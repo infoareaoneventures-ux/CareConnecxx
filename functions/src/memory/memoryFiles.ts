@@ -331,12 +331,17 @@ export async function initializeMemoryFiles(
   ]);
 }
 
-// Triggered when user asks "what do you know about mom?" (or similar)
+// Triggered when user asks what Evia knows/remembers ("what do you know about
+// mom?", "do you know my name?", "what's my mom's name?").
+// `question`: the user's actual message — the answer must address THIS, not just
+//   dump the whole profile (asking "what's my mom's name" should get the name,
+//   not a warm recap of the entire care situation).
 // zepContext: recent conversational memory from Zep (optional, injected by caller)
 export async function handleMemoryQuery(
   userId: string,
   chatId: string,
   sendMessage: (id: string, msg: string) => Promise<unknown>,
+  question: string,
   zepContext?: string
 ): Promise<void> {
   const fileContext = await getMemoryContext(userId);
@@ -353,10 +358,13 @@ export async function handleMemoryQuery(
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
-      "You are Evia, a care assistant. Summarize what you know about this family's care situation " +
-      "in 2–3 warm, conversational sentences. No bullet points. No headers. Speak as if recounting " +
-      "what a trusted friend would remember.",
-    messages: [{ role: "user", content: combined }],
+      "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
+      "their care situation. Answer THEIR QUESTION directly and specifically using that context. " +
+      "If they ask for one fact (a name, an age, a city), lead with that fact in one short sentence — " +
+      "do NOT recap the whole profile. If the question is open-ended (e.g. \"what do you know about my mom\"), " +
+      "give a warm 2–3 sentence summary. If the answer isn't in what you know, say so briefly and offer to " +
+      "note it. Plain conversational text — no bullet points, no headers.",
+    messages: [{ role: "user", content: `What I know:\n${combined}\n\nTheir question: ${question}` }],
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();

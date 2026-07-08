@@ -450,6 +450,8 @@ export async function handleInterviewConfirm(
   const oneHourBefore  = interviewMs - 60 * 60 * 1000;
   const ninetyMinAway  = interviewMs - 90 * 60 * 1000;
 
+  const triggerRefId = `interview_${interviewRef.id}`; // cancelTriggersByRef key on cancel
+
   if (nowMs < ninetyMinAway) {
     // 1h-before reminder to the family
     const familySessionSnap = await db.collection("agent_sessions").doc(phone).get();
@@ -462,6 +464,7 @@ export async function handleInterviewConfirm(
       message:
         `Your interview with ${pending.caregiverName} is in an hour — ` +
         (callUrl ? callUrl : "make sure you have the link ready."),
+      refId:       triggerRefId,
     }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
 
     // 1h-before reminder to the caregiver
@@ -477,6 +480,7 @@ export async function handleInterviewConfirm(
           `Interview in an hour with a family. ` +
           (callUrl ? callUrl : "Check your calendar.") +
           ` Reply if you need to reschedule.`,
+        refId:       triggerRefId,
       }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
     }
   }
@@ -489,6 +493,7 @@ export async function handleInterviewConfirm(
     type:        "custom",
     scheduledAt: followUpAt,
     message:     `interview_followup:${interviewRef.id}`,
+    refId:       triggerRefId,
   }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
 }
 

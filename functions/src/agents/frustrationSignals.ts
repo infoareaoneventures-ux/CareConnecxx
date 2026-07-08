@@ -43,6 +43,46 @@ export function detectFrustrationSignals(input: FrustrationSignalInput): Frustra
   };
 }
 
+// Agent "broken record" detection (ch10 — the confirm-name-loop class of bug).
+// Mirror of the USER-side rephrase-loop check, but pointed at EVIA'S OWN recent
+// outbound messages: if the reply she's about to send is a near-duplicate of
+// something she just said, that's the pathological loop — break it (vary or
+// escalate) instead of texting the same thing twice. Uses the same Jaccard
+// helper as the user-side detector so the threshold behaviour matches.
+//
+// candidate = the about-to-send reply; recentHistory = the loaded turn history.
+// excludeSynthetic drops the getConversationHistory summary-doc line (a fixed
+// "Got it - I have context…" assistant string that would false-positive).
+const SELF_REPEAT_THRESHOLD = 0.8; // stricter than the user-side 0.72: Evia
+// legitimately reuses phrasing across a conversation; only near-identical
+// consecutive sends are the loop we want to catch.
+// Matched against the NORMALIZED text, so no punctuation (normalize strips the
+// "-" in the real "Got it - I have context…" summary line).
+const SYNTHETIC_SUMMARY_PREFIX = "got it i have context";
+
+export function detectAgentSelfRepeat(
+  candidate: string,
+  recentHistory?: Array<{ role: "user" | "assistant"; content: string }>,
+): { repeated: boolean; matchedPrior?: string; score?: number } {
+  const normalized = normalize(candidate);
+  if (normalized.length < MIN_REPHRASE_CHARS) return { repeated: false };
+
+  const recentAssistant = (recentHistory ?? [])
+    .filter(row => row.role === "assistant")
+    .map(row => ({ raw: row.content, norm: normalize(row.content) }))
+    .filter(row => row.norm.length >= MIN_REPHRASE_CHARS)
+    .filter(row => !row.norm.startsWith(SYNTHETIC_SUMMARY_PREFIX))
+    .slice(-4);
+
+  for (const prev of recentAssistant) {
+    const score = prev.norm === normalized ? 1 : similarity(prev.norm, normalized);
+    if (score >= SELF_REPEAT_THRESHOLD) {
+      return { repeated: true, matchedPrior: prev.raw, score };
+    }
+  }
+  return { repeated: false };
+}
+
 export function normalize(text: string): string {
   return text
     .toLowerCase()

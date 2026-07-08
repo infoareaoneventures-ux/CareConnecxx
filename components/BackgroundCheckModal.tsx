@@ -117,7 +117,7 @@ export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onCl
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
               <p className="text-sm font-semibold text-blue-900 mb-2">Disclosure Notice</p>
               <p className="text-xs text-blue-800 leading-relaxed">
-                In connection with your application to provide care services through CareConnecxx, a consumer report (background check) will be obtained about you from <strong>Checkr, Inc.</strong>, a consumer reporting agency (FCRA § 604). This report may include criminal history and other public record information, and will be used solely to evaluate your eligibility to join the platform.
+                In connection with your application to provide care services through Evia, a consumer report (background check) will be obtained about you from <strong>Checkr, Inc.</strong>, a consumer reporting agency (FCRA § 604). This report may include criminal history and other public record information, and will be used solely to evaluate your eligibility to join the platform.
               </p>
             </div>
 
@@ -141,7 +141,7 @@ export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onCl
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start gap-3">
               <Lock className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
               <p className="text-xs text-slate-500 leading-relaxed">
-                Your SSN and date of birth are entered directly on Checkr's secure site — <strong>they are never transmitted to or stored by CareConnecxx</strong>.
+                Your SSN and date of birth are entered directly on Checkr's secure site — <strong>they are never transmitted to or stored by Evia</strong>.
               </p>
             </div>
 
@@ -216,7 +216,7 @@ export const BackgroundCheckModal: React.FC<BackgroundCheckModalProps> = ({ onCl
                   onChange={(e) => setFormData({ ...formData, consentGiven: e.target.checked })}
                 />
                 <span className="text-xs text-slate-600 leading-relaxed">
-                  I have read the disclosure above and authorize CareConnecxx and Checkr, Inc. to obtain a consumer report (background check) about me for caregiving eligibility purposes under the FCRA. I understand that Checkr will email me a secure link to provide my SSN and date of birth directly on their platform. I agree to Checkr's{' '}
+                  I have read the disclosure above and authorize Evia and Checkr, Inc. to obtain a consumer report (background check) about me for caregiving eligibility purposes under the FCRA. I understand that Checkr will email me a secure link to provide my SSN and date of birth directly on their platform. I agree to Checkr's{' '}
                   <a
                     href="https://checkr.com/customer-terms-of-service"
                     target="_blank"

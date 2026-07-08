@@ -32,6 +32,9 @@ function capToolsForOpenAi(tools: AnthropicTool[]): AnthropicTool[] {
 export interface OpenAiAgentTurnResult {
   content: Anthropic.ContentBlock[];
   stop_reason: Anthropic.Message["stop_reason"];
+  // Normalized to Anthropic's field names so the qaAgent loop can read usage
+  // off either provider's result with one shape (input_tokens/output_tokens).
+  usage?: { input_tokens: number; output_tokens: number };
 }
 
 function systemToText(system: string | Anthropic.TextBlockParam[]): string {
@@ -179,6 +182,10 @@ export async function callOpenAiAgentTurn(params: {
   return {
     content,
     stop_reason: finishReasonToStopReason(choice?.finish_reason ?? "stop"),
+    usage: {
+      input_tokens:  res.usage?.prompt_tokens ?? 0,
+      output_tokens: res.usage?.completion_tokens ?? 0,
+    },
   };
 }
 

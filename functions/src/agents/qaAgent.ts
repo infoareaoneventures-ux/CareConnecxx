@@ -27,13 +27,23 @@ import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
 import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
-import { resolveCaraModelConfig } from "../config/caraModels";
+import { resolveCaraModelConfig, estimateCostUsd } from "../config/caraModels";
 import { runAgentModelTurn } from "./agentModelTurn";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
-import { detectFrustrationSignals } from "./frustrationSignals";
+import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
+import {
+  HUMAN_HANDOFF_COPY,
+  HUMAN_HANDOFF_HELD_COPY,
+  HANDOFF_GROUNDING_SYSTEM_PROMPT,
+  buildHandoffGroundingPayload,
+  parseHandoffGroundingVerdict,
+  shouldHandOffToHuman,
+  isHandoffActive,
+} from "./humanHandoff";
+import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { isOnboardingTool } from "./onboardingContract";
 import { isReGreet } from "./onboardingEvalGraders";
 import { withToolsCacheControl } from "./toolCache";
@@ -467,14 +477,16 @@ export function buildClientSystemPrompt(
     `PROMISES MUST BE ACTIONS (non-negotiable): If you say "let me pull up", "let me find", "I'll check", "let me look that up", "give me a moment", "I'll get back to you with X", or any phrase implying deferred work, you MUST call the relevant tool IN THE SAME TURN. Never end your reply with a promise to do work without having already called the tool that does it. The user gets the text reply and any tool calls as one atomic turn; if the tool isn't called now, the work never happens.`,
     `Examples:`,
     `- BAD: "Got it, I'll find caregivers — let me pull up options." (no tool call → user waits forever)`,
-    `- GOOD: call find_replacement_caregivers, then in your text reply say what you found or that you're pulling matches now (the tool fires before your text is sent).`,
+    `- GOOD: call find_replacement_caregivers, then follow the instruction in its result — it tells you exactly what the family has already been sent and what your one reply should say.`,
     `- BAD: "Let me check your next visit." (no tool call)`,
     `- GOOD: call get_upcoming_appointments, then reply with the actual answer.`,
     `If you need more info from the family before you can call the tool (e.g. you don't know what they want), ASK a concrete question — don't say "let me check" first.`,
     ``,
+    `ONE VOICE (non-negotiable): The family experiences this whole turn as ONE person texting them. Some tools deliver messages to the family themselves (a caregiver photo gallery, a signup link, a booking explanation) — their results say so ("sent": true, "instruction", or words like "already messaged the family"). When a result says the family already received something, NEVER restate, summarize, or rephrase it in your reply — a real person doesn't text the same thing twice in a row. Follow the result's instruction for what (if anything) your reply should add. When a result says nothing was sent, YOUR reply is the family's only update — deliver it fully and honestly.`,
+    ``,
     MEMORY_SOURCE_PRIORITY_POLICY,
     ``,
-    `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names", call find_replacement_caregivers IMMEDIATELY. Do not re-ask about care needs if you already have them in the cached context above. The matching tool handles the search itself; you only need to invoke it. After invoking, your reply should briefly say what you're matching on ("I'm looking for caregivers near you who can help with bathing and meds — coming up.") — never "Let me pull up options" with no tool call.`,
+    `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names", call find_replacement_caregivers IMMEDIATELY. Do not re-ask about care needs if you already have them in the cached context above. The tool runs the full search before your reply is composed, and its result tells you the real outcome ("matched", "no_match", or "failed") plus exactly what the family has already been sent and what your one reply should say — follow that instruction (ONE VOICE). Never add your own status update on top of what the tool already texted, and never claim you're "actively searching" or "will bring names" when the result says no match was found — be honest about the outcome instead.`,
     `When a family member expresses interest in a specific caregiver (e.g. "yes let's connect", "let's go with him", "I like her"), proactively call schedule_interview to set up an intro, or ask them for their preferred time if you don't have one yet. Do not punt them to a website or "team".`,
     ``,
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
@@ -512,6 +524,7 @@ export function buildClientSystemPrompt(
     `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
     `  · get_callout_backups / select_callout_backup / request_callout_refund — when a caregiver calls out: show backup options, assign the family's choice, or file a refund if none work`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
+    `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
     `  · log_health_flag — when they report a concern about ${seniorName}`,
     `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
     `  · cara_knows — call when the family asks what you remember about ${seniorName}, what's on file, or to verify what you've been told. Summarize the returned context warmly in 2–3 sentences as prose, never a list.`,
@@ -581,6 +594,17 @@ export function buildClientSystemPrompt(
     `  · cancel_interview — cancel a scheduled interview; the caregiver is notified automatically. Confirm first.`,
     `  · delete_memory_file — permanently delete one of your memory files for this family (content + search index). MANDATORY: read back which file and wait for explicit YES. To fix a single fact use edit_memory_file instead.`,
     `  · list_blocked_users — show who the family has blocked. Use before block_user/unblock_user or when they ask "who have I blocked?".`,
+    `  · retry_shift_payment — re-run a FAILED visit payment when the family asks ("my payment didn't go through, try again"). Usually after they've fixed their card via get_payment_update_link. Don't promise success — the charge runs asynchronously; say you've re-run it.`,
+    `  · update_booking_payment_method — switch how an upcoming confirmed booking is paid: card on file (credit) or paying the caregiver directly (cash, venmo, zelle). Only before the visit starts. Confirm the new method first.`,
+    `  · create_refund_request — file a refund request for a specific visit or invoice. Confirm the amount and what it's for before calling; tell the family ops reviews it.`,
+    `  · get_refund_requests — check the status of the family's refund requests.`,
+    `  · update_reminder — change an existing reminder's time, text, or schedule (use list_user_reminders first to find it).`,
+    `  · edit_comment / delete_comment — fix or remove a comment the family left on a care journal entry.`,
+    `  · edit_review — update a review the family previously left for a caregiver.`,
+    `  · cancel_followup — cancel a follow-up check-in you scheduled if the family says it's no longer needed.`,
+    `  · get_work_in_progress — see everything you (Evia) currently have in flight for this family. Use when they ask "what are you working on" or "any update on that thing".`,
+    `  · update_preferences — update the family's notification, do-not-disturb, or timezone preferences ("don't text me after 8pm").`,
+    `  · read_memory_file / search_memory — read or search your long-term memory files for this family when the cached context above doesn't cover it.`,
     `For irreversible actions (cancel_appointment, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, block_user, report_user, archive_senior_profile, cancel_interview, delete_memory_file), always confirm with the family before calling. For everything else, act and report.`,
     ``,
     `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through yet. Never claim someone was notified if notification.sent === false. If reason is "queued_for_retry", the message is queued and WILL be delivered automatically within minutes — say so ("the text is delayed but will go out shortly") and do NOT offer a manual retry. For any other reason, tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?"`,
@@ -590,6 +614,7 @@ export function buildClientSystemPrompt(
     `- search_web: fastest — find doctors, pharmacies, insurance info, hours, addresses`,
     `- perform_web_action (actionType "fetch"): get content from a specific URL`,
     `- perform_web_action (actionType "browse"): navigate a site with AI browser`,
+    `- fetch_web_page / browse_web / search_healthcare_provider: direct single-purpose versions of the above — fetch one URL, browse one site, or find a doctor/clinic/pharmacy near an address`,
     `LOGIN-REQUIRED (check stored credentials, collect if missing):`,
     `- perform_web_action (loginAction "schedule_appointment", no chosenSlot): READ-ONLY appointment slot discovery. Pass portalService, doctorName, preferredDate. Do not tell the family it is booked; present the returned slot and say you need explicit YES before booking it.`,
     `- perform_web_action (loginAction "schedule_appointment", with chosenSlot): booking COMMIT for the exact approved slot only. Call this only after the family/account holder has explicitly approved that exact provider/date/time/location, or when the pending-action approval rerun supplies _confirmedActionId.`,
@@ -707,6 +732,7 @@ function buildCaregiverSystemPrompt(
     // LAUNCH: wording pending counsel review (R15)
     `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the caregiver directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
+    `ONE VOICE (non-negotiable): The caregiver experiences this turn as ONE person texting them. If a tool result says something was already sent to them ("sent": true, an "instruction" field, or words like "already messaged"), NEVER restate or rephrase it in your reply — a real person doesn't text the same thing twice in a row. Follow the result's instruction for what (if anything) to add.`,
     ``,
     apptLine,
     coreContext ? `\n${coreContext}\n` : "",
@@ -721,7 +747,7 @@ function buildCaregiverSystemPrompt(
     `- update_memory_file: note something important about the client that Evia should remember`,
     `- search_web: look up addresses, phone numbers, hours, or anything you need`,
     `- perform_web_action (actionType "fetch" or "browse"): get content from a public website`,
-    `- list_user_reminders / create_reminder / delete_reminder: manage your personal reminders`,
+    `- list_user_reminders / create_reminder / update_reminder / delete_reminder: manage your personal reminders`,
     `- get_billing_summary: check your payment history`,
     `- update_caregiver_profile: update your hourly rate, bio, phone, city, or weekly availability`,
     `- pause_account: pause your account so you stop getting job matches (vacation, a break). Pass until as 'YYYY-MM-DD' or 'indefinite'`,
@@ -729,18 +755,28 @@ function buildCaregiverSystemPrompt(
     `- accept_shift / decline_shift: accept or decline the shift offer you were just sent (resolves your current pending offer)`,
     `- complete_task: when you've finished (or are blocked), call this with a status and your reply message instead of plain text. Never mark 'done' while an action is still awaiting a YES/NO confirmation.`,
     `- create_care_journal_entry: log notes, mood, and medications for a completed visit`,
+    `- update_care_journal_entry: amend a journal entry you already submitted (typo, forgot a med)`,
     `- apply_to_job: apply to an open job post with optional rate and cover note`,
+    `- withdraw_job_application: withdraw an application you submitted and no longer want`,
     `- browse_job_board: see open jobs available to apply to`,
     `- get_my_applications: check the status of your submitted applications`,
+    `- respond_to_booking_request: accept or decline a direct booking request a family sent you`,
     `- respond_to_interview_request: accept or decline an interview; include proposedDate/Time to counter-offer`,
     `- list_interviews: see your scheduled interviews (date, time, status)`,
     `- cancel_interview: cancel an interview you can't make — the family is notified; to propose a new time use respond_to_interview_request instead`,
+    `- start_shift: clock in when you arrive at a visit — starts the shift record`,
+    `- complete_shift: clock out when the visit ends — closes the shift and kicks off hours submission`,
+    `- update_shift_task: check off or update a care-plan task during the current shift`,
+    `- submit_media_update: send the family a photo or video update from a visit`,
     `- submit_shift_hours: submit your clock-in/out times after a visit for client approval`,
-    `- confirm_cash_received: confirm you received a cash payment for an approved shift — marks it paid`,
-    `- request_instant_payout: request immediate payment of your earned balance (1.5% fee)`,
+    `- respond_to_shift_hour_correction: accept or dispute the family's proposed correction to hours you submitted`,
+    `- get_shifts: list your shift records with hours and payment status`,
+    `- confirm_cash_received: confirm you received an offline payment (cash, Venmo, or Zelle) for an approved shift — marks it paid`,
+    `- request_instant_payout: cash out your instantly-available balance — free, arrives in ~30 min (regular earnings pay out automatically every day)`,
     `- get_payout_history: see your recent payout records from Stripe`,
     `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
     `- update_caregiver_availability: add or remove days from your weekly availability`,
+    `- get_caregiver_availability: read your current weekly availability before changing it`,
     `- get_caregiver_info: look up your own profile details (rate, bio, city, availability)`,
     `- get_caregiver_reviews: see your own ratings and recent reviews from families`,
     `- get_background_check_status: check the status of your background check`,
@@ -749,9 +785,13 @@ function buildCaregiverSystemPrompt(
     `- list_shift_swaps: see your open coverage requests and open swap offers from peers you could pick up`,
     `- submit_gps_checkin: record a GPS check-in at the start of a visit`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
-    `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after.`,
+    `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after. NEVER tell the caregiver a link is coming or being pulled up unless you have CALLED this tool in the same turn — narration does not send anything.`,
     `- send_client_message: send a message to a client on your behalf`,
     `- get_recent_messages: see recent messages with a client`,
+    `- react_to_message: add an iMessage tapback (like/thumbs-up) to the caregiver's last message — a silent acknowledgment for quick confirmations ("got it", "on my way") that needs no reply text. iMessage only; if the tool reports a fallback, acknowledge briefly in text instead.`,
+    `- create_caregiver_referral: refer a fellow caregiver to join Evia — sends them an invite text with the caregiver's name attached`,
+    `- get_work_in_progress: see everything Evia currently has in flight for this caregiver ("any update on that?")`,
+    `- get_support_tickets: check the status of your existing support tickets before opening a new one`,
     `- create_support_ticket: LAST RESORT only — for issues no other tool can resolve. Never tell a caregiver "the team will follow up" for something you can do right now with the tools above (status checks, links, swaps, payouts, earnings).`,
     ``,
     `Only state facts from the appointment details above or tool results in this conversation. If you don't have an answer, call a tool or say you'll check.`,
@@ -846,20 +886,78 @@ function detectLowConfidence(reply: string): boolean {
   return HALLUCINATION_SIGNALS.some((r) => r.test(reply));
 }
 
-// Sprint 8: confident-speculation detector. Catches the failure mode where
-// Evia asserts a fact about a specific caregiver/availability/condition that
-// she hasn't actually verified — distinct from hedging (handled above).
-// LOG-ONLY this sprint: we measure the false-positive rate before deciding
-// whether to add a rewrite path.
+// Confident (non-hedged) medical-fact assertions — the dangerous case the
+// hedging detector (detectLowConfidence) misses entirely: a fabricated
+// diagnosis, condition, medication, or vital stated flatly as fact, with no
+// "might"/"maybe" tell. Dose *directions* ("give her 20mg") are handled
+// separately by detectMedicationInstruction; this covers *stated facts about
+// the senior's health*. These feed detectConfidenceClaim so they route through
+// the CONTEXT-AWARE grounding-LLM handoff gate (which can see the injected care
+// plan) rather than the context-blind local rewriter — a blind strip would
+// wrongly delete real facts Evia legitimately has on file.
+const MEDICAL_ASSERTION_PATTERNS = [
+  /\b(?:was|were|is|are|has|have|had|been)\s+diagnos\w+/i,            // "was diagnosed with…"
+  /\bdiagnos\w+\s+with\b/i,                                            // "diagnosis of / diagnosed with…"
+  /\b(?:is|was|are|were)\s+(?:on|taking|prescribed)\s+\w+/i,          // "is taking Lisinopril"
+  /\b(?:blood pressure|heart rate|blood sugar|temperature|oxygen|o2 sat)\s+(?:is|was|of|reads?|=|:)?\s*\d/i, // stated vital
+  /\b(?:has|have|had)\s+(?:diabetes|dementia|alzheimer'?s|hypertension|copd|cancer|a\s+uti|pneumonia)\b/i,
+];
+
+export function detectMedicalAssertion(reply: string): boolean {
+  return MEDICAL_ASSERTION_PATTERNS.some((r) => r.test(reply));
+}
+
+// Confident-speculation detector. Catches the failure mode where Evia asserts a
+// specific fact (availability, an action, a name/role, a date/time, an amount, a
+// medical fact) she hasn't actually verified — distinct from hedging (handled
+// above). This is a WIDE trigger by design: it only decides whether to *run* the
+// context-aware grounding-LLM verdict (see the handoff gate), which fails open
+// and hands off ONLY on an explicit UNSUPPORTED verdict. A false positive costs
+// one quick-tier LLM call; a false negative ships a fabricated fact. So err wide.
 const CONFIDENCE_CLAIM_PATTERNS = [
   // Proper-name + availability/state claim ("Maria is free", "Alice is sick")
   /\b[A-Z][a-z]+(?:'s| is)\s+(free|available|booked|coming|out|sick|here|on|off|done)\b/,
   // "I confirmed/scheduled/cancelled X" without any tool record
   /\b(I (?:confirmed|scheduled|cancelled|booked|moved|paid|refunded))\b/i,
+  // Named person + future action ("Maria will arrive at 3", "Sarah is going to call")
+  /\b[A-Z][a-z]+\s+(?:will|'ll|is going to|is gonna)\s+\w+/,
+  // Relationship / role assertion ("Dr. Chen is her primary physician")
+  /\b[A-Z][a-z]+\s+is\s+(?:her|his|your|their|the)\s+\w+/,
+  // Concrete money claim ("your invoice was $340", "that'll be $85")
+  /\$\s?\d[\d,]*(?:\.\d+)?/,
+  // Appointment / booking fact tied to a day or state ("has an appointment Tuesday")
+  /\b(?:appointment|shift|booking|interview|visit)\b.{0,40}\b(?:is|was|on|at|scheduled|booked|confirmed|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
+  // Specific clock time asserted ("at 3pm", "by 2:30 pm")
+  /\b(?:at|by|on)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
 ];
 
 export function detectConfidenceClaim(reply: string): boolean {
-  return CONFIDENCE_CLAIM_PATTERNS.some((r) => r.test(reply));
+  return CONFIDENCE_CLAIM_PATTERNS.some((r) => r.test(reply)) || detectMedicalAssertion(reply);
+}
+
+// Pull the tool_result observations the tool loop recorded THIS turn out of the
+// working `messages` array, flattened to plain text. Feeds the handoff grounding
+// check so a claim justified by a tool called this turn reads as SUPPORTED
+// (closes the "called a tool then embellished past its result" gap). Only
+// tool_result blocks are collected — the user's own message and assistant
+// tool_use blocks are irrelevant to whether the tool RETURNED the claimed fact.
+export function collectTurnToolObservations(messages: Anthropic.MessageParam[]): string {
+  const chunks: string[] = [];
+  for (const m of messages ?? []) {
+    if (!Array.isArray(m.content)) continue;
+    for (const block of m.content) {
+      if ((block as { type?: string })?.type !== "tool_result") continue;
+      const content = (block as Anthropic.ToolResultBlockParam).content;
+      if (typeof content === "string") {
+        chunks.push(content);
+      } else if (Array.isArray(content)) {
+        for (const c of content) {
+          if ((c as { type?: string })?.type === "text") chunks.push((c as { text: string }).text);
+        }
+      }
+    }
+  }
+  return chunks.join("\n").trim();
 }
 
 // Promise-without-tool-call detector (R8). The system prompt bans phrases
@@ -1194,6 +1292,26 @@ export async function runQaAgent(params: {
       ).catch(() => {});
     }
     return "";
+  }
+
+  // Human-handoff hold (ch10 low-confidence gate). If a prior turn handed this
+  // thread to a teammate and the hold hasn't expired, Evia stays out of the way:
+  // she does NOT auto-answer, re-pages ops so the new message is visible in the
+  // Control Room, and (on web only) returns a brief holding line. SMS stays
+  // silent so we don't re-text the same hold each message. The hold self-expires
+  // (handoffTtlMs) so the user is never permanently stranded, and this sits
+  // AFTER the upstream crisis fast-path, so emergencies are never suppressed.
+  if (!onboardingMode && channel === "[USER]" && isHandoffActive(session, Date.now())) {
+    console.info("qaAgent: thread held for human handoff — suppressing auto-reply", { userId });
+    createCaraOpsAlert({
+      type:     "human_handoff_followup",
+      severity: "high",
+      phone, userId, role: userType,
+      source:   "qaAgent",
+      message:  "Held thread received a follow-up message while awaiting a teammate.",
+      context:  { text: safeText.slice(0, 300) },
+    }).catch(() => {});
+    return skipSend ? HUMAN_HANDOFF_HELD_COPY : "";
   }
 
   // Sprint 8: post-process turn resume. If a prior attempt at THIS exact inbound
@@ -1720,6 +1838,10 @@ export async function runQaAgent(params: {
   // re-runs the turn and double-sends the link (client_payment even mints a
   // fresh Stripe Checkout session each time).
   let deliveredToUser = false;
+  // Which self-delivering tool fired — picks the right exhausted-loop
+  // confirmation copy ("tap the link" only fits send_onboarding_link; the
+  // match gallery and booking-block explanation need a generic pointer).
+  let deliveredLinkArtifact = false;
 
   try {
     if (!skipSend) await startTyping(chatId).catch(() => {});
@@ -1826,7 +1948,14 @@ export async function runQaAgent(params: {
     // front-loaded answer. Give collection more headroom.
     const maxIterations = onboardingMode ? Math.max(budget.maxIterations, 10) : budget.maxIterations;
     let totalToolCalls = 0;
-    console.info("qaAgent.loopBudget", { userId, flowClass, maxIterations });
+    // ch9 cost budget: accumulate estimated spend across this turn's model calls
+    // and force a final text reply once it crosses the flow-class ceiling — the
+    // spend analogue of the wall-clock + tool-call caps. Guards the runaway /
+    // credit-exhaustion failure class. Estimate is conservative (see caraModels).
+    let turnInputTokens  = 0;
+    let turnOutputTokens = 0;
+    let turnCostUsd       = 0;
+    console.info("qaAgent.loopBudget", { userId, flowClass, maxIterations, maxCostUsd: budget.maxCostUsd });
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       // On the final allowed iteration, or once the wall-clock budget is spent,
       // force a text-only completion (tool_choice:none) so the model MUST emit a
@@ -1835,12 +1964,17 @@ export async function runQaAgent(params: {
       // completion beats the fragile no-text heuristic.
       const budgetExceeded   = Date.now() - turnStart > TURN_BUDGET_MS;
       const toolCapExceeded  = totalToolCalls >= MAX_TOOL_CALLS_PER_TURN;
-      const forceTextReply   = budgetExceeded || toolCapExceeded || iteration === maxIterations - 1;
+      const costCapExceeded  = turnCostUsd >= budget.maxCostUsd;
+      const forceTextReply   = budgetExceeded || toolCapExceeded || costCapExceeded || iteration === maxIterations - 1;
       if (budgetExceeded) {
         console.warn("qaAgent: turn budget exceeded — forcing final text reply", { userId, iteration });
       }
       if (toolCapExceeded) {
         console.warn("qaAgent: per-turn tool-call cap reached — forcing final text reply", { userId, totalToolCalls });
+      }
+      if (costCapExceeded) {
+        console.warn("qaAgent: per-turn cost cap reached — forcing final text reply", { userId, turnCostUsd: turnCostUsd.toFixed(4), maxCostUsd: budget.maxCostUsd });
+        metrics.costBudgetExceeded = true;
       }
       // Clip oversized tool_use args in older messages — the result is what
       // matters past the first turn or two, and full args bloat every cached
@@ -1867,6 +2001,24 @@ export async function runQaAgent(params: {
         messages,
         metrics,
       });
+
+      // Accumulate this call's token usage + estimated cost. Read defensively:
+      // the Anthropic path returns a raw Message ({usage:{input_tokens,output_tokens}})
+      // and the OpenAI/Gemini path normalizes to the same field names. Priced by
+      // the model actually used this call (metrics.modelUsed is set inside
+      // runAgentModelTurn, including on a fallback). Feeds the cost cap checked at
+      // the top of the NEXT iteration.
+      {
+        const u = (response as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
+        const inTok  = Number(u?.input_tokens ?? 0) || 0;
+        const outTok = Number(u?.output_tokens ?? 0) || 0;
+        turnInputTokens  += inTok;
+        turnOutputTokens += outTok;
+        turnCostUsd      += estimateCostUsd(metrics.modelUsed ?? "", inTok, outTok);
+        metrics.inputTokens  = turnInputTokens;
+        metrics.outputTokens = turnOutputTokens;
+        metrics.costUsd      = turnCostUsd;
+      }
 
       // max_tokens cutoff while emitting tool_use blocks → tool input JSON may
       // be truncated. We can't safely execute partially-specified tool calls
@@ -2025,11 +2177,14 @@ export async function runQaAgent(params: {
                 });
               }
             } else if ((result as { sent?: boolean })?.sent === true) {
-              // A self-delivering tool (send_onboarding_link) already pushed a
-              // tappable artifact to this chat. Remember it so the exhausted-loop
-              // and outer-catch paths confirm rather than contradict — and never
-              // schedule a retry that would re-send / re-mint the link.
+              // A self-delivering tool (send_onboarding_link, the matched-path
+              // find_replacement_caregivers gallery, a blocked request_booking
+              // explanation) already pushed its message to this chat. Remember it
+              // so the exhausted-loop and outer-catch paths confirm rather than
+              // contradict — and never schedule a retry that would re-send /
+              // re-mint the artifact or re-run the search.
               deliveredToUser = true;
+              if (block.name === "send_onboarding_link") deliveredLinkArtifact = true;
             }
 
             // Instrumentation for D4 — track success rate on the cancel path so
@@ -2159,8 +2314,11 @@ export async function runQaAgent(params: {
         // The link/artifact already went out this turn; the only thing missing
         // is Evia's confirming sentence. Supply it directly and DO NOT schedule
         // a retry — re-running would call send_onboarding_link again (duplicate
-        // link, and a fresh Stripe Checkout session for client_payment).
-        reply = "There you go — tap the link I just sent to finish up.";
+        // link, and a fresh Stripe Checkout session for client_payment) or
+        // re-run the caregiver search / re-text the family.
+        reply = deliveredLinkArtifact
+          ? "There you go — tap the link I just sent to finish up."
+          : "Everything's in what I just sent above — text me if anything's unclear.";
       } else if (!isRetry) {
         // Schedule a retry in 30 seconds via the trigger engine — the retry
         // will reply with the real answer when it succeeds.
@@ -2212,9 +2370,22 @@ export async function runQaAgent(params: {
       }
     }
 
-    // Grounding revision — when medical claims + hedging co-occur, ask Claude to strip speculation
-    const MEDICAL_CLAIM = /\b(doctor|diagnosis|medication|dosage|mg|ml|blood pressure|heart rate|fall|injury|hospital|symptom|condition)\b/i;
-    if (detectLowConfidence(reply) && MEDICAL_CLAIM.test(reply)) {
+    // Grounding revision. Two medical paths:
+    //  (a) HEDGED medical text ("might be", "probably" + a medical term) → the
+    //      local de-hedge rewrite below. Safe even though the rewriter is
+    //      context-blind: stripping hedging never invents or deletes a fact.
+    //  (b) CONFIDENT medical assertion ("was diagnosed with…", "is taking X",
+    //      stated vitals) with no hedge tell → do NOT rewrite locally. The
+    //      rewriter can't see the injected care plan, so it can't tell a
+    //      fabricated fact from one Evia legitimately has on file. Instead we log
+    //      it and let the CONTEXT-AWARE grounding-LLM handoff gate (below) verify
+    //      the claim against the care plan and hand off only if truly unsupported.
+    // Inflected forms matter: real replies say "diagnosed"/"prescribing", not
+    // just "diagnosis" — so the term list uses word stems (but avoids `dos\w*`,
+    // which would swallow "does").
+    const MEDICAL_CLAIM = /\b(doctor|physician|diagnos\w*|prescri\w*|medicat\w*|medicine|dosage|dose|doses|dosing|mg|ml|mcg|blood pressure|heart rate|blood sugar|fall|fell|fallen|injur\w*|hospital\w*|symptom\w*|condition\w*)\b/i;
+    const hasMedicalContent = MEDICAL_CLAIM.test(reply);
+    if (hasMedicalContent && detectLowConfidence(reply)) {
       console.warn("qaAgent: grounding revision triggered", { userId, preview: reply.slice(0, 100) });
       metrics.groundingTriggered = true;
       db.collection("agent_uncertainty_log").add({
@@ -2243,6 +2414,19 @@ export async function runQaAgent(params: {
       } catch {
         // Non-critical — proceed with original reply
       }
+    } else if (hasMedicalContent && detectMedicalAssertion(reply)) {
+      // Confident, unhedged medical fact — flagged for the context-aware gate,
+      // not rewritten here. detectConfidenceClaim() also matches it, so the
+      // handoff grounding check downstream verifies it against the care plan.
+      console.warn("qaAgent: confident medical assertion flagged for grounding gate", { userId, preview: reply.slice(0, 100) });
+      metrics.groundingTriggered = true;
+      db.collection("agent_uncertainty_log").add({
+        userId, phone,
+        question: text.slice(0, 200),
+        reply:    reply.slice(0, 500),
+        detectedAt: new Date().toISOString(),
+        confidentMedicalClaim: true,
+      }).catch(() => {});
     } else if (detectLowConfidence(reply)) {
       console.warn("qaAgent: low-confidence reply (no medical claims)", { userId, preview: reply.slice(0, 100) });
       db.collection("agent_uncertainty_log").add({
@@ -2451,8 +2635,156 @@ export async function runQaAgent(params: {
       metrics.onboardingReGreet = true;
     }
 
+    // Low-confidence human handoff (ch10 "overcommitted guess" gate). If the
+    // FINAL reply asserts a confidence claim (availability, an action like "I
+    // confirmed…", a name/role/date/amount, or a medical fact) that isn't
+    // supported by the injected context, the conversation, OR this turn's tool
+    // results, that's the confident-wrong failure mode — hand the thread to a
+    // teammate instead of sending the guess. Runs AFTER supervise so the handoff
+    // copy (which intentionally breaks the never-punt lint) isn't rewritten, and
+    // short-circuits the self-repeat guard below (no point varying a handoff
+    // line). Founder-approved exception to the never-punt voice; kill-switchable
+    // via CARA_CONFIDENCE_HANDOFF; the hold self-expires so the thread is never
+    // permanently stranded.
+    let handedOff = false;
+    if (reply.trim() && shouldHandOffToHuman({
+      confidenceClaimDetected: detectConfidenceClaim(reply),
+      toolCallsThisTurn:       metrics.toolCalls ?? 0,
+      onboardingMode,
+      isUserChannel:           channel === "[USER]",
+    })) {
+      metrics.confidenceClaimDetected = true;
+      // FP guard: the regex over-fires on the mainline flow (facts answered from
+      // the pre-injected core context, "I scheduled that" referencing a PRIOR
+      // turn, or a claim justified by a tool called THIS turn). A claim only
+      // warrants the handoff when its substance is supported by NONE of: the
+      // injected context (systemPrompt carries core context + snapshot + care
+      // plan), the conversation, or this turn's tool observations. That last
+      // source is why tool-backed turns are checked too rather than skipped —
+      // it closes the "called a tool then embellished past it" gap without
+      // false-flagging genuinely tool-backed claims. Checker error/garbage →
+      // fail open to sending (pre-gate behavior), never into a false hold.
+      const toolObservations = collectTurnToolObservations(messages);
+      let groundingVerdict: "supported" | "unsupported" = "supported";
+      try {
+        const gateController = new AbortController();
+        const gateTimer = setTimeout(() => gateController.abort(), 8_000);
+        const verdictRaw = await quickComplete(
+          HANDOFF_GROUNDING_SYSTEM_PROMPT,
+          buildHandoffGroundingPayload(systemPrompt, history, reply, toolObservations),
+          { maxTokens: 8, signal: gateController.signal },
+        );
+        clearTimeout(gateTimer);
+        groundingVerdict = parseHandoffGroundingVerdict(verdictRaw);
+      } catch {
+        // Fail open to sending — a checker outage must not hold threads.
+      }
+
+      if (groundingVerdict === "unsupported") {
+        handedOff = true;
+        metrics.humanHandoffTriggered = true;
+        console.warn("qaAgent: low-confidence handoff to human", { userId, preview: reply.slice(0, 100) });
+        const handoffIso = new Date().toISOString();
+        db.collection("agent_sessions").doc(phone).set({
+          handedToHuman:       true,
+          handedToHumanAt:     handoffIso,
+          handedToHumanReason: "low_confidence_unbacked_claim",
+        }, { merge: true }).catch(() => { /* non-critical */ });
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question:    text.slice(0, 200),
+          reply:       reply.slice(0, 500),
+          detectedAt:  handoffIso,
+          humanHandoff: true,
+        }).catch(() => {});
+        createCaraOpsAlert({
+          type:     "human_handoff_low_confidence",
+          severity: "high",
+          phone, userId, role: userType,
+          source:   "qaAgent",
+          message:  "Evia handed a thread to a teammate: an unbacked confident claim fell below the confidence bar.",
+          context:  { question: text.slice(0, 200), suppressedReply: reply.slice(0, 300) },
+        }).catch(() => {});
+        reply = HUMAN_HANDOFF_COPY;
+      } else {
+        // Regex fired but the claim is grounded — send normally, keep the
+        // candidate visible so the pattern list can be tuned on real data.
+        metrics.humanHandoffSuppressed = true;
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question:    text.slice(0, 200),
+          reply:       reply.slice(0, 500),
+          detectedAt:  new Date().toISOString(),
+          handoffSuppressedBySupport: true,
+        }).catch(() => {});
+      }
+    }
+
+    // Broken-record guard (ch10). Before the final send, check whether this
+    // reply is a near-duplicate of something Evia JUST said. A real person does
+    // not text the same thing twice — this is the failure class behind the
+    // confirm-name loop (patched per-step in onboardingConversation.ts, but the
+    // free-form QA path has no attempt counter). On a hit, do ONE varied rewrite
+    // that keeps the intent but changes the wording and moves the conversation
+    // forward; fail-open (send the rewrite, or the original if the rewrite is
+    // empty/also-duplicate) so the guard never blocks a legitimate reply. The
+    // metric flag makes frequency visible in cara_turn_metrics regardless.
+    if (!handedOff && reply.trim()) {
+      const selfRepeat = detectAgentSelfRepeat(reply, history);
+      if (selfRepeat.repeated) {
+        metrics.agentSelfRepeatDetected = true;
+        console.warn("qaAgent: agent self-repeat detected", { userId, score: selfRepeat.score, preview: reply.slice(0, 100) });
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question: text.slice(0, 200),
+          reply:    reply.slice(0, 500),
+          priorReply: (selfRepeat.matchedPrior ?? "").slice(0, 500),
+          detectedAt: new Date().toISOString(),
+          agentSelfRepeat: true,
+        }).catch(() => {});
+        try {
+          const varyController = new AbortController();
+          const varyTimer = setTimeout(() => varyController.abort(), 8_000);
+          const varied = await quickComplete(
+            "You are Evia, a warm SMS care coordinator. You are about to send a message that is nearly " +
+              "identical to one you JUST sent — that reads as a broken record. Rewrite it so it keeps the same " +
+              "intent but uses different wording AND moves the conversation forward: if you already asked this, " +
+              "either accept what the person likely meant or offer a concrete next step instead of re-asking the " +
+              "same way. Keep it short, warm, no markdown, no greeting. Output only the rewritten message.\n\n" +
+              `MESSAGE YOU JUST SENT: ${(selfRepeat.matchedPrior ?? "").slice(0, 400)}`,
+            reply,
+            { maxTokens: 200, signal: varyController.signal },
+          );
+          clearTimeout(varyTimer);
+          const trimmed = varied.trim();
+          // Only accept the rewrite if it's non-empty AND not itself a repeat of
+          // the prior message — otherwise keep the original (fail-open).
+          if (trimmed && !detectAgentSelfRepeat(trimmed, history).repeated) {
+            reply = trimmed;
+            metrics.agentSelfRepeatRewritten = true;
+          }
+        } catch {
+          // Non-critical — proceed with the original reply.
+        }
+      }
+    }
+
     await saveConversationTurn(phone, text, reply);
     if (!skipSend) await sendSplit(chatId, reply);
+
+    // Link-promise net (onboarding): the model narrated an incoming link
+    // ("I'm pulling up your secure photo link — I'll send it here") without
+    // calling send_onboarding_link. Links are ONLY delivered as that tool's
+    // side effect, so the promise would otherwise be silently broken — the
+    // narration reply itself clears turn_watch, and the qa_answer promise net
+    // below is skipped in onboarding mode. Deliver the promised link
+    // deterministically; on failure a tracked `link` commitment retries and
+    // escalates. Fire-and-log: this must never break a turn that already sent.
+    if (!skipSend && !shadowMode && onboardingMode && !deliveredLinkArtifact && reply.trim()) {
+      const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
+      await fulfillNarratedLinkPromise({ phone, chatId, reply, userType }).catch((err) =>
+        console.error("qaAgent: link-promise net failed", err));
+    }
 
     // A real answer went out — clear any open "I'll get back to you"
     // commitment for this same question (the qa_retry trigger re-enters with
@@ -2517,7 +2849,9 @@ export async function runQaAgent(params: {
     // snag message on every attempt (null = notice already sent this hour —
     // stay quiet; the commitment below still owes them the answer).
     const failureCopy = deliveredToUser
-      ? "There you go — tap the link I just sent to finish up."
+      ? (deliveredLinkArtifact
+        ? "There you go — tap the link I just sent to finish up."
+        : "Everything's in what I just sent above — text me if anything's unclear.")
       : await degradedFailureNotice(phone, session, SNAG_ANSWER_COPY).catch(() => SNAG_ANSWER_COPY);
     if (failureCopy) {
       await sendMessage(chatId, failureCopy).catch(() => {});

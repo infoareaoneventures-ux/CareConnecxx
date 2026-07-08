@@ -684,7 +684,20 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
-    
+
+    // ==========================================
+    // MATCH OUTCOMES (AI matching learning loop)
+    // ==========================================
+    match /match_outcomes/{outcomeId} {
+      // Analytics rows written best-effort from the client matching flow
+      // (services/api.ts recordMatchOutcome/updateMatchOutcome); read by
+      // coordinator/admin dashboards. Backend readers use the admin SDK.
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
     // ==========================================
     // SHIFTS (GPS Clock In/Out)
     // ==========================================

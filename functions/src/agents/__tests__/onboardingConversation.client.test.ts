@@ -179,7 +179,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
     // Mid-flow question gate.
-    if (prompt.includes("Reply YES if this is a general question")) return questionMode ? "YES" : "NO";
+    if (prompt.includes("general question or off-topic comment")) return questionMode ? "YES" : "NO";
     // answerQuestionMidFlow — only hit when questionMode is on.
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     // Otherwise it's the step's own parse prompt.

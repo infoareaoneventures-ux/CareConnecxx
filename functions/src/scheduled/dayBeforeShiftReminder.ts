@@ -20,15 +20,18 @@ export const sendDayBeforeShiftReminders = functions.pubsub
       weekday: "long", month: "long", day: "numeric",
     });
 
+    // NOTE: no `.where("dayBeforeConfirmSent","!=",true)` — Firestore `!=` excludes
+    // docs missing the field (appointments are created without it), so it would
+    // skip every never-reminded shift. Filter already-sent in code.
     const snap = await db.collection("appointments")
       .where("date",                 "==", tomorrowStr)
       .where("status",               "in", ["confirmed", "pending_caregiver_confirmation"])
-      .where("dayBeforeConfirmSent", "!=", true)
       .get();
 
     for (const doc of snap.docs) {
       const appt        = doc.data();
       const apptId      = doc.id;
+      if (appt.dayBeforeConfirmSent === true) continue;
       const caregiverId = (appt.caregiverId ?? "") as string;
       const clientId    = (appt.clientId    ?? "") as string;
       if (!caregiverId || !clientId) continue;

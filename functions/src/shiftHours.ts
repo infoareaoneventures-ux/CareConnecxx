@@ -2,14 +2,13 @@ import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billing/config';
+import { PaymentMethod, normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from './billing/paymentMethods';
 import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 
 const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
 });
 const db = admin.firestore();
-
-type PaymentMethod = 'cash' | 'credit';
 
 type ShiftHoursStatus =
   | 'pending_client_review'
@@ -151,7 +150,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const clientData = clientDoc?.data() || {};
   const totalHours = computeTotalHours(startTime, endTime);
   const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
-  const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
+  const paymentMethod: PaymentMethod = normalizePaymentMethod(shiftDoc.paymentMethod);
   const submittedAt = nowIso();
   const autoApproveAt = autoApproveAtIso();
   const basePay  = Math.round(totalHours * payRate * 100) / 100;
@@ -793,14 +792,15 @@ export const onShiftHoursApproved = functions
       return null;
     }
 
-    if (after.paymentMethod === 'cash') {
-      // Cash shifts: client has approved — notify caregiver to confirm cash receipt.
-      // We do NOT mark paid here; caregiver must call confirmCashReceived to close it out.
+    if (isOfflinePaymentMethod(after.paymentMethod)) {
+      // Offline shifts (cash/Venmo/Zelle): client has approved — notify caregiver
+      // to confirm receipt. We do NOT mark paid here; caregiver must call
+      // confirmCashReceived to close it out.
       await pushNotification(
         after.caregiverId,
         'shift_hours_cash_pending_confirmation',
         'Client approved your hours',
-        `Confirm you received $${(after.grossPay || 0).toFixed(2)} cash from ${after.clientName || 'the client'}.`,
+        `Confirm you received $${(after.grossPay || 0).toFixed(2)} via ${paymentMethodLabel(after.paymentMethod)} from ${after.clientName || 'the client'}.`,
         { appointmentId: context.params.appointmentId }
       );
       return null;
@@ -904,7 +904,7 @@ export async function completeShiftPaymentAfterCharge(appointmentId: string): Pr
   if (!snap.exists) return;
   const shift = snap.data()!;
   if (shift.status === 'paid' && shift.stripeTransferId) return; // already settled
-  if (shift.paymentMethod === 'cash') return;                    // cash never transfers
+  if (isOfflinePaymentMethod(shift.paymentMethod)) return;       // offline (cash/Venmo/Zelle) never transfers
   if (!shift.stripeChargeId) return;                             // no charge initiated
 
   const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
@@ -1115,8 +1115,8 @@ export const confirmCashReceived = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only the caregiver can confirm cash receipt');
   }
 
-  if (shift.paymentMethod !== 'cash') {
-    throw new functions.https.HttpsError('failed-precondition', 'Shift is not a cash payment');
+  if (!isOfflinePaymentMethod(shift.paymentMethod)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Shift is not an offline (cash/Venmo/Zelle) payment');
   }
 
   if (shift.status !== 'approved' && shift.status !== 'auto_approved') {
@@ -1127,26 +1127,28 @@ export const confirmCashReceived = functions.https.onCall(async (data, context) 
   }
 
   const now = nowIso();
+  const method = normalizePaymentMethod(shift.paymentMethod);
+  const methodLabel = paymentMethodLabel(method);
   await ref.update({
     status: 'paid' as ShiftHoursStatus,
-    paidMethod: 'cash',
+    paidMethod: method,
     paidAt: now,
-    cashConfirmedAt: now,
+    cashConfirmedAt: now,   // field name kept for existing readers; set for all offline methods
     updatedAt: now,
   });
 
   await pushNotification(
     shift.caregiverId,
     'shift_hours_paid',
-    'Cash payment confirmed',
-    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received.`,
+    'Payment confirmed',
+    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received via ${methodLabel}.`,
     { appointmentId }
   );
   await pushNotification(
     shift.clientId,
     'shift_hours_paid',
     'Hours settled',
-    `${shift.caregiverName}'s ${shift.finalTotalHours}h cash shift is confirmed paid.`,
+    `${shift.caregiverName}'s ${shift.finalTotalHours}h ${methodLabel} shift is confirmed paid.`,
     { appointmentId }
   );
 

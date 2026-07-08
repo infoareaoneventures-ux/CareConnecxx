@@ -170,6 +170,10 @@ vi.mock("../../agents/onboardingConversation", () => ({
   sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
   continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
   absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
+  // Gate-handoff caregiver doc pre-create (P0-C). null = no uid resolved, so
+  // the handoff proceeds without patching session.caregiverId - the __RESUME__
+  // routing under test is unaffected.
+  ensureCaregiverDocForOnboarding: vi.fn(async () => null),
 }));
 
 const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));
@@ -322,7 +326,7 @@ vi.mock("../../utils/language", () => ({
   t: new Proxy({}, { get: (_t, prop) => () => `[${String(prop)}]` }),
 }));
 
-import { handleInbound } from "../webhooks";
+import { handleInbound, userHasRealOnboardingProgress } from "../webhooks";
 
 const PHONE = "+15550001111";
 const CHAT  = "chat-1";
@@ -793,12 +797,13 @@ describe("onboarding agent-loop flag routing", () => {
     expect(finalData).toMatchObject({ firstName: "Sarah", seniorName: "Dorothy", age: 82 });
   });
 
-  // U6: the net's need_zip handling must mirror save_onboarding_field's
-  // mcp/server.ts branch (city saved but unrecognized, no zip yet) — ask for the
-  // ZIP and return, rather than letting the stuck-signup net advance the cursor
-  // past collection on an unconfirmed service area. Previously the net only
-  // special-cased the "out" verdict, not "need_zip" (review-validated asymmetry).
-  it("persistence net: need_zip service-area outcome asks for ZIP and does not advance the cursor", async () => {
+  // §0.2 pre-turn service-area gate: at the location step, an unrecognized city
+  // with no zip (evaluateServiceArea → "need_zip") must ask for the ZIP and
+  // return BEFORE the model turn — so the model can't first compose a "great,
+  // that works!" acknowledgment that the gate then contradicts. runQaAgent must
+  // therefore NOT run, and the cursor must not advance past collection on an
+  // unconfirmed service area.
+  it("pre-turn gate: need_zip at the location step asks for ZIP before the model turn and does not advance the cursor", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
     seedSession({
       onboardingStep: "client_ask_location",
@@ -809,7 +814,8 @@ describe("onboarding agent-loop flag routing", () => {
 
     await handleInbound(makeEvent("we're in Nowhereville"));
 
-    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    // Gated BEFORE the model turn — no premature acknowledgment.
+    expect(runQaAgent).not.toHaveBeenCalled();
     expect(absorbClientFields).toHaveBeenCalled();
     // Asked for the ZIP.
     expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("ZIP"));
@@ -1240,5 +1246,39 @@ describe("onboarding agent-loop double-send guard (U9)", () => {
 
     expect(runQaAgent).toHaveBeenCalledTimes(1);
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── userHasRealOnboardingProgress — the "seeded users doc ≠ returning user" guard ──
+// createWebOnboardingSession seeds users/{uid} at /start OTP time, seconds before
+// the first inbound. Treating bare doc-existence as "returning" marked every fresh
+// web signup onboardingStep:"complete" and skipped onboarding entirely (2026-07-08
+// live bug: new caregiver greeted "Good to hear from you again!").
+describe("userHasRealOnboardingProgress", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("seeded stub (uid/phone/userType/name only) → false", async () => {
+    expect(await userHasRealOnboardingProgress("uid-1", {
+      uid: "uid-1", phone: PHONE, userType: "caregiver", name: "Imran",
+    })).toBe(false);
+  });
+
+  it("client with seniorIds → true", async () => {
+    expect(await userHasRealOnboardingProgress("uid-2", {
+      uid: "uid-2", phone: PHONE, userType: "client", seniorIds: ["s1"],
+    })).toBe(true);
+  });
+
+  it("client with legacy singular seniorId → true", async () => {
+    expect(await userHasRealOnboardingProgress("uid-3", {
+      uid: "uid-3", userType: "client", seniorId: "s1",
+    })).toBe(true);
+  });
+
+  it("caregiver with caregivers/{uid} profile doc → true", async () => {
+    hoisted.docState.set("caregivers/uid-4", { phone: PHONE, status: "pending_review" });
+    expect(await userHasRealOnboardingProgress("uid-4", {
+      uid: "uid-4", userType: "caregiver", name: "Imran",
+    })).toBe(true);
   });
 });

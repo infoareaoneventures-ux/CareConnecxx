@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -14,19 +15,23 @@ export const sendClientThirtyMinReminders = functions.pubsub
   .onRun(async () => {
     const now           = new Date();
     const nowMs         = now.getTime();
-    const today         = now.toISOString().slice(0, 10);
+    const today         = businessTodayStr();   // Pacific date, not UTC
     const windowStartMs = nowMs + 25 * 60 * 1000;
     const windowEndMs   = nowMs + 40 * 60 * 1000;
 
+    // NOTE: do NOT add `.where("clientThirtyMinReminderSent","!=",true)` here —
+    // Firestore `!=` excludes docs where the field is ABSENT, and appointments
+    // are created without this flag, so the query would silently skip every
+    // never-reminded appointment. Filter the already-sent ones in code instead.
     const snap = await db.collection("appointments")
       .where("date",                            "==", today)
       .where("status",                          "==", "confirmed")
-      .where("clientThirtyMinReminderSent",     "!=", true)
       .get();
 
     for (const doc of snap.docs) {
       const appt    = doc.data();
       const apptId  = doc.id;
+      if (appt.clientThirtyMinReminderSent === true) continue;
       const startTime = (appt.startTime ?? appt.time ?? "") as string;
       if (!startTime) continue;
 
@@ -97,5 +102,9 @@ function parseAppointmentTimeMs(dateStr: string, timeStr: string): number | null
   }
 
   if (h === null || m === null) return null;
-  return new Date(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`).getTime();
+  // Interpret the naive date+time as business-timezone (Pacific) wall-clock, not
+  // UTC — parsing "YYYY-MM-DDTHH:MM:00" with new Date() on Cloud Functions treats
+  // it as UTC and shifts the reminder ~7-8h. parseScheduledTimeMs is DST-correct.
+  const ms = parseScheduledTimeMs(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`);
+  return Number.isNaN(ms) ? null : ms;
 }

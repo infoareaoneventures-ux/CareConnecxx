@@ -72,6 +72,21 @@ export const onVideoInterviewLinkEnsure = functions
         return;
       }
 
+      // Agreed → terminal transition (declined/cancelled/no-response): retire
+      // the 1h reminders so nobody gets "your interview is in an hour" for a
+      // dead interview. Clearing remindersScheduledAt lets a later
+      // re-agreement schedule fresh ones.
+      const before = change.before.exists ? (change.before.data() as InterviewDoc) : null;
+      if (before?.status && AGREED.has(before.status) && after.status && !AGREED.has(after.status)) {
+        const { cancelTriggersByRef } = await import("./triggerEngine");
+        const n = await cancelTriggersByRef(`video_interview_${interviewId}`).catch(() => 0);
+        if (after.remindersScheduledAt) {
+          await ref.update({ remindersScheduledAt: admin.firestore.FieldValue.delete() }).catch(() => {});
+        }
+        if (n > 0) console.log(`onVideoInterviewLinkEnsure: cancelled ${n} reminder(s) for ${interviewId} (${after.status})`);
+        return;
+      }
+
       if (!after.status || !AGREED.has(after.status)) return;
 
       // Fast precheck — most writes on a fully-processed doc stop here
@@ -164,7 +179,7 @@ async function processInterview(
 
   // 3. Reminders (1h before, both parties) — transactional, calibration-exempt
   if (!doc.remindersScheduledAt) {
-    const scheduled = await scheduleReminders(doc, startMs, callUrl, caregiverName);
+    const scheduled = await scheduleReminders(doc, interviewId, startMs, callUrl, caregiverName);
     if (scheduled) updates.remindersScheduledAt = new Date().toISOString();
   }
 
@@ -209,6 +224,7 @@ async function resolveClientPhone(clientId?: string): Promise<string | undefined
 
 async function scheduleReminders(
   doc: InterviewDoc,
+  interviewId: string,
   startMs: number,
   callUrl: string,
   caregiverName: string
@@ -218,6 +234,7 @@ async function scheduleReminders(
   if (Date.now() >= ninetyMinAway) return true; // too close — mark done, no stale reminder
 
   const { scheduleTrigger } = await import("./triggerEngine");
+  const refId = `video_interview_${interviewId}`; // cancelTriggersByRef key on decline/cancel
   const clientPhone = await resolveClientPhone(doc.clientId);
   if (clientPhone) {
     await scheduleTrigger({
@@ -226,6 +243,7 @@ async function scheduleReminders(
       type:        "appointment_reminder",
       scheduledAt: new Date(oneHourBefore).toISOString(),
       message:     `Your interview with ${caregiverName} is in an hour — ${callUrl}`,
+      refId,
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (client) error:", err));
   }
   const cgPhone = doc.caregiverId
@@ -238,6 +256,7 @@ async function scheduleReminders(
       type:        "appointment_reminder",
       scheduledAt: new Date(oneHourBefore).toISOString(),
       message:     `Interview in an hour with a family — ${callUrl} Reply if you need to reschedule.`,
+      refId,
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (caregiver) error:", err));
   }
   return true;

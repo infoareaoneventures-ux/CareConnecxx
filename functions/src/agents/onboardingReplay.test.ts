@@ -105,7 +105,7 @@ vi.mock("firebase-admin", () => {
 // ── Parser + copy mocks ───────────────────────────────────────────────────────
 function route(systemPrompt: string): string {
   const p = systemPrompt;
-  if (p.includes("Reply YES if this is a general question")) return CURRENT.isQuestion ?? "NO";
+  if (p.includes("general question or off-topic comment")) return CURRENT.isQuestion ?? "NO";
   if (p.includes("switchTo"))                                 return '{"switchTo":"none"}';
   if (p.includes("Detect if they are correcting"))            return CURRENT.correction ?? "null";
   if (p.includes("extracting onboarding details"))            return CURRENT.absorb ?? "{}";
@@ -244,14 +244,19 @@ describe("prompt-driven dispatcher (U12)", () => {
     expect(resolveClientStep({})).toBe("client_ask_name");
     expect(resolveClientStep({ firstName: "Sarah" })).toBe("client_ask_senior");
     expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy" })).toBe("client_ask_needs");
-    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82 })).toBe("client_ask_location");
-    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82, city: "Austin" })).toBe("client_ask_schedule");
+    // careNeeds (not age) is the completion key for the needs step — an age
+    // alone does NOT skip it, so a family that front-loads "mom Dorothy, 82" is
+    // still asked what help she needs (careNeeds/conditions would otherwise ship
+    // empty into senior_profiles.needs, clientIntakes.careTypes, and matching).
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82 })).toBe("client_ask_needs");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", careNeeds: ["bathing"] })).toBe("client_ask_location");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", careNeeds: ["bathing"], city: "Austin" })).toBe("client_ask_schedule");
     // A free-text schedule string alone does NOT complete the schedule step —
     // daysPerWeek (the required structured field) is the completion key, so a
     // vague schedule can't skip the ask and ship daysPerWeek 0 into the intake.
-    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82, city: "Austin", schedule: "3 mornings" })).toBe("client_ask_schedule");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", careNeeds: ["bathing"], city: "Austin", schedule: "3 mornings" })).toBe("client_ask_schedule");
     // All absorbable fields collected → hands back to the legacy post-collection step.
-    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", age: 82, city: "Austin", daysPerWeek: 3, timeOfDay: "mornings" })).toBe("client_ask_start");
+    expect(resolveClientStep({ firstName: "Sarah", seniorName: "Dorothy", careNeeds: ["bathing"], city: "Austin", daysPerWeek: 3, timeOfDay: "mornings" })).toBe("client_ask_start");
   });
 
   describe("conversational parity: flag ON produces the same result as the legacy machine", () => {

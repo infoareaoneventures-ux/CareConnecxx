@@ -20,7 +20,7 @@ export const getStripe = () => {
 // Client monthly membership — $29.95/mo (live price ID)
 export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Caregiver annual membership (background check) — $24.95/yr (live price ID)
+// Caregiver annual membership (background check) — $66.49/yr (live price ID)
 export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg';
 
 export interface SubscriptionStatus {
@@ -336,14 +336,22 @@ export const requestInstantPayout = async (): Promise<PayoutResult> => {
   return res.data as PayoutResult;
 };
 
-export const requestStandardPayout = async (): Promise<PayoutResult> => {
+export interface PayoutBalance {
+  connected: boolean;
+  instantAvailable: number;  // dollars, instantly payable right now
+  pending: number;           // dollars, still settling — auto-pays out daily
+}
+
+// Standard payouts are automatic (Stripe daily schedule) — there is no
+// requestStandardPayout anymore. Instant payout is the only on-demand path.
+export const getPayoutBalance = async (): Promise<PayoutBalance> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
-  const fn = httpsCallable(fns, 'v1-requestStandardPayout');
+  const fn = httpsCallable(fns, 'v1-getPayoutBalance');
   const res = await fn({});
-  return res.data as PayoutResult;
+  return res.data as PayoutBalance;
 };
 
 /**
@@ -396,7 +404,7 @@ export const stripeService = {
   initiateOnboarding,
   checkOnboardingStatus,
   requestInstantPayout,
-  requestStandardPayout,
+  getPayoutBalance,
   formatPrice,
   hasActiveMembership,
   MEMBERSHIP_PRICE_ID,

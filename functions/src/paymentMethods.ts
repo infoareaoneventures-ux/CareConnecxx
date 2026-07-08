@@ -1,7 +1,10 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
+import { OFFLINE_PAYMENT_METHODS } from './billing/paymentMethods';
 
 const db = admin.firestore();
+
+const VALID_PAYMENT_METHODS = ['credit', ...OFFLINE_PAYMENT_METHODS];
 
 /**
  * Client switches the payment method on a confirmed, not-yet-started booking.
@@ -14,8 +17,8 @@ export const updateBookingPaymentMethod = functions.https.onCall(async (data, co
   }
 
   const { appointmentId, paymentMethod } = data;
-  if (!appointmentId || (paymentMethod !== 'cash' && paymentMethod !== 'credit')) {
-    throw new functions.https.HttpsError('invalid-argument', 'appointmentId and paymentMethod (cash|credit) required');
+  if (!appointmentId || !VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+    throw new functions.https.HttpsError('invalid-argument', `appointmentId and paymentMethod (${VALID_PAYMENT_METHODS.join('|')}) required`);
   }
 
   const ref = db.collection('appointments').doc(appointmentId);

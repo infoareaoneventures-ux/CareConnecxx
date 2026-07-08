@@ -58,6 +58,12 @@ export interface TurnMetrics {
   toolArgsTruncated?: number; // tool_use input args clipped by truncateOldToolCallArgs
   exhausted?:      boolean;   // loop exited the for-block without producing reply text
   recoveryFired?:  boolean;   // recovery sub-agent fired after 2+ consecutive error iterations
+  // ch9 cost budget: token usage + estimated spend summed across the turn's
+  // model calls, and whether the per-turn cost ceiling force-stopped the loop.
+  inputTokens?:        number;
+  outputTokens?:       number;
+  costUsd?:            number;
+  costBudgetExceeded?: boolean; // per-turn cost cap forced a final text reply
 
   // Quality signals
   prefetchHit?:             boolean;
@@ -94,6 +100,10 @@ export interface TurnMetrics {
   frustrationDetected?: boolean; // user shows explicit frustration with Evia/system
   rephraseLoopDetected?: boolean; // user repeats/rephrases a request from recent history
   repeatedGreetingDetected?: boolean; // user repeats a greeting because Evia did not move forward
+  agentSelfRepeatDetected?: boolean; // EVIA about to send a near-duplicate of her own recent outbound (ch10 broken-record)
+  agentSelfRepeatRewritten?: boolean; // the self-repeat guard produced a varied reply instead of resending
+  humanHandoffTriggered?: boolean; // low-confidence gate handed the thread to a human (ch10 overcommitted-guess)
+  humanHandoffSuppressed?: boolean; // handoff regex fired but the grounding check found the claim supported (FP candidate)
 
   // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
   // empathy reflection AND the turn was non-calm. Lets us measure whether the
@@ -152,11 +162,16 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["frustrationDetected", "frustration_detected"],
   ["rephraseLoopDetected", "rephrase_loop_detected"],
   ["repeatedGreetingDetected", "repeated_greeting_detected"],
+  ["agentSelfRepeatDetected", "agent_self_repeat_detected"],
+  ["agentSelfRepeatRewritten", "agent_self_repeat_rewritten"],
+  ["humanHandoffTriggered", "human_handoff_triggered"],
+  ["humanHandoffSuppressed", "human_handoff_suppressed"],
   ["groundingTriggered", "grounding_triggered"],
   ["formatRevisionTriggered", "format_revision_triggered"],
   ["postProcessModified", "post_process_modified"],
   ["exhausted", "agent_loop_exhausted"],
   ["recoveryFired", "recovery_fired"],
+  ["costBudgetExceeded", "cost_budget_exceeded"],
   ["resumedFromCheckpoint", "resumed_from_checkpoint"],
   ["onboardingReGreet", "onboarding_re_greet"],
 ];
@@ -272,6 +287,10 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       flowClass:                 metrics.flowClass ?? null,
       onboardingReGreet:         !!metrics.onboardingReGreet,
       iterations:                metrics.iterations ?? null,
+      inputTokens:               metrics.inputTokens ?? null,
+      outputTokens:              metrics.outputTokens ?? null,
+      costUsd:                   metrics.costUsd ?? null,
+      costBudgetExceeded:        !!metrics.costBudgetExceeded,
       exhausted:                 !!metrics.exhausted,
       experiments:               metrics.experiments ?? null,
       qualityFlags,
@@ -298,6 +317,10 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       frustrationDetected:          !!metrics.frustrationDetected,
       rephraseLoopDetected:         !!metrics.rephraseLoopDetected,
       repeatedGreetingDetected:     !!metrics.repeatedGreetingDetected,
+      agentSelfRepeatDetected:      !!metrics.agentSelfRepeatDetected,
+      agentSelfRepeatRewritten:     !!metrics.agentSelfRepeatRewritten,
+      humanHandoffTriggered:        !!metrics.humanHandoffTriggered,
+      humanHandoffSuppressed:       !!metrics.humanHandoffSuppressed,
       historyRolledUp:              !!metrics.historyRolledUp,
       zepContextEmpty:              !!metrics.zepContextEmpty,
       learnedFactsCount:            metrics.learnedFactsCount ?? 0,

@@ -25,7 +25,7 @@ Evia is a SaaS platform that connects families with vetted caregivers for in-hom
 
 **Caregiver**
 1. Web entry `/start?role=caregiver` → phone verification → handoff to Evia over SMS.
-2. Evia SMS onboarding (canonical): name → location → experience → specialties → profile → availability → job type → rate → email → bio → photo → documents → MVR opt-in → membership ($24.95/yr) → background check (Checkr) → Stripe Connect payout setup.
+2. Evia SMS onboarding (canonical): name → location → experience → specialties → profile → availability → job type → rate → email → bio → photo → documents → MVR opt-in → membership ($66.49/yr, covers the background check) → background check (Checkr) → Stripe Connect payout setup.
 3. On completion the caregiver doc is finalized `status: "active"` **and** `onboardingStatus: "profile_complete"` — which makes them visible in family search.
 4. Ongoing: jobs board, bookings, calendar, payouts, instant payout.
 

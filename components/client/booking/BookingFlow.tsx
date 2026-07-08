@@ -40,7 +40,7 @@ interface BookingFormData {
   confirmedDates: string[];
   recipientsCount: 1 | 2 | 3 | 4;
   rate: number;
-  paymentMethod: 'credit' | 'cash';
+  paymentMethod: 'credit' | 'cash' | 'venmo' | 'zelle';
   description: string;
   streetAddress: string;
   address2: string;
@@ -886,8 +886,8 @@ const DetailsStep: React.FC<{
           </Field>
 
           <Field label="Payment method">
-            <div className="flex items-center gap-5">
-              {(['credit', 'cash'] as const).map(method => (
+            <div className="flex flex-wrap items-center gap-5">
+              {([['credit', 'Credit Card'], ['cash', 'Cash'], ['venmo', 'Venmo'], ['zelle', 'Zelle']] as const).map(([method, label]) => (
                 <label key={method} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                   <input
                     type="radio"
@@ -895,7 +895,7 @@ const DetailsStep: React.FC<{
                     onChange={() => onChange(prev => ({ ...prev, paymentMethod: method }))}
                     className="accent-teal-600"
                   />
-                  {method === 'credit' ? 'Credit Card' : 'Cash'}
+                  {label}
                 </label>
               ))}
             </div>

@@ -404,6 +404,11 @@ describe("booking tools", () => {
       expect(r.success).toBe(false);
       expect(r.blocked).toBe(true);
       expect(r.reason).toBe("booking_blocked_pending_background_check");
+      // ONE VOICE (double-send fix 2026-07-06): the executor already texted the
+      // family the explanation — the result must say so, so the agent doesn't
+      // re-explain in a second bubble.
+      expect(r.sent).toBe(true);
+      expect(r.instruction).toMatch(/ALREADY been texted/i);
     });
 
     it("requires session-injected clientId and phone", async () => {

@@ -12,8 +12,13 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
  * <Input label="Email" type="email" error="Invalid email" />
  */
 export const Input: React.FC<InputProps> = ({ label, error, className = '', id, ...props }) => {
-  // Generate unique ID if not provided for label association
-  const inputId = id || `input-${React.useId()}`;
+  // Generate unique ID if not provided for label association. useId() MUST be
+  // called unconditionally (Rules of Hooks) — the previous `id || ...useId()`
+  // short-circuited the hook when `id` was passed, so a caller that sometimes
+  // passed id and sometimes didn't would crash the subtree with a hook-count
+  // mismatch.
+  const generatedId = React.useId();
+  const inputId = id || `input-${generatedId}`;
   const errorId = error ? `${inputId}-error` : undefined;
 
   return (

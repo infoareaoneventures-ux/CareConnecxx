@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 import { ToastMessage } from '../../types';
 
@@ -33,12 +33,20 @@ interface ToastItemProps {
 }
 
 const ToastItem: React.FC<ToastItemProps> = ({ toast, onRemove }) => {
+  // Keep the latest onRemove in a ref so the auto-dismiss effect does NOT depend
+  // on it. ToastContainer passes a fresh `() => removeToast(toast.id)` closure on
+  // every render, so depending on onRemove restarted the 4s timer on every parent
+  // re-render (e.g. any context/Firestore update) — the toast could hang forever.
+  // Keyed on toast.id, the timer is set exactly once per toast.
+  const onRemoveRef = useRef(onRemove);
+  onRemoveRef.current = onRemove;
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      onRemove();
+      onRemoveRef.current();
     }, 4000);
     return () => clearTimeout(timer);
-  }, [onRemove]);
+  }, [toast.id]);
 
   const styles = {
     success: "bg-slate-900 text-white border border-slate-800",

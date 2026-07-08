@@ -12,11 +12,14 @@ export const upcomingVisitReminder = functions.pubsub
     const nowIso    = now.toISOString();
     const plus90min = new Date(now.getTime() + 90 * 60 * 1000).toISOString();
 
+    // NOTE: no `.where("preVisitReminderSent","!=",true)` — Firestore `!=` excludes
+    // docs missing the field (appointments are created without it) AND can't be
+    // combined with the startDateTime range (inequality on two fields). Filter
+    // already-sent in code instead.
     const snap = await db.collection("appointments")
       .where("status",             "==", "confirmed")
       .where("startDateTime",      ">=", nowIso)
       .where("startDateTime",      "<=", plus90min)
-      .where("preVisitReminderSent", "!=", true)
       .get();
 
     if (snap.empty) return;
@@ -25,6 +28,7 @@ export const upcomingVisitReminder = functions.pubsub
 
     for (const doc of snap.docs) {
       const appt = doc.data();
+      if (appt.preVisitReminderSent === true) continue;
       try {
         const userSnap = await db.collection("users").doc(appt.clientId as string).get();
         const phone    = (userSnap.data() as any)?.phone as string | undefined;

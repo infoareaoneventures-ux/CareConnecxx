@@ -18,25 +18,30 @@ export class ValidationError extends Error {
  */
 export function normalizePhoneNumber(phone: string): string | null {
   if (!phone) return null;
-  
+
+  const hadPlus = phone.trim().startsWith('+');
   // Strip all non-digits
   const digits = phone.replace(/\D/g, '');
-  
+
   // US number: 10 digits, add +1 prefix
   if (digits.length === 10) {
     return `+1${digits}`;
   }
-  
+
   // Already has country code (11 digits starting with 1)
   if (digits.length === 11 && digits.startsWith('1')) {
     return `+${digits}`;
   }
-  
-  // International format with + already present in original
-  if (digits.length > 10) {
+
+  // International E.164 — ONLY when the original explicitly had a leading '+'
+  // (a country code the user actually typed). E.164 allows 8–15 digits. Without
+  // this guard, ANY >10-digit string — a bare 11-digit typo, a pasted account
+  // number — was accepted as a "valid" phone and stored, corrupting the E.164
+  // numbers SMS onboarding relies on.
+  if (hadPlus && digits.length >= 8 && digits.length <= 15) {
     return `+${digits}`;
   }
-  
+
   return null;
 }
 

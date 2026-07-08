@@ -102,7 +102,7 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   //   zipCode — the service-area gate in save_onboarding_field asks for a ZIP
   //     when the city isn't recognized; the loop must be able to save it
   //   gender / languages / canDrive — the caregiver_ask_profile step's fields
-  "certifications", "skills", "zipCode", "gender", "languages", "canDrive",
+  "certifications", "skills", "zipCode", "gender", "languages", "canDrive", "bioSkipped",
 ]);
 
 // The step the flow advances to once conversational collection completes and the
@@ -130,7 +130,10 @@ export function missingRequiredFields(
   data: Record<string, unknown> | undefined,
 ): string[] {
   const d = data ?? {};
-  return requiredFieldsForRole(role).filter((f) => !isFieldFilled(d[f]));
+  return requiredFieldsForRole(role).filter((f) => {
+    if (role === "caregiver" && f === "bio" && d.bioSkipped === true) return false;
+    return !isFieldFilled(d[f]);
+  });
 }
 
 export function firstGateStep(role: OnboardingRole): string {

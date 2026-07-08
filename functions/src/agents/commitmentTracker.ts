@@ -18,10 +18,11 @@
 //     admin_alert. Silence is never an outcome.
 
 import * as admin from "firebase-admin";
+import type { OnboardingLinkType } from "./onboardingConversation";
 
 const db = admin.firestore();
 
-export type CommitmentKind = "qa_answer" | "matching";
+export type CommitmentKind = "qa_answer" | "matching" | "link";
 
 // Shared fallback copy. qaAgent sends these; the sweep compares a re-run's
 // reply against them to know whether it produced a real answer or another stall.
@@ -38,6 +39,8 @@ export interface PendingCommitment {
   promiseText:  string;
   /** qa_answer: the original user text to re-run through the QA agent. */
   question?:    string;
+  /** link: the onboarding link that was promised but not delivered. */
+  linkType?:    string;
   userId?:      string;
   seniorId?:    string;
   userType?:    "client" | "caregiver";
@@ -77,6 +80,7 @@ export async function recordCommitment(input: {
   source:       string;
   dueInMs:      number;
   question?:    string;
+  linkType?:    string;
   userId?:      string;
   seniorId?:    string;
   userType?:    "client" | "caregiver";
@@ -104,6 +108,7 @@ export async function recordCommitment(input: {
       sweepAfter:  dueAt,
       // Firestore rejects undefined values — add optional fields conditionally.
       ...(input.question    ? { question: input.question.slice(0, 500) } : {}),
+      ...(input.linkType    ? { linkType: input.linkType }       : {}),
       ...(input.userId      ? { userId: input.userId }           : {}),
       ...(input.seniorId    ? { seniorId: input.seniorId }       : {}),
       ...(input.userType    ? { userType: input.userType }       : {}),
@@ -223,6 +228,8 @@ export async function sweepOverdueCommitments(): Promise<void> {
 
       if (c.kind === "matching") {
         await attemptMatchingFulfillment(doc.ref, c, session);
+      } else if (c.kind === "link") {
+        await attemptLinkFulfillment(doc.ref, c);
       } else {
         await attemptAnswerFulfillment(doc.ref, c, session);
       }
@@ -312,6 +319,33 @@ async function attemptMatchingFulfillment(
     });
   if (result === "failed") return; // stays open; escalated on the next sweep
   await markFulfilled(ref, result === "matched" ? "matches_sent" : "no_match_handled");
+}
+
+// Re-attempt a promised-but-failed onboarding link send. sendOnboardingLink is
+// self-delivering (it texts the link itself) and reuses stored URLs/accounts
+// (bgcheckInviteUrl, stripeAccountId), so a successful re-attempt cannot mint
+// duplicate Stripe/Checkr resources. On success it also resolves this very
+// commitment (resolveCommitment(phone, "link") in its send tail) — markFulfilled
+// here is then a no-op belt-and-suspenders.
+async function attemptLinkFulfillment(
+  ref: FirebaseFirestore.DocumentReference,
+  c: PendingCommitment
+): Promise<void> {
+  if (!c.linkType) {
+    await escalateCommitment(ref, c);
+    return;
+  }
+  try {
+    const { sendOnboardingLink } = await import("./onboardingConversation");
+    const result = await sendOnboardingLink(c.phone, c.linkType as OnboardingLinkType);
+    if (result?.success) {
+      await markFulfilled(ref, "link_sent");
+      return;
+    }
+  } catch (err) {
+    console.error("[commitmentTracker] link re-attempt threw:", err);
+  }
+  // Stays open — the attempt was claimed above, so the next sweep escalates.
 }
 
 // Re-run the original question through the QA agent with skipSend so this
@@ -405,6 +439,9 @@ async function escalateCommitment(
   const content = c.kind === "matching"
     ? "I'm sorry — pulling caregiver matches is taking longer than I promised. " +
       "I've escalated this to our care team, and a real person will follow up with your matches shortly."
+    : c.kind === "link"
+    ? "I'm sorry — the setup link I promised is taking longer than it should. " +
+      "I've escalated this to our care team, and a real person will text it to you shortly."
     : "I'm sorry — I still owe you an answer on what you asked earlier, and it's taking longer than it should. " +
       "I've escalated it to our care team, and a real person will follow up with you shortly.";
 

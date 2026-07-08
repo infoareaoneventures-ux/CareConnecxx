@@ -25,6 +25,9 @@ export * from './stripe';
 // CHECKR - Background check initiation + webhook
 export * from './checkr';
 
+// Shared caregiver profile links (/p/{id}) — per-caregiver OG tags for rich previews
+export { caregiverProfileMeta } from './caregiverProfileMeta';
+
 // Export Notification Functions
 export * from './notifications';
 
@@ -42,11 +45,8 @@ export { sendTestSMS } from './sms';
 
 // Linq management utilities are imported by other modules — not exposed as Cloud Functions
 
-// INSTANT PAYOUT
+// INSTANT PAYOUT (standard payouts are automatic — Stripe daily schedule, no callable)
 export * from './instantPayout';
-
-// STANDARD PAYOUT (free 2-3 day)
-export * from './standardPayout';
 
 // STRIPE CONNECT (onboarding + account status)
 export * from './stripeConnect';
@@ -91,7 +91,6 @@ export * from './triggers/userCreated';
 export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
-export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
 export { projectActivityFeed } from './triggers/projectActivityFeed';
 export { projectSwapRequestSummary, projectSwapOfferSummary } from './triggers/projectSwapSummary';
@@ -241,6 +240,13 @@ export * from './migrations/linkPhoneProviders';
 // hasTransportation/weeklyAvailability on caregivers; recipientName/careTypes/
 // schedule on clientIntakes; users.uid) — dry-run first: ?dryRun=1
 export * from './migrations/backfillEviaProfileFields';
+// Identity unification: re-key legacy random-ID caregivers docs to the Auth
+// uid + re-point caregiverId child refs — dry-run first: ?dryRun=1
+export * from './migrations/rekeyLegacyCaregiverDocs';
+
+// Care-plan consolidation onto canonical care_plans/{clientId} + versions
+// subcollection (bug-audit §6.1) — DRY-RUN first: ?apply=true to write.
+export * from './migrations/migrateCarePlansToCanonical';
 
 // fixAcceptedCounterPay migration already executed — not exported
 
@@ -337,7 +343,50 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     createdAt:   admin.firestore.Timestamp.fromDate(now),
     ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
   }, { merge: true });
-
+  try {
+    const userRef = db.collection("users").doc(context.auth.uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? userSnap.data() ?? {} : {};
+    const userPatch: Record<string, unknown> = {
+      uid:       context.auth.uid,
+      phone,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (!userSnap.exists) {
+      userPatch.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    if (!userData.userType) {
+      userPatch.userType = role;
+    }
+    if (name) {
+      if (role === "caregiver") userPatch.name = name;
+      else userPatch.firstName = name;
+    }
+    await userRef.set(userPatch, { merge: true });
+  } catch (err) {
+    console.error("createWebOnboardingSession: failed to seed users doc", {
+      phone,
+      role,
+      uid: context.auth.uid,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    await db.collection("admin_alerts").add({
+      type:      "auth_account_create_failed",
+      role,
+      phone,
+      uid:       context.auth.uid,
+      error:     err instanceof Error ? err.message : String(err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch((alertErr) => {
+      console.error("createWebOnboardingSession: failed to write auth_account_create_failed admin alert", {
+        phone,
+        uid: context.auth?.uid,
+        err: alertErr instanceof Error ? alertErr.message : String(alertErr),
+      });
+    });
+  }
   if (referralId && role === "caregiver") {
     const referralRef = db.collection("referrals").doc(referralId);
     const authUid = context.auth.uid;

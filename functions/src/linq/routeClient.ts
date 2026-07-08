@@ -349,6 +349,7 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
       const refundClientId = ((session as any).userId ?? phone) as string;
       await handleRefundRequest(
         refundClientId,
+        phone,
         text,
         session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)

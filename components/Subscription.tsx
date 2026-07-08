@@ -22,7 +22,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "How much do caregivers pay?",
-            answer: "Caregivers pay just $24.95/year for full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
+            answer: "Caregivers pay $66.49/year, which covers their required background check and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
         },
         {
             question: "What's included in the $29.95/month fee?",
@@ -64,7 +64,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                 title="Pricing & Subscription Plans - Evia"
                 description="Evia pricing: $29.95/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
-                canonicalUrl="https://careconnex-d4c8b.web.app/pricing"
+                canonicalUrl="https://www.eviacares.com/pricing"
             />
 
             <div className="min-h-screen bg-paper-50">
@@ -112,7 +112,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 Care that's <span className="text-ink-400">affordable</span> for everyone.
                             </h1>
                             <p className="text-xl text-ink-600 mb-8 leading-relaxed font-light max-w-2xl mx-auto">
-                                One simple price for families. <span className="font-semibold text-ink-900">Just $24.95/year for caregivers.</span> No hidden fees, no surprises.
+                                One simple price for families. <span className="font-semibold text-ink-900">$66.49/year for caregivers.</span> No hidden fees, no surprises.
                             </p>
                         </div>
                     </div>

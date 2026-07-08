@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessNowMinutes } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -112,8 +113,9 @@ async function getCompletedTaskIds(appointmentId: string): Promise<Set<string>> 
 export const sendShiftTaskNudges = functions.pubsub
   .schedule("*/15 * * * *")
   .onRun(async () => {
-    const now        = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    // Business-timezone (Pacific) minutes-since-midnight — getHours() would be
+    // UTC on Cloud Functions and mis-fire task nudges by ~7-8h.
+    const nowMinutes = businessNowMinutes();
     const windowEnd  = nowMinutes + 30;
 
     const snap = await db.collection("appointments")

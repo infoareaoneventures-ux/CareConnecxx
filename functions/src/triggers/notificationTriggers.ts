@@ -247,6 +247,14 @@ export const onBookingAmendmentWrite = functions.firestore
 // completed   → notify client (caregiver ended shift)
 // cancelled by client → notify caregiver (individual shift only;
 //   bulk booking cancellations handled by onBookingRequestWrite)
+// MERGED handler (bug-audit §7.1): this is the SINGLE onShiftStatusChanged for
+// shifts/{shiftId} onUpdate. It previously collided with an identically-named
+// export in shiftStatusTrigger.ts — index.ts re-exported that one explicitly, so
+// ES-module rules dropped THIS one and in-app shift notifications never deployed.
+// Both concerns now live here: (1) in-app shift_started/_completed/_cancelled
+// notifications, and (2) marking a booking_requests doc completed once its last
+// scheduled shift reaches a terminal state. Each concern has its own try/catch so
+// one failing never suppresses the other.
 export const onShiftStatusChanged = functions.firestore
   .document('shifts/{shiftId}')
   .onUpdate(async (change, context) => {
@@ -255,6 +263,7 @@ export const onShiftStatusChanged = functions.firestore
 
     if (before.status === after.status) return;
 
+    // ── 1. In-app notifications on status change ────────────────────────────
     try {
       // Caregiver started shift → notify client
       if (after.status === 'in-progress' && after.clientId) {
@@ -264,22 +273,16 @@ export const onShiftStatusChanged = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} has started your visit.`,
           data: { shiftId: context.params.shiftId },
         });
-        return;
-      }
-
-      // Caregiver ended shift → notify client
-      if (after.status === 'completed' && after.clientId) {
+      } else if (after.status === 'completed' && after.clientId) {
+        // Caregiver ended shift → notify client
         await addNotification(after.clientId, {
           type: 'shift_completed',
           title: 'Shift Completed',
           body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
           data: { shiftId: context.params.shiftId },
         });
-        return;
-      }
-
-      // Cancelled — direction depends on who cancelled
-      if (after.status === 'cancelled' && !after.bulkCancelled) {
+      } else if (after.status === 'cancelled' && !after.bulkCancelled) {
+        // Cancelled — direction depends on who cancelled
         const fmtDate = after.date
           ? new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
           : 'an upcoming date';
@@ -303,6 +306,39 @@ export const onShiftStatusChanged = functions.firestore
         }
       }
     } catch (err) {
-      console.error('[onShiftStatusChanged] error:', err);
+      console.error('[onShiftStatusChanged] notification error:', err);
+    }
+
+    // ── 2. Booking completion: when the last scheduled shift for a booking
+    //      reaches a terminal state, mark the booking completed so the client
+    //      and caregiver UIs move it to Past (formerly shiftStatusTrigger.ts) ──
+    try {
+      const terminal = ['completed', 'cancelled'];
+      if (!terminal.includes(after.status)) return;
+
+      const bookingRequestId: string | undefined = after.bookingRequestId;
+      if (!bookingRequestId) return;
+
+      const remainingSnap = await db
+        .collection('shifts')
+        .where('bookingRequestId', '==', bookingRequestId)
+        .where('status', '==', 'scheduled')
+        .limit(1)
+        .get();
+      if (!remainingSnap.empty) return; // still active shifts — nothing to do
+
+      const bookingRef = db.collection('booking_requests').doc(bookingRequestId);
+      const bookingSnap = await bookingRef.get();
+      if (!bookingSnap.exists) return;
+      if (bookingSnap.data()!.status !== 'accepted') return; // don't overwrite cancelled
+
+      await bookingRef.update({
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log(`[onShiftStatusChanged] booking ${bookingRequestId} marked completed — no scheduled shifts remain`);
+    } catch (err) {
+      console.error('[onShiftStatusChanged] booking-completion error:', err);
     }
   });

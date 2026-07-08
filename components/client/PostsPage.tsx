@@ -13,7 +13,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
-import { JobPost } from '../../types';
+import { JobPost, isOfflinePaymentMethod } from '../../types';
 
 type MainTab = 'posts' | 'interviews';
 type PostsFilter = 'open' | 'closed';
@@ -640,7 +640,7 @@ export const PostsPage: React.FC = () => {
         agreedRate: prevBookingData?.rate ?? null,
         paymentMethod: (() => {
           const raw = (prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '').toLowerCase();
-          return raw === 'cash' ? 'cash' : raw === 'card' || raw === 'credit' ? 'credit' : '';
+          return isOfflinePaymentMethod(raw) ? raw : raw === 'card' || raw === 'credit' ? 'credit' : '';
         })(),
         selectedAddress: prevBookingData?.address || '',
         note: prevBookingData?.notes || '',
@@ -732,7 +732,7 @@ export const PostsPage: React.FC = () => {
         rate: bookingDraft.agreedRate ?? post?.rate ?? null,
         paymentMethod: (() => {
           const raw = (bookingDraft.paymentMethod || (post as any)?.paymentMethod || '').toLowerCase();
-          return raw === 'cash' ? 'cash' : raw ? 'credit' : null;
+          return isOfflinePaymentMethod(raw) ? raw : raw ? 'credit' : null;
         })(),
         careNeeds: [...new Set(Object.values(bookingDraft.recipientDrafts).flatMap(rd => rd.careNeeds))],
         careRecipients: selectedRecipients,

@@ -5,10 +5,12 @@ import {
   XCircle, CalendarDays, Loader2, Repeat, CreditCard, Banknote,
   CheckCircle, ChevronDown, ChevronUp, AlertCircle, Phone, User,
 } from 'lucide-react';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { ClientNavigation } from './ClientNavigation';
 import { useAccessGates } from '../../hooks/useAccessGates';
+import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { paymentMethodLabel } from '../../types';
 
 interface Shift {
   id: string;
@@ -238,7 +240,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${booking.rate}/hr</span>
-              <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+              <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(booking.paymentMethod)}</span>
             </span>
           </div>
         )}
@@ -494,7 +496,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${base.rate}/hr</span>
-              <span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+              <span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(base.paymentMethod)}</span>
             </span>
           </div>
         )}
@@ -977,7 +979,7 @@ export const ClientVisitsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const { gate, Modals: GateModals } = useAccessGates();
 
-  const user = auth?.currentUser;
+  const user = useAuthUser();
 
   useEffect(() => {
     if (!user || !db) { setLoading(false); return; }

@@ -98,19 +98,31 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         'Use the relationship words even when names are missing (e.g. "mom and dad" → seniorName "Mom", additional name "Dad"). ' +
         'Otherwise reply in JSON format: {"seniorName":"...","relationship":"..."}',
       parse(raw, session) {
-        let seniorName = "your loved one", relationship = "family member";
-        let additional: Array<{ name?: string; relationship?: string }> = [];
+        if (raw === "__parse_error__") return null; // re-ask: "didn't catch that"
+        let parsed: { seniorName?: unknown; relationship?: unknown; additionalRecipients?: unknown };
         try {
-          const parsed = JSON.parse(raw);
-          seniorName   = parsed.seniorName   || seniorName;
-          relationship = parsed.relationship || relationship;
-          if (Array.isArray(parsed.additionalRecipients)) additional = parsed.additionalRecipients;
-        } catch { /* keep defaults */ }
+          parsed = JSON.parse(raw);
+        } catch {
+          // Parse failed → re-ask. Never persist a placeholder name: the old
+          // "your loved one" default flowed verbatim to senior_profiles.name and
+          // clientIntakes.recipientName.
+          return null;
+        }
+        let seniorName   = String(parsed.seniorName   ?? "").trim();
+        let relationship = String(parsed.relationship ?? "").trim();
+        const additional: Array<{ name?: string; relationship?: string }> =
+          Array.isArray(parsed.additionalRecipients)
+            ? (parsed.additionalRecipients as Array<{ name?: string; relationship?: string }>)
+            : [];
         // "It's for me" — the sender is the care recipient.
         if (seniorName === "SELF" || relationship === "self") {
           const own = (session.onboardingData?.firstName as string) || "you";
           return { seniorName: own, relationship: "self" };
         }
+        // No identifiable recipient name → re-ask rather than storing a
+        // placeholder as their real name.
+        if (!seniorName) return null;
+        if (!relationship) relationship = "family member"; // soft default — relationship is non-critical
         const extras = additional
           .map((r) => ({
             name:         String(r?.name ?? "").trim(),
@@ -168,17 +180,25 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         '"recipientAges":[{"name":"...","age":0}] with one entry per named person. ' +
         'Reply in JSON: {"age":0,"careNeeds":[],"conditions":[]}',
       parse(raw, session) {
-        let age = 0;
-        let careNeeds: string[] = [];
-        let conditions: string[] = [];
-        let recipientAges: Array<{ name?: string; age?: number }> = [];
+        if (raw === "__parse_error__") return null; // re-ask: "didn't catch that"
+        let parsed: { age?: unknown; careNeeds?: unknown; conditions?: unknown; recipientAges?: unknown };
         try {
-          const parsed = JSON.parse(raw);
-          age        = parsed.age        ?? 0;
-          careNeeds  = parsed.careNeeds  ?? [];
-          conditions = parsed.conditions ?? [];
-          if (Array.isArray(parsed.recipientAges)) recipientAges = parsed.recipientAges;
-        } catch { /* keep defaults */ }
+          parsed = JSON.parse(raw);
+        } catch {
+          return null; // parse failed → re-ask instead of advancing with empty needs
+        }
+        const rawAge      = Number(parsed.age);
+        const age         = Number.isFinite(rawAge) && rawAge > 0 ? rawAge : undefined;
+        const careNeeds   = Array.isArray(parsed.careNeeds)  ? (parsed.careNeeds  as string[]) : [];
+        const conditions  = Array.isArray(parsed.conditions) ? (parsed.conditions as string[]) : [];
+        const recipientAges: Array<{ name?: string; age?: number }> =
+          Array.isArray(parsed.recipientAges) ? (parsed.recipientAges as Array<{ name?: string; age?: number }>) : [];
+
+        // careNeeds is the REQUIRED field this step exists to collect. If the
+        // message had nothing needs-shaped (auto-skip loop landed here off a
+        // front-loaded age, or the answer was only an age), re-ask instead of
+        // advancing with empty needs — mirrors the client_ask_schedule guard.
+        if (careNeeds.length === 0) return null;
 
         // Multi-recipient household: route each named age to the right person —
         // primary keeps top-level `age`, everyone else's lands on their entry in
@@ -199,21 +219,22 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
             (a) => String(a?.name ?? "").toLowerCase() === primaryName,
           );
           const primaryAge = Number(primaryMatch?.age);
+          const resolvedAge = Number.isFinite(primaryAge) && primaryAge > 0 ? primaryAge : age;
           return {
-            age: Number.isFinite(primaryAge) && primaryAge > 0 ? primaryAge : age,
+            ...(resolvedAge !== undefined ? { age: resolvedAge } : {}),
             careNeeds,
             conditions,
             additionalRecipients: patched,
           };
         }
-        return { age, careNeeds, conditions };
+        return { ...(age !== undefined ? { age } : {}), careNeeds, conditions };
       },
       nextStep: "client_ask_location",
       reask(session) {
         const d = session.onboardingData ?? {};
         return `How old is ${d.seniorName ?? "your loved one"}, and what kind of help do they need?`;
       },
-      // needs always advances with defaults — retry is never reached.
+      // Reached when parse returns null (parse error or no care needs extracted).
       retry(session) {
         const d = session.onboardingData ?? {};
         return `How old is ${d.seniorName ?? "your loved one"}, and what kind of help do they need?`;

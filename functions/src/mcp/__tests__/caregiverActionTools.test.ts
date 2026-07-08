@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // U2 — caregiver action-parity tools:
 //   withdraw_job_application, respond_to_booking_request, start_shift,
 //   complete_shift, update_shift_task, submit_media_update,
-//   respond_to_shift_hour_correction, request_standard_payout.
+//   respond_to_shift_hour_correction, request_instant_payout (delegation).
 //
 // Same firebase-admin mock shape as booking.test.ts: docState backs .doc().get(),
 // collState backs .where().get() (filters are ignored — seed the queried path).
@@ -139,6 +139,21 @@ vi.mock("../../stripe", () => ({
   }),
 }));
 
+// Shared payout implementation — request_instant_payout must delegate here.
+const payoutCommonMock = vi.hoisted(() => {
+  class InstantPayoutError extends Error {
+    constructor(public code: string, message: string) {
+      super(message);
+      this.name = "InstantPayoutError";
+    }
+  }
+  return { executeInstantPayout: vi.fn(), InstantPayoutError };
+});
+vi.mock("../../payoutCommon", () => ({
+  executeInstantPayout: (...args: unknown[]) => payoutCommonMock.executeInstantPayout(...args),
+  InstantPayoutError: payoutCommonMock.InstantPayoutError,
+}));
+
 // These tests target the tools' own payment-safety logic (ownership, no
 // double-charge, pending_review). The runtime confirmation gate cara-100 added
 // to handleToolCall (ALWAYS_CONFIRM / CONDITIONAL_CONFIRM) has its own suite, so
@@ -170,6 +185,7 @@ describe("U2 caregiver action tools", () => {
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
     balanceRetrieve.mockClear(); balanceRetrieve.mockResolvedValue({ available: [{ amount: 10000, currency: "usd" }] });
+    payoutCommonMock.executeInstantPayout.mockReset();
   });
 
   // ── withdraw_job_application ───────────────────────────────────────────────
@@ -372,58 +388,56 @@ describe("U2 caregiver action tools", () => {
     });
   });
 
-  // ── request_standard_payout (no Stripe/eligibility bypass) ─────────────────
-  describe("request_standard_payout", () => {
-    it("creates a STANDARD (not instant) Stripe payout when eligible", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.method).toBe("standard");
-      expect(payoutCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ method: "standard", currency: "usd" }),
-        expect.objectContaining({ stripeAccount: "acct_1" }),
+  // ── payouts ─────────────────────────────────────────────────────────────────
+  // Eligibility/idempotency logic lives in payoutCommon.executeInstantPayout
+  // (unit-tested in payoutCommon.test.ts). Here we verify the MCP dispatcher's
+  // wiring: delegation, error surfacing, and that the removed standard-payout
+  // tool stays removed.
+  describe("payouts", () => {
+    it("request_instant_payout delegates to the shared executeInstantPayout and reports free payout", async () => {
+      payoutCommonMock.executeInstantPayout.mockResolvedValueOnce({
+        payoutDocId: "p1", stripePayoutId: "po_1", amountCents: 5000, status: "pending", arrivalDate: null,
+      });
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
+      expect(payoutCommonMock.executeInstantPayout).toHaveBeenCalledWith(
+        expect.objectContaining({ caregiverId: "cg1", source: "mcp" }),
       );
+      expect(r.success).toBe(true);
+      expect(r.fee).toBe(0);
+      expect(r.amountCents).toBe(5000);
     });
 
-    it("rejects when payouts are not enabled — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: false });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
+    it("request_instant_payout surfaces payout preconditions as tool errors (no silent success)", async () => {
+      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(
+        new payoutCommonMock.InstantPayoutError("NO_BALANCE", "No funds are instantly available right now."),
+      );
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
+      expect(r.success).not.toBe(true);
     });
 
-    it("rejects when there is no Stripe account — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { payoutsEnabled: true });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
-    });
-
-    it("rejects when the available balance is zero — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      balanceRetrieve.mockResolvedValueOnce({ available: [{ amount: 0, currency: "usd" }] });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
-    });
-
-    // U11 scenario 6 — a payout that fails at Stripe must be ledgered and raise
-    // an admin_alert so it surfaces in the Evia Control Room (never a silent
-    // false success). The Stripe call throwing routes through the MCP
+    // U11 scenario 6 — a payout that fails unexpectedly must be ledgered and
+    // raise an admin_alert so it surfaces in the Evia Control Room (never a
+    // silent false success). An unexpected throw routes through the MCP
     // dispatcher's catch, which writes admin_alerts via createCaraOpsAlert.
-    it("ledgers + admin-alerts a Stripe payout failure (Control Room visibility)", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      payoutCreate.mockRejectedValueOnce(new Error("insufficient funds in Stripe balance"));
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      // Must NOT report success.
+    it("ledgers + admin-alerts an unexpected payout failure (Control Room visibility)", async () => {
+      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(new Error("stripe exploded"));
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(r.success).not.toBe(true);
       expect(r._toolError).toBe(true);
-      // An admin_alert was raised for the failed money-moving tool.
       const alert = hoisted.adds.find(
-        (a) => a.path === "admin_alerts" && a.data.toolName === "request_standard_payout",
+        (a) => a.path === "admin_alerts" && a.data.toolName === "request_instant_payout",
       );
       expect(alert).toBeTruthy();
       expect(alert!.data.resolved).toBe(false);
+    });
+
+    // Removed 2026-07-06: standard payouts are automatic (Stripe daily
+    // schedule); Stripe rejects manual standard payouts on automatic schedules.
+    it("request_standard_payout no longer exists as a tool", async () => {
+      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(payoutCreate).not.toHaveBeenCalled();
     });
   });
 

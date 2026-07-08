@@ -5,7 +5,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { buildHelpSmsReply } from "./capabilityDiscovery";
 import { languageFromSession } from "../utils/language";
-import { getAppUrl } from "../config/appUrl";
+import { appLink, getAppUrl } from "../config/appUrl";
 
 async function askClaude(system: string, userText: string): Promise<string> {
   try {
@@ -320,19 +320,22 @@ export async function handleCaregiverPermissionsReply(
       context: `Caregiver ${d.name ? String(d.name) : ""}${city ? ` based${city}` : ""} just completed onboarding and permissions setup. Their profile is now live and they're ready to be matched with families. Celebrate this warmly, let them know what happens next (Evia will text job details when a family needs someone with their skills, including the care plan and directions before every visit).`,
       fallback: `You're all set${name}! Your profile is live and you're ready to be matched with families${city}.\n\nWhen a family needs someone with your skills, I'll text you the job details — including the care plan and directions before every visit.`,
     });
-    await sendMessage(chatId, `${msgPerm7}\n\nView your profile: ${appUrl}/caregiver/${caregiverId}`);
+    await sendMessage(chatId, `${msgPerm7}\n\nView your profile: ${appUrl}/p/${caregiverId}\n\nLog in anytime to manage your profile, availability, and payouts: ${appLink("/login")}`);
 
     // Capability discovery: onboarding is complete — tell the caregiver what
     // Evia can do in care-work terms, not a chatbot menu.
     await sendMessage(chatId, buildHelpSmsReply("caregiver", undefined,
       languageFromSession(session as unknown as Record<string, unknown>)));
 
-    // Notify admin for final review
+    // Notify admin that this caregiver finished onboarding — the profile is live
+    // and matchable at this point (background check already cleared, permissions
+    // set), so this is a completion notice, NOT a pending-review request.
     await db.collection("admin_alerts").add({
-      type:        "caregiver_pending_review",
+      type:        "caregiver_onboarding_complete",
       caregiverId,
       name:        d.name,
       phone,
+      note:        "Caregiver completed onboarding — profile is live and ready to match.",
       createdAt:   new Date().toISOString(),
       resolved:    false,
     });

@@ -76,6 +76,25 @@ const hoisted = vi.hoisted(() => {
   };
 });
 
+const axiosPost = vi.hoisted(() => vi.fn(async () => ({ data: {} })));
+// Shared candidate-first Checkr helper (checkrApi.ts). Default REJECTS —
+// matching the old axios default of `{ data: {} }` (no invitation_url), which
+// exercised the failure branch; the helper now throws in that case.
+const checkrInvite = vi.hoisted(() => vi.fn(async (): Promise<{ invitationUrl: string; candidateId: string }> => {
+  throw new Error("Checkr invitation created without invitation_url.");
+}));
+vi.mock("../../checkrApi", () => ({
+  createCheckrInvitation: (...a: unknown[]) => checkrInvite(...a),
+  checkrPost: vi.fn(),
+  CheckrApiError: class CheckrApiError extends Error {},
+}));
+const stripeSpies = vi.hoisted(() => ({
+  checkoutCreate: vi.fn(async () => ({ url: "https://stripe.local/checkout" })),
+  accountsCreate: vi.fn(async () => ({ id: "acct_test" })),
+  accountLinksCreate: vi.fn(async () => ({ url: "https://stripe.local/onboarding" })),
+}));
+
+
 vi.mock("firebase-admin", () => {
   const firestore = Object.assign(() => ({ collection: hoisted.collectionMock }), {
     FieldValue: {
@@ -119,6 +138,15 @@ vi.mock("../../notifications", () => ({
   notifyAdminNewCaregiverSignup: vi.fn(async () => {}),
 }));
 vi.mock("../buildJobPost", () => ({ buildAndSaveJobPost: vi.fn(async () => {}) }));
+vi.mock("axios", () => ({ __esModule: true, default: { post: axiosPost }, post: axiosPost }));
+vi.mock("stripe", () => ({
+  __esModule: true,
+  default: class {
+    checkout = { sessions: { create: stripeSpies.checkoutCreate } };
+    accounts = { create: stripeSpies.accountsCreate };
+    accountLinks = { create: stripeSpies.accountLinksCreate };
+  },
+}));
 
 // tokenService signs upload links with JWT_SECRET — stub it so the bespoke
 // photo/membership handlers (which the bio + awaiting-membership steps hand off
@@ -163,7 +191,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
     // Mid-flow question gate.
-    if (prompt.includes("Reply YES if this is a general question")) return questionMode ? "YES" : "NO";
+    if (prompt.includes("general question or off-topic comment")) return questionMode ? "YES" : "NO";
     // answerQuestionMidFlow — only hit when questionMode is on.
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     // Otherwise it's the step's own parse prompt.
@@ -171,7 +199,7 @@ vi.mock("../../utils/openaiClient", () => ({
   }),
 }));
 
-import { handleOnboardingStep } from "../onboardingConversation";
+import { handleOnboardingStep, sendOnboardingLink } from "../onboardingConversation";
 
 const PHONE = "+15555550100";
 const CHAT  = "chat-1";
@@ -190,8 +218,29 @@ beforeEach(() => {
   sentMessages.length = 0;
   questionMode = false;
   stepAnswer = "";
+  axiosPost.mockReset();
+  axiosPost.mockResolvedValue({ data: {} });
+  stripeSpies.checkoutCreate.mockClear();
+  stripeSpies.checkoutCreate.mockResolvedValue({ url: "https://stripe.local/checkout" });
+  stripeSpies.accountsCreate.mockClear();
+  stripeSpies.accountsCreate.mockResolvedValue({ id: "acct_test" });
+  stripeSpies.accountLinksCreate.mockClear();
+  stripeSpies.accountLinksCreate.mockResolvedValue({ url: "https://stripe.local/onboarding" });
 });
 
+describe("caregiver onboarding link hardening", () => {
+  it("does not send a fake background-check link when Checkr returns no invitation URL", async () => {
+    seedSession("caregiver_awaiting_bgcheck", { name: "Maria Lopez" });
+    axiosPost.mockResolvedValueOnce({ data: {} });
+
+    const result = await sendOnboardingLink(PHONE, "caregiver_background_check");
+
+    expect(result).toEqual({ success: false, linkType: "caregiver_background_check" });
+    expect(sentMessages.some(m => JSON.stringify(m.text).includes("/done?task=background_check"))).toBe(false);
+    expect(sentMessages.some(m => typeof m.text === "string" && m.text.includes("snag"))).toBe(true);
+    expect([...hoisted.docState.values()].some((doc: any) => doc?.type === "onboarding_link_generation_failed" && doc?.step === "send_onboarding_link_background_check")).toBe(true);
+  });
+});
 describe("caregiver onboarding steps — characterization", () => {
   // ── caregiver_ask_name ─────────────────────────────────────────────────────────
   describe("caregiver_ask_name", () => {
@@ -437,6 +486,26 @@ describe("caregiver onboarding steps — characterization", () => {
       // which advances to caregiver_awaiting_photo and sends the photo-upload ask.
       expect(stored.onboardingStep).toBe("caregiver_awaiting_photo");
       expect(sentMessages.some(m => typeof m.text === "string" && m.text.includes("profile photo"))).toBe(true);
+    });
+
+    it("preserves a short real bio instead of silently wiping it", async () => {
+      const session = seedSession("caregiver_ask_bio", { name: "Maria", email: "maria@example.com" });
+      stepAnswer = "BIO";
+      await handleOnboardingStep(PHONE, CHAT, "Kind and patient.", session, { service: "SMS" });
+
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.onboardingData.bio).toBe("Kind and patient.");
+      expect(stored.onboardingStep).toBe("caregiver_awaiting_photo");
+    });
+
+    it("keeps explicit bio skip as an empty bio", async () => {
+      const session = seedSession("caregiver_ask_bio", { name: "Maria", email: "maria@example.com" });
+      stepAnswer = "SKIP";
+      await handleOnboardingStep(PHONE, CHAT, "skip", session, { service: "SMS" });
+
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.onboardingData.bio).toBe("");
+      expect(stored.onboardingStep).toBe("caregiver_awaiting_photo");
     });
   });
 

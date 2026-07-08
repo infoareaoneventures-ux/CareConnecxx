@@ -78,9 +78,14 @@ function applyBans(text: string): string {
   }
 
   for (const phrase of BANNED_PHRASES) {
-    // Case-insensitive, word-boundary-aware replacement
+    // Case-insensitive, word-boundary-aware replacement. Add \b ONLY where the
+    // phrase edge is a word character — so "leverage"/"utilize" won't be stripped
+    // out of unrelated words ("leveraging" → "ing"), while phrases that end in
+    // punctuation ("Of course!") still match (a trailing \b there would break it).
     const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(safePhrase, "gi"), "");
+    const leading  = /^\w/.test(phrase) ? "\\b" : "";
+    const trailing = /\w$/.test(phrase) ? "\\b" : "";
+    result = result.replace(new RegExp(`${leading}${safePhrase}${trailing}`, "gi"), "");
   }
 
   return result;

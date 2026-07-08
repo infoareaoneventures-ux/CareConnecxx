@@ -9,7 +9,7 @@ Allow: /*.css$
 Allow: /*.js$
 
 # Sitemap location
-Sitemap: https://careconnex-d4c8b.web.app/sitemap.xml
+Sitemap: https://www.eviacares.com/sitemap.xml
 
 # Crawl-delay for respectful crawling
 Crawl-delay: 1

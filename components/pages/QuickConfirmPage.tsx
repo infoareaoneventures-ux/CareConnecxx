@@ -84,7 +84,7 @@ export default function QuickConfirmPage() {
         <Clock className="w-12 h-12 text-amber-400 mx-auto mb-4" />
         <h1 className="text-xl font-bold text-ink-900 text-center mb-2">This link has expired</h1>
         <p className="text-ink-600 text-center text-sm">
-          Replacement requests expire after 30 minutes. Please open the CareConnecxx app to find a caregiver.
+          Replacement requests expire after 30 minutes. Please open the Evia app to find a caregiver.
         </p>
       </Screen>
     );

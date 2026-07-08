@@ -91,6 +91,9 @@ export interface AgentSession {
   onboardingData?:  Record<string, unknown>;
   // Preferred language for outbound messages ("en" | "es"); set during onboarding.
   preferredLanguage?: string;
+  // Linq id of the user's most recent inbound message — the default target for
+  // react_to_message (outbound tapbacks). Refreshed on every message.received.
+  lastInboundMessageId?: string;
 }
 
 export interface LinqPhoneNumber {

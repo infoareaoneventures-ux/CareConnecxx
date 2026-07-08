@@ -98,12 +98,12 @@ React Router v6 in `App.tsx`. Landing page and critical auth routes are eagerly 
 ### User Roles
 Two distinct user roles share the same Firebase Auth:
 - **Clients** (families): $29.95/month Stripe subscription (`VITE_STRIPE_PRICE_ID`)
-- **Caregivers**: $24.95/year membership (`VITE_STRIPE_CAREGIVER_ANNUAL`), onboarded conversationally via Evia over SMS
+- **Caregivers**: $66.49/year membership (covers the required Checkr background check; `VITE_STRIPE_CAREGIVER_ANNUAL` → price_1TqGrE…), onboarded conversationally via Evia over SMS
 
 ### Caregiver Onboarding
 Evia's SMS conversation in `functions/src/agents/onboardingConversation.ts` (the `caregiver_*` steps) is the **sole** caregiver onboarding path. Every signup CTA routes to `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`), which verifies the phone then hands off to Evia via SMS. Evia collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `status: 'active'`, `onboardingStatus: 'profile_complete'` (gates visibility in `FindCaregivers`), and `verificationStatus: 'submitted'` (puts it in the admin verification queue). The old web signup form was retired — `/caregiver/apply` now redirects into the Evia flow. `components/caregiver/CaregiverOnboardingWizard.tsx` is kept ONLY as a recovery tool for legacy/web accounts left at `onboardingStatus: 'incomplete'` (it is not a signup path).
 
-**Known follow-up:** Evia writes phone-keyed, random-ID `caregivers` docs with no Firebase Auth account, whereas legacy web caregivers used uid-keyed docs + auth. Unifying this identity model (and migrating existing records) is a tracked follow-up — see `context/progress-tracker.md`.
+**Identity model (unified):** Caregivers get a Firebase Auth account during onboarding — at `/start` OTP verification (web entry path) or, for the cold-SMS path, when the caregiver doc is first created (photo/bg-check step via `createFirebaseAuthAccount`). The identity model is unified: `caregivers/{uid}` = `users/{uid}` = Auth uid. Legacy phone-keyed random-ID docs were migrated by the `rekeyLegacyCaregiverDocs` migration (already run in prod). Evia's Firestore writes land where the web reads.
 
 ## Environment Variables
 

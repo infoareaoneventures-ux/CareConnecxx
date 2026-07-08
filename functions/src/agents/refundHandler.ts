@@ -35,6 +35,12 @@ async function answerQuestionMidFlow(text: string): Promise<string> {
 
 export async function handleRefundRequest(
   clientId: string,
+  // agent_sessions is keyed by PHONE, not by clientId/userId. Refund flow state
+  // (refundStep, refundCandidates, …) MUST be written to doc(phone) so the router
+  // — which loads the session by phone — sees it on the next turn. clientId
+  // (= userId for registered clients) is used only for the appointments query and
+  // the refundRequests record, never for the session doc. See bug-audit §1.1.
+  phone: string,
   text: string,
   session: Record<string, unknown>,
   sendMessage: (msg: string) => Promise<unknown>
@@ -58,7 +64,7 @@ export async function handleRefundRequest(
         maxTokens: 80,
       });
       await sendMessage(msgR1);
-      await db.collection("agent_sessions").doc(clientId).update({ refundStep: admin.firestore.FieldValue.delete() });
+      await db.collection("agent_sessions").doc(phone).update({ refundStep: admin.firestore.FieldValue.delete() });
       return;
     }
 
@@ -73,7 +79,7 @@ export async function handleRefundRequest(
       };
     });
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:       "select_visit",
       refundCandidates: JSON.stringify(visits),
     });
@@ -123,7 +129,7 @@ export async function handleRefundRequest(
     }
 
     const visitDesc = `${visit.date} with ${visit.caregiverName}${visit.cost ? ` ($${visit.cost})` : ""}`;
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:             "confirm",
       refundAppointmentId:    visit.id,
       refundVisitDescription: visitDesc,
@@ -155,7 +161,7 @@ export async function handleRefundRequest(
     const reason  = text.trim().slice(0, 300);
     const desc    = (session.refundVisitDescription as string) ?? "that visit";
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:   "submitted",
       refundReason: reason,
     });
@@ -202,7 +208,7 @@ export async function handleRefundRequest(
         maxTokens: 80,
       });
       await sendMessage(msgR5);
-      await db.collection("agent_sessions").doc(clientId).update({
+      await db.collection("agent_sessions").doc(phone).update({
         refundStep:             admin.firestore.FieldValue.delete(),
         refundAppointmentId:    admin.firestore.FieldValue.delete(),
         refundCandidates:       admin.firestore.FieldValue.delete(),
@@ -224,7 +230,7 @@ export async function handleRefundRequest(
       source:      "cara_self_service",
     });
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:             admin.firestore.FieldValue.delete(),
       refundAppointmentId:    admin.firestore.FieldValue.delete(),
       refundCandidates:       admin.firestore.FieldValue.delete(),

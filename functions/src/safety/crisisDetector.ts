@@ -14,7 +14,7 @@ const MEDICAL_KEYWORDS = [
   "passed out", "collapsed", "fell down", "bleeding badly", "unresponsive",
   "not responding", "not responsive", "won't wake up", "can't wake",
   "can't get up", "cannot get up", "fell and", "heart problem", "cardiac",
-  "911", "ambulance", "emergency room", "ER now", "call 911",
+  "911", "ambulance", "emergency room", "er now", "call 911",
   "choking", "allergic reaction", "anaphylaxis", "overdose",
   // Spanish (accent-free)
   "no puedo respirar", "no puede respirar", "no respira", "dolor en el pecho",

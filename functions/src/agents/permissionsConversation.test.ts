@@ -28,7 +28,7 @@ vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({ messages: { 
 const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m" }));
 vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...a) }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
-vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test" }));
+vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test", appLink: (path: string) => `https://app.test${path}` }));
 vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
 
 import { classifyPermissionReply, handleClientPermissionsReply, handleCaregiverPermissionsReply } from "./permissionsConversation";

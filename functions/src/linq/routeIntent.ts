@@ -20,7 +20,6 @@ import {
   writeInterviewOutcomeSignal,
 } from "../agents/interviewAgent";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
-import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
@@ -1006,7 +1005,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const zepFacts  = await searchZepMemory(zepUserId, text).catch(() => "");
       const memUserId = session.userId ?? session.caregiverId ?? phone;
       const { handleMemoryQuery } = await import("../memory/memoryFiles");
-      await handleMemoryQuery(memUserId, chatId, sendMessage, zepFacts || undefined);
+      await handleMemoryQuery(memUserId, chatId, sendMessage, text, zepFacts || undefined);
       return;
     }
 
@@ -1383,7 +1382,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // machine below, unchanged). Reversible by clearing CONVERGENCE_FLIPPED; the
       // state machine is retained until a later post-flip cleanup deletes it.
       if (isConvergenceFlipped("reminder_management")) {
-        const qaReplyReminder = await runQaAgent({
+        // runQaAgent delivers its own reply via sendSplit(chatId); do NOT also
+        // route it through sendViaInteractionAgent (that path is for proactive
+        // agent-initiated sends and would double-send this reply). Matches the
+        // default QA path below.
+        await runQaAgent({
           text, phone, chatId,
           userId:      session.userId ?? "",
           seniorId:    session.seniorId ?? session.userId ?? "",
@@ -1391,9 +1394,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           caregiverId: session.caregiverId,
           session:     session as unknown as Record<string, unknown>,
           intent,
-        });
-        await sendViaInteractionAgent(phone, {
-          content: qaReplyReminder, urgency: "standard", sourceAgent: "qa_reminder", canDrop: false,
         });
         return;
       }
@@ -1426,7 +1426,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
     if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
-      const qaReplyReschedule = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1437,12 +1439,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyReschedule,
-        urgency:     "standard",
-        sourceAgent: "qa_reschedule",
-        canDrop:     false,
       });
       return;
     }
@@ -1590,6 +1586,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // Initialise the state machine by calling with step = "identify_visit"
       await handleRefundRequest(
         refundClientId,
+        phone,
         text,
         session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
@@ -1602,7 +1599,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       (intent === "VIEW_INVOICE" && session.userType !== "caregiver") ||
       (intent === "VIEW_CARE_PLAN_HISTORY" && session.userType !== "caregiver")
     ) {
-      const qaReplyInvoice = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1613,12 +1612,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyInvoice,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
       });
       return;
     }
@@ -1677,7 +1670,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       intent === "VIEW_JOURNAL"    ||
       intent === "BROWSE_JOB_BOARD"
     ) {
-      const qaReplyPlatform = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1689,18 +1684,14 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         session:     session as unknown as Record<string, unknown>,
         intent,
       });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyPlatform,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
-      });
       return;
     }
 
     // ── Credential management — "what logins do you have", "remove my CVS login" ─
     if (intent === "CREDENTIAL_MANAGEMENT" && session.userType !== "caregiver") {
-      const qaReply = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1711,12 +1702,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReply,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
       });
       return;
     }

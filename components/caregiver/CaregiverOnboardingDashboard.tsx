@@ -4,7 +4,7 @@ import {
   CheckCircle, Briefcase, MapPin, ArrowRight, Clock, Lock,
   Calendar, Sun, Moon, Car, Users as UsersIcon, CreditCard, Banknote, X, Loader2,
 } from 'lucide-react';
-import { Caregiver, JobPost, AddToastFunction } from '../../types';
+import { Caregiver, JobPost, AddToastFunction, isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 import { ProfileApprovalBanner } from './ProfileApprovalBanner';
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
@@ -354,7 +354,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                     const labels = times.map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
                     return labels.join(', ') || null;
                   })();
-                  const isCash = !((job as any).paymentMethod) || (job as any).paymentMethod === 'cash';
+                  const isOffline = !((job as any).paymentMethod) || isOfflinePaymentMethod((job as any).paymentMethod);
                   return (
                     <div key={job.id} className="bg-white rounded-2xl p-5 hover:shadow-md shadow-sm transition-all">
                       {/* Header: title + rate */}
@@ -373,8 +373,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           )}
                           {(job as any).paymentMethod && (
                             <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
-                              {isCash ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                              via {isCash ? 'cash' : 'card'}
+                              {isOffline ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
+                              via {isOffline ? paymentMethodLabel((job as any).paymentMethod || 'cash').toLowerCase() : 'card'}
                             </p>
                           )}
                         </div>

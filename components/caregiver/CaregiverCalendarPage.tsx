@@ -6,9 +6,10 @@ import {
   Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Lock,
 } from 'lucide-react';
 import firebase from 'firebase/compat/app';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useAuthUser } from '../../hooks/useAuthUser';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
@@ -164,7 +165,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const [saving,            setSaving]            = useState(false);
   const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
 
-  const user = auth?.currentUser;
+  const user = useAuthUser();
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchInterviews(); fetchAvailability(); }, []);

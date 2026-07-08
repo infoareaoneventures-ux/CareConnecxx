@@ -40,6 +40,30 @@ function tzOffsetMs(utcMs: number, timeZone: string): number {
   return wall - utcMs;
 }
 
+// Today's date (YYYY-MM-DD) in the business timezone — NOT UTC. Cloud Functions
+// run in UTC, so `new Date().toISOString().slice(0,10)` is the UTC date, which
+// during Pacific evening hours is already tomorrow — making `where("date","==",
+// today)` query the wrong day for reminders. Use this instead.
+export function businessTodayStr(timeZone: string = DEFAULT_TZ, now: Date = new Date()): string {
+  const parts: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now)) parts[p.type] = p.value;
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+// Minutes-since-midnight of `now` in the business timezone (0–1439). For jobs
+// that compare a wall-clock shift/task time to "now" — using getHours() gives
+// UTC minutes on Cloud Functions and fires those jobs at the wrong local hour.
+export function businessNowMinutes(timeZone: string = DEFAULT_TZ, now: Date = new Date()): number {
+  const parts: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat("en-US", {
+    timeZone, hour12: false, hour: "2-digit", minute: "2-digit",
+  }).formatToParts(now)) parts[p.type] = p.value;
+  const h = parts.hour === "24" ? 0 : Number(parts.hour);
+  return h * 60 + Number(parts.minute);
+}
+
 // Human-facing time for SMS copy, rendered in the client's timezone
 export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): string {
   return new Date(ms).toLocaleString("en-US", {

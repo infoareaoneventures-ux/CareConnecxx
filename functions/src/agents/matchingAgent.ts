@@ -159,6 +159,22 @@ function computeRuleSignals(
  */
 export type MatchRunResult = "matched" | "no_match" | "failed";
 
+/**
+ * suppressConversationalSends: set by callers that are themselves about to
+ * speak to the family in the same turn (the QA agent's find_replacement_caregivers
+ * tool). With it on, matching still does all its work (interview requests,
+ * failure counters, admin alerts, commitments, pendingMatches) and still sends
+ * the artifacts only it can send (intro line + photo gallery on a match), but
+ * SKIPS the pure-status texts — the no-match update, the "Which ones would you
+ * like to meet?" closer, and the catch-path stall copy — so the family hears
+ * ONE voice per turn instead of the tool and the agent both texting.
+ * Direct callers (routeIntent, commitmentTracker sweep, caraAgent dispatch)
+ * have no agent reply behind them and must leave this off.
+ */
+export interface MatchRunOptions {
+  suppressConversationalSends?: boolean;
+}
+
 // This family's OWN match history, as a prompt block for the scorer. Global
 // outcome patterns say what families in general hire; this says what THIS
 // family has already passed on or hired. Names only — the scorer sees each
@@ -214,8 +230,10 @@ export async function runMatchingForClient(
   phone:   string,
   chatId:  string,
   intake:  Record<string, unknown>,
-  session?: Record<string, unknown>
+  session?: Record<string, unknown>,
+  opts?:   MatchRunOptions
 ): Promise<MatchRunResult> {
+  const suppressSends = !!opts?.suppressConversationalSends;
   try {
     // Matching starting = the family is actively trying to hire. Record a
     // DURABLE goal (7-day horizon, generous turn budget) so Evia carries the
@@ -418,11 +436,16 @@ export async function runMatchingForClient(
       });
 
       if (failureCount >= 2) {
-        // Pool is repeatedly exhausted — escalate urgently and keep searching
-        await sendMessage(chatId,
-          "I haven't been able to find the right match yet, but I'm still actively searching. " +
-          "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
-        );
+        // Pool is repeatedly exhausted — escalate urgently and keep searching.
+        // suppressSends: the agent turn that invoked us delivers this update
+        // itself (tool result carries the facts) — texting it here too gave
+        // the family two back-to-back, contradictory messages.
+        if (!suppressSends) {
+          await sendMessage(chatId,
+            "I haven't been able to find the right match yet, but I'm still actively searching. " +
+            "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
+          );
+        }
         // Auto-trigger a broader rematch on the next cycle by clearing rejected list
         // only if all local + broader search is exhausted
         if (rejectedIds.length > 0) {
@@ -432,14 +455,16 @@ export async function runMatchingForClient(
             rejectedCaregiverIds: trimmedRejections,
           });
         }
-      } else {
+      } else if (!suppressSends) {
         await sendMessage(chatId,
           "I don't have anyone available in your area right now, but I've flagged your request " +
           "and our team will reach out within 24 hours to find the right match."
         );
       }
       // The family got an honest update (with the team paged via admin_alerts)
-      // — any earlier "I'll pull matches" promise has been answered.
+      // — any earlier "I'll pull matches" promise has been answered. Under
+      // suppressSends the invoking agent turn delivers that update (its tool
+      // result instructs it to), so the promise is equally answered.
       await resolveCommitment(phone, "matching", "no_match_handled");
       return "no_match";
     }
@@ -524,7 +549,10 @@ export async function runMatchingForClient(
         topReason:    ms.reasoning[0] ?? "available and local",
         allReasons:   ms.reasoning,
         overallScore: ms.overallScore,
-        profileUrl:   `${appUrl}/caregiver/${c.id}`,
+        // /p/{id} is the canonical share path — hosting rewrites it through
+        // v1-caregiverProfileMeta so the texted link previews with this
+        // caregiver's name + photo instead of the generic marketing card.
+        profileUrl:   `${appUrl}/p/${c.id}`,
         // Headshot (persisted from web upload OR a photo texted to Evia). Sent as
         // an image bubble before each caregiver's profile link so families see a
         // face, not a generic preview card. Null for legacy caregivers w/o a photo.
@@ -622,7 +650,12 @@ export async function runMatchingForClient(
       }
     }
 
-    await sendMessage(chatId, "Which ones would you like to meet? Just reply with a name or number.");
+    // suppressSends: the invoking agent turn asks this itself as its one
+    // closing line (tool result instructs it), landing AFTER the gallery —
+    // sending it here too would double the question.
+    if (!suppressSends) {
+      await sendMessage(chatId, "Which ones would you like to meet? Just reply with a name or number.");
+    }
 
     // Store match list in session for follow-up; embed active goal context so
     // interview selection can pre-populate booking dates without re-prompting the family
@@ -673,10 +706,14 @@ export async function runMatchingForClient(
       source:      "matchingAgent:catch",
       dueInMs:     30 * 60_000,
     });
-    await sendMessage(chatId, tracked
-      ? "I'm searching for caregivers — I'll text you top matches within the hour."
-      : "I'm having trouble pulling up matches right now. I've alerted our care team so a real person follows up with you."
-    ).catch(() => {});
+    // suppressSends: the invoking agent turn tells the family (tool result
+    // instructs it) — the commitment + admin alert above are already recorded.
+    if (!suppressSends) {
+      await sendMessage(chatId, tracked
+        ? "I'm searching for caregivers — I'll text you top matches within the hour."
+        : "I'm having trouble pulling up matches right now. I've alerted our care team so a real person follows up with you."
+      ).catch(() => {});
+    }
     return "failed";
   }
 }

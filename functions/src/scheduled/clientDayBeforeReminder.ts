@@ -27,15 +27,18 @@ export const sendClientDayBeforeReminders = functions.pubsub
     // Only send for confirmed appointments — skip pending_caregiver_confirmation
     // (we don't want to tell the family it's locked in if the caregiver hasn't
     // confirmed yet) and skip ones we've already reminded.
+    // NOTE: no `.where("clientDayBeforeReminderSent","!=",true)` — Firestore `!=`
+    // excludes docs missing the field (appointments are created without it), so
+    // it would skip every never-reminded appointment. Filter already-sent in code.
     const snap = await db.collection("appointments")
       .where("date",                       "==", tomorrowStr)
       .where("status",                     "==", "confirmed")
-      .where("clientDayBeforeReminderSent","!=", true)
       .get();
 
     for (const doc of snap.docs) {
       const appt    = doc.data();
       const apptId  = doc.id;
+      if (appt.clientDayBeforeReminderSent === true) continue;
       const clientId    = (appt.clientId    ?? "") as string;
       const caregiverId = (appt.caregiverId ?? "") as string;
       if (!clientId || !caregiverId) continue;

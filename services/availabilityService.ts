@@ -1,5 +1,6 @@
 import { Caregiver, WeeklySchedule, TimeSlot } from '../types';
 import { db } from '../lib/firebase';
+import { localDateStr } from '../utils/shiftUtils';
 
 /**
  * Enhanced Availability Matching Service
@@ -165,8 +166,10 @@ export const availabilityService = {
         }
 
         try {
-            // Format date to YYYY-MM-DD for comparison
-            const dateStr = requestedDate.toISOString().split('T')[0];
+            // Local calendar date (NOT UTC) — appointments store local dates, so
+            // toISOString() would query the wrong day for evening-local bookings
+            // and miss same-day conflicts (double-book). See utils/shiftUtils.
+            const dateStr = localDateStr(requestedDate);
             
             // Calculate time window with buffer
             const requestedStartMinutes = timeToMinutes(startTime);
@@ -312,7 +315,8 @@ export const availabilityService = {
         );
 
         // Then check conflicts for candidates only (slower, async)
-        const dateStr = requestedDate.toISOString().split('T')[0];
+        // Local calendar date (NOT UTC) — see the note above / utils/shiftUtils.
+        const dateStr = localDateStr(requestedDate);
         
         try {
             // Single query for all candidates

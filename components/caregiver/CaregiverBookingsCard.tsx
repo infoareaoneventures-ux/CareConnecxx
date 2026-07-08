@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, CalendarDays, Clock, MapPin } from 'lucide-react';
 import { useCaregiverBookings } from '../../hooks/useCaregiverBookings';
+import { paymentMethodLabel } from '../../types';
 
 function fmtTime(t?: string): string {
   if (!t) return '';
@@ -88,7 +89,7 @@ export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnl
                       {schedLine && <div className="flex items-center gap-1.5 text-xs text-slate-500"><Calendar className="w-3 h-3 flex-shrink-0" /><span className="truncate">{schedLine}</span></div>}
                       {b.address && <div className="flex items-center gap-1.5 text-xs text-slate-500"><MapPin className="w-3 h-3 flex-shrink-0" /><span className="truncate">{b.address}</span></div>}
                     </div>
-                    {b.rate != null && <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>}
+                    {b.rate != null && <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {paymentMethodLabel(b.paymentMethod)}</p>}
                   </div>
                 );
               })}
@@ -150,7 +151,7 @@ export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnl
                       </div>
                       {(shift.startTime || shift.endTime) && <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5"><Clock className="w-3 h-3 flex-shrink-0" /><span>{fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</span></div>}
                       {shift.address && <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-0.5"><MapPin className="w-3 h-3 flex-shrink-0" /><span className="truncate">{shift.address}</span></div>}
-                      {shift.rate != null && <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>}
+                      {shift.rate != null && <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {paymentMethodLabel(shift.paymentMethod)}</p>}
                     </div>
                   </div>
                 );

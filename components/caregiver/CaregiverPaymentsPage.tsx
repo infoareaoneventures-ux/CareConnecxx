@@ -8,13 +8,14 @@ import { useNavigate } from 'react-router-dom';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { PayoutHistory } from './PayoutHistory';
 import { ConnectBankButton } from '../ui/ConnectBankButton';
-import { InstantPayoutModal, PayoutMethod } from './InstantPayoutModal';
+import { InstantPayoutModal } from './InstantPayoutModal';
 import { CompletedShift, SubmitShiftHoursModal } from '../payroll/SubmitShiftHoursModal';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { shiftHoursService, dbService } from '../../services/api';
-import { checkOnboardingStatus, requestInstantPayout, requestStandardPayout, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
+import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
+import { isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -434,8 +435,8 @@ const PendingShiftRow: React.FC<{
   const [reviewOpen,        setReviewOpen]        = React.useState(false);
   const [showDetailModal,   setShowDetailModal]   = React.useState(false);
 
-  // Cash shift approved by client — caregiver must confirm receipt
-  if (row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')) {
+  // Offline shift (cash/Venmo/Zelle) approved by client — caregiver must confirm receipt
+  if (isOfflinePaymentMethod(row.paymentMethod) && (row.status === 'approved' || row.status === 'auto_approved')) {
     const dispStart = row.finalStartTime   ? new Date(row.finalStartTime)   : row.submittedStartTime ? new Date(row.submittedStartTime) : null;
     const dispEnd   = row.finalEndTime     ? new Date(row.finalEndTime)     : row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
     const hours     = dispStart && dispEnd
@@ -540,7 +541,7 @@ const PendingShiftRow: React.FC<{
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {confirming ? 'Confirming…' : 'Confirm cash received'}
+                {confirming ? 'Confirming…' : `Confirm ${paymentMethodLabel(row.paymentMethod).toLowerCase() === 'cash' ? 'cash' : paymentMethodLabel(row.paymentMethod)} received`}
               </button>
             </div>
           </div>
@@ -1457,6 +1458,11 @@ export const CaregiverPaymentsPage: React.FC = () => {
   // Payouts tab state
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [showPayoutModal, setShowPayoutModal] = useState(false);
+  // Live Stripe instant balance — what a cash-out will actually pay. The
+  // shift-derived availableBalance below is "earned"; charges/transfers may
+  // still be settling, so the two can differ.
+  const [instantBalance, setInstantBalance] = useState<number | null>(null);
+  const [fetchingBalance, setFetchingBalance] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Membership tab state
@@ -1544,12 +1550,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const pendingRows = shiftRows.filter(r =>
     ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) ||
     // cash approved shifts that need caregiver cash confirmation
-    (r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
+    (isOfflinePaymentMethod(r.paymentMethod) && (r.status === 'approved' || r.status === 'auto_approved'))
   );
   const historyRows = shiftRows.filter(r =>
     !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) &&
     // exclude cash-approved shifts waiting for confirmation — they still belong in Pending
-    !(r.paymentMethod === 'cash' && (r.status === 'approved' || r.status === 'auto_approved'))
+    !(isOfflinePaymentMethod(r.paymentMethod) && (r.status === 'approved' || r.status === 'auto_approved'))
   );
   const actionCount = submittableShifts.length + pendingRows.length;
 
@@ -1651,28 +1657,46 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const handleConfirmCash = async (row: ShiftRow) => {
     try {
       await shiftHoursService.confirmCashReceived(row.appointmentId);
-      addToast('Cash payment confirmed — shift marked paid', 'success');
+      addToast('Payment confirmed — shift marked paid', 'success');
     } catch (e: any) {
-      addToast(e?.message || 'Failed to confirm cash receipt', 'error');
+      addToast(e?.message || 'Failed to confirm payment receipt', 'error');
     }
   };
 
-  const handlePayout = async (method: PayoutMethod) => {
+  const handlePayout = async () => {
     try {
-      const result = method === 'instant'
-        ? await requestInstantPayout()
-        : await requestStandardPayout();
+      const result = await requestInstantPayout();
       if (result.success) {
-        addToast(
-          method === 'instant'
-            ? `Instant payout of $${result.amount.toFixed(2)} initiated!`
-            : `Standard payout of $${result.amount.toFixed(2)} initiated!`,
-          'success',
-        );
+        addToast(`Instant payout of $${result.amount.toFixed(2)} initiated — free, arrives in ~30 minutes!`, 'success');
       }
     } catch (error: any) {
       addToast(error.message || 'Payout failed. Please try again.', 'error');
       throw error;
+    }
+  };
+
+  const handleOpenPayoutModal = async () => {
+    setFetchingBalance(true);
+    try {
+      const balance = await getPayoutBalance();
+      setInstantBalance(balance.instantAvailable);
+      if (balance.instantAvailable < 1) {
+        addToast(
+          balance.pending > 0
+            ? `$${balance.pending.toFixed(2)} is still settling — it pays out automatically, no action needed.`
+            : 'Nothing to cash out right now — your earnings pay out automatically every day.',
+          'info',
+        );
+        return;
+      }
+      setShowPayoutModal(true);
+    } catch {
+      // Balance lookup failed — open with the shift-derived figure; the
+      // backend re-checks the real balance before paying anyway.
+      setInstantBalance(null);
+      setShowPayoutModal(true);
+    } finally {
+      setFetchingBalance(false);
     }
   };
 
@@ -2059,11 +2083,12 @@ export const CaregiverPaymentsPage: React.FC = () => {
 
                 {canPayout ? (
                   <button
-                    onClick={() => setShowPayoutModal(true)}
-                    className="flex items-center gap-2 bg-white text-slate-900 px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-slate-100 transition-colors shadow-sm"
+                    onClick={handleOpenPayoutModal}
+                    disabled={fetchingBalance}
+                    className="flex items-center gap-2 bg-white text-slate-900 px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-slate-100 disabled:opacity-60 transition-colors shadow-sm"
                   >
                     <Zap className="w-4 h-4 text-blue-600" />
-                    Cash Out
+                    {fetchingBalance ? 'Checking balance…' : 'Cash Out'}
                   </button>
                 ) : !fullyEnabled ? (
                   <button
@@ -2078,7 +2103,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 )}
 
                 <p className="text-xs text-slate-400 mt-3">
-                  💡 Instant: 30 min, 1.5% fee · Standard: 2-3 days, free
+                  💡 Earnings pay out automatically every day (free) · Instant cash-out: free, ~30 min
                 </p>
               </div>
             </div>
@@ -2093,8 +2118,8 @@ export const CaregiverPaymentsPage: React.FC = () => {
                     <p className="text-sm font-semibold text-green-700">Bank account connected</p>
                   </div>
                   <p className="text-sm text-slate-500 mb-3">
-                    Standard payouts arrive in 2–3 business days (free).
-                    Instant payouts arrive in 30 minutes (1.5% fee, min $0.50).
+                    Earnings pay out automatically every day and arrive ~2 business days after each visit is paid (free).
+                    Instant payouts arrive in about 30 minutes — also free.
                   </p>
                   <a
                     href="https://dashboard.stripe.com/express"
@@ -2154,14 +2179,14 @@ export const CaregiverPaymentsPage: React.FC = () => {
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 bg-slate-50 rounded-xl text-center">
-                  <p className="font-semibold text-slate-900 text-sm">Standard</p>
-                  <p className="text-xs text-slate-500 mt-0.5">2–3 business days</p>
+                  <p className="font-semibold text-slate-900 text-sm">Automatic</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Daily · ~2 business days</p>
                   <p className="text-xs font-bold text-green-600 mt-1">Free</p>
                 </div>
                 <div className="p-3 bg-primary-50 border border-primary-100 rounded-xl text-center">
                   <p className="font-semibold text-slate-900 text-sm">Instant</p>
                   <p className="text-xs text-slate-500 mt-0.5">~30 minutes</p>
-                  <p className="text-xs font-bold text-primary-600 mt-1">1.5% fee</p>
+                  <p className="text-xs font-bold text-primary-600 mt-1">Free</p>
                 </div>
               </div>
             </div>
@@ -2197,7 +2222,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
       {/* Modals */}
       {showPayoutModal && (
         <InstantPayoutModal
-          availableBalance={availableBalance}
+          availableBalance={instantBalance ?? availableBalance}
           onClose={() => setShowPayoutModal(false)}
           onConfirm={handlePayout}
           onShowToast={addToast}
@@ -2351,7 +2376,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
             {badge?.label ?? status}
           </div>
           <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
-          <p className="text-2xl font-bold">Annual plan · $24.95/yr</p>
+          <p className="text-2xl font-bold">Annual plan · $66.49/yr</p>
           {subscription?.cancelAtPeriodEnd ? (
             <p className="text-sm text-amber-200 mt-2">
               ⚠ Cancels on {renewalDate ?? '—'}

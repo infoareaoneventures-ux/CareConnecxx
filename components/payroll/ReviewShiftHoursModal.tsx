@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, CheckCircle2, AlertTriangle, ArrowUpRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
+import { paymentMethodLabel } from '../../types';
 
 interface CorrectionHistoryEntry {
   by: string;
@@ -257,7 +258,7 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
             {fmtTimeRange(shift.submittedStartTime, shift.submittedEndTime)}
           </p>
           <p className="text-xs text-slate-500">
-            Rate: ${shift.payRate}/hr · Payment: {shift.paymentMethod === 'cash' ? 'Cash' : 'Credit card'}
+            Rate: ${shift.payRate}/hr · Payment: {paymentMethodLabel(shift.paymentMethod)}
           </p>
 
           {/* Pay breakdown — always shown */}

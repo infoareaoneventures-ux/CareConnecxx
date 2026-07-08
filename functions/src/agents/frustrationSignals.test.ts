@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectFrustrationSignals, normalize } from "./frustrationSignals";
+import { detectFrustrationSignals, normalize, detectAgentSelfRepeat } from "./frustrationSignals";
 
 describe("frustrationSignals", () => {
   it("normalizes punctuation and casing without keeping formatting noise", () => {
@@ -54,5 +54,53 @@ describe("frustrationSignals", () => {
       rephraseLoopDetected: false,
       repeatedGreetingDetected: false,
     });
+  });
+});
+
+describe("detectAgentSelfRepeat (ch10 broken-record)", () => {
+  it("flags a near-duplicate of Evia's own recent outbound (the loop bug's actual shape)", () => {
+    // The confirm-name loop re-sent near-identical text, not a paraphrase — the
+    // guard is tuned (0.8) to catch that, and to leave legitimate rephrasings be.
+    const prior = "Just to confirm, do you go by Anahi or do you prefer a different name?";
+    const candidate = "Just to confirm, do you go by Anahi or do you prefer a different first name?";
+    const r = detectAgentSelfRepeat(candidate, [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: prior },
+    ]);
+    expect(r.repeated).toBe(true);
+    expect(r.matchedPrior).toBe(prior);
+  });
+
+  it("leaves a genuine rephrasing of the same intent alone (no false positive)", () => {
+    const prior = "Happy to help — do you go by Anahi, or do you prefer another name?";
+    const candidate = "Would you rather I call you something other than Anahi?";
+    expect(detectAgentSelfRepeat(candidate, [{ role: "assistant", content: prior }]).repeated).toBe(false);
+  });
+
+  it("catches a verbatim resend", () => {
+    const msg = "What time works best for the visit on Thursday?";
+    expect(detectAgentSelfRepeat(msg, [{ role: "assistant", content: msg }]).repeated).toBe(true);
+  });
+
+  it("only compares against ASSISTANT messages, not the user's", () => {
+    const msg = "please send the caregiver setup link for my mother today";
+    // Same text but spoken by the USER — not a self-repeat.
+    expect(detectAgentSelfRepeat(msg, [{ role: "user", content: msg }]).repeated).toBe(false);
+  });
+
+  it("does not flag genuinely different replies", () => {
+    const r = detectAgentSelfRepeat("Your caregiver Maria is confirmed for 9am Tuesday.", [
+      { role: "assistant", content: "Do you go by Anahi, or another name?" },
+    ]);
+    expect(r.repeated).toBe(false);
+  });
+
+  it("ignores the synthetic history-summary assistant line", () => {
+    const summary = "Got it - I have context on this family and the ongoing care.";
+    expect(detectAgentSelfRepeat(summary, [{ role: "assistant", content: summary }]).repeated).toBe(false);
+  });
+
+  it("does not flag very short replies (below the min-length floor)", () => {
+    expect(detectAgentSelfRepeat("Sounds good!", [{ role: "assistant", content: "Sounds good!" }]).repeated).toBe(false);
   });
 });

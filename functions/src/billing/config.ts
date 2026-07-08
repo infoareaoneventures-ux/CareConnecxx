@@ -20,9 +20,11 @@ export const SHIFT_PLATFORM_FEE_RATE = 0.015;
 export const SHIFT_PLATFORM_FEE_MIN_DOLLARS = 0.5;
 
 /**
- * Instant-payout processing fee deducted from a caregiver's payout when they
- * cash out early (requestInstantPayout): max(gross * RATE, MIN). 1.5%, $0.50
- * minimum. Standard (1–2 day) payouts are free and carry no fee.
+ * Instant payouts are FREE to the caregiver (pricing decision 2026-07-06):
+ * the platform absorbs Stripe's instant-payout fee. Regular payouts happen
+ * automatically on Stripe's daily schedule and were always free. The former
+ * INSTANT_PAYOUT_FEE_RATE / INSTANT_PAYOUT_FEE_MIN_DOLLARS constants were
+ * retired with that decision — reintroducing a caregiver-facing fee requires
+ * real fee recoup (an account-debit transfer to the platform), not just a
+ * smaller payout, because any remainder auto-sweeps back to the caregiver.
  */
-export const INSTANT_PAYOUT_FEE_RATE = 0.015;
-export const INSTANT_PAYOUT_FEE_MIN_DOLLARS = 0.5;

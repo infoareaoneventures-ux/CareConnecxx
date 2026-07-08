@@ -112,7 +112,7 @@ export const IMessageSignupPage: React.FC = () => {
                   <span className="text-white font-bold text-sm">C</span>
                 </div>
                 <p className="text-white text-sm font-semibold">Evia 💙</p>
-                <p className="text-white/40 text-xs">CareConnecxx</p>
+                <p className="text-white/40 text-xs">eviacares.com</p>
               </div>
 
               {/* Messages */}
@@ -159,7 +159,7 @@ export const IMessageSignupPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="px-6 py-6 text-center text-ink-400 text-xs max-w-6xl mx-auto w-full border-t hairline">
-        © 2026 CareConnecxx · Santa Clara County · Privacy · Terms
+        © 2026 Evia · Santa Clara County · Privacy · Terms
       </footer>
     </div>
   );

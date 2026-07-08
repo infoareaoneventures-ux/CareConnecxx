@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -12,19 +13,22 @@ export const sendThirtyMinShiftReminders = functions.pubsub
   .onRun(async () => {
     const now           = new Date();
     const nowMs         = now.getTime();
-    const today         = now.toISOString().slice(0, 10);
+    const today         = businessTodayStr();   // Pacific date, not UTC
     const windowStartMs = nowMs + 25 * 60 * 1000;
     const windowEndMs   = nowMs + 40 * 60 * 1000;
 
+    // NOTE: no `.where("caraThirtyMinReminderSent","!=",true)` — Firestore `!=`
+    // excludes docs missing the field (appointments are created without it), so
+    // it would skip every never-reminded shift. Filter already-sent in code.
     const snap = await db.collection("appointments")
       .where("date",                       "==", today)
       .where("status",                     "in", ["confirmed", "pending_caregiver_confirmation"])
-      .where("caraThirtyMinReminderSent",  "!=", true)
       .get();
 
     for (const doc of snap.docs) {
       const appt    = doc.data();
       const apptId  = doc.id;
+      if (appt.caraThirtyMinReminderSent === true) continue;
       const startTime = (appt.startTime ?? appt.time ?? "") as string;
       if (!startTime) continue;
 
@@ -93,5 +97,8 @@ function parseAppointmentTimeMs(dateStr: string, timeStr: string): number | null
   }
 
   if (h === null || m === null) return null;
-  return new Date(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`).getTime();
+  // Interpret naive date+time as business-timezone (Pacific) wall-clock, not UTC
+  // (see clientThirtyMinReminder for the rationale). DST-correct.
+  const ms = parseScheduledTimeMs(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`);
+  return Number.isNaN(ms) ? null : ms;
 }

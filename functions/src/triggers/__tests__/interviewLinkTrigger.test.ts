@@ -88,16 +88,20 @@ vi.mock("firebase-functions/v1", () => {
   return { __esModule: true, ...builder, default: builder };
 });
 
-const { createAssets, trySendMock, scheduleTriggerMock, opsAlert } = vi.hoisted(() => ({
+const { createAssets, trySendMock, scheduleTriggerMock, cancelTriggersByRefMock, opsAlert } = vi.hoisted(() => ({
   createAssets: vi.fn(),
   trySendMock: vi.fn(),
   scheduleTriggerMock: vi.fn().mockResolvedValue("trig-1"),
+  cancelTriggersByRefMock: vi.fn().mockResolvedValue(0),
   opsAlert: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("../../agents/interviewLinks", () => ({ createInterviewCallAssets: createAssets }));
 vi.mock("../../utils/toolNotify", () => ({ trySend: trySendMock }));
-vi.mock("../triggerEngine", () => ({ scheduleTrigger: scheduleTriggerMock }));
+vi.mock("../triggerEngine", () => ({
+  scheduleTrigger: scheduleTriggerMock,
+  cancelTriggersByRef: cancelTriggersByRefMock,
+}));
 vi.mock("../../observability/caraOpsAlerts", () => ({ createCaraOpsAlert: opsAlert }));
 
 import { onVideoInterviewLinkEnsure } from "../interviewLinkTrigger";
@@ -184,12 +188,37 @@ describe("onVideoInterviewLinkEnsure", () => {
     expect(trySendMock).toHaveBeenCalledTimes(2);
     const msgs = trySendMock.mock.calls.map((c) => c[1] as string);
     for (const m of msgs) expect(m).toContain("https://meet.google.com/abc-defg-hij");
-    // Reminders: both parties, calibration-exempt, 1h before
+    // Reminders: both parties, calibration-exempt, 1h before, cancellable by refId
     expect(scheduleTriggerMock).toHaveBeenCalledTimes(2);
     for (const call of scheduleTriggerMock.mock.calls) {
       expect(call[1]).toEqual({ bypassCalibration: true });
       expect(new Date(call[0].scheduledAt).getTime()).toBe(FUTURE_MS - 60 * 60 * 1000);
+      expect(call[0].refId).toBe("video_interview_iv2");
     }
+  });
+
+  it("agreed → declined transition cancels pending reminders and clears remindersScheduledAt", async () => {
+    hoisted.docState.set("video_interviews/iv9", {
+      status: "declined", declinedBy: "client", clientId: "cl1", caregiverId: "cg1",
+      scheduledTime: FUTURE_ISO, callUrl: "https://meet.google.com/xyz",
+      linkDelivery: { client: { status: "sent", at: "x" }, caregiver: { status: "sent", at: "x" } },
+      remindersScheduledAt: "2026-07-05T00:00:00Z",
+    });
+    await fire("iv9", { status: "confirmed" });
+    expect(cancelTriggersByRefMock).toHaveBeenCalledWith("video_interview_iv9");
+    expect(hoisted.docState.get("video_interviews/iv9").remindersScheduledAt).toBeUndefined();
+    // dead interview: no link work, no sends, no new reminders
+    expect(createAssets).not.toHaveBeenCalled();
+    expect(scheduleTriggerMock).not.toHaveBeenCalled();
+  });
+
+  it("requested → declined (never agreed) does not attempt cancellation", async () => {
+    hoisted.docState.set("video_interviews/iv10", {
+      status: "declined", declinedBy: "caregiver", clientId: "cl1", caregiverId: "cg1",
+      scheduledTime: FUTURE_ISO,
+    });
+    await fire("iv10", { status: "requested" });
+    expect(cancelTriggersByRefMock).not.toHaveBeenCalled();
   });
 
   it("fully-processed doc write → precheck no-op (no regeneration, no re-sends)", async () => {

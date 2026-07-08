@@ -65,10 +65,8 @@ export async function handleEarningsView(
   }
   const pendingAmount = pendingCents / 100;
 
-  // Next payout date — typically next Friday
-  const daysUntilFriday = (5 - now.getDay() + 7) % 7 || 7;
-  const nextFriday = new Date(now.getTime() + daysUntilFriday * 24 * 60 * 60 * 1000);
-  const nextPayoutDate = nextFriday.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  // Payouts are automatic on Stripe's daily schedule — money lands in the bank
+  // ~2 business days after each shift payment. No fixed payout day exists.
 
   if (visitCount === 0 && pendingAmount === 0) {
     const msg = await generateCaraMessage({
@@ -95,8 +93,8 @@ export async function handleEarningsView(
 
   const body = lines.join("\n");
   const nextPayoutLine = pendingAmount > 0
-    ? `\n\nNext payout: ${nextPayoutDate}`
+    ? `\n\nPayouts are automatic — money lands in your bank about 2 business days after each visit is paid.`
     : "";
 
-  await sendMessage(`${opener}\n\n${body}${nextPayoutLine}\n\nText PAYOUT to request an instant payout, or ask me anything else.`);
+  await sendMessage(`${opener}\n\n${body}${nextPayoutLine}\n\nText PAYOUT for a free instant payout (arrives in ~30 min), or ask me anything else.`);
 }

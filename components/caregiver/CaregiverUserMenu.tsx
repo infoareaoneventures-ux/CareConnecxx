@@ -73,7 +73,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
     { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
     { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
     { label: 'Success guide', onClick: scrollToSuccessGuide, icon: <BookOpen className="w-4 h-4" /> },
-    { label: 'Give feedback', onClick: () => { window.location.href = 'mailto:support@careconnex.app?subject=Caregiver%20feedback'; setOpen(false); }, icon: <MessageCircle className="w-4 h-4" />, divider: true },
+    { label: 'Give feedback', onClick: () => { window.location.href = 'mailto:support@eviacares.com?subject=Caregiver%20feedback'; setOpen(false); }, icon: <MessageCircle className="w-4 h-4" />, divider: true },
   ];
 
   return (

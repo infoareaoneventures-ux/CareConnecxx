@@ -52,25 +52,19 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   // but it remains fully toggleable.
   const [includeMVR, setIncludeMVR] = useState<boolean>(false);
 
-  const [promoCode, setPromoCode] = useState('');
-  const [promoApplied, setPromoApplied] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const annualPrice = 24.95;
+  // $66.49/yr — the actual Stripe charge (product "Caregiver background check
+  // $66.49/yr", price_1TqGrE…, unit_amount 6649). The membership fee covers the
+  // required Checkr background check + verified badge. Was stale at 24.95, which
+  // did NOT match what Stripe charges.
+  const annualPrice = 66.49;
   const mvrPrice = 9.50;
   const annualPerMonth = (annualPrice / 12).toFixed(2);
 
   const selectedPrice = annualPrice;
   const selectedPriceId = CAREGIVER_ANNUAL_PRICE_ID;
 
-  const handleApplyPromo = () => {
-    if (promoCode.trim().toUpperCase() === 'CARE10') {
-      setPromoApplied(true);
-      onShowToast?.('Promo code applied — 10% off!', 'success');
-    } else {
-      onShowToast?.('Invalid promo code', 'error');
-    }
-  };
 
   const handleCheckout = async () => {
     const user = authService.getCurrentUser();
@@ -201,44 +195,19 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
             </button>
           </div>
 
-          {/* Promo code */}
-          <div className="mb-6">
-            <label className="text-xs font-medium text-slate-600 block mb-1.5">Promo code (optional)</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                className="flex-1 px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400"
-                placeholder="Enter code"
-                value={promoCode}
-                onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                disabled={promoApplied}
-              />
-              <button
-                onClick={handleApplyPromo}
-                disabled={promoApplied || !promoCode.trim()}
-                className="px-4 py-2.5 text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors disabled:opacity-50"
-              >
-                {promoApplied ? <CheckCircle className="w-4 h-4 text-green-500" /> : 'Apply'}
-              </button>
-            </div>
-          </div>
-
           {/* Total */}
           <div className="py-3.5 border-t border-b border-slate-100 mb-6">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-slate-700">Total today</span>
               <span className="text-xl font-extrabold text-slate-900">
-                ${(promoApplied
-                  ? selectedPrice * 0.9
-                  : selectedPrice
-                ).toFixed(2)}
+                ${selectedPrice.toFixed(2)}
                 {includeMVR && <span className="text-base font-bold text-slate-900"> + ${mvrPrice.toFixed(2)}</span>}
                 <span className="text-sm font-medium text-slate-500 ml-1">/year</span>
               </span>
             </div>
             {includeMVR && (
               <p className="text-xs text-slate-400 text-right mt-1">
-                ${mvrPrice.toFixed(2)} MVR is a one-time charge — your annual renewal is ${promoApplied ? (selectedPrice * 0.9).toFixed(2) : selectedPrice.toFixed(2)}/yr
+                ${mvrPrice.toFixed(2)} MVR is a one-time charge — your annual renewal is ${selectedPrice.toFixed(2)}/yr
               </p>
             )}
           </div>

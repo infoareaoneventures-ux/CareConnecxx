@@ -121,7 +121,7 @@ vi.mock("../../memory/preferences", () => ({
 }));
 
 vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+  runMatchingForClient: vi.fn().mockResolvedValue("no_match"),
 }));
 
 vi.mock("../../agents/familyGroupManager", () => ({
@@ -452,7 +452,7 @@ describe("MCP tool smoke coverage", () => {
     });
   });
 
-  describe("find_replacement_caregivers filters (U17)", () => {
+  describe("find_replacement_caregivers filters (U17) + one-voice contract (double-send fix 2026-07-06)", () => {
     it("accepts optional filters and echoes them back", async () => {
       hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
       hoisted.docState.set("users/c1", { name: "Fam" });
@@ -461,7 +461,6 @@ describe("MCP tool smoke coverage", () => {
         needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15,
       }) as any;
       expect(r.success).toBe(true);
-      expect(r.triggered).toBe(true);
       expect(r.filtersApplied).toMatchObject({ needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15 });
     });
 
@@ -471,6 +470,60 @@ describe("MCP tool smoke coverage", () => {
       const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.filtersApplied).toMatchObject({ needs: null, nearZip: null });
+    });
+
+    it("suppresses matching's own conversational sends — the agent turn is the voice", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" });
+      const call = vi.mocked(runMatchingForClient).mock.calls.at(-1)!;
+      expect(call[4]).toMatchObject({ suppressConversationalSends: true });
+    });
+
+    it("no_match: reports the real outcome + an honest one-message instruction (never 'triggered: true')", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("no_match");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.outcome).toBe("no_match");
+      expect(r.matchesFound).toBe(0);
+      expect(r.sent).toBeUndefined();          // nothing was texted — agent's reply is the only message
+      expect(r.instruction).toMatch(/ONE short warm message/i);
+      expect(r.triggered).toBeUndefined();     // old blind shape must not come back
+    });
+
+    it("matched: flags the already-sent gallery (sent:true) and forbids repeating it", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("matched");
+      hoisted.docState.set("agent_sessions/+15555550000", {
+        zipCode: "10001",
+        pendingMatches: [{ id: "cg1", name: "Maria", rate: 28 }, { id: "cg2", name: "James", rate: 25 }],
+      });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.outcome).toBe("matched");
+      expect(r.sent).toBe(true);               // hooks qaAgent's deliveredToUser guard
+      expect(r.matchesPresented).toEqual([
+        { name: "Maria", hourlyRate: 28 },
+        { name: "James", hourlyRate: 25 },
+      ]);
+      expect(r.instruction).toMatch(/Do NOT repeat/i);
+    });
+
+    it("failed: honest failure with follow-up note, not a fake success", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("failed");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(false);
+      expect(r.outcome).toBe("failed");
+      expect(r._toolError).toBeUndefined();    // a failed search is not a tool error — no recovery loop
+      expect(r.instruction).toMatch(/NOTHING has been texted/i);
     });
   });
 

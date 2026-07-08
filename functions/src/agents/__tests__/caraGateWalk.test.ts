@@ -35,6 +35,16 @@ const stripeSpies = vi.hoisted(() => ({
 const axiosPost = vi.hoisted(() =>
   vi.fn(async () => ({ data: { invitation_url: "https://checkr.local/invite", candidate_id: "cand_live", id: "cand_live" } })),
 );
+// The shared candidate-first Checkr helper (checkrApi.ts) — the bg-check gate
+// now goes through this instead of a raw axios invitation POST.
+const checkrInvite = vi.hoisted(() =>
+  vi.fn(async () => ({ invitationUrl: "https://checkr.local/invite", candidateId: "cand_live" })),
+);
+vi.mock("../../checkrApi", () => ({
+  createCheckrInvitation: (...a: unknown[]) => checkrInvite(...a),
+  checkrPost: vi.fn(),
+  CheckrApiError: class CheckrApiError extends Error {},
+}));
 
 // ── In-memory Firestore + Auth mock (caregiver characterization pattern, with
 //    arrayUnion/serverTimestamp added for the advanceOnboardingStep webhook path) ─
@@ -170,7 +180,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("You are extracting onboarding details from one message")) return "{}";
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
-    if (prompt.includes("Reply YES if this is a general question")) return questionMode ? "YES" : "NO";
+    if (prompt.includes("general question or off-topic comment")) return questionMode ? "YES" : "NO";
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     return stepAnswer;
   }),
@@ -266,8 +276,14 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
 
     // Stripe membership paid → Evia fires the Checkr invitation + pre-creates the doc.
     await advanceOnboardingStep(PHONE, "membership", "sub_live123");
-    expect(axiosPost).toHaveBeenCalledTimes(1);
-    expect(String(axiosPost.mock.calls[0]?.[0])).toContain("checkr.com/v1/invitations");
+    expect(checkrInvite).toHaveBeenCalledTimes(1);
+    // Candidate-first contract: the helper gets the session's email — an
+    // invitation without a candidate (the pre-2026-07-07 shape) is impossible.
+    expect(checkrInvite).toHaveBeenCalledWith(expect.objectContaining({
+      firstName: "Maria",
+      email:     "maria@example.com",
+      workState: "CA",
+    }));
 
     // Checkr cleared → Evia sets up the Stripe Connect payout account.
     await advanceOnboardingStep(PHONE, "background_check", "clear");

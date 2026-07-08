@@ -1112,7 +1112,8 @@ async function handleCareNotes(
     if (rawPaymentMethod != null && typeof rawPaymentMethod !== "string") {
       console.warn("[handleCareNotes] unexpected paymentMethod type on appointment", { apptId, type: typeof rawPaymentMethod });
     }
-    const paymentMethod = typeof rawPaymentMethod === "string" && rawPaymentMethod.toLowerCase().trim() === "cash" ? "cash" : "credit";
+    const { normalizePaymentMethod } = await import("../billing/paymentMethods");
+    const paymentMethod = normalizePaymentMethod(rawPaymentMethod);
     let created = false;
     try {
       // create() is atomic: it fails (ALREADY_EXISTS) if the doc already exists,
@@ -1901,6 +1902,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (setAt < tenMinAgo) {
         await db.collection("agent_sessions").doc(phone).update({
           pendingInstantPayoutConfirm: admin.firestore.FieldValue.delete(),
+          pendingInstantPayoutAmount:  admin.firestore.FieldValue.delete(),
         }).catch(() => {});
       } else {
         const { handleInstantPayoutConfirm } = await import("../agents/instantPayoutHandler");

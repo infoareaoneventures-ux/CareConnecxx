@@ -29,7 +29,10 @@ const ALLOWED_PRICE_IDS = [
   process.env.STRIPE_PRICE_MONTHLY        || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
   process.env.STRIPE_PRICE_QUARTERLY      || '',
   process.env.STRIPE_PRICE_ANNUAL         || '',
-  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
+  // $66.49/yr caregiver background check (Essential Criminal via Checkr); the
+  // legacy $24.95 membership price stays allowed for in-flight checkouts.
+  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TqGrEL7Ss5iuUb7gW7DsMtA',
+  'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
   process.env.STRIPE_CAREGIVER_MONTHLY    || '',
   MEMBERSHIP_PRICE_ID,
 ].filter(Boolean);
@@ -472,7 +475,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
     let CHECKR_PKG = CHECKR_PKG_BASE;
     if (includeMVRFlag) {
       try {
@@ -528,9 +531,13 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     });
 
     const invOk = invRes.ok;
+    let invitationUrl: string | undefined;
     if (!invOk) {
       const errText = await invRes.text().catch(() => '');
       console.error(`Checkr invitation failed for ${userId}: ${invRes.status} ${errText}`);
+    } else {
+      const inv = await invRes.json().catch(() => null);
+      if (typeof inv?.invitation_url === 'string') invitationUrl = inv.invitation_url;
     }
 
     await admin.firestore().collection('caregivers').doc(userId).set({
@@ -545,10 +552,34 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
         submittedAt: new Date().toISOString(),
         status: 'pending',
         invitationStatus: invOk ? 'sent' : 'error',
+        ...(invitationUrl && { invitationUrl }),
         initiatedVia: 'stripe_webhook',
         ...(includeMVRFlag && { mvrIncluded: true }),
       },
     }, { merge: true });
+
+    // Text the caregiver their background-check link. Checkr also emails it, but
+    // an SMS-first caregiver may never see that email — the link must reach them
+    // where the rest of onboarding happens.
+    const caregiverPhone = (caregiverData.phone || '').trim();
+    if (invitationUrl && caregiverPhone) {
+      try {
+        await admin.firestore().collection('agent_sessions').doc(caregiverPhone).update({
+          bgcheckInviteUrl: invitationUrl,
+        }).catch(() => {});
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(caregiverPhone, {
+          content:
+            'Payment received! Next step: your background check — it usually takes about 5 minutes. ' +
+            `Tap to get started: ${invitationUrl}`,
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (err) {
+        console.error(`Failed to text bg-check link to caregiver ${userId}:`, err);
+      }
+    }
 
     await admin.firestore().collection('users').doc(userId).set({
       verificationStatus: 'submitted',
@@ -624,18 +655,46 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return;
   }
 
+  const renewalPhone = ((caregiverData.phone as string | undefined) || '').trim();
+  async function notifyRenewalLinkFailure(reason: string) {
+    await admin.firestore().collection('admin_alerts').add({
+      type:        'onboarding_link_generation_failed',
+      severity:    'high',
+      step:        'stripe_subscription_renewal_bgcheck',
+      caregiverId: userId,
+      phone:       renewalPhone,
+      error:       reason,
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+    }).catch((alertErr: unknown) => console.error(`Failed to write Checkr renewal alert for ${userId}:`, alertErr));
+    if (renewalPhone) {
+      try {
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(renewalPhone, {
+          content: 'Your annual background check needs a quick renewal. I hit a snag pulling up the link, and I will text it as soon as it is ready.',
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (sendErr) {
+        console.error(`Failed to text Checkr renewal failure to caregiver ${userId}:`, sendErr);
+      }
+    }
+  }
+
   // Renewal: reset verification and re-run Checkr for the existing candidate
   console.log(`Annual renewal for caregiver ${userId} — re-initiating Checkr`);
 
   const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
   if (!apiKey) {
-    console.error('CHECKR_KEY not configured — skipping Checkr renewal');
+    console.error('CHECKR_KEY not configured - skipping Checkr renewal');
+    await notifyRenewalLinkFailure('CHECKR_KEY not configured');
     return;
   }
 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
     const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
     const dateKey = new Date().toISOString().slice(0, 10);
 
@@ -653,8 +712,13 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
       // existing state intact and surface the failure for retry.
       const errText = await invRes.text().catch(() => '');
       console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText} — leaving verification state unchanged`);
+      await notifyRenewalLinkFailure(`${invRes.status} ${errText}`.trim());
       return;
     }
+
+    const inv = await invRes.json().catch(() => null);
+    const renewalUrl: string | undefined =
+      typeof inv?.invitation_url === 'string' ? inv.invitation_url : undefined;
 
     await admin.firestore().collection('caregivers').doc(userId).set({
       verified: false,
@@ -666,14 +730,38 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
         submittedAt: new Date().toISOString(),
         status: 'pending',
         invitationStatus: 'sent',
+        ...(renewalUrl ? { invitationUrl: renewalUrl } : { invitationUrl: null }),
         initiatedVia: 'annual_renewal',
         checkrClearedAt: null,
       },
     }, { merge: true });
 
+    // Text the renewal link — same rationale as the first-payment path: the
+    // Checkr email alone is easy to miss, and the caregiver stays unbookable
+    // until the renewed check clears.
+    if (renewalUrl && renewalPhone) {
+      try {
+        await admin.firestore().collection('agent_sessions').doc(renewalPhone).update({
+          bgcheckInviteUrl: renewalUrl,
+        }).catch(() => {});
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(renewalPhone, {
+          content:
+            'Your annual membership renewed — time for your yearly background check refresh. ' +
+            `It usually takes about 5 minutes: ${renewalUrl}`,
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (err) {
+        console.error(`Failed to text renewal bg-check link to caregiver ${userId}:`, err);
+      }
+    }
+
     console.log(`Checkr renewal initiated for caregiver: ${userId}`);
   } catch (err: any) {
     console.error(`Checkr renewal error for ${userId}:`, err?.message);
+    await notifyRenewalLinkFailure(err?.message ?? String(err));
   }
 }
 
@@ -720,8 +808,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  // TODO: switch to eviacares.com once the domain is linked to Firebase Hosting
-  const billingUrl = "https://careconnex-d4c8b.web.app/client/membership";
+  const billingUrl = appLink("/client/membership");
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =

@@ -868,7 +868,10 @@ export const dbService = {
                 .onSnapshot((snapshot) => {
                     const appts: Appointment[] = [];
                     snapshot.forEach((doc) => {
-                        appts.push(doc.data() as Appointment);
+                        // Include doc.id — the live listener feeds cancel/start/end
+                        // actions and React keys that reference appointment.id.
+                        // getAppointments() already spreads id; this path omitted it.
+                        appts.push({ id: doc.id, ...doc.data() } as Appointment);
                     });
                     console.log(`📊 Received ${appts.length} appointments for ${userType} ${userId}`);
                     onUpdate(appts);
@@ -3789,13 +3792,15 @@ export const shiftHoursService = {
         return res.data as { success: boolean; error?: string };
     },
 
-    updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'credit') => {
+    updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'venmo' | 'zelle' | 'credit') => {
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-updateBookingPaymentMethod');
         const res = await fn({ appointmentId, paymentMethod });
         return res.data as { success: boolean };
     },
 
+    // Caregiver confirms receipt of an offline payment (cash, Venmo, or Zelle).
+    // Name kept for existing callers; covers all offline methods.
     confirmCashReceived: async (appointmentId: string) => {
         if (!isConfigured || !db) throw new Error('Firebase not configured');
         const uid = auth?.currentUser?.uid;
@@ -3806,17 +3811,18 @@ export const shiftHoursService = {
         if (!snap.exists) throw new Error('Shift hours record not found');
 
         const shift = snap.data()!;
+        const method = (shift.paymentMethod || '').toLowerCase();
         if (shift.caregiverId !== uid)
-            throw new Error('Only the caregiver can confirm cash receipt');
-        if ((shift.paymentMethod || '').toLowerCase() !== 'cash')
-            throw new Error('Shift is not a cash payment');
+            throw new Error('Only the caregiver can confirm payment receipt');
+        if (!['cash', 'venmo', 'zelle'].includes(method))
+            throw new Error('Shift is not an offline (cash/Venmo/Zelle) payment');
         if (shift.status !== 'approved' && shift.status !== 'auto_approved')
             throw new Error(`Shift must be approved first (current: ${shift.status})`);
 
         const now = new Date().toISOString();
         await ref.update({
             status: 'paid',
-            paidMethod: 'cash',
+            paidMethod: method,
             paidAt: now,
             cashConfirmedAt: now,
             updatedAt: now,

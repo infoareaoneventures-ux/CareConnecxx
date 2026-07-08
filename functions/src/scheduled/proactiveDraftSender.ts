@@ -86,13 +86,23 @@ export async function runProactiveDraftSenderPass(): Promise<SendStats> {
       continue;
     }
 
+    // Atomically claim (approved → sent) BEFORE sending so an overlapping pass —
+    // the */5 cron racing the admin triggerProactiveDraftSendNow, or racing
+    // sendApprovedDraftNow — can't send the same draft twice. Only the
+    // transaction that flips status off "approved" wins; the loser skips.
+    // Claiming to "sent" up front means a crash between claim and send is a lost
+    // nudge (acceptable) rather than a duplicate SMS.
+    const claimed = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (!fresh.exists || fresh.data()?.status !== "approved") return false;
+      tx.update(doc.ref, { status: "sent", sentAt: new Date().toISOString() });
+      return true;
+    }).catch(() => false);
+    if (!claimed) continue;
+
     try {
       const result = await sendSMS({ to: d.phone, message: d.draftText });
       if (result.success) {
-        await doc.ref.update({
-          status: "sent",
-          sentAt: new Date().toISOString(),
-        });
         stats.sent += 1;
       } else {
         await doc.ref.update({
@@ -147,21 +157,28 @@ export const sendApprovedDraftNow = functions.https.onCall(async (data: { draftI
   }
 
   const ref  = db.collection("proactive_drafts").doc(draftId);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new functions.https.HttpsError("not-found", `draft ${draftId} not found`);
-  }
-  const d = snap.data() as { status?: string; phone?: string; draftText?: string };
-  if (d.status !== "approved") {
-    throw new functions.https.HttpsError("failed-precondition", `draft status is "${d.status}", must be "approved"`);
-  }
-  if (!d.phone || !d.draftText) {
-    throw new functions.https.HttpsError("failed-precondition", "draft missing phone or draftText");
-  }
+  // Atomically claim (approved → sent) so this manual send can't race the cron
+  // pass and double-send the same draft. Validation happens inside the txn so
+  // the status check and the claim are a single atomic step.
+  const d = await db.runTransaction(async (tx) => {
+    const fresh = await tx.get(ref);
+    if (!fresh.exists) {
+      throw new functions.https.HttpsError("not-found", `draft ${draftId} not found`);
+    }
+    const data = fresh.data() as { status?: string; phone?: string; draftText?: string };
+    if (data.status !== "approved") {
+      throw new functions.https.HttpsError("failed-precondition", `draft status is "${data.status}", must be "approved"`);
+    }
+    if (!data.phone || !data.draftText) {
+      throw new functions.https.HttpsError("failed-precondition", "draft missing phone or draftText");
+    }
+    tx.update(ref, { status: "sent", sentAt: new Date().toISOString() });
+    return data;
+  });
 
-  const result = await sendSMS({ to: d.phone, message: d.draftText });
+  const result = await sendSMS({ to: d.phone!, message: d.draftText! });
   if (result.success) {
-    await ref.update({ status: "sent", sentAt: new Date().toISOString() });
+    // Already marked "sent" by the claim transaction above.
     return { success: true };
   }
   await ref.update({

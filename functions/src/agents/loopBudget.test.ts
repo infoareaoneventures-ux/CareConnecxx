@@ -32,4 +32,16 @@ describe("resolveLoopBudget (U5)", () => {
   it("bounds mutation blast radius above any legitimate flow's tool count", () => {
     expect(MAX_TOOL_CALLS_PER_TURN).toBeGreaterThanOrEqual(10);
   });
+
+  it("carries a positive per-turn cost ceiling that scales with flow class", () => {
+    const quick = resolveLoopBudget("VIEW_INVOICE");
+    const standard = resolveLoopBudget("CANCEL_REQUEST");
+    const multistep = resolveLoopBudget("PRESCRIPTION_REFILL");
+    for (const b of [quick, standard, multistep]) {
+      expect(b.maxCostUsd).toBeGreaterThan(0);
+    }
+    // A heavier flow class must not have a tighter budget than a lighter one.
+    expect(standard.maxCostUsd).toBeGreaterThanOrEqual(quick.maxCostUsd);
+    expect(multistep.maxCostUsd).toBeGreaterThanOrEqual(standard.maxCostUsd);
+  });
 });

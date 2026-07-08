@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
-import { fetchWithTimeout } from "./utils/httpTimeout";
+import { checkrPost } from "./checkrApi";
 import { assertMvrCheckConfig } from "./mvrConfig";
 
 if (!admin.apps.length) {
@@ -10,42 +10,14 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "driver_pro";
+// Essential Criminal: county criminal (7yr), global watchlist, national criminal
+// (standard), sex offender, SSN trace, motor vehicle report.
+const CHECKR_PACKAGE = process.env.CHECKR_PACKAGE || "checkrdirect_essential_criminal";
 
 type CheckrStatus = "pending" | "clear" | "consider" | "suspended" | "canceled";
 
-function basicAuth(apiKey: string): string {
-  return "Basic " + Buffer.from(apiKey + ":").toString("base64");
-}
-
-async function checkrPost(path: string, body: Record<string, unknown>, idempotencyKey?: string): Promise<any> {
-  // CHECKR_KEY is preferred — avoids legacy Secret Manager binding on CHECKR_API_KEY
-  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || "").trim();
-  if (!apiKey) {
-    throw new functions.https.HttpsError("internal", "Checkr API Key not configured.");
-  }
-  const headers: Record<string, string> = {
-    "Authorization": basicAuth(apiKey),
-    "Content-Type": "application/json",
-  };
-  if (idempotencyKey) {
-    headers["Idempotency-Key"] = idempotencyKey;
-  }
-  const baseUrl = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
-  const keySource = process.env.CHECKR_KEY ? "CHECKR_KEY" : "CHECKR_API_KEY";
-  console.log(`Checkr POST ${baseUrl}${path} key=${apiKey.slice(0,8)}... (from ${keySource})`);
-  const res = await fetchWithTimeout(`${baseUrl}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    console.error(`Checkr ${path} failed: ${res.status} ${errBody}`);
-    throw new functions.https.HttpsError("internal", "Checkr request failed.");
-  }
-  return res.json();
-}
+// checkrPost / candidate+invitation creation live in checkrApi.ts — the ONE
+// place that talks to the Checkr REST API (shared with the SMS onboarding flow).
 
 // Official guide (p.17): check assessment first, then result. Use status only for suspension.
 function mapCheckrResult(payload: Record<string, any>): CheckrStatus {
@@ -147,7 +119,8 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     };
     if (workLocations.length) invitationBody.work_locations = workLocations;
 
-    await checkrPost("/invitations", invitationBody, `${uid}-invitation-${dateKey}`);
+    const invitation = await checkrPost("/invitations", invitationBody, `${uid}-invitation-${dateKey}`);
+    const invitationUrl: string | undefined = invitation?.invitation_url;
 
     await db.collection("caregivers").doc(uid).set({
       backgroundCheckData: {
@@ -159,11 +132,12 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
         submittedAt: new Date().toISOString(),
         status: "pending",
         invitationStatus: "sent",
+        ...(invitationUrl && { invitationUrl }),
         ...(mvrPaid && { mvrIncluded: true }),
       },
     }, { merge: true });
 
-    return { success: true, candidateId };
+    return { success: true, candidateId, invitationUrl };
   } catch (error: any) {
     if (error instanceof functions.https.HttpsError) throw error;
     console.error("Checkr initiate error:", error?.message, error?.code, JSON.stringify(error));
@@ -207,6 +181,58 @@ async function findCaregiverUidByCandidateId(candidateId: string): Promise<strin
     .get();
   if (snap.empty) return null;
   return snap.docs[0].id;
+}
+
+// Deliver a bad-news background-check notice (consider / suspended / disputed) to
+// the caregiver. These are compliance-adjacent and must reach the caregiver even
+// when no agent session exists yet — the legacy web-onboarded cohort never texted
+// Evia, so sendViaInteractionAgent (which returns early on a missing session doc)
+// would silently drop them. Session present → interaction agent (supervisor lint,
+// audit, immediate/canDrop:false flags). No session → sendToPhone, which creates
+// the chat, seeds the session, and enforces STOP opt-out itself. Any outcome that
+// is neither sent nor queued pages ops so the miss is never silent.
+async function sendBgcheckNoticeToCaregiver(
+  phone: string,
+  caregiverUid: string,
+  content: string,
+): Promise<void> {
+  const sessSnap = await db.collection("agent_sessions").doc(phone).get();
+  if (sessSnap.exists) {
+    const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+    await sendViaInteractionAgent(phone, {
+      content,
+      urgency:     "immediate",
+      sourceAgent: "checkr_status",
+      canDrop:     false,
+    });
+    return;
+  }
+  const { sendToPhone } = await import("./linq/client");
+  // sendToPhone RETHROWS chat-creation failures (the session-less path has no
+  // dead-letter, unlike existing-chat sends) — a throw is a miss too, and must
+  // page ops the same as a dropped outcome instead of dying in the branch's
+  // outer console.error catch.
+  let outcome: string;
+  try {
+    outcome = await sendToPhone(phone, content);
+  } catch (err) {
+    console.error("sendBgcheckNoticeToCaregiver sendToPhone error:", err instanceof Error ? err.message : err);
+    outcome = "send_error";
+  }
+  if (outcome !== "sent" && outcome !== "queued") {
+    // "skipped_opt_out" is a deliberate STOP; "dropped" is a circuit-open drop.
+    // Either way a human must follow up out-of-band — the caregiver got nothing.
+    await db.collection("admin_alerts").add({
+      type:        "bgcheck_notice_undelivered",
+      caregiverId: caregiverUid,
+      phone,
+      outcome,
+      preview:     content.slice(0, 120),
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+      severity:    "high",
+    });
+  }
 }
 
 /**
@@ -445,19 +471,60 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
 
     } else if (type === "invitation.created") {
       updates["backgroundCheckData.invitationStatus"] = "sent";
+      // Persist the canonical apply link so "send me the link" flows can resend
+      // the SAME invitation instead of minting a duplicate.
+      if (typeof payload.invitation_url === "string" && payload.invitation_url) {
+        updates["backgroundCheckData.invitationUrl"] = payload.invitation_url;
+      }
 
     } else if (type === "invitation.completed") {
       updates["backgroundCheckData.invitationStatus"] = "completed";
 
     } else if (type === "invitation.expired") {
       updates["backgroundCheckData.invitationStatus"] = "expired";
+      updates["backgroundCheckData.invitationUrl"] = admin.firestore.FieldValue.delete();
       notificationPayload = {
         title: "Verification link expired",
         body: "Your background check link expired after 7 days. Return to your dashboard to get a new link.",
       };
+      // The cached link is dead — drop it from the Evia session too so the next
+      // link request mints a fresh invitation instead of resending a dead URL,
+      // and proactively tell the caregiver how to get a new one.
+      try {
+        const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          await db.collection("agent_sessions").doc(cgPhone).update({
+            bgcheckInviteUrl: admin.firestore.FieldValue.delete(),
+          }).catch(() => {});
+          const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+          await sendViaInteractionAgent(cgPhone, {
+            content:
+              "Your background check link expired — no worries, it happens. " +
+              "Reply here and I'll text you a fresh one right away.",
+            urgency:     "standard",
+            sourceAgent: "checkr_status",
+            canDrop:     true,
+          });
+        }
+      } catch (err) {
+        console.error("invitation.expired cleanup error:", err);
+      }
 
     } else if (type === "invitation.deleted" || type === "invitation.cancelled") {
       updates["backgroundCheckData.invitationStatus"] = "canceled";
+      updates["backgroundCheckData.invitationUrl"] = admin.firestore.FieldValue.delete();
+      try {
+        const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          await db.collection("agent_sessions").doc(cgPhone).update({
+            bgcheckInviteUrl: admin.firestore.FieldValue.delete(),
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error("invitation cancel cleanup error:", err);
+      }
 
     } else if (type === "verification.created") {
       updates["backgroundCheckData.status"] = "pending";
@@ -518,8 +585,27 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           }
           const cgPhone = cgData?.phone as string | undefined;
           if (cgPhone) {
-            const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
-            await advanceOnboardingStep(cgPhone, "background_check", "");
+            // advanceOnboardingStep dedupes on processedWebhookTasks, so for a
+            // caregiver whose ORIGINAL check already advanced onboarding (renewal /
+            // re-run), it silently no-ops — and the "I'll text you the moment
+            // results come in" promise would go unfulfilled. Text them directly in
+            // that case instead of relying on the onboarding state machine.
+            const sessSnap = await db.collection("agent_sessions").doc(cgPhone).get();
+            const processedTasks: string[] = sessSnap.data()?.processedWebhookTasks ?? [];
+            if (processedTasks.includes("background_check")) {
+              const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+              await sendViaInteractionAgent(cgPhone, {
+                content:
+                  `🎉 Great news — your background check just cleared. ` +
+                  `You're approved on Evia and bookings are active again. Nothing else needed from you!`,
+                urgency:     "standard",
+                sourceAgent: "checkr_status",
+                canDrop:     false,
+              });
+            } else {
+              const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
+              await advanceOnboardingStep(cgPhone, "background_check", "");
+            }
             // Flag so any follow-up reply routes to qaAgent with BG-check context
             await db.collection("agent_sessions").doc(cgPhone).update({
               pendingBgCheckAck:      "clear",
@@ -584,16 +670,15 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           });
 
           if (cgData.phone) {
-            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
-            await sendViaInteractionAgent(cgData.phone, {
-              content:
-                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
-                `your background check is under review. This is normal and usually takes a few business days. ` +
-                `Our team will reach out if anything is needed. Hang tight.`,
-              urgency:     "standard",
-              sourceAgent: "checkr_status",
-              canDrop:     true,
-            });
+            // Compliance-adjacent: must always deliver (immediate bypasses the
+            // daily cap, canDrop:false skips wait-tool suppression, and the
+            // helper falls back to sendToPhone for session-less caregivers).
+            await sendBgcheckNoticeToCaregiver(cgData.phone, caregiverUid,
+              `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+              `your background check is under review. This is normal and usually takes a few business days. ` +
+              `Our team will reach out if anything is needed. Hang tight.`);
+            // Ack flag lands after the send so it also lands on a session the
+            // helper's sendToPhone fallback just created.
             await db.collection("agent_sessions").doc(cgData.phone).update({
               pendingBgCheckAck:      "review",
               pendingBgCheckAckSetAt: new Date().toISOString(),
@@ -618,23 +703,19 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
             name:        cgData.name ?? "",
             phone:       cgData.phone ?? "",
             status:      "suspended",
+            checkrReportId: payload.id ?? "",
             createdAt:   new Date().toISOString(),
             resolved:    false,
-            severity:    "medium",
+            severity:    "high",
           });
 
           if (cgData.phone) {
-            const { sendViaInteractionAgent } = await import("./agents/caraAgent");
-            await sendViaInteractionAgent(cgData.phone, {
-              content:
-                `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
-                `Checkr put your background check on hold while they gather more information. ` +
-                `Please check the email from Checkr and follow any instructions there. ` +
-                `Reach out if you need anything — we're here to help.`,
-              urgency:     "standard",
-              sourceAgent: "checkr_status",
-              canDrop:     true,
-            });
+            // Compliance-adjacent: must always deliver (see consider branch).
+            await sendBgcheckNoticeToCaregiver(cgData.phone, caregiverUid,
+              `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
+              `Checkr put your background check on hold while they gather more information. ` +
+              `Please check the email from Checkr and follow any instructions there. ` +
+              `Reach out if you need anything — we're here to help.`);
             await db.collection("agent_sessions").doc(cgData.phone).update({
               pendingBgCheckAck:      "suspended",
               pendingBgCheckAckSetAt: new Date().toISOString(),
@@ -663,6 +744,28 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
         title: "Background check under dispute",
         body: "Your background check result is being reviewed following your dispute. We'll update you when resolved.",
       };
+      try {
+        const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
+        const cgData = cgSnap.data() ?? {};
+        await db.collection("admin_alerts").add({
+          type:        "background_check_review",
+          caregiverId: caregiverUid,
+          name:        cgData.name ?? "",
+          phone:       cgData.phone ?? "",
+          status:      "disputed",
+          checkrReportId: payload.id ?? "",
+          createdAt:   new Date().toISOString(),
+          resolved:    false,
+          severity:    "high",
+        });
+        if (cgData.phone) {
+          // Compliance-adjacent: must always deliver (see consider branch).
+          await sendBgcheckNoticeToCaregiver(cgData.phone, caregiverUid,
+            "Your background check is being reviewed after the dispute. Our team is watching it and I'll text you as soon as there's an update. Nothing else needed from you right now.");
+        }
+      } catch (err) {
+        console.error("admin_alerts write error (disputed):", err);
+      }
 
     } else if (type === "report.pre_adverse_action") {
       updates["backgroundCheckData.status"] = "consider";

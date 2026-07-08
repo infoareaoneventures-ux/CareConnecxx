@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
+import { appLink } from "../config/appUrl";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { routeCaregiverMessage } from "./routeCaregiver";
 import { routeClientStateMachines } from "./routeClient";
@@ -116,6 +117,24 @@ function verifySignature(
 // not legitimate active conversations. A normal care/onboarding flow can
 // easily run 30+ messages in an hour. Linq's per-pair rate limit (28 msgs
 // per 60s in client.ts) handles outbound spam separately.
+// A users doc alone does NOT prove a finished account: createWebOnboardingSession
+// (index.ts) seeds users/{uid} at /start OTP time — seconds BEFORE the first
+// inbound text. Treating "doc exists" as "returning user" marked every fresh web
+// signup onboardingStep:"complete" and skipped onboarding entirely (2026-07-08
+// live bug: brand-new caregiver greeted "Good to hear from you again!", the
+// caregiver flow never started). Real progress = client finished intake
+// (seniorId/seniorIds are written only at the payment step) or a caregivers/{uid}
+// profile doc exists (created at the bg-check gate).
+export async function userHasRealOnboardingProgress(
+  userId: string,
+  userData: Record<string, unknown>,
+): Promise<boolean> {
+  const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+  if ((userData.seniorId as string | undefined) || seniorIds.length > 0) return true;
+  const cg = await db.collection("caregivers").doc(userId).get().catch(() => null);
+  return !!cg?.exists;
+}
+
 async function isRateLimited(phone: string): Promise<boolean> {
   const rateRef = db.collection("agent_rate").doc(phone);
   const snap    = await rateRef.get();
@@ -578,33 +597,34 @@ async function handleVisitFeedback(params: {
 // concurrently and clobber each other's session writes. Acquires a per-phone
 // lock (bounded wait), then delegates to handleInboundInner; releases in a
 // finally so every internal return path still frees the lock.
-export async function handleInbound(event: unknown): Promise<void> {
-  const phone = (event as any)?.data?.sender_handle?.handle as string | undefined;
-  // No phone → nothing to serialize on; inner will drop it.
-  if (!phone) return handleInboundInner(event);
-
-  // Wait briefly for an in-flight message from the same phone to finish. SMS
-  // bursts arrive within a few seconds, so a short window catches the common
-  // race.
+// Serialize a unit of work against all other inbound processing for the same
+// phone (messages AND reactions). SMS bursts + iMessage tapbacks arrive within a
+// few seconds, so a short retry window catches the common race. Shared by
+// handleInbound and the reaction.added dispatch so a 👍 and a "yes" text can't
+// run concurrently against the same awaiting_approval agent_task (double-book /
+// double-charge). Throws if the lock can't be acquired so the caller decides
+// whether to retry (message path → 500/retry) or drop (reaction → logged).
+export async function runSerializedByPhone(phone: string, fn: () => Promise<void>): Promise<void> {
   let acquired = false;
   for (let attempt = 0; attempt < 6; attempt++) {
     if (await claimInboundProcessing(phone, db)) { acquired = true; break; }
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!acquired) {
-    // Fail closed: proceeding without the lock would let two handlers for the
-    // same phone run concurrently and clobber each other's session writes — the
-    // exact race this lock exists to prevent. Throw so the webhook settles the
-    // event "failed" and Linq's at-least-once retry re-drives the turn once the
-    // (TTL-bounded) lock frees, rather than processing unserialized.
-    throw new Error(`handleInbound: per-phone lock unavailable after retries for ${phone}`);
+    throw new Error(`runSerializedByPhone: per-phone lock unavailable after retries for ${phone}`);
   }
-
   try {
-    await handleInboundInner(event);
+    await fn();
   } finally {
     await releaseInboundProcessing(phone, db);
   }
+}
+
+export async function handleInbound(event: unknown): Promise<void> {
+  const phone = (event as any)?.data?.sender_handle?.handle as string | undefined;
+  // No phone → nothing to serialize on; inner will drop it.
+  if (!phone) return handleInboundInner(event);
+  return runSerializedByPhone(phone, () => handleInboundInner(event));
 }
 
 // One LangSmith trace per inbound message ("turn"). Every nested LLM call
@@ -722,6 +742,10 @@ const handleInboundInner = traceable(
   if (sessionSnap.exists) {
     const stored = sessionSnap.data() as AgentSession & { chatId?: string };
     const update: Record<string, unknown> = { lastInboundAt: new Date().toISOString() };
+    // Remember the Linq message id so react_to_message can tapback this message.
+    // Tolerant field chain — same shapes the other event handlers accept.
+    const inboundMessageId = (ev.data?.id ?? ev.data?.message_id ?? ev.data?.message?.id) as string | undefined;
+    if (inboundMessageId) update.lastInboundMessageId = inboundMessageId;
     if (stored.chatId && stored.chatId !== chatId) {
       update.chatId  = chatId;
       update.service = service;
@@ -869,12 +893,15 @@ const handleInboundInner = traceable(
         ? (webRole === "caregiver" ? { name: webName } : { firstName: webName })
         : undefined;
 
-      // Returning user — phone already linked to an account. Skip re-onboarding;
-      // restore their account context and greet them as a known user. Without
-      // this, a returning user who re-verified on /start would be walked through
-      // onboarding from scratch.
+      // Returning user — phone already linked to an account WITH real onboarding
+      // progress. Skip re-onboarding; restore their account context and greet them
+      // as a known user. NOTE: mere users-doc existence is NOT enough —
+      // createWebOnboardingSession seeds users/{uid} moments before this inbound,
+      // so that check marked every fresh web signup "complete" and skipped
+      // onboarding (see userHasRealOnboardingProgress).
       const userQuery = await db.collection("users").where("phone", "==", phone).limit(1).get();
-      const isReturning = !userQuery.empty;
+      const isReturning = !userQuery.empty &&
+        await userHasRealOnboardingProgress(userQuery.docs[0].id, userQuery.docs[0].data());
 
       if (isReturning) {
         const userDoc   = userQuery.docs[0];
@@ -1297,7 +1324,7 @@ const handleInboundInner = traceable(
     if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
       await sendMessage(chatId,
         "Your Evia membership needs attention — there was an issue with your payment.\n\n" +
-        "To keep your care coordination active, please update your billing at https://careconnex-d4c8b.web.app/client/membership. Reply SUPPORT and I'll connect you with our team.",
+        `To keep your care coordination active, please update your billing at ${appLink("/client/membership")}. Reply SUPPORT and I'll connect you with our team.`,
         { preferredService: "SMS" } // billing/legal notice — force SMS, never iMessage
       );
       return;
@@ -1568,17 +1595,48 @@ const handleInboundInner = traceable(
       const userDoc   = userQuery.docs[0];
       const userData  = userDoc.data();
       const userId    = userDoc.id;
-      const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-      const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
-      await db.collection("agent_sessions").doc(phone).update({
-        userId,
-        seniorId,
-        onboardingStep: "complete",
-      });
-      // Reload the session so downstream code sees the updated fields
-      session.userId         = userId;
-      (session as any).seniorId      = seniorId;
-      session.onboardingStep = "complete";
+      if (await userHasRealOnboardingProgress(userId, userData)) {
+        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+        await db.collection("agent_sessions").doc(phone).update({
+          userId,
+          seniorId,
+          onboardingStep: "complete",
+        });
+        // Reload the session so downstream code sees the updated fields
+        session.userId         = userId;
+        (session as any).seniorId      = seniorId;
+        session.onboardingStep = "complete";
+      } else {
+        // Seeded-but-unfinished account: the users doc came from the /start OTP
+        // seed (createWebOnboardingSession) or a signup that never finished —
+        // NOT a completed account. Link the uid so downstream writes land on it,
+        // but do NOT mark complete: keep a mid-flow step where it is, otherwise
+        // route into the role's onboarding start (name-confirm when the web form
+        // captured a name — mirrors the web-onboarding bridge).
+        const role = (userData.userType as string | undefined) === "caregiver" ? "caregiver" : "client";
+        const seededName = ((role === "caregiver" ? userData.name : userData.firstName) as string | undefined)?.trim() || "";
+        const midFlow = !!session.onboardingStep && session.onboardingStep !== "complete";
+        const firstStep = midFlow
+          ? session.onboardingStep
+          : seededName
+            ? (role === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
+            : (role === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
+        const nameKey  = role === "caregiver" ? "name" : "firstName";
+        const mergedOnboardingData = seededName && !midFlow
+          ? { ...((session.onboardingData as Record<string, unknown> | undefined) ?? {}), [nameKey]: seededName }
+          : undefined;
+        await db.collection("agent_sessions").doc(phone).update({
+          userId,
+          userType:       role,
+          onboardingStep: firstStep,
+          ...(mergedOnboardingData ? { onboardingData: mergedOnboardingData } : {}),
+        });
+        session.userId         = userId;
+        session.userType       = role as AgentSession["userType"];
+        session.onboardingStep = firstStep;
+        if (mergedOnboardingData) (session as any).onboardingData = mergedOnboardingData;
+      }
     } else if (!session.onboardingStep) {
       // Genuinely stepless and no account — start onboarding from the beginning.
       await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "ask_role" });
@@ -1765,6 +1823,48 @@ const handleInboundInner = traceable(
       // (persistence net, cursor update, Zep push) must NEVER fall through to
       // handleOnboardingStep, which would send a second, stale-context reply
       // on top of the one the loop already sent.
+      // ── Pre-turn service-area gate (bug-audit §0.2) ─────────────────────────
+      // When the current step is the location step, evaluate the service area
+      // BEFORE the model turn. Otherwise the model freely composes "Great, San
+      // Francisco works — next question…" and sends it, and only the post-turn
+      // persistence-net gate below fires the decline — the caregiver sees a
+      // contradictory pair ("SF works" then "we're not in your area"). Gating
+      // first means the model never acknowledges an out-of-area location.
+      if ((step === "caregiver_ask_location" || step === "client_ask_location") && text.trim() !== "") {
+        const preData = (session.onboardingData ?? {}) as Record<string, unknown>;
+        const locAbsorbed: Record<string, unknown> = loopRole === "caregiver"
+          ? await absorbCaregiverFields(text, preData).catch(() => ({}))
+          : await absorbClientFields(text, preData).catch(() => ({}));
+        const gateCity = (locAbsorbed.city ?? preData.city) as string | undefined;
+        const gateZip  = (locAbsorbed.zipCode ?? preData.zipCode) as string | undefined;
+        if (gateCity || gateZip) {
+          const { evaluateServiceArea } = await import("../config/serviceArea");
+          const sa = evaluateServiceArea({ city: gateCity as string, zip: (gateZip as string) || (gateCity as string) });
+          if (sa === "out") {
+            const mergedData = { ...preData, ...locAbsorbed };
+            const { parkOutOfArea } = await import("../agents/serviceAreaGate");
+            await parkOutOfArea({
+              phone, role: loopRole,
+              city: (gateCity as string) ?? "", zipCode: (gateZip as string) ?? "",
+              name: ((mergedData.firstName ?? mergedData.name) as string) ?? "",
+              onboardingData: mergedData,
+            });
+            await sendMessage(chatId, "I'm so sorry — we're not in your area just yet. I've added you to our waitlist and I'll reach out the moment we expand there. 💙");
+            await pushOnboardingStepToZep(step);
+            return;
+          }
+          if (sa === "need_zip" && locAbsorbed.city && !gateZip) {
+            // Persist the city so the follow-up ZIP reply (same step) has context.
+            await db.collection("agent_sessions").doc(phone).set({ onboardingData: locAbsorbed }, { merge: true });
+            const { askForZipMessage } = await import("../agents/serviceAreaGate");
+            await sendMessage(chatId, askForZipMessage());
+            await pushOnboardingStepToZep(step);
+            return;
+          }
+          // sa === "in": fall through to the normal loop turn.
+        }
+      }
+
       let loopReplied = false;
       try {
         await runQaAgent({
@@ -1806,6 +1906,21 @@ const handleInboundInner = traceable(
           const absorbed: Record<string, unknown> = loopRole === "caregiver"
             ? await absorbCaregiverFields(text, curData).catch(() => ({}))
             : await absorbClientFields(text, curData).catch(() => ({}));
+          // Step-scoped bio capture (bug-audit §0.1): the caregiver absorber
+          // deliberately never guesses `bio` (any message could be misread, and a
+          // wrong bio is family-visible). But AT the caregiver_ask_bio step the
+          // user's message IS their bio answer. When the model acknowledges it
+          // ("lovely — next I'll send your photo step") but skips
+          // save_onboarding_field, bio stays missing, the cursor never reaches
+          // caregiver_send_photo, and the promised photo-upload link is never
+          // sent — signup dead-ends. Capture it here as the safety-net fallback
+          // (length + not-"skip" gated so a short ack isn't stored as a bio).
+          if (loopRole === "caregiver" && step === "caregiver_ask_bio" && !curData.bio) {
+            const bioText = text.trim();
+            if (bioText.length >= 20 && bioText.toLowerCase() !== "skip") {
+              absorbed.bio = bioText.slice(0, 1000);
+            }
+          }
           if (Object.keys(absorbed).length > 0) {
             await db.collection("agent_sessions").doc(phone)
               .set({ onboardingData: absorbed }, { merge: true });
@@ -1858,6 +1973,19 @@ const handleInboundInner = traceable(
         if (curStep === firstGateStep(loopRole)) {
           try {
             if (loopRole === "caregiver") {
+              // Collection just completed — create the uid-keyed caregivers doc
+              // NOW (status "onboarding": invisible to matching/FindCaregivers)
+              // so the webapp account carries the profile from this point on and
+              // every later mergeOnboardingData keeps it in sync. Previously the
+              // doc only appeared at bg-check success / the final Stripe step,
+              // so a caregiver who stalled mid-gates had an EMPTY webapp account.
+              // Non-fatal: the gate links must still go out if this fails.
+              const { ensureCaregiverDocForOnboarding } = await import("../agents/onboardingConversation");
+              const ensuredId = await ensureCaregiverDocForOnboarding(phone).catch((err) => {
+                console.error("webhooks: caregiver doc pre-create at gate failed", err);
+                return null;
+              });
+              if (ensuredId) (after as Record<string, unknown>).caregiverId = ensuredId;
               await handleOnboardingStep(phone, chatId, "__RESUME__", {
                 ...(after as unknown as AgentSession),
                 onboardingStep: curStep,
@@ -2521,7 +2649,16 @@ export const linqWebhook = functions
     const event = req.body;
     // Linq v3 envelope uses event_type; fall back to X-Webhook-Event header for safety
     const eventType: string = event.event_type ?? (req.headers["x-webhook-event"] as string) ?? "";
-    const eventId: string | undefined = event.event_id ?? event.id;
+    // Dedup key: prefer the explicit event id, then the message id (redeliveries
+    // usually carry a stable message_id even when event_id is absent), then — so
+    // dedup is NEVER silently skipped — a synthetic key hashed from the signed
+    // timestamp + raw body. Without this last fallback, an id-less redelivery
+    // re-drives the whole turn (duplicate reply + duplicate side effects).
+    const eventId: string =
+      event.event_id ??
+      event.id ??
+      event.data?.message_id ??
+      `syn_${crypto.createHash("sha256").update(`${timestamp}:`).update(rawBody).digest("hex").slice(0, 32)}`;
 
     // message.received uses claim-BEFORE-process / settle-AFTER semantics: a
     // handler throw settles "failed" (deletes the claim) so Linq's at-least-once
@@ -2576,11 +2713,18 @@ export const linqWebhook = functions
       }).catch(() => {/* non-critical */});
       break;
 
-    case "reaction.added":
-      await handleReactionAdded(event as any).catch((err) =>
-        console.error("linqWebhook handleReactionAdded:", err)
-      );
+    case "reaction.added": {
+      // Serialize against message processing for the same phone — a 👍 and a
+      // "yes" text arriving together must not both execute the pending booking/
+      // approval (double-charge). On lock contention the reaction is dropped
+      // (logged), not retried: the user's text reply still confirms, and the
+      // awaiting_approval status check makes a redelivered reaction a no-op.
+      const rPhone = (event as any).data?.sender_handle?.handle as string | undefined;
+      const runReaction = () => handleReactionAdded(event as any);
+      await (rPhone ? runSerializedByPhone(rPhone, runReaction) : runReaction())
+        .catch((err) => console.error("linqWebhook handleReactionAdded:", err));
       break;
+    }
 
     case "chat.typing_indicator.started":
       await handleTypingStarted(event).catch((err) =>

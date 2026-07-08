@@ -77,8 +77,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_refund_requests:      ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
+  retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
+  update_booking_payment_method: ["billing", "booking"], // parity 2026-07-06: agent mirror of v1-updateBookingPaymentMethod
   request_instant_payout:   ["billing"],
-  request_standard_payout:  ["billing"],
   respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
   get_caregiver_earnings:   ["billing"],
@@ -219,6 +220,10 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // low-risk; keep them always-available rather than guessing an intent.
   "send_referral",
   "get_referral_status",
+  // Outbound iMessage tapback (Linq reactions, 2026-07): an expressive,
+  // intent-orthogonal nicety — Evia may want to heart a photo or thumbs-up a
+  // confirmation under ANY intent, so it must never be filtered out.
+  "react_to_message",
 ]);
 
 // Intent → required capabilities. An empty array means "no filter — bind
@@ -321,7 +326,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
   // money
   "cancel_subscription", "reactivate_subscription", "create_refund_request",
-  "request_instant_payout",
+  "request_instant_payout", "retry_shift_payment", "update_booking_payment_method",
   // people & safety
   "add_family_member", "remove_family_member", "block_user", "unblock_user", "report_user",
   // care data

@@ -84,3 +84,45 @@ export function shouldFallbackAgentToGemini(env: EnvLike = process.env): boolean
 export function resolveGeminiAgentModel(env: EnvLike = process.env): string {
   return clean(env.CARA_AGENT_GEMINI_MODEL) ?? "gemini-2.5-flash";
 }
+
+// ── Token cost estimation (ch9 layered-termination cost budget) ────────────────
+// USD per 1M tokens, matched by model-name PREFIX so versioned/dated model ids
+// still resolve. This backs the per-turn cost ceiling in the agent loop, NOT
+// billing — so the numbers are deliberately CONSERVATIVE (rounded up). An
+// over-estimate makes the loop stop a little sooner, which is the safe direction
+// for a spend guard. Longest-prefix wins. Unknown models fall to DEFAULT_PRICING
+// (priced as a frontier model so an unrecognized id never reads as "free").
+interface ModelPrice { inputPerMTok: number; outputPerMTok: number }
+
+const DEFAULT_PRICING: ModelPrice = { inputPerMTok: 5, outputPerMTok: 15 };
+
+const MODEL_PRICING_USD_PER_MTOK: Array<[prefix: string, price: ModelPrice]> = [
+  // OpenAI (GPT-5.4 family pricing not public at build time — priced at/above
+  // the gpt-4o tier so the ceiling never under-counts).
+  ["gpt-5.4-nano", { inputPerMTok: 0.5,  outputPerMTok: 2 }],
+  ["gpt-5.4-mini", { inputPerMTok: 1,    outputPerMTok: 4 }],
+  ["gpt-5.5",      { inputPerMTok: 6,    outputPerMTok: 18 }],
+  ["gpt-5.4",      { inputPerMTok: 3,    outputPerMTok: 12 }],
+  ["gpt-4o-mini",  { inputPerMTok: 0.6,  outputPerMTok: 2.4 }],
+  ["gpt-4o",       { inputPerMTok: 5,    outputPerMTok: 15 }],
+  // Anthropic
+  ["claude-sonnet", { inputPerMTok: 3,   outputPerMTok: 15 }],
+  ["claude-haiku",  { inputPerMTok: 1,   outputPerMTok: 5 }],
+  ["claude-opus",   { inputPerMTok: 15,  outputPerMTok: 75 }],
+  // Gemini
+  ["gemini-2.5-pro",   { inputPerMTok: 2.5, outputPerMTok: 15 }],
+  ["gemini-2.5-flash", { inputPerMTok: 0.3, outputPerMTok: 2.5 }],
+];
+
+export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const m = (model ?? "").toLowerCase();
+  let price = DEFAULT_PRICING;
+  let bestLen = -1;
+  for (const [prefix, p] of MODEL_PRICING_USD_PER_MTOK) {
+    if (m.startsWith(prefix) && prefix.length > bestLen) {
+      price = p;
+      bestLen = prefix.length;
+    }
+  }
+  return (inputTokens / 1_000_000) * price.inputPerMTok + (outputTokens / 1_000_000) * price.outputPerMTok;
+}

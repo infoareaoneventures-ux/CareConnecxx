@@ -15,6 +15,7 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
+import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 
@@ -28,7 +29,8 @@ import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 // MCP tool AND high-risk — otherwise it never receives a _confirmedActionId and
 // this guard is dead code. That guard caught the original mis-wiring: payouts
 // and submit_shift_hours are NOT confirmation-gated (they carry their own
-// idempotency — Stripe keys, appointmentId dedup), so keying them here did
+// idempotency — payoutCommon.executeInstantPayout's replay window + doc-keyed
+// Stripe idempotency key, appointmentId dedup), so keying them here did
 // nothing. The genuine confirmed-and-irreversible action is the real-world web
 // submit (pharmacy refill / appointment commit), where a double-fire hits a
 // third party. This ledger is defense-in-depth layered over claimPendingAction's
@@ -542,6 +544,27 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "react_to_message",
+    description:
+      "Add an iMessage tapback reaction to the user's most recent message — silent, no text is sent. " +
+      "Use it the way a person would: heart a photo of their loved one, thumbs-up a quick confirmation, laugh at a joke. " +
+      "After reacting, only send a text reply if one is genuinely needed — a reaction alone is often the whole answer. " +
+      "Works on iMessage only; on SMS/RCS this tool tells you to express the sentiment in your text reply instead. " +
+      "Session context (phone) is injected automatically — the tool targets the user's last message by itself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["love", "like", "dislike", "laugh", "emphasize", "question", "custom"],
+          description: "Tapback type: love (❤️), like (👍), dislike (👎), laugh (haha), emphasize (!!), question (?), or 'custom' for any other emoji.",
+        },
+        customEmoji: { type: "string", description: "Required when type is 'custom' — a single emoji character (e.g. '🎉')." },
+      },
+      required: ["type"],
+    },
+  },
+  {
     name: "get_recurring_schedule",
     description: "Get the active recurring care schedule for a client — days of the week, times, caregiver, and status.",
     input_schema: {
@@ -665,7 +688,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_job_post",
     description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string", description: "'card' (charged through the platform) or an offline method paid directly to the caregiver: 'cash', 'venmo', 'zelle'" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
   },
   {
     name: "list_proactive_drafts",
@@ -1269,8 +1292,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "request_instant_payout",
     description:
-      "Request an instant payout of your earned balance. A 1.5% processing fee applies. " +
-      "If no amount specified, requests full available balance.",
+      "Request an instant payout of the caregiver's instantly-available balance — free, arrives within ~30 minutes. " +
+      "If no amount specified, pays out the full instantly-available balance. Regular earnings need no request: " +
+      "Stripe pays the balance out automatically every day (arrives ~2 business days after each shift payment).",
     input_schema: {
       type: "object",
       properties: {
@@ -1426,20 +1450,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "request_standard_payout",
-    description:
-      "Request a standard (free, 1-2 business day) payout of your earned balance via Stripe. " +
-      "Unlike an instant payout there is no processing fee. If no amount is specified, requests the full available balance.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string",  description: "Your caregiver document ID" },
-        amountCents: { type: "integer", description: "Amount in cents (optional — omit for full balance)" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
     name: "create_caregiver_referral",
     description:
       "Invite a referred caregiver by SMS. Writes a non-bookable referral record, sends the application link, " +
@@ -1565,14 +1575,12 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_care_plan_history",
     description:
-      "Get the revision history of a senior's care plan — who changed what and when. Returns up to 10 versions.",
+      "Get the revision history of the client's care plan — who changed what and when. Returns up to 10 versions.",
     input_schema: {
       type: "object",
       properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        limit:    { type: "number", description: "Number of versions to return (default 5, max 10)" },
+        limit: { type: "number", description: "Number of versions to return (default 5, max 10)" },
       },
-      required: ["seniorId"],
     },
   },
   {
@@ -1582,11 +1590,10 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        seniorId:  { type: "string", description: "The senior's profile document ID" },
-        versionId: { type: "string", description: "The carePlanVersions document ID to restore" },
-        clientId:  { type: "string", description: "The client's user ID (ownership check)" },
+        versionId: { type: "string", description: "The care-plan version document ID to restore (from get_care_plan_history)" },
+        clientId:  { type: "string", description: "The client's user ID (auto-injected from session)" },
       },
-      required: ["seniorId", "versionId", "clientId"],
+      required: ["versionId"],
     },
   },
   {
@@ -1604,7 +1611,7 @@ export const MCP_TOOLS: McpTool[] = [
         startDate:    { type: "string", description: "New start date YYYY-MM-DD" },
         daysOfWeek:   { type: "array", items: { type: "string" }, description: "New days array" },
         timeOfDay:    { type: "array", items: { type: "string" }, description: "New time-of-day array" },
-        paymentMethod:{ type: "string", enum: ["card","cash"], description: "New payment method" },
+        paymentMethod:{ type: "string", enum: ["card","cash","venmo","zelle"], description: "New payment method — card is charged through the platform; cash/Venmo/Zelle are paid directly to the caregiver" },
       },
       required: ["jobId", "clientId"],
     },
@@ -1847,13 +1854,51 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "retry_shift_payment",
+    description:
+      "Retry a failed visit payment. Use when the family says a payment failed and asks to run it again — " +
+      "typically after they've fixed their card (get_payment_update_link). Only works on a shift whose " +
+      "payment is currently in the failed state; re-charges the amount already owed for that visit. " +
+      "Use get_shifts first if you don't know which visit's payment failed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string", description: "The appointment/shift ID whose payment failed" },
+        clientId:      { type: "string", description: "The client's user ID (ownership check)" },
+      },
+      required: ["appointmentId", "clientId"],
+    },
+  },
+  {
+    name: "update_booking_payment_method",
+    description:
+      "Switch how an upcoming confirmed booking is paid: credit (charged through Stripe) or an offline " +
+      "method the family pays the caregiver directly (cash, venmo, zelle). Only allowed before the " +
+      "booking starts. Confirm the new method with the family before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string", description: "The appointment ID of the confirmed, not-yet-started booking" },
+        clientId:      { type: "string", description: "The client's user ID (ownership check)" },
+        paymentMethod: {
+          type: "string",
+          enum: ["credit", "cash", "venmo", "zelle"],
+          description: "The new payment method",
+        },
+      },
+      required: ["appointmentId", "clientId", "paymentMethod"],
+    },
+  },
+  {
     name: "send_onboarding_link",
     description:
       "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
       "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, document " +
       "upload, background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
       "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
-      "link you can send with this tool. Pick the linkType that matches what they asked for.",
+      "link you can send with this tool. Pick the linkType that matches what they asked for. NEVER tell the user " +
+      "a link is coming or being pulled up without calling this tool in the same turn — narrating a link does not " +
+      "send anything.",
     input_schema: {
       type: "object",
       properties: {
@@ -2344,14 +2389,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "confirm_cash_received",
     description:
-      "Caregiver confirms they received a cash payment for an approved shift. Marks the shift-hours record paid " +
-      "(cash). Only works for cash-payment shifts whose hours are already approved. Confirm the shift with the " +
-      "caregiver before calling.",
+      "Caregiver confirms they received an offline payment (cash, Venmo, or Zelle) for an approved shift. Marks the " +
+      "shift-hours record paid. Only works for offline-payment shifts whose hours are already approved. Confirm the " +
+      "shift with the caregiver before calling.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
-        appointmentId: { type: "string", description: "The appointment/shiftHours document ID the cash was for" },
+        appointmentId: { type: "string", description: "The appointment/shiftHours document ID the payment was for" },
       },
       required: ["caregiverId", "appointmentId"],
     },
@@ -2412,7 +2457,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_shift_task",
   "submit_media_update",
   "respond_to_shift_hour_correction",
-  "request_standard_payout",
   "create_caregiver_referral",
   // Missing CRUD tools — reads + in-place updates
   "get_support_tickets",
@@ -2427,6 +2471,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "confirm_cash_received",
   // Unified work-in-progress view (agentic-reliability wave 2026-07)
   "get_work_in_progress",
+  // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
+  "react_to_message",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -2464,7 +2510,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "update_shift_task",
   "submit_media_update",
   "respond_to_shift_hour_correction",
-  "request_standard_payout",
   "create_caregiver_referral",
   "get_shifts",
   "get_caregiver_availability",
@@ -2768,7 +2813,12 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
-  "get_caregiver_reviews", "find_replacement_caregivers", "list_saved_caregivers",
+  // find_replacement_caregivers was WRONGLY on this list (double-send audit
+  // 2026-07-06): it texts the family (match gallery / status), writes
+  // interview_requests + agent_sessions + admin_alerts, and resolves
+  // commitments — a shadow run was sending real SMS. It is mutating; it must
+  // be synthesized under shadow like every other side-effecting tool.
+  "get_caregiver_reviews", "list_saved_caregivers",
   "get_recurring_schedule", "list_user_reminders",
   "get_billing_summary", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
@@ -3130,18 +3180,71 @@ async function executeToolCall(
         if (needsOk)  matchIntake.careNeeds          = needs;
         if (availOk)  matchIntake.availabilityWindow = availabilityWindow;
         if (radiusOk) matchIntake.radiusMiles        = radiusMiles;
-        await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
+        // ONE VOICE: this runs the search synchronously. suppressConversationalSends
+        // keeps matching from texting its own status/closer lines — the agent turn
+        // that called us is about to speak, and the family must hear one voice, not
+        // a canned tool message AND an agent reply back-to-back (double-send bug,
+        // founder screenshot 2026-07-06). On a match the tool still delivers the
+        // intro + photo gallery (artifacts only it can send); the tool result below
+        // tells the agent exactly what the family has already seen and what its one
+        // reply should be.
+        const matchOutcome = await runMatchingForClient(
+          phone as string, chatId as string, matchIntake, clientProfile,
+          { suppressConversationalSends: true },
+        );
+        // Report only the filters that actually passed validation and were
+        // applied — not the raw input (a malformed nearZip is reported as null).
+        const filtersApplied = {
+          needs:              needsOk  ? (needs as string) : null,
+          nearZip:            zipOk    ? (nearZip as string) : null,
+          availabilityWindow: availOk  ? (availabilityWindow as string) : null,
+          radiusMiles:        radiusOk ? (radiusMiles as number) : null,
+        };
+        if (matchOutcome === "matched") {
+          // Names the family was just shown — freshly written to the session by
+          // runMatchingForClient. Given to the agent for follow-up context only.
+          const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
+          const presented = ((freshSess.data()?.pendingMatches ?? []) as Array<{ name?: string; rate?: number }>)
+            .map((m) => ({ name: m.name ?? "Caregiver", hourlyRate: m.rate ?? null }));
+          return {
+            success: true,
+            outcome: "matched",
+            // sent:true = self-delivering tool (same contract as send_onboarding_link):
+            // the intro line + per-caregiver photo gallery already went to this chat.
+            sent: true,
+            matchesPresented: presented,
+            instruction:
+              "The family has ALREADY been texted an intro line plus each caregiver's photo, rate, and " +
+              "numbered profile link — those messages land BEFORE your reply. Do NOT repeat the names, " +
+              "rates, or links, and do NOT say 'I found N caregivers' again. Your entire reply must be " +
+              "ONE short closing line asking which caregiver they'd like to meet (reply with a name or number).",
+            filtersApplied,
+          };
+        }
+        if (matchOutcome === "no_match") {
+          return {
+            success: true,
+            outcome: "no_match",
+            matchesFound: 0,
+            teamAlerted: true,
+            instruction:
+              "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
+              "only message they get. In ONE short warm message: be honest that you haven't found the right " +
+              "match yet, that you're still actively searching, and that the team has been alerted and will " +
+              "personally reach out. Do not invent caregiver names and do not promise a specific timeline.",
+            filtersApplied,
+          };
+        }
         return {
-          success: true,
-          triggered: true,
-          // Report only the filters that actually passed validation and were
-          // applied — not the raw input (a malformed nearZip is reported as null).
-          filtersApplied: {
-            needs:              needsOk  ? (needs as string) : null,
-            nearZip:            zipOk    ? (nearZip as string) : null,
-            availabilityWindow: availOk  ? (availabilityWindow as string) : null,
-            radiusMiles:        radiusOk ? (radiusMiles as number) : null,
-          },
+          success: false,
+          outcome: "failed",
+          followUpTracked: true,
+          instruction:
+            "The search hit a technical snag; a retry is already scheduled and the care team was alerted. " +
+            "NOTHING has been texted to the family — in ONE short message tell them you're pulling up " +
+            "matches and will text names as soon as they come through. Stay warm and calm; never sound " +
+            "broken or blame technology.",
+          filtersApplied,
         };
       }
 
@@ -3208,8 +3311,20 @@ async function executeToolCall(
         });
         if (!taskId) {
           // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
-          // and has already messaged the family. Surface that to the agent.
-          return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
+          // and has already messaged the family. Tell the agent explicitly so it
+          // doesn't re-explain the block in its own words — the family must not
+          // get two back-to-back messages saying the same thing (ONE VOICE).
+          return {
+            success: false,
+            blocked: true,
+            reason: "booking_blocked_pending_background_check",
+            sent: true,
+            instruction:
+              "The family has ALREADY been texted a full explanation (background check still in progress, " +
+              "they'll be notified the moment it clears, plus an offer to find another caregiver meanwhile). " +
+              "Do NOT repeat or rephrase any of that. Reply with nothing beyond what genuinely adds — at " +
+              "most one short line answering whatever else they asked, or nothing new at all.",
+          };
         }
         logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
         return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
@@ -3222,6 +3337,25 @@ async function executeToolCall(
         // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
         const { clientId, note, location } = input;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        // Idempotency: a model retry / double-call must not spawn duplicate active
+        // alerts (which double-pages ops). If this client already has an active
+        // alert raised in the last 2 minutes, return it instead of raising another
+        // — a genuine emergency that recent is already covered by the active one.
+        // Single-equality query (no composite index) so the emergency path can't
+        // fail on a missing index; per-client alert count is tiny.
+        const recentAlerts = await db.collection("emergency_alerts")
+          .where("initiatorId", "==", clientId)
+          .limit(50)
+          .get();
+        const twoMinAgoMs = Date.now() - 2 * 60 * 1000;
+        const activeRecent = recentAlerts.docs.find((d) => {
+          const data = d.data();
+          const ts = Date.parse((data.timestamp as string) ?? "");
+          return data.status === "active" && !isNaN(ts) && ts >= twoMinAgoMs;
+        });
+        if (activeRecent) {
+          return { success: true, alertId: activeRecent.id, status: "active", advise911: true, deduped: true };
+        }
         const alertRef = await db.collection("emergency_alerts").add({
           initiatorId:     clientId,
           initiatorType:   "client",
@@ -3541,6 +3675,65 @@ async function executeToolCall(
           success: true,
           nativePromptSent: true,
           message: "Sent the native location prompt. The user's shared location will arrive as a separate message.",
+        };
+      }
+
+      case "react_to_message": {
+        const { phone, type, customEmoji } = input;
+        if (!phone || !type) return toolError("INVALID_INPUT", "phone and type are required");
+        const VALID_REACTIONS = new Set(["love", "like", "dislike", "laugh", "emphasize", "question", "custom"]);
+        if (!VALID_REACTIONS.has(type as string)) {
+          return toolError("INVALID_INPUT", `type must be one of: ${[...VALID_REACTIONS].join(", ")}`);
+        }
+        if (type === "custom" && !customEmoji) {
+          return toolError("INVALID_INPUT", "customEmoji is required when type is 'custom'");
+        }
+        const sessionSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const session = sessionSnap.data() as
+          | { service?: string; chatId?: string; lastInboundMessageId?: string }
+          | undefined;
+        const textFallback = (why: string) => ({
+          success:  true,
+          reacted:  false,
+          fallback: "express_in_text",
+          message:  `${why} — express the sentiment briefly in your text reply instead.`,
+        });
+        // Reactions are an iMessage feature; SMS/RCS can't render a tapback.
+        if (session?.service !== "iMessage") {
+          return textFallback("Reactions aren't supported on this chat (iMessage only)");
+        }
+        const targetMessageId = session?.lastInboundMessageId;
+        if (!targetMessageId) {
+          return textFallback("No recent message on file to react to");
+        }
+        const { addReaction } = await import("../linq/client");
+        try {
+          await addReaction({
+            messageId:   targetMessageId,
+            type:        type as import("../linq/client").LinqReactionType,
+            customEmoji: customEmoji as string | undefined,
+          });
+        } catch (err) {
+          // A reaction is a nicety — soft-fall back to text rather than surfacing
+          // a tool error that would trip the recovery loop.
+          console.warn("react_to_message: addReaction failed", {
+            phone, targetMessageId, err: err instanceof Error ? err.message : String(err),
+          });
+          return textFallback("Couldn't add the reaction");
+        }
+        await db.collection("agent_reactions").add({
+          chatId:    session?.chatId ?? null,
+          messageId: targetMessageId,
+          reaction:  type === "custom" ? (customEmoji as string) : (type as string),
+          phone,
+          direction: "outbound",
+          operation: "added",
+          reactedAt: new Date().toISOString(),
+        }).catch(() => {/* audit only */});
+        return {
+          success: true,
+          reacted: true,
+          message: "Reaction added to the user's message. Only send a text reply if one is genuinely needed — the reaction may be the whole answer.",
         };
       }
 
@@ -4717,21 +4910,30 @@ async function executeToolCall(
     if (name === "request_instant_payout") {
       const { caregiverId, amountCents } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap3 = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap3.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg3 = cgSnap3.data()!;
-      if (!cg3.stripeAccountId) return toolError("INVALID_INPUT", "Stripe account not set up — complete onboarding first");
-      if (!cg3.payoutsEnabled)  return toolError("INVALID_INPUT", "Payouts are not yet enabled on your account");
-      const { getStripeClient } = await import("../stripe");
-      const sc = getStripeClient();
-      const balance = await sc.balance.retrieve({ stripeAccount: cg3.stripeAccountId as string });
-      const availableCents = balance.available[0]?.amount ?? 0;
-      if (availableCents <= 0) return toolError("INVALID_INPUT", "No available balance to pay out");
-      const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
-      if (payoutCents > availableCents) return toolError("INVALID_INPUT", `Requested $${(payoutCents/100).toFixed(2)} exceeds available balance of $${(availableCents/100).toFixed(2)}`);
-      await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "instant" }, { stripeAccount: cg3.stripeAccountId as string });
-      logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", amountCents: payoutCents } }).catch(() => {});
-      return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, estimatedArrival: "within minutes" };
+      // Single payout implementation shared with the app callable and the SMS
+      // PAYOUT flow — eligibility, replay guard, Stripe idempotency key, and
+      // the caregivers/{id}/payouts record all live there.
+      const { executeInstantPayout, InstantPayoutError } = await import("../payoutCommon");
+      try {
+        const result = await executeInstantPayout({
+          caregiverId: caregiverId as string,
+          requestedCents: amountCents != null ? Number(amountCents) : null,
+          source: "mcp",
+        });
+        logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", amountCents: result.amountCents, stripePayoutId: result.stripePayoutId } }).catch(() => {});
+        return {
+          success: true,
+          amountCents: result.amountCents,
+          amountDollars: `$${(result.amountCents / 100).toFixed(2)}`,
+          fee: 0,
+          estimatedArrival: "within ~30 minutes",
+        };
+      } catch (err) {
+        if (err instanceof InstantPayoutError) {
+          return toolError(err.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT", err.message);
+        }
+        throw err;
+      }
     }
 
     if (name === "submit_shift_hours") {
@@ -4764,7 +4966,7 @@ async function executeToolCall(
         amountCents: amountCents3,
         // Charge-engine fields (processShiftPayment reads grossPay/paymentMethod/currency)
         basePay: grossPay3, grossPay: grossPay3, currency: "usd",
-        paymentMethod: String(appt3.paymentMethod ?? "").toLowerCase().trim() === "cash" ? "cash" : "credit",
+        paymentMethod: normalizePaymentMethod(appt3.paymentMethod),
         status: "pending_client_review", submittedAt: nowIso,
         autoApproveAt: autoApproveAtIso(),
         paymentAttemptCount: 0,
@@ -5047,28 +5249,10 @@ async function executeToolCall(
       });
     }
 
-    // ── request_standard_payout (U2 — must not bypass Stripe/eligibility) ────────
-    if (name === "request_standard_payout") {
-      const { caregiverId, amountCents } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg = cgSnap.data()!;
-      // Same eligibility gate as request_instant_payout — Stripe Connect required.
-      if (!cg.stripeAccountId) return toolError("INVALID_INPUT", "Stripe account not set up — complete onboarding first");
-      if (!cg.payoutsEnabled)  return toolError("INVALID_INPUT", "Payouts are not yet enabled on your account");
-      const { getStripeClient } = await import("../stripe");
-      const sc = getStripeClient();
-      const balance = await sc.balance.retrieve({ stripeAccount: cg.stripeAccountId as string });
-      const availableCents = balance.available[0]?.amount ?? 0;
-      if (availableCents <= 0) return toolError("INVALID_INPUT", "No available balance to pay out");
-      const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
-      if (payoutCents > availableCents) return toolError("INVALID_INPUT", `Requested $${(payoutCents/100).toFixed(2)} exceeds available balance of $${(availableCents/100).toFixed(2)}`);
-      // Standard (free) payout — NOT instant. No processing fee.
-      await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "standard" }, { stripeAccount: cg.stripeAccountId as string });
-      logAudit({ eventType: "standard_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_standard_payout", amountCents: payoutCents } }).catch(() => {});
-      return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, method: "standard", estimatedArrival: "1–2 business days" };
-    }
+    // request_standard_payout was removed 2026-07-06: Stripe rejects manual
+    // standard payouts on the automatic daily schedule our Connect accounts
+    // use, and the daily auto-sweep already delivers earnings for free.
+    // Instant payout (above) remains the only on-demand payout.
 
     if (name === "create_caregiver_referral") {
       return runActionNativeMcpWrite(name, input, async () => {
@@ -5913,6 +6097,79 @@ async function executeToolCall(
       return { success: true, url: session.url, expiresIn: "5 minutes" };
     }
 
+    // ── retry_shift_payment ─────────────────────────────────────────────────
+    // Agent mirror of the v1-retryShiftPayment callable (shiftHours.ts): reset a
+    // payment_failed shift to 'approved' so the onShiftHoursApproved trigger
+    // re-charges. Naturally idempotent — a replay finds status !== payment_failed
+    // and refuses instead of double-charging.
+    if (name === "retry_shift_payment") {
+      const { appointmentId, clientId } = input as Record<string, unknown>;
+      if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
+
+      const ref  = db.collection("shiftHours").doc(appointmentId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "No shift record found for that appointment.");
+      const shift = snap.data()!;
+      if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit doesn't belong to this family.");
+      if (shift.status !== "payment_failed") {
+        return toolError(
+          "INVALID_INPUT",
+          `This visit's payment is not in a failed state (current status: ${shift.status}). ` +
+          "Nothing to retry — if they think a payment is wrong, check get_shifts / get_invoice_history.",
+        );
+      }
+
+      await ref.update({ status: "approved", retryCount: (shift.retryCount ?? 0) + 1 });
+      logAudit({ eventType: "shift_payment_retried", userId: clientId as string, data: { source: "mcp:retry_shift_payment", appointmentId, retryCount: (shift.retryCount ?? 0) + 1 } }).catch(() => {});
+      return {
+        success: true,
+        appointmentId,
+        guidance:
+          "The payment is being retried now. Tell the family you've re-run it and you'll let them know if it " +
+          "fails again — do NOT promise it succeeded; the charge happens asynchronously. If it fails again, " +
+          "send get_payment_update_link so they can fix their card.",
+      };
+    }
+
+    // ── update_booking_payment_method ───────────────────────────────────────
+    // Agent mirror of the v1-updateBookingPaymentMethod callable
+    // (paymentMethods.ts): same guards — owner only, confirmed status, not yet
+    // started — so the two paths can never diverge on what's allowed.
+    if (name === "update_booking_payment_method") {
+      const { appointmentId, clientId, paymentMethod } = input as Record<string, unknown>;
+      const { OFFLINE_PAYMENT_METHODS } = await import("../billing/paymentMethods");
+      const validMethods = ["credit", ...OFFLINE_PAYMENT_METHODS];
+      if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
+      if (!validMethods.includes(paymentMethod as string)) {
+        return toolError("INVALID_INPUT", `paymentMethod must be one of: ${validMethods.join(", ")}`);
+      }
+
+      const ref  = db.collection("appointments").doc(appointmentId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Appointment not found.");
+      const appt = snap.data()!;
+      if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This booking doesn't belong to this family.");
+      if (appt.status !== "confirmed") {
+        return toolError("INVALID_INPUT", "Payment method can only be changed on a confirmed booking that hasn't started.");
+      }
+      const startIso = appt.isoDate || appt.date;
+      if (startIso && new Date(startIso).getTime() <= Date.now()) {
+        return toolError("INVALID_INPUT", "That booking has already started — the payment method can't be changed now.");
+      }
+
+      await ref.update({ paymentMethod, updatedAt: nowIso });
+      logAudit({ eventType: "booking_payment_method_updated", userId: clientId as string, data: { source: "mcp:update_booking_payment_method", appointmentId, paymentMethod } }).catch(() => {});
+      const offline = paymentMethod !== "credit";
+      return {
+        success: true,
+        appointmentId,
+        paymentMethod,
+        guidance: offline
+          ? `Confirm the switch to the family and remind them they'll pay the caregiver directly by ${paymentMethod}; the caregiver confirms receipt after the visit.`
+          : "Confirm the switch to the family — this visit will be charged to their card on file.",
+      };
+    }
+
     // ── send_onboarding_link ────────────────────────────────────────────────
     if (name === "send_onboarding_link") {
       const { linkType, phone } = input as Record<string, unknown>;
@@ -5958,11 +6215,30 @@ async function executeToolCall(
       if (!isAllowedField(role, fieldName)) {
         return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
       }
-      if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
+      if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
         return toolError("INVALID_INPUT", "fieldValue is required");
       }
+      let onboardingDataPatch: Record<string, unknown> = { [fieldName]: fieldValue };
+      if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
+        try {
+          const { quickComplete } = await import("../utils/openaiClient");
+          const raw = await quickComplete(
+            "Classify whether this caregiver is explicitly choosing to skip writing a public profile bio. Reply exactly SKIP or BIO. SKIP only for clear skip/no bio/not now intent. Otherwise BIO.",
+            fieldValue,
+            { maxTokens: 5 },
+          );
+          if (raw.trim().toUpperCase() === "SKIP") {
+            onboardingDataPatch = { bio: "", bioSkipped: true };
+          } else {
+            onboardingDataPatch = { bio: fieldValue.trim(), bioSkipped: false };
+          }
+        } catch (err) {
+          console.error("save_onboarding_field bio skip classification error:", err);
+          return toolError("UNAVAILABLE", "Couldn't process that bio preference right now - ask the caregiver to share a short bio or confirm they want to skip it.");
+        }
+      }
       const ref  = db.collection("agent_sessions").doc(phone as string);
-      await ref.set({ onboardingData: { [fieldName]: fieldValue } }, { merge: true });
+      await ref.set({ onboardingData: onboardingDataPatch }, { merge: true });
       // R-MEM-1/2: durable capture begins here, at name+number — this merge
       // persists every field as it's collected, and the webhook already logs each
       // onboarding message to Zep from first contact. On resume, the onboarding
@@ -6069,11 +6345,13 @@ async function executeToolCall(
 
     // ── get_care_plan_history ───────────────────────────────────────────────
     if (name === "get_care_plan_history") {
-      const { seniorId: cpSeniorId } = input as Record<string, string | undefined>;
-      if (!cpSeniorId) return toolError("INVALID_INPUT", "seniorId is required");
+      // Canonical path: care_plans/{clientId}/versions (bug-audit §6.1). clientId
+      // is session-injected, so history is always scoped to the caller's own plan.
+      const { clientId: cpClientId } = input as Record<string, string | undefined>;
+      if (!cpClientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
       const cpLimit = Math.min((input.limit as number) ?? 5, 10);
-      const cpSnap = await db.collection("senior_profiles").doc(cpSeniorId)
-        .collection("carePlanVersions")
+      const cpSnap = await db.collection("care_plans").doc(cpClientId)
+        .collection("versions")
         .orderBy("savedAt", "desc")
         .limit(cpLimit)
         .get();
@@ -6090,30 +6368,24 @@ async function executeToolCall(
 
     // ── restore_care_plan_version ───────────────────────────────────────────
     if (name === "restore_care_plan_version") {
-      const { seniorId: rSeniorId, versionId: rVersionId, clientId: rClientId } = input as Record<string, string | undefined>;
-      if (!rSeniorId || !rVersionId || !rClientId) return toolError("INVALID_INPUT", "seniorId, versionId, and clientId are required");
-      const rSenior = await db.collection("senior_profiles").doc(rSeniorId).get();
-      if (!rSenior.exists) return toolError("NOT_FOUND", "Senior not found");
-      const rVersionDoc = await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("carePlanVersions").doc(rVersionId).get();
+      // Canonical path: care_plans/{clientId} + its versions subcollection
+      // (bug-audit §6.1/§6.2). clientId is session-injected, and the version is
+      // read from THIS client's own subcollection — so a model-supplied versionId
+      // can only ever address the caller's own plan (cross-household restore is
+      // prevented by construction; no separate ownership check needed).
+      const { versionId: rVersionId, clientId: rClientId } = input as Record<string, string | undefined>;
+      if (!rVersionId || !rClientId) return toolError("INVALID_INPUT", "versionId is required (clientId auto-injected from session)");
+      const rVersionDoc = await db.collection("care_plans").doc(rClientId)
+        .collection("versions").doc(rVersionId).get();
       if (!rVersionDoc.exists) return toolError("NOT_FOUND", "Version not found");
       const rVersionData = rVersionDoc.data()!;
-      // Save current plan as a version before restoring
-      const rCurrentPlan = await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("care_plans").doc("active").get();
-      if (rCurrentPlan.exists) {
-        await db.collection("senior_profiles").doc(rSeniorId)
-          .collection("carePlanVersions").add({
-            ...rCurrentPlan.data(),
-            savedAt:   nowIso,
-            changedBy: rClientId,
-            summary:   "Auto-saved before restore",
-          });
-      }
-      // Restore the selected version
-      await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("care_plans").doc("active").set(rVersionData.carePlan ?? rVersionData);
-      logAudit({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", seniorId: rSeniorId, versionId: rVersionId } }).catch(() => {});
+      const rPlan = (rVersionData.carePlan ?? rVersionData) as Record<string, unknown>;
+      // Overwrite the live plan with the snapshot. This write fires
+      // onCarePlanWrite, which records the restored state as the newest version —
+      // and the pre-restore state is already in history (versioned when it was
+      // last edited), so no explicit "save before restore" is needed.
+      await db.collection("care_plans").doc(rClientId).set({ ...rPlan, updatedAt: nowIso });
+      logAudit({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", versionId: rVersionId } }).catch(() => {});
       return { success: true, message: "Care plan restored to the selected version." };
     }
 
@@ -6857,6 +7129,15 @@ async function executeToolCall(
         cancelledBy,
         cancelReason: ciReason ?? null,
       });
+      // Retire pending 1h reminders + follow-up for the dead interview. The
+      // video_interviews path is also covered by onVideoInterviewLinkEnsure
+      // (web declines never pass through this tool); SMS `interviews` docs
+      // have no status trigger, so this call is their only cleanup.
+      {
+        const { cancelTriggersByRef } = await import("../triggers/triggerEngine");
+        const prefix = ivSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview";
+        await cancelTriggersByRef(`${prefix}_${ciInterviewId}`).catch(() => {});
+      }
       // Notify the counterpart, following schedule_interview (caregiver via
       // trySend) / respond_to_interview_request (client via agent_sessions).
       const when = typeof iv.scheduledTime === "string" ? iv.scheduledTime.slice(0, 10) : "the scheduled time";
@@ -6949,8 +7230,9 @@ async function executeToolCall(
 
     // ── confirm_cash_received ───────────────────────────────────────────────
     // Mirror of the web's confirmCashReceived (services/api.ts): caregiver-owned
-    // cash shift, approved/auto_approved → paid. Idempotent on SMS retry — an
-    // already-paid cash shift returns a no-op success, never a double transition.
+    // offline shift (cash/Venmo/Zelle), approved/auto_approved → paid. Idempotent
+    // on SMS retry — an already-paid shift returns a no-op success, never a
+    // double transition. (Tool name keeps "cash" for prompt/contract stability.)
     if (name === "confirm_cash_received") {
       const { caregiverId: ccCgId, appointmentId: ccApptId } = input as Record<string, unknown>;
       if (!ccCgId || !ccApptId) return toolError("INVALID_INPUT", "caregiverId and appointmentId are required");
@@ -6958,21 +7240,22 @@ async function executeToolCall(
       const shiftSnap = await shiftRef.get();
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours record not found");
       const shift = shiftSnap.data()!;
-      if (shift.caregiverId !== ccCgId) return toolError("PERMISSION_DENIED", "Only the caregiver on this shift can confirm cash receipt");
-      if (String(shift.paymentMethod ?? "").toLowerCase() !== "cash") return toolError("INVALID_INPUT", "This shift is not a cash payment");
+      if (shift.caregiverId !== ccCgId) return toolError("PERMISSION_DENIED", "Only the caregiver on this shift can confirm payment receipt");
+      if (!isOfflinePaymentMethod(shift.paymentMethod)) return toolError("INVALID_INPUT", "This shift is not an offline (cash/Venmo/Zelle) payment");
       if (shift.status === "paid") return { success: true, alreadyPaid: true, appointmentId: ccApptId };
       if (shift.status !== "approved" && shift.status !== "auto_approved") {
-        return toolError("INVALID_INPUT", `Shift hours must be approved before confirming cash (current status: ${shift.status})`);
+        return toolError("INVALID_INPUT", `Shift hours must be approved before confirming payment (current status: ${shift.status})`);
       }
+      const ccMethod = normalizePaymentMethod(shift.paymentMethod);
       await shiftRef.update({
         status:          "paid",
-        paidMethod:      "cash",
+        paidMethod:      ccMethod,
         paidAt:          nowIso,
         cashConfirmedAt: nowIso,
         updatedAt:       nowIso,
       });
-      logAudit({ eventType: "cash_payment_confirmed", userId: ccCgId as string, data: { source: "mcp:confirm_cash_received", appointmentId: ccApptId } }).catch(() => {});
-      return { success: true, paid: true, method: "cash", appointmentId: ccApptId };
+      logAudit({ eventType: "cash_payment_confirmed", userId: ccCgId as string, data: { source: "mcp:confirm_cash_received", appointmentId: ccApptId, method: ccMethod } }).catch(() => {});
+      return { success: true, paid: true, method: ccMethod, appointmentId: ccApptId };
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);

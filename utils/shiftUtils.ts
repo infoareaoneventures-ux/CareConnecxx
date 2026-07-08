@@ -5,7 +5,11 @@ export type ShiftDisplayStatus =
   | 'completed'
   | 'cancelled';
 
-function localDateStr(d: Date): string {
+// Local calendar date (YYYY-MM-DD) — NOT UTC. Appointments store the local
+// calendar date, so conflict checks must compare against the local date; using
+// toISOString() (UTC) rolls to the next day for evening-local times and misses
+// same-day conflicts. Exported for reuse (e.g. availabilityService).
+export function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 

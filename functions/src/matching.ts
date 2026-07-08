@@ -401,7 +401,7 @@ async function sendIntakeNotificationEmail(intakeData: any, matchAssignmentId: s
             <p><strong>Location:</strong> ${intakeData.city}, ${intakeData.state} ${intakeData.zipCode}</p>
             ${intakeData.additionalComments ? `<p><strong>Notes:</strong> ${intakeData.additionalComments}</p>` : ''}
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/admin" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Review in Dashboard</a></p>
+            <p><a href="${appLink("/admin")}" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Review in Dashboard</a></p>
             <p>Match Assignment ID: ${matchAssignmentId}</p>
         `;
         
@@ -410,7 +410,7 @@ async function sendIntakeNotificationEmail(intakeData: any, matchAssignmentId: s
             to: coordinatorEmails,
             subject: subject,
             html: html,
-            text: `New client intake from ${intakeData.contactName}. Priority: ${priority}. Review at https://careconnex-d4c8b.web.app/admin`
+            text: `New client intake from ${intakeData.contactName}. Priority: ${priority}. Review at ${appLink("/admin")}`
         });
         
         console.log(`[sendIntakeNotificationEmail] Sent to ${coordinatorEmails.length} coordinators`);
@@ -492,7 +492,7 @@ async function sendHireOfferEmail(caregiverId: string, hireRequestData: any): Pr
             </ul>
             ${hireRequestData.clientNotes ? `<p><strong>Client Notes:</strong> ${hireRequestData.clientNotes}</p>` : ''}
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/caregiver" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin-right: 10px;">Accept Offer</a></p>
+            <p><a href="${appLink("/caregiver")}" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin-right: 10px;">Accept Offer</a></p>
             <p>Please respond within 24 hours to secure this opportunity.</p>
             <p>Questions? Reply to this email or call us at (555) 123-4567.</p>
         `;
@@ -502,7 +502,7 @@ async function sendHireOfferEmail(caregiverId: string, hireRequestData: any): Pr
             to: email,
             subject: '🎉 You\'ve Been Hired on Evia!',
             html: html,
-            text: `Hi ${name}, You've been selected by a client on Evia! Log in to view details and accept: https://careconnex-d4c8b.web.app/caregiver`
+            text: `Hi ${name}, You've been selected by a client on Evia! Log in to view details and accept: ${appLink("/caregiver")}`
         });
         
         console.log(`[sendHireOfferEmail] Sent to caregiver ${caregiverId}`);
@@ -552,7 +552,7 @@ async function sendCaregiverAcceptedEmail(clientId: string, caregiverName: strin
             </ul>
             <p>Your care coordinator will reach out within 24 hours to finalize the first visit details.</p>
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/client" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View in Dashboard</a></p>
+            <p><a href="${appLink("/client")}" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View in Dashboard</a></p>
             <p>Questions? Contact your care coordinator or reply to this email.</p>
         `;
         
@@ -561,7 +561,7 @@ async function sendCaregiverAcceptedEmail(clientId: string, caregiverName: strin
             to: email,
             subject: '✅ Your Caregiver Has Accepted!',
             html: html,
-            text: `Hi ${name}, ${caregiverName} has accepted your hire request! View details: https://careconnex-d4c8b.web.app/client`
+            text: `Hi ${name}, ${caregiverName} has accepted your hire request! View details: ${appLink("/client")}`
         });
         
         console.log(`[sendCaregiverAcceptedEmail] Sent to client ${clientId}`);

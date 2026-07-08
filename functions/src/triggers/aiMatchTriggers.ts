@@ -6,6 +6,7 @@ import {
     runMatchingForIntake,
 } from "../ai/matchJob";
 import { composeCaregiverText, hashText } from "../ai/embeddings";
+import { writeMatchOutcome } from "../ai/matchOutcomes";
 import { createJobPost, notifyAreaCaregivers } from "./jobNotifications";
 
 const CAREGIVER_EMBED_FIELDS = [
@@ -210,8 +211,64 @@ export const onHireRequestFeedback = functions.firestore
                     `[onHireRequestFeedback] Logged 'rejected' for client ${clientId} ↔ caregiver ${caregiverId}`
                 );
             }
+            await writeMatchOutcome({
+                clientId,
+                caregiverId,
+                outcome: isPositive ? "hired" : "rejected",
+                source: "hire_request",
+                refId: context.params.requestId,
+            });
         } catch (err) {
             console.error("[onHireRequestFeedback] failed:", err);
+        }
+        return null;
+    });
+
+// Learning-loop outcome writers. Web (PostsPage/useJobApplications) and Evia
+// (mcp respond_to_job_application) both mutate job_applications.status
+// directly, so this trigger is the single choke point that records the
+// family's hire/pass decision regardless of surface.
+export const onJobApplicationOutcome = functions.firestore
+    .document("job_applications/{applicationId}")
+    .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        if (!after || before?.status === after.status) return null;
+        if (after.status !== "accepted" && after.status !== "rejected") return null;
+        try {
+            await writeMatchOutcome({
+                clientId: after.clientId,
+                caregiverId: after.caregiverId,
+                outcome: after.status === "accepted" ? "hired" : "rejected",
+                source: "job_application",
+                refId: context.params.applicationId,
+            });
+        } catch (err) {
+            console.error("[onJobApplicationOutcome] failed:", err);
+        }
+        return null;
+    });
+
+// A client declining a video interview is a "pass" on that caregiver.
+// Caregiver-side declines (declinedBy !== 'client') are availability, not a
+// family decision, and are not recorded.
+export const onVideoInterviewClientDecline = functions.firestore
+    .document("video_interviews/{interviewId}")
+    .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        if (!after || before?.status === after.status) return null;
+        if (after.status !== "declined" || after.declinedBy !== "client") return null;
+        try {
+            await writeMatchOutcome({
+                clientId: after.clientId,
+                caregiverId: after.caregiverId,
+                outcome: "rejected",
+                source: "video_interview",
+                refId: context.params.interviewId,
+            });
+        } catch (err) {
+            console.error("[onVideoInterviewClientDecline] failed:", err);
         }
         return null;
     });

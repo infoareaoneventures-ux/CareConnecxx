@@ -127,7 +127,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             title="How Evia Works - Simple 4-Step Process"
             description="Find verified caregivers in Santa Clara County in 4 simple steps. AI-powered matching and background checks included."
             keywords="how it works, find caregivers, hire caregivers, senior care process, caregiver matching, Santa Clara County"
-            canonicalUrl="https://careconnex-d4c8b.web.app/how-it-works"
+            canonicalUrl="https://www.eviacares.com/how-it-works"
          />
 
          {/* Navigation Header */}

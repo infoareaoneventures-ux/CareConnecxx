@@ -92,13 +92,17 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
       parsePrompt:
         'Extract yearsExperience (number) and certifications (array of strings) from this message. Reply in JSON: {"yearsExperience":0,"certifications":[]}',
       parse(raw) {
+        if (raw === "__parse_error__") return null; // re-ask instead of recording 0 years / no certs
         let yearsExperience = 0, certifications: string[] = [];
-        try { const p = JSON.parse(raw); yearsExperience = p.yearsExperience ?? 0; certifications = p.certifications ?? []; } catch { /* keep defaults */ }
-        return { yearsExperience, certifications };
+        try { const p = JSON.parse(raw); yearsExperience = p.yearsExperience ?? 0; certifications = Array.isArray(p.certifications) ? p.certifications : []; } catch { /* keep defaults */ }
+        // Only include certifications when this step actually found some —
+        // otherwise an empty [] overwrites certifications already extracted from
+        // the caregiver's free-form story step (caregiver_ask_story).
+        return { yearsExperience, ...(certifications.length ? { certifications } : {}) };
       },
       nextStep: "caregiver_ask_specialties",
       reask: () => "How many years of caregiving experience do you have, and do you hold any certifications?",
-      // experience always advances with defaults — retry is never reached.
+      // Reached on parse error (a valid "0 years / none" answer still advances).
       retry: () => "How many years of caregiving experience do you have, and do you hold any certifications?",
       async nextQuestion(session) {
         const yearsExperience = (session.onboardingData?.yearsExperience as number) ?? 0;
@@ -122,13 +126,14 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
       parsePrompt:
         "Extract a list of care specialties from this message. Reply in JSON: {\"specialties\":[\"...\",\"...\"]}",
       parse(raw) {
+        if (raw === "__parse_error__") return null; // re-ask instead of recording empty specialties
         let specialties: string[] = [];
-        try { const p = JSON.parse(raw); specialties = p.specialties ?? []; } catch { /* keep defaults */ }
+        try { const p = JSON.parse(raw); specialties = Array.isArray(p.specialties) ? p.specialties : []; } catch { /* keep defaults */ }
         return { specialties };
       },
       nextStep: "caregiver_ask_profile",
       reask: () => "What types of care do you specialize in? (e.g. dementia, mobility, post-surgery, companionship)",
-      // specialties always advances with defaults — retry is never reached.
+      // Reached on parse error.
       retry: () => "What types of care do you specialize in? (e.g. dementia, mobility, post-surgery, companionship)",
       async nextQuestion(session) {
         const specialties = (session.onboardingData?.specialties as string[]) ?? [];
@@ -151,13 +156,14 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
       parsePrompt:
         "Extract availability days (array of strings) and hours (string) from this message. Reply in JSON: {\"days\":[\"Monday\",\"Tuesday\"],\"hours\":\"9am-5pm\"}",
       parse(raw) {
+        if (raw === "__parse_error__") return null; // re-ask instead of recording empty availability
         let days: string[] = [], hours = "";
-        try { const p = JSON.parse(raw); days = p.days ?? []; hours = p.hours ?? ""; } catch { /* keep defaults */ }
+        try { const p = JSON.parse(raw); days = Array.isArray(p.days) ? p.days : []; hours = p.hours ?? ""; } catch { /* keep defaults */ }
         return { availability: { days, hours } };
       },
       nextStep: "caregiver_ask_job_type",
       reask: () => "What days and hours are you generally available to work?",
-      // availability always advances with defaults — retry is never reached.
+      // Reached on parse error.
       retry: () => "What days and hours are you generally available to work?",
       async nextQuestion(session) {
         const availability = (session.onboardingData?.availability as { days?: string[]; hours?: string }) ?? {};
@@ -184,12 +190,13 @@ export function buildCaregiverSteps(deps: CaregiverStepDeps): Record<string, Con
         '"3", full-time, full time, every day, all week → full_time. ' +
         'Reply with exactly one of: occasional, part_time, full_time',
       parse(raw) {
+        if (raw === "__parse_error__") return null; // re-ask instead of defaulting to part_time
         const jobType = ["occasional", "part_time", "full_time"].includes(raw) ? raw : "part_time";
         return { jobType };
       },
       nextStep: "caregiver_ask_rate",
       reask: () => "Are you looking for occasional, part-time, or full-time work?",
-      // job_type always advances (defaults to part_time) — retry is never reached.
+      // Reached on parse error (an unrecognized-but-present answer still defaults to part_time).
       retry: () => "Are you looking for occasional, part-time, or full-time work?",
       async nextQuestion(session) {
         const jobType = (session.onboardingData?.jobType as string) ?? "part_time";

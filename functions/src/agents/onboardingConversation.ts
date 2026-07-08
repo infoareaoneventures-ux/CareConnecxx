@@ -2,8 +2,9 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import { canChargeBundledMvr, canChargeStandaloneMvr, mvrPriceId } from "../mvrConfig";
-import axios from "axios";
+import { createCheckrInvitation } from "../checkrApi";
 import Stripe from "stripe";
+import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 import { sendMessage, signalThinking, AgentSession } from "../linq/client";
 import {
   classifyEmotionalContext,
@@ -16,9 +17,11 @@ import { generateToken } from "./tokenService";
 import { getCapabilityExamples } from "./capabilityDiscovery";
 import { summarizeFrontload } from "./frontloadSummary";
 import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../notifications";
+import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 import { buildAndSaveJobPost } from "./buildJobPost";
+import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
@@ -29,6 +32,7 @@ import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
 import { runStep, RunStepContext, StepDeps } from "./conversationStep";
+import { isQuestionOrOther as stepIsQuestionOrOther } from "./stepHandler";
 import { buildClientSteps } from "./onboardingSteps.client";
 import { buildCaregiverSteps } from "./onboardingSteps.caregiver";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
@@ -104,6 +108,68 @@ const DRY_RUN_STRIPE = {
 
 const APP_URL = getAppUrl();
 
+// Work location for Checkr candidates/invitations (Checkr requires
+// work_locations for US checks). The service-area gate (config/serviceArea.ts)
+// only admits Santa Clara County signups today, so CA is exact — update this
+// when the service area widens past California.
+const CHECKR_WORK_STATE = "CA";
+
+async function alertOnboardingLinkFailure(phone: string, step: string, err: unknown): Promise<void> {
+  await db.collection("admin_alerts").add({
+    type:      "onboarding_link_generation_failed",
+    severity:  "high",
+    phone,
+    step,
+    error:     err instanceof Error ? err.message : String(err),
+    createdAt: new Date().toISOString(),
+    resolved:  false,
+  }).catch((alertErr) => console.error("onboarding link failure alert write failed", {
+    phone,
+    step,
+    err: alertErr instanceof Error ? alertErr.message : String(alertErr),
+  }));
+}
+
+async function sendOnboardingLinkFailureMessage(
+  phone: string,
+  chatId: string,
+  session: AgentSession,
+  kind: "background-check" | "payout setup" | "background-check renewal",
+): Promise<void> {
+  // "I'll text you the moment it's ready" is a tracked promise, not vibes:
+  // record a `link` commitment BEFORE sending the copy, so the sweep re-attempts
+  // the send in ~5 minutes and escalates to a human if it fails again. Before
+  // this, the sentence had no mechanism behind it — the caregiver's signup
+  // silently dead-ended here (2026-07-07 live test).
+  const linkType: OnboardingLinkType =
+    kind === "payout setup" ? "caregiver_payouts" : "caregiver_background_check";
+  await recordCommitment({
+    phone,
+    chatId,
+    kind:        "link",
+    promiseText: `onboarding ${kind} link failed to generate — retry the send`,
+    linkType,
+    userType:    "caregiver",
+    source:      "onboardingConversation:link_failure",
+    dueInMs:     5 * 60_000,
+  });
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context: `A caregiver needs a ${kind} link, but Evia could not generate the real external link. Be honest, warm, and brief. Say you are on it and will text the link once it is ready. Do not include any URL.`,
+    fallback: `I hit a snag pulling up your ${kind} link — I'm on it and I'll text you the moment it's ready.`,
+    maxTokens: 70,
+  }));
+}
+
+async function isExplicitBioSkip(text: string): Promise<boolean> {
+  const raw = await parseWithClaude(
+    'Classify whether this caregiver is explicitly choosing to skip writing a public profile bio. Reply exactly SKIP or BIO. SKIP only for clear skip/no bio/not now intent. Otherwise BIO.',
+    text,
+  );
+  return raw.trim().toUpperCase() === "SKIP";
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function updateSession(phone: string, updates: Record<string, unknown>): Promise<void> {
@@ -122,10 +188,129 @@ async function mergeOnboardingData(phone: string, data: Record<string, unknown>)
     return;
   }
   const snap = await db.collection("agent_sessions").doc(phone).get();
-  const existing = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+  const sess     = (snap.data() ?? {}) as Record<string, unknown>;
+  const existing = (sess.onboardingData ?? {}) as Record<string, unknown>;
+  const merged   = { ...existing, ...data };
   await db.collection("agent_sessions").doc(phone).update({
-    onboardingData: { ...existing, ...data },
+    onboardingData: merged,
   });
+
+  // Incremental profile persistence: once the uid-keyed caregivers doc exists
+  // (created at the gate handoff / bg-check pre-create), keep it in sync with
+  // every onboarding merge. Before this, the FULL profile was written only at
+  // the final Stripe Connect step — a caregiver who stalled anywhere mid-flow
+  // had an empty webapp account. Non-fatal: profile mirroring must never break
+  // the conversation turn. Visibility gates are untouched (status /
+  // onboardingStatus stay wherever the step machinery put them).
+  const caregiverId = sess.caregiverId as string | undefined;
+  if (caregiverId && sess.userType === "caregiver") {
+    const mirror = buildCaregiverProfileMirror(merged);
+    if (Object.keys(mirror).length > 0) {
+      await db.collection("caregivers").doc(caregiverId)
+        .set(mirror, { merge: true })
+        .catch((err) => console.error("mergeOnboardingData: caregiver profile mirror failed (non-fatal):", err));
+    }
+  }
+}
+
+// The caregiver-doc field mapping for everything collected over SMS — shared by
+// the incremental mirror above, the gate-handoff doc creation, and the final
+// Stripe Connect finalization, so the three can never drift apart again (the
+// firstName-vs-name class of bug). Only DEFINED values are included: a merge
+// with this object can never blank a field another path already set. The
+// gating fields (status, onboardingStatus, verificationStatus,
+// membershipSubscriptionId) are deliberately NOT here — they belong to the
+// step machinery exclusively.
+export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const copy = (key: string, v: unknown): void => {
+    if (v !== undefined && v !== null && v !== "") out[key] = v;
+  };
+
+  copy("name",    d.name);
+  copy("city",    d.city);
+  copy("zipCode", d.zipCode);
+  // Raw coords (present only when the caregiver shared a location pin) — let
+  // aiMatching use true haversine distance instead of the city/zip proxy.
+  if (typeof d.lat === "number" && typeof d.lng === "number") {
+    out.lat = d.lat;
+    out.lng = d.lng;
+    out.location = { lat: d.lat, lng: d.lng };
+  }
+  // Profile photo + uploaded credentials (web upload OR texted to Evia).
+  if (d.profilePhoto) {
+    out.profilePhoto = d.profilePhoto;
+    out.photoURL     = d.profilePhoto;
+  }
+  if (Array.isArray(d.documents) && d.documents.length) out.documents = d.documents;
+  copy("yearsExperience", d.yearsExperience);
+  // Web parity aliases — the client-facing cards/modal and aiMatching read
+  // these exact names (types.ts Caregiver): experience, hasTransportation,
+  // skills. Without them Evia-onboarded caregivers render with blank
+  // experience/skills and no transportation badge.
+  copy("experience", d.yearsExperience);
+  if (Array.isArray(d.certifications) && d.certifications.length) out.certifications = d.certifications;
+  if (Array.isArray(d.specialties)   && d.specialties.length)     out.specialties   = d.specialties;
+  const skills = Array.from(new Set([
+    ...(Array.isArray(d.skills)      ? d.skills      as string[] : []),
+    ...(Array.isArray(d.specialties) ? d.specialties as string[] : []),
+  ]));
+  if (skills.length) out.skills = skills;
+  copy("availability", d.availability);
+  // Structured map read by ai/scoring.ts availabilityOverlap and the web
+  // profile modal. Missing map scores as 0% available — derive it.
+  const weekly = deriveWeeklyAvailability(d.availability);
+  if (weekly) out.weeklyAvailability = weekly;
+  copy("hourlyRate", d.hourlyRate);
+  copy("email",      d.email);
+  copy("bio",        d.bio);
+  copy("jobType",    d.jobType);
+  copy("gender",     d.gender);
+  if (Array.isArray(d.languages) && d.languages.length) out.languages = d.languages;
+  if (d.canDrive !== undefined && d.canDrive !== null) {
+    out.canDrive          = d.canDrive;
+    out.hasTransportation = d.canDrive;
+  }
+  copy("stripeAccountId", d.stripeAccountId);
+  return out;
+}
+
+// Create the uid-keyed caregivers/{uid} doc the moment collection completes
+// (called from the webhooks.ts gate handoff), instead of waiting for the
+// bg-check pre-create / final Stripe step. status "onboarding" is invisible to
+// matching (matchingAgent queries status in ["active","pending_review"]) and
+// to FindCaregivers (requires onboardingStatus "profile_complete") — but the
+// caregiver's own webapp login shows their profile from this point on, and
+// every subsequent mergeOnboardingData keeps it fresh.
+export async function ensureCaregiverDocForOnboarding(phone: string): Promise<string | null> {
+  if (isOnboardingDryRun()) {
+    recordSideEffect("firestore.set:caregivers.gate_pre_create", { phone });
+    return null;
+  }
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  const sess = (snap.data() ?? {}) as Record<string, unknown>;
+  if (sess.caregiverId) return sess.caregiverId as string;
+
+  const d = (sess.onboardingData ?? {}) as Record<string, unknown>;
+  const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
+  // No random-ID fallback here: without a uid the bg-check pre-create and the
+  // finalization migration still cover doc creation later, on their own terms.
+  if (!authUid) return null;
+
+  const docRef  = db.collection("caregivers").doc(authUid);
+  const docSnap = await docRef.get();
+  // Never demote a doc that already progressed (recovery / re-onboarding edge).
+  const keepStatus = docSnap.exists &&
+    ["active", "pending_review"].includes((docSnap.data()?.status as string) ?? "");
+  await docRef.set({
+    phone,
+    uid: authUid,
+    ...(keepStatus ? {} : { status: "onboarding", onboardingStatus: "in_progress" }),
+    ...(docSnap.exists ? {} : { createdAt: new Date().toISOString() }),
+    ...buildCaregiverProfileMirror(d),
+  }, { merge: true });
+  await db.collection("agent_sessions").doc(phone).update({ caregiverId: authUid });
+  return authUid;
 }
 
 // ── Native location request (1:1 iMessage) ────────────────────────────────────
@@ -159,16 +344,14 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
     return "__parse_error__";
   }
 }
-// Use unwrapJson where a JSON-shaped answer is needed and prose may sneak in
-void unwrapJson;
-
-async function isQuestionOrOther(text: string): Promise<boolean> {
-  const result = await parseWithClaude(
-    'Reply YES if this is a general question or off-topic comment. Reply NO if it is an answer to the question asked. Only reply YES or NO.',
-    text
-  );
-  return result.toUpperCase().startsWith("Y");
-}
+// Context-aware question/off-topic detector — the shared stepHandler version.
+// The old local copy here classified the text WITHOUT knowing what question was
+// asked, so direct answers like "yes" or "Anahi is fine" were routinely
+// misread as small talk, answered with a free-form reply, and the step's
+// question re-asked in a loop (launch bug, 2026-07-06). The shared version
+// takes the current question as context; `stepDeps` also passes each table
+// step's re-ask through automatically now that the signature accepts it.
+const isQuestionOrOther = stepIsQuestionOrOther;
 
 // ── Mid-flow role-switch detector ────────────────────────────────────────────
 // Catches the case where someone realized halfway through onboarding that they
@@ -321,7 +504,12 @@ export const CLIENT_STEP_ORDER = [
 export const CLIENT_STEP_FIELD: Record<string, string> = {
   client_ask_name:     "firstName",
   client_ask_senior:   "seniorName",
-  client_ask_needs:    "age",
+  // Keyed on careNeeds (a REQUIRED intake field), not age: skipping this step
+  // when only `age` was front-loaded (e.g. "my mom Dorothy, 82") left careNeeds
+  // and conditions uncollected, shipping empty to senior_profiles.needs,
+  // clientIntakes.careTypes, and the matching prompt. Same fix already applied
+  // to client_ask_schedule below.
+  client_ask_needs:    "careNeeds",
   client_ask_location: "city",
   // Keyed on daysPerWeek (a REQUIRED intake field), not the free-text
   // `schedule` string: skipping this step on `schedule` alone left
@@ -462,8 +650,25 @@ export async function handleOnboardingStep(
   // that keeps texting gets a calm acknowledgement, not a re-collect loop. "START
   // OVER" lets them retry (e.g. if they mistyped their location).
   if (step === WAITLISTED_STEP) {
-    if (norm === "START OVER" || norm === "RESTART") {
-      await updateSession(phone, { onboardingStep: "ask_role", waitlisted: false, userType: null, onboardingData: {} });
+    // Exact-match fast path (the reminder tells them to reply START OVER), then
+    // fall back to LLM classification so natural phrasings ("can I try again?",
+    // "let me redo this") also escape the waitlist dead-end (CLAUDE.md: no
+    // keyword-only intent parsing of free-form text).
+    let wantsRestart = norm === "START OVER" || norm === "RESTART";
+    if (!wantsRestart) {
+      const cls = await parseWithClaude(
+        'The user is on a signup waitlist because they appear to be outside the service area. ' +
+        'Does the user want to restart signup or try again (e.g. because their location was wrong)? ' +
+        'Reply exactly "restart" if they want to retry/start over, otherwise reply exactly "other".',
+        text
+      );
+      wantsRestart = cls.trim().toLowerCase() === "restart";
+    }
+    if (wantsRestart) {
+      // bgcheckInviteUrl must not survive a restart: the reuse guard in
+      // handleCaregiverSendBgcheck would resend the OLD invitation (old legal
+      // name/package) instead of minting one for the corrected details.
+      await updateSession(phone, { onboardingStep: "ask_role", waitlisted: false, userType: null, onboardingData: {}, bgcheckInviteUrl: null });
       step = "ask_role";
       session.onboardingStep = "ask_role";
       (session as any).userType = null;
@@ -517,8 +722,10 @@ export async function handleOnboardingStep(
     // Clear userType + waitlisted too (mirrors the WAITLISTED_STEP reset). Leaving
     // userType set would trip the ask_role self-heal above on the NEXT inbound,
     // jumping past the role question — so a user who restarts to switch roles
-    // would be silently kept in their old role.
-    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false });
+    // would be silently kept in their old role. bgcheckInviteUrl is cleared so a
+    // restarted signup mints a fresh Checkr invitation (corrected name/package)
+    // instead of the reuse guard resending the old one.
+    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false, bgcheckInviteUrl: null });
     await sendMessage(chatId,
       "No problem, let's start fresh.\n\n" +
       "Are you looking for care for a loved one, or are you a caregiver looking for work?"
@@ -685,7 +892,22 @@ export async function handleOnboardingStep(
       && !step.startsWith("job_")) {
     const correction = await detectCorrection(text);
     if (correction) {
-      await mergeOnboardingData(phone, { [correction.field]: correction.value });
+      // Caregivers store their name in `name`; clients in `firstName`. The
+      // detector only emits `firstName`, so remap it for caregivers — otherwise
+      // the corrected name lands on a field the caregiver doc never reads and is
+      // silently lost.
+      const correctionField =
+        correction.field === "firstName" && step.startsWith("caregiver_")
+          ? "name"
+          : correction.field;
+      // Numeric fields must be stored as numbers to match the normal parse path
+      // (caregivers.hourlyRate / yearsExperience are written straight through).
+      let correctionValue: string | number = correction.value;
+      if (correctionField === "hourlyRate" || correctionField === "yearsExperience") {
+        const n = Number(correction.value);
+        if (Number.isFinite(n)) correctionValue = n;
+      }
+      await mergeOnboardingData(phone, { [correctionField]: correctionValue });
       // Re-ask the current question
       const stepMessages: Record<string, string> = {
         client_ask_name:       "What's your name?",
@@ -853,7 +1075,7 @@ async function handleVerifyPhone(
   // If the message looks more like a question than an OTP code or RESEND/STOP keyword,
   // answer it and re-prompt instead of failing the OTP attempt.
   const looksLikeCode = /^\s*\d{4,6}\s*$/.test(text);
-  if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text)) {
+  if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text, "Please reply with the 6-digit verification code I just texted you.")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Please reply with the 6-digit verification code I just texted you. (Reply RESEND if you didn't get it.)");
@@ -1028,36 +1250,15 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
 // question; a different name is captured as a correction; a bare "no" routes back to
 // the normal ask-name step. Only reached when a name rode in on the web bridge.
 async function handleClientConfirmName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    const current = (session.onboardingData?.firstName as string | undefined) ?? "there";
-    await sendMessage(chatId, `So I get it right — do you go by ${current}?`);
-    return;
-  }
   const seeded = (session.onboardingData?.firstName as string | undefined) ?? "";
-  const raw = await parseWithClaude(
-    `The user was greeted with the name "${seeded}" and asked to confirm it. Decide whether they confirmed it or gave a different name. ` +
-      'Reply ONLY JSON: {"confirmed": true|false, "correctedName": "<first name>" or null}. ' +
-      'Affirmations (yes, yep, correct, that\'s right, that\'s me) → confirmed=true, correctedName=null. ' +
-      'A different first name (with or without "no") → confirmed=false, correctedName=that name. ' +
-      'A denial with no name (no, nope, wrong) → confirmed=false, correctedName=null.',
-    text
-  );
-  let confirmed = true;
-  let correctedName: string | null = null;
-  try {
-    const parsed = JSON.parse(raw);
-    confirmed = parsed.confirmed !== false;
-    correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
-      ? parsed.correctedName.trim() : null;
-  } catch {
-    // Parse failure → re-ask rather than guessing.
-    await sendMessage(chatId, `Sorry — just want to get it right. Do you go by ${seeded || "the name you gave"}, or is there another you'd prefer?`);
-    return;
-  }
 
-  if (correctedName) {
+  // Parse the confirmation FIRST. The old order ran the question-detector
+  // before parsing, so direct answers like "yes" or "Anahi is fine" were
+  // misread as small talk and the name question re-asked forever.
+  const kind = await parseNameConfirmation(seeded, text);
+
+  if (kind.kind === "corrected") {
+    const correctedName = kind.correctedName;
     await mergeOnboardingData(phone, { firstName: correctedName });
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
@@ -1070,23 +1271,84 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     return;
   }
 
-  if (!confirmed) {
-    // Denied without offering a name — fall back to the standard ask-name step.
+  if (kind.kind === "denied" || !seeded) {
+    // Denied without offering a name (or nothing seeded to confirm) — fall
+    // back to the standard ask-name step.
     await updateSession(phone, { onboardingStep: "client_ask_name" });
     await sendMessage(chatId, "No problem — what name should I use?");
     return;
   }
 
-  // Confirmed — keep the seeded name and move to the senior question.
-  const name = seeded || "there";
+  if (kind.kind === "confirmed") {
+    // Confirmed — keep the seeded name and move to the senior question.
+    await updateSession(phone, { onboardingStep: "client_ask_senior" });
+    const msg = await generateCaraMessage({
+      audience: "family",
+      context: `The client confirmed their name is ${seeded}. Greet them warmly by name and ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
+      fallback: `Lovely to meet you, ${seeded}. Who are we caring for?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, msg);
+    return;
+  }
+
+  // "other" — their message wasn't about the name at all. NEVER loop on the
+  // name: a question gets answered with at most ONE confirm re-ask; anything
+  // else accepts the seeded name and moves the flow forward.
+  const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
+  const attempts = (session.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
+  if (await isQuestionOrOther(text, confirmQuestion)) {
+    const answer = await answerQuestionMidFlow(text, session);
+    await sendMessage(chatId, answer);
+    if (attempts < 1) {
+      await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
+      await sendMessage(chatId, `So I get it right — do you go by ${seeded}?`);
+      return;
+    }
+    // Already re-asked once — accept the seeded name and continue.
+    await updateSession(phone, { onboardingStep: "client_ask_senior" });
+    const msg = await generateCaraMessage({
+      audience: "family",
+      context: `Evia is moving on with the name ${seeded}. Ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy"). One short sentence.`,
+      fallback: `Now — who are we caring for?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, msg);
+    return;
+  }
+  // Substantive non-name message (e.g. they jumped ahead and described who
+  // needs care). Accept the seeded name and hand their text to the next step
+  // so nothing they typed is lost or re-asked.
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
-  const msg = await generateCaraMessage({
-    audience: "family",
-    context: `The client confirmed their name is ${name}. Greet them warmly by name and ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
-    fallback: `Lovely to meet you, ${name}. Who are we caring for?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, msg);
+  return handleClientAskSenior(phone, chatId, text, { ...session, onboardingStep: "client_ask_senior" } as AgentSession);
+}
+
+// Shared confirm-name classifier for both roles. Parses the user's reply to
+// "is <seeded> what you go by?" into one of four shapes. Parse failures fall to
+// "other", whose handling is loop-proof (the old code re-asked on failure).
+async function parseNameConfirmation(
+  seeded: string,
+  text: string,
+): Promise<{ kind: "confirmed" | "corrected" | "denied" | "other"; correctedName: string | null }> {
+  const raw = await parseWithClaude(
+    `Evia greeted the user by the name "${seeded}" and asked if that's the name they go by. Classify their reply. ` +
+      'Reply ONLY JSON: {"kind": "confirmed" | "corrected" | "denied" | "other", "correctedName": "<first name>" or null}. ' +
+      `"confirmed" — any affirmation of that name (yes, yep, correct, that's right, that's me, "${seeded || "that"} is fine", "you can call me ${seeded || "that"}"). ` +
+      '"corrected" — they give a DIFFERENT name to go by (with or without a "no"); put it in correctedName. ' +
+      '"denied" — no/nope/wrong WITHOUT offering another name. ' +
+      '"other" — anything else: a question, or a message about something other than their name (e.g. describing care needs, work, or location).',
+    text
+  );
+  try {
+    const parsed = JSON.parse(unwrapJson(raw, "object"));
+    const kind = ["confirmed", "corrected", "denied", "other"].includes(parsed.kind) ? parsed.kind : "other";
+    const correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
+      ? parsed.correctedName.trim() : null;
+    if (kind === "corrected" && !correctedName) return { kind: "denied", correctedName: null };
+    return { kind, correctedName: kind === "corrected" ? correctedName : null };
+  } catch {
+    return { kind: "other", correctedName: null };
+  }
 }
 
 // The linear client question steps, expressed as data and driven by `runStep`
@@ -1174,7 +1436,7 @@ async function handleClientAskLocation(phone: string, chatId: string, text: stri
     return;
   }
 
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "What city and zip code are you in?")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, locationPrompt("What city and zip code are you in? (e.g. \"San Jose, CA 95125\")", service));
@@ -1534,7 +1796,7 @@ async function handleClientPlanReply(
   session: AgentSession
 ): Promise<void> {
   // Mid-flow question (e.g. "is it monthly?") — answer, then re-offer.
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "Are you ready to go ahead with setup? (a yes gets the setup link)")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "When you're ready, say yes and I'll send the setup link again.");
@@ -1645,35 +1907,13 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
 // routes back to the standard ask-name step. Only reached when a name rode in on the bridge.
 async function handleCaregiverConfirmName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
   const sess = session ?? ({ onboardingData: {} } as AgentSession);
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, sess);
-    await sendMessage(chatId, answer);
-    const current = (sess.onboardingData?.name as string | undefined) ?? "there";
-    await sendMessage(chatId, `So I get it right — do you go by ${current}?`);
-    return;
-  }
   const seeded = (sess.onboardingData?.name as string | undefined) ?? "";
-  const raw = await parseWithClaude(
-    `The user was greeted with the name "${seeded}" and asked to confirm it. Decide whether they confirmed it or gave a different name. ` +
-      'Reply ONLY JSON: {"confirmed": true|false, "correctedName": "<name>" or null}. ' +
-      'Affirmations (yes, yep, correct, that\'s right, that\'s me) → confirmed=true, correctedName=null. ' +
-      'A different name (with or without "no") → confirmed=false, correctedName=that name. ' +
-      'A denial with no name (no, nope, wrong) → confirmed=false, correctedName=null.',
-    text
-  );
-  let confirmed = true;
-  let correctedName: string | null = null;
-  try {
-    const parsed = JSON.parse(raw);
-    confirmed = parsed.confirmed !== false;
-    correctedName = typeof parsed.correctedName === "string" && parsed.correctedName.trim()
-      ? parsed.correctedName.trim() : null;
-  } catch {
-    await sendMessage(chatId, `Sorry — just want to get it right. Do you go by ${seeded || "the name you gave"}, or is there another you'd prefer?`);
-    return;
-  }
 
-  if (correctedName) {
+  // Parse the confirmation FIRST — same ordering fix as handleClientConfirmName.
+  const kind = await parseNameConfirmation(seeded, text);
+
+  if (kind.kind === "corrected") {
+    const correctedName = kind.correctedName;
     await mergeOnboardingData(phone, { name: correctedName });
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
@@ -1686,21 +1926,55 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     return;
   }
 
-  if (!confirmed) {
+  if (kind.kind === "denied" || !seeded) {
     await updateSession(phone, { onboardingStep: "caregiver_ask_name" });
     await sendMessage(chatId, "No problem — what name should I use?");
     return;
   }
 
-  const name = seeded || "there";
+  if (kind.kind === "confirmed") {
+    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
+    const msg = await generateCaraMessage({
+      audience: "caregiver",
+      context: `The caregiver confirmed their name is ${seeded}. Greet them by name and ask what city and zip code they work in.`,
+      fallback: `Great to meet you, ${seeded}. What city and zip code do you work in?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, locationPrompt(msg, service));
+    return;
+  }
+
+  // "other" — not about the name. NEVER loop on the name: a question gets
+  // answered with at most ONE confirm re-ask; anything else accepts the
+  // seeded name and moves the flow forward.
+  const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
+  const attempts = (sess.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
+  if (await isQuestionOrOther(text, confirmQuestion)) {
+    const answer = await answerQuestionMidFlow(text, sess);
+    await sendMessage(chatId, answer);
+    if (attempts < 1) {
+      await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
+      await sendMessage(chatId, `So I get it right — do you go by ${seeded}?`);
+      return;
+    }
+    // Already re-asked once — accept the seeded name and continue.
+    await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
+    const msg = await generateCaraMessage({
+      audience: "caregiver",
+      context: `Evia is moving on with the name ${seeded}. Ask what city and zip code they work in. One short sentence.`,
+      fallback: `Now — what city and zip code do you work in?`,
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, locationPrompt(msg, service));
+    return;
+  }
+  // Substantive non-name message (e.g. they jumped ahead with the work they
+  // want or the areas they cover). Accept the seeded name and hand their text
+  // to the location step so nothing they typed is lost or re-asked.
   await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
-  const msg = await generateCaraMessage({
-    audience: "caregiver",
-    context: `The caregiver confirmed their name is ${name}. Greet them by name and ask what city and zip code they work in.`,
-    fallback: `Great to meet you, ${name}. What city and zip code do you work in?`,
-    maxTokens: 80,
-  });
-  await sendMessage(chatId, locationPrompt(msg, service));
+  return handleCaregiverAskLocation(phone, chatId, text,
+    { ...sess, onboardingStep: "caregiver_ask_location" } as AgentSession,
+    { service });
 }
 
 async function handleCaregiverAskName(phone: string, chatId: string, text: string, session?: AgentSession, service?: string): Promise<void> {
@@ -1755,7 +2029,7 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
     city = rev?.city ?? ""; zipCode = rev?.zipCode ?? "";
     coords = { lat: inboundLocation.lat, lng: inboundLocation.lng };
   } else {
-    if (await isQuestionOrOther(text)) {
+    if (await isQuestionOrOther(text, "What city and zip code do you work in?")) {
       const answer = await answerQuestionMidFlow(text, session);
       await sendMessage(chatId, answer);
       await sendMessage(chatId, locationPrompt("What city and zip code do you work in?", service));
@@ -1830,7 +2104,7 @@ async function handleCaregiverAskLocation(phone: string, chatId: string, text: s
  */
 async function handleCaregiverAskStory(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
   // 1. Mid-flow question guard — answer, then re-ask the story prompt; never store.
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "Tell me a bit about your caregiving experience in your own words.")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
@@ -1952,7 +2226,7 @@ async function handleCaregiverAskSpecialties(phone: string, chatId: string, text
 }
 
 async function handleCaregiverAskProfile(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "Are you male or female, what languages do you speak, and can you drive clients to appointments?")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Are you male or female, what languages do you speak, and can you drive clients to appointments?");
@@ -2002,7 +2276,7 @@ async function handleCaregiverAskEmail(phone: string, chatId: string, text: stri
   // For email, only treat as question if it doesn't even look like an email attempt —
   // skip the isQuestionOrOther LLM hop when there's a "@" in the trimmed text.
   const email = text.trim().toLowerCase();
-  if (!email.includes("@") && await isQuestionOrOther(text)) {
+  if (!email.includes("@") && await isQuestionOrOther(text, "What's your email address?")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "What's your email address?");
@@ -2020,15 +2294,17 @@ async function handleCaregiverAskEmail(phone: string, chatId: string, text: stri
 }
 
 async function handleCaregiverAskBio(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  // Only treat as question if the message is short (< 60 chars) — a bio that's
+  const trimmedBio = text.trim();
+  const explicitBioSkip = await isExplicitBioSkip(trimmedBio);
+  // Only treat as question if the message is short (< 60 chars) - a bio that's
   // also a question is unlikely at this stage.
-  if (text.trim().length < 60 && text.trim().toLowerCase() !== "skip" && await isQuestionOrOther(text)) {
+  if (trimmedBio.length < 60 && !explicitBioSkip && await isQuestionOrOther(text, "Tell me about your approach to care in a sentence or two - or reply SKIP.")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Tell me about your approach to care in a sentence or two — or reply SKIP.");
+    await sendMessage(chatId, "Tell me about your approach to care in a sentence or two - or reply SKIP.");
     return;
   }
-  const bio = text.trim().toLowerCase() === "skip" || text.trim().length < 10 ? "" : text.trim();
+  const bio = explicitBioSkip ? "" : trimmedBio;
   await mergeOnboardingData(phone, { bio });
   await updateSession(phone, { onboardingStep: "caregiver_send_photo" });
   await handleCaregiverSendPhoto(phone, chatId, session);
@@ -2071,6 +2347,13 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   const mvrCharged = wantsMvr && canChargeBundledMvr();
   if (wantsMvr && !mvrCharged) {
     console.error("Caregiver opted into MVR but it is not configured (price/package); proceeding membership-only.");
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: "The caregiver asked to include the optional driving-record MVR add-on, but it is not configured. Warmly explain that Evia will continue with the standard background check and the team can follow up about adding the driving check later.",
+      fallback: "Heads up � I couldn't add the driving-record check to your membership right now, so I'm setting you up with the standard background check. Our team can follow up if you'd like to add it later.",
+      maxTokens: 90,
+    }));
     await db.collection("admin_alerts").add({
       type:      "mvr_signup_misconfigured",
       phone,
@@ -2113,7 +2396,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   }
 
   const mvrLine = mvrCharged
-    ? "\n\nYour order includes the $24.95/yr membership + MVR driver check."
+    ? "\n\nYour order includes the $66.49/yr membership + MVR driver check."
     : "";
 
   // Re-cite the live local demand the caregiver saw at the location step — fresh
@@ -2131,7 +2414,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     membershipCheckoutUrl: checkoutUrl,
   });
   await sendMessage(chatId,
-    `${demandLine}You're almost ready to apply! Activate your membership ($24.95/year) to unlock applying to the ` +
+    `${demandLine}You're almost ready to apply! Activate your membership ($66.49/year) to unlock applying to the ` +
     `jobs near you, getting booked, and Evia's scheduling + payout tools.${mvrLine}\n\nTap to activate:`
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
@@ -2140,7 +2423,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
 async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
   // If the caregiver replied with a question while waiting on Stripe, answer it
   // before resending the link.
-  if (text && await isQuestionOrOther(text)) {
+  if (text && await isQuestionOrOther(text, "Finish your membership payment via the link Evia sent.")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
   }
@@ -2206,7 +2489,7 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
 }
 
 async function handleCaregiverResendMvr(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
-  if (text && await isQuestionOrOther(text)) {
+  if (text && await isQuestionOrOther(text, "Add your Approved Driver check via the link Evia sent.")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
   }
@@ -2349,7 +2632,27 @@ async function handleInboundDocument(
 }
 
 async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  let inviteUrl = `${APP_URL}/done?task=background_check`;
+  // Re-send path (resendStuckStep / repeat webhook): if we already minted a
+  // Checkr invitation for this caregiver, resend THAT link instead of POSTing a
+  // new /v1/invitations — a second candidate would split webhook state (the
+  // pre-created caregiver doc tracks only the FIRST checkrCandidateId) and can
+  // double-bill. Guard on caregiverId too (means the pre-create + candidate
+  // tracking succeeded); if the first attempt failed entirely, fall through to a
+  // fresh POST — that's the retry working as designed.
+  // TODO expiry: Checkr invitations expire (~7 days). If a reuse is stale, this
+  // will resend a dead link; a future pass can fall through to a fresh POST past
+  // ~6 days and overwrite bgcheckInviteUrl + backgroundCheckData.checkrCandidateId.
+  const cachedUrl = (session as any).bgcheckInviteUrl as string | undefined;
+  if (cachedUrl && session.caregiverId) {
+    await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
+    await sendMessage(chatId, "Here's your background-check link again — takes about 5 minutes:");
+    await sendMessage(chatId, { parts: [{ type: "link", value: cachedUrl }] });
+    resolveCommitment(phone, "link", "link_sent").catch(() => {});
+    return;
+  }
+
+  let inviteUrl: string | null = null;
+  let linkError: unknown = null;
   await signalThinking(chatId, session.service);
   try {
     const d = session.onboardingData ?? {};
@@ -2358,28 +2661,35 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
     const mvrPaid      = (session as any).mvrPaid === true;
     const checkrPkg    = mvrPaid
-      ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
-      : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
+      ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
+      : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
 
-    const resp = await guardSideEffect(
+    // Candidate-first (Checkr's contract): POST /candidates with the email
+    // collected at caregiver_ask_email, THEN /invitations with candidate_id.
+    // An invitation without a candidate_id is rejected — this malformed call
+    // was the launch-blocking "can't generate your background check link" bug.
+    const inv = await guardSideEffect(
       "checkr.invitation.create",
-      () => axios.post(
-        "https://api.checkr.com/v1/invitations",
-        {
-          package:    checkrPkg,
-          first_name: nameParts[0] ?? "",
-          last_name:  nameParts.slice(1).join(" ") ?? "",
-        },
-        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
-      ),
-      { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
+      () => createCheckrInvitation({
+        firstName:   nameParts[0] ?? "",
+        lastName:    nameParts.slice(1).join(" "),
+        email:       (d.email ?? "") as string,
+        zipCode:     (d.zipCode || undefined) as string | undefined,
+        workState:   CHECKR_WORK_STATE,
+        workCity:    (d.city || undefined) as string | undefined,
+        packageSlug: checkrPkg,
+      }),
+      { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
     );
-    inviteUrl = resp.data?.invitation_url ?? inviteUrl;
+    inviteUrl = inv.invitationUrl;
+    // Cache the real Checkr link so a later "send me the link" request resends
+    // THIS invitation instead of minting a duplicate (see sendOnboardingLink).
+    await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
 
     // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
     // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
     // uid so Evia writes land where the web reads (uid-keyed caregivers/{uid}).
-    const candidateId = (resp.data?.candidate_id ?? resp.data?.id) as string | undefined;
+    const candidateId = inv.candidateId as string | undefined;
     if (candidateId && !session.caregiverId) {
       const docData = {
         phone,
@@ -2402,17 +2712,40 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
         caregiverDocId = (await db.collection("caregivers").add(docData)).id;
       }
       await updateSession(phone, { caregiverId: caregiverDocId });
+    } else if (candidateId && session.caregiverId) {
+      // Fresh invitation for an already pre-created doc (restart cleared the
+      // cache, invitation.expired deleted it, or the doc was created at the
+      // gate handoff with status "onboarding"): re-point the doc at the NEW
+      // candidate so the Checkr webhook — which matches on checkrCandidateId —
+      // follows the invitation the caregiver will actually complete. Mirrors
+      // sendBgCheckRenewalLink's idiom. Also move status to "pending_review"
+      // (the value this step has always stamped): matchingAgent treats it as
+      // matchable-with-pending-check, unlike the gate-created "onboarding".
+      await db.collection("caregivers").doc(session.caregiverId).update({
+        "status":                                "pending_review",
+        "backgroundCheckData.checkrCandidateId": candidateId,
+        "backgroundCheckData.status":            "pending",
+        "backgroundCheckData.submittedAt":       new Date().toISOString(),
+        "backgroundCheckData.mvrIncluded":       mvrPaid,
+      }).catch(() => {});
     }
   } catch (err) {
+    linkError = err;
     console.error("Checkr invitation error:", err);
   }
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
+  if (!inviteUrl) {
+    await alertOnboardingLinkFailure(phone, "caregiver_send_bgcheck", linkError ?? "missing Checkr invitation URL");
+    await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
+    return;
+  }
   await sendMessage(chatId,
     "Almost done! A background check is required for all caregivers.\n\n" +
     "Tap to get started — usually takes about 5 minutes:"
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
+  resolveCommitment(phone, "link", "link_sent").catch(() => {});
   await sendMessage(chatId, await generateCaraMessage({
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
@@ -2426,37 +2759,52 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
 // check expired / is expiring (they replied "RENEW" to the expiry nudge). Mirrors the
 // onboarding invitation logic but updates the EXISTING caregiver doc instead of creating one.
 export async function sendBgCheckRenewalLink(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  let inviteUrl = `${APP_URL}/done?task=background_check`;
+  let inviteUrl: string | null = null;
+  let linkError: unknown = null;
   try {
-    // Resolve the caregiver's name: prefer the caregivers doc, fall back to session.
+    // Resolve name/email/candidate: prefer the caregivers doc, fall back to session.
     let firstName = "";
     let lastName  = "";
+    let docEmail: string | undefined;
+    let existingCandidateId: string | undefined;
     const caregiverId = session.caregiverId;
     if (caregiverId) {
       const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-      const parts = ((cgSnap.data()?.name ?? "") as string).split(" ");
+      const cg = cgSnap.data() ?? {};
+      const parts = ((cg.name ?? "") as string).split(" ");
       firstName = parts[0] ?? "";
       lastName  = parts.slice(1).join(" ");
+      docEmail  = (cg.email || undefined) as string | undefined;
+      existingCandidateId = cg.backgroundCheckData?.checkrCandidateId as string | undefined;
     }
+    const d = session.onboardingData ?? {};
     if (!firstName) {
-      const parts = (((session.onboardingData ?? {}).name ?? "") as string).split(" ");
+      const parts = ((d.name ?? "") as string).split(" ");
       firstName = parts[0] ?? "";
       lastName  = parts.slice(1).join(" ");
     }
 
-    const checkrPkg = process.env.CHECKR_PACKAGE ?? "tasker_standard";
-    const resp = await guardSideEffect(
+    const checkrPkg = process.env.CHECKR_PACKAGE || "checkrdirect_essential_criminal";
+    // Renewal: reuse the existing Checkr candidate when we have one (mirrors the
+    // web renewal path) — a fresh candidate would orphan the caregiver's history.
+    // Candidate-first otherwise; email required for candidate creation.
+    const inv = await guardSideEffect(
       "checkr.invitation.create",
-      () => axios.post(
-        "https://api.checkr.com/v1/invitations",
-        { package: checkrPkg, first_name: firstName, last_name: lastName },
-        { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
-      ),
-      { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
+      () => createCheckrInvitation({
+        firstName,
+        lastName,
+        email:       docEmail ?? ((d.email ?? "") as string),
+        candidateId: existingCandidateId,
+        workState:   CHECKR_WORK_STATE,
+        packageSlug: checkrPkg,
+        ...(caregiverId ? { customId: caregiverId } : {}),
+      }),
+      { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
     );
-    inviteUrl = resp.data?.invitation_url ?? inviteUrl;
+    inviteUrl = inv.invitationUrl;
+    await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
 
-    const candidateId = (resp.data?.candidate_id ?? resp.data?.id) as string | undefined;
+    const candidateId = inv.candidateId as string | undefined;
     if (caregiverId) {
       await db.collection("caregivers").doc(caregiverId).update({
         "backgroundCheckData.checkrCandidateId": candidateId ?? null,
@@ -2465,44 +2813,94 @@ export async function sendBgCheckRenewalLink(phone: string, chatId: string, sess
       }).catch(() => {});
     }
   } catch (err) {
+    linkError = err;
     console.error("[sendBgCheckRenewalLink] Checkr invitation error:", err);
   }
 
-  await sendMessage(chatId, "Here's your background check renewal link — usually about 5 minutes:");
+  if (!inviteUrl) {
+    await alertOnboardingLinkFailure(phone, "background_check_renewal", linkError ?? "missing Checkr renewal invitation URL");
+    await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check renewal");
+    return;
+  }
+
+  await sendMessage(chatId, "Here's your background check renewal link - usually about 5 minutes:");
   await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
+  resolveCommitment(phone, "link", "link_sent").catch(() => {});
   await sendMessage(chatId, "I'll text you the moment results come in (usually 1–3 days). Bookings stay paused until it clears.");
 }
 
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const token = generateToken({ phone, task: "stripe_connect" });
-  let connectUrl = `${APP_URL}/done?task=stripe_connect&t=${token}`;
+  let connectUrl: string | null = null;
+  let linkError: unknown = null;
 
   await signalThinking(chatId, session.service);
   try {
     const d = session.onboardingData ?? {};
-    const account = await getStripe().accounts.create({
-      type:    "express",
-      country: "US",
-      email:   (d.email ?? "") as string,
-      metadata: { phone, caregiverName: (d.name ?? "") as string },
-    });
+    // Reuse a previously created Express account — this handler is re-entered by
+    // resendStuckStep and repeat bg-check webhooks, and each accounts.create call
+    // would otherwise orphan the prior account (same reuse rule as
+    // sendOnboardingLink's caregiver_payouts branch).
+    let accountId = d.stripeAccountId as string | undefined;
+    if (!accountId) {
+      const account = await getStripe().accounts.create({
+        type:    "express",
+        country: "US",
+        email:   (d.email ?? "") as string,
+        metadata: { phone, caregiverName: (d.name ?? "") as string },
+      });
+      accountId = account.id;
+      await mergeOnboardingData(phone, { stripeAccountId: accountId });
+    }
+
+    // Mirror the Express account id onto the caregiver doc so the Connect
+    // webhook (account.updated → charges+payouts enabled) can MATCH this
+    // caregiver and finalize onboarding server-side — the browser returning to
+    // /done is no longer the only activation trigger. Idempotent set+merge on a
+    // doc that already exists (pre-created by handleCaregiverSendBgcheck).
+    // Re-read caregiverId fresh: `session` may be a stale snapshot (this handler
+    // is re-entered by resendStuckStep with a session read before the merge).
+    try {
+      const freshSnap = await db.collection("agent_sessions").doc(phone).get();
+      const caregiverId = (freshSnap.data() as AgentSession | undefined)?.caregiverId ?? session.caregiverId;
+      if (caregiverId) {
+        await guardSideEffect(
+          "firestore.set:caregivers.stripeAccountId",
+          async () => {
+            await db.collection("caregivers").doc(caregiverId)
+              .set({ stripeAccountId: accountId, phone }, { merge: true });
+          },
+          undefined,
+          { phone },
+        );
+      }
+    } catch (mergeErr) {
+      console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr);
+    }
+
     const link = await getStripe().accountLinks.create({
-      account:     account.id,
+      account:     accountId,
       type:        "account_onboarding",
       return_url:  `${APP_URL}/done?task=stripe_connect&t=${token}`,
       refresh_url: `${APP_URL}/done?task=stripe_connect&t=${token}`,
     });
     connectUrl = link.url;
-    await mergeOnboardingData(phone, { stripeAccountId: account.id });
   } catch (err) {
+    linkError = err;
     console.error("Stripe Connect error:", err);
   }
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_stripe" });
+  if (!connectUrl) {
+    await alertOnboardingLinkFailure(phone, "caregiver_send_stripe_connect", linkError ?? "missing Stripe Connect account link");
+    await sendOnboardingLinkFailureMessage(phone, chatId, session, "payout setup");
+    return;
+  }
   await sendMessage(chatId,
     "Last step — set up your payout account so you can get paid after every visit:\n"
   );
   await sendMessage(chatId, { parts: [{ type: "link", value: connectUrl }] });
+  resolveCommitment(phone, "link", "link_sent").catch(() => {});
 }
 
 // ── On-demand onboarding link (re)send ────────────────────────────────────────
@@ -2598,23 +2996,47 @@ export async function sendOnboardingLink(
     case "caregiver_background_check": {
       const stored = session.bgcheckInviteUrl as string | undefined;
       if (stored) { url = stored; break; }
-      url = `${APP_URL}/done?task=background_check`;
       const nameParts = ((d.name ?? "") as string).split(" ");
       const mvrPaid   = (session.mvrPaid as boolean | undefined) === true;
       const checkrPkg = mvrPaid
-        ? (process.env.CHECKR_PACKAGE_MVR ?? "tasker_standard")
-        : (process.env.CHECKR_PACKAGE     ?? "tasker_standard");
-      const resp = await guardSideEffect(
-        "checkr.invitation.create",
-        () => axios.post(
-          "https://api.checkr.com/v1/invitations",
-          { package: checkrPkg, first_name: nameParts[0] ?? "", last_name: nameParts.slice(1).join(" ") ?? "" },
-          { auth: { username: process.env.CHECKR_API_KEY ?? "", password: "" } }
-        ),
-        { data: { invitation_url: "https://dryrun.local/checkr", candidate_id: "cand_dryrun", id: "cand_dryrun" } } as any,
-      );
-      url = resp.data?.invitation_url ?? url;
+        ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
+        : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
+      // Candidate-first (Checkr's contract) — same shape as
+      // handleCaregiverSendBgcheck; see the comment there.
+      let inv: { invitationUrl: string; candidateId: string };
+      try {
+        inv = await guardSideEffect(
+          "checkr.invitation.create",
+          () => createCheckrInvitation({
+            firstName:   nameParts[0] ?? "",
+            lastName:    nameParts.slice(1).join(" "),
+            email:       (d.email ?? "") as string,
+            zipCode:     (d.zipCode || undefined) as string | undefined,
+            workState:   CHECKR_WORK_STATE,
+            workCity:    (d.city || undefined) as string | undefined,
+            packageSlug: checkrPkg,
+          }),
+          { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
+        );
+      } catch (err) {
+        await alertOnboardingLinkFailure(phone, "send_onboarding_link_background_check", err);
+        await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
+        return { success: false, linkType };
+      }
+      url = inv.invitationUrl;
       await updateSession(phone, { bgcheckInviteUrl: url });
+      // A fresh invitation means a fresh candidate — keep the caregiver doc's
+      // checkrCandidateId pointing at the invitation the caregiver will actually
+      // complete, or the report webhook can't match (split-state bug).
+      const freshCandidateId = inv.candidateId as string | undefined;
+      if (freshCandidateId && session.caregiverId) {
+        await db.collection("caregivers").doc(session.caregiverId as string).update({
+          "backgroundCheckData.checkrCandidateId": freshCandidateId,
+          "backgroundCheckData.status":            "pending",
+          "backgroundCheckData.submittedAt":       new Date().toISOString(),
+          "backgroundCheckData.mvrIncluded":       mvrPaid,
+        }).catch(() => {});
+      }
       break;
     }
 
@@ -2631,6 +3053,25 @@ export async function sendOnboardingLink(
         accountId = account.id;
         await mergeOnboardingData(phone, { stripeAccountId: accountId });
       }
+      // Mirror onto the caregiver doc so the Connect webhook can match this
+      // caregiver even when the link is (re)sent via the agent tool — same
+      // activation-independence fix as handleCaregiverSendStripeConnect.
+      // (Safe even mid-flow: advanceOnboardingStep's stripe_connect step guard
+      // refuses to finalize unless the session is at the Connect step, so an
+      // early payout link can't prematurely activate the caregiver.)
+      if (session.caregiverId) {
+        const linkCaregiverId = session.caregiverId as string;
+        await guardSideEffect(
+          "firestore.set:caregivers.stripeAccountId",
+          async () => {
+            await db.collection("caregivers").doc(linkCaregiverId)
+              .set({ stripeAccountId: accountId, phone }, { merge: true })
+              .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
+          },
+          undefined,
+          { phone },
+        );
+      }
       const link = await getStripe().accountLinks.create({
         account:     accountId,
         type:        "account_onboarding",
@@ -2646,6 +3087,10 @@ export async function sendOnboardingLink(
   }
 
   await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
+  // A link just landed in the chat — any open "I'll text you the link" promise
+  // is now fulfilled (recorded by sendOnboardingLinkFailureMessage / the
+  // link-promise net). Harmless no-op when none is open.
+  resolveCommitment(phone, "link", "link_sent").catch(() => {});
   return { success: true, linkType };
 }
 
@@ -3051,11 +3496,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
-      // Checkr came back clear → advance to Stripe Connect
+      // Checkr came back clear → congratulate, then advance to Stripe Connect
       await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
+      const clearFirstName = (((session.onboardingData ?? {}).name ?? "") as string).split(" ")[0];
       await sendMessage(chatId,
-        "Your background check came back clear.\n\n" +
-        "One last step: set up your payout account so you can get paid after every visit."
+        `🎉 Great news${clearFirstName ? `, ${clearFirstName}` : ""} — your background check came back clear. ` +
+        `You're officially approved to be on Evia, and families can now book you!`
       );
       await handleCaregiverSendStripeConnect(phone, chatId, session);
       break;
@@ -3117,53 +3563,50 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     case "stripe_connect": {
+      // Step guard: only finalize when the session is actually parked at the
+      // Connect step. Without this, ANY completed Connect account would activate
+      // the caregiver — e.g. an early payout link minted by the agent tool while
+      // the background check is still pending would send a "background check
+      // came back clear" celebration prematurely. Blocked completions recover
+      // when the flow reaches the Connect step: the reused account's link is
+      // re-sent and /done (or the next account.updated) re-fires this task.
+      const stepNow = (session as any).onboardingStep as string | undefined;
+      if (stepNow !== "caregiver_awaiting_stripe" && stepNow !== "caregiver_send_stripe_connect") {
+        console.info(`advanceOnboardingStep: ignoring stripe_connect at step="${stepNow}" for phone=${phone}`);
+        return;
+      }
+
+      // Atomic claim: with stripeAccountId mirrored onto the caregiver doc, BOTH
+      // the Connect webhook and the /done callable fire for the same completion —
+      // often inside the read window of the processedWebhookTasks guard above
+      // (read-then-arrayUnion, not atomic). claimWebhookEvent's create() is
+      // atomic, so exactly one caller finalizes; it fails OPEN on ledger infra
+      // errors (losing an activation is worse than a rare duplicate celebration).
+      const claimId = `advance_stripe_connect_${phone}`;
+      if (await claimWebhookEvent(STRIPE_EVENTS_COLLECTION, claimId) === "duplicate") {
+        console.info(`advanceOnboardingStep: stripe_connect already claimed for phone=${phone}`);
+        return;
+      }
+
       // Mark processed first to prevent duplicate caregiver doc creation on retry
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
+      // The arrayUnion is now durable — the top-of-function guard owns dedupe
+      // from here, so stamp the claim settled (a crash BEFORE this line leaves
+      // the claim to expire in 10 min, letting a webhook redelivery retry).
+      await settleWebhookEvent(STRIPE_EVENTS_COLLECTION, claimId, "processed");
 
-      // Caregiver Stripe Connect complete → finalize caregiver doc
+      // Caregiver Stripe Connect complete → finalize caregiver doc. The field
+      // mapping lives in buildCaregiverProfileMirror (shared with the
+      // incremental mirror in mergeOnboardingData and the gate-handoff doc
+      // creation) — only the gating fields are finalization-specific. The
+      // mirror omits absent fields instead of writing nulls, so this merge can
+      // never blank a field another path already set.
       const d = session.onboardingData ?? {};
-      // Raw coords (present only when the caregiver shared a location pin) — let
-      // aiMatching use true haversine distance instead of the city/zip proxy.
-      const cgLat = typeof d.lat === "number" ? d.lat as number : undefined;
-      const cgLng = typeof d.lng === "number" ? d.lng as number : undefined;
-      const cgHasCoords = cgLat !== undefined && cgLng !== undefined;
-      const cgWeekly = deriveWeeklyAvailability(d.availability);
       const profileData = {
         phone,
-        name:            d.name,
-        city:            d.city,
-        zipCode:         d.zipCode,
-        ...(cgHasCoords ? { lat: cgLat, lng: cgLng, location: { lat: cgLat, lng: cgLng } } : {}),
-        // Profile photo + uploaded credentials (web upload OR texted to Evia).
-        ...(d.profilePhoto ? { profilePhoto: d.profilePhoto, photoURL: d.profilePhoto } : {}),
-        ...(Array.isArray(d.documents) && d.documents.length ? { documents: d.documents } : {}),
-        yearsExperience: d.yearsExperience,
-        // Web parity aliases — the client-facing cards/modal and aiMatching read
-        // these exact names (types.ts Caregiver): experience, hasTransportation,
-        // skills. Without them Evia-onboarded caregivers render with blank
-        // experience/skills and no transportation badge.
-        experience:      d.yearsExperience ?? null,
-        certifications:  d.certifications,
-        specialties:     d.specialties,
-        skills:          Array.from(new Set([
-          ...(Array.isArray(d.skills)      ? d.skills      as string[] : []),
-          ...(Array.isArray(d.specialties) ? d.specialties as string[] : []),
-        ])),
-        availability:    d.availability,
-        // Structured map read by ai/scoring.ts availabilityOverlap and the web
-        // profile modal. Missing map scores as 0% available — derive it.
-        ...(cgWeekly ? { weeklyAvailability: cgWeekly } : {}),
-        hourlyRate:      d.hourlyRate,
-        stripeAccountId: d.stripeAccountId,
-        email:           d.email   ?? null,
-        bio:             d.bio     ?? null,
-        jobType:         d.jobType ?? null,
-        gender:          d.gender    ?? null,
-        languages:       Array.isArray(d.languages) ? d.languages : [],
-        canDrive:        d.canDrive ?? null,
-        hasTransportation: d.canDrive ?? null,
+        ...buildCaregiverProfileMirror(d),
         membershipSubscriptionId: (session as any).caregiverSubscriptionId ?? null,
         status:          "active",
         // Visibility gate: families' FindCaregivers query only loads caregivers
@@ -3332,6 +3775,15 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       });
       await sendMessage(chatId, activationMsg);
 
+      // How-you-get-paid facts (2026-07-06 money model): automatic daily payouts
+      // are the standard rail and instant payouts are free. Sent once, here, so
+      // every caregiver leaves onboarding knowing how money reaches them.
+      await sendMessage(chatId,
+        `Quick money note: payouts are automatic — your earnings land in your bank about 2 business days after each visit is paid, no action needed. ` +
+        `Need it sooner? Just text me PAYOUT for a free instant payout. ` +
+        `You can see your balance and payment history anytime at ${APP_URL}/caregiver/payments`
+      );
+
       const { sendCaregiverPermissionsFlow } = await import("./permissionsConversation");
       await sendCaregiverPermissionsFlow(phone, chatId, session, d.name as string);
       break;
@@ -3480,7 +3932,7 @@ async function handleJobAskFrequency(
 async function handleJobAskDays(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "How often do you need help? 1 Occasional, 2 Part-time, 3 Full-time")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
@@ -3510,7 +3962,7 @@ async function handleJobAskDays(
 async function handleJobAskTime(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "Which days work best?")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")");
@@ -3545,7 +3997,7 @@ async function handleJobAskTime(
 async function handleJobAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "What time of day works best? Morning, Afternoon, Evening, or Overnight")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
@@ -3587,7 +4039,7 @@ async function handleJobAskCareNeeds(
 async function handleJobAskCareLevel(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "What kind of help does your loved one need? (reply with the numbers)")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     const d2 = session.onboardingData ?? {};
@@ -3629,7 +4081,7 @@ async function handleJobAskCareLevel(
 async function handleJobAskEnvironment(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "How much support is needed? Light, Moderate, or Intensive")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
@@ -3657,7 +4109,7 @@ async function handleJobAskEnvironment(
 async function handleJobAskRate(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "Are there pets in the home? Is it a smoking household?")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Are there pets in the home? Is it a smoking household?");
@@ -3690,7 +4142,7 @@ async function handleJobAskRate(
 async function handleJobAskPayMethod(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "What hourly rate are you hoping to pay? (or \"flexible\")")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "What hourly rate are you hoping to pay? (or \"flexible\")");
@@ -3711,27 +4163,30 @@ async function handleJobAskPayMethod(
   await updateSession(phone, { onboardingStep: "job_ask_description" });
   await sendMessage(chatId,
     `${rateLabel} — sounds good! How will you pay the caregiver?\n\n` +
-    "1️⃣  Credit/debit card\n" +
-    "2️⃣  Cash directly"
+    "1️⃣  Credit/debit card (through the platform)\n" +
+    "2️⃣  Cash directly\n" +
+    "3️⃣  Venmo\n" +
+    "4️⃣  Zelle"
   );
 }
 
 async function handleJobAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
+  if (await isQuestionOrOther(text, "How will you pay the caregiver? Card, Cash, Venmo, or Zelle")) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "How will you pay the caregiver?\n1️⃣ Card  2️⃣ Cash");
+    await sendMessage(chatId, "How will you pay the caregiver?\n1️⃣ Card  2️⃣ Cash  3️⃣ Venmo  4️⃣ Zelle");
     return;
   }
   const raw = await parseWithClaude(
     '"1", card, credit, debit, stripe = card. "2", cash, direct, hand = cash. ' +
-    'Reply with exactly one of: card, cash',
+    '"3", venmo = venmo. "4", zelle = zelle. ' +
+    'Reply with exactly one of: card, cash, venmo, zelle',
     text
   );
-  const paymentMethod = raw === "cash" ? "cash" : "card";
-  const payLabel = paymentMethod === "cash" ? "Cash" : "Card";
+  const paymentMethod = ["cash", "venmo", "zelle"].includes(raw) ? raw : "card";
+  const payLabel = paymentMethod === "card" ? "Card" : paymentMethod === "cash" ? "Cash" : paymentMethod === "venmo" ? "Venmo" : "Zelle";
   const d = session.onboardingData ?? {};
   await mergeOnboardingData(phone, { jobPaymentMethod: paymentMethod });
   await updateSession(phone, { onboardingStep: "job_confirm_post" });
@@ -3756,7 +4211,7 @@ async function handleJobConfirmPost(
     const rd = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
 
     const rateLabel     = rd.jobHourlyRate === "flexible" ? "flexible rate" : `$${rd.jobHourlyRate}/hr`;
-    const payLabel      = rd.jobPaymentMethod === "cash" ? "cash" : "card";
+    const payLabel      = paymentMethodLabel(rd.jobPaymentMethod);
     const daysArr       = Array.isArray(rd.jobDays)       ? (rd.jobDays as string[]).join(", ") : "—";
     const timeArr       = Array.isArray(rd.jobTimeOfDay)  ? (rd.jobTimeOfDay as string[]).join(", ") : "—";
     const needsArr      = Array.isArray(rd.jobCareNeeds)  ? (rd.jobCareNeeds as string[]).join(", ") : "—";
@@ -3842,7 +4297,8 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
       // LAUNCH: wording pending counsel review (R15)
       "(3) Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot) and never refer to yourself in the third person. But if directly asked whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question. Also never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
-      "Don't re-ask the signup question; that's added automatically after your reply.",
+      "(5) Ask NO question of your own — none. The signup question is re-asked automatically right after your reply, so a question from you would leave the user answering two different things at once. " +
+      "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report).",
     text,
     { maxTokens: 90 },
   )).trim();

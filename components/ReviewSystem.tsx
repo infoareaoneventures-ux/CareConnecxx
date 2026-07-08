@@ -23,6 +23,7 @@ export default function ReviewSystem() {
   });
   const [hoverRating, setHoverRating] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [visit, setVisit] = useState<{
     id: string;
@@ -67,6 +68,11 @@ export default function ReviewSystem() {
       addToast('Please select a star rating before submitting.', 'error');
       return;
     }
+    // In-flight guard: a double-click otherwise writes two `reviews` docs and
+    // double-increments the caregiver's totalReviews/ratingSum, permanently
+    // inflating their public rating.
+    if (submitting) return;
+    setSubmitting(true);
 
     try {
       const fdb = db;
@@ -123,6 +129,8 @@ export default function ReviewSystem() {
     } catch (error) {
       console.error('Error submitting review:', error);
       addToast('Failed to submit review. Please try again.', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -303,10 +311,10 @@ export default function ReviewSystem() {
         {/* Submit Button */}
         <button
           onClick={handleSubmit}
-          disabled={review.rating === 0}
+          disabled={review.rating === 0 || submitting}
           className="w-full py-4 bg-gradient-to-r from-primary-600 to-blue-600 text-white font-bold rounded-xl hover:from-primary-700 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Submit Review
+          {submitting ? 'Submitting…' : 'Submit Review'}
         </button>
 
         <button

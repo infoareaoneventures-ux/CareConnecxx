@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { DollarSign, Clock, AlertCircle, Check, Zap, Calendar } from 'lucide-react';
-
-export type PayoutMethod = 'instant' | 'standard';
+import { DollarSign, Clock, AlertCircle, Check, Calendar } from 'lucide-react';
 
 interface InstantPayoutModalProps {
     availableBalance: number;
     onClose: () => void;
-    onConfirm: (method: PayoutMethod) => Promise<void>;
+    onConfirm: () => Promise<void>;
     onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+/**
+ * Cash-out modal. Regular earnings pay out automatically on Stripe's daily
+ * schedule (free, ~2 business days after each shift payment) — this modal only
+ * offers the optional instant payout, which is also free to the caregiver
+ * (the platform absorbs Stripe's instant fee; pricing decision 2026-07-06).
+ */
 export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
     availableBalance,
     onClose,
@@ -18,11 +22,6 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
     onShowToast,
 }) => {
     const [processing, setProcessing] = useState(false);
-    const [method, setMethod] = useState<PayoutMethod>('instant');
-
-    const instantFee = Math.max(availableBalance * 0.015, 0.50);
-    const fee = method === 'instant' ? instantFee : 0;
-    const netAmount = availableBalance - fee;
 
     const handleConfirm = async () => {
         if (availableBalance < 1) {
@@ -32,13 +31,8 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
 
         setProcessing(true);
         try {
-            await onConfirm(method);
-            onShowToast(
-                method === 'instant'
-                    ? 'Instant payout initiated! Funds will arrive in 30 minutes.'
-                    : 'Standard payout initiated! Funds will arrive in 2-3 business days.',
-                'success',
-            );
+            await onConfirm();
+            onShowToast('Instant payout initiated! Funds will arrive in about 30 minutes.', 'success');
             onClose();
         } catch (error: any) {
             console.error('Payout error:', error);
@@ -46,32 +40,6 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
         } finally {
             setProcessing(false);
         }
-    };
-
-    const MethodCard: React.FC<{
-        value: PayoutMethod;
-        icon: React.ReactNode;
-        title: string;
-        subtitle: string;
-    }> = ({ value, icon, title, subtitle }) => {
-        const selected = method === value;
-        return (
-            <button
-                type="button"
-                onClick={() => setMethod(value)}
-                className={`flex-1 p-3 rounded-xl border-2 text-left transition-all ${
-                    selected
-                        ? 'border-blue-500 bg-blue-50 shadow-sm'
-                        : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
-            >
-                <div className="flex items-center gap-2 mb-1">
-                    {icon}
-                    <span className="font-semibold text-gray-900 text-sm">{title}</span>
-                </div>
-                <p className="text-xs text-gray-600">{subtitle}</p>
-            </button>
-        );
     };
 
     return createPortal(
@@ -84,8 +52,8 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                             <DollarSign className="w-6 h-6 text-blue-600" />
                         </div>
                         <div>
-                            <h2 className="text-2xl font-bold text-gray-900">Cash Out</h2>
-                            <p className="text-sm text-gray-500">Transfer earnings to your bank</p>
+                            <h2 className="text-2xl font-bold text-gray-900">Cash Out Now</h2>
+                            <p className="text-sm text-gray-500">Get your earnings in ~30 minutes</p>
                         </div>
                     </div>
                     <button
@@ -98,41 +66,21 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                     </button>
                 </div>
 
-                {/* Method picker */}
-                <div className="flex gap-2 mb-4">
-                    <MethodCard
-                        value="instant"
-                        icon={<Zap className="w-4 h-4 text-blue-600" />}
-                        title="Instant"
-                        subtitle="30 min · 1.5% fee"
-                    />
-                    <MethodCard
-                        value="standard"
-                        icon={<Calendar className="w-4 h-4 text-blue-600" />}
-                        title="Standard"
-                        subtitle="2-3 days · free"
-                    />
-                </div>
-
-                {/* Amount Breakdown */}
+                {/* Amount */}
                 <div className="bg-gradient-to-br from-blue-50 to-blue-50 rounded-xl p-6 mb-6">
                     <div className="space-y-4">
                         <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Available Balance</span>
+                            <span className="text-gray-600">Available Now</span>
                             <span className="text-2xl font-bold text-gray-900">${availableBalance.toFixed(2)}</span>
                         </div>
                         <div className="border-t border-gray-200 pt-4">
                             <div className="flex justify-between items-center text-sm mb-2">
-                                <span className="text-gray-600">
-                                    {method === 'instant' ? 'Instant Payout Fee (1.5%)' : 'Standard Payout Fee'}
-                                </span>
-                                <span className="text-gray-900 font-medium">
-                                    {method === 'instant' ? `-$${fee.toFixed(2)}` : 'Free'}
-                                </span>
+                                <span className="text-gray-600">Fee</span>
+                                <span className="text-gray-900 font-medium">Free</span>
                             </div>
                             <div className="flex justify-between items-center">
                                 <span className="text-gray-900 font-semibold">You'll Receive</span>
-                                <span className="text-3xl font-bold text-green-600">${netAmount.toFixed(2)}</span>
+                                <span className="text-3xl font-bold text-green-600">${availableBalance.toFixed(2)}</span>
                             </div>
                         </div>
                     </div>
@@ -143,10 +91,16 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                     <div className="flex items-start space-x-3 bg-blue-50 p-3 rounded-lg">
                         <Clock className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                         <div>
-                            <p className="text-sm font-medium text-blue-900">
-                                {method === 'instant' ? 'Arrives in 30 minutes' : 'Arrives in 2-3 business days'}
-                            </p>
+                            <p className="text-sm font-medium text-blue-900">Arrives in about 30 minutes</p>
                             <p className="text-xs text-blue-700">Funds will be sent to your connected bank account</p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-start space-x-3 bg-slate-50 p-3 rounded-lg">
+                        <Calendar className="w-5 h-5 text-slate-500 mt-0.5 flex-shrink-0" />
+                        <div>
+                            <p className="text-sm font-medium text-slate-800">No rush? No action needed</p>
+                            <p className="text-xs text-slate-600">Your earnings pay out automatically every day and land in your bank within ~2 business days.</p>
                         </div>
                     </div>
 
@@ -155,7 +109,7 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                             <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
                             <div>
                                 <p className="text-sm font-medium text-red-900">Minimum amount not met</p>
-                                <p className="text-xs text-red-700">You need at least $1.00 to request a payout</p>
+                                <p className="text-xs text-red-700">You need at least $1.00 to request an instant payout</p>
                             </div>
                         </div>
                     )}
@@ -188,14 +142,14 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                                 Processing...
                             </span>
                         ) : (
-                            'Confirm Payout'
+                            'Cash Out Now'
                         )}
                     </button>
                 </div>
 
                 {/* Disclaimer */}
                 <p className="text-xs text-gray-500 text-center mt-4">
-                    Standard payouts (2-3 business days) are always free. Instant payout fees help cover processing costs.
+                    Instant payouts are free. Regular payouts happen automatically every day — nothing to request.
                 </p>
             </div>
         </div>

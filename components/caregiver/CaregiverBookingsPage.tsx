@@ -10,6 +10,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { db } from '../../lib/firebase';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { paymentMethodLabel } from '../../types';
 import firebase from '../../lib/firebase';
 import { dbService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
@@ -746,7 +747,7 @@ const BookingGroupCard: React.FC<{
             {base.paymentMethod === 'credit'
               ? <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
-            <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span></span>
+            <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(base.paymentMethod)}</span></span>
           </div>
         )}
         {base.notes && (

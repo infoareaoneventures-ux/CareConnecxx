@@ -358,7 +358,10 @@ const AppContent: React.FC = () => {
           {/* Legacy routes — redirect to unified payments page */}
           <Route path="/caregiver/transactions" element={<CaregiverRoute element={<CaregiverTransactionsPage />} />} />
           <Route path="/caregiver/payout" element={<CaregiverRoute element={<CaregiverPayoutPage />} />} />
-          {/* Public shareable caregiver profile */}
+          {/* Public shareable caregiver profile. /p/:id is the canonical share
+              path — hosting rewrites it through v1-caregiverProfileMeta so texted
+              links get per-caregiver OG previews; /caregiver/:id kept for old links. */}
+          <Route path="/p/:id" element={<PublicCaregiverProfile />} />
           <Route path="/caregiver/:id" element={<PublicCaregiverProfile />} />
 
           <Route path="/client/care-plan" element={

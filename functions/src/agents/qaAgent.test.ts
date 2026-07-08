@@ -33,6 +33,8 @@ vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildTo
 import {
   hasListShape,
   detectConfidenceClaim,
+  detectMedicalAssertion,
+  collectTurnToolObservations,
   detectPromiseWithoutToolCall,
   detectGenericHelpAsk,
   detectMedicationInstruction,
@@ -79,6 +81,11 @@ describe("detectConfidenceClaim", () => {
     ["Alice is sick today.",                "proper-name state assertion"],
     ["Sarah is coming at 9.",               "proper-name schedule assertion"],
     ["I confirmed the appointment.",        "first-person done-claim"],
+    ["Maria will arrive at 3pm.",           "named-person future action"],
+    ["Dr. Chen is her primary physician.",  "relationship/role assertion"],
+    ["Your invoice was $340.",              "concrete money claim"],
+    ["Your mom has an appointment Tuesday at 2.", "appointment day fact"],
+    ["She was diagnosed with diabetes.",    "confident medical assertion"],
   ])("flags %p (%s)", (input) => {
     expect(detectConfidenceClaim(input)).toBe(true);
   });
@@ -90,6 +97,47 @@ describe("detectConfidenceClaim", () => {
     ["",                                         "empty"],
   ])("does NOT flag %p (%s)", (input) => {
     expect(detectConfidenceClaim(input)).toBe(false);
+  });
+});
+
+describe("detectMedicalAssertion", () => {
+  it.each([
+    ["She was diagnosed with early-stage dementia.", "was diagnosed"],
+    ["He is taking Lisinopril for blood pressure.",  "is taking a med"],
+    ["Her blood pressure is 140 over 90.",           "stated vital"],
+    ["Your dad has diabetes.",                        "named condition"],
+  ])("flags confident medical fact %p (%s)", (input) => {
+    expect(detectMedicalAssertion(input)).toBe(true);
+  });
+
+  it.each([
+    ["I can't advise on changing meds — please call her doctor.", "safe deflection, no asserted fact"],
+    ["It might be worth asking her doctor about that.",            "hedged, no flat assertion"],
+    ["Let me check what's on her care plan.",                      "promise, no assertion"],
+  ])("does NOT flag %p (%s)", (input) => {
+    expect(detectMedicalAssertion(input)).toBe(false);
+  });
+});
+
+describe("collectTurnToolObservations", () => {
+  it("flattens string and text-block tool_result content, ignoring other blocks", () => {
+    const messages = [
+      { role: "user" as const, content: "who is coming?" },
+      { role: "assistant" as const, content: [{ type: "tool_use", id: "t1", name: "get_schedule", input: {} }] },
+      { role: "user" as const, content: [
+        { type: "tool_result", tool_use_id: "t1", content: "Maria, Tuesday 9am" },
+        { type: "tool_result", tool_use_id: "t2", content: [{ type: "text", text: "invoice $85" }] },
+      ] },
+    ] as never;
+    const out = collectTurnToolObservations(messages);
+    expect(out).toContain("Maria, Tuesday 9am");
+    expect(out).toContain("invoice $85");
+    expect(out).not.toContain("who is coming?");
+  });
+
+  it("returns empty string when no tools ran", () => {
+    const messages = [{ role: "user" as const, content: "hi" }] as never;
+    expect(collectTurnToolObservations(messages)).toBe("");
   });
 });
 

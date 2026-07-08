@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, Banknote, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
-import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
+import { ViewType, Caregiver, ClientIntakeData, Senior, paymentMethodLabel } from '../../types';
 import { dbService, authService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
@@ -1072,7 +1072,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 )}
                               </div>
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
                               )}
                             </div>
                           );
@@ -1177,7 +1177,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   </div>
                                 )}
                                 {shift.rate != null && (
-                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(shift.paymentMethod)}</p>
                                 )}
                               </div>
                             </div>
@@ -1254,7 +1254,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               {durationStr && <span className="text-slate-300">·</span>}
                               <span className="font-semibold text-slate-700">${pay.toFixed(2)}</span>
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${isCash ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                                {isCash ? 'Cash' : 'Card'}
+                                {isCash ? paymentMethodLabel(shift.paymentMethod) : 'Card'}
                               </span>
                               <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusCfg.bg} ${statusCfg.color}`}>
                                 {statusCfg.label}
@@ -1341,7 +1341,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {cashTotal > 0 && (
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                                <Banknote className="w-3.5 h-3.5" /> Cash
+                                <Banknote className="w-3.5 h-3.5" /> Paid directly
                               </div>
                               <span className="text-sm font-semibold text-slate-900">${cashTotal.toFixed(2)}</span>
                             </div>
@@ -1698,7 +1698,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 </div>
                               )}
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
                               )}
                             </div>
                           </div>

@@ -297,7 +297,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: false,
     webReads: true,
-    notes: "Caregiver payout ledger. Per-caregiver subcollection (caregivers/{uid}/payouts, PayoutHistory.tsx) AND a top-level admin mirror read by FinanceDashboard. Written via instantPayout/standardPayout (Admin SDK). Payment entity: client-destructive delete blocked.",
+    notes: "Caregiver payout ledger. Per-caregiver subcollection (caregivers/{uid}/payouts, PayoutHistory.tsx) AND a top-level admin mirror read by FinanceDashboard. Written via payoutCommon.executeInstantPayout (all instant-payout paths) and stripeConnectWebhook (automatic daily payouts, payout.paid/failed) — Admin SDK only. Payment entity: client-destructive delete blocked.",
   },
   reports: {
     path: "reports",

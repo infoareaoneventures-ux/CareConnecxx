@@ -18,6 +18,9 @@ export interface ProactiveTrigger {
   firedAt?:          string;
   cancelledAt?:      string;
   createdAt:         string;
+  // Links a trigger to the record it serves (e.g. "video_interview_<id>") so
+  // cancelTriggersByRef can retire reminders when that record is cancelled.
+  refId?:            string;
   // Claude-scheduled trigger fields
   source?:           "claude" | "system";   // "claude" = scheduled by Evia via schedule_followup tool
   intent?:           string;                // why this trigger exists (used for dynamic content + suppression)
@@ -129,6 +132,43 @@ async function shouldFireTrigger(
   }
 }
 
+// Time-critical/transactional triggers a user reply must NOT invalidate: an
+// interview or medication reminder is still owed after the family texts Evia
+// about something unrelated, and system directives (caregiver check-ins,
+// post-interview follow-ups, escalations) are work items, not nudges.
+// qa_retry stays reply-cancellable on purpose — a new inbound starts a fresh
+// turn and the commitment tracker backstops the promised answer.
+const REPLY_EXEMPT_TYPES = new Set(["appointment_reminder", "medication_reminder"]);
+const REPLY_EXEMPT_MESSAGE_PREFIXES = [
+  "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
+  "health_escalation:", "issue_escalation:", "issue_escalation_final:",
+  "issue_followup:", "replacement_task:", "retry_extend_schedule:",
+];
+export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
+  if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
+  return REPLY_EXEMPT_MESSAGE_PREFIXES.some((p) => t.message?.startsWith(p));
+}
+
+// Cancels every pending trigger stamped with this refId (see ProactiveTrigger.refId).
+// Fired/already-cancelled triggers are left untouched; safe to call repeatedly.
+export async function cancelTriggersByRef(refId: string): Promise<number> {
+  const snap = await db.collection("proactive_triggers")
+    .where("refId", "==", refId)
+    .get();
+  const now = new Date().toISOString();
+  const batch = db.batch();
+  let cancelled = 0;
+  for (const doc of snap.docs) {
+    const d = doc.data() as ProactiveTrigger;
+    if (!d.firedAt && !d.cancelledAt) {
+      batch.update(doc.ref, { cancelledAt: now });
+      cancelled++;
+    }
+  }
+  if (cancelled > 0) await batch.commit().catch(() => {});
+  return cancelled;
+}
+
 // Called at the top of the main webhook handler (after crisis check) to cancel pending triggers
 // Twin-trigger pattern: if user replied, cancel their scheduled nudge
 export async function cancelTriggerIfUserReplied(userId: string, phone: string): Promise<void> {
@@ -143,10 +183,13 @@ export async function cancelTriggerIfUserReplied(userId: string, phone: string):
 
   if (!snap.empty) {
     const batch = db.batch();
+    let toCancel = 0;
     for (const doc of snap.docs) {
+      if (isReplyExempt(doc.data() as ProactiveTrigger)) continue;
       batch.update(doc.ref, { cancelledAt: now });
+      toCancel++;
     }
-    await batch.commit().catch(() => {});
+    if (toCancel > 0) await batch.commit().catch(() => {});
   }
 
   // Mark any recently-fired triggers as engaged — user replied
@@ -268,20 +311,25 @@ export const runTriggerEngine = functions.pubsub
       // Skip already fired or cancelled
       if (trigger.firedAt || trigger.cancelledAt) continue;
 
-      // Twin-trigger: check if user sent a message since trigger was created
-      const lastReply = await db
-        .collection("agent_conversations")
-        .doc(trigger.phone)
-        .collection("messages")
-        .where("role",      "==", "user")
-        .where("timestamp", ">=", new Date(trigger.createdAt).getTime())
-        .limit(1)
-        .get();
+      // Twin-trigger: check if user sent a message since trigger was created.
+      // Time-critical reminders and system directives are exempt — texting
+      // Evia about anything must not kill an interview reminder or a
+      // caregiver check-in (isReplyExempt).
+      if (!isReplyExempt(trigger)) {
+        const lastReply = await db
+          .collection("agent_conversations")
+          .doc(trigger.phone)
+          .collection("messages")
+          .where("role",      "==", "user")
+          .where("timestamp", ">=", new Date(trigger.createdAt).getTime())
+          .limit(1)
+          .get();
 
-      if (!lastReply.empty) {
-        // User already replied — cancel the trigger
-        await doc.ref.update({ cancelledAt: now });
-        continue;
+        if (!lastReply.empty) {
+          // User already replied — cancel the trigger
+          await doc.ref.update({ cancelledAt: now });
+          continue;
+        }
       }
 
       // Get user's session to find chatId
@@ -419,18 +467,28 @@ export const runTriggerEngine = functions.pubsub
     }
 
     // ── No-show detection — check for unacknowledged confirmed visits ─────────
-    const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    // Window is bounded on BOTH ends: visits that started between 3h and 20min
+    // ago. Do NOT filter on `noShowChecked == null` — Firestore `==null` matches
+    // only docs where the field is explicitly null (appointments are created
+    // WITHOUT it), so that filter returned zero rows and no-show detection never
+    // fired. We instead skip already-checked docs in code. The lower bound +
+    // ascending order keep the scan bounded so already-checked visits can't fill
+    // the limit and starve fresh ones (the old unbounded `limit(10)` would).
+    const twentyMinAgo  = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
 
     const noShowSnap = await db
       .collection("appointments")
       .where("status",          "==", "confirmed")
+      .where("startDateTime",   ">=", threeHoursAgo)
       .where("startDateTime",   "<=", twentyMinAgo)
-      .where("noShowChecked",   "==", null)
-      .limit(10)
+      .orderBy("startDateTime", "asc")
+      .limit(25)
       .get();
 
     for (const apptDoc of noShowSnap.docs) {
       const appt = apptDoc.data();
+      if (appt.noShowChecked) continue; // already evaluated for no-show
       if (appt.arrivedAt) continue; // caregiver arrived, not a no-show
 
       await apptDoc.ref.update({ noShowChecked: now });

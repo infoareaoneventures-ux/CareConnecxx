@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
 import { Resend } from "resend";
 import { isCaregiverBookable } from "./utils/caregiverEligibility";
+import { appLink } from "./config/appUrl";
 
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -378,7 +379,7 @@ function generateCalloutEmailHtml(caregiverName: string, date: string, time: str
                                     ${caregiverList}
 
                                     <div style="text-align: center; margin: 32px 0;">
-                                        <a href="https://careconnex-d4c8b.web.app/client/dashboard" 
+                                        <a href="${appLink("/client/dashboard")}"
                                            style="display: inline-block; background: #0d9488; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600;">
                                             Select Backup Caregiver
                                         </a>
@@ -429,7 +430,7 @@ AVAILABLE BACKUP CAREGIVERS:
 ${caregiverList}
 
 To select a backup caregiver, visit:
-https://careconnex-d4c8b.web.app/client/dashboard
+${appLink("/client/dashboard")}
 
 PREFER A REFUND?
 If none of these caregivers work for you, you can request a full refund from your dashboard.

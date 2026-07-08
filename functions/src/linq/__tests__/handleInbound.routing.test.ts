@@ -165,11 +165,13 @@ const handleOnboardingStep   = vi.fn(async (..._a: any[]) => {});
 const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
 const continueAfterClientCollection = vi.fn(async (..._a: any[]) => {});
 const absorbClientFields     = vi.fn(async (..._a: any[]) => ({}));
+const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
   sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
   continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
   absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
+  drivePostCollectionHandoff: (...a: any[]) => drivePostCollectionHandoff(...a),
   // Gate-handoff caregiver doc pre-create (P0-C). null = no uid resolved, so
   // the handoff proceeds without patching session.caregiverId - the __RESUME__
   // routing under test is unaffected.
@@ -313,8 +315,9 @@ vi.mock("../../utils/locationShare", () => ({
   extractLocationPart: (...a: any[]) => extractLocationPart(...a),
   reverseGeocode:      (...a: any[]) => reverseGeocode(...a),
 }));
+const extractMediaPart = vi.fn((..._a: any[]): any => null);
 vi.mock("../../utils/mediaIntake", () => ({
-  extractMediaPart:  vi.fn(() => null),
+  extractMediaPart:  (...a: any[]) => extractMediaPart(...a),
   downloadMedia:     vi.fn(async () => null),
   storeInboundMedia: vi.fn(async () => null),
 }));
@@ -375,6 +378,7 @@ beforeEach(() => {
   sendMessage.mockResolvedValue({ message_id: "m1" });
   extractLocationPart.mockReturnValue(null);
   reverseGeocode.mockResolvedValue(null);
+  extractMediaPart.mockReturnValue(null);
 });
 
 describe("pre-checks", () => {
@@ -881,6 +885,22 @@ describe("onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("couldn't read that"));
   });
+
+  // 2a-media: a photo/document sent WITH a caption at a collection step routes the
+  // caption to the loop (the attachment is set aside) instead of falling to the
+  // media handler and dropping the caption. Without the fix the caption's fields
+  // are lost and the user gets the defensive "I lost that" nudge.
+  it("captioned media at a collection step routes the caption text to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    extractMediaPart.mockReturnValue({ url: "https://x/img.jpg", type: "image" });
+
+    await handleInbound(makeEvent("6 years, mostly dementia", { parts: [{ type: "image", value: "https://x/img.jpg" }, { type: "text", value: "6 years, mostly dementia" }] }));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(String(runQaAgent.mock.calls[0][0].text)).toContain("6 years");
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
 });
 
 // ── Caregiver onboarding agent-loop routing (dark: flag-gated off) ──────────
@@ -973,6 +993,57 @@ describe("caregiver onboarding agent-loop flag routing", () => {
     await handleInbound(makeEvent("Maria"));
     expect(runQaAgent).toHaveBeenCalledTimes(2);
     expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+});
+
+// ── Onboarding checkpoint RESUME (2f, loop-only) ─────────────────────────────
+// A paused signup carries an onboardingCheckpoint; on RESUME the loop owns
+// conversational collection, so a checkpoint parked on a COLLECTION step must
+// not call the (deleted) scripted collection handler. Two sub-cases:
+//   - still-missing fields → a warm "here's the next thing" nudge, cursor left
+//     on the collection step so the next inbound routes to the loop;
+//   - everything already collected → DRIVE the post-collection handoff now (do
+//     not just promise "I'll take it from here" and stall on a webhook-passive
+//     gate the flow won't advance on its own).
+// A checkpoint on a GATE step still resumes through the scripted runner.
+describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
+  const COMPLETE_CLIENT = {
+    firstName: "Sarah", seniorName: "Dorothy", age: 82,
+    careNeeds: ["companionship"], city: "San Jose", daysPerWeek: 3, timeOfDay: "mornings",
+  };
+
+  function seedCheckpoint(step: string, data: Record<string, unknown>, userType = "client") {
+    seedSession({
+      userType,
+      onboardingStep: step,
+      onboardingCheckpoint: { step, onboardingData: data, savedAt: "2026-07-01T00:00:00.000Z" },
+    });
+  }
+
+  it("RESUME at a collection step with everything collected → drives the handoff, no 'what's left' nudge", async () => {
+    seedCheckpoint("client_ask_schedule", COMPLETE_CLIENT, "client");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).toHaveBeenCalledTimes(1);
+    expect(drivePostCollectionHandoff.mock.calls[0].slice(0, 3)).toEqual([PHONE, CHAT, "client"]);
+    // Did NOT fall to the scripted runner for a (deleted) collection handler.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("RESUME at a collection step with fields still missing → sends a nudge, does NOT drive the handoff", async () => {
+    seedCheckpoint("client_ask_needs", { firstName: "Sarah", seniorName: "Dorothy" }, "client");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
+    // The welcome-back nudge went out (generateCaraMessage → fallback in the mock).
+    expect(sendMessage).toHaveBeenCalled();
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("RESUME at a GATE step still resumes through the scripted runner", async () => {
+    seedCheckpoint("caregiver_awaiting_photo", { name: "Maria" }, "caregiver");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
   });
 });
 

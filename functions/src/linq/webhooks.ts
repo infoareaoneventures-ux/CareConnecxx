@@ -19,6 +19,7 @@ import {
   handleOnboardingStep,
   continueAfterClientCollection,
   absorbClientFields,
+  drivePostCollectionHandoff,
 } from "../agents/onboardingConversation";
 import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
 import { runQaAgent } from "../agents/qaAgent";
@@ -1269,16 +1270,23 @@ const handleInboundInner = traceable(
         const cpRole: OnboardingRole = resumedSession.userType === "caregiver" ? "caregiver" : "client";
         if (collectionStepsForRole(cpRole).includes(checkpoint.step)) {
           const missing = missingRequiredFields(cpRole, checkpoint.onboardingData);
-          const nudge = await generateCaraMessage({
-            audience: cpRole === "caregiver" ? "caregiver" : "family",
-            context: "You're picking a signup back up with someone who paused midway; you already have some of their details. " +
-              (missing.length
-                ? `You still need: ${missing.join(", ")}. In ONE short, warm line, welcome them back and ask for the FIRST missing item only — no list, no re-introduction.`
-                : "You already have everything you need. In ONE short, warm line, welcome them back and say you'll take it from here."),
-            fallback: "Welcome back! Let's pick up right where we left off.",
-            maxTokens: 90,
-          });
-          await sendMessage(chatId, nudge);
+          if (missing.length === 0) {
+            // Everything's already collected. Don't just promise to "take it from
+            // here" and leave the cursor parked on a collection step the
+            // webhook-passive gate phase won't advance — advance to the gate and
+            // DRIVE the next phase now (matches/paywall or the photo gate), the
+            // same handoff the main loop path runs when collection completes.
+            await drivePostCollectionHandoff(phone, chatId, cpRole);
+          } else {
+            const nudge = await generateCaraMessage({
+              audience: cpRole === "caregiver" ? "caregiver" : "family",
+              context: "You're picking a signup back up with someone who paused midway; you already have some of their details. " +
+                `You still need: ${missing.join(", ")}. In ONE short, warm line, welcome them back and ask for the FIRST missing item only — no list, no re-introduction.`,
+              fallback: "Welcome back! Let's pick up right where we left off.",
+              maxTokens: 90,
+            });
+            await sendMessage(chatId, nudge);
+          }
         } else {
           await sendMessage(chatId, "Picking up where we left off!");
           await handleOnboardingStep(phone, chatId, "__RESUME__", resumedSession);
@@ -1791,15 +1799,14 @@ const handleInboundInner = traceable(
       await handleCaregiverPermissionsReply(phone, chatId, text, session, caregiverId);
       return;
     }
-    // U4: agent-native onboarding collapse (per-role: client shipped first,
-    // caregiver added behind the same flag). For a user in the conversational
-    // collection phase, run the turn inside the qaAgent loop instead of the
-    // scripted step runner — Evia leads collection as one agent (no re-greet,
-    // no double-send). Gated OFF by default; a role routes ONLY when named in
-    // ONBOARDING_AGENT_LOOP (e.g. "client" or "client,caregiver"). Only
-    // plain-text turns route here; media/location stay on the legacy handlers,
-    // and transactional / gate steps (not in that role's collection list) are
-    // never affected.
+    // U4: agent-native onboarding collapse (loop-only as of 2026-07-08). For a
+    // user in the conversational collection phase, the turn runs inside the
+    // qaAgent loop instead of the (now-deleted) scripted step runner — Evia leads
+    // collection as one agent (no re-greet, no double-send). Routing is
+    // unconditional: any plain-text turn at a collection step routes here (no
+    // feature flag — loop-only must not be revertable-by-config to a path that no
+    // longer exists). Media/location are converted to text or handled above, and
+    // transactional / gate steps (not in that role's collection list) never route.
     // Shared structured-Zep push (knowledge-graph capture of names/conditions/
     // care needs). Called by BOTH the agent-loop path and the scripted runner so
     // the graph stays populated regardless of which handled the turn.
@@ -1828,7 +1835,7 @@ const handleInboundInner = traceable(
 
     // Which role's loop this turn belongs to. Only meaningful inside the routed
     // branch below (shouldRouteOnboardingToLoop already verified the role is
-    // "client" or "caregiver" AND that role is named in ONBOARDING_AGENT_LOOP).
+    // "client" or "caregiver" and the step is in that role's collection list).
     const loopRole: OnboardingRole = session.userType === "caregiver" ? "caregiver" : "client";
 
     // 2a (loop-only): a location PIN at a collection step is handled by the loop,
@@ -1849,6 +1856,22 @@ const handleInboundInner = traceable(
         : `[The user shared their location: ${lat}, ${lng}]`;
       inboundLocation = null; // now a text turn — hasLocation is false below
       console.info("webhooks: converted onboarding location pin to text for loop", { phone, step });
+    }
+
+    // 2a-media (loop-only): a photo/document that arrives WITH a text caption at a
+    // collection step (e.g. a caregiver sends a selfie captioned "hi, I'm John, 5
+    // years experience"). Collection steps only ever want text fields — the upload
+    // gates are separate, non-collection steps — so route the CAPTION to the loop
+    // and set the attachment aside, rather than letting the turn fall through to
+    // the media handler and drop the caption on the floor (the pre-deletion
+    // scripted path discarded it via the defensive "I lost that" nudge). Only when
+    // the turn would otherwise route to the loop as text; media at a GATE step is
+    // untouched, so handleInboundMedia still owns the actual upload gates.
+    if (inboundMedia && text.trim() !== "" && shouldRouteOnboardingToLoop({
+      role: session.userType, step, hasText: true, hasMedia: false,
+    })) {
+      inboundMedia = null; // now a text turn — hasMedia is false below
+      console.info("webhooks: collection-step media had a caption — routing caption to loop, media set aside", { phone, step });
     }
 
     // 2c (loop-only): a truly empty turn at a collection step — no text, no media,

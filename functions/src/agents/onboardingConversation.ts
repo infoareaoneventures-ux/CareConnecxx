@@ -43,6 +43,7 @@ import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboard
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep } from "./onboardingContract";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -1157,6 +1158,73 @@ async function dispatchOnboardingToLoop(
     onboardingRole: role,
     intent:      null,
   });
+  // Collection may have completed on this handed-off turn — e.g. the user
+  // front-loaded every remaining field in the same message that also confirmed
+  // their name. Drive the post-collection handoff so the next phase actually
+  // fires; otherwise the loop's closing line ("here's your photo link" / "let me
+  // show you caregivers") is a promise with nothing behind it until the user
+  // happens to text again.
+  await drivePostCollectionHandoff(phone, chatId, role);
+}
+
+// ── Post-collection handoff (loop-only) ───────────────────────────────────────
+// Canonical "conversational collection just finished → drive the next phase"
+// step, shared by the cold loop-entry paths: dispatchOnboardingToLoop (the
+// confirm-name / ask_role re-dispatch) and the webhook's 2f checkpoint-resume.
+// The hot webhook main-path keeps an INLINE copy of this same logic (the
+// stuck-signup-net + proactive-handoff block in webhooks.ts) — keep the two in
+// sync.
+//
+// Re-reads the session from Firestore so it sees whatever the loop (and any
+// persistence net) just wrote, then:
+//   1. Stuck-signup net: if the cursor is still on a collection step but every
+//      required field is present, advance it to the role's first gate step (the
+//      model may have collected everything without calling complete_collection).
+//   2. If (and only if) the cursor now sits at that first gate step, DRIVE the
+//      next phase — client → matches/paywall (continueAfterClientCollection);
+//      caregiver → the scripted photo-upload gate via the "__RESUME__" sentinel,
+//      pre-creating the uid-keyed caregivers doc first. Webhook-passive gates
+//      never prompt on their own, so without this Evia goes silent right after
+//      "that's everything I need".
+// Idempotent and non-fatal: a no-op unless collection is (now) complete, and any
+// handoff failure is logged, never thrown.
+export async function drivePostCollectionHandoff(
+  phone: string,
+  chatId: string,
+  role: "client" | "caregiver",
+): Promise<void> {
+  const after   = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
+  let   curStep = (after.onboardingStep as string) ?? "";
+  const curData = (after.onboardingData ?? {}) as Record<string, unknown>;
+
+  if (collectionStepsForRole(role).includes(curStep) && missingRequiredFields(role, curData).length === 0) {
+    await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep(role) });
+    curStep = firstGateStep(role);
+    console.info("onboarding: stuck-signup net advanced cursor to gate", { phone, role });
+  }
+
+  if (curStep !== firstGateStep(role)) return;
+
+  try {
+    if (role === "caregiver") {
+      const ensuredId = await ensureCaregiverDocForOnboarding(phone).catch((err) => {
+        console.error("onboarding: caregiver doc pre-create at gate failed", err);
+        return null;
+      });
+      const resumeSession = {
+        ...(after as unknown as AgentSession),
+        onboardingStep: curStep,
+        onboardingData: curData,
+        chatId,
+      } as AgentSession;
+      if (ensuredId) (resumeSession as unknown as Record<string, unknown>).caregiverId = ensuredId;
+      await handleOnboardingStep(phone, chatId, "__RESUME__", resumeSession);
+    } else {
+      await continueAfterClientCollection(phone, chatId);
+    }
+  } catch (err) {
+    console.error("onboarding: post-collection handoff failed", err instanceof Error ? err.message : err);
+  }
 }
 
 // ── CLIENT FLOW ───────────────────────────────────────────────────────────────

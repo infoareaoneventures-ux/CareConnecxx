@@ -282,3 +282,38 @@ describe("missing CRUD tools", () => {
     });
   });
 });
+
+// Fix 3 (loop-only): the model saves jobType in whatever casing it extracted
+// ("Full time", "FT", "part-time"); the caregiver doc + matching expect the
+// canonical occasional|part_time|full_time enum. save_onboarding_field must
+// canonicalize AT the persist site — this exercises the real wiring end-to-end
+// (not just the pure normalizeOnboardingFieldValue unit), so a future edit that
+// drops the normalize call (persists raw fieldValue) is caught.
+describe("save_onboarding_field jobType canonicalization (Fix 3)", () => {
+  const PHONE = "+15555550001";
+  beforeEach(() => { hoisted.reset(); });
+
+  const persistedJobType = () =>
+    hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData?.jobType;
+
+  it.each([
+    ["Full time", "full_time"],
+    ["FT", "full_time"],
+    ["part-time", "part_time"],
+    ["Occasionally", "occasional"],
+  ])("normalizes %o to %o at the save site", async (raw, canonical) => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "jobType", fieldValue: raw,
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(persistedJobType()).toBe(canonical);
+  });
+
+  it("passes an unknown jobType through unchanged (never silently dropped)", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "caregiver", fieldName: "jobType", fieldValue: "seasonal-ish",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(persistedJobType()).toBe("seasonal-ish");
+  });
+});

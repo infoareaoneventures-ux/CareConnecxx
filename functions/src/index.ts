@@ -122,7 +122,7 @@ export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/tran
 export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
 
 // Evia iMessage pivot — onboarding callables
-export { markTaskComplete } from './agents/onboardingAgent';
+export { markTaskComplete, uploadOnboardingFile } from './agents/onboardingAgent';
 
 // Admin invoicing (createInvoice/sendInvoiceEmail were called by the admin
 // InvoicingTab but never deployed — this wires the backend up)

@@ -1,50 +1,102 @@
 import React, { useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { functions } from '../../lib/firebase';
 
 const LINQ_PHONE = import.meta.env.VITE_LINQ_PHONE_NUMBER || '';
+const MAX_BYTES  = 6 * 1024 * 1024; // must match uploadOnboardingFile server cap
+
+const readAsDataURL = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+
+// Downscale + re-encode as JPEG. Keeps the callable payload small and
+// normalizes iPhone HEIC (Safari decodes it into the canvas; the export is
+// plain JPEG the rest of the platform can render). Returns null when the
+// browser can't decode the file — caller falls back to the raw bytes.
+async function compressImage(file: File): Promise<{ base64: string; contentType: string } | null> {
+  try {
+    const dataUrl = await readAsDataURL(file);
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload  = () => resolve(i);
+      i.onerror = () => reject(new Error('decode failed'));
+      i.src = dataUrl;
+    });
+    const MAX_DIM = 1280;
+    const scale  = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL('image/jpeg', 0.85);
+    const base64 = out.split(',')[1];
+    return base64 ? { base64, contentType: 'image/jpeg' } : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function UploadPage() {
   const { type } = useParams<{ type: 'photo' | 'document' }>();
   const isPhoto   = type === 'photo';
 
   const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error' | 'expired'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
     setStatus('uploading');
+    setErrorMsg(null);
     try {
-      const storage   = getStorage();
-      const token     = new URLSearchParams(window.location.search).get('t') ?? 'unknown';
-      const ext       = file.name.split('.').pop() ?? (isPhoto ? 'jpg' : 'pdf');
-      const path      = `${isPhoto ? 'profile_photos' : 'caregiver_docs'}/${token}_${Date.now()}.${ext}`;
-      const sRef      = storageRef(storage, path);
-
-      await uploadBytes(sRef, file);
-      const url = await getDownloadURL(sRef);
-
       if (!functions) { setStatus('error'); return; }
-      const markDone = functions.httpsCallable('v1-markTaskComplete');
-      try {
-        // Must NOT swallow this: if the token is expired/invalid the file is in
-        // Storage but onboarding never advances. Showing "done" would be a silent
-        // false success. Surface an explicit expired state with a resend path.
-        await markDone({ token, taskId: url });
-      } catch (err) {
-        console.error('markTaskComplete failed (likely expired/invalid token):', err);
-        setStatus('expired');
-        return;
+      const token = new URLSearchParams(window.location.search).get('t') ?? '';
+      if (!token) { setStatus('expired'); return; }
+
+      let payload = file.type.startsWith('image/') ? await compressImage(file) : null;
+      if (!payload) {
+        if (file.size > MAX_BYTES) {
+          setErrorMsg('That file is too large — 6MB max. A photo straight from your camera works great.');
+          setStatus('error');
+          return;
+        }
+        const dataUrl = await readAsDataURL(file);
+        payload = {
+          base64: dataUrl.split(',')[1] ?? '',
+          contentType: file.type || (isPhoto ? 'image/jpeg' : 'application/pdf'),
+        };
       }
 
+      // Single token-authenticated call: the server (Admin SDK) stores the file
+      // AND advances onboarding. The page has no Firebase Auth session, so a
+      // direct Storage write would be rejected by storage.rules.
+      const upload = functions.httpsCallable('v1-uploadOnboardingFile');
+      await upload({ token, dataBase64: payload.base64, contentType: payload.contentType });
+
       setStatus('done');
+      // Hand the caregiver straight back to their iMessage/SMS thread with Evia.
       setTimeout(() => {
         if (LINQ_PHONE) {
           window.location.href = `sms:${LINQ_PHONE}`;
         }
-      }, 2000);
-    } catch {
+      }, 1500);
+    } catch (err: unknown) {
+      const e = err as { code?: string; message?: string };
+      // Compat SDK surfaces HttpsError codes without the "functions/" prefix,
+      // modular with it — accept both.
+      const code = (e?.code ?? '').replace(/^functions\//, '');
+      if (code === 'unauthenticated') {
+        setStatus('expired');
+        return;
+      }
+      console.error('uploadOnboardingFile failed:', err);
+      if (code === 'invalid-argument' && e?.message) setErrorMsg(e.message);
       setStatus('error');
     }
   };
@@ -149,7 +201,7 @@ export default function UploadPage() {
       )}
 
       {status === 'error' && (
-        <p className="text-red-400 text-sm">Upload failed. Please try again.</p>
+        <p className="text-red-400 text-sm">{errorMsg ?? 'Upload failed. Please try again.'}</p>
       )}
 
       <a

@@ -866,19 +866,48 @@ export async function handleOnboardingStep(
       }));
       return;
     case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
-    case "caregiver_awaiting_documents":
-      if (norm === "SKIP") {
+    case "caregiver_awaiting_documents": {
+      // "SKIP" fast path kept (zero latency, old links/copy said it) — but the
+      // ask is phrased naturally now, so also understand free-form skips
+      // ("don't have any", "no certs", "nope") and answer questions instead of
+      // nudging past them.
+      let docIntent: string = norm === "SKIP" ? "skip" : "";
+      if (!docIntent) {
+        const parsed = await parseWithClaude(
+          "The caregiver was asked to upload certifications (CNA license, CPR card, etc.) via a link, and told it's fine to say so if they don't have any. Classify the reply: " +
+          "wants to skip / has none / will add later (\"skip\", \"don't have any\", \"no certs\", \"nope\", \"not yet\") → skip. " +
+          "Asked a question (what counts, is it required, link not working) → question. " +
+          "Says they HAVE certs or will upload (\"yes I have my CNA\", \"one sec\", \"uploading now\") or anything else → other. " +
+          "Reply with exactly one word: skip, question, or other.",
+          text
+        );
+        const v = (parsed ?? "").trim().toLowerCase();
+        docIntent = v === "skip" || v === "question" ? v : "other";
+      }
+      if (docIntent === "skip") {
         await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
         return handleCaregiverAskMvr(phone, chatId, session);
+      }
+      if (docIntent === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session));
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "caregiver",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "You just answered the caregiver's question at the certifications step. In ONE short natural line: whenever they're ready they can tap the upload link you sent, or just tell you to skip it.",
+          fallback: "Whenever you're ready — tap the link to upload, or just tell me to skip it.",
+          maxTokens: 50,
+        }));
+        return;
       }
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver is at the certifications step. Warmly nudge them to tap the link you already sent to upload their certifications, or reply SKIP to continue without them. You MUST include the literal keyword \"SKIP\".",
-        fallback: "Tap the link I sent to upload your certifications, or reply SKIP to continue without them.",
+        context: "The caregiver is at the certifications step. Warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
+        fallback: "Tap the link I sent to upload your certifications — or if you don't have any, just tell me to skip it.",
         maxTokens: 70,
       }));
       return;
+    }
     case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
     case "caregiver_send_membership":  return handleCaregiverSendMembership(phone, chatId, session);
     case "caregiver_awaiting_membership":
@@ -1909,19 +1938,78 @@ async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSessio
   if (typeof textOrSession !== "string") {
     // First visit — ask the question
     await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
-    await sendMessage(chatId,
-      "Do you transport clients to appointments or errands?\n\n" +
-      "Adding a Motor Vehicle Record check to your profile shows families you're a verified driver. " +
-      "It's an optional add-on you can include with your membership.\n\n" +
-      "Reply YES to add it, or NO to skip."
-    );
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: textOrSession.preferredLanguage === "es" ? "es" : "en",
+      context:
+        "Mid-signup, ask the caregiver whether they ever drive clients to appointments or errands. " +
+        "If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — it puts a verified-driver badge on their profile that families who need a driver look for. " +
+        "Weave the choice in naturally, like a person would ('want me to add it? totally fine to leave it off') — do NOT write a stiff 'Reply YES or NO' instruction. Do NOT include any URL or price.",
+      fallback:
+        "Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check to your membership — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?",
+      maxTokens: 120,
+    }));
     return;
   }
 
-  // User has replied — process their answer
-  const norm = (textOrSession as string).trim().toUpperCase();
-  const wantsMvr = norm === "YES" || norm === "Y";
-  await mergeOnboardingData(phone, { wantsMvr });
+  // User has replied — classify the answer with the LLM (the ask is phrased
+  // naturally, so replies are free-form: "yeah sure", "nah I don't drive",
+  // "how much is it?"). Strict YES/NO stays as a zero-latency fast path.
+  const raw  = (textOrSession as string).trim();
+  const norm = raw.toUpperCase();
+  let verdict: "yes" | "no" | "question" | "unclear";
+  if (norm === "YES" || norm === "Y") verdict = "yes";
+  else if (norm === "NO" || norm === "N") verdict = "no";
+  else {
+    const parsed = await parseWithClaude(
+      "The caregiver was just asked whether they want an optional Motor Vehicle Record (driving) check added to their profile. " +
+      "Clear agreement (\"yes\", \"sure\", \"yeah add it\", \"sounds good\", \"I do drive so yes\") → yes. " +
+      "Clear decline (\"no\", \"nah\", \"skip\", \"not now\", \"I don't drive\") → no. " +
+      "They asked a question (what it costs, what it is, how long it takes) → question. " +
+      "Anything else or ambiguous → unclear. Reply with exactly one word: yes, no, question, or unclear.",
+      raw
+    );
+    const v = (parsed ?? "").trim().toLowerCase();
+    verdict = v === "yes" || v === "no" || v === "question" ? (v as "yes" | "no" | "question") : "unclear";
+  }
+
+  if (verdict === "question") {
+    await sendMessage(chatId, await answerQuestionMidFlow(raw, session!));
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session?.preferredLanguage === "es" ? "es" : "en",
+      context: "You just answered the caregiver's question about the optional driving-record check. In ONE short, natural line ask whether they'd like it added or left off.",
+      fallback: "So — want me to add the driving check, or leave it off for now?",
+      maxTokens: 50,
+    }));
+    return; // stay at caregiver_ask_mvr for their answer
+  }
+
+  if (verdict === "unclear") {
+    const attempts = (((session?.onboardingData ?? {}).mvrAskAttempts as number | undefined) ?? 0);
+    if (attempts < 1) {
+      await mergeOnboardingData(phone, { mvrAskAttempts: attempts + 1 });
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session?.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver's reply didn't clearly say whether they want the optional driving-record check. In ONE warm line, ask again simply — add it or leave it off.",
+        fallback: "No rush — should I add the driving check to your profile, or leave it off for now?",
+        maxTokens: 60,
+      }));
+      return;
+    }
+    // Second unclear reply — don't loop. Default to no, say so gracefully, move on.
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session?.preferredLanguage === "es" ? "es" : "en",
+      context: "You couldn't get a clear answer on the optional driving check, so you're leaving it off — tell them warmly it's off for now and they can add it any time later, then move on.",
+      fallback: "I'll leave the driving check off for now — you can add it anytime by texting me. Moving on!",
+      maxTokens: 60,
+    }));
+    verdict = "no";
+  }
+
+  await mergeOnboardingData(phone, { wantsMvr: verdict === "yes" });
   await updateSession(phone, { onboardingStep: "caregiver_send_membership" });
   await handleCaregiverSendMembership(phone, chatId, session!);
 }
@@ -1999,28 +2087,34 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     }).catch(() => {});
   }
 
-  const mvrLine = mvrCharged
-    ? "\n\nYour order includes the $66.49/yr membership + MVR driver check."
-    : "";
-
   // Re-cite the live local demand the caregiver saw at the location step — fresh
   // at the moment of payment — so the ask is anchored to concrete, current jobs
   // rather than a generic "jobs near you". Honest if supply has since dried up.
   const city = (d.city as string | undefined) ?? "";
   const { count: openJobCount } = await getLocalJobTeaser(city);
-  const demandLine = openJobCount > 0
-    ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — `
-    : "";
 
   // Store URL on session so we can resend it
   await updateSession(phone, {
     onboardingStep:        "caregiver_awaiting_membership",
     membershipCheckoutUrl: checkoutUrl,
   });
-  await sendMessage(chatId,
-    `${demandLine}You're almost ready to apply! Activate your membership ($66.49/year) to unlock applying to the ` +
-    `jobs near you, getting booked, and Evia's scheduling + payout tools.${mvrLine}\n\nTap to activate:`
-  );
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
+      "it's $66.49/year, it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools" +
+      (mvrCharged ? ", and their order also includes the driving-record (MVR) check they asked for" : "") +
+      (openJobCount > 0
+        ? `. Anchor it to the real demand: there ${openJobCount === 1 ? "is" : "are"} currently ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} waiting`
+        : "") +
+      ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
+    fallback:
+      `${openJobCount > 0 ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — ` : ""}you're almost ready to apply! ` +
+      `Activate your membership ($66.49/year) to unlock applying to jobs near you, getting booked, and my scheduling + payout tools.` +
+      `${mvrCharged ? " Your order includes the membership + MVR driver check." : ""} Tap to activate:`,
+    maxTokens: 140,
+  }));
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
 
@@ -2095,9 +2189,14 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
     mvrCheckoutUrl: checkoutUrl,
     mvrPriorStep:   session.onboardingStep ?? null,
   });
-  await sendMessage(chatId,
-    "Becoming an Approved Driver adds a Motor Vehicle Record (MVR) check to your profile, so families who need a driver can see your verified-driver badge. It's a one-time add-on and doesn't change your annual membership.\n\nTap to add it:"
-  );
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver wants the Approved Driver add-on. Naturally explain: it adds a Motor Vehicle Record (driving) check to their profile, families who need a driver see a verified-driver badge, it's a one-time add-on, and it doesn't change their annual membership. The payment link comes right below. Do NOT include any URL.",
+    fallback: "Becoming an Approved Driver adds a Motor Vehicle Record check to your profile — families who need a driver see your verified-driver badge. One-time add-on, doesn't change your membership. Tap to add it:",
+    maxTokens: 110,
+  }));
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
 
@@ -2129,6 +2228,18 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_photo" });
   const d = session.onboardingData ?? {};
+  const firstName = (((d.name ?? "") as string).split(" ")[0]) || "";
+  const ask = await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      `The caregiver${firstName ? ` (first name ${firstName})` : ""} just finished sharing their background and experience — their profile is coming together. ` +
+      "Naturally ask them to add a profile photo next: families want to see who they're trusting, and a clear friendly headshot makes a real difference in getting booked. " +
+      "Tell them you're dropping the upload link right below. Do NOT include any URL — the link is appended after your text.",
+    fallback:
+      `Almost there${firstName ? `, ${firstName}` : ""}! One more thing — families want to see who they're trusting, and a clear friendly headshot makes a big difference. Tap here to add your photo:`,
+    maxTokens: 110,
+  });
   // Send the upload URL INLINE as plain text (one structured text part), NOT as a
   // standalone `link` part. A link part renders as a rich preview CARD that needs
   // fetchable OG metadata; the token-gated /upload/photo page has none (unlike the
@@ -2138,10 +2249,7 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
   // of OG, and a structured text part bypasses sendMessage's URL→link-card splitter
   // (only plain-string sends are split). The JWT token is base64url with dots, so
   // redactPii (SSN/card/email formats) never mangles it.
-  await sendMessage(chatId, { parts: [{ type: "text", value:
-    `Almost there${d.name ? `, ${d.name}` : ""}. One more thing — families want to see who they're trusting.\n\n` +
-    `Tap to add your profile photo:\n${photoUrl}`,
-  }] });
+  await sendMessage(chatId, { parts: [{ type: "text", value: `${ask}\n${photoUrl}` }] });
 }
 
 async function handleCaregiverSendDocuments(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -2149,12 +2257,20 @@ async function handleCaregiverSendDocuments(phone: string, chatId: string, sessi
   const docUrl = `${APP_URL}/upload/document?t=${token}`;
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_documents" });
+  const ask = await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver just added their profile photo. Next, ask naturally whether they have any certifications — CNA license, CPR card, anything like that — because certs make their profile stand out to families. " +
+      "Tell them you're dropping an upload link right below this message, and weave in naturally that it's totally fine if they don't have any — they can just say so and you'll move on. " +
+      "Do NOT write a stiff 'reply SKIP' instruction, do NOT include any URL — the link is appended after your text.",
+    fallback:
+      "Nice — photo's in! Do you have any certifications, like a CNA license or CPR card? They really make your profile stand out. Here's an upload link — and if you don't have any, just say so and we'll keep moving:",
+    maxTokens: 120,
+  });
   // Inline URL as text, same reason as the photo gate: the token-gated
   // /upload/document page has no OG metadata, so a link-part card renders blank.
-  await sendMessage(chatId, { parts: [{ type: "text", value:
-    "Do you have certifications to upload? (CNA license, CPR card, etc.)\n\n" +
-    `Tap to upload, or reply SKIP:\n${docUrl}`,
-  }] });
+  await sendMessage(chatId, { parts: [{ type: "text", value: `${ask}\n${docUrl}` }] });
 }
 
 // ── Inbound media during onboarding (texted photo / document) ─────────────────
@@ -2365,10 +2481,14 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
     return;
   }
-  await sendMessage(chatId,
-    "Almost done! A background check is required for all caregivers.\n\n" +
-    "Tap to get started — usually takes about 5 minutes:"
-  );
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver just paid their membership — they're nearly done. Naturally let them know the last big step is the background check every caregiver completes (it's what lets families trust the platform), it usually takes about 5 minutes, and the link is coming right below. Do NOT include any URL.",
+    fallback: "Almost done! Last big step: the background check every caregiver completes — usually about 5 minutes. Tap to get started:",
+    maxTokens: 100,
+  }));
   await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
   await sendMessage(chatId, await generateCaraMessage({
@@ -2521,9 +2641,14 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
     await sendOnboardingLinkFailureMessage(phone, chatId, session, "payout setup");
     return;
   }
-  await sendMessage(chatId,
-    "Last step — set up your payout account so you can get paid after every visit:\n"
-  );
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver's background check just cleared — this is the very last step of signup. Naturally tell them to set up their payout account via the link below so they get paid after every visit. Keep it celebratory but brief. Do NOT include any URL.",
+    fallback: "Last step — set up your payout account so you can get paid after every visit:",
+    maxTokens: 90,
+  }));
   await sendMessage(chatId, { parts: [{ type: "link", value: connectUrl }] });
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
 }
@@ -3105,10 +3230,15 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
       await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-      await sendMessage(chatId,
-        "Payment received — thank you! Now for the final step: a background check is required for all caregivers.\n\n" +
-        "Tap to get started — usually takes about 5 minutes:"
-      );
+      // Short thank-you only — handleCaregiverSendBgcheck composes the
+      // background-check intro itself (avoids two stacked intros).
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver's membership payment just went through. ONE short warm line acknowledging it — you're about to send the background-check step right after, so don't explain it here.",
+        fallback: "Payment received — thank you!",
+        maxTokens: 40,
+      }));
       await handleCaregiverSendBgcheck(phone, chatId, session);
       break;
     }
@@ -3121,9 +3251,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // messages route normally; the MVR-only check runs server-side.
       const priorStep = (session as any).mvrPriorStep as string | undefined;
       if (priorStep) await updateSession(phone, { onboardingStep: priorStep }).catch(() => {});
-      await sendMessage(chatId,
-        "Payment received — your driving record (MVR) check is underway. I'll text you the moment your Approved Driver badge is active. This doesn't change your existing caregiver approval."
-      );
+      await sendMessage(chatId, await generateCaraMessage({
+        audience: "caregiver",
+        language: session.preferredLanguage === "es" ? "es" : "en",
+        context: "The caregiver just paid for the Approved Driver add-on. Naturally confirm: payment received, their driving-record (MVR) check is underway, you'll text them the moment their verified-driver badge is active, and it doesn't affect their existing caregiver approval.",
+        fallback: "Payment received — your driving record check is underway. I'll text you the moment your Approved Driver badge is active. This doesn't change your existing caregiver approval.",
+        maxTokens: 90,
+      }));
       break;
     }
 

@@ -943,9 +943,13 @@ export function detectConfidenceClaim(reply: string): boolean {
 // (closes the "called a tool then embellished past its result" gap). Only
 // tool_result blocks are collected — the user's own message and assistant
 // tool_use blocks are irrelevant to whether the tool RETURNED the claimed fact.
-export function collectTurnToolObservations(messages: Anthropic.MessageParam[]): string {
+// `fromIndex` marks where THIS turn starts in the array: the working array is
+// seeded with prior history, and if history rows ever carry block content
+// (e.g. persisted tool results), stale results must not masquerade as fresh
+// grounding for an unbacked claim.
+export function collectTurnToolObservations(messages: Anthropic.MessageParam[], fromIndex = 0): string {
   const chunks: string[] = [];
-  for (const m of messages ?? []) {
+  for (const m of (messages ?? []).slice(Math.max(0, fromIndex))) {
     if (!Array.isArray(m.content)) continue;
     for (const block of m.content) {
       if ((block as { type?: string })?.type !== "tool_result") continue;
@@ -1904,6 +1908,10 @@ export async function runQaAgent(params: {
       ...history,
       { role: "user", content: taggedText },
     ]);
+    // Everything pushed at or beyond this index was produced by THIS turn's
+    // tool loop — the boundary collectTurnToolObservations needs so prior-turn
+    // history can never pass as fresh tool grounding.
+    const turnStartIndex = messages.length;
 
     // CURRENT TIME - computed once per turn, in the user's stored timezone
     // (getPreferences defaults to America/Los_Angeles, the service area).
@@ -2403,7 +2411,9 @@ export async function runQaAgent(params: {
         const grounded = await quickComplete(
           "You are a grounding editor. Revise the message below to remove all speculation, hedging, " +
             "and probabilistic language about medical or health topics. " +
-            "Replace hedged claims with 'I don't have that information' or attribute them to documented sources. " +
+            "Replace hedged claims with 'I don't have that information' or a warm equivalent. " +
+            "NEVER invent an attribution — you cannot see any records, so do not claim a care plan, " +
+            "chart, doctor, or note says something. " +
             "Keep the same warm tone and length. Output only the revised message.",
           reply,
           { maxTokens: 300, signal: groundedController.signal },
@@ -2666,7 +2676,7 @@ export async function runQaAgent(params: {
       // it closes the "called a tool then embellished past it" gap without
       // false-flagging genuinely tool-backed claims. Checker error/garbage →
       // fail open to sending (pre-gate behavior), never into a false hold.
-      const toolObservations = collectTurnToolObservations(messages);
+      const toolObservations = collectTurnToolObservations(messages, turnStartIndex);
       let groundingVerdict: "supported" | "unsupported" = "supported";
       try {
         const gateController = new AbortController();
@@ -3006,9 +3016,26 @@ export async function runQuickReply(params: {
     { role: "user", content: text },
   ];
 
+  // Context-aware fallback: lead with the most useful known fact instead of
+  // a generic "what can I help you with" (which is on Evia's banned list).
+  // Built verbatim from Firestore facts — safe to send without a grounding
+  // check, so the gate below skips replies that came from here.
+  const contextFallbackGreeting = (): string => {
+    if (pendingTask) return "Hey! You still have that booking waiting on a yes/no — want me to pull it up?";
+    if (pendingTimesheets > 0) return `Hey! ${pendingTimesheets > 1 ? `${pendingTimesheets} timesheets are` : "A timesheet is"} waiting for your approval whenever you're ready.`;
+    if (nextAppt) {
+      const cg = (nextAppt as any).caregiverName ?? "your caregiver";
+      const d = (nextAppt as any).date ?? "soon";
+      return `Hey! ${cg} is coming ${d} — anything you want me to pass along?`;
+    }
+    if (activeAgent) return "Hey! Picking up where we left off — give me a sec.";
+    return "Hey! How's everything going?";
+  };
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   let reply: string;
+  let usedDeterministicFallback = false;
   try {
     const quickModel = resolveCaraModelConfig("quick").model;
     const res = await getOpenAIClient().chat.completions.create(
@@ -3024,20 +3051,55 @@ export async function runQuickReply(params: {
   } catch (err) {
     clearTimeout(timer);
     console.warn("runQuickReply error — falling back to context-aware default", err instanceof Error ? err.message : err);
-    // Context-aware fallback: lead with the most useful known fact instead of
-    // a generic "what can I help you with" (which is on Evia's banned list).
-    if (pendingTask) reply = "Hey! You still have that booking waiting on a yes/no — want me to pull it up?";
-    else if (pendingTimesheets > 0) reply = `Hey! ${pendingTimesheets > 1 ? `${pendingTimesheets} timesheets are` : "A timesheet is"} waiting for your approval whenever you're ready.`;
-    else if (nextAppt) {
-      const cg = (nextAppt as any).caregiverName ?? "your caregiver";
-      const d = (nextAppt as any).date ?? "soon";
-      reply = `Hey! ${cg} is coming ${d} — anything you want me to pass along?`;
-    }
-    else if (activeAgent) reply = "Hey! Picking up where we left off — give me a sec.";
-    else reply = "Hey! How's everything going?";
+    reply = contextFallbackGreeting();
+    usedDeterministicFallback = true;
   }
 
-  if (!reply) reply = "Hey! How's everything going?";
+  if (!reply) {
+    reply = "Hey! How's everything going?";
+    usedDeterministicFallback = true;
+  }
+
+  // Hallucination gate for the quick path (2026-07-11). The quick model gets
+  // real context lines (visit names, dates, times) injected into its persona
+  // and can embellish past them — and this path used to bypass every grounding
+  // check runQaAgent runs. If the reply asserts a specific fact, run the same
+  // context-aware grounding verdict the main loop's handoff gate uses; on
+  // UNSUPPORTED, swap in the deterministic context-led fallback (a greeting
+  // never warrants a human handoff — the fix is to say less, not to hold the
+  // thread). Fail open on checker error/garbage, like the main gate.
+  if (!usedDeterministicFallback && detectConfidenceClaim(reply)) {
+    metrics.confidenceClaimDetected = true;
+    metrics.groundingTriggered = true;
+    try {
+      const gateController = new AbortController();
+      const gateTimer = setTimeout(() => gateController.abort(), 8_000);
+      const verdictRaw = await quickComplete(
+        HANDOFF_GROUNDING_SYSTEM_PROMPT,
+        buildHandoffGroundingPayload(
+          persona,
+          recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+          reply,
+        ),
+        { maxTokens: 8, signal: gateController.signal },
+      );
+      clearTimeout(gateTimer);
+      if (parseHandoffGroundingVerdict(verdictRaw) === "unsupported") {
+        console.warn("runQuickReply: unsupported claim in quick reply — using context fallback", { userId, preview: reply.slice(0, 100) });
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question:   text.slice(0, 200),
+          reply:      reply.slice(0, 500),
+          detectedAt: new Date().toISOString(),
+          quickReplyGroundingFallback: true,
+        }).catch(() => {});
+        reply = contextFallbackGreeting();
+        metrics.groundingRewriteApplied = true;
+      }
+    } catch {
+      // Fail open — a checker outage must not degrade greetings.
+    }
+  }
 
   // Quick replies bypass the full supervisor (lint + constitution check) that
   // runQaAgent runs. Redact PII + lint here so the SAVED turn never holds PII

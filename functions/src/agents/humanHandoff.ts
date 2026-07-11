@@ -93,6 +93,19 @@ const GROUNDING_CONTEXT_MAX_CHARS = 12_000;
 // verbose (full care plans, message lists) — bound them separately.
 const GROUNDING_TOOL_MAX_CHARS = 8_000;
 
+// Head+tail slice for the cost caps above. The facts that back a claim can sit
+// ANYWHERE in the material (core context up front, care plan / snapshot appended
+// near the end; a claim usually cites the LAST tool called) — so a head-only
+// `slice(0, max)` could cut off exactly the section that supports the claim,
+// turning a true fact into an UNSUPPORTED verdict and a false human hold. Keep
+// both ends with an elision marker instead, at the same cost cap.
+export function headTailSlice(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const head = Math.ceil(maxChars * 0.6);
+  const tail = maxChars - head;
+  return `${text.slice(0, head)}\n[…middle truncated…]\n${text.slice(text.length - tail)}`;
+}
+
 export function buildHandoffGroundingPayload(
   systemContext: string,
   recentHistory: Array<{ role: "user" | "assistant"; content: string }>,
@@ -105,13 +118,13 @@ export function buildHandoffGroundingPayload(
     .join("\n");
   return [
     "CONTEXT:",
-    (systemContext ?? "").slice(0, GROUNDING_CONTEXT_MAX_CHARS),
+    headTailSlice(systemContext ?? "", GROUNDING_CONTEXT_MAX_CHARS),
     "",
     "RECENT CONVERSATION:",
     historyTail || "(none)",
     "",
     "TOOL RESULTS THIS TURN:",
-    (toolObservations ?? "").slice(0, GROUNDING_TOOL_MAX_CHARS) || "(none)",
+    headTailSlice(toolObservations ?? "", GROUNDING_TOOL_MAX_CHARS) || "(none)",
     "",
     "DRAFT:",
     draftReply,

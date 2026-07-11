@@ -112,7 +112,17 @@ describe("grounding-check FP guard", () => {
 
   it("bounds an oversized system context AND tool results (quick-tier cost cap)", () => {
     const payload = buildHandoffGroundingPayload("x".repeat(50_000), [], "draft", "y".repeat(50_000));
-    expect(payload.length).toBeLessThan(21_000); // 12k context + 8k tools + labels
+    expect(payload.length).toBeLessThan(21_000); // 12k context + 8k tools + labels + elision markers
+  });
+
+  it("keeps BOTH ends of oversized material — facts appended late (care plan, last tool result) still ground the claim", () => {
+    const context = `HEAD-FACT: Maria visits Tuesday.\n${"x".repeat(50_000)}\nTAIL-FACT: care plan lists Lisinopril.`;
+    const tools = `first tool output\n${"y".repeat(50_000)}\nLAST-TOOL: invoice is $85`;
+    const payload = buildHandoffGroundingPayload(context, [], "draft", tools);
+    expect(payload).toContain("HEAD-FACT");
+    expect(payload).toContain("TAIL-FACT");
+    expect(payload).toContain("LAST-TOOL");
+    expect(payload).toContain("[…middle truncated…]");
   });
 
   it("keeps only the last 8 conversation turns", () => {

@@ -139,6 +139,21 @@ describe("collectTurnToolObservations", () => {
     const messages = [{ role: "user" as const, content: "hi" }] as never;
     expect(collectTurnToolObservations(messages)).toBe("");
   });
+
+  it("excludes entries before fromIndex — prior-turn history can't pass as fresh grounding", () => {
+    const messages = [
+      { role: "user" as const, content: [
+        { type: "tool_result", tool_use_id: "old", content: "STALE: Maria, LAST Tuesday" },
+      ] },
+      { role: "user" as const, content: "who is coming?" },
+      { role: "user" as const, content: [
+        { type: "tool_result", tool_use_id: "t1", content: "Maria, Tuesday 9am" },
+      ] },
+    ] as never;
+    const out = collectTurnToolObservations(messages, 2);
+    expect(out).toContain("Maria, Tuesday 9am");
+    expect(out).not.toContain("STALE");
+  });
 });
 
 describe("detectPromiseWithoutToolCall", () => {

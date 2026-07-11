@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import { canChargeBundledMvr, canChargeStandaloneMvr, mvrPriceId } from "../mvrConfig";
+import { writeCaregiverBackgroundPII } from "../caregiverPrivate";
 import { createCheckrInvitation } from "../checkrApi";
 import Stripe from "stripe";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
@@ -2887,9 +2888,6 @@ export async function confirmBgcheckConsent(
         submittedAt:       new Date().toISOString(),
         mvrIncluded:       mvrPaid,
         consentGiven:      true,
-        legalFirstName:    form.legalFirstName,
-        legalLastName:     form.legalLastName,
-        zip:               form.zipCode,
         invitationStatus:  "sent",
         invitationUrl:     inviteUrl,
       },
@@ -2903,6 +2901,12 @@ export async function confirmBgcheckConsent(
     } else {
       caregiverDocId = (await db.collection("caregivers").add(docData)).id;
     }
+    // Identity PII → owner/admin-only private subcollection, not the parent doc.
+    await writeCaregiverBackgroundPII(caregiverDocId, {
+      legalFirstName: form.legalFirstName,
+      legalLastName:  form.legalLastName,
+      zip:            form.zipCode,
+    });
     await updateSession(phone, { caregiverId: caregiverDocId });
   } else if (candidateId && session.caregiverId) {
     // Fresh invitation for an already pre-created doc (restart cleared the
@@ -2920,12 +2924,15 @@ export async function confirmBgcheckConsent(
       "backgroundCheckData.submittedAt":       new Date().toISOString(),
       "backgroundCheckData.mvrIncluded":       mvrPaid,
       "backgroundCheckData.consentGiven":      true,
-      "backgroundCheckData.legalFirstName":    form.legalFirstName,
-      "backgroundCheckData.legalLastName":     form.legalLastName,
-      "backgroundCheckData.zip":               form.zipCode,
       "backgroundCheckData.invitationStatus":  "sent",
       "backgroundCheckData.invitationUrl":     inviteUrl,
     }).catch(() => {});
+    // Identity PII → owner/admin-only private subcollection, not the parent doc.
+    await writeCaregiverBackgroundPII(session.caregiverId, {
+      legalFirstName: form.legalFirstName,
+      legalLastName:  form.legalLastName,
+      zip:            form.zipCode,
+    });
   }
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });

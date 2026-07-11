@@ -173,6 +173,15 @@ service cloud.firestore {
         allow read: if isOwner(caregiverId) || isAdmin();
         allow write: if false;
       }
+
+      // Subcollection: private — identity PII (legal name, DOB, SSN-last-4, ZIP)
+      // moved off the world-readable parent caregiver doc. Readable ONLY by the
+      // owning caregiver or an admin; written ONLY by Cloud Functions (Admin SDK
+      // bypasses rules), so client writes are denied.
+      match /private/{docId} {
+        allow read: if isOwner(caregiverId) || isAdmin();
+        allow write: if false;
+      }
     }
 
     // ==========================================

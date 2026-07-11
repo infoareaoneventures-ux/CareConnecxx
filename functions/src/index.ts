@@ -254,6 +254,10 @@ export * from './migrations/rekeyLegacyCaregiverDocs';
 // subcollection (bug-audit §6.1) — DRY-RUN first: ?apply=true to write.
 export * from './migrations/migrateCarePlansToCanonical';
 
+// Caregiver PII → caregivers/{id}/private/background: move legal name / DOB /
+// SSN-4 / ZIP off the world-readable parent doc. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverPrivateBackground';
+
 // fixAcceptedCounterPay migration already executed — not exported
 
 // ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────

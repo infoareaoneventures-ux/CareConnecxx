@@ -58,6 +58,27 @@ export const AdminCaregiverManager: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
+  // Identity PII (legal name / DOB / SSN-4 / ZIP) moved off the world-readable
+  // caregiver doc into caregivers/{uid}/private/background. When a caregiver is
+  // selected, fetch it and merge into backgroundCheckData so the detail view
+  // still renders. Parent values (pre-backfill docs) are kept as a fallback —
+  // private wins when present. Keyed on uid only to avoid a merge loop.
+  useEffect(() => {
+    const uid = selected?.uid;
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      const pii = await adminService.getCaregiverBackgroundPII(uid);
+      if (cancelled || !pii || Object.keys(pii).length === 0) return;
+      setSelected(prev => {
+        if (!prev || prev.uid !== uid) return prev;
+        return { ...prev, backgroundCheckData: { ...(prev as any).backgroundCheckData, ...pii } } as Caregiver;
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.uid]);
+
   useEffect(() => {
     if (!showSkillsDropdown) return;
     const handler = (e: MouseEvent) => {

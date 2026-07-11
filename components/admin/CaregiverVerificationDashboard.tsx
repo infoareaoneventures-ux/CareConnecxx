@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Check, X, Clock, User, FileText, AlertCircle, Search, ChevronRight, ExternalLink, Car } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
-import { dbService } from '../../services/api';
+import { dbService, adminService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { Caregiver, CaregiverDocuments } from '../../types';
 import { isCaregiverBookable, UNBOOKABLE_BG_STATUSES } from '../../utils/caregiverEligibility';
@@ -95,6 +95,26 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
     return () => { try { (unsub as any)?.(); } catch {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
+
+  // Identity PII moved off the world-readable caregiver doc into
+  // caregivers/{uid}/private/background. Merge it into the selected caregiver
+  // so the detail view renders; parent values are a pre-backfill fallback.
+  useEffect(() => {
+    const uid = (selectedCaregiver as any)?.id || (selectedCaregiver as any)?.uid;
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      const pii = await adminService.getCaregiverBackgroundPII(uid);
+      if (cancelled || !pii || Object.keys(pii).length === 0) return;
+      setSelectedCaregiver(prev => {
+        const pid = (prev as any)?.id || (prev as any)?.uid;
+        if (!prev || pid !== uid) return prev;
+        return { ...prev, backgroundCheckData: { ...(prev as any).backgroundCheckData, ...pii } } as VerificationQueueItem;
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(selectedCaregiver as any)?.id, (selectedCaregiver as any)?.uid]);
 
   const loadVerificationQueue = async () => {
     setLoading(true);

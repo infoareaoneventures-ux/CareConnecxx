@@ -3972,6 +3972,19 @@ export const adminService = {
         }
     },
 
+    // Caregiver identity PII (legal name / DOB / SSN-4 / ZIP) now lives in the
+    // owner+admin-only caregivers/{uid}/private/background doc, not the
+    // world-readable parent. Admins read it here to render the verification
+    // detail view. Returns {} when absent (pre-backfill docs still carry the
+    // fields on the parent, so callers merge parent-then-private).
+    getCaregiverBackgroundPII: async (uid: string): Promise<Record<string, any>> => {
+        if (!isConfigured || !db || !uid) return {};
+        try {
+            const snap = await db.collection('caregivers').doc(uid).collection('private').doc('background').get();
+            return snap.exists ? (snap.data() as Record<string, any>) : {};
+        } catch { return {}; }
+    },
+
     getClientAppointments: async (clientId: string): Promise<import('../types').Appointment[]> => {
         if (!isConfigured || !db) return [];
         try {

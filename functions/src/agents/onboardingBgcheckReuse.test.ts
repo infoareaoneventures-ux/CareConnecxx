@@ -17,10 +17,13 @@ const hoisted = vi.hoisted(() => {
     bgcheckInviteUrl: "https://apply.checkr.com/invite/abc",
     onboardingData: { name: "Jane Doe", email: "jane@x.com" },
   };
-  const docFn = () => ({
-    get:    vi.fn(async () => ({ exists: true, data: () => sessionData })),
-    update: updateMock,
-    set:    setMock,
+  // doc() supports nested subcollections (e.g. caregivers/{id}/private/background,
+  // written by writeCaregiverBackgroundPII) — .collection() recurses back to a doc.
+  const docFn: () => any = () => ({
+    get:        vi.fn(async () => ({ exists: true, data: () => sessionData })),
+    update:     updateMock,
+    set:        setMock,
+    collection: vi.fn(() => ({ doc: docFn })),
   });
   const collectionMock = vi.fn(() => ({ doc: docFn }));
 

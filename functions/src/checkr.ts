@@ -4,6 +4,7 @@ import * as crypto from "crypto";
 import { claimWebhookEvent, settleWebhookEvent, CHECKR_EVENTS_COLLECTION } from "./utils/webhookLedger";
 import { checkrPost } from "./checkrApi";
 import { assertMvrCheckConfig } from "./mvrConfig";
+import { writeCaregiverBackgroundPII } from "./caregiverPrivate";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -122,13 +123,14 @@ export const initiateCheckrCandidate = functions.runWith({}).https.onCall(async 
     const invitation = await checkrPost("/invitations", invitationBody, `${uid}-invitation-${dateKey}`);
     const invitationUrl: string | undefined = invitation?.invitation_url;
 
+    // Identity PII (legal name, ZIP) goes to the owner/admin-only private
+    // subcollection — NOT the world-readable parent doc. Operational fields
+    // stay on the parent for agent gating + the admin verification query.
+    await writeCaregiverBackgroundPII(uid, { legalFirstName, legalLastName, zip: zipCode });
     await db.collection("caregivers").doc(uid).set({
       backgroundCheckData: {
         checkrCandidateId: candidateId,
         consentGiven: true,
-        legalFirstName,
-        legalLastName,
-        zip: zipCode,
         submittedAt: new Date().toISOString(),
         status: "pending",
         invitationStatus: "sent",

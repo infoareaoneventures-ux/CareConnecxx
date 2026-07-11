@@ -5,6 +5,7 @@ import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from 
 import { fetchWithTimeout } from './utils/httpTimeout';
 import { appLink } from './config/appUrl';
 import { assertMvrPaymentConfig, assertMvrCheckConfig } from './mvrConfig';
+import { writeCaregiverBackgroundPII } from './caregiverPrivate';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -547,15 +548,14 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       if (typeof inv?.invitation_url === 'string') invitationUrl = inv.invitation_url;
     }
 
+    // Identity PII → owner/admin-only private subcollection, not the parent.
+    await writeCaregiverBackgroundPII(userId, { legalFirstName: firstName, legalLastName: lastName, zip: zipCode });
     await admin.firestore().collection('caregivers').doc(userId).set({
       membershipPaid: true,
       ...(includeMVRFlag && { mvrPaid: true }),
       verificationStatus: 'submitted',
       backgroundCheckData: {
         checkrCandidateId: candidateId,
-        legalFirstName: firstName,
-        legalLastName: lastName,
-        zip: zipCode,
         submittedAt: new Date().toISOString(),
         status: 'pending',
         invitationStatus: invOk ? 'sent' : 'error',

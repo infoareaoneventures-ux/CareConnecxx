@@ -708,6 +708,17 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return;
   }
 
+  // …and only for an ANNUAL plan. `subscription_cycle` fires on EVERY renewal
+  // regardless of interval, so a monthly caregiver plan (legacy $24.95 /
+  // STRIPE_CAREGIVER_MONTHLY, still allowed) would buy a Checkr check every
+  // month AND strip `verified` 12x/yr. The background check is annual; gate on
+  // the price interval, not the price ID (robust to price-ID drift).
+  const renewalInterval = subscription.items?.data?.[0]?.price?.recurring?.interval;
+  if (renewalInterval !== 'year') {
+    console.log(`Renewal for ${userId} is interval='${renewalInterval}', not annual — skipping Checkr re-initiation`);
+    return;
+  }
+
   const caregiverSnap = await admin.firestore().collection('caregivers').doc(userId).get();
   if (!caregiverSnap.exists) return;
 
@@ -971,7 +982,14 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
   await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: subscription.status,
     subscriptionId: subscription.id,
-    subscriptionActive: true,
+    // Derive from status, NOT hardcoded true: a subscription created
+    // 'incomplete'/'past_due' (3DS-pending or API-created before first
+    // payment) is NOT paid. A hardcoded true here marks such users paid and
+    // trips downstream gates that publish their job / blast caregivers before
+    // payment (the exact case aiMatchTriggers gates on subscriptionActive).
+    // Self-heals on the next subscription.updated, but must not open the gate
+    // in the interim. Matches handleSubscriptionUpdated below.
+    subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 

@@ -144,36 +144,66 @@ export async function executeInstantPayout(opts: {
     }
 
     // Replay guard — reuse the most recent payout instead of creating another.
+    // Runs in a TRANSACTION so two concurrent requests (e.g. a duplicate SMS
+    // "YES" and an app tap landing on different instances) can't both read
+    // "no recent payout" and each create a live Stripe payout — which would
+    // bill the platform the instant-payout fee twice and double-disburse the
+    // requested amount. The read (recent payout) and the write (placeholder
+    // doc) are now atomic; the Stripe call stays outside, keyed by the doc id.
     const payoutsCol = caregiverRef.collection("payouts");
-    const recentSnap = await payoutsCol.orderBy("createdAt", "desc").limit(1).get();
-    if (!recentSnap.empty) {
-        const recent = recentSnap.docs[0].data();
-        const recentAt = Date.parse(recent.createdAt ?? "");
-        if (Number.isFinite(recentAt) && Date.now() - recentAt < REPLAY_WINDOW_MS && recent.status !== "failed") {
-            if (recent.stripePayoutId) {
-                return {
-                    payoutDocId: recentSnap.docs[0].id,
-                    stripePayoutId: recent.stripePayoutId,
-                    amountCents: Math.round((recent.amount ?? 0) * 100),
-                    status: recent.status ?? "pending",
-                    arrivalDate: recent.arrivalDate ?? null,
-                };
-            }
-            throw new InstantPayoutError("DUPLICATE", "A payout was requested moments ago and is still processing — give it a minute.");
-        }
-    }
-
-    const payoutRef = payoutsCol.doc();
     const createdAt = new Date().toISOString();
-    await payoutRef.set({
-        amount: amountCents / 100,
-        grossAmount: amountCents / 100,
-        fee: 0,
-        type: "instant",
-        status: "pending",
-        source,
-        createdAt,
+    // Fixed per-caregiver lock doc, read+written by every request. Firestore
+    // detects transaction conflicts on documents READ, not on collection
+    // membership — so with an empty payouts collection two simultaneous
+    // requests would each see "no recent payout" and both commit (phantom
+    // read). Reading and writing this shared doc forces the two transactions
+    // to serialize: the loser retries, re-runs the query, and now sees the
+    // winner's fresh payout. Kept OUT of the payouts collection so it never
+    // pollutes the reuse query or PayoutHistory.
+    const lockRef = caregiverRef.collection("payoutLocks").doc("instant");
+    const txnResult = await caregiverRef.firestore.runTransaction<
+        | { reuse: InstantPayoutSuccess }
+        | { reuse: null; payoutRef: FirebaseFirestore.DocumentReference }
+    >(async (txn) => {
+        await txn.get(lockRef);
+        const recentSnap = await txn.get(payoutsCol.orderBy("createdAt", "desc").limit(1));
+        if (!recentSnap.empty) {
+            const recent = recentSnap.docs[0].data();
+            const recentAt = Date.parse(recent.createdAt ?? "");
+            if (Number.isFinite(recentAt) && Date.now() - recentAt < REPLAY_WINDOW_MS && recent.status !== "failed") {
+                if (recent.stripePayoutId) {
+                    return {
+                        reuse: {
+                            payoutDocId: recentSnap.docs[0].id,
+                            stripePayoutId: recent.stripePayoutId,
+                            amountCents: Math.round((recent.amount ?? 0) * 100),
+                            status: recent.status ?? "pending",
+                            arrivalDate: recent.arrivalDate ?? null,
+                        },
+                    };
+                }
+                throw new InstantPayoutError("DUPLICATE", "A payout was requested moments ago and is still processing — give it a minute.");
+            }
+        }
+        const newRef = payoutsCol.doc();
+        txn.set(newRef, {
+            amount: amountCents / 100,
+            grossAmount: amountCents / 100,
+            fee: 0,
+            type: "instant",
+            status: "pending",
+            source,
+            createdAt,
+        });
+        // Bump the lock doc we read above — this is what makes a concurrent
+        // transaction's commit conflict (it read the old lock version) and
+        // retry, at which point it sees THIS payout and reuses/rejects it.
+        txn.set(lockRef, { lastRequestedAt: createdAt }, { merge: true });
+        return { reuse: null, payoutRef: newRef };
     });
+
+    if (txnResult.reuse) return txnResult.reuse;
+    const payoutRef = txnResult.payoutRef;
 
     let payout: any;
     try {

@@ -56,6 +56,25 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// Whitelist + clamp caregiver/client-supplied line items. Every path that lets
+// a user set line items and feeds them into a charged/paid amount MUST run this
+// (submit, propose_correction, counter_propose) — otherwise negative or absurd
+// `amount`s flow straight into grossPay and the Stripe transfer/charge.
+const VALID_LINE_ITEM_TYPES = ['overtime', 'mileage', 'supplies', 'bonus', 'custom'];
+export function sanitizeShiftLineItems(
+  raw: unknown,
+): Array<{ type: string; label: string; note: string; amount: number }> {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((li: any) => li && typeof li === 'object')
+    .map((li: any) => ({
+      type:   VALID_LINE_ITEM_TYPES.includes(li.type) ? li.type : 'custom',
+      label:  typeof li.label === 'string' ? li.label.slice(0, 100) : '',
+      note:   typeof li.note  === 'string' ? li.note.slice(0, 500)  : '',
+      amount: Math.max(0, Math.round((Number(li.amount) || 0) * 100) / 100),
+    }))
+    .filter((li) => li.amount > 0);
+}
+
 async function pushNotification(userId: string, type: string, title: string, message: string, data: any) {
   await db.collection('users').doc(userId).collection('notifications').add({
     userId,
@@ -107,18 +126,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   }
 
   // Validate and sanitise line items
-  const VALID_TYPES = ['overtime', 'mileage', 'supplies', 'bonus', 'custom'];
-  const lineItems: Array<{ type: string; label: string; note: string; amount: number }> =
-    (Array.isArray(rawLineItems) ? rawLineItems : [])
-      .filter((li: any) => li && typeof li === 'object')
-      .map((li: any) => ({
-        type:   VALID_TYPES.includes(li.type) ? li.type : 'custom',
-        label:  typeof li.label === 'string' ? li.label.slice(0, 100) : '',
-        note:   typeof li.note  === 'string' ? li.note.slice(0, 500)  : '',
-        amount: Math.max(0, Math.round((Number(li.amount) || 0) * 100) / 100),
-      }))
-      .filter((li) => li.amount > 0);
-
+  const lineItems = sanitizeShiftLineItems(rawLineItems);
   const lineItemsTotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
 
   // Source of truth is now the shifts collection
@@ -315,8 +323,12 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
     const proposedTotalHours = computeTotalHours(proposedStartTime, proposedEndTime);
     const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
 
-    const proposedLineItems: Array<{ type: string; label: string; note: string; amount: number }> =
-      Array.isArray(rawLineItems) ? rawLineItems : (shift.lineItems ?? []);
+    // Clamp/whitelist — a client-proposed correction feeds proposedGrossPay,
+    // which autoAcceptCorrection later charges/pays. Fall back to the already-
+    // sanitized stored line items when the caller sends none.
+    const proposedLineItems = rawLineItems !== undefined
+      ? sanitizeShiftLineItems(rawLineItems)
+      : (shift.lineItems ?? []);
     const proposedLineItemsTotal = proposedLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0);
     const proposedBasePay = Math.round(proposedTotalHours * shift.payRate * 100) / 100;
     const proposedGrossPay = Math.round((proposedBasePay + proposedLineItemsTotal) * 100) / 100;
@@ -502,7 +514,12 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('invalid-argument', 'counterStartTime and counterEndTime are required for counter_propose');
   }
   const counterTotalHours = computeTotalHours(counterStartTime, counterEndTime);
-  const safeCounterLineItems = Array.isArray(rawCounterLineItems) ? rawCounterLineItems : (shift.lineItems ?? []);
+  // Clamp/whitelist — a caregiver counter feeds counterGrossPay, which is
+  // charged if the client accepts. Fall back to stored (already-sanitized)
+  // items when none are sent.
+  const safeCounterLineItems = rawCounterLineItems !== undefined
+    ? sanitizeShiftLineItems(rawCounterLineItems)
+    : (shift.lineItems ?? []);
   const counterLineItemsTotal = safeCounterLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0);
   const counterBasePay = Math.round(counterTotalHours * (shift.payRate || 0) * 100) / 100;
   const counterGrossPay = Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
@@ -863,7 +880,13 @@ export async function settleShiftTransfer(
       transfer_group: appointmentId,
       metadata: { appointmentId, shiftHoursId: appointmentId },
     }, {
-      idempotencyKey: attempt > 1 ? `shift-transfer-${appointmentId}-attempt-${attempt}` : `shift-transfer-${appointmentId}`,
+      // STABLE per appointment — never attempt-suffixed. A shift is paid out
+      // exactly once, so Stripe must dedupe the transfer even across retries.
+      // The Firestore `stripeTransferId` guard above is written by the SAME
+      // update that can fail (leaving transferId unrecorded), so a per-attempt
+      // key would let a retry create a SECOND real transfer — double-paying the
+      // caregiver. This key is the only durable guarantee, so it must not vary.
+      idempotencyKey: `shift-transfer-${appointmentId}`,
     });
     transferId = transfer.id;
   }
@@ -990,13 +1013,13 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
     // some payment methods settle asynchronously ('processing'). We must NOT
     // pay the caregiver until the charge has truly settled — paying earlier
     // risks an un-recoverable payout if the charge later fails.
-    let replacedTerminalChargeId: string | undefined;
     let chargeStatus: string;
     if (paymentIntentId) {
       const existing = await stripe.paymentIntents.retrieve(paymentIntentId);
       chargeStatus = existing.status;
       if (isTerminalPaymentIntentStatus(chargeStatus)) {
-        replacedTerminalChargeId = paymentIntentId;
+        // Terminal (canceled / requires_payment_method): abandon this PI and
+        // create a fresh one under the next attempt's key.
         paymentIntentId = undefined;
       }
     }
@@ -1012,11 +1035,17 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
         description: `Evia shift ${appointmentId}`,
         metadata: { appointmentId, shiftHoursId: appointmentId },
       }, {
-        // Idempotency-keyed by appointmentId so re-firing the Firestore
-        // trigger never creates a second charge for the same shift.
-        idempotencyKey: replacedTerminalChargeId || shift.status === 'payment_failed'
-          ? `shift-charge-${appointmentId}-attempt-${attempt}`
-          : `shift-charge-${appointmentId}`,
+        // Key on (appointment, attempt) ALWAYS. `attempt` is derived from the
+        // input snapshot's paymentAttemptCount, so:
+        //  - re-firing the trigger on the same doc computes the SAME attempt →
+        //    SAME key → Stripe dedupes → never a second charge for one shift;
+        //  - a genuine retry (after a failure bumped paymentAttemptCount, or
+        //    after replacing a terminal PI) computes a HIGHER attempt → new key
+        //    → a fresh charge, as intended.
+        // The previous base-vs-attempt branch could hand two concurrent
+        // processors (trigger + scheduled retry sweep) DIFFERENT keys for the
+        // same shift → two live PaymentIntents → the client charged twice.
+        idempotencyKey: `shift-charge-${appointmentId}-attempt-${attempt}`,
       });
       paymentIntentId = intent.id;
       chargeStatus = intent.status;

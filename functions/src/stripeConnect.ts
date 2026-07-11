@@ -30,6 +30,30 @@ const buildAccountLink = async (accountId: string) => {
     });
 };
 
+// Verify the caller is allowed to act on `accountId`: either it is the Stripe
+// account on their own caregiver doc, or they are an admin (mirrors
+// firestore.rules isAdmin()). Without this, any authenticated user could pass
+// another caregiver's stripeAccountId — readable from the world-readable
+// caregivers/{id} docs — and mint a live account-onboarding link for it,
+// letting them edit that caregiver's payout bank account (account takeover).
+const assertCanAccessAccount = async (
+    context: functions.https.CallableContext,
+    accountId: string,
+): Promise<void> => {
+    const uid = context.auth!.uid;
+    const cgSnap = await db.collection("caregivers").doc(uid).get();
+    if (cgSnap.exists && cgSnap.data()?.stripeAccountId === accountId) return;
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    const u = userSnap.exists ? userSnap.data() ?? {} : {};
+    if (u.userType === "admin" || u.isAdmin === true) return;
+
+    throw new functions.https.HttpsError(
+        "permission-denied",
+        "You do not have access to this Stripe account.",
+    );
+};
+
 const syncAccountStatus = async (accountId: string) => {
     const account = await stripe.accounts.retrieve(accountId);
     const chargesEnabled = !!account.charges_enabled;
@@ -111,6 +135,7 @@ export const getStripeOnboardingLink = functions
         if (!accountId) {
             throw new functions.https.HttpsError("invalid-argument", "accountId is required");
         }
+        await assertCanAccessAccount(context, accountId);
 
         const link = await buildAccountLink(accountId);
         return { url: link.url };
@@ -126,6 +151,7 @@ export const checkStripeAccountStatus = functions
         if (!accountId) {
             throw new functions.https.HttpsError("invalid-argument", "accountId is required");
         }
+        await assertCanAccessAccount(context, accountId);
 
         return syncAccountStatus(accountId);
     });

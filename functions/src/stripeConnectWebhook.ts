@@ -141,12 +141,20 @@ export const stripeConnectWebhook = functions
                             .get();
                         const batch = db.batch();
                         const paidOutAt = new Date().toISOString();
+                        // A payout only covers balance that settled BEFORE it was
+                        // cut. A shift whose transfer landed after payout.created
+                        // is in the NEXT sweep, not this one — stamping it here
+                        // claims the money hit the bank ~1 day early.
+                        const payoutCreatedMs = (payout.created ?? 0) * 1000;
                         let stamped = 0;
                         unstampedShifts.forEach((shiftDoc) => {
                             const s = shiftDoc.data();
                             // Offline shifts (cash/Venmo/Zelle) settle outside Stripe
                             // and are marked paid by confirmOfflinePaymentReceived.
                             if (s.paidOutAt || isOfflinePaymentMethod(s.paymentMethod)) return;
+                            // Skip shifts that settled after this payout was created.
+                            const settledMs = Date.parse(s.lastPaymentAttemptAt ?? s.updatedAt ?? "");
+                            if (Number.isFinite(settledMs) && payoutCreatedMs && settledMs > payoutCreatedMs) return;
                             batch.update(shiftDoc.ref, {
                                 payoutStatus: "completed",
                                 payoutType: isInstant ? "instant" : "automatic",

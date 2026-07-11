@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { parseScheduledTimeMs, businessTodayStr } from "./utils/scheduledTime";
 
 if (!admin.apps.length) {
     admin.initializeApp();
@@ -28,16 +29,16 @@ function parseTime24(raw: unknown): string | null {
 
 // Compute when the appointment was scheduled to end, in UTC ms. Returns null
 // if any of the inputs are unparseable.
-function computeScheduledEndMs(isoDate: unknown, time: unknown, duration: unknown): number | null {
+export function computeScheduledEndMs(isoDate: unknown, time: unknown, duration: unknown): number | null {
     if (typeof isoDate !== "string") return null;
     const time24 = parseTime24(time);
     if (!time24) return null;
     const hours = typeof duration === "number" && isFinite(duration) ? duration : 1;
-    // Treat the stored isoDate+time as local-time; without a tz hint we
-    // approximate with UTC. Caregivers running cron at 15-min cadence absorb
-    // up to a few hours of skew via the GRACE_MINUTES buffer.
-    const start = new Date(`${isoDate}T${time24}:00Z`);
-    const startMs = start.getTime();
+    // The stored isoDate+time is Pacific wall-clock. Parsing it as UTC ("...Z")
+    // lands 7-8h EARLY — the cron would mark an evening shift completed before
+    // it starts, unblocking submitShiftHours pre-shift. GRACE_MINUTES (30) is
+    // an intentional post-end buffer, not a timezone allowance.
+    const startMs = parseScheduledTimeMs(`${isoDate}T${time24}:00`);
     if (!isFinite(startMs)) return null;
     return startMs + hours * 60 * 60 * 1000;
 }
@@ -50,7 +51,9 @@ export const markAppointmentsCompleted = functions.pubsub
     .schedule("every 15 minutes")
     .onRun(async () => {
         const now = Date.now();
-        const todayIso = new Date(now).toISOString().split("T")[0];
+        // Pacific business date, not UTC — during PT evening hours the UTC date
+        // is already tomorrow, which would pull tomorrow's shifts into the scan.
+        const todayIso = businessTodayStr();
 
         const snap = await db.collection("appointments")
             .where("status", "in", ["confirmed", "awaiting_feedback"])

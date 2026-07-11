@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
+import { parseScheduledTimeMs, businessTodayStr, slotHourKey, apptSlotHourKey } from "../utils/scheduledTime";
 import { sendMessage, getOrCreateSession, AgentSession } from "../linq/client";
 import { writeFeedbackSignal } from "../ai/feedback";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -61,27 +62,31 @@ async function findMutualTime(proposedTimes: string[], clientPhone: string): Pro
   const clientId: string | undefined = sessSnap.data()?.userId;
   if (!clientId) return proposedTimes[0];
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Pacific business date — the UTC date is already tomorrow during PT evening
+  // hours, which would drop today's remaining appointments from the busy set.
+  const today = businessTodayStr();
   const apptSnap = await db.collection("appointments")
     .where("clientId", "==", clientId)
     .where("status", "in", ["confirmed", "pending"])
     .where("date", ">=", today)
     .get();
 
-  // Build set of busy hours as "YYYY-MM-DDTHH" strings
+  // Build set of busy hours as "YYYY-MM-DDTHH" strings. Both sides MUST go
+  // through the shared Pacific slot-key helpers: stored `time` is PT wall-clock
+  // ("2:00 PM"), while proposals arrive as ISO strings — keying one side via
+  // toISOString()/getHours() (UTC on Cloud Functions) shifted the buckets 7-8h
+  // apart, so no conflict was ever detected and families got double-booked.
   const busy = new Set<string>();
   for (const d of apptSnap.docs) {
     const a = d.data();
-    if (a.date && a.time) {
-      const hour = a.time.slice(0, 2);
-      busy.add(`${a.date}T${hour}`);
-    }
+    const key = apptSlotHourKey(a.date, a.time);
+    if (key) busy.add(key);
   }
 
   for (const iso of proposedTimes) {
-    const dt   = new Date(iso);
-    const key  = `${dt.toISOString().slice(0, 10)}T${String(dt.getHours()).padStart(2, "0")}`;
-    if (!busy.has(key)) return iso;
+    const ms = parseScheduledTimeMs(iso);
+    if (!Number.isFinite(ms)) continue;
+    if (!busy.has(slotHourKey(ms))) return iso;
   }
 
   // All proposed times conflict with the family's calendar — signal "no mutual

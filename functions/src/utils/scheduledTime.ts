@@ -52,6 +52,47 @@ export function businessTodayStr(timeZone: string = DEFAULT_TZ, now: Date = new 
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// Tomorrow's date (YYYY-MM-DD) in the business timezone. Calendar arithmetic
+// on the rendered date (not now+24h, which lands on the same business date
+// during the fall-back DST hour).
+export function businessTomorrowStr(timeZone: string = DEFAULT_TZ, now: Date = new Date()): string {
+  const d = new Date(`${businessTodayStr(timeZone, now)}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// "YYYY-MM-DDTHH" bucket of an instant, rendered in the business timezone.
+// Calendar-collision checks must key BOTH sides through this — building one
+// side from stored wall-clock fields and the other from toISOString()/UTC
+// produces keys 7-8h apart that never match, so conflicts go undetected.
+export function slotHourKey(ms: number, timeZone: string = DEFAULT_TZ): string {
+  const parts: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat("en-CA", {
+    timeZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+  }).formatToParts(new Date(ms))) parts[p.type] = p.value;
+  const h = parts.hour === "24" ? "00" : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${h}`;
+}
+
+// Same bucket for a stored appointment `date` ("YYYY-MM-DD") + `time` field
+// ("2:00 PM", "9:00", "14:00" — wall-clock in the business timezone). Returns
+// null when the time is unparseable rather than guessing a slot.
+export function apptSlotHourKey(date: unknown, time: unknown, timeZone: string = DEFAULT_TZ): string | null {
+  if (typeof date !== "string" || !date) return null;
+  if (typeof time !== "string") return null;
+  const m = time.trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = m[2];
+  if (m[3] === "PM" && hour < 12) hour += 12;
+  if (m[3] === "AM" && hour === 12) hour = 0;
+  if (hour > 23 || Number(minute) > 59) return null;
+  const ms = parseScheduledTimeMs(`${date}T${String(hour).padStart(2, "0")}:${minute}:00`, timeZone);
+  if (!Number.isFinite(ms)) return null;
+  return slotHourKey(ms, timeZone);
+}
+
 // Minutes-since-midnight of `now` in the business timezone (0–1439). For jobs
 // that compare a wall-clock shift/task time to "now" — using getHours() gives
 // UTC minutes on Cloud Functions and fires those jobs at the wrong local hour.

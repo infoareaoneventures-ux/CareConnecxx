@@ -6,16 +6,19 @@ import { handlePromptGet } from "../mcp/server";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { generateCaraMessage } from "../utils/caraMessage";
 
 const db = admin.firestore();
 
-// Runs every day at 7am local (12:00 UTC covers most US time zones at 7am)
+// Runs every day at 7am Pacific. With .timeZone() set, the cron string is
+// interpreted IN that timezone — "0 12 * * *" here meant noon PT, not 12:00
+// UTC, so "morning" briefings were landing midday, after visits had started.
 export const sendMorningBriefings = functions.pubsub
-  .schedule("0 12 * * *")
+  .schedule("0 7 * * *")
   .timeZone("America/Los_Angeles")
   .onRun(async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessTodayStr();
 
     // Find all confirmed appointments for today
     const snap = await db.collection("appointments")
@@ -249,14 +252,14 @@ async function sendFamilyMorningBriefings(
       const session = sessionSnap.data()!;
       if (session.optedOut) continue;
 
-      // Respect DND and preferred summary time from preferences
+      // Respect DND from preferences. preferredSummaryTime is NOT checked
+      // here: this cron runs once (7am PT) and can only suppress, never
+      // reschedule — and getPreferences fills a default of "18:00", so gating
+      // on it would silently drop the briefing for every default client. (The
+      // old check also compared the server's UTC hour to the user's local
+      // preference, which is how it appeared to work at the noon-PT run.)
       const prefs = await getPreferences(phone).catch(() => null);
       if (prefs && isInDND(prefs)) continue;
-      if (prefs?.preferredSummaryTime) {
-        const [prefH] = prefs.preferredSummaryTime.split(":").map(Number);
-        const nowHour = new Date().getHours();
-        if (Math.abs(nowHour - prefH) > 1) continue;
-      }
 
       // Avoid duplicate sends — check if we sent a family briefing today already
       const lastBriefingSnap = await db.collection("agent_alerts_log")

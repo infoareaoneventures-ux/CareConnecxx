@@ -17,7 +17,7 @@ import {
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
 import { answerHumanQuestionOnly } from "../agents/humanReply";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
@@ -1539,12 +1539,13 @@ async function handleCareNotes(
     }
   }
 
-  // Find next appointment for this caregiver
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // Find next appointment for this caregiver. Pacific tomorrow, not UTC —
+  // caregivers submit shift notes in the PT evening, when the UTC date has
+  // already rolled and UTC "tomorrow" skips right past tomorrow's visit
+  // ("No upcoming visits scheduled yet." with one confirmed for tomorrow).
   const nextSnap = await db.collection("appointments")
     .where("caregiverId", "==", caregiverId)
-    .where("date",        ">=", tomorrow.toISOString().slice(0, 10))
+    .where("date",        ">=", businessTomorrowStr())
     .where("status",      "in", ["confirmed"])
     .orderBy("date", "asc").limit(1).get();
 

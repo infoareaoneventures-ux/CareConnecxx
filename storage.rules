@@ -23,21 +23,40 @@ service firebase.storage {
       );
     }
 
+    // Does the caller own this senior profile? (family who created it). Mirrors
+    // firestore.rules senior_profiles ownership: doc id == uid (legacy single-
+    // senior) OR senior_profiles/{seniorId}.userId == uid (household seniors).
+    function ownsSenior(seniorId) {
+      return isAuthenticated() && (
+        request.auth.uid == seniorId ||
+        firestore.get(/databases/(default)/documents/senior_profiles/$(seniorId)).data.userId == request.auth.uid
+      );
+    }
+
     // ==========================================
     // CARE JOURNAL PHOTOS
     // ==========================================
     match /care_journal/{seniorId}/{entryId}/{filename} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() 
-        && request.resource.size < 5 * 1024 * 1024  // 5MB max
-        && request.resource.contentType.matches('image/.*');
+      // PHI: photos of a care recipient. Read is scoped to the owning family
+      // or an admin — NOT any authenticated user. In-app rendering uses stored
+      // getDownloadURL() tokens (which bypass rules), so scoping the SDK read
+      // rule closes cross-tenant enumeration without breaking display.
+      allow read: if ownsSenior(seniorId) || isAdmin();
+      // Writes are function-only (Evia's journal tools use the Admin SDK, which
+      // bypasses rules). No client path uploads here, so denying client writes
+      // closes the cross-tenant tamper hole (previously any authed user could
+      // overwrite/plant photos in any senior's journal).
+      allow write: if false;
     }
 
     // ==========================================
     // VERIFICATION DOCUMENTS
     // ==========================================
     match /verification/{caregiverId}/{docType}/{filename} {
-      allow read: if isOwner(caregiverId) || isAuthenticated();
+      // Identity documents (driver's license, insurance, MVR). The old
+      // `|| isAuthenticated()` made the owner check DEAD — any signed-in user
+      // could read every caregiver's identity docs. Owner + admin only.
+      allow read: if isOwner(caregiverId) || isAdmin();
       allow write: if isOwner(caregiverId)
         && request.resource.size < 10 * 1024 * 1024  // 10MB max
         && (request.resource.contentType.matches('image/.*') 
@@ -63,7 +82,10 @@ service firebase.storage {
     // PROFILE PHOTOS
     // ==========================================
     match /profile_photos/{userId}/{filename} {
-      allow read: if true;  // Public read for profile photos
+      // Was `if true` (anonymous, enumerable). Rendering uses stored
+      // getDownloadURL() tokens (bypass rules), so requiring auth closes
+      // anonymous scraping without breaking display.
+      allow read: if isAuthenticated();
       allow write: if isOwner(userId)
         && request.resource.size < 5 * 1024 * 1024  // 5MB max
         && request.resource.contentType.matches('image/.*');
@@ -73,7 +95,11 @@ service firebase.storage {
     // CARE RECIPIENT PHOTOS (uploaded by client)
     // ==========================================
     match /clients/{userId}/recipients/{filename} {
-      allow read: if true;  // Public read so photos show on booking/shift cards
+      // PHI: photos of care recipients (elderly/vulnerable). Was `if true`
+      // (fully public, enumerable by userId). Cards render from stored
+      // getDownloadURL() tokens (bypass rules), so requiring auth closes
+      // anonymous internet access without breaking booking/shift cards.
+      allow read: if isAuthenticated();
       allow write: if isOwner(userId)
         && request.resource.size < 5 * 1024 * 1024  // 5MB max
         && request.resource.contentType.matches('image/.*');

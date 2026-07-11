@@ -147,10 +147,13 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         const clientSchedule = intake?.weeklySchedule || intake?.schedule || null;
 
         // ── 4. Fetch caregivers ──
-        const [usersSnap, caregiversSnap] = await Promise.all([
-          fdb.collection('users').where('role', '==', 'caregiver').limit(100).get(),
-          fdb.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
-        ]);
+        // Caregivers collection ONLY. The old parallel `users` query
+        // (role==caregiver) is gone: it leaked the whole user directory to any
+        // authed client, and was redundant — visibility gates on approvedIds
+        // (from `caregivers`), and every profile_complete caregiver's caregivers
+        // doc carries name+geo (verified against prod 2026-07-11).
+        const caregiversSnap = await fdb.collection('caregivers')
+          .where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null);
 
         // Bookability contract: onboardingStatus 'profile_complete' (the query above)
         // AND verificationStatus 'approved' (post-filter; the where() is pre-filtering only)
@@ -210,10 +213,9 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
           } as any);
         };
 
-        // Process caregivers collection first — it has the richer data (documents, verificationStatus etc.)
-        // usersSnap fills in any caregivers not already seen
+        // Caregivers collection is the sole discovery source (richer data:
+        // documents, verificationStatus, canonical name/geo).
         caregiversSnap?.forEach(pushDoc);
-        usersSnap.forEach(pushDoc);
 
         // Bookability was already enforced by approvedIds in pushDoc.
         // ── 5. Hard filter: distance ──

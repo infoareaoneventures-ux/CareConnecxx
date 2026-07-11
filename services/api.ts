@@ -3025,15 +3025,15 @@ export const dbService = {
                 return;
             }
 
-            // Find referrer
-            const referrerSnapshot = await db.collection('users')
-                .where('referralCode', '==', referralCode)
-                .limit(1)
-                .get();
-
-            if (referrerSnapshot.empty) return;
-
-            const referrerId = referrerSnapshot.docs[0].id;
+            // Find referrer via a server-side callable. Clients can no longer
+            // query the users collection (the list rule is admin-only, to stop
+            // full-directory enumeration), so the Admin SDK does the lookup.
+            // No match → return, same as the old empty-snapshot behavior.
+            if (!functions) return;
+            const resolveFn = functions.httpsCallable('v1-resolveReferrerByCode');
+            const resolveRes = await resolveFn({ code: referralCode });
+            const referrerId = (resolveRes.data as { referrerId?: string })?.referrerId;
+            if (!referrerId) return;
 
             // Update referral record
             const referralSnapshot = await db.collection('referrals')

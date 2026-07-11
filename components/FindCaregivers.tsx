@@ -233,10 +233,15 @@ export default function FindCaregivers() {
       const precomputedMatches = precomputedData?.topMatches || [];
       const matchMap = new Map(precomputedMatches.map((m) => [m.caregiverId, m]));
 
-      const [usersSnap, caregiversSnap] = await Promise.all([
-        fdb.collection('users').where('role', '==', 'caregiver').limit(100).get(),
-        fdb.collection('caregivers').where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null),
-      ]);
+      // Discover caregivers from the `caregivers` collection ONLY. The old
+      // parallel `users` query (role==caregiver) is gone: it exposed the whole
+      // user directory to any authed client (firestore.rules users list was
+      // open), and it was redundant — visibility is gated on approvedIds
+      // (below), which is derived solely from `caregivers`, and every
+      // profile_complete caregiver's caregivers doc carries name+geo (verified
+      // against prod 2026-07-11: 0 caregivers relied on the users doc).
+      const caregiversSnap = await fdb.collection('caregivers')
+        .where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null);
 
       // Build set of visible caregiver IDs — bookability contract: onboardingStatus 'profile_complete'
       // (the query above) AND verificationStatus 'approved' (post-filter; the where() is pre-filtering only)
@@ -294,7 +299,6 @@ export default function FindCaregivers() {
         });
       };
 
-      usersSnap.forEach(pushDoc);
       caregiversSnap?.forEach(pushDoc);
 
       let caregiversWithScores: (Caregiver & { matchScore?: AIMatchScore })[] = caregiverList;

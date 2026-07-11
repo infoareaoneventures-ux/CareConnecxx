@@ -50,6 +50,7 @@ export * from './instantPayout';
 
 // STRIPE CONNECT (onboarding + account status)
 export * from './stripeConnect';
+export * from './referralLookup';
 
 // STRIPE CONNECT WEBHOOK (account.updated → sync caregiver status)
 export * from './stripeConnectWebhook';

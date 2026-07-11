@@ -572,13 +572,23 @@ service cloud.firestore {
     }
     
     // ==========================================
-    // ADMIN-ONLY CLEANUP OPERATIONS
+    // COLLECTION LIST/ENUMERATION
     // ==========================================
+    // caregivers: any authed user may enumerate — the collection is the public
+    // caregiver directory (browse/match), consistent with the per-doc
+    // `allow read: if isAuthenticated()` above.
     match /caregivers/{docId} {
       allow list: if isAuthenticated();
     }
+    // users: ADMIN ONLY. This was `if isAuthenticated()`, which let any signed-in
+    // user enumerate the entire users collection (name/email/phone/role/
+    // stripeCustomerId/isAdmin) — a full-directory PII leak. Per-doc get stays
+    // owner||admin (above). Client paths that used to query users were
+    // re-routed: caregiver discovery now reads the caregivers collection, and
+    // referral-by-code resolves via the v1-resolveReferrerByCode callable.
+    // verifyConnection() already treats a denied list as "connected".
     match /users/{docId} {
-      allow list: if isAuthenticated();
+      allow list: if isAdmin();
     }
     
     // ==========================================

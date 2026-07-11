@@ -14,6 +14,7 @@ import {
   ONBOARDING_TOOL_NAMES,
   normalizeOnboardingFieldValue,
   CAREGIVER_JOB_TYPES,
+  caregiverJobTypesToWebIds,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
@@ -130,6 +131,25 @@ describe("onboardingContract", () => {
     });
   });
 
+  describe("caregiverJobTypesToWebIds (webapp 'Looking for' parity)", () => {
+    it("maps the underscored enum to hyphenated webapp ids", () => {
+      expect(caregiverJobTypesToWebIds("full_time", undefined)).toEqual(["full-time"]);
+      expect(caregiverJobTypesToWebIds("part_time", undefined)).toEqual(["part-time"]);
+      expect(caregiverJobTypesToWebIds("occasional", undefined)).toEqual(["occasional"]);
+    });
+    it("keeps every type when more than one was named, in stable order", () => {
+      expect(caregiverJobTypesToWebIds("part_time", ["occasional", "part_time"]))
+        .toEqual(["occasional", "part-time"]);
+    });
+    it("tolerates already-hyphenated values and dedupes", () => {
+      expect(caregiverJobTypesToWebIds("part-time", ["part_time"])).toEqual(["part-time"]);
+    });
+    it("returns [] when nothing usable", () => {
+      expect(caregiverJobTypesToWebIds(undefined, undefined)).toEqual([]);
+      expect(caregiverJobTypesToWebIds("weekends only", [])).toEqual([]);
+    });
+  });
+
   describe("firstGateStep", () => {
     it("client hands off to the legacy post-collection step", () => {
       expect(firstGateStep("client")).toBe("client_ask_start");
@@ -185,7 +205,7 @@ describe("onboardingContract", () => {
         "caregiver_send_documents", "caregiver_awaiting_documents",
         "caregiver_ask_mvr", "caregiver_send_mvr", "caregiver_awaiting_mvr",
         "caregiver_send_membership", "caregiver_awaiting_membership",
-        "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck",
+        "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
         "caregiver_send_stripe_connect", "caregiver_awaiting_stripe",
         "verify_phone",
       ]) {
@@ -219,7 +239,8 @@ describe("onboardingContract", () => {
       for (const step of [
         "caregiver_confirm_name", "caregiver_send_photo", "caregiver_awaiting_photo",
         "caregiver_awaiting_documents", "caregiver_ask_mvr", "caregiver_awaiting_membership",
-        "caregiver_awaiting_bgcheck", "caregiver_awaiting_stripe", "verify_phone", "ask_role",
+        "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
+        "caregiver_awaiting_stripe", "verify_phone", "ask_role",
       ]) {
         expect(shouldRouteOnboardingToLoop({ ...base, step })).toBe(false);
       }

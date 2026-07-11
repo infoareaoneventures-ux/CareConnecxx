@@ -62,6 +62,7 @@ const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSign
 const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
 const AuthLoginPage       = lazy(() => import('./components/auth/LoginPage'));
 const UploadPage          = lazy(() => import('./components/pages/UploadPage'));
+const BgcheckConsentPage  = lazy(() => import('./components/pages/BgcheckConsentPage'));
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
@@ -280,6 +281,7 @@ const AppContent: React.FC = () => {
           <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
           <Route path="/start"              element={<PhoneSignupPage />} />
           <Route path="/upload/:type"        element={<UploadPage />} />
+          <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
           <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
           <Route path="/health-summary/:token" element={<ErrorBoundary><HealthSummaryPage /></ErrorBoundary>} />

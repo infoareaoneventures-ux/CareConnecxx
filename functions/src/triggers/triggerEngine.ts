@@ -3,6 +3,8 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
+import { parseScheduledTimeMs } from "../utils/scheduledTime";
+import { decideArrivalCapture } from "./noShowPolicy";
 
 const db = admin.firestore();
 
@@ -466,45 +468,114 @@ export const runTriggerEngine = functions.pubsub
       }
     }
 
-    // ── No-show detection — check for unacknowledged confirmed visits ─────────
-    // Window is bounded on BOTH ends: visits that started between 3h and 20min
+    // ── Arrival capture + no-show detection ───────────────────────────────────
+    // Window is bounded on BOTH ends: visits that started between 3h and 8min
     // ago. Do NOT filter on `noShowChecked == null` — Firestore `==null` matches
     // only docs where the field is explicitly null (appointments are created
     // WITHOUT it), so that filter returned zero rows and no-show detection never
     // fired. We instead skip already-checked docs in code. The lower bound +
     // ascending order keep the scan bounded so already-checked visits can't fill
     // the limit and starve fresh ones (the old unbounded `limit(10)` would).
-    const twentyMinAgo  = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    //
+    // A caregiver who arrived on time but forgot to text ARRIVED must NOT be
+    // treated as a no-show — that falsely tells the family their caregiver
+    // cancelled. So we first send an arrival-capture ping and only escalate to
+    // emergency replacement if that ping goes unanswered (see noShowPolicy).
+    const eightMinAgo   = new Date(Date.now() - 8  * 60 * 1000).toISOString();
     const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
 
     const noShowSnap = await db
       .collection("appointments")
       .where("status",          "==", "confirmed")
       .where("startDateTime",   ">=", threeHoursAgo)
-      .where("startDateTime",   "<=", twentyMinAgo)
+      .where("startDateTime",   "<=", eightMinAgo)
       .orderBy("startDateTime", "asc")
       .limit(25)
       .get();
 
     for (const apptDoc of noShowSnap.docs) {
       const appt = apptDoc.data();
-      if (appt.noShowChecked) continue; // already evaluated for no-show
-      if (appt.arrivedAt) continue; // caregiver arrived, not a no-show
-
-      await apptDoc.ref.update({ noShowChecked: now });
+      if (appt.noShowChecked) continue; // replacement already run
+      if (appt.arrivedAt) continue;     // caregiver checked in, not a no-show
 
       try {
-        const clientSnap = await db.collection("users").doc(appt.clientId).get();
-        const phone = (clientSnap.data() as any)?.phone as string | undefined;
-        if (!phone) continue;
+        const startMs = parseScheduledTimeMs(appt.startDateTime as string);
+        if (Number.isNaN(startMs)) continue;
 
-        const { runEmergencyReplacement } = await import("../agents/replacementAgent");
-        await runEmergencyReplacement({
-          appointmentId: apptDoc.id,
-          clientId:      appt.clientId,
-          clientPhone:   phone,
-          appt,
+        const arrivalPingSentAtMs = appt.arrivalPingSentAt
+          ? Date.parse(appt.arrivalPingSentAt as string) : null;
+
+        // Resolve the caregiver's phone + last inbound (engagement signal).
+        let cgPhone: string | undefined;
+        let lastInboundAtMs: number | null = null;
+        if (appt.caregiverId) {
+          const cgSnap = await db.collection("caregivers").doc(appt.caregiverId as string).get();
+          cgPhone = cgSnap.data()?.phone as string | undefined;
+          if (cgPhone) {
+            const cgSession = await db.collection("agent_sessions").doc(cgPhone).get();
+            const li = cgSession.data()?.lastInboundAt as string | undefined;
+            lastInboundAtMs = li ? Date.parse(li) : null;
+          }
+        }
+
+        const decision = decideArrivalCapture({
+          startMs,
+          arrived: false,
+          arrivalPingSentAtMs,
+          lastInboundAtMs,
+          canPing: !!cgPhone,
+          nowMs: Date.now(),
         });
+
+        if (decision.action === "ping" && cgPhone) {
+          const seniorName = (appt.clientName ?? appt.seniorName ?? "your client") as string;
+          const pinged = await sendViaInteractionAgent(cgPhone, {
+            content:     `Hi — are you with ${seniorName}? Text ARRIVED so I can let the family know you're there.`,
+            urgency:     "immediate",
+            sourceAgent: "arrival_capture",
+            canDrop:     false,
+          });
+          if (pinged) {
+            await apptDoc.ref.update({ arrivalPingSentAt: now });
+          } else {
+            // Undeliverable ping (no session doc / opted out): stamping it would
+            // start a 15-min clock on a message that never existed — the exact
+            // false "caregiver cancelled" this flow exists to prevent. Fall back
+            // to the plain timeout an unreachable caregiver gets.
+            const fallback = decideArrivalCapture({
+              startMs, arrived: false, arrivalPingSentAtMs: null,
+              lastInboundAtMs, canPing: false, nowMs: Date.now(),
+            });
+            if (fallback.action === "replace") {
+              await apptDoc.ref.update({ noShowChecked: now });
+              const clientSnap2 = await db.collection("users").doc(appt.clientId).get();
+              const clientPhone2 = (clientSnap2.data() as any)?.phone as string | undefined;
+              if (clientPhone2) {
+                const { runEmergencyReplacement } = await import("../agents/replacementAgent");
+                await runEmergencyReplacement({
+                  appointmentId: apptDoc.id,
+                  clientId:      appt.clientId,
+                  clientPhone:   clientPhone2,
+                  appt,
+                });
+              }
+            }
+          }
+        } else if (decision.action === "replace") {
+          await apptDoc.ref.update({ noShowChecked: now });
+          const clientSnap = await db.collection("users").doc(appt.clientId).get();
+          const phone = (clientSnap.data() as any)?.phone as string | undefined;
+          if (!phone) continue;
+
+          const { runEmergencyReplacement } = await import("../agents/replacementAgent");
+          await runEmergencyReplacement({
+            appointmentId: apptDoc.id,
+            clientId:      appt.clientId,
+            clientPhone:   phone,
+            appt,
+          });
+        }
+        // "wait"/"skip": do nothing this pass.
       } catch (err) {
         console.error("triggerEngine no-show handling error for", apptDoc.id, err);
       }

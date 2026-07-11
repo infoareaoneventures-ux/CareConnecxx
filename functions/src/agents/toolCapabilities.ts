@@ -127,6 +127,11 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_shift_task:         ["care_plan"],
   submit_media_update:       ["care_plan", "messaging"],
   get_background_check_status: ["care_plan", "booking"],
+  // Checkr Candidate MCP bridge (2026-07-09) — caregiver-only, so the tags
+  // never drive client intent-filtering; tagged to satisfy coverage.
+  request_checkr_verification: ["care_plan"],
+  verify_checkr_otp:           ["care_plan"],
+  get_checkr_report:           ["care_plan"],
 
   // ── messaging (family group, contact prefs, safety) ─────────────────────
   send_caregiver_message:           ["messaging"],
@@ -138,6 +143,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   remove_family_member:             ["messaging"],
   update_preferences:               ["messaging"],
   update_communication_preferences: ["messaging"],
+  set_visit_update_frequency:       ["messaging"],
   request_email_change:             ["messaging"],
   block_user:                       ["messaging"],
   unblock_user:                     ["messaging"],

@@ -117,8 +117,21 @@ export const onIntakeAiMatch = functions.firestore
             );
 
             if (result?.clientId) {
-                await createJobPost(intakeId, data, result.clientId);
-                await notifyAreaCaregivers(intakeId, data, result.clientId);
+                // Public job post + caregiver SMS blast ONLY for paying families.
+                // clientIntakes is now created at intake-confirm (pre-payment,
+                // 2026-07-10) so this onCreate fires before checkout — the
+                // matching above still runs (feeds the show-caregivers preview),
+                // but the job goes public at payment via Evia's prefilled
+                // job-post confirm (buildAndSaveJobPost → same job_posts/{uid}).
+                const userSnap = await admin.firestore().collection("users").doc(result.clientId).get();
+                const u = userSnap.data() ?? {};
+                const paid = u.subscriptionActive === true || u.membershipStatus === "active";
+                if (paid) {
+                    await createJobPost(intakeId, data, result.clientId);
+                    await notifyAreaCaregivers(intakeId, data, result.clientId);
+                } else {
+                    console.log(`[onIntakeAiMatch] intake ${intakeId}: client not subscribed yet — job post deferred to payment`);
+                }
             }
         } catch (err) {
             console.error("[onIntakeAiMatch] failed:", err);

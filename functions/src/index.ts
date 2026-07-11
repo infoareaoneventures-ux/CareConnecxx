@@ -121,8 +121,9 @@ export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/tran
 // Shift generation: instant on acceptance + daily rolling window
 export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
 
-// Evia iMessage pivot — onboarding callables
-export { markTaskComplete, uploadOnboardingFile } from './agents/onboardingAgent';
+// Evia iMessage pivot — onboarding callables (+ the /stripe-refresh redirect
+// that re-mints expired single-use Connect account links)
+export { markTaskComplete, uploadOnboardingFile, confirmBgcheckOnboarding, stripeConnectRefresh } from './agents/onboardingAgent';
 
 // Admin invoicing (createInvoice/sendInvoiceEmail were called by the admin
 // InvoicingTab but never deployed — this wires the backend up)
@@ -148,6 +149,7 @@ export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
 export { extendRecurringSchedules } from './scheduled/recurringScheduler';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
+export { sendInShiftUpdates } from './scheduled/inShiftUpdate';
 export { sendPreShiftFamilyCheckin } from './scheduled/preShiftFamilyCheckin';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
@@ -240,6 +242,10 @@ export * from './migrations/linkPhoneProviders';
 // hasTransportation/weeklyAvailability on caregivers; recipientName/careTypes/
 // schedule on clientIntakes; users.uid) — dry-run first: ?dryRun=1
 export * from './migrations/backfillEviaProfileFields';
+// Care-services + availability parity (2026-07-09): canonicalize skills/services
+// to the webapp checkbox enum, re-derive weeklyAvailability at aligned block
+// boundaries, mirror jobType → jobTypes. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverServiceAvailability';
 // Identity unification: re-key legacy random-ID caregivers docs to the Auth
 // uid + re-point caregiverId child refs — dry-run first: ?dryRun=1
 export * from './migrations/rekeyLegacyCaregiverDocs';

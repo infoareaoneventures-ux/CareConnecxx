@@ -59,7 +59,7 @@ export const PublicCaregiverProfile: React.FC = () => {
     );
   }
 
-  const photo = profile.photo || profile.imageUrl;
+  const photo = profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL;
   const city = [profile.city, profile.state].filter(Boolean).join(', ') || profile.location;
 
   return (

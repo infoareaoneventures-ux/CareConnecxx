@@ -12,6 +12,10 @@
         "function": "v1-caregiverProfileMeta"
       },
       {
+        "source": "/stripe-refresh",
+        "function": "v1-stripeConnectRefresh"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

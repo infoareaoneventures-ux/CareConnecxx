@@ -37,13 +37,14 @@ import { getAppUrl } from "../config/appUrl";
 // deleted — caregiver has no runStep-based kept steps and the dispatcher only
 // ever sequenced scripted client collection.)
 import { runStep, RunStepContext, StepDeps } from "./conversationStep";
-import { isQuestionOrOther as stepIsQuestionOrOther } from "./stepHandler";
+import { isQuestionOrOther as stepIsQuestionOrOther, classifyAwaitingReply } from "./stepHandler";
 import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds } from "./onboardingContract";
+import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -104,6 +105,7 @@ const DRY_RUN_STRIPE = {
   },
   accounts: {
     create: async () => { recordSideEffect("stripe.accounts.create"); return { id: "acct_dryrun" }; },
+    retrieve: async () => ({ id: "acct_dryrun", charges_enabled: true, payouts_enabled: true, details_submitted: true }),
   },
   accountLinks: {
     create: async () => { recordSideEffect("stripe.accountLinks.create"); return { url: "https://dryrun.local/connect-onboarding" }; },
@@ -237,9 +239,13 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
     out.location = { lat: d.lat, lng: d.lng };
   }
   // Profile photo + uploaded credentials (web upload OR texted to Evia).
+  // `photo` is the webapp's canonical Caregiver field (types.ts) — the
+  // caregiver-facing profile page, user menu, and public profile read it;
+  // without it Evia-onboarded caregivers see a blank avatar.
   if (d.profilePhoto) {
     out.profilePhoto = d.profilePhoto;
     out.photoURL     = d.profilePhoto;
+    out.photo        = d.profilePhoto;
   }
   if (Array.isArray(d.documents) && d.documents.length) out.documents = d.documents;
   copy("yearsExperience", d.yearsExperience);
@@ -249,12 +255,26 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   // experience/skills and no transportation badge.
   copy("experience", d.yearsExperience);
   if (Array.isArray(d.certifications) && d.certifications.length) out.certifications = d.certifications;
-  if (Array.isArray(d.specialties)   && d.specialties.length)     out.specialties   = d.specialties;
+  // specialties = the caregiver's RAW words (profile flavor). skills/services =
+  // the CANONICAL care-services enum the webapp checkboxes + matching engine read
+  // (canonicalized at save time; see caregiverServices.ts). Prefer the canonical
+  // skills; fall back to raw specialties only for legacy docs saved before
+  // canonicalization existed (the backfill migration rewrites those).
+  if (Array.isArray(d.specialties) && d.specialties.length) out.specialties = d.specialties;
   const skills = Array.from(new Set([
-    ...(Array.isArray(d.skills)      ? d.skills      as string[] : []),
-    ...(Array.isArray(d.specialties) ? d.specialties as string[] : []),
+    ...(Array.isArray(d.skills)       ? d.skills       as string[] : []),
+    ...(Array.isArray(d.services)     ? d.services     as string[] : []),
+    // legacy fallback only when no canonical skills/services were saved
+    ...((!Array.isArray(d.skills) || !d.skills.length) &&
+        (!Array.isArray(d.services) || !d.services.length) &&
+        Array.isArray(d.specialties) ? d.specialties as string[] : []),
   ]));
-  if (skills.length) out.skills = skills;
+  if (skills.length) {
+    out.skills = skills;
+    // The webapp reads services || skills; write both so the checkboxes light
+    // regardless of which field the profile page prefers.
+    out.services = skills;
+  }
   copy("availability", d.availability);
   // Structured map read by ai/scoring.ts availabilityOverlap and the web
   // profile modal. Missing map scores as 0% available — derive it.
@@ -264,6 +284,10 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("email",      d.email);
   copy("bio",        d.bio);
   copy("jobType",    d.jobType);
+  // Webapp display parity: the profile "Looking for" pills read jobTypes (array
+  // of hyphenated ids), which nothing server-side reads — matching uses jobType.
+  const jobTypes = caregiverJobTypesToWebIds(d.jobType, d.jobTypes);
+  if (jobTypes.length) out.jobTypes = jobTypes;
   copy("gender",     d.gender);
   if (Array.isArray(d.languages) && d.languages.length) out.languages = d.languages;
   if (d.canDrive !== undefined && d.canDrive !== null) {
@@ -347,6 +371,25 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
 // step's re-ask through automatically now that the signature accepts it.
 const isQuestionOrOther = stepIsQuestionOrOther;
 
+// Brief warm reply to a pure acknowledgment ("thanks", "sounds good") at an
+// awaiting/gate step. Never re-explains the step or resends the link — the user
+// already understood; re-explaining reads as not listening (see
+// classifyAwaitingReply in stepHandler.ts).
+async function sendAwaitingAck(
+  chatId:   string,
+  session:  AgentSession,
+  context:  string,
+  fallback: string,
+): Promise<void> {
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: session.userType === "caregiver" ? "caregiver" : "family",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context: `${context} Reply with ONE brief warm line. Do NOT re-explain anything, do NOT mention any link.`,
+    fallback,
+    maxTokens: 40,
+  }));
+}
+
 // ── Mid-flow role-switch detector ────────────────────────────────────────────
 // Catches the case where someone realized halfway through onboarding that they
 // picked the wrong role ("wait, I'm actually a caregiver", "no I'm looking for
@@ -416,7 +459,16 @@ async function createFirebaseAuthAccount(phone: string, displayName: string): Pr
   } catch (err: any) {
     if (err.code !== "auth/phone-number-already-exists") throw err;
     try {
-      return (await admin.auth().getUserByPhoneNumber(phone)).uid;
+      const existing = await admin.auth().getUserByPhoneNumber(phone);
+      // The /start OTP web entry creates the Auth user with NO displayName, so
+      // this already-exists branch is the common path — backfill it or the
+      // webapp greets the family by email prefix forever (it renders Auth
+      // displayName, not the Firestore firstName).
+      if (displayName && !existing.displayName) {
+        await admin.auth().updateUser(existing.uid, { displayName }).catch((updErr) =>
+          console.error(`[createFirebaseAuthAccount] displayName backfill failed for ${phone}:`, updErr));
+      }
+      return existing.uid;
     } catch {
       return null;
     }
@@ -567,8 +619,9 @@ function currentStepQuestion(step: string, session: AgentSession): string {
     caregiver_awaiting_documents:  "uploading your certifications (or reply SKIP)",
     caregiver_send_membership:     "activating your membership with the link I sent",
     caregiver_awaiting_membership: "activating your membership with the link I sent",
-    caregiver_send_bgcheck:        "your background check with the link I sent",
-    caregiver_awaiting_bgcheck:    "your background check results (usually 1–3 days)",
+    caregiver_send_bgcheck:        "authorizing your background check with the link I sent",
+    caregiver_awaiting_bgcheck_consent: "authorizing your background check with the link I sent",
+    caregiver_awaiting_bgcheck:    "finishing your background check (Checkr emailed you a secure link)",
     caregiver_send_stripe_connect: "setting up your payout account with the link I sent",
     caregiver_awaiting_stripe:     "setting up your payout account with the link I sent",
   };
@@ -820,24 +873,51 @@ export async function handleOnboardingStep(
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
     case "client_awaiting_identity": {
+      const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
+      if (idReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The family member just acknowledged your last message (a thanks or 'sounds good') while their identity verification is in progress — you'll send their caregiver options as soon as it clears.",
+          "You're welcome! I'll send your caregiver options as soon as it clears.");
+        return;
+      }
+      if (idReplyKind === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        return;
+      }
+      const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
       const msgIdentity = await generateCaraMessage({
         audience: "family",
-        context: "A family member texted Evia while their identity verification is still in progress. Reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
+        context: (liveIdentityFact ? `${liveIdentityFact} ` : "") +
+          "A family member texted Evia while their identity verification is in progress. Ground your reply in the live status above if present (if it VERIFIED, confirm it's done — do not say it's still verifying); otherwise reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
         fallback: "Still verifying — I'll send your caregiver options as soon as it clears.",
         maxTokens: 80,
       });
       await sendMessage(chatId, msgIdentity);
       return;
     }
-    case "client_awaiting_payment":
+    case "client_awaiting_payment": {
+      const payReplyKind = await classifyAwaitingReply(text, "finish their payment setup via the link Evia sent");
+      if (payReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The family member just acknowledged your payment-setup ask (a thanks or 'will do') — you're here when it's done.",
+          "Sounds good — I'm here when it's done!");
+        return;
+      }
+      if (payReplyKind === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        return;
+      }
+      const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The family hasn't finished their payment setup yet. Warmly nudge them to tap the link you already sent to finish up — it only takes about 30 seconds.",
+        context: (liveClientPayFact ? `${liveClientPayFact} ` : "") +
+          "Ground your reply in the live status above if present — if the payment already WENT THROUGH, confirm it's active and do NOT nudge them to tap the link again; otherwise warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
         fallback: "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳",
         maxTokens: 70,
       }));
       return;
+    }
     case "job_confirm_prefill":  return handleJobConfirmPrefill(phone, chatId, text, session);
     case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
     case "job_ask_frequency":    return handleJobAskFrequency(phone, chatId, text, session);
@@ -856,15 +936,29 @@ export async function handleOnboardingStep(
     // routes them to the loop); the defensive default below covers strays. The
     // gate steps below (send_photo onward) are KEPT — the loop hands off to them.
     case "caregiver_send_photo":       return handleCaregiverSendPhoto(phone, chatId, session);
-    case "caregiver_awaiting_photo":
+    case "caregiver_awaiting_photo": {
+      const photoReplyKind = await classifyAwaitingReply(text, "upload their profile photo via the link Evia sent");
+      if (photoReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The caregiver just acknowledged your photo-upload ask (a thanks or 'will do') — no rush, you're here when it's in.",
+          "Sounds good — I'm here whenever it's in!");
+        return;
+      }
+      if (photoReplyKind === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        return;
+      }
+      const livePhotoFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_photo(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver hasn't uploaded their profile photo yet. Warmly nudge them to tap the upload link you already sent.",
+        context: (livePhotoFact ? `${livePhotoFact} ` : "") +
+          "Ground your reply in the live status above if present — if the photo is already IN, confirm you've got it and do NOT ask them to upload it again; otherwise warmly nudge them to tap the upload link you already sent.",
         fallback: "Still waiting for your photo! Tap the upload link I sent 📷",
         maxTokens: 60,
       }));
       return;
+    }
     case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
     case "caregiver_awaiting_documents": {
       // "SKIP" fast path kept (zero latency, old links/copy said it) — but the
@@ -877,19 +971,26 @@ export async function handleOnboardingStep(
           "The caregiver was asked to upload certifications (CNA license, CPR card, etc.) via a link, and told it's fine to say so if they don't have any. Classify the reply: " +
           "wants to skip / has none / will add later (\"skip\", \"don't have any\", \"no certs\", \"nope\", \"not yet\") → skip. " +
           "Asked a question (what counts, is it required, link not working) → question. " +
+          "ONLY a thanks or acknowledgment with nothing else (\"thanks\", \"sounds good\", \"ok great\") → ack. " +
           "Says they HAVE certs or will upload (\"yes I have my CNA\", \"one sec\", \"uploading now\") or anything else → other. " +
-          "Reply with exactly one word: skip, question, or other.",
+          "Reply with exactly one word: skip, question, ack, or other.",
           text
         );
         const v = (parsed ?? "").trim().toLowerCase();
-        docIntent = v === "skip" || v === "question" ? v : "other";
+        docIntent = v === "skip" || v === "question" || v === "ack" ? v : "other";
       }
       if (docIntent === "skip") {
         await updateSession(phone, { onboardingStep: "caregiver_ask_mvr" });
         return handleCaregiverAskMvr(phone, chatId, session);
       }
+      if (docIntent === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The caregiver just acknowledged your certifications ask (a thanks or 'ok') — you're here whenever they've uploaded, or they can tell you to skip it.",
+          "Sounds good — I'm here whenever you're ready!");
+        return;
+      }
       if (docIntent === "question") {
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session));
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         await sendMessage(chatId, await generateCaraMessage({
           audience: "caregiver",
           language: session.preferredLanguage === "es" ? "es" : "en",
@@ -899,10 +1000,12 @@ export async function handleOnboardingStep(
         }));
         return;
       }
+      const liveDocsFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_documents(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver is at the certifications step. Warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
+        context: (liveDocsFact ? `${liveDocsFact} ` : "") +
+          "Ground your reply in the live status above if present — if certifications are already on file, acknowledge that and let them add more or move on; otherwise warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
         fallback: "Tap the link I sent to upload your certifications — or if you don't have any, just tell me to skip it.",
         maxTokens: 70,
       }));
@@ -918,26 +1021,59 @@ export async function handleOnboardingStep(
       await handleCaregiverResendMvr(phone, chatId, session, text);
       return;
     case "caregiver_send_bgcheck":    return handleCaregiverSendBgcheck(phone, chatId, session);
+    case "caregiver_awaiting_bgcheck_consent":
+      await handleCaregiverResendBgcheckConsent(phone, chatId, session, text);
+      return;
     case "caregiver_awaiting_bgcheck": {
+      // A plain "thanks / sounds good" is NOT a status inquiry — re-explaining
+      // the Checkr flow at someone who just acknowledged it reads as not
+      // listening (founder report, 2026-07-09).
+      const bgReplyKind = await classifyAwaitingReply(text, "finish the background-check form Checkr emailed them (results take 1–3 days after they submit)");
+      if (bgReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The caregiver just acknowledged your last message (a thanks or 'sounds good') while their background check is with Checkr — you'll text them the moment results are in.",
+          "Anytime! I'll text you the moment your results are in.");
+        return;
+      }
+      if (bgReplyKind === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        return;
+      }
+      const liveBgFact = await buildLiveBgcheckFact(session);
       const msgBgcheck = await generateCaraMessage({
         audience: "caregiver",
-        context: "A caregiver texted Evia while their background check is still processing. Let them know it's still in progress, that it usually takes 1–3 days, and that Evia will text them the moment results are in.",
-        fallback: "Your background check is still processing — usually 1–3 days. I'll text you the moment results are in.",
-        maxTokens: 80,
+        context: (liveBgFact ? `${liveBgFact} ` : "") +
+          "A caregiver texted Evia while their background check is with Checkr. Ground your reply in the live status above if present; otherwise: if they haven't finished Checkr's form yet, the secure link is in their email from Checkr (Checkr re-sends it daily, and they can ask Evia to text the link too); once they've finished, results usually take 1–3 days and Evia will text them the moment they're in.",
+        fallback: "Your background check is with Checkr now. If you haven't finished their form, the secure link is in your email (I can text it to you too — just ask). Once you're done, results usually take 1–3 days and I'll text you the moment they're in.",
+        maxTokens: 100,
       });
       await sendMessage(chatId, msgBgcheck);
       return;
     }
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
-    case "caregiver_awaiting_stripe":
+    case "caregiver_awaiting_stripe": {
+      const stripeReplyKind = await classifyAwaitingReply(text, "set up their payout account via the link Evia sent");
+      if (stripeReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The caregiver just acknowledged your payout-setup ask (a thanks or 'will do') — you're here when it's done.",
+          "Sounds good — I'm here when it's done!");
+        return;
+      }
+      if (stripeReplyKind === "question") {
+        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        return;
+      }
+      const livePayoutFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_stripe(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: "The caregiver still needs to set up their payout account. Warmly nudge them to tap the link you already sent so they can get paid after each visit.",
+        context: (livePayoutFact ? `${livePayoutFact} ` : "") +
+          "Ground your reply in the live status above if present — if payouts are already LIVE, congratulate them and do NOT nudge them to finish setup; if Stripe is still reviewing, reassure them it's almost done; otherwise warmly nudge them to tap the link you already sent so they can get paid after each visit.",
         fallback: "Tap the link I sent to set up your payout account so you can get paid after each visit.",
         maxTokens: 70,
       }));
       return;
+    }
     default:
       // Loop-only defensive default (2c): a conversational collection-step cursor
       // (*_ask_* other than the KEPT client_ask_start/preferences/budget and
@@ -984,7 +1120,7 @@ async function handleVerifyPhone(
   // answer it and re-prompt instead of failing the OTP attempt.
   const looksLikeCode = /^\s*\d{4,6}\s*$/.test(text);
   if (!looksLikeCode && norm !== "RESEND" && norm !== "START OVER" && norm !== "RESTART" && await isQuestionOrOther(text, "Please reply with the 6-digit verification code I just texted you.")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Please reply with the 6-digit verification code I just texted you. (Reply RESEND if you didn't get it.)");
     return;
@@ -1312,7 +1448,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
   const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
   const attempts = (session.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
   if (await isQuestionOrOther(text, confirmQuestion)) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     if (attempts < 1) {
       await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
@@ -1530,6 +1666,168 @@ async function createClientIdentitySession(phone: string): Promise<string> {
   return session.url!;
 }
 
+// Persist the confirmed client intake as REAL care records — carePlans/{uid},
+// senior_profiles (primary + household), clientIntakes/{uid}, users.seniorIds.
+// Called at intake-confirm (handleClientShowCaregivers) so the webapp account
+// reflects the care recipient even if the family stalls at the paywall, and
+// re-run by the payment webhook so the final budget/preferences/startDate land.
+// Every write is a merge — safe to run repeatedly. Same fix class as the
+// caregiver doc pre-create at the gate handoff (a client who onboarded but
+// didn't pay used to leave NO care record at all).
+export async function persistClientCareRecords(
+  uid: string | undefined,
+  phone: string,
+  d: Record<string, unknown>,
+  opts: { allowAnonIntake?: boolean } = {},
+): Promise<void> {
+  // Raw coords (present only when the family shared a location pin) — unlock
+  // true haversine distance in aiMatching instead of city/zip proxy buckets.
+  const lat = typeof d.lat === "number" ? d.lat as number : undefined;
+  const lng = typeof d.lng === "number" ? d.lng as number : undefined;
+  const hasCoords = lat !== undefined && lng !== undefined;
+
+  const seniorName   = (d.seniorName   ?? "") as string;
+  const relationship = (d.relationship ?? "") as string;
+  const city         = (d.city         ?? "") as string;
+  const zipCode      = (d.zipCode      ?? "") as string;
+  const conditions   = (d.conditions   ?? []) as string[];
+  const careNeeds    = (d.careNeeds    ?? []) as string[];
+  const seniorAge    = d.age as number | undefined;
+
+  if (uid) {
+    // One plan entry per care recipient (primary + any additional — "both
+    // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
+    // (recipientPlanKey) or the web tabs can't find Evia's plan data.
+    // Care needs/conditions are shared across recipients at signup — same
+    // behavior as the web PostJob flow; per-person details are edited later
+    // in the CarePlan tabs.
+    const recipients = allCareRecipients(d);
+    const recipientPlans: Record<string, unknown> = {};
+    for (const r of recipients) {
+      recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
+        name:         r.name,
+        age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
+        relationship: r.relationship ?? "",
+        careNeeds,
+        conditions,
+        updatedAt:    new Date().toISOString(),
+      };
+    }
+    await db.collection("carePlans").doc(uid).set({
+      clientId: uid,
+      phone,
+      recipientPlans,
+      locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    // senior_profiles/{uid} parity write for the PRIMARY recipient —
+    // CarePlan, matching, and the family dashboard read this doc (web
+    // signup creates it; Evia must too). The account holder's identity
+    // stays on users/{uid}; this doc is the care recipient's.
+    await db.collection("senior_profiles").doc(uid).set({
+      userId:    uid,
+      clientId:  uid,
+      name:      seniorName,
+      ...(seniorAge !== undefined ? { age: seniorAge } : {}),
+      ...(relationship ? { relationship } : {}),
+      needs:     careNeeds,
+      diagnoses: conditions,
+      // Web Senior type requires location (city string); preference fields
+      // feed the matching engine and the family dashboard.
+      location:  city || "",
+      zipCode:   zipCode || null,
+      genderPreference:   (d.genderPreference   ?? "") as string,
+      languagePreference: (d.languagePreference ?? "") as string,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
+
+    // Additional recipients get their own household senior_profiles docs
+    // (deterministic IDs — webhook retries must not mint duplicates) plus
+    // users/{uid}.seniorIds back-refs, so the MCP list_household_seniors
+    // tool and household-aware readers see every person Evia cares for.
+    const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
+    for (const r of extraRecipients) {
+      const seniorDocId = householdSeniorDocId(uid, r.name);
+      await db.collection("senior_profiles").doc(seniorDocId).set({
+        userId:    uid,
+        clientId:  uid,
+        name:      r.name,
+        ...(r.age !== undefined ? { age: r.age } : {}),
+        ...(r.relationship ? { relationship: r.relationship } : {}),
+        needs:     careNeeds,
+        diagnoses: conditions,
+        location:  city || "",
+        zipCode:   zipCode || null,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true }).catch((err) => console.error("household senior_profiles write error:", err));
+      await db.collection("users").doc(uid).set({
+        seniorIds: admin.firestore.FieldValue.arrayUnion(seniorDocId),
+      }, { merge: true }).catch((err) => console.error("users.seniorIds write error:", err));
+    }
+  }
+
+  // Write intake — uid-keyed so the web app (ClientIntakeFlowV2, matching
+  // hooks) reads the same doc Evia writes. Random-ID fallback only when no
+  // auth uid could be resolved AND the caller allows it (the payment webhook
+  // does; the intake-confirm call doesn't, so a transient auth failure can't
+  // mint a duplicate anonymous intake that payment re-adds later).
+  // Human-readable schedule string — the web ClientIntakeData contract and
+  // the matching prompt both read intake.schedule; built from the structured
+  // fields (or the absorbed free-text schedule when that's all we have).
+  const scheduleText = [
+    d.daysPerWeek ? `${d.daysPerWeek} days/week` : "",
+    (d.timeOfDay as string) ?? "",
+    d.hoursPerDay ? `${d.hoursPerDay} hrs/day` : "",
+  ].filter(Boolean).join(", ") || ((d.schedule as string) ?? "");
+
+  const intakeData = {
+    phone,
+    userId:      uid ?? null,
+    firstName:   d.firstName,
+    seniorName:  d.seniorName,
+    relationship: d.relationship,
+    age:         d.age,
+    careNeeds:   d.careNeeds,
+    conditions:  d.conditions,
+    city:        d.city,
+    zipCode:     d.zipCode,
+    ...(hasCoords ? { lat, lng, location: { lat, lng } } : {}),
+    daysPerWeek: d.daysPerWeek,
+    timeOfDay:   d.timeOfDay,
+    hoursPerDay: d.hoursPerDay,
+    // Web-contract aliases (types.ts ClientIntakeData) — the client profile
+    // dashboard reads recipientName/careTypes/contactName/schedule and shows
+    // blanks without them.
+    recipientName:      (d.seniorName ?? "") as string,
+    recipientFirstName: (((d.seniorName ?? "") as string).split(" ")[0]) || (d.seniorName ?? ""),
+    careTypes:          d.careNeeds ?? [],
+    contactName:        (d.firstName ?? "") as string,
+    schedule:           scheduleText,
+    // Collected during intake but previously dropped at finalization:
+    startDate:          (d.startDate ?? null) as string | null,
+    budgetMin:          (d.budgetMin ?? null) as number | null,
+    budgetMax:          (d.budgetMax ?? null) as number | null,
+    caregiverPreferences: d.caregiverPreferences ?? {},
+    genderPreference:     (d.genderPreference   ?? "") as string,
+    languagePreference:   (d.languagePreference ?? "") as string,
+    needsDriving:         d.needsDriving === true,
+    otherPreference:      (d.otherPreference ?? "") as string,
+    // Multi-recipient household ("both mom and dad"): everyone after the
+    // primary, plus the count the web PostJob flow also records.
+    additionalRecipients: normalizeAdditionalRecipients(d.additionalRecipients)
+      .map((r) => ({ firstName: r.name, lastName: "", name: r.name, relationship: r.relationship ?? "", ...(r.age !== undefined ? { age: String(r.age) } : {}) })),
+    recipientsCount:      1 + normalizeAdditionalRecipients(d.additionalRecipients).length,
+    status:      "pending",
+    createdAt:   new Date().toISOString(),
+  };
+  if (uid) {
+    await db.collection("clientIntakes").doc(uid).set(intakeData, { merge: true });
+  } else if (opts.allowAnonIntake) {
+    await db.collection("clientIntakes").add(intakeData);
+  }
+}
+
 async function handleClientShowCaregivers(
   phone: string,
   chatId: string,
@@ -1547,6 +1845,15 @@ async function handleClientShowCaregivers(
     const uid = await ensureWebAccount(phone, "client", (d.firstName as string) ?? "");
     if (uid) (session as any).userId = uid;
   }
+
+  // …and persist the confirmed intake as real care records NOW (carePlans,
+  // senior_profiles, clientIntakes) so the webapp shows the care recipient
+  // even if the family never completes checkout. All merges; the payment
+  // webhook re-runs this with the final budget/preferences. Non-fatal: the
+  // caregiver preview below must still go out if a write hiccups.
+  await persistClientCareRecords(
+    (session as any).userId as string | undefined, phone, d,
+  ).catch((err) => console.error("[handleClientShowCaregivers] care-record persist failed (non-fatal):", err));
 
   let preview: Awaited<ReturnType<typeof runGetCaregiverPreviewAction>>;
   try {
@@ -1708,7 +2015,7 @@ async function handleClientPlanReply(
 ): Promise<void> {
   // Mid-flow question (e.g. "is it monthly?") — answer, then re-offer.
   if (await isQuestionOrOther(text, "Are you ready to go ahead with setup? (a yes gets the setup link)")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "When you're ready, say yes and I'll send the setup link again.");
     return;
@@ -1874,7 +2181,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
   const confirmQuestion = `Evia asked: "Is ${seeded} the name you go by, or do you prefer something else?"`;
   const attempts = (sess.onboardingData?.confirmNameAttempts as number | undefined) ?? 0;
   if (await isQuestionOrOther(text, confirmQuestion)) {
-    const answer = await answerQuestionMidFlow(text, sess);
+    const answer = await answerQuestionMidFlow(text, sess, phone);
     await sendMessage(chatId, answer);
     if (attempts < 1) {
       await mergeOnboardingData(phone, { confirmNameAttempts: attempts + 1 });
@@ -1974,7 +2281,7 @@ async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSessio
   }
 
   if (verdict === "question") {
-    await sendMessage(chatId, await answerQuestionMidFlow(raw, session!));
+    await sendMessage(chatId, await answerQuestionMidFlow(raw, session!, phone));
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: session?.preferredLanguage === "es" ? "es" : "en",
@@ -2103,27 +2410,58 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
       "The caregiver's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
-      "it's $66.49/year, it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools" +
-      (mvrCharged ? ", and their order also includes the driving-record (MVR) check they asked for" : "") +
+      "it's $66.49/year, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), " +
+      "and it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools. Once their background check comes back clear, they're approved to care for clients" +
+      (mvrCharged ? ". Their order also includes the driving-record (MVR) check they asked for" : "") +
       (openJobCount > 0
         ? `. Anchor it to the real demand: there ${openJobCount === 1 ? "is" : "are"} currently ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} waiting`
         : "") +
       ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
     fallback:
       `${openJobCount > 0 ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — ` : ""}you're almost ready to apply! ` +
-      `Activate your membership ($66.49/year) to unlock applying to jobs near you, getting booked, and my scheduling + payout tools.` +
+      `Activate your membership ($66.49/year) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
+      `Once your background check clears, you're approved to care for clients.` +
       `${mvrCharged ? " Your order includes the membership + MVR driver check." : ""} Tap to activate:`,
-    maxTokens: 140,
+    maxTokens: 160,
   }));
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
 
 async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
   // If the caregiver replied with a question while waiting on Stripe, answer it
-  // before resending the link.
-  if (text && await isQuestionOrOther(text, "Finish your membership payment via the link Evia sent.")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
+  // before resending the link. A pure "thanks / sounds good" gets a brief ack
+  // WITHOUT re-blasting the link.
+  if (text) {
+    const kind = await classifyAwaitingReply(text, "finish their membership payment via the link Evia sent");
+    if (kind === "ack") {
+      await sendAwaitingAck(chatId, session,
+        "The caregiver just acknowledged your membership-payment ask (a thanks or 'will do') — you're here when it's done.",
+        "Sounds good — I'm here when it's done!");
+      return;
+    }
+    if (kind === "question") {
+      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    }
+  }
+  // A webhook may have processed the payment between the inbound and this reply —
+  // re-blasting the checkout link at someone who already paid reads as not
+  // listening. Fresh-read the completion flag; if it's paid, confirm instead.
+  let membershipPaid = false;
+  try {
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    membershipPaid = !!((snap.data() as any)?.caregiverSubscriptionId);
+  } catch { /* fail-soft: treat as not paid → resend link as before */ }
+  if (membershipPaid) {
+    const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_membership(phone, session);
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: (liveFact ? `${liveFact} ` : "") +
+        "Their membership payment already went through. Warmly confirm it's done and that you'll take it from here — do NOT ask them to pay or tap any link again.",
+      fallback: "Good news — your membership payment already came through! You're all set on that; I'll take it from here.",
+      maxTokens: 80,
+    }));
+    return;
   }
   const url = (session as any).membershipCheckoutUrl as string | undefined;
   if (url) {
@@ -2201,9 +2539,36 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
 }
 
 async function handleCaregiverResendMvr(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
-  if (text && await isQuestionOrOther(text, "Add your Approved Driver check via the link Evia sent.")) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
+  if (text) {
+    const kind = await classifyAwaitingReply(text, "add their Approved Driver check via the payment link Evia sent");
+    if (kind === "ack") {
+      await sendAwaitingAck(chatId, session,
+        "The caregiver just acknowledged your Approved Driver ask (a thanks or 'will do') — you're here when it's done.",
+        "Sounds good — I'm here when it's done!");
+      return;
+    }
+    if (kind === "question") {
+      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    }
+  }
+  // Don't re-send the MVR payment link if the webhook already recorded payment
+  // (the driving check is under way) — confirm instead.
+  let mvrPaidNow = false;
+  try {
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    mvrPaidNow = (snap.data() as any)?.mvrPaid === true;
+  } catch { /* fail-soft: treat as not paid → resend link as before */ }
+  if (mvrPaidNow) {
+    const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_mvr(phone, session);
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: (liveFact ? `${liveFact} ` : "") +
+        "Their Approved Driver payment already landed and the driving-record check is under way. Warmly confirm it's in progress — do NOT ask them to pay or tap any link again.",
+      fallback: "Your Approved Driver payment already came through — the driving-record check is under way. I'll let you know when it's done!",
+      maxTokens: 80,
+    }));
+    return;
   }
   const url = (session as any).mvrCheckoutUrl as string | undefined;
   if (url) {
@@ -2373,131 +2738,211 @@ async function handleInboundDocument(
 }
 
 async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  // Re-send path (resendStuckStep / repeat webhook): if we already minted a
-  // Checkr invitation for this caregiver, resend THAT link instead of POSTing a
-  // new /v1/invitations — a second candidate would split webhook state (the
-  // pre-created caregiver doc tracks only the FIRST checkrCandidateId) and can
-  // double-bill. Guard on caregiverId too (means the pre-create + candidate
-  // tracking succeeded); if the first attempt failed entirely, fall through to a
-  // fresh POST — that's the retry working as designed.
-  // TODO expiry: Checkr invitations expire (~7 days). If a reuse is stale, this
-  // will resend a dead link; a future pass can fall through to a fresh POST past
-  // ~6 days and overwrite bgcheckInviteUrl + backgroundCheckData.checkrCandidateId.
+  // Re-send path (resendStuckStep / repeat webhook): the caregiver already
+  // authorized on the consent page and a Checkr invitation exists — resend THAT
+  // link instead of POSTing a new /v1/invitations (a second candidate would
+  // split webhook state and can double-bill). The same link is also in their
+  // email from Checkr, which re-sends daily reminders.
+  // TODO expiry: Checkr invitations expire after 7 days (docs.checkr.com). If a
+  // reuse is stale, this resends a dead link; a future pass can fall through to
+  // a fresh POST past ~6 days and overwrite bgcheckInviteUrl + checkrCandidateId.
   const cachedUrl = (session as any).bgcheckInviteUrl as string | undefined;
   if (cachedUrl && session.caregiverId) {
     await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
-    await sendMessage(chatId, "Here's your background-check link again — takes about 5 minutes:");
+    await sendMessage(chatId, "Here's your background-check link again — takes about 5 minutes. It's also in your email from Checkr:");
     await sendMessage(chatId, { parts: [{ type: "link", value: cachedUrl }] });
     resolveCommitment(phone, "link", "link_sent").catch(() => {});
     return;
   }
 
-  let inviteUrl: string | null = null;
-  let linkError: unknown = null;
-  await signalThinking(chatId, session.service);
+  // Webapp parity (founder, 2026-07-08): NOTHING touches Checkr until the
+  // caregiver reviews the FCRA disclosure and authorizes the check on OUR
+  // /bgcheck page — the same disclosure + written consent the webapp's
+  // BackgroundCheckModal collects (and it asks for their LEGAL name, which is
+  // what records are actually searched against). The page's token callable
+  // (v1-confirmBgcheckOnboarding → confirmBgcheckConsent below) then creates
+  // the Checkr candidate + invitation server-side, and Checkr EMAILS the
+  // caregiver the secure link to enter SSN/DOB directly with Checkr.
+  const token      = generateToken({ phone, task: "bgcheck_consent" });
+  const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
+  await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck_consent" });
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      "The caregiver just paid their membership — they're nearly done. Naturally explain: the last big step is the background check every caregiver completes, and it's already included in the membership they just paid (no extra charge). The link coming right below opens Evia's secure page where they review the disclosure and authorize the check — takes about a minute. After they authorize, Checkr emails them a secure link to finish; their SSN and date of birth are entered directly with Checkr, never with Evia. Once results come back clear (usually 1–3 days) they're approved and families can book them. Do NOT include any URL.",
+    fallback:
+      "Almost done! Last big step: your background check — it's already included in your membership, no extra charge. " +
+      "Tap the link below to review and authorize it (about a minute). Checkr will then email you a secure link to finish — your SSN and date of birth go directly to Checkr, never to me. " +
+      "Once it clears (usually 1–3 days), you're approved and families can book you.",
+    maxTokens: 150,
+  }));
+  // Token page (no OG metadata) → inline as text so it renders tappable instead
+  // of a blank preview card — same rule as the /upload links in sendOnboardingLink.
+  await sendMessage(chatId, { parts: [{ type: "text", value: `Review & authorize here:\n${consentUrl}` }] });
+  resolveCommitment(phone, "link", "link_sent").catch(() => {});
+}
+
+// The caregiver texted while sitting at the consent-page link. Answer any
+// question first (with step facts), then re-send a FRESH consent link (tokens
+// expire after 2h — a fresh mint is always safe, the page is stateless).
+async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  if (text) {
+    const kind = await classifyAwaitingReply(text, "review and authorize their background check via the link Evia sent");
+    if (kind === "ack") {
+      await sendAwaitingAck(chatId, session,
+        "The caregiver just acknowledged your background-check authorization ask (a thanks or 'will do') — you're here when it's done.",
+        "Sounds good — I'm here when it's done!");
+      return;
+    }
+    if (kind === "question") {
+      await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    }
+  }
+  const token      = generateToken({ phone, task: "bgcheck_consent" });
+  const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
+  await sendMessage(chatId, { parts: [{ type: "text", value: `Review & authorize your background check here:\n${consentUrl}` }] });
+}
+
+// ── Background-check consent confirm (v1-confirmBgcheckOnboarding) ───────────
+// Runs when the caregiver submits the FCRA authorization on the /bgcheck page.
+// Only NOW does Checkr get involved: candidate-first invitation (Checkr's
+// contract) using the LEGAL name from the form, consent recorded on the
+// caregiver doc in the same shape the webapp's initiateCheckrCandidate stamps,
+// then Evia texts "Checkr just emailed you". Mirrors the webapp flow exactly.
+export interface BgcheckConsentForm {
+  legalFirstName: string;
+  legalLastName:  string;
+  zipCode:        string;
+  state:          string;
+}
+
+export async function confirmBgcheckConsent(
+  phone: string,
+  form: BgcheckConsentForm
+): Promise<{ status: "ok" | "already" }> {
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  if (!snap.exists) throw new Error(`confirmBgcheckConsent: no session for ${phone}`);
+  const session = snap.data() as AgentSession;
+  const chatId  = session.chatId;
+  const d       = session.onboardingData ?? {};
+
+  // Idempotent: double-tap / re-submit after a successful authorization — the
+  // invitation already exists, don't mint a second candidate (split-state bug).
+  if ((session as any).bgcheckInviteUrl && session.caregiverId) {
+    return { status: "already" };
+  }
+
+  // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
+  const mvrPaid   = (session as any).mvrPaid === true;
+  const checkrPkg = mvrPaid
+    ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
+    : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
+
+  let inv: { invitationUrl: string; candidateId: string };
   try {
-    const d = session.onboardingData ?? {};
-    const nameParts = ((d.name ?? "") as string).split(" ");
-
-    // Use MVR package if caregiver paid for it; flag is set on session by stripe.ts webhook
-    const mvrPaid      = (session as any).mvrPaid === true;
-    const checkrPkg    = mvrPaid
-      ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
-      : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
-
     // Candidate-first (Checkr's contract): POST /candidates with the email
     // collected at caregiver_ask_email, THEN /invitations with candidate_id.
-    // An invitation without a candidate_id is rejected — this malformed call
-    // was the launch-blocking "can't generate your background check link" bug.
-    const inv = await guardSideEffect(
+    inv = await guardSideEffect(
       "checkr.invitation.create",
       () => createCheckrInvitation({
-        firstName:   nameParts[0] ?? "",
-        lastName:    nameParts.slice(1).join(" "),
+        firstName:   form.legalFirstName,
+        lastName:    form.legalLastName,
         email:       (d.email ?? "") as string,
-        zipCode:     (d.zipCode || undefined) as string | undefined,
-        workState:   CHECKR_WORK_STATE,
+        zipCode:     form.zipCode || ((d.zipCode || undefined) as string | undefined),
+        workState:   (form.state || CHECKR_WORK_STATE).toUpperCase(),
         workCity:    (d.city || undefined) as string | undefined,
         packageSlug: checkrPkg,
       }),
       { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
     );
-    inviteUrl = inv.invitationUrl;
-    // Cache the real Checkr link so a later "send me the link" request resends
-    // THIS invitation instead of minting a duplicate (see sendOnboardingLink).
-    await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
-
-    // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
-    // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
-    // uid so Evia writes land where the web reads (uid-keyed caregivers/{uid}).
-    const candidateId = inv.candidateId as string | undefined;
-    if (candidateId && !session.caregiverId) {
-      const docData = {
-        phone,
-        status:    "pending_review",
-        createdAt: new Date().toISOString(),
-        backgroundCheckData: {
-          checkrCandidateId: candidateId,
-          status:            "pending",
-          submittedAt:       new Date().toISOString(),
-          mvrIncluded:       mvrPaid,
-        },
-        ...(mvrPaid && { mvrPaid: true }),
-      };
-      const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
-      let caregiverDocId: string;
-      if (authUid) {
-        await db.collection("caregivers").doc(authUid).set({ ...docData, uid: authUid }, { merge: true });
-        caregiverDocId = authUid;
-      } else {
-        caregiverDocId = (await db.collection("caregivers").add(docData)).id;
-      }
-      await updateSession(phone, { caregiverId: caregiverDocId });
-    } else if (candidateId && session.caregiverId) {
-      // Fresh invitation for an already pre-created doc (restart cleared the
-      // cache, invitation.expired deleted it, or the doc was created at the
-      // gate handoff with status "onboarding"): re-point the doc at the NEW
-      // candidate so the Checkr webhook — which matches on checkrCandidateId —
-      // follows the invitation the caregiver will actually complete. Mirrors
-      // sendBgCheckRenewalLink's idiom. Also move status to "pending_review"
-      // (the value this step has always stamped): matchingAgent treats it as
-      // matchable-with-pending-check, unlike the gate-created "onboarding".
-      await db.collection("caregivers").doc(session.caregiverId).update({
-        "status":                                "pending_review",
-        "backgroundCheckData.checkrCandidateId": candidateId,
-        "backgroundCheckData.status":            "pending",
-        "backgroundCheckData.submittedAt":       new Date().toISOString(),
-        "backgroundCheckData.mvrIncluded":       mvrPaid,
-      }).catch(() => {});
-    }
   } catch (err) {
-    linkError = err;
-    console.error("Checkr invitation error:", err);
+    // The caregiver is looking at the page — it shows the retry state — but ops
+    // must know, and the SMS failure note covers them closing the tab.
+    console.error("confirmBgcheckConsent Checkr invitation error:", err);
+    await alertOnboardingLinkFailure(phone, "bgcheck_consent_confirm", err);
+    if (chatId) await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
+    throw err;
+  }
+
+  const inviteUrl = inv.invitationUrl;
+  // Cache the real Checkr link so a later "send me the link" request resends
+  // THIS invitation instead of minting a duplicate (see sendOnboardingLink).
+  await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
+
+  // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
+  // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
+  // uid so Evia writes land where the web reads (uid-keyed caregivers/{uid}).
+  // Consent fields match the webapp's initiateCheckrCandidate stamp so both
+  // channels hold the same FCRA paper trail.
+  const candidateId = inv.candidateId as string | undefined;
+  if (candidateId && !session.caregiverId) {
+    const docData = {
+      phone,
+      status:    "pending_review",
+      createdAt: new Date().toISOString(),
+      backgroundCheckData: {
+        checkrCandidateId: candidateId,
+        status:            "pending",
+        submittedAt:       new Date().toISOString(),
+        mvrIncluded:       mvrPaid,
+        consentGiven:      true,
+        legalFirstName:    form.legalFirstName,
+        legalLastName:     form.legalLastName,
+        zip:               form.zipCode,
+        invitationStatus:  "sent",
+        invitationUrl:     inviteUrl,
+      },
+      ...(mvrPaid && { mvrPaid: true }),
+    };
+    const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
+    let caregiverDocId: string;
+    if (authUid) {
+      await db.collection("caregivers").doc(authUid).set({ ...docData, uid: authUid }, { merge: true });
+      caregiverDocId = authUid;
+    } else {
+      caregiverDocId = (await db.collection("caregivers").add(docData)).id;
+    }
+    await updateSession(phone, { caregiverId: caregiverDocId });
+  } else if (candidateId && session.caregiverId) {
+    // Fresh invitation for an already pre-created doc (restart cleared the
+    // cache, invitation.expired deleted it, or the doc was created at the
+    // gate handoff with status "onboarding"): re-point the doc at the NEW
+    // candidate so the Checkr webhook — which matches on checkrCandidateId —
+    // follows the invitation the caregiver will actually complete. Mirrors
+    // sendBgCheckRenewalLink's idiom. Also move status to "pending_review"
+    // (the value this step has always stamped): matchingAgent treats it as
+    // matchable-with-pending-check, unlike the gate-created "onboarding".
+    await db.collection("caregivers").doc(session.caregiverId).update({
+      "status":                                "pending_review",
+      "backgroundCheckData.checkrCandidateId": candidateId,
+      "backgroundCheckData.status":            "pending",
+      "backgroundCheckData.submittedAt":       new Date().toISOString(),
+      "backgroundCheckData.mvrIncluded":       mvrPaid,
+      "backgroundCheckData.consentGiven":      true,
+      "backgroundCheckData.legalFirstName":    form.legalFirstName,
+      "backgroundCheckData.legalLastName":     form.legalLastName,
+      "backgroundCheckData.zip":               form.zipCode,
+      "backgroundCheckData.invitationStatus":  "sent",
+      "backgroundCheckData.invitationUrl":     inviteUrl,
+    }).catch(() => {});
   }
 
   await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
-  if (!inviteUrl) {
-    await alertOnboardingLinkFailure(phone, "caregiver_send_bgcheck", linkError ?? "missing Checkr invitation URL");
-    await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
-    return;
+  if (chatId) {
+    const email = (d.email ?? "") as string;
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context:
+        `The caregiver just reviewed and authorized their background check on Evia's secure page. Naturally confirm: authorization received, and Checkr has emailed them a secure link${email ? ` at ${email}` : ""} to finish — about 5 minutes, and their SSN and date of birth are entered directly with Checkr, never with Evia. Checkr re-sends the email daily if they miss it. You'll text them the moment results come in, usually within 1–3 days — then families can book them. Do NOT include any URL.`,
+      fallback:
+        `Authorization received! Checkr just emailed you a secure link${email ? ` at ${email}` : ""} to finish up — about 5 minutes, and your SSN and date of birth go directly to Checkr, never to me. ` +
+        `I'll text you the moment your results are in (usually 1–3 days) — then families can book you.`,
+      maxTokens: 130,
+    }));
   }
-  await sendMessage(chatId, await generateCaraMessage({
-    audience: "caregiver",
-    language: session.preferredLanguage === "es" ? "es" : "en",
-    context:
-      "The caregiver just paid their membership — they're nearly done. Naturally let them know the last big step is the background check every caregiver completes (it's what lets families trust the platform), it usually takes about 5 minutes, and the link is coming right below. Do NOT include any URL.",
-    fallback: "Almost done! Last big step: the background check every caregiver completes — usually about 5 minutes. Tap to get started:",
-    maxTokens: 100,
-  }));
-  await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
-  resolveCommitment(phone, "link", "link_sent").catch(() => {});
-  await sendMessage(chatId, await generateCaraMessage({
-    audience: "caregiver",
-    language: session.preferredLanguage === "es" ? "es" : "en",
-    context: "You just sent the caregiver their background-check link. Warmly reassure them you'll text them when the results come in, usually within 1–3 days. One short line.",
-    fallback: "I'll text you when results come in (usually 1–3 days).",
-    maxTokens: 60,
-  }));
+  return { status: "ok" };
 }
 
 // Re-issue a Checkr background-check link for an already-onboarded caregiver whose
@@ -2627,7 +3072,11 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
       account:     accountId,
       type:        "account_onboarding",
       return_url:  `${APP_URL}/done?task=stripe_connect&t=${token}`,
-      refresh_url: `${APP_URL}/done?task=stripe_connect&t=${token}`,
+      // Stripe sends expired/already-visited account links here — it must mint
+      // a FRESH link, never the success page (account links are single-use and
+      // iMessage preview fetches can consume them; pointing refresh at /done
+      // showed "Payout account ready!" to caregivers who never onboarded).
+      refresh_url: `${APP_URL}/stripe-refresh?t=${token}`,
     });
     connectUrl = link.url;
   } catch (err) {
@@ -2651,6 +3100,104 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
   }));
   await sendMessage(chatId, { parts: [{ type: "link", value: connectUrl }] });
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
+}
+
+// ── Stripe Connect: fresh-link mint + real-state verification ────────────────
+// Account links are single-use and expire; Stripe redirects any dead link to
+// the refresh_url, and the return_url fires on flow EXIT — completed or not
+// (Stripe docs: return_url does not signal completion). Both facts mean the
+// only trustworthy completion signal is the account's own charges/payouts
+// flags — read here on the /done path and by the Connect webhook.
+
+/** Mint a fresh Connect onboarding link, reusing (or creating) the caregiver's
+ *  Express account. Used by the v1-stripeConnectRefresh redirect endpoint and
+ *  by the /done page when verification finds the setup unfinished. */
+export async function mintStripeConnectAccountLink(phone: string): Promise<string | null> {
+  try {
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    if (!snap.exists) return null;
+    const session = snap.data() as AgentSession;
+    const d = session.onboardingData ?? {};
+    let accountId = d.stripeAccountId as string | undefined;
+    if (!accountId) {
+      const account = await getStripe().accounts.create({
+        type:     "express",
+        country:  "US",
+        email:    (d.email ?? "") as string,
+        metadata: { phone, caregiverName: (d.name ?? "") as string },
+      });
+      accountId = account.id;
+      await mergeOnboardingData(phone, { stripeAccountId: accountId });
+      // Mirror onto the caregiver doc so the Connect webhook can match this
+      // caregiver (same rule as handleCaregiverSendStripeConnect).
+      if (session.caregiverId) {
+        const linkCaregiverId = session.caregiverId as string;
+        await guardSideEffect(
+          "firestore.set:caregivers.stripeAccountId",
+          async () => {
+            await db.collection("caregivers").doc(linkCaregiverId)
+              .set({ stripeAccountId: accountId, phone }, { merge: true })
+              .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
+          },
+          undefined,
+          { phone },
+        );
+      }
+    }
+    const token = generateToken({ phone, task: "stripe_connect" });
+    const link = await getStripe().accountLinks.create({
+      account:     accountId,
+      type:        "account_onboarding",
+      return_url:  `${APP_URL}/done?task=stripe_connect&t=${token}`,
+      refresh_url: `${APP_URL}/stripe-refresh?t=${token}`,
+    });
+    return link.url;
+  } catch (err) {
+    console.error("mintStripeConnectAccountLink error:", err);
+    return null;
+  }
+}
+
+export type StripeConnectVerification =
+  | { status: "complete" }
+  | { status: "incomplete"; finishUrl: string | null }
+  | { status: "unverified" };
+
+/** Ask Stripe whether this caregiver's Connect onboarding actually finished.
+ *  "complete" mirrors the Connect webhook's bar (charges + payouts enabled).
+ *  Fails CLOSED ("unverified") on Stripe API errors — a lost advancement is
+ *  recoverable via the webhook; a false activation is not. */
+export async function verifyStripeConnectComplete(phone: string): Promise<StripeConnectVerification> {
+  const snap = await db.collection("agent_sessions").doc(phone).get();
+  const session = snap.exists ? (snap.data() as AgentSession) : undefined;
+  const accountId = (session?.onboardingData as Record<string, unknown> | undefined)?.stripeAccountId as string | undefined;
+  if (!accountId) {
+    // No Express account was ever created for them — nothing can be complete.
+    return { status: "incomplete", finishUrl: await mintStripeConnectAccountLink(phone) };
+  }
+  let account: Stripe.Account;
+  try {
+    account = await getStripe().accounts.retrieve(accountId);
+  } catch (err) {
+    console.error("verifyStripeConnectComplete accounts.retrieve error:", err);
+    return { status: "unverified" };
+  }
+  const complete = !!account.charges_enabled && !!account.payouts_enabled;
+  if (!complete) {
+    return { status: "incomplete", finishUrl: await mintStripeConnectAccountLink(phone) };
+  }
+  // Stamp the caregiver doc with the same fields the Connect webhook writes so
+  // the webapp reflects reality even if account.updated delivery lags.
+  if (session?.caregiverId) {
+    await db.collection("caregivers").doc(session.caregiverId as string).set({
+      chargesEnabled:              true,
+      payoutsEnabled:              true,
+      detailsSubmitted:            !!account.details_submitted,
+      stripeOnboardingComplete:    true,
+      stripeOnboardingCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch((err) => console.error("verifyStripeConnectComplete caregiver stamp failed (non-fatal):", err));
+  }
+  return { status: "complete" };
 }
 
 // ── On-demand onboarding link (re)send ────────────────────────────────────────
@@ -2746,47 +3293,13 @@ export async function sendOnboardingLink(
     case "caregiver_background_check": {
       const stored = session.bgcheckInviteUrl as string | undefined;
       if (stored) { url = stored; break; }
-      const nameParts = ((d.name ?? "") as string).split(" ");
-      const mvrPaid   = (session.mvrPaid as boolean | undefined) === true;
-      const checkrPkg = mvrPaid
-        ? (process.env.CHECKR_PACKAGE_MVR || "checkrdirect_essential_criminal")
-        : (process.env.CHECKR_PACKAGE     || "checkrdirect_essential_criminal");
-      // Candidate-first (Checkr's contract) — same shape as
-      // handleCaregiverSendBgcheck; see the comment there.
-      let inv: { invitationUrl: string; candidateId: string };
-      try {
-        inv = await guardSideEffect(
-          "checkr.invitation.create",
-          () => createCheckrInvitation({
-            firstName:   nameParts[0] ?? "",
-            lastName:    nameParts.slice(1).join(" "),
-            email:       (d.email ?? "") as string,
-            zipCode:     (d.zipCode || undefined) as string | undefined,
-            workState:   CHECKR_WORK_STATE,
-            workCity:    (d.city || undefined) as string | undefined,
-            packageSlug: checkrPkg,
-          }),
-          { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
-        );
-      } catch (err) {
-        await alertOnboardingLinkFailure(phone, "send_onboarding_link_background_check", err);
-        await sendOnboardingLinkFailureMessage(phone, chatId, session, "background-check");
-        return { success: false, linkType };
-      }
-      url = inv.invitationUrl;
-      await updateSession(phone, { bgcheckInviteUrl: url });
-      // A fresh invitation means a fresh candidate — keep the caregiver doc's
-      // checkrCandidateId pointing at the invitation the caregiver will actually
-      // complete, or the report webhook can't match (split-state bug).
-      const freshCandidateId = inv.candidateId as string | undefined;
-      if (freshCandidateId && session.caregiverId) {
-        await db.collection("caregivers").doc(session.caregiverId as string).update({
-          "backgroundCheckData.checkrCandidateId": freshCandidateId,
-          "backgroundCheckData.status":            "pending",
-          "backgroundCheckData.submittedAt":       new Date().toISOString(),
-          "backgroundCheckData.mvrIncluded":       mvrPaid,
-        }).catch(() => {});
-      }
+      // No invitation yet = the caregiver hasn't authorized the check on the
+      // /bgcheck consent page (webapp parity, 2026-07-08: FCRA disclosure +
+      // written authorization BEFORE any Checkr call — the invitation is
+      // created by v1-confirmBgcheckOnboarding when they submit, and Checkr
+      // then emails them the secure completion link). Sending the consent link
+      // here means the agent tool can never bypass consent.
+      url = `${APP_URL}/bgcheck?t=${generateToken({ phone, task: "bgcheck_consent" })}`;
       break;
     }
 
@@ -2826,7 +3339,9 @@ export async function sendOnboardingLink(
         account:     accountId,
         type:        "account_onboarding",
         return_url:  `${APP_URL}/done?task=stripe_connect&t=${token}`,
-        refresh_url: `${APP_URL}/done?task=stripe_connect&t=${token}`,
+        // Expired/used links must re-mint, never land on the success page
+        // (see handleCaregiverSendStripeConnect).
+        refresh_url: `${APP_URL}/stripe-refresh?t=${token}`,
       });
       url = link.url;
       break;
@@ -2836,14 +3351,18 @@ export async function sendOnboardingLink(
       throw new Error(`sendOnboardingLink: unknown linkType ${linkType as string}`);
   }
 
-  // Token-gated /upload pages have no OG metadata, so a `link` part renders as a
-  // BLANK preview card (the "message arrives but no link" bug). Send those inline
-  // as plain text — tappable on iMessage and SMS regardless of OG. External
-  // provider URLs (Stripe checkout/Connect, Checkr) carry their own OG and render
-  // as proper cards, so they stay `link` parts.
-  const inlineAsText = linkType === "caregiver_photo" || linkType === "caregiver_documents";
+  // Token-gated /upload and /bgcheck pages have no OG metadata, so a `link` part
+  // renders as a BLANK preview card (the "message arrives but no link" bug). Send
+  // those inline as plain text — tappable on iMessage and SMS regardless of OG.
+  // External provider URLs (Stripe checkout/Connect, Checkr) carry their own OG
+  // and render as proper cards, so they stay `link` parts.
+  const inlineAsText =
+    linkType === "caregiver_photo" ||
+    linkType === "caregiver_documents" ||
+    url.startsWith(`${APP_URL}/bgcheck`);
   if (inlineAsText) {
-    await sendMessage(chatId, { parts: [{ type: "text", value: `Tap to upload:\n${url}` }] });
+    const label = linkType === "caregiver_background_check" ? "Review & authorize here:" : "Tap to upload:";
+    await sendMessage(chatId, { parts: [{ type: "text", value: `${label}\n${url}` }] });
   } else {
     await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
   }
@@ -2865,9 +3384,11 @@ export async function resendStuckStep(phone: string): Promise<boolean> {
   if (!chatId || !step) return false;
 
   switch (step) {
+    case "caregiver_awaiting_bgcheck_consent":
     case "caregiver_awaiting_bgcheck":
     case "caregiver_send_bgcheck": {
-      // Re-send the Checkr invite link
+      // Pre-consent → fresh /bgcheck authorization link; post-consent (cached
+      // invitation) → the Checkr link again. handleCaregiverSendBgcheck routes.
       await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
       await handleCaregiverSendBgcheck(phone, chatId, session);
       return true;
@@ -2952,11 +3473,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       });
 
       const d = session.onboardingData ?? {};
-      // Raw coords (present only when the family shared a location pin) — unlock
-      // true haversine distance in aiMatching instead of city/zip proxy buckets.
-      const lat = typeof d.lat === "number" ? d.lat as number : undefined;
-      const lng = typeof d.lng === "number" ? d.lng as number : undefined;
-      const hasCoords = lat !== undefined && lng !== undefined;
 
       // Get or create Firebase Auth UID (may already exist from identity step)
       let uid = session.userId as string | undefined;
@@ -2980,6 +3496,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       }
 
       // Write subscription status to users/{uid} so web app shows membership as active
+      // stripe.ts stamps the Stripe customer id on the agent session BEFORE
+      // calling advanceOnboardingStep — mirror it onto users/{uid} and
+      // customers/{uid}: the client Payments page reads
+      // customers/{uid}.stripeCustomerId to show "Manage payment method", and
+      // the shared billing-portal callable resolves the customer from that
+      // same doc (identical fix to the caregiver membership case).
+      const clientCustId = (session as any).stripeCustomerId as string | undefined;
       if (uid) {
         await db.collection("users").doc(uid).set({
           // uid must live IN the doc too — services/api.ts getUser gates the
@@ -2988,6 +3511,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           membershipStatus:   "active",
           subscriptionActive: true,
           ...(taskData ? { stripeSubscriptionId: taskData } : {}),
+          ...(clientCustId ? { stripeCustomerId: clientCustId } : {}),
           phone,
           firstName:          (d.firstName ?? "") as string,
           updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
@@ -2996,145 +3520,21 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
             membershipActive: true,
           },
         }, { merge: true });
-
-        // Write initial carePlans/{uid} with what we know so far
-        const seniorName   = (d.seniorName   ?? "") as string;
-        const relationship = (d.relationship ?? "") as string;
-        const city         = (d.city         ?? "") as string;
-        const zipCode      = (d.zipCode      ?? "") as string;
-        const conditions   = (d.conditions   ?? []) as string[];
-        const careNeeds    = (d.careNeeds    ?? []) as string[];
-        const seniorAge    = d.age as number | undefined;
-
-        // One plan entry per care recipient (primary + any additional — "both
-        // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
-        // (recipientPlanKey) or the web tabs can't find Evia's plan data.
-        // Care needs/conditions are shared across recipients at signup — same
-        // behavior as the web PostJob flow; per-person details are edited later
-        // in the CarePlan tabs.
-        const recipients = allCareRecipients(d);
-        const recipientPlans: Record<string, unknown> = {};
-        for (const r of recipients) {
-          recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
-            name:         r.name,
-            age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
-            relationship: r.relationship ?? "",
-            careNeeds,
-            conditions,
-            updatedAt:    new Date().toISOString(),
-          };
+        if (clientCustId) {
+          await db.collection("customers").doc(uid).set({
+            stripeCustomerId: clientCustId,
+          }, { merge: true }).catch((err) =>
+            console.error("advanceOnboardingStep(payment): customers/{uid} mirror failed:", err));
         }
-        await db.collection("carePlans").doc(uid).set({
-          clientId: uid,
-          phone,
-          recipientPlans,
-          locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
-          updatedAt: new Date().toISOString(),
-        }, { merge: true });
 
-        // senior_profiles/{uid} parity write for the PRIMARY recipient —
-        // CarePlan, matching, and the family dashboard read this doc (web
-        // signup creates it; Evia must too). The account holder's identity
-        // stays on users/{uid}; this doc is the care recipient's.
-        await db.collection("senior_profiles").doc(uid).set({
-          userId:    uid,
-          clientId:  uid,
-          name:      seniorName,
-          ...(seniorAge !== undefined ? { age: seniorAge } : {}),
-          ...(relationship ? { relationship } : {}),
-          needs:     careNeeds,
-          diagnoses: conditions,
-          // Web Senior type requires location (city string); preference fields
-          // feed the matching engine and the family dashboard.
-          location:  city || "",
-          zipCode:   zipCode || null,
-          genderPreference:   (d.genderPreference   ?? "") as string,
-          languagePreference: (d.languagePreference ?? "") as string,
-          updatedAt: new Date().toISOString(),
-        }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
-
-        // Additional recipients get their own household senior_profiles docs
-        // (deterministic IDs — webhook retries must not mint duplicates) plus
-        // users/{uid}.seniorIds back-refs, so the MCP list_household_seniors
-        // tool and household-aware readers see every person Evia cares for.
-        const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
-        for (const r of extraRecipients) {
-          const seniorDocId = householdSeniorDocId(uid, r.name);
-          await db.collection("senior_profiles").doc(seniorDocId).set({
-            userId:    uid,
-            clientId:  uid,
-            name:      r.name,
-            ...(r.age !== undefined ? { age: r.age } : {}),
-            ...(r.relationship ? { relationship: r.relationship } : {}),
-            needs:     careNeeds,
-            diagnoses: conditions,
-            location:  city || "",
-            zipCode:   zipCode || null,
-            updatedAt: new Date().toISOString(),
-          }, { merge: true }).catch((err) => console.error("household senior_profiles write error:", err));
-          await db.collection("users").doc(uid).set({
-            seniorIds: admin.firestore.FieldValue.arrayUnion(seniorDocId),
-          }, { merge: true }).catch((err) => console.error("users.seniorIds write error:", err));
-        }
       }
 
-      // Write intake — uid-keyed so the web app (ClientIntakeFlowV2, matching
-      // hooks) reads the same doc Evia writes. Random-ID fallback only when no
-      // auth uid could be resolved.
-      // Human-readable schedule string — the web ClientIntakeData contract and
-      // the matching prompt both read intake.schedule; built from the structured
-      // fields (or the absorbed free-text schedule when that's all we have).
-      const scheduleText = [
-        d.daysPerWeek ? `${d.daysPerWeek} days/week` : "",
-        (d.timeOfDay as string) ?? "",
-        d.hoursPerDay ? `${d.hoursPerDay} hrs/day` : "",
-      ].filter(Boolean).join(", ") || ((d.schedule as string) ?? "");
-
-      const intakeData = {
-        phone,
-        userId:      uid ?? null,
-        firstName:   d.firstName,
-        seniorName:  d.seniorName,
-        relationship: d.relationship,
-        age:         d.age,
-        careNeeds:   d.careNeeds,
-        conditions:  d.conditions,
-        city:        d.city,
-        zipCode:     d.zipCode,
-        ...(hasCoords ? { lat, lng, location: { lat, lng } } : {}),
-        daysPerWeek: d.daysPerWeek,
-        timeOfDay:   d.timeOfDay,
-        hoursPerDay: d.hoursPerDay,
-        // Web-contract aliases (types.ts ClientIntakeData) — the client profile
-        // dashboard reads recipientName/careTypes/contactName/schedule and shows
-        // blanks without them.
-        recipientName:      (d.seniorName ?? "") as string,
-        recipientFirstName: (((d.seniorName ?? "") as string).split(" ")[0]) || (d.seniorName ?? ""),
-        careTypes:          d.careNeeds ?? [],
-        contactName:        (d.firstName ?? "") as string,
-        schedule:           scheduleText,
-        // Collected during intake but previously dropped at finalization:
-        startDate:          (d.startDate ?? null) as string | null,
-        budgetMin:          (d.budgetMin ?? null) as number | null,
-        budgetMax:          (d.budgetMax ?? null) as number | null,
-        caregiverPreferences: d.caregiverPreferences ?? {},
-        genderPreference:     (d.genderPreference   ?? "") as string,
-        languagePreference:   (d.languagePreference ?? "") as string,
-        needsDriving:         d.needsDriving === true,
-        otherPreference:      (d.otherPreference ?? "") as string,
-        // Multi-recipient household ("both mom and dad"): everyone after the
-        // primary, plus the count the web PostJob flow also records.
-        additionalRecipients: normalizeAdditionalRecipients(d.additionalRecipients)
-          .map((r) => ({ firstName: r.name, lastName: "", name: r.name, relationship: r.relationship ?? "", ...(r.age !== undefined ? { age: String(r.age) } : {}) })),
-        recipientsCount:      1 + normalizeAdditionalRecipients(d.additionalRecipients).length,
-        status:      "pending",
-        createdAt:   new Date().toISOString(),
-      };
-      if (uid) {
-        await db.collection("clientIntakes").doc(uid).set(intakeData, { merge: true });
-      } else {
-        await db.collection("clientIntakes").add(intakeData);
-      }
+      // Care records (carePlans, senior_profiles, clientIntakes, seniorIds)
+      // were already persisted at intake-confirm (handleClientShowCaregivers →
+      // persistClientCareRecords); re-run the same merge-writes here so the
+      // final budget/preferences/startDate land, with the anonymous-intake
+      // fallback for the rare path where no auth uid ever resolved.
+      await persistClientCareRecords(uid, phone, d, { allowAnonIntake: true });
 
       // Notify admin of new client signup
       notifyAdminNewClientSignup({
@@ -3206,8 +3606,23 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // finalization (taskData is the Storage URL — from the web upload page OR
       // a texted headshot). Previously this URL was dropped on the floor.
       if (taskData) await mergeOnboardingData(phone, { profilePhoto: taskData });
-      await updateSession(phone, { onboardingStep: "caregiver_send_documents" });
-      await handleCaregiverSendDocuments(phone, chatId, session);
+      // Post-onboarding photo UPDATES (caregiverProfileHandler's UPDATE_PHOTO
+      // flow) reuse this same token task — only advance the onboarding flow
+      // when the session is actually at the photo gate, otherwise the update
+      // would drag an active caregiver back into the documents step.
+      const photoStep = session.onboardingStep ?? "";
+      if (photoStep === "caregiver_send_photo" || photoStep === "caregiver_awaiting_photo") {
+        await updateSession(phone, { onboardingStep: "caregiver_send_documents" });
+        await handleCaregiverSendDocuments(phone, chatId, session);
+      } else {
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "caregiver",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "The caregiver just uploaded a new profile photo (an update to their existing profile — they are NOT in onboarding). ONE short warm line confirming the new photo is saved on their profile.",
+          fallback: "Got it — your new profile photo is saved on your profile.",
+          maxTokens: 40,
+        }));
+      }
       break;
     }
 
@@ -3229,6 +3644,55 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
       });
+
+      // Webapp parity: the caregiver dashboard progress card and useCaregiverGate
+      // read caregivers/{uid}.membershipPaid / membershipStatus, and MCP tools +
+      // paywall winback read users/{uid}.membershipStatus. The web checkout path
+      // writes these in stripe.ts (firebaseUID metadata); the SMS checkout only
+      // carries phone metadata, so mirror them here — otherwise a paid caregiver
+      // stays parked at "Activate your membership" on the webapp forever.
+      // Non-fatal: the conversation must advance even if the mirror write fails.
+      try {
+        let uid = (session.userId ?? session.caregiverId) as string | undefined;
+        if (!uid) {
+          uid = await admin.auth().getUserByPhoneNumber(phone)
+            .then((u) => u.uid).catch(() => undefined);
+        }
+        if (uid) {
+          const subId  = (session as any).caregiverSubscriptionId as string | undefined;
+          const custId = (session as any).stripeCustomerId as string | undefined;
+          await db.collection("caregivers").doc(uid).set({
+            uid,
+            phone,
+            membershipPaid: true,
+            ...(subId ? { membershipSubscriptionId: subId } : {}),
+          }, { merge: true });
+          await db.collection("users").doc(uid).set({
+            membershipStatus:   "active",
+            subscriptionActive: true,
+            ...(subId  ? { subscriptionId: subId } : {}),
+            ...(custId ? { stripeCustomerId: custId } : {}),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          // customers/{uid} is where the caregiver billing portal resolves the
+          // Stripe customer (createCaregiverBillingPortalSession) — the web
+          // checkout writes it at creation; mirror it for the SMS path.
+          if (custId) {
+            await db.collection("customers").doc(uid).set({
+              stripeCustomerId: custId,
+            }, { merge: true }).catch((err) =>
+              console.error("advanceOnboardingStep(membership): customers/{uid} mirror failed:", err));
+          }
+        } else {
+          // No auth uid yet (cold-SMS path before doc creation) — the Stripe
+          // Connect finalization mirrors membershipPaid from
+          // caregiverSubscriptionId when it creates the doc.
+          console.warn(`advanceOnboardingStep(membership): no uid resolvable for phone=${phone} — membership mirror deferred to finalization`);
+        }
+      } catch (err) {
+        console.error("advanceOnboardingStep(membership): membership mirror failed (non-fatal):", err);
+      }
+
       await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
       // Short thank-you only — handleCaregiverSendBgcheck composes the
       // background-check intro itself (avoids two stacked intros).
@@ -3377,6 +3841,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         phone,
         ...buildCaregiverProfileMirror(d),
         membershipSubscriptionId: (session as any).caregiverSubscriptionId ?? null,
+        // Webapp parity: the dashboard's membership step reads membershipPaid.
+        // Normally the "membership" webhook task mirrored this already; this
+        // covers sessions where no uid was resolvable at payment time.
+        ...((session as any).caregiverSubscriptionId ? { membershipPaid: true } : {}),
         status:          "active",
         // Visibility gate: families' FindCaregivers query only loads caregivers
         // where onboardingStatus === 'profile_complete'. Evia is the canonical
@@ -3448,6 +3916,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           phone,
           email:      (d.email ?? null) as string | null,
           caregiverId,
+          // Membership parity (MCP tools + winback read users.membershipStatus) —
+          // only when the membership webhook actually recorded a subscription.
+          ...((session as any).caregiverSubscriptionId ? {
+            membershipStatus:   "active",
+            subscriptionActive: true,
+            subscriptionId:     (session as any).caregiverSubscriptionId,
+          } : {}),
           updatedAt:  admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }).catch((err) => console.error("caregiver users/{uid} parity write error:", err));
       }
@@ -3468,12 +3943,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         console.error("notifyWaitlistedFamilies error:", err)
       );
 
-      // U10 — reverse of the job→caregiver fan-out: a newly active caregiver
-      // should immediately hear about open jobs that already fit them, not just
-      // future ones. Fire-and-forget; invites the single best-fit open job.
-      import("../triggers/caregiverJobMatch")
-        .then((m) => m.notifyNewCaregiverOfJobs(caregiverId))
-        .catch((err) => console.error("notifyNewCaregiverOfJobs error:", err));
+      // U10 — reverse of the job→caregiver fan-out (notifyNewCaregiverOfJobs)
+      // now fires when the PERMISSIONS flow completes (permissionsConversation.ts)
+      // instead of here: firing it moments before the permissions questions made
+      // two competing "Reply YES or NO" prompts race, and while onboardingStep
+      // was a permissions step the router fed the caregiver's YES to the
+      // permissions machine — silently dropping the job application.
 
       // Notify admin
       notifyAdminNewCaregiverSignup({
@@ -3691,24 +4166,18 @@ async function handleJobAskFrequency(
   await mergeOnboardingData(phone, { jobStartDate: startDate !== "__parse_error__" ? startDate : text.trim() });
   await updateSession(phone, { onboardingStep: "job_ask_days" });
   await sendMessage(chatId,
-    "How often do you need help?\n\n" +
-    "1️⃣  Occasional (1–2 days/week)\n" +
-    "2️⃣  Part-time (3–4 days/week)\n" +
-    "3️⃣  Full-time (5+ days/week)"
+    "How often do you need help — just occasional (a day or two a week), part-time (3–4 days), or full-time (5+ days)?"
   );
 }
 
 async function handleJobAskDays(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text, "How often do you need help? 1 Occasional, 2 Part-time, 3 Full-time")) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, "How often do you need help? Occasional, part-time, or full-time")) {
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "How often do you need help?\n\n" +
-      "1️⃣  Occasional (1–2 days/week)\n" +
-      "2️⃣  Part-time (3–4 days/week)\n" +
-      "3️⃣  Full-time (5+ days/week)"
+      "So — how often do you need help? Occasional (1–2 days a week), part-time (3–4 days), or full-time (5+)?"
     );
     return;
   }
@@ -3732,7 +4201,7 @@ async function handleJobAskTime(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "Which days work best?")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")");
     return;
@@ -3754,12 +4223,8 @@ async function handleJobAskTime(
   await mergeOnboardingData(phone, { jobDays: days });
   await updateSession(phone, { onboardingStep: "job_ask_care_needs" });
   await sendMessage(chatId,
-    `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best?\n\n` +
-    "Reply with one or more numbers:\n\n" +
-    "1️⃣  Morning (6am–noon)\n" +
-    "2️⃣  Afternoon (noon–6pm)\n" +
-    "3️⃣  Evening (6pm–10pm)\n" +
-    "4️⃣  Overnight"
+    `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best — ` +
+    `mornings, afternoons, evenings, overnight, or a mix?`
   );
 }
 
@@ -3767,11 +4232,10 @@ async function handleJobAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "What time of day works best? Morning, Afternoon, Evening, or Overnight")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "What time of day works best?\n\n" +
-      "1️⃣  Morning  2️⃣  Afternoon  3️⃣  Evening  4️⃣  Overnight"
+      "So — what time of day works best? Mornings, afternoons, evenings, overnight, or a mix?"
     );
     return;
   }
@@ -3792,28 +4256,22 @@ async function handleJobAskCareNeeds(
   await mergeOnboardingData(phone, { jobTimeOfDay: timeOfDay });
   await updateSession(phone, { onboardingStep: "job_ask_care_level" });
   await sendMessage(chatId,
-    `Got it — ${timeOfDay.join(" & ")}! What kind of help does ${(d.seniorName as string) ?? "your loved one"} need?\n\n` +
-    "Reply with numbers (pick all that apply):\n\n" +
-    "1️⃣  Mobility & Movement\n" +
-    "2️⃣  Memory Care / Dementia\n" +
-    "3️⃣  Medications\n" +
-    "4️⃣  Personal Care (bathing, dressing)\n" +
-    "5️⃣  Meals & Nutrition\n" +
-    "6️⃣  Transportation\n" +
-    "7️⃣  Light Housekeeping\n" +
-    "8️⃣  Companionship"
+    `Got it — ${timeOfDay.join(" & ")}! What kind of help does ${(d.seniorName as string) ?? "your loved one"} need? ` +
+    `Just tell me in your own words — things like mobility, memory care, medications, personal care ` +
+    `(bathing, dressing), meals, rides, light housekeeping, or companionship. Whatever applies.`
   );
 }
 
 async function handleJobAskCareLevel(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text, "What kind of help does your loved one need? (reply with the numbers)")) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, "What kind of help does your loved one need? (mobility, memory care, meals, etc.)")) {
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     const d2 = session.onboardingData ?? {};
     await sendMessage(chatId,
-      `What kind of help does ${(d2.seniorName as string) ?? "your loved one"} need? Reply with numbers.`
+      `So — what kind of help does ${(d2.seniorName as string) ?? "your loved one"} need? ` +
+      `Mobility, memory care, medications, personal care, meals, rides, housekeeping, companionship — whatever applies.`
     );
     return;
   }
@@ -3840,10 +4298,9 @@ async function handleJobAskCareLevel(
   await mergeOnboardingData(phone, { jobCareNeeds: careNeeds });
   await updateSession(phone, { onboardingStep: "job_ask_environment" });
   await sendMessage(chatId,
-    `Noted — ${careNeeds.join(", ")}. How much support does ${(d.seniorName as string) ?? "your loved one"} need overall?\n\n` +
-    "1️⃣  Light — mostly supervision & companionship\n" +
-    "2️⃣  Moderate — hands-on help with some tasks\n" +
-    "3️⃣  Intensive — full assistance with most tasks"
+    `Noted — ${careNeeds.join(", ")}. How much support does ${(d.seniorName as string) ?? "your loved one"} need overall — ` +
+    `pretty light (mostly supervision and companionship), moderate (hands-on help with some tasks), ` +
+    `or intensive (full assistance with most things)?`
   );
 }
 
@@ -3851,10 +4308,10 @@ async function handleJobAskEnvironment(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "How much support is needed? Light, Moderate, or Intensive")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "How much support is needed?\n1️⃣ Light  2️⃣ Moderate  3️⃣ Intensive"
+      "So — how much support is needed? Light, moderate, or intensive?"
     );
     return;
   }
@@ -3879,7 +4336,7 @@ async function handleJobAskRate(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "Are there pets in the home? Is it a smoking household?")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "Are there pets in the home? Is it a smoking household?");
     return;
@@ -3912,7 +4369,7 @@ async function handleJobAskPayMethod(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "What hourly rate are you hoping to pay? (or \"flexible\")")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, "What hourly rate are you hoping to pay? (or \"flexible\")");
     return;
@@ -3931,11 +4388,7 @@ async function handleJobAskPayMethod(
   await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate });
   await updateSession(phone, { onboardingStep: "job_ask_description" });
   await sendMessage(chatId,
-    `${rateLabel} — sounds good! How will you pay the caregiver?\n\n` +
-    "1️⃣  Credit/debit card (through the platform)\n" +
-    "2️⃣  Cash directly\n" +
-    "3️⃣  Venmo\n" +
-    "4️⃣  Zelle"
+    `${rateLabel} — sounds good! How will you pay the caregiver — card through the platform, cash, Venmo, or Zelle?`
   );
 }
 
@@ -3943,9 +4396,9 @@ async function handleJobAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   if (await isQuestionOrOther(text, "How will you pay the caregiver? Card, Cash, Venmo, or Zelle")) {
-    const answer = await answerQuestionMidFlow(text, session);
+    const answer = await answerQuestionMidFlow(text, session, phone);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "How will you pay the caregiver?\n1️⃣ Card  2️⃣ Cash  3️⃣ Venmo  4️⃣ Zelle");
+    await sendMessage(chatId, "So — how will you pay the caregiver? Card, cash, Venmo, or Zelle?");
     return;
   }
   const raw = await parseWithClaude(
@@ -4051,9 +4504,77 @@ async function handleJobConfirmPost(
 
 // ── Mid-flow question answering ───────────────────────────────────────────────
 
-async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
+// Grounded facts per gate step so mid-flow questions ("what am I being charged
+// for?", "why do you need my SSN?") get ACCURATE answers instead of the
+// fact-free deflection rule (4) below. Keyed by onboardingStep; steps without
+// an entry fall back to the generic prompt. Money/compliance facts only — keep
+// each entry short, the model weaves in what's relevant.
+const MEMBERSHIP_STEP_FACTS =
+  "The $66.49/year caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, " +
+  "getting booked, and Evia's scheduling + payout tools. It renews yearly. Right after payment comes the background-check step; " +
+  "once it clears (usually 1–3 days) they're approved and families can book them. The optional Approved Driver (MVR) check is a separate add-on.";
+const BGCHECK_CONSENT_STEP_FACTS =
+  "Their background check is already paid for — included in the membership, no extra charge. The link Evia sent opens Evia's secure page to review " +
+  "the FCRA disclosure and authorize the check (it asks for their LEGAL name because records are searched against it). After they authorize, Checkr — " +
+  "the background-check company — emails them a secure link to finish; SSN and date of birth are entered directly with Checkr and never stored by Evia. " +
+  "Results usually take 1–3 days; once clear they're approved and families can book them.";
+const BGCHECK_WAIT_STEP_FACTS =
+  "Their background check is with Checkr now, already paid for via the membership. If they haven't finished Checkr's form, the secure link is in their " +
+  "email from Checkr (re-sent daily; Evia can text it again too). Results usually take 1–3 days after finishing; Evia texts them the moment it clears — " +
+  "then they're approved and families can book them.";
+const PAYOUTS_STEP_FACTS =
+  "Their background check cleared — they're approved on Evia. The payout link sets up their Stripe account so they get paid after each visit: " +
+  "earnings pay out daily automatically, and instant payouts are free.";
+const PHOTO_STEP_FACTS =
+  "A profile photo is how families see who they're trusting — a clear, friendly headshot makes them much more likely to request an interview. " +
+  "The link Evia sent opens a phone-friendly upload page and returns them right back to Messages when they're done. Next after the photo is certifications.";
+const DOCUMENTS_STEP_FACTS =
+  "Certifications (CNA license, CPR card, etc.) are OPTIONAL — they help a profile stand out, but a caregiver can skip them and keep going. " +
+  "The link Evia sent opens a phone-friendly upload page. After this comes the optional Approved Driver (MVR) question, then activating their membership.";
+const MVR_STEP_FACTS =
+  "The Approved Driver check is an OPTIONAL one-time add-on: it adds a Motor Vehicle Record (driving) check so families who need a driver see a verified-driver " +
+  "badge on their profile. It's a separate one-time charge and does NOT change their annual membership — entirely their choice.";
+const CLIENT_PAYMENT_STEP_FACTS =
+  "The family membership is $29.95/month — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. " +
+  "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, Evia starts finding caregivers.";
+const CLIENT_IDENTITY_STEP_FACTS =
+  "Before payment, Evia runs a quick one-time identity check through Stripe Identity — it's secure, takes about 30 seconds, and keeps every family on the platform " +
+  "real and safe. Their details go directly to Stripe, never stored by Evia. Once it clears, the next step is starting the membership.";
+const STEP_QUESTION_FACTS: Record<string, string> = {
+  caregiver_send_membership:          MEMBERSHIP_STEP_FACTS,
+  caregiver_awaiting_membership:      MEMBERSHIP_STEP_FACTS,
+  caregiver_ask_mvr:                  MEMBERSHIP_STEP_FACTS,
+  caregiver_send_photo:               PHOTO_STEP_FACTS,
+  caregiver_awaiting_photo:           PHOTO_STEP_FACTS,
+  caregiver_send_documents:           DOCUMENTS_STEP_FACTS,
+  caregiver_awaiting_documents:       DOCUMENTS_STEP_FACTS,
+  caregiver_send_mvr:                 MVR_STEP_FACTS,
+  caregiver_awaiting_mvr:             MVR_STEP_FACTS,
+  caregiver_send_bgcheck:             BGCHECK_CONSENT_STEP_FACTS,
+  caregiver_awaiting_bgcheck_consent: BGCHECK_CONSENT_STEP_FACTS,
+  caregiver_awaiting_bgcheck:         BGCHECK_WAIT_STEP_FACTS,
+  caregiver_send_stripe_connect:      PAYOUTS_STEP_FACTS,
+  caregiver_awaiting_stripe:          PAYOUTS_STEP_FACTS,
+  client_send_payment:                CLIENT_PAYMENT_STEP_FACTS,
+  client_awaiting_payment:            CLIENT_PAYMENT_STEP_FACTS,
+  client_awaiting_identity:           CLIENT_IDENTITY_STEP_FACTS,
+};
+
+async function answerQuestionMidFlow(text: string, session: AgentSession, phone: string): Promise<string> {
   const d = session.onboardingData ?? {};
   const name = (d.name ?? d.firstName ?? "") as string;
+  const step = (session.onboardingStep ?? "") as string;
+  let stepFacts = STEP_QUESTION_FACTS[step];
+  // The static STEP_QUESTION_FACTS describe the PROCESS; without the user's
+  // actual live state a status question ("did my payment go through?", "where's
+  // my check?") got a hedged, fact-free non-answer (founder report, 2026-07-09).
+  // Every gate/awaiting step with a registered builder gets its live fact
+  // prepended; fail-soft ("" → static facts stand alone).
+  const liveBuilder = LIVE_GATE_FACT_BUILDERS[step];
+  if (liveBuilder) {
+    const live = await liveBuilder(phone, session);
+    if (live) stepFacts = `${live} ${stepFacts ?? ""}`.trim();
+  }
   return (await quickComplete(
     "You are Evia, a warm human-feeling care coordinator at Evia. You help people entirely over text — " +
       "YOU do the work for them: you find, vet, and match caregivers and set everything up through this conversation. " +
@@ -4066,6 +4587,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
       // LAUNCH: wording pending counsel review (R15)
       "(3) Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot) and never refer to yourself in the third person. But if directly asked whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question. Also never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
+      (stepFacts ? `FACTS about exactly where they are in signup — ground your answer in these when the question touches them, never contradict them: ${stepFacts} ` : "") +
       "(5) Ask NO question of your own — none. The signup question is re-asked automatically right after your reply, so a question from you would leave the user answering two different things at once. " +
       "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report).",
     text,

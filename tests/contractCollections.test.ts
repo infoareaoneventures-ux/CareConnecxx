@@ -83,6 +83,13 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Out-of-area onboarding leads (Santa Clara County service-area gate) —
     // server-written, not part of the web read contract.
     'waitlist',
+    // Checkr MCP bridge OTP/session state (caregiver-only report tools,
+    // 2026-07-09) — server-only, never read by the web.
+    'checkr_mcp_sessions',
+    // In-shift caregiver→family update cadence/ledger state (2026-07-10) —
+    // server-only; families receive the updates over SMS, the web reads
+    // visits/shiftHours mirrors, not this.
+    'in_shift_updates',
     // Matching / scheduling internals (web reads the user-facing mirrors, not these)
     // (memory_embeddings/facts/learned_facts, proactive_triggers/user_triggers,
     // health_signals, and user_preferences moved to CONTRACT_COLLECTIONS as

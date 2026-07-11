@@ -40,6 +40,7 @@ const STEP_TO_LINK: Record<string, OnboardingLinkType> = {
   caregiver_send_membership:     "caregiver_membership",
   caregiver_awaiting_membership: "caregiver_membership",
   caregiver_send_bgcheck:        "caregiver_background_check",
+  caregiver_awaiting_bgcheck_consent: "caregiver_background_check",
   caregiver_awaiting_bgcheck:    "caregiver_background_check",
   caregiver_send_stripe_connect: "caregiver_payouts",
   caregiver_awaiting_stripe:     "caregiver_payouts",

@@ -80,10 +80,19 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                     const userType = profile?.userType && validUserTypes.includes(profile.userType)
                         ? profile.userType
                         : 'client';
+                    // Auth displayName is unset for phone-OTP signups; the SMS
+                    // onboarding writes the name to the users doc instead
+                    // (clients: firstName, caregivers: name) — fall back to it
+                    // so the dashboard never greets by email prefix. Client
+                    // profiles are merged with senior_profiles in getUser, so
+                    // their `name` is the CARE RECIPIENT's — use firstName only.
+                    const profileName = userType === 'client'
+                        ? ((profile as any)?.firstName || null)
+                        : ((profile as any)?.name || (profile as any)?.firstName || null);
                     const authenticatedUser: AuthenticatedUser = {
                         uid: firebaseUser.uid,
                         email: firebaseUser.email,
-                        displayName: firebaseUser.displayName,
+                        displayName: firebaseUser.displayName || profileName,
                         photoURL: firebaseUser.photoURL,
                         userType,
                         isVerified: profile?.verified ?? false,

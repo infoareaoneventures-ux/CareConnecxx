@@ -109,18 +109,37 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     );
   }, 20_000);
 
-  it("falls through to a fresh Checkr POST (exactly once) when no invite was ever cached", async () => {
+  it("sends the /bgcheck consent link (NO Checkr POST) when no invite was ever cached", async () => {
+    // Webapp parity (2026-07-08): with no cached invitation, the caregiver
+    // hasn't authorized the check yet — the resend points them at Evia's FCRA
+    // consent page. Checkr is only ever called from confirmBgcheckConsent.
     delete (hoisted.sessionData as any).bgcheckInviteUrl;
     const { resendStuckStep } = await import("./onboardingConversation");
     await resendStuckStep("+15551112222");
 
-    // Retry-as-designed: with no cached URL the fresh-POST path runs exactly once...
+    expect(hoisted.checkrInvite).not.toHaveBeenCalled();
+    // Consent link goes out inline as text (token pages have no OG preview).
+    const part = lastLinkPart();
+    expect(part.type).toBe("text");
+    expect(part.value).toContain("/bgcheck?t=");
+    // Parked at the consent step so inbound texts re-serve the consent link.
+    expect(hoisted.updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ onboardingStep: "caregiver_awaiting_bgcheck_consent" })
+    );
+  }, 20_000);
+
+  it("confirmBgcheckConsent fires the Checkr POST (exactly once, legal name) and re-caches the URL", async () => {
+    delete (hoisted.sessionData as any).bgcheckInviteUrl;
+    const { confirmBgcheckConsent } = await import("./onboardingConversation");
+    await confirmBgcheckConsent("+15551112222", {
+      legalFirstName: "Jane", legalLastName: "Doe", zipCode: "95110", state: "CA",
+    });
+
+    // Candidate-first with the session's email + the form's legal name/work
+    // location — the exact request shape Checkr requires. The 2026-07-07
+    // launch blocker was an invitation POST with no candidate/email; this pins
+    // the fix at its new home.
     expect(hoisted.checkrInvite).toHaveBeenCalledTimes(1);
-    // ...candidate-first with the session's email + work location — the exact
-    // request shape Checkr requires. The 2026-07-07 launch blocker was an
-    // invitation POST with no candidate/email; this pins the fix. (The old test
-    // mocked the HTTP response and never inspected the request — a regression
-    // here was invisible.)
     expect(hoisted.checkrInvite).toHaveBeenCalledWith(expect.objectContaining({
       firstName:   "Jane",
       lastName:    "Doe",
@@ -128,19 +147,21 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
       workState:   "CA",
       packageSlug: expect.any(String),
     }));
-    // ...and the NEW invitation URL is re-cached for future resends.
+    // ...and the NEW invitation URL is cached for future resends.
     expect(hoisted.updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ bgcheckInviteUrl: "https://new/x" })
     );
   }, 20_000);
 
-  it("re-points the pre-created caregiver doc at the NEW candidate on a fresh POST", async () => {
+  it("re-points the pre-created caregiver doc at the NEW candidate on consent confirm", async () => {
     // Restart / expired-invite scenario: cache cleared, but the doc (and its old
     // checkrCandidateId) still exist. The webhook matches on checkrCandidateId,
     // so the doc must follow the invitation the caregiver will actually complete.
     delete (hoisted.sessionData as any).bgcheckInviteUrl;
-    const { resendStuckStep } = await import("./onboardingConversation");
-    await resendStuckStep("+15551112222");
+    const { confirmBgcheckConsent } = await import("./onboardingConversation");
+    await confirmBgcheckConsent("+15551112222", {
+      legalFirstName: "Jane", legalLastName: "Doe", zipCode: "95110", state: "CA",
+    });
 
     expect(hoisted.updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ "backgroundCheckData.checkrCandidateId": "cand_new" })

@@ -565,6 +565,29 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "set_visit_update_frequency",
+    description:
+      "Set how often the family gets mid-visit updates while a caregiver is with their loved one. " +
+      "Use when they say things like 'update me every hour', 'fewer updates please', 'stop the visit updates', " +
+      "or 'go back to normal updates'. Default is every 2 hours during a visit. " +
+      "Session context (phone) is injected automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        frequencyMinutes: {
+          type: "number",
+          description: "Minutes between mid-visit updates (30–480). E.g. 60 for hourly. Omit when using mode.",
+        },
+        mode: {
+          type: "string",
+          enum: ["default", "off"],
+          description: "'default' resets to the standard cadence (every 2 hours); 'off' stops mid-visit updates entirely (arrival and end-of-visit summaries still send).",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "get_recurring_schedule",
     description: "Get the active recurring care schedule for a client — days of the week, times, caregiver, and status.",
     input_schema: {
@@ -1936,6 +1959,56 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId"],
     },
   },
+  // ── Checkr Candidate MCP bridge (docs.checkr.com/mcp) ──────────────────────
+  // Pulls the caregiver's FULL redacted report straight from Checkr, gated by
+  // Checkr's own candidate identity verification (email OTP). Flow:
+  // request_checkr_verification → verify_checkr_otp → get_checkr_report.
+  {
+    name: "request_checkr_verification",
+    description:
+      "Start a secure Checkr identity-verification session so the caregiver's FULL background-check report can be " +
+      "pulled with get_checkr_report. Checkr emails a one-time code to the caregiver's email on file with Checkr. " +
+      "Use when get_background_check_status isn't enough — e.g. the caregiver asks which screenings ran, what a " +
+      "\"consider\" result means for THEIR report, or why it's delayed. Confirm their email first; max 3 code sends " +
+      "per session.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        email:       { type: "string", description: "The caregiver's email — must match the email on their Checkr candidate record" },
+      },
+      required: ["caregiverId", "email"],
+    },
+  },
+  {
+    name: "verify_checkr_otp",
+    description:
+      "Complete Checkr identity verification with the one-time code the caregiver received by email after " +
+      "request_checkr_verification. Max 3 attempts per session; on success get_checkr_report becomes available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        code:        { type: "string", description: "The one-time code from the caregiver's email" },
+      },
+      required: ["caregiverId", "code"],
+    },
+  },
+  {
+    name: "get_checkr_report",
+    description:
+      "Fetch the caregiver's latest background-check report details live from Checkr (status, result, individual " +
+      "screenings, exceptions, candidate portal link) — all PII redacted by Checkr. Requires a verified session " +
+      "(request_checkr_verification then verify_checkr_otp first). For a quick status answer use " +
+      "get_background_check_status instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
   {
     name: "request_shift_swap",
     description: "Initiate a shift swap request for a caregiver — finds available peer caregivers and broadcasts the coverage request. Only call after caregiver has confirmed which shift needs coverage.",
@@ -2473,6 +2546,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_work_in_progress",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
+  // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
+  "request_checkr_verification",
+  "verify_checkr_otp",
+  "get_checkr_report",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -2515,6 +2592,10 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "get_caregiver_availability",
   "confirm_cash_received",
   "list_shift_swaps",
+  // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
+  "request_checkr_verification",
+  "verify_checkr_otp",
+  "get_checkr_report",
 ]);
 export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name));
 
@@ -2829,6 +2910,10 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
   // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
   "list_interviews", "list_blocked_users", "list_shift_swaps",
+  // get_checkr_report is a pure remote read (Checkr redacts PII; nothing is
+  // consumed or mutated). request_checkr_verification / verify_checkr_otp are
+  // NOT read-only — they send a real OTP email / burn a verify attempt.
+  "get_checkr_report",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -3734,6 +3819,55 @@ async function executeToolCall(
           success: true,
           reacted: true,
           message: "Reaction added to the user's message. Only send a text reply if one is genuinely needed — the reaction may be the whole answer.",
+        };
+      }
+
+      case "set_visit_update_frequency": {
+        const { phone, frequencyMinutes, mode } = input;
+        if (!phone) return toolError("INVALID_INPUT", "phone is required");
+        if (mode === undefined && frequencyMinutes === undefined) {
+          return toolError("INVALID_INPUT", "Provide frequencyMinutes (30–480) or mode ('default' | 'off')");
+        }
+
+        const sessionRef = db.collection("agent_sessions").doc(phone as string);
+        const sessionSnap = await sessionRef.get();
+        if (!sessionSnap.exists) return toolError("NOT_FOUND", "No session found for this phone");
+
+        if (mode === "off") {
+          await sessionRef.update({
+            inShiftUpdatesPaused:  true,
+            inShiftUpdateCadence:  admin.firestore.FieldValue.delete(),
+          });
+          return {
+            success: true,
+            setting: "off",
+            message: "Mid-visit updates are off. Arrival notices and the end-of-visit summary still send. They can turn updates back on anytime.",
+          };
+        }
+        if (mode === "default") {
+          await sessionRef.update({
+            inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
+            inShiftUpdateCadence: admin.firestore.FieldValue.delete(),
+          });
+          return {
+            success: true,
+            setting: "default",
+            message: "Mid-visit updates reset to the standard cadence — roughly every 2 hours during a visit.",
+          };
+        }
+
+        const minutes = Number(frequencyMinutes);
+        if (!Number.isFinite(minutes) || minutes < 30 || minutes > 480) {
+          return toolError("INVALID_INPUT", "frequencyMinutes must be between 30 and 480");
+        }
+        await sessionRef.update({
+          inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
+          inShiftUpdateCadence: Math.round(minutes),
+        });
+        return {
+          success: true,
+          setting: `${Math.round(minutes)}m`,
+          message: `Mid-visit updates will now come about every ${Math.round(minutes)} minutes during a visit.`,
         };
       }
 
@@ -4690,11 +4824,18 @@ async function executeToolCall(
       // the amended senior_profiles rule lets the owning family read them (KTD-10).
       const ref = await db.collection("senior_profiles").add({
         userId:       clientId,
+        // clientId field REQUIRED for household reads — list_household_seniors
+        // queries where("clientId","==",...) and the onboarding writes set it;
+        // without it a tool-created senior is invisible to the household list.
+        clientId:     clientId,
         name:         seniorName,
         relationship: relationship ?? null,
         age:          age ?? null,
         needs:        Array.isArray(needs) ? needs : [],
         conditions:   Array.isArray(conditions) ? conditions : [],
+        // Onboarding-write shape parity: finalization stores conditions under
+        // `diagnoses` — mirror it so readers of either field see the same data.
+        diagnoses:    Array.isArray(conditions) ? conditions : [],
         location:     location ?? null,
         createdAt:    nowIso,
         source:       "cara_sms",
@@ -4794,24 +4935,24 @@ async function executeToolCall(
       const daysArr = Array.isArray(days) ? (days as string[]) : [];
       const todArr  = Array.isArray(timeOfDay) ? (timeOfDay as string[]) : [];
       const ref = db.collection("job_posts").doc();
-      await ref.set({
-        intakeId:       ref.id,
-        clientId,
-        status:         "open",
-        careTypes,
-        schedule:       { frequency: frequency ?? "flexible", days: daysArr, timeOfDay: todArr },
-        startDate:      startDate ?? null,
-        location:       { city: city ?? null, lat: null, lng: null },
-        summary:        `New care job — ${(careTypes as string[]).slice(0, 2).join(", ")}`,
-        daysPerWeek:    daysArr.length,
-        timeOfDay:      todArr.join(", "),
-        hourlyRate,
-        paymentMethod:  paymentMethod ?? null,
-        applicantCount: 0,
-        notifiedCount:  0,
-        source:         "cara_sms",
-        createdAt:      nowIso,
-      });
+      // Web JobPost contract via the shared builder — the caregiver Job Board
+      // renders title/location-string/rate; the old hand-rolled shape here
+      // (summary + location OBJECT) rendered blank and could crash the board.
+      const { buildWebJobPostDoc } = await import("../agents/jobPostContract");
+      await ref.set(buildWebJobPostDoc({
+        clientId:      clientId as string,
+        source:        "cara_sms",
+        title:         city ? `Care needed in ${city}` : "Care needed",
+        careTypes:     careTypes as string[],
+        startDate:     (startDate ?? undefined) as string | undefined,
+        frequency:     (frequency ?? undefined) as string | undefined,
+        days:          daysArr,
+        timeOfDay:     todArr,
+        hourlyRate:    hourlyRate as number | string,
+        paymentMethod: (paymentMethod ?? undefined) as string | undefined,
+        city:          (city ?? undefined) as string | undefined,
+        intakeId:      ref.id,
+      }));
       logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
       return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
     }
@@ -5773,6 +5914,110 @@ async function executeToolCall(
       };
     }
 
+    // ── Checkr Candidate MCP bridge ──────────────────────────────────────────
+    // Sessions live on Checkr's side (1 hour, one candidate, Mcp-Session-Id
+    // header). Each turn is a separate function invocation, so the session id
+    // is persisted per caregiver in checkr_mcp_sessions and reused by the
+    // verify/report tools.
+    if (name === "request_checkr_verification") {
+      const { caregiverId, email } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return toolError("INVALID_INPUT", "A valid email is required");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      if (!checkrMcp.isCheckrMcpConfigured()) {
+        return toolError("UNAVAILABLE",
+          "Checkr report lookup isn't configured yet — use get_background_check_status for the current status.");
+      }
+      try {
+        const mcpSessionId = await checkrMcp.initializeCheckrSession();
+        const result = await checkrMcp.callCheckrTool(mcpSessionId, "request_candidate_verification", { email });
+        if (result.isError) {
+          return { error: true, message: result.text || "Checkr couldn't send a verification code to that email." };
+        }
+        await db.collection("checkr_mcp_sessions").doc(caregiverId as string).set({
+          sessionId: mcpSessionId,
+          email,
+          verified:  false,
+          createdAt: nowIso,
+          // Checkr sessions last 1h; expire ours slightly earlier so we never
+          // hand the agent a session Checkr has already evicted.
+          expiresAt: new Date(Date.now() + 55 * 60 * 1000).toISOString(),
+        });
+        return {
+          success: true,
+          message: "Checkr emailed the caregiver a one-time code. Ask them for it, then call verify_checkr_otp.",
+        };
+      } catch (e) {
+        console.error("[request_checkr_verification] error:", e);
+        return { error: true, message: "I couldn't reach Checkr just now. Try again in a moment." };
+      }
+    }
+
+    if (name === "verify_checkr_otp") {
+      const { caregiverId, code } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (!code) return toolError("INVALID_INPUT", "code is required");
+      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
+      const sessSnap = await sessRef.get();
+      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
+      if (!sess || (sess.expiresAt as string) < new Date().toISOString()) {
+        return toolError("NOT_FOUND",
+          "No active Checkr verification session — call request_checkr_verification first.");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      try {
+        const result = await checkrMcp.callCheckrTool(
+          sess.sessionId as string,
+          "verify_candidate_otp",
+          { email: sess.email, code: String(code).trim() },
+        );
+        if (result.isError) {
+          return { error: true, message: result.text || "That code didn't verify — Checkr allows 3 attempts per session." };
+        }
+        await sessRef.set({ verified: true, verifiedAt: nowIso }, { merge: true });
+        return { success: true, message: "Identity verified with Checkr. get_checkr_report is now available." };
+      } catch (e) {
+        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
+          await sessRef.delete().catch(() => {});
+          return toolError("NOT_FOUND",
+            "The Checkr session expired — start over with request_checkr_verification.");
+        }
+        console.error("[verify_checkr_otp] error:", e);
+        return { error: true, message: "I couldn't verify that with Checkr just now. Try again in a moment." };
+      }
+    }
+
+    if (name === "get_checkr_report") {
+      const { caregiverId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
+      const sessSnap = await sessRef.get();
+      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
+      if (!sess || !sess.verified || (sess.expiresAt as string) < new Date().toISOString()) {
+        return toolError("PERMISSION_DENIED",
+          "Checkr identity verification needed first — call request_checkr_verification, then verify_checkr_otp.");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      try {
+        const result = await checkrMcp.callCheckrTool(sess.sessionId as string, "get_report", {});
+        if (result.isError) {
+          return { error: true, message: result.text || "Checkr couldn't return the report just now." };
+        }
+        logAudit({ eventType: "health_data_accessed", userId: caregiverId as string, data: { source: "mcp:get_checkr_report" } }).catch(() => {});
+        return { success: true, report: result.data ?? result.text };
+      } catch (e) {
+        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
+          await sessRef.delete().catch(() => {});
+          return toolError("NOT_FOUND",
+            "The Checkr session expired — start over with request_checkr_verification.");
+        }
+        console.error("[get_checkr_report] error:", e);
+        return { error: true, message: "I couldn't pull the report from Checkr just now. Try again in a moment." };
+      }
+    }
+
     // ── update_caregiver_availability ───────────────────────────────────────
     if (name === "update_caregiver_availability") {
       const { caregiverId, availableDays, unavailableDays, preferredTimeOfDay } = input as Record<string, unknown>;
@@ -6226,6 +6471,21 @@ async function executeToolCall(
         console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
       }
       let onboardingDataPatch: Record<string, unknown> = { [fieldName]: normalizedValue };
+      // Care-services canonicalization: keep the caregiver's RAW specialties as
+      // profile flavor, and also write the canonical skills/services enum the
+      // webapp checkboxes + matching engine read. Never let a canonicalization
+      // failure lose the specialties — the raw value is already in the patch.
+      if (role === "caregiver" && fieldName === "specialties") {
+        try {
+          const { canonicalizeCaregiverServices } = await import("../agents/caregiverServices");
+          const canonical = await canonicalizeCaregiverServices(normalizedValue);
+          if (canonical.length) {
+            onboardingDataPatch = { specialties: normalizedValue, skills: canonical, services: canonical };
+          }
+        } catch (err) {
+          console.error("save_onboarding_field: service canonicalization failed (keeping raw specialties):", err);
+        }
+      }
       if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
         try {
           const { quickComplete } = await import("../utils/openaiClient");

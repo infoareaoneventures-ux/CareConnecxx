@@ -24,6 +24,8 @@ const GROUP_SOURCE_AGENTS = new Set([
   "shift_task_family_update",
   "pre_shift_checkin",
   "shift_confirm_family_update",
+  "in_shift_update",
+  "in_shift_heartbeat",
 ]);
 
 // ── AgentOutput — returned by execution agents, consumed by Interaction Agent ──
@@ -33,6 +35,12 @@ export interface AgentOutput {
   urgency:     "immediate" | "standard" | "low";
   sourceAgent: string;
   canDrop:     boolean; // if false, always send regardless of DND/recency
+  // Exempt this send from the global per-user daily proactive cap while STILL
+  // honoring quiet hours / DND (canDrop: true). Used by transactional in-shift
+  // updates, which are part of an active service the family opted into and can
+  // tune conversationally — one long visit would otherwise exhaust the 3/day cap
+  // by mid-afternoon. Volume is bounded by the feature's own per-shift ceiling.
+  bypassDailyCap?: boolean;
   // Force a Linq protocol for compliance/deliverability-critical sends (e.g.
   // "SMS" for billing and emergency alerts so they never depend on iMessage).
   // Omit for the default iMessage → RCS → SMS auto-selection.
@@ -179,12 +187,17 @@ function splitMessage(text: string, maxLen = 1000): string[] {
 
 // ── sendViaInteractionAgent — the ONLY path for user-facing messages ──────────
 
+// Resolves true only when the message was actually handed to the transport —
+// every suppression path (opt-out, wait tool, daily cap, dedup) resolves false
+// so callers that meter real deliveries (e.g. the in-shift per-shift ceiling)
+// don't count phantom sends. Existing callers that ignore the result are
+// unaffected.
 export async function sendViaInteractionAgent(
   phone:  string,
   output: AgentOutput
-): Promise<void> {
+): Promise<boolean> {
   const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-  if (!sessionSnap.exists) return;
+  if (!sessionSnap.exists) return false;
 
   const session = sessionSnap.data() as AgentSession & Record<string, unknown>;
   const consentSnapshot = { optedOut: session.optedOut, optedInAt: (session as any).optedInAt };
@@ -193,7 +206,7 @@ export async function sendViaInteractionAgent(
     db.collection("consent_audit_log").add(
       buildConsentAuditRecord(phone, output.sourceAgent, "suppressed_opted_out", consentSnapshot, new Date().toISOString()),
     ).catch(() => {});
-    return;
+    return false;
   }
 
   // Determine target chat (group thread for group-appropriate sources)
@@ -217,12 +230,15 @@ export async function sendViaInteractionAgent(
         phone,
         data: { suppressed: true, reason: "wait_tool", sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
       }).catch(() => {});
-      return;
+      return false;
     }
 
     // Global per-user daily cap across ALL proactive sources. shouldSend judged
-    // "send now?"; this enforces "enough today?". Urgent/immediate bypasses.
-    if (output.urgency !== "immediate") {
+    // "send now?"; this enforces "enough today?". Urgent/immediate bypasses, as
+    // do transactional in-shift updates (bypassDailyCap) — they cleared the
+    // quiet-hours/DND check in shouldSend above, they just don't count against
+    // the daily proactive budget.
+    if (output.urgency !== "immediate" && !output.bypassDailyCap) {
       const today = new Date().toISOString().slice(0, 10);
       const cap = evaluateProactiveCap(
         (session as Record<string, unknown>).proactiveSentToday as ProactiveTally | undefined,
@@ -235,7 +251,7 @@ export async function sendViaInteractionAgent(
           phone,
           data: { suppressed: true, reason: "daily_cap", cap: MAX_PROACTIVE_PER_DAY, sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
         }).catch(() => {});
-        return;
+        return false;
       }
       proactiveTallyToPersist = cap.next;
     }
@@ -261,7 +277,7 @@ export async function sendViaInteractionAgent(
       phone,
       data: { suppressed: true, reason: "duplicate", sourceAgent: output.sourceAgent, preview: output.content.slice(0, 50) },
     }).catch(() => {});
-    return;
+    return false;
   }
 
   // Run through supervisor (which also lints internally). If supervisor throws
@@ -317,6 +333,7 @@ export async function sendViaInteractionAgent(
   db.collection("consent_audit_log").add(
     buildConsentAuditRecord(phone, output.sourceAgent, "sent", consentSnapshot, new Date().toISOString()),
   ).catch(() => {});
+  return true;
 }
 
 // ── Interaction Agent — NLU only, reads only ──────────────────────────────────

@@ -66,7 +66,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
     .join('')
     .toUpperCase();
 
-  const avatar = profile?.photo || profile?.imageUrl || (currentUser as any)?.photoURL;
+  const avatar = profile?.photo || profile?.imageUrl || (profile as any)?.profilePhoto || (profile as any)?.photoURL || (currentUser as any)?.photoURL;
 
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
     { label: 'Profile', onClick: () => go('/caregiver/profile'), icon: <User className="w-4 h-4" /> },

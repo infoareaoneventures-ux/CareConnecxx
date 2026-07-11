@@ -305,12 +305,12 @@ export async function handleCaregiverAvailabilityReply(
     const familySession = familySnap.data()!;
     const caregiverAvailableMsg = await generateCaraMessage({
       audience: "family",
-      context:  `${caregiverName} is available for an interview. The proposed time is ${formatted}. Ask the family to confirm by replying YES to schedule.`,
-      fallback: `${caregiverName} is available for an interview.\n\n${formatted}\n\nConfirm this time? Reply YES to schedule.`,
+      context:  `${caregiverName} is available for an interview. The proposed time is ${formatted}. Ask the family if that time works — a yes from them schedules it. End with the question itself, never a stiff "Reply YES" instruction.`,
+      fallback: `${caregiverName} is available for an interview.`,
       maxTokens: 80,
     });
     await sendMessage(familySession.chatId,
-      `${caregiverAvailableMsg}\n\n${formatted}\n\nReply YES to schedule.`
+      `${caregiverAvailableMsg}\n\n${formatted}\n\nDoes that time work? Say yes and I'll get it scheduled.`
     );
     // Store pending confirmation
     await db.collection("agent_sessions").doc(reqData.clientPhone).update({

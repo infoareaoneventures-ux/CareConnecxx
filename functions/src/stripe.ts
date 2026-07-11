@@ -333,10 +333,17 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       const subscriptionId = typeof session.subscription === 'string'
         ? session.subscription
         : (session.subscription as any)?.id ?? '';
+      const customerId = typeof session.customer === 'string'
+        ? session.customer
+        : (session.customer as any)?.id ?? '';
       const update: Record<string, unknown> = {};
       // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
       if (session.metadata?.includeMVR === 'true') update.mvrPaid = true;
       if (subscriptionId) update.caregiverSubscriptionId = subscriptionId;
+      // Stamped so advanceOnboardingStep can mirror it to customers/{uid} —
+      // the caregiver billing portal (createCaregiverBillingPortalSession)
+      // resolves the Stripe customer from that doc.
+      if (customerId) update.stripeCustomerId = customerId;
       if (Object.keys(update).length) {
         await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => {});
       }
@@ -593,6 +600,63 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 }
 
 /**
+ * Resolve the Firebase uid behind a subscription. Web-created subscriptions
+ * carry firebaseUID metadata; Evia SMS checkouts only carry `phone`
+ * (subscription_data.metadata, onboardingConversation.ts) — resolve those via
+ * the agent session / Auth / the recorded subscription id so renewal,
+ * payment-failure, and cancellation webhooks aren't blind to SMS members.
+ */
+async function resolveSubscriptionUserId(subscription: Stripe.Subscription): Promise<string | null> {
+  const direct = subscription.metadata?.firebaseUID;
+  if (direct) return direct;
+
+  const phone = subscription.metadata?.phone;
+  if (phone) {
+    try {
+      const sess = await admin.firestore().collection('agent_sessions').doc(phone).get();
+      const viaSession = (sess.data()?.userId ?? sess.data()?.caregiverId) as string | undefined;
+      if (viaSession) return viaSession;
+    } catch { /* fall through */ }
+    try {
+      return (await admin.auth().getUserByPhoneNumber(phone)).uid;
+    } catch { /* fall through */ }
+  }
+
+  // Last resort: the onboarding mirrors recorded the subscription id on the docs.
+  try {
+    const cg = await admin.firestore().collection('caregivers')
+      .where('membershipSubscriptionId', '==', subscription.id).limit(1).get();
+    if (!cg.empty) return cg.docs[0].id;
+    const us = await admin.firestore().collection('users')
+      .where('subscriptionId', '==', subscription.id).limit(1).get();
+    if (!us.empty) return us.docs[0].id;
+  } catch { /* fall through */ }
+
+  return null;
+}
+
+/**
+ * Mirror a membership status change onto caregivers/{uid} — the caregiver
+ * webapp (CaregiverProgressCard, useCaregiverGate) reads membershipStatus /
+ * membershipPaid from the CAREGIVERS doc, not users. No-op for clients.
+ */
+async function mirrorMembershipToCaregiverDoc(userId: string, membershipStatus: string): Promise<boolean> {
+  try {
+    const ref = admin.firestore().collection('caregivers').doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    await ref.set({
+      membershipStatus,
+      ...(membershipStatus === 'active' || membershipStatus === 'trialing' ? { membershipPaid: true } : {}),
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`mirrorMembershipToCaregiverDoc failed for ${userId}:`, err);
+    return false;
+  }
+}
+
+/**
  * Handle invoice.payment_succeeded
  */
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
@@ -600,7 +664,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
 
   if (!userId) return;
 
@@ -622,6 +686,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     membershipStatus: 'active',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
+  await mirrorMembershipToCaregiverDoc(userId, 'active');
 
   // Notify caregiver of successful payment
   const amountPaid = (invoice.amount_paid / 100).toFixed(2);
@@ -773,8 +838,8 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
-  const userId = subscription.metadata?.firebaseUID;
-  
+  const userId = await resolveSubscriptionUserId(subscription);
+
   if (!userId) return;
 
   // Record failed payment
@@ -797,18 +862,22 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     ? new Date(invoice.next_payment_attempt * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })
     : null;
 
-  // Update user status
-  await admin.firestore().collection('users').doc(userId).update({
+  // Update user status. set/merge, not update — an SMS-onboarded member's
+  // users doc may not exist yet, and update() would 500 the whole webhook.
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus:    'payment_failed',
     subscriptionStatus:  'past_due',
     paymentFailureCount: attemptCount,
     lastPaymentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  // Caregiver webapp reads the caregivers doc — surfaces the "Payment failed"
+  // card with the update-payment CTA. Returns false for clients (no doc).
+  const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'payment_failed');
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  const billingUrl = appLink("/client/membership");
+  const billingUrl = appLink(isCaregiverMember ? "/caregiver/membership" : "/client/membership");
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =
@@ -876,7 +945,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
  * Handle customer.subscription.created
  */
 async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
   // Save subscription to Firestore
@@ -897,13 +966,14 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-  // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  // Update user document. set/merge — the SMS path's users doc may not exist
+  // yet when this event races checkout.session.completed.
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: subscription.status,
     subscriptionId: subscription.id,
     subscriptionActive: true,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
 
   console.log(`Subscription created for user: ${userId}`);
 }
@@ -912,30 +982,33 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
  * Handle customer.subscription.updated
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
-  // Update subscription in Firestore
+  // Update subscription in Firestore. set/merge — SMS-created subscriptions
+  // have no customers/{uid}/subscriptions doc (that's written by the web
+  // flow's created-handler), and update() on a missing doc throws.
   await admin.firestore()
     .collection('customers')
     .doc(userId)
     .collection('subscriptions')
     .doc(subscription.id)
-    .update({
+    .set({
       status: subscription.status,
       current_period_start: new Date(subscription.current_period_start * 1000),
       current_period_end: new Date(subscription.current_period_end * 1000),
       cancel_at_period_end: subscription.cancel_at_period_end,
       canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000) : null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, { merge: true });
 
   // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: subscription.status,
     subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  await mirrorMembershipToCaregiverDoc(userId, subscription.status);
 
   console.log(`Subscription updated for user: ${userId}`);
 }
@@ -944,28 +1017,31 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * Handle customer.subscription.deleted
  */
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
-  // Update subscription in Firestore
+  // Update subscription in Firestore. set/merge — see handleSubscriptionUpdated.
   await admin.firestore()
     .collection('customers')
     .doc(userId)
     .collection('subscriptions')
     .doc(subscription.id)
-    .update({
+    .set({
       status: 'canceled',
       canceled_at: new Date(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, { merge: true });
 
   // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: 'canceled',
     subscriptionActive: false,
     subscriptionId: null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  // Caregiver webapp reads the caregivers doc — surfaces the "Membership
+  // canceled" card with the reactivate CTA.
+  await mirrorMembershipToCaregiverDoc(userId, 'canceled');
 
   await admin.firestore().collection('users').doc(userId).collection('notifications').add({
     userId,

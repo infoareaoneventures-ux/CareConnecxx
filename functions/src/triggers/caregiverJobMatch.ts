@@ -49,8 +49,10 @@ export async function notifyNewCaregiverOfJobs(caregiverId: string): Promise<voi
     const scored: Scored[] = [];
     for (const jobDoc of jobsSnap.docs) {
       const data = jobDoc.data();
-      const jLat = data.location?.lat ?? data.location?.latitude ?? data.latitude;
-      const jLng = data.location?.lng ?? data.location?.longitude ?? data.longitude;
+      // Web-contract docs carry top-level lat/lng (all writers since
+      // 2026-07-10); the object fallbacks cover legacy docs.
+      const jLat = data.lat ?? data.location?.lat ?? data.location?.latitude ?? data.latitude;
+      const jLng = data.lng ?? data.location?.lng ?? data.location?.longitude ?? data.longitude;
       const dist = haversineMiles(cgLat, cgLng, jLat, jLng);
       if (dist === undefined || dist > NOTIFY_RADIUS_MILES) continue;
       const careTypes: string[] = data.careTypes ?? [];
@@ -84,7 +86,7 @@ export async function notifyNewCaregiverOfJobs(caregiverId: string): Promise<voi
     const message =
       `Welcome aboard, ${firstName}! There's already a care job near you that fits your profile.\n\n` +
       `📍 ${city} · ${careText}\n\n` +
-      `Interested? Reply YES or NO.` +
+      `Interested? Just tell me yes or no — or ask me anything about it.` +
       (more > 0 ? `\n\n(${more} more open nearby — reply "jobs" to see them.)` : "");
 
     await startTyping(session.chatId).catch(() => {});

@@ -89,7 +89,7 @@ export async function startInstantPayout(
   await sendMessage(chatId,
     `You have $${amount} available for instant payout.\n\n` +
     `Instant payouts are free and arrive within about 30 minutes. ` +
-    `Send $${amount} to your bank now? Reply YES or NO.`,
+    `Want me to send $${amount} to your bank now? Reply YES to send it, or NO to hold off.`,
   );
 }
 
@@ -100,7 +100,7 @@ export async function handleInstantPayoutConfirm(
   chatId:      string,
 ): Promise<void> {
   // isQuestionOrOther guard
-  const reAsk = "Send the instant payout? Reply YES or NO.";
+  const reAsk = "So — send the instant payout? Reply YES to send it, or NO to hold off.";
   const isQ = await parseWithClaude(
     `A caregiver was asked: "${reAsk}". ` +
       "Reply YES if their message is a question or off-topic, NO if it's a direct yes/no answer. Only reply YES or NO.",

@@ -209,6 +209,22 @@ vi.mock("../../agents/jobMatchRecommender", () => ({
   recommendJobsForCaregiver: vi.fn().mockResolvedValue([{ jobId: "j1", score: 0.9 }]),
 }));
 
+vi.mock("../checkrMcpClient", () => ({
+  isCheckrMcpConfigured:   vi.fn().mockReturnValue(true),
+  initializeCheckrSession: vi.fn().mockResolvedValue("mcp-sess-1"),
+  callCheckrTool: vi.fn().mockResolvedValue({
+    isError: false,
+    text:    JSON.stringify({ status: "complete", result: "clear" }),
+    data:    { status: "complete", result: "clear" },
+  }),
+  CheckrMcpError: class CheckrMcpError extends Error {
+    constructor(message: string, public readonly status?: number, public readonly sessionExpired = false) {
+      super(message);
+      this.name = "CheckrMcpError";
+    }
+  },
+}));
+
 import { handleToolCall } from "../server";
 
 describe("MCP tool smoke coverage", () => {
@@ -260,6 +276,54 @@ describe("MCP tool smoke coverage", () => {
 
   it("get_background_check_status rejects missing input", async () => {
     expect(((await handleToolCall("get_background_check_status", {})) as any)._toolError).toBe(true);
+  });
+
+  // ── Checkr Candidate MCP bridge ────────────────────────────────────────────
+  it("request_checkr_verification happy path opens a session and persists it", async () => {
+    const r = await handleToolCall("request_checkr_verification", { caregiverId: "cg1", email: "cg@example.com" }) as any;
+    expect(r.success).toBe(true);
+    const sess = hoisted.docState.get("checkr_mcp_sessions/cg1");
+    expect(sess?.sessionId).toBe("mcp-sess-1");
+    expect(sess?.verified).toBe(false);
+  });
+
+  it("request_checkr_verification rejects missing input", async () => {
+    expect(((await handleToolCall("request_checkr_verification", {})) as any)._toolError).toBe(true);
+    expect(((await handleToolCall("request_checkr_verification", { caregiverId: "cg1", email: "not-an-email" })) as any)._toolError).toBe(true);
+  });
+
+  it("verify_checkr_otp happy path marks the session verified", async () => {
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: false,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const r = await handleToolCall("verify_checkr_otp", { caregiverId: "cg1", code: "123456" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.docState.get("checkr_mcp_sessions/cg1")?.verified).toBe(true);
+  });
+
+  it("verify_checkr_otp rejects missing input and missing session", async () => {
+    expect(((await handleToolCall("verify_checkr_otp", {})) as any)._toolError).toBe(true);
+    expect(((await handleToolCall("verify_checkr_otp", { caregiverId: "cg-none", code: "123456" })) as any)._toolError).toBe(true);
+  });
+
+  it("get_checkr_report happy path returns the report on a verified session", async () => {
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: true,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const r = await handleToolCall("get_checkr_report", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.report).toEqual({ status: "complete", result: "clear" });
+  });
+
+  it("get_checkr_report rejects missing input and an unverified session", async () => {
+    expect(((await handleToolCall("get_checkr_report", {})) as any)._toolError).toBe(true);
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: false,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    expect(((await handleToolCall("get_checkr_report", { caregiverId: "cg1" })) as any)._toolError).toBe(true);
   });
 
   it("get_health_signals happy path", async () => {

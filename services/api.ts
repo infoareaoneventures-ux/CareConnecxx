@@ -160,6 +160,31 @@ import { storageService } from './storageService';
 // Email/password and Google auth were retired with the phone-only login
 // cutover (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
 // Login is phone OTP at /login; signup is the phone-first /start flow.
+// Coerce legacy server-written job_posts docs (Evia pre-2026-07-10) into the
+// web JobPost render contract: those docs carried `location` as an OBJECT
+// (crashes JSX), `summary` instead of `title`, `hourlyRate` instead of `rate`,
+// and no `date` mirror. New writes go through functions'
+// agents/jobPostContract.ts (buildWebJobPostDoc), so this is purely a defense
+// for docs already in Firestore. Exported for the Job Board's
+// direct-collection reads.
+export const normalizeJobPost = (raw: any): JobPost => {
+    const j: any = { ...raw };
+    if (j.location && typeof j.location === 'object') {
+        if (j.lat == null && j.location.lat != null) j.lat = j.location.lat;
+        if (j.lng == null && j.location.lng != null) j.lng = j.location.lng;
+        j.location = [j.location.city ?? j.city, j.zipCode].filter(Boolean).join(', ');
+    }
+    if (!j.title) j.title = j.summary || 'Care needed';
+    if (j.rate == null) {
+        if (typeof j.hourlyRate === 'number') j.rate = j.hourlyRate;
+        else { j.rate = 0; j.rateFlexible = j.rateFlexible ?? true; }
+    }
+    if (!j.date && j.startDate) j.date = j.startDate;
+    if (!j.careTypes && Array.isArray(j.requirements)) j.careTypes = j.requirements;
+    if (Array.isArray(j.schedule?.days) && !j.daysOfWeek && j.schedule.days.length) j.daysOfWeek = j.schedule.days;
+    return j as JobPost;
+};
+
 export const dbService = {
     logout: async () => {
         if (isConfigured && auth) {
@@ -435,7 +460,7 @@ export const dbService = {
                     .where('clientId', '==', clientId)
                     .get();
                 const jobs: JobPost[] = [];
-                snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                 jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
                 return jobs;
             } catch (e: any) {
@@ -456,7 +481,7 @@ export const dbService = {
             .onSnapshot(
                 snap => {
                     const jobs: JobPost[] = [];
-                    snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                    snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                     jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
                     onUpdate(jobs);
                 },
@@ -541,7 +566,7 @@ export const dbService = {
                 const snap = await q.get();
 
                 const jobs: JobPost[] = [];
-                snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                 return jobs;
             } catch (e: any) {
                 if (e.code === 'permission-denied') return [];
@@ -571,8 +596,8 @@ export const dbService = {
                 const jobs: JobPost[] = [];
                 snap.forEach(doc => {
                     const data = doc.data();
-                    if (data && data.title) {
-                        jobs.push({ id: doc.id, ...data } as JobPost);
+                    if (data && (data.title || data.summary)) {
+                        jobs.push(normalizeJobPost({ id: doc.id, ...data }));
                     }
                 });
                 return jobs;

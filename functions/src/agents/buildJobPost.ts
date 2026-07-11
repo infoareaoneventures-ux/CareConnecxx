@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import axios from "axios";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
 import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
+import { buildWebJobPostDoc } from "./jobPostContract";
 
 const db = admin.firestore();
 
@@ -135,28 +136,38 @@ export async function buildAndSaveJobPost(params: {
     updatedAt: new Date().toISOString(),
   }, { merge: true });
 
-  // ── job_posts/{autoId} — public listing that triggers caregiver notifications
-  const jobPostRef = db.collection("job_posts").doc();
-  const jobPostDoc = {
-    intakeId:       jobPostRef.id,
-    clientId:       uid,
-    status:         "open",
-    careTypes:      careNeeds,
-    schedule:       { frequency, days, timeOfDay },
+  // ── job_posts/{uid} — public listing in the WEB JobPost contract ───────────
+  // Keyed by the client uid, NOT an autoId: the clientIntakes onCreate trigger
+  // (aiMatchTriggers → jobNotifications.createJobPost) also writes
+  // job_posts/{uid}, so both paths converge on ONE doc instead of the board
+  // showing the same family twice (and caregivers being texted twice).
+  const jobPostRef = db.collection("job_posts").doc(uid);
+  const jobPostDoc = buildWebJobPostDoc({
+    clientId:        uid,
+    source:          "cara",
+    title,
+    description,
+    clientName:      ((onboardingData.firstName ?? "") as string) || undefined,
+    careTypes:       careNeeds,
+    careLevel,
     startDate,
-    location:       { lat: coords?.lat ?? null, lng: coords?.lng ?? null, city },
-    summary:        careNeeds.length > 0 ? `New care job — ${careNeeds.slice(0, 2).join(", ")}` : "New care job",
-    recipientsCount,
-    daysPerWeek:    days.length || Number(jobData.jobDaysPerWeek ?? 0),
-    timeOfDay:      timeOfDay.join(", "),
-    hourlyRate,
+    frequency,
+    days,
+    daysPerWeek:     Number(jobData.jobDaysPerWeek ?? 0),
+    timeOfDay,
+    hourlyRate:      hourlyRate as number | string | undefined,
     paymentMethod,
-    applicantCount: 0,
-    notifiedCount:  0,
-    source:         "cara",
-    createdAt:      admin.firestore.FieldValue.serverTimestamp(),
-  };
-  await jobPostRef.set(jobPostDoc);
+    city,
+    zipCode,
+    lat:             coords?.lat ?? null,
+    lng:             coords?.lng ?? null,
+    recipientsCount,
+    petsInHome,
+    smokingHousehold,
+    phone,
+    intakeId:        uid,
+  });
+  await jobPostRef.set(jobPostDoc, { merge: true });
 
   // ── onboardingProgress flags on users/{uid} ───────────────────────────────
   await db.collection("users").doc(uid).set({

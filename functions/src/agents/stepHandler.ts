@@ -29,6 +29,34 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
   return result.trim().toUpperCase().startsWith("Y");
 }
 
+// Classify a reply sent while Evia is WAITING on the user to finish an
+// out-of-band action (tap a link, finish a Checkr form, complete a payment).
+// These steps have no question to answer, so the two-way question/answer split
+// above is the wrong shape: a pure "thanks / sounds good" is neither, and
+// treating it as "other" made Evia re-explain the step or re-blast the link at
+// someone who was just being polite (broken-record behavior).
+//   ack      → acknowledgment/thanks/agreement only; reply with ONE brief warm
+//              line and do NOT resend the link or re-explain the step
+//   question → a question or a reported problem; answer it first
+//   other    → anything actionable (wants the link again, status, new info);
+//              the step's normal resend/status behavior applies
+export type AwaitingReplyKind = "ack" | "question" | "other";
+
+export async function classifyAwaitingReply(text: string, waitingOn: string): Promise<AwaitingReplyKind> {
+  const raw = await parseWithClaude(
+    "Evia, a care coordinator, just told the user what happens next and is now waiting on them to: " +
+      `${waitingOn}. The user texted back. Classify the reply: ` +
+      'ONLY an acknowledgment, thanks, or agreement with nothing asked or added ("thanks", "sounds good", "ok great", "got it", "perfect", "will do", "👍") → ack. ' +
+      "A question, confusion, or a reported problem (link not working, never got the email, how long does it take) → question. " +
+      "Anything actionable — asks for the link again, gives new information, reports the action done → other. " +
+      "Reply with exactly one word: ack, question, or other.",
+    text,
+    5,
+  ).catch(() => "other"); // fail toward the step's normal behavior
+  const v = raw.trim().toLowerCase();
+  return v === "ack" || v === "question" ? v : "other";
+}
+
 // Answer a mid-flow question briefly, then append the re-ask so the user can
 // still answer the step they were on.
 export async function answerMidFlow(text: string, reAsk: string): Promise<string> {

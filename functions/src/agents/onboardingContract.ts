@@ -100,7 +100,12 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   //   zipCode — the service-area gate in save_onboarding_field asks for a ZIP
   //     when the city isn't recognized; the loop must be able to save it
   //   gender / languages / canDrive — the caregiver_ask_profile step's fields
-  "certifications", "skills", "zipCode", "gender", "languages", "canDrive", "bioSkipped",
+  //   jobTypes — webapp display-parity array (mirror of jobType); the model may
+  //     save it directly when a caregiver names more than one work type
+  //   services — canonical care-services (mirror of skills); rarely saved by the
+  //     model directly but allowed so the absorber/canonicalizer can write it
+  "certifications", "skills", "services", "zipCode", "gender", "languages",
+  "canDrive", "bioSkipped", "jobTypes",
 ]);
 
 // The step the flow advances to once conversational collection completes and the
@@ -151,6 +156,41 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
     return JOB_TYPE_CANON[key] ?? value;
   }
   return value;
+}
+
+// The webapp caregiver profile stores/reads jobTypes as an array of hyphenated
+// ids (components/caregiver/signup/constants.ts JOB_TYPES: occasional |
+// part-time | full-time), while Evia's collected jobType uses the matching
+// engine's underscored enum (occasional | part_time | full_time). Map one to the
+// other for the webapp display mirror. Unknown values are dropped.
+const JOB_TYPE_TO_WEB_ID: Record<string, string> = {
+  occasional: "occasional",
+  part_time: "part-time",
+  full_time: "full-time",
+  // tolerate already-hyphenated or raw spellings so the mirror never blanks
+  "part-time": "part-time",
+  "full-time": "full-time",
+};
+
+// Produce the webapp jobTypes array from whatever the loop collected — a single
+// jobType string and/or a jobTypes array (when the caregiver named more than one
+// work type). Deduped, in a stable order, hyphenated web ids only.
+export function caregiverJobTypesToWebIds(
+  jobType: unknown,
+  jobTypes: unknown,
+): string[] {
+  const raw: string[] = [];
+  if (Array.isArray(jobTypes)) {
+    for (const v of jobTypes) if (typeof v === "string") raw.push(v);
+  }
+  if (typeof jobType === "string") raw.push(jobType);
+  const order = ["occasional", "part-time", "full-time"];
+  const mapped = new Set<string>();
+  for (const v of raw) {
+    const web = JOB_TYPE_TO_WEB_ID[v.trim().toLowerCase()];
+    if (web) mapped.add(web);
+  }
+  return order.filter((o) => mapped.has(o));
 }
 
 // Required fields still missing from the collected data, in flow order.

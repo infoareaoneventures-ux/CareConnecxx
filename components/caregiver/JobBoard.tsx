@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
-import { dbService } from '../../services/api';
+import { dbService, normalizeJobPost } from '../../services/api';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
 import { jobApplicationService, useMyApplications } from '../../hooks/useJobApplications';
@@ -175,7 +175,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         if (hiddenIds.length === 0) { setHiddenJobs([]); setHiddenJobsLoading(false); return; }
         if (!db) { setHiddenJobsLoading(false); return; }
         db.collection('job_posts').where('status', '==', 'open').get().then(snap => {
-            const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as JobPost[];
+            const all = snap.docs.map(d => normalizeJobPost({ id: d.id, ...d.data() }));
             setHiddenJobs(all.filter(j => hiddenIds.includes(j.id)));
         }).catch(() => {}).finally(() => setHiddenJobsLoading(false));
     }, [activeTab]);
@@ -191,7 +191,10 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 (snapshot) => {
                     const appliedJobIds = new Set(applications.map(a => a.jobId));
                     const hidden = new Set<string>(JSON.parse(localStorage.getItem('careconnex.hiddenJobs') || '[]'));
-                    const allJobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as JobPost[];
+                    // normalizeJobPost: legacy Evia-written docs carry location
+                    // as an OBJECT (crashes JSX) / summary instead of title —
+                    // coerce to the render contract before anything touches them.
+                    const allJobs = snapshot.docs.map(doc => normalizeJobPost({ id: doc.id, ...doc.data() }));
                     setJobs(allJobs.filter(job => !appliedJobIds.has(job.id) && !hidden.has(job.id) && (job as any).clientActive !== false));
                     setJobsLoading(false);
                 },
@@ -300,7 +303,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         try {
             const doc = await fdb.collection('job_posts').doc(jobId).get();
             if (doc.exists) {
-                const job = { id: doc.id, ...doc.data() } as JobPost;
+                const job = normalizeJobPost({ id: doc.id, ...doc.data() });
                 // Apply the same blocked-client / inactive-client filters the job list
                 // uses, so a ?job= deep-link (or an Interviews/Applications "Details"
                 // link) can't open a job from a blocked or deactivated client.

@@ -133,6 +133,31 @@ describe("buildCaregiverOnboardingDirective", () => {
     expect(d).toContain("one short, casual question");
   });
 
+  it("surfaces concrete care services in the ask and sweeps the rest once", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("care services");
+    // a few concrete menu items named so the caregiver knows what counts
+    expect(d).toContain("companionship");
+    expect(d).toContain("medication reminders");
+    expect(d).toContain("transportation");
+    // one sweep, not a recited list
+    expect(d).toContain("sweep the rest once");
+    expect(d).toContain("never read all eight back like a form");
+  });
+
+  it("asks availability in the webapp's parts-of-day vocabulary and echoes what it saved", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("mornings, afternoons, evenings, or overnights");
+    expect(d).toContain("echo what you saved");
+    expect(d).toContain("reflect back");
+  });
+
+  it("captures every job type named (webapp jobTypes parity)", () => {
+    const d = buildCaregiverOnboardingDirective({}).toLowerCase();
+    expect(d).toContain("job type");
+    expect(d).toContain("jobtypes");
+  });
+
   it("user-facing brand is Evia (never Cara) in the directive prose", () => {
     const d = buildCaregiverOnboardingDirective({});
     expect(d).not.toMatch(/\bCara\b/);

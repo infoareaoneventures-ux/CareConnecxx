@@ -85,4 +85,22 @@ describe("absorbCaregiverFields", () => {
     const out = await absorbCaregiverFields("msg", {});
     expect(out).toEqual({});
   });
+
+  it("canonicalizes freshly-absorbed specialties into skills/services (keeps raw specialties)", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce(JSON.stringify({ specialties: ["memory care", "meal prep"] })) // extraction
+      .mockResolvedValueOnce(JSON.stringify(["Dementia / Memory Care", "Meal Preparation"])); // canonicalization
+    const out = await absorbCaregiverFields("msg", {});
+    expect(out.specialties).toEqual(["memory care", "meal prep"]);
+    expect(out.skills).toEqual(["Dementia / Memory Care", "Meal Preparation"]);
+    expect(out.services).toEqual(["Dementia / Memory Care", "Meal Preparation"]);
+  });
+
+  it("does not touch skills when the model already saved them", async () => {
+    parseWithClaude.mockResolvedValueOnce(JSON.stringify({ specialties: ["dementia"] }));
+    const out = await absorbCaregiverFields("msg", { skills: ["Companionship"] });
+    expect(out.specialties).toEqual(["dementia"]);
+    expect(out.skills).toBeUndefined();
+    expect(out.services).toBeUndefined();
+  });
 });

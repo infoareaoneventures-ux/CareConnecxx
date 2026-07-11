@@ -2,6 +2,8 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
+import { AgentSession } from "../linq/client";
 
 const db = admin.firestore();
 
@@ -16,6 +18,7 @@ export const sendStaleSessionNudges = functions.pubsub
 
     // ── Auto-recover sessions stuck waiting for a webhook for 7+ days ─────────
     const WEBHOOK_AWAITING_STEPS = [
+      "caregiver_awaiting_bgcheck_consent",
       "caregiver_awaiting_bgcheck",
       "caregiver_awaiting_stripe",
       "caregiver_awaiting_membership",
@@ -46,6 +49,58 @@ export const sendStaleSessionNudges = functions.pubsub
         }
       } catch (err) {
         console.error(`[staleSessionNudge] resendStuckStep failed for ${doc.id}:`, err);
+      }
+    }
+
+    // ── Auto-complete sessions stuck at a permissions step for 7+ days ────────
+    // The permission questions are optional yes/no setup that runs AFTER the
+    // real onboarding is done (caregiver: bg check cleared + payouts live;
+    // client: payment landed) — but the router consumes EVERY inbound text
+    // while onboardingStep is a permissions step, so a session stuck here
+    // blocks all of Evia's normal features indefinitely. After 7 days: default
+    // the unanswered permissions OFF, mark complete, and tell them they're set.
+    const PERMISSION_STEPS = [
+      "caregiver_permissions_decline", "caregiver_permissions_arrival",
+      "client_permissions_contact", "client_permissions_booking", "client_permissions_autobook",
+    ];
+    const permSnap = await db.collection("agent_sessions")
+      .where("onboardingStep", "in", PERMISSION_STEPS)
+      .get();
+
+    for (const doc of permSnap.docs) {
+      const session = doc.data();
+      if (session.optedOut) continue;
+      const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
+      if (!updatedAt || updatedAt > sevenDaysAgo) continue;
+      if (!session.chatId) continue;
+
+      try {
+        const step     = session.onboardingStep as string;
+        const userType = step.startsWith("caregiver") ? ("caregiver" as const) : ("client" as const);
+        const userId   = ((userType === "caregiver" ? session.caregiverId : session.userId) ?? doc.id) as string;
+        const { finalizePermissionsWithDefaults } = await import("../agents/permissionsConversation");
+        await finalizePermissionsWithDefaults(doc.id, session.chatId as string, userType, userId, step);
+
+        const message = await generateCaraMessage({
+          audience: userType === "caregiver" ? "caregiver" : "family",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: userType === "caregiver"
+            ? "This caregiver's profile is complete and live, but they never answered the optional yes/no setup questions, so Evia has left those auto-settings OFF and finished setup for them. Tell them warmly: they're all set, their profile is live, and they can turn on auto-declining jobs or arrival notifications anytime by texting. Never claim anything is missing or unfinished."
+            : "This family's setup is complete, but they never answered the optional yes/no permission questions, so Evia has left those settings off (Evia will always check with them first) and finished setup. Tell them warmly they're all set and Evia is finding caregivers now; they can change any setting anytime by texting.",
+          fallback: userType === "caregiver"
+            ? "You're all set — your profile is live! I've left the optional auto-settings off for now; text me anytime to change them."
+            : "You're all set! I've left the optional settings off for now (I'll always check with you first) and I'm finding caregivers for you. Text me anytime to change anything.",
+          maxTokens: 120,
+        });
+        await sendViaInteractionAgent(doc.id, {
+          content:     message,
+          urgency:     "low",
+          sourceAgent: "stale_nudge",
+          canDrop:     true,
+        });
+        console.log(`[staleSessionNudge] auto-completed stale permissions for ${doc.id} (step: ${step})`);
+      } catch (err) {
+        console.error(`[staleSessionNudge] permissions auto-complete failed for ${doc.id}:`, err);
       }
     }
 
@@ -97,9 +152,12 @@ export const sendStaleSessionNudges = functions.pubsub
             `Hi${namePart}, still thinking about care? Whenever you're ready, just tell me — ` +
             `are you looking for care for someone, or are you a caregiver yourself?`;
         } else if (userType === "caregiver") {
-          if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck") {
-            context = `${firstName || "This caregiver"} stalled at the background-check step — the last thing before families can book them. Warmly nudge them: families can't book until it's done, it takes about 5 minutes, and they can reply here to get the link again.`;
-            fallback = `${greeting} Your background check is the last step before you can start getting booked.\n\nFamilies can't book you until it's done. It takes about 5 minutes. Reply here and I'll send the link again.`;
+          if (step === "caregiver_send_bgcheck" || step === "caregiver_awaiting_bgcheck_consent") {
+            context = `${firstName || "This caregiver"} stalled before authorizing their background check — the last thing before families can book them, and it's already included in the membership they paid. Warmly nudge them: it takes about a minute to review and authorize, then Checkr emails them a secure link to finish, and they can reply here to get the link again.`;
+            fallback = `${greeting} Your background check is the last step before you can start getting booked — and it's already included in your membership.\n\nAuthorizing it takes about a minute, then Checkr emails you a secure link to finish. Reply here and I'll send the link again.`;
+          } else if (step === "caregiver_awaiting_bgcheck") {
+            context = `${firstName || "This caregiver"} authorized their background check but hasn't finished Checkr's form yet. Warmly nudge them: the secure link is in their email from Checkr, it takes about 5 minutes, families can't book them until it's done, and they can reply here to get the link texted again.`;
+            fallback = `${greeting} Your background check is almost done — Checkr emailed you a secure link to finish (about 5 minutes).\n\nFamilies can't book you until it's complete. Reply here and I'll text you the link again.`;
           } else if (step === "caregiver_ask_rate") {
             context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge $18-28/hr, and they can always update it later. Encourage them to pick something.`;
             fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge $18-28/hr. You can always update it later. No pressure to get it perfect now.`;
@@ -107,28 +165,62 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
             fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: activating their $66.49/year membership unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
-            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nActivating your $66.49/year membership unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their $66.49/year membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
+            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour $66.49/year membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
             context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, CPR, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
             fallback = `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
+          } else if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
+            // Their profile IS finished at this point (bg check cleared, payouts
+            // live, matchable) — never imply otherwise (founder report 2026-07-10:
+            // the generic branch below told a fully live caregiver their profile
+            // was "almost there").
+            context = `${firstName || "This caregiver"}'s profile is COMPLETE and LIVE — they're fully approved and matchable. NOTHING is missing from their profile; never say it's unfinished or that they can't pick up shifts yet. All that's left is one optional yes/no setup question Evia already asked (${step === "caregiver_permissions_arrival" ? "auto-notifying the family when they arrive at a visit" : "auto-declining job requests outside their availability"}). Warmly invite a quick yes or no — one word finishes setup, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
+            fallback = `${greeting} Good news — your profile is complete and live. A quick yes or no to my last question and you're all set (you can change it anytime).`;
           } else {
             context = `${firstName || "This caregiver"} stalled partway through profile setup. Send a short, warm nudge inviting them to reply whenever they're ready to continue.`;
             fallback = `${greeting} Your caregiver profile is almost done.\n\nReply here whenever you're ready to continue.`;
           }
         } else {
           if (step === "client_send_payment" || step === "client_awaiting_payment") {
-            context = `${firstName || "This family member"} stalled at the last step — adding a payment method so caregivers can get paid after each visit. Warmly reassure: it takes about 30 seconds and there are no charges until they book a caregiver.`;
-            fallback = `${greeting} The last step is adding a payment method so caregivers can get paid after each visit.\n\nTakes about 30 seconds. No charges until you book a caregiver.`;
+            // Accurate money copy (2026-07-09): this checkout is a $29.95/month
+            // subscription that bills immediately — never claim "no charges
+            // until you book" or frame it as card-on-file.
+            context = `${firstName || "This family member"} stalled at the last step — starting their $29.95/month Evia membership, which is what lets Evia begin finding and coordinating caregivers. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
+            fallback = `${greeting} The last step is starting your membership ($29.95/month) so I can begin finding caregivers for you.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
           } else if (step === "client_awaiting_identity") {
             context = `${firstName || "This family member"} stalled on a quick identity check. Warmly reassure: it's a 30-second step that keeps every family on the platform safe, and they can reply here to get a fresh link.`;
             fallback = `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\nReply here and I'll send you a fresh link.`;
           } else if (step === "client_ask_schedule") {
             context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you'll start searching for caregivers.`;
             fallback = `${greeting} Almost there. Just need to know how often you need care and I'll start searching for caregivers.`;
+          } else if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
+            // Setup and payment are DONE at this point — only the yes/no
+            // permission questions gate sending matches. Never imply their
+            // setup is unfinished.
+            context = `${firstName || "This family member"}'s setup and payment are COMPLETE — Evia is ready to search for caregivers. NOTHING else is missing; never say their setup is unfinished. All that's left is a quick yes/no permission question Evia already asked. Warmly invite a quick yes or no so caregiver matches can go out — one word finishes setup, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
+            fallback = `${greeting} You're all set except one quick question — a quick yes or no to my last text and I'll get your caregiver matches moving.`;
           } else {
             context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
             fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;
+          }
+        }
+
+        // Ground the per-step nudge in the user's LIVE state so a branch's
+        // baked-in assertion (e.g. the bg-check branch's "hasn't finished
+        // Checkr's form yet") can never contradict Firestore — a cleared or
+        // considered check must not ship that copy. Grounding only; this does
+        // not change which sessions get nudged or the cadence. Fail-soft: a
+        // builder error leaves the original (ungrounded) context untouched.
+        const liveBuilder = LIVE_GATE_FACT_BUILDERS[step];
+        if (liveBuilder) {
+          try {
+            const liveFact = await liveBuilder(doc.id, session as AgentSession);
+            if (liveFact) {
+              context = `${liveFact} Ground your nudge in this live status and NEVER assert a state that contradicts it. ${context}`;
+            }
+          } catch (err) {
+            console.warn("[staleSessionNudge] live fact builder failed (ungrounded nudge):", err);
           }
         }
 

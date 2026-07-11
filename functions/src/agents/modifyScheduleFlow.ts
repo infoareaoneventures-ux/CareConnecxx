@@ -117,10 +117,7 @@ export async function startModifyScheduleFlow(
 
   await sendMessage(chatId,
     `Your current recurring schedule with ${cgName} is: ${daysLabel}, ${timeLabel}.\n\n` +
-    `What would you like to change?\n\n` +
-    `1️⃣  Change the days\n` +
-    `2️⃣  Change the times\n` +
-    `3️⃣  Change both days and times`
+    `What would you like to change — the days, the times, or both?`
   );
 }
 
@@ -154,7 +151,7 @@ async function handleMsAskWhat(
   if (await isQuestionOrOther(text)) {
     const data = await getScheduleData(phone);
     const cgName = (data.caregiverName as string) ?? "your caregiver";
-    await sendMessage(chatId, `No problem! What would you like to change about your recurring schedule with ${cgName}?\n\n1️⃣  Days\n2️⃣  Times\n3️⃣  Both`);
+    await sendMessage(chatId, `No problem! What would you like to change about your recurring schedule with ${cgName} — the days, the times, or both?`);
     return;
   }
 

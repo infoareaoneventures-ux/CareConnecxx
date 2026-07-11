@@ -137,11 +137,12 @@ export const sendShiftTaskNudges = functions.pubsub
         const cgPhone = cgSnap.data()?.phone as string | undefined;
         if (!cgPhone) continue;
 
-        // Skip if caregiver session has a blocking state flag active
+        // Skip if caregiver session has a blocking state flag active (incl. an
+        // open in-shift check-in prompt — a task nudge would shadow its reply)
         const sessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
         if (sessionSnap.exists) {
           const s = sessionSnap.data() as any;
-          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription) continue;
+          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription || s.awaitingInShiftUpdate) continue;
         }
 
         const clientId = (appt.clientId ?? "") as string;

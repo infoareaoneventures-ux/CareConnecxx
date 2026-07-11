@@ -150,13 +150,13 @@ async function handleRateUpdate(
       profileUpdateValue: String(rate),
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await sendMessage(chatId, `Set your hourly rate to $${rate}/hr? Reply YES to save, or NO to cancel.`);
+    await sendMessage(chatId, `Set your hourly rate to $${rate}/hr? Just say yes to save it, or no to cancel.`);
     return;
   }
 
   // confirm
   const proposedRate = parseFloat((session.profileUpdateValue as string) ?? "0");
-  const reAskConfirm = `Set your hourly rate to $${proposedRate}/hr? Reply YES to save, or NO to cancel.`;
+  const reAskConfirm = `Set your hourly rate to $${proposedRate}/hr? Just say yes to save it, or no to cancel.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -250,7 +250,7 @@ async function handleSkillsUpdate(
     });
     await sendMessage(chatId,
       `Updated skills will be: ${proposed.length ? proposed.join(", ") : "(none)"}\n\n` +
-      `Save? Reply YES or NO.`,
+      `Want me to save that?`,
     );
     return;
   }
@@ -260,7 +260,7 @@ async function handleSkillsUpdate(
     try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; }
     catch { return []; }
   })();
-  const reAskConfirm = `Save these skills: ${proposed.join(", ") || "(none)"}? Reply YES or NO.`;
+  const reAskConfirm = `So — want me to save these skills: ${proposed.join(", ") || "(none)"}?`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -313,13 +313,13 @@ async function handleBioUpdate(
       profileUpdateValue: bio,
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await sendMessage(chatId, `Here's your new bio:\n\n"${bio}"\n\nSave? Reply YES or NO.`);
+    await sendMessage(chatId, `Here's your new bio:\n\n"${bio}"\n\nWant me to save that?`);
     return;
   }
 
   // confirm
   const proposedBio = (session.profileUpdateValue as string) ?? "";
-  const reAskConfirm = `Save this bio?\n\n"${proposedBio}"\n\nReply YES or NO.`;
+  const reAskConfirm = `So — want me to save this bio?\n\n"${proposedBio}"`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -413,7 +413,7 @@ async function handlePauseAccount(
   // confirm
   const until = (session.profileUpdateValue as string) ?? "indefinite";
   const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
-  const reAskConfirm = `Pause your account ${untilLabel}? Reply YES or NO.`;
+  const reAskConfirm = `Pause your account ${untilLabel}? Reply YES to pause, or NO to cancel.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;

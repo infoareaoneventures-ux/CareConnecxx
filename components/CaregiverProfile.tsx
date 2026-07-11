@@ -222,7 +222,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <div className="px-6 pb-5">
             <div className="flex items-end justify-between -mt-10 mb-4">
               <AvatarUpload
-                currentUrl={profile.photo || profile.imageUrl}
+                currentUrl={profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL}
                 onImageSelected={handleImageUpdate}
                 userId={currentUser?.uid}
                 storageFolder="caregivers"

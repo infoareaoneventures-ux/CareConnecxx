@@ -1477,13 +1477,13 @@ const handleInboundInner = traceable(
         isSame = v.startsWith("Y");
         if (v.startsWith("U")) {
           await sendMessage(chatId,
-            `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? Reply YES or NO.`,
+            `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? A quick yes or no helps me keep things straight.`,
           );
           return;
         }
       } catch {
         await sendMessage(chatId,
-          `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? Reply YES or NO.`,
+          `Just to be sure — is this message about ${pending.seniorName ?? "the person on file"}? A quick yes or no helps me keep things straight.`,
         );
         return;
       }
@@ -1534,9 +1534,9 @@ const handleInboundInner = traceable(
       await sendMessage(chatId,
         sessionSeniorName
           ? `I see this phone is set up for ${sessionSeniorName}'s care plan, but your message sounds like it's about someone else. ` +
-            `Is this still about ${sessionSeniorName}? Reply YES to continue, or NO if it's a different family member.`
+            `Is this still about ${sessionSeniorName}, or a different family member?`
           : `Quick check — your message sounds like it might be about someone other than the person I have on file for this phone. ` +
-            `Is this for the same person? Reply YES or NO.`,
+            `Is this for the same person? A quick yes or no helps me keep things straight.`,
       );
       return;
     }
@@ -2406,6 +2406,17 @@ const handleInboundInner = traceable(
     if (await routeCaregiverMessage({ phone, chatId, text, norm, session }) === "handled") return;
   }
 
+  // ── Praise loop (fire-and-forget side effect, never consumes the message) ───
+  // A family text landing shortly after an in-shift update gets sentiment-judged
+  // async; genuine warmth relays to the caregiver. Normal routing still answers
+  // the message below regardless.
+  if (session.userType !== "caregiver" && (session as any).lastInShiftUpdate) {
+    import("./inShiftPraise")
+      .then(({ maybeRelayPraiseFromText }) =>
+        maybeRelayPraiseFromText(phone, session as unknown as Record<string, unknown>, text))
+      .catch((err) => console.error("linqWebhook: praise-loop check failed:", err));
+  }
+
   // ── Client-side pre-intent state machines (extracted to routeClient.ts) ──────
   // Covers: awaitingPreShiftUpdate, awaitingEmergencyContactUpdate,
   // pendingShiftApproval, pendingDisputeDetail, collectingCredential,
@@ -2736,6 +2747,14 @@ async function handleReactionAdded(event: any): Promise<void> {
     }
     await handleRecurringConfirm(phone, chatId, session);
     return;
+  }
+
+  // Praise loop: a positive tapback with nothing pending, landing shortly after
+  // an in-shift update, is the family loving the update — relay it to the
+  // caregiver (one-shot per update; see inShiftPraise.ts).
+  if (isYes) {
+    const { maybeRelayPraiseFromReaction } = await import("./inShiftPraise");
+    await maybeRelayPraiseFromReaction(phone, session as unknown as Record<string, unknown>, reaction);
   }
 }
 

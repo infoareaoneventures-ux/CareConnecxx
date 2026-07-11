@@ -108,5 +108,23 @@ export async function absorbCaregiverFields(
     if (isFieldFilled(existing[k])) continue;
     out[k] = v;
   }
+
+  // When we recovered fresh specialties, also write the canonical skills/services
+  // enum the webapp checkboxes + matching engine read (mirrors the save handler's
+  // canonicalization). Only when skills isn't already set, and never at the cost
+  // of the raw specialties, which are already in `out`.
+  if (Array.isArray(out.specialties) && out.specialties.length && !isFieldFilled(existing.skills)) {
+    try {
+      const { canonicalizeCaregiverServices } = await import("./caregiverServices");
+      const canonical = await canonicalizeCaregiverServices(out.specialties);
+      if (canonical.length) {
+        out.skills = canonical;
+        out.services = canonical;
+      }
+    } catch {
+      /* keep raw specialties; canonicalization is best-effort */
+    }
+  }
+
   return out;
 }

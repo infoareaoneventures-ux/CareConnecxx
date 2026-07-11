@@ -65,12 +65,11 @@ function formatAvailability(weekly: WeeklyAvailability): string {
   return lines.length > 0 ? lines.join("\n") : "  (no availability set)";
 }
 
-/** The block menu shown to caregivers when picking availability */
-const BLOCK_MENU =
-  `  1. Morning (6am–12pm)\n` +
-  `  2. Afternoon (12pm–6pm)\n` +
-  `  3. Evening (6pm–11pm)\n` +
-  `  4. Overnight (11pm–6am)`;
+/** The time blocks described in prose when caregivers pick availability
+ *  (voice contract 2026-07-11: no numbered menus — the parser still accepts
+ *  numbers, names, "all", or "none"). */
+const BLOCK_CHOICES =
+  `morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–11pm), or overnight (11pm–6am)`;
 
 async function isQuestionOrOther(text: string): Promise<boolean> {
   const result = await parseWithClaude(
@@ -167,7 +166,7 @@ export async function handleAvailabilityUpdate(
       await sendMessage(
         `${opener}\n\n` +
         formatAvailability(proposed) +
-        `\n\nReply YES to save, or NO to cancel.`
+        `\n\nJust say yes to save it, or no to cancel.`
       );
       return;
     }
@@ -182,10 +181,8 @@ export async function handleAvailabilityUpdate(
 
     const verb = parsed.action === "add" ? "add for" : "set for";
     await sendMessage(
-      `Got it — ${dayList}. Which time blocks would you like to ${verb} ${validDays.length === 1 ? "that day" : "those days"}?\n\n` +
-      BLOCK_MENU +
-      `\n\nReply with the numbers or names (e.g. "1 and 2" or "Morning, Afternoon"). ` +
-      `Reply "all" for all blocks or "none" to remove availability.`
+      `Got it — ${dayList}. Which time blocks would you like to ${verb} ${validDays.length === 1 ? "that day" : "those days"} — ` +
+      `${BLOCK_CHOICES}? You can pick a few, say "all", or "none" to clear ${validDays.length === 1 ? "it" : "them"}.`
     );
     return;
   }
@@ -195,9 +192,7 @@ export async function handleAvailabilityUpdate(
     // isQuestionOrOther check first
     if (await isQuestionOrOther(text)) {
       await sendMessage(
-        `Which time blocks would you like?\n\n` +
-        BLOCK_MENU +
-        `\n\nReply with numbers or names, "all", or "none".`
+        `So — which time blocks would you like: ${BLOCK_CHOICES}? You can pick a few, say "all", or "none".`
       );
       return;
     }
@@ -269,7 +264,7 @@ export async function handleAvailabilityUpdate(
     await sendMessage(
       `${opener}\n\n` +
       formatAvailability(proposed) +
-      `\n\nReply YES to save, or NO to cancel.`
+      `\n\nJust say yes to save it, or no to cancel.`
     );
     return;
   }
@@ -282,7 +277,7 @@ export async function handleAvailabilityUpdate(
       await sendMessage(
         `Your proposed schedule:\n\n` +
         formatAvailability(proposed) +
-        `\n\nReply YES to save, or NO to cancel.`
+        `\n\nJust say yes to save it, or no to cancel.`
       );
       return;
     }

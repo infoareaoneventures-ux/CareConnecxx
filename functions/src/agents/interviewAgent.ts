@@ -500,6 +500,39 @@ export async function handleInterviewConfirm(
     message:     `interview_followup:${interviewRef.id}`,
     refId:       triggerRefId,
   }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+
+  // Surface this Evia-scheduled interview in the caregiver's in-app calendar,
+  // which reads the `video_interviews` collection (CaregiverCalendarPage) — the
+  // SMS flow above writes `interviews`, so without this the interview is
+  // invisible in-app (the Meet link still reaches both parties via the SMS
+  // above; this is in-app parity only). Mirror it with callUrl + per-recipient
+  // linkDelivery markers + remindersScheduledAt already set, so the
+  // onVideoInterviewLinkEnsure trigger's precheck no-ops instead of
+  // re-generating the link or re-notifying — the exact pattern the MCP
+  // schedule_interview tool uses (see interviewLinkTrigger.ts header). Gated on
+  // caregiverId (the calendar's query key); best-effort, never blocks the SMS
+  // confirmation that already went out.
+  if (caregiverId) {
+    const nowIso = new Date().toISOString();
+    await db.collection("video_interviews").add({
+      clientPhone:   phone,
+      caregiverName: pending.caregiverName,
+      caregiverId,
+      ...(clientId ? { clientId } : {}),
+      scheduledTime: pending.mutualTime,
+      status:        "scheduled",
+      ...(callUrl ? { callUrl } : {}),
+      ...(icsUrl ? { icsUrl } : {}),
+      source:            "evia_sms",
+      interviewRequestId: pending.docId,
+      linkedInterviewId:  interviewRef.id,
+      createdAt:          nowIso,
+      // Trigger-suppression markers (onVideoInterviewLinkEnsure precheck):
+      // delivery already done inline above, reminders already scheduled.
+      linkDelivery:        { client: { status: "sent", at: nowIso }, caregiver: { status: "sent", at: nowIso } },
+      remindersScheduledAt: nowIso,
+    }).catch((err) => console.error("interviewAgent: video_interviews mirror write failed:", err));
+  }
 }
 
 // ── Write interview outcome feedback signal ───────────────────────────────────

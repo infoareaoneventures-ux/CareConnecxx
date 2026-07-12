@@ -442,31 +442,31 @@ async function sendArrivalCarePlanBriefing(
   const seniorId = (apptData.seniorId ?? clientId) as string;
   const seniorName = (apptData.clientName ?? "your client") as string;
 
-  // Load care plan (same dual-path as shiftTaskNudges)
+  // Load care plan (same read order as shiftTaskNudges: CANONICAL
+  // care_plans/{clientId} first — web cutover 2026-07-12 — then legacy subdocs)
   let dailyRoutine: Array<{ id: string; time: string; description: string; category: string }> = [];
   let medications:  Array<{ name: string; dosage: string; frequency: string }> = [];
 
-  for (const [collection, docId] of [
-    ["senior_profiles", seniorId],
-    ["senior_profiles", clientId],
-  ] as [string, string][]) {
-    if (!docId) continue;
-    const snap = await db.collection(collection).doc(docId)
-      .collection("care_plans").doc("default").get().catch(() => null);
-    if (snap?.exists) {
-      const d = snap.data()!;
-      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
-      medications  = (d.medications  ?? []) as typeof medications;
-      break;
-    }
+  const canonicalSnap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
+  if (canonicalSnap?.exists) {
+    const d = canonicalSnap.data()!;
+    dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+    medications  = (d.medications  ?? []) as typeof medications;
   }
   if (!dailyRoutine.length && !medications.length) {
-    // Try legacy flat collection
-    const snap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
-    if (snap?.exists) {
-      const d = snap.data()!;
-      dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
-      medications  = (d.medications  ?? []) as typeof medications;
+    for (const [collection, docId] of [
+      ["senior_profiles", seniorId],
+      ["senior_profiles", clientId],
+    ] as [string, string][]) {
+      if (!docId) continue;
+      const snap = await db.collection(collection).doc(docId)
+        .collection("care_plans").doc("default").get().catch(() => null);
+      if (snap?.exists) {
+        const d = snap.data()!;
+        dailyRoutine = (d.dailyRoutine ?? []) as typeof dailyRoutine;
+        medications  = (d.medications  ?? []) as typeof medications;
+        break;
+      }
     }
   }
 

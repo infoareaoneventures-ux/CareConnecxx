@@ -61,11 +61,11 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     notes: "Web signup creates it; Evia onboarding mirrors senior name/age/needs/diagnoses.",
   },
   care_plans: {
-    path: "senior_profiles/{clientUid}/care_plans/default",
-    docId: "subcollection",
+    path: "care_plans",
+    docId: "clientUid",
     caraWrites: true,
     webReads: true,
-    notes: "Versioned care plan subcollection used by care-plan tools.",
+    notes: "Canonical live care plan (2026-07-06 decision; web cut over 2026-07-12). Evia's get/update_care_plan tools and the web Care Plan tab share this doc; versions subcollection is server-only history. Legacy senior_profiles/{uid}/care_plans/default is read-fallback only.",
   },
   carePlans: {
     path: "carePlans",

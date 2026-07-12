@@ -60,7 +60,21 @@ async function loadCarePlan(
 ): Promise<{ dailyRoutine: RoutineTask[]; medications: Medication[] }> {
   const empty = { dailyRoutine: [], medications: [] };
 
-  // 1. Canonical path: senior_profiles/{seniorId}/care_plans/default
+  // 1. CANONICAL path (web cutover 2026-07-12): care_plans/{clientId} — the doc
+  // both the web Care Plan tab and Evia's care-plan tools write. Must be checked
+  // FIRST or a stale legacy subdoc shadows fresh data.
+  if (clientId) {
+    const snap = await db.collection("care_plans").doc(clientId).get();
+    if (snap.exists) {
+      const d = snap.data()!;
+      return {
+        dailyRoutine: (d.dailyRoutine ?? []) as RoutineTask[],
+        medications:  (d.medications  ?? []) as Medication[],
+      };
+    }
+  }
+
+  // 2. Legacy web subdoc: senior_profiles/{seniorId}/care_plans/default
   if (seniorId) {
     const snap = await db.collection("senior_profiles").doc(seniorId)
       .collection("care_plans").doc("default").get();
@@ -73,22 +87,10 @@ async function loadCarePlan(
     }
   }
 
-  // 2. Legacy 1:1 model: senior_profiles/{clientId}/care_plans/default
+  // 3. Legacy 1:1 model: senior_profiles/{clientId}/care_plans/default
   if (clientId && clientId !== seniorId) {
     const snap = await db.collection("senior_profiles").doc(clientId)
       .collection("care_plans").doc("default").get();
-    if (snap.exists) {
-      const d = snap.data()!;
-      return {
-        dailyRoutine: (d.dailyRoutine ?? []) as RoutineTask[],
-        medications:  (d.medications  ?? []) as Medication[],
-      };
-    }
-  }
-
-  // 3. Flat legacy collection (same as morningBriefing.ts)
-  if (clientId) {
-    const snap = await db.collection("care_plans").doc(clientId).get();
     if (snap.exists) {
       const d = snap.data()!;
       return {

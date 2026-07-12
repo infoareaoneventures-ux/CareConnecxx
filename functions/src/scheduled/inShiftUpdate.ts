@@ -64,6 +64,14 @@ async function loadClientSession(
 }
 
 async function carePlanHasMeds(seniorId: string, clientId: string): Promise<boolean> {
+  // CANONICAL doc first (web cutover 2026-07-12), then the legacy subdocs.
+  if (clientId) {
+    const snap = await db.collection("care_plans").doc(clientId).get().catch(() => null);
+    if (snap?.exists) {
+      const meds = (snap.data()?.medications ?? []) as unknown[];
+      if (Array.isArray(meds) && meds.length > 0) return true;
+    }
+  }
   for (const id of [seniorId, clientId].filter(Boolean)) {
     const snap = await db.collection("senior_profiles").doc(id)
       .collection("care_plans").doc("default").get().catch(() => null);

@@ -185,6 +185,28 @@ export const normalizeJobPost = (raw: any): JobPost => {
     return j as JobPost;
 };
 
+// Coerce the canonical care_plans/{clientUid} doc into the web CarePlan shape.
+// Evia's update_care_plan tool may append plain strings to the array fields;
+// the web UI needs { id, name, … } items. Extra Evia-only fields (careNeeds,
+// dietaryNotes, doctorContacts, specialInstructions, notes) are passed through
+// via the spread so a web save round-trips them unchanged.
+const normalizeCarePlan = (data: any): CarePlan => {
+    const arr = (v: any): any[] => (Array.isArray(v) ? v : []);
+    const withId = (item: any, i: number, prefix: string) =>
+        item && typeof item === 'object'
+            ? { ...item, id: item.id || `${prefix}_${i}` }
+            : null;
+    return {
+        ...data,
+        medications: arr(data?.medications).map((m, i) =>
+            withId(m, i, 'med') ?? { id: `med_${i}`, name: String(m), dosage: '', frequency: '' }),
+        emergencyContacts: arr(data?.emergencyContacts).map((c, i) =>
+            withId(c, i, 'contact') ?? { id: `contact_${i}`, name: String(c), relation: '', phone: '', isPrimary: false }),
+        dailyRoutine: arr(data?.dailyRoutine).map((t, i) =>
+            withId(t, i, 'task') ?? { id: `task_${i}`, time: '', description: String(t), category: 'activity' }),
+    } as CarePlan;
+};
+
 export const dbService = {
     logout: async () => {
         if (isConfigured && auth) {
@@ -1599,11 +1621,22 @@ export const dbService = {
         return res.data;
     },
 
+    // Canonical care-plan path (consolidation, 2026-07-12): the live plan is the
+    // TOP-LEVEL doc care_plans/{clientUid} — the SAME doc Evia's get_care_plan /
+    // update_care_plan SMS tools read and write, so medications/instructions sync
+    // both ways. The old web path senior_profiles/{uid}/care_plans/default is
+    // legacy: read once as a fallback until the backfill migration runs, never
+    // written again. Evia may append plain-string entries (e.g. "Metformin 500mg")
+    // to the arrays — normalizeCarePlan coerces them into the web item shapes and
+    // preserves Evia-only fields (careNeeds, dietaryNotes, doctorContacts, …) so a
+    // web save round-trips them untouched.
     getCarePlan: async (uid: string): Promise<CarePlan> => {
         if (isConfigured && db) {
             try {
-                const doc = await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get();
-                if (doc.exists) return doc.data() as CarePlan;
+                const doc = await db.collection('care_plans').doc(uid).get();
+                if (doc.exists) return normalizeCarePlan(doc.data());
+                const legacy = await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get();
+                if (legacy.exists) return normalizeCarePlan(legacy.data());
                 return { medications: [], emergencyContacts: [], dailyRoutine: [] };
             } catch (e) {
                 return { medications: [], emergencyContacts: [], dailyRoutine: [] };
@@ -1615,7 +1648,11 @@ export const dbService = {
     updateCarePlan: async (uid: string, plan: CarePlan) => {
         if (isConfigured && db) {
             try {
-                await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').set(plan, { merge: true });
+                await db.collection('care_plans').doc(uid).set({
+                    ...plan,
+                    lastUpdatedBy: 'web',
+                    updatedAt: new Date().toISOString(),
+                }, { merge: true });
             } catch (e: any) {
                 if (e.code === 'permission-denied') return;
             }
@@ -1624,12 +1661,18 @@ export const dbService = {
 
     subscribeToCarePlan: (uid: string, onUpdate: (plan: CarePlan) => void) => {
         if (isConfigured && db) {
-            const docRef = db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default');
+            const docRef = db.collection('care_plans').doc(uid);
             return docRef.onSnapshot((doc) => {
                 if (doc.exists) {
-                    onUpdate(doc.data() as CarePlan);
+                    onUpdate(normalizeCarePlan(doc.data()));
                 } else {
-                    onUpdate({ medications: [], emergencyContacts: [], dailyRoutine: [] });
+                    // Pre-migration fallback: surface any data stranded on the
+                    // legacy subdoc so nothing disappears before the backfill.
+                    db!.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get()
+                        .then(legacy => onUpdate(legacy.exists
+                            ? normalizeCarePlan(legacy.data())
+                            : { medications: [], emergencyContacts: [], dailyRoutine: [] }))
+                        .catch(() => onUpdate({ medications: [], emergencyContacts: [], dailyRoutine: [] }));
                 }
             }, (error) => {
                 if (error.code === 'permission-denied') {
@@ -1724,9 +1767,9 @@ export const dbService = {
 
         if (isConfigured && db) {
             try {
-                await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').update({
+                await db.collection('care_plans').doc(uid).set({
                     dailyRoutine: updatedPlan.dailyRoutine
-                });
+                }, { merge: true });
             } catch (e: any) {
                 // Ignore permission error
             }

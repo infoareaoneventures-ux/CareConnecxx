@@ -119,7 +119,9 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Subcollection leaf names that appear as bare collection("name") segments.
     // Their parent docs are governed by the contract entry for the parent path.
     'messages',          // threads/{id}/messages — covered by 'threads' entry
-    'care_keepsakes', 'care_plans', 'appointment_care_plans', 'carePlanVersions',
+    // ('care_plans' moved to CONTRACT_COLLECTIONS as a top-level shared doc —
+    // web cutover 2026-07-12)
+    'care_keepsakes', 'appointment_care_plans', 'carePlanVersions',
     'versions',      // care_plans/{id}/versions — caregiver history, server-only
     'shift_checkins', 'shift_hours', 'tax_summaries',
     'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry

@@ -986,8 +986,8 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", description: "Which field to update: 'medications', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', or 'notes'" },
-        value:    { description: "The new value. For array fields (medications, careNeeds, doctorContacts), pass an array. For string fields, pass a string." },
+        field:    { type: "string", description: "Which field to update: 'medications', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', 'notes', 'emergencyContacts', 'dailyRoutine', 'accessCodes', or 'dietaryRestrictions'" },
+        value:    { description: "The new value. For array fields (medications, careNeeds, doctorContacts, emergencyContacts, dailyRoutine), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}. dailyRoutine items: {time, description, category: meal|medication|activity|hygiene}." },
         action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
       },
       required: ["clientId", "field", "value", "action"],
@@ -4395,7 +4395,10 @@ async function executeToolCall(
       const { clientId, field, value, action } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove";
       };
-      const ALLOWED_FIELDS = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes"];
+      // emergencyContacts/dailyRoutine/accessCodes/dietaryRestrictions are the
+      // web Care Plan tab's fields — same doc since the 2026-07-12 cutover, so
+      // Evia can manage everything the family can edit on the web (parity).
+      const ALLOWED_FIELDS = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "emergencyContacts", "dailyRoutine", "accessCodes", "dietaryRestrictions"];
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }

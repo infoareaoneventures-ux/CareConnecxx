@@ -950,6 +950,20 @@ service cloud.firestore {
     }
 
     // ==========================================
+    // CANONICAL CARE PLAN (medications / routines / contacts)
+    // ==========================================
+    // care_plans/{clientId} is the single live care-plan doc shared by Evia's
+    // get_care_plan/update_care_plan SMS tools (server-side writes) and the web
+    // Care Plan tab (2026-07-12 cutover — replaces the legacy
+    // senior_profiles/{uid}/care_plans/default subdoc). The versions
+    // subcollection is server-only history (no client match → default deny).
+    match /care_plans/{clientId} {
+      allow read: if isOwner(clientId) || isAdmin();
+      allow create, update: if isOwner(clientId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
     // BOOKING REQUESTS
     // ==========================================
     match /booking_requests/{requestId} {

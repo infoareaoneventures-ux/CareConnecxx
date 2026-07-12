@@ -259,6 +259,11 @@ export * from './migrations/rekeyLegacyCaregiverDocs';
 // subcollection (bug-audit §6.1) — DRY-RUN first: ?apply=true to write.
 export * from './migrations/migrateCarePlansToCanonical';
 
+// Web care-plan data (senior_profiles/{uid}/care_plans/default) → canonical
+// care_plans/{clientId} (web cutover 2026-07-12). Additive union-merge only,
+// legacy doc untouched. DRY-RUN first: ?apply=true to write.
+export * from './migrations/consolidateWebCarePlans';
+
 // Caregiver PII → caregivers/{id}/private/background: move legal name / DOB /
 // SSN-4 / ZIP off the world-readable parent doc. Dry-run first: ?dryRun=1
 export * from './migrations/backfillCaregiverPrivateBackground';

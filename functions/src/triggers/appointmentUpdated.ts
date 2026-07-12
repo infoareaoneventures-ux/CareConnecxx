@@ -4,9 +4,13 @@ import { sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { scoreReplacements } from "../agents/replacementScorer";
 import { scheduleTrigger } from "./triggerEngine";
+import { parseScheduledTimeMs } from "../utils/scheduledTime";
 
 function hoursUntil(date: string, time: string): number {
-  const apptMs = new Date(`${date}T${time.slice(0, 5)}:00`).getTime();
+  // Stored date/time are Pacific wall-clock — a naive `new Date()` parse reads
+  // them as UTC on Cloud Functions, undercounting hours-until by ~7-8h (which
+  // misrouted 24-31h-out cancellations into the same-day emergency blast).
+  const apptMs = parseScheduledTimeMs(`${date}T${time.slice(0, 5)}:00`);
   return (apptMs - Date.now()) / (1000 * 60 * 60);
 }
 
@@ -122,7 +126,9 @@ export const onAppointmentUpdated = functions.firestore
 
         if (phone && after.date && after.time) {
           try {
-            const visitMs  = new Date(`${after.date}T${after.time.slice(0, 5)}:00`).getTime();
+            // Pacific wall-clock parse (naive Date read PT as UTC → the
+            // "1h-before" reminder and "2h-before" check-in fired ~8h early).
+            const visitMs  = parseScheduledTimeMs(`${after.date}T${after.time.slice(0, 5)}:00`);
             const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
             const clientId    = sessionSnap.data()?.userId ?? after.clientId ?? "";
             const cgName      = after.caregiverName ?? "Your caregiver";

@@ -29,9 +29,13 @@ export const onVideoInterviewWrite = functions.firestore
     const statusAfter  = after.status;
 
     try {
-      // New interview created → notify caregiver
+      // New interview created → notify caregiver. Parse scheduledTime tz-aware
+      // and render in PT — Z-form values rendered without a timeZone showed the
+      // UTC clock (7-8h wrong) in the notification.
       if (!before && statusAfter === 'requested' && after.caregiverId) {
-        const displayTime = new Date(after.scheduledTime).toLocaleString('en-US', {
+        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
+        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
+          timeZone: 'America/Los_Angeles',
           weekday: 'short', month: 'short', day: 'numeric',
           hour: '2-digit', minute: '2-digit',
         });

@@ -1,5 +1,6 @@
 import { quickComplete } from "../utils/openaiClient";
 import { safeParseJson } from "../utils/jsonUtils";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { sendViaInteractionAgent } from "./caraAgent";
 import {
   createUserTrigger,
@@ -18,7 +19,9 @@ interface ParsedSchedule {
 }
 
 async function parseScheduleRequest(userMessage: string): Promise<ParsedSchedule | null> {
-  const today = new Date().toISOString().slice(0, 10);
+  // Business-timezone today — telling the LLM "today is <UTC date>" after 5pm
+  // PT parses "tomorrow" a day late.
+  const today = businessTodayStr();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   let raw: string;

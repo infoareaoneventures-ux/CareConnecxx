@@ -481,16 +481,20 @@ export const runTriggerEngine = functions.pubsub
     // treated as a no-show — that falsely tells the family their caregiver
     // cancelled. So we first send an arrival-capture ping and only escalate to
     // emergency replacement if that ping goes unanswered (see noShowPolicy).
-    const eightMinAgo   = new Date(Date.now() - 8  * 60 * 1000).toISOString();
-    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    // Derive the started-8min-to-3h-ago window from the stored `date` +
+    // `startTime`/`time` wall-clock fields — the old range query on
+    // `startDateTime` matched NOTHING because no writer ever sets that field
+    // on appointments (this no-show sweep was silently dead).
+    const nowNoShowMs   = Date.now();
+    const eightMinAgoMs   = nowNoShowMs - 8 * 60 * 1000;
+    const threeHoursAgoMs = nowNoShowMs - 3 * 60 * 60 * 1000;
+    const { apptStartMs, businessTodayStr } = await import("../utils/scheduledTime");
 
     const noShowSnap = await db
       .collection("appointments")
-      .where("status",          "==", "confirmed")
-      .where("startDateTime",   ">=", threeHoursAgo)
-      .where("startDateTime",   "<=", eightMinAgo)
-      .orderBy("startDateTime", "asc")
-      .limit(25)
+      .where("status", "==", "confirmed")
+      .where("date",   "==", businessTodayStr())
+      .limit(200)
       .get();
 
     for (const apptDoc of noShowSnap.docs) {
@@ -499,8 +503,9 @@ export const runTriggerEngine = functions.pubsub
       if (appt.arrivedAt) continue;     // caregiver checked in, not a no-show
 
       try {
-        const startMs = parseScheduledTimeMs(appt.startDateTime as string);
-        if (Number.isNaN(startMs)) continue;
+        const startMs = apptStartMs(appt.date, appt.startTime ?? appt.time);
+        if (!Number.isFinite(startMs)) continue;
+        if (startMs > eightMinAgoMs || startMs < threeHoursAgoMs) continue; // outside the window
 
         const arrivalPingSentAtMs = appt.arrivalPingSentAt
           ? Date.parse(appt.arrivalPingSentAt as string) : null;

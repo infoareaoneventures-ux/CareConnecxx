@@ -4,6 +4,7 @@ import { safeParseJson } from "../utils/jsonUtils";
 import { sendMessage, AgentSession } from "../linq/client";
 import { isConvergenceFlipped } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -361,7 +362,10 @@ async function handleMsConfirm(
   const [eh2, em2] = newEnd.split(":").map(Number);
   const newDuration = ((eh2 * 60 + em2) - (sh2 * 60 + sm2)) / 60;
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Business-timezone today — the UTC date ("PT tomorrow" in the evening)
+  // skipped tomorrow's old appointment when rewriting a recurring schedule,
+  // leaving a stale visit alongside the new one.
+  const today = businessTodayStr();
   const now   = new Date().toISOString();
 
   // Cancel all future confirmed appointments from the old schedule

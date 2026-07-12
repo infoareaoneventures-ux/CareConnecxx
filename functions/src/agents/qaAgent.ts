@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
+import { businessTodayStr } from "../utils/scheduledTime";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { buildClickableMessage } from "./caraAgent";
@@ -97,7 +98,9 @@ async function getRecentJournalEntries(seniorId: string, limit = 3) {
 }
 
 async function getNextAppointment(userId: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Business-timezone today — UTC date is already tomorrow during Pacific
+  // evenings, which dropped today's remaining visit from "next appointment".
+  const today = businessTodayStr();
   const snap = await db
     .collection("appointments")
     .where("clientId", "==", userId)
@@ -153,7 +156,9 @@ async function getCaregiverProfile(caregiverId: string) {
 }
 
 async function getCaregiverTodayAppointment(caregiverId: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Business-timezone today — from 5pm PT the UTC date returned TOMORROW's
+  // appointment as "today" and missed tonight's shift.
+  const today = businessTodayStr();
   const snap = await db
     .collection("appointments")
     .where("caregiverId", "==", caregiverId)
@@ -284,7 +289,7 @@ async function buildClientCoreContext(
   const loc = senior?.location || senior?.city;
   if (loc) parts.push(`LOCATION: ${loc}.`);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessTodayStr();
   const [planSnap, userSnap, apptSnap] = await Promise.all([
     db.collection("care_plans").doc(userId).get().catch(() => null),
     db.collection("users").doc(userId).get().catch(() => null),

@@ -3,6 +3,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
+import { parseScheduledTimeMs } from "./utils/scheduledTime";
 
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -310,10 +311,22 @@ export const sendShiftReminders = functions.pubsub
 
             for (const doc of appointmentsSnapshot.docs) {
                 const appointment = doc.data();
-                
-                // Parse appointment datetime
-                const appointmentDateTime = new Date(`${appointment.date} ${appointment.time}`);
-                
+
+                // Parse appointment datetime as PACIFIC wall-clock. The old
+                // `new Date("YYYY-MM-DD HH:mm")` read PT times as server-local
+                // UTC, matching the reminder window ~8h before the real start
+                // (and stamping reminderSent so nothing fired at the right
+                // time). Handles both "14:00" and "2:00 PM" shapes.
+                const tm = String(appointment.time ?? "").trim().toUpperCase()
+                    .match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+                if (!tm || !appointment.date) continue;
+                let apptHour = parseInt(tm[1], 10);
+                if (tm[3] === 'PM' && apptHour < 12) apptHour += 12;
+                if (tm[3] === 'AM' && apptHour === 12) apptHour = 0;
+                const appointmentDateTime = new Date(parseScheduledTimeMs(
+                    `${appointment.date}T${String(apptHour).padStart(2, '0')}:${tm[2]}:00`
+                ));
+
                 // Check if appointment is between 15 min and 1 hour from now
                 if (appointmentDateTime >= fifteenMinutesFromNow && appointmentDateTime <= oneHourFromNow) {
                     // Send reminder to caregiver

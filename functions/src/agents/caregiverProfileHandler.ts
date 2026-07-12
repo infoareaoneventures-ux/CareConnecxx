@@ -6,6 +6,7 @@ import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
 import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -373,7 +374,9 @@ async function handlePauseAccount(
       await sendMessage(chatId, await answerMidFlow(text, reAsk));
       return;
     }
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // Business-timezone today — a UTC anchor after 5pm PT parses "until
+    // Friday" style pause dates a day late.
+    const todayIso = businessTodayStr();
     const raw = await parseWithClaude(
       `Parse the caregiver's pause-until date. Today is ${todayIso}. Reply JSON: ` +
         '{"until":"YYYY-MM-DD"} for a specific end date, or {"until":"indefinite"} for an open-ended pause. ' +

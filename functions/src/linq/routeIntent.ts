@@ -31,6 +31,7 @@ import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { handleJobResponse } from "../triggers/jobNotifications";
 import {
   addUserMessageToZep,
@@ -116,7 +117,9 @@ async function handleRecurringCancel(phone: string, chatId: string, session: Age
     return;
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  // Business-timezone today — UTC ("PT tomorrow" in the evening) left
+  // tomorrow's visit confirmed when cancelling a recurring schedule at night.
+  const today = businessTodayStr();
 
   // Cancel all future unconfirmed visits from this schedule
   const futureSnap = await db.collection("appointments")
@@ -169,7 +172,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
     return;
   }
   const sched = schedSnap.data()!;
-  const today = new Date().toISOString().split("T")[0];
+  const today = businessTodayStr();
   const now   = new Date().toISOString();
 
   const { generateRecurringDates } = await import("../scheduled/recurringScheduler");
@@ -1181,7 +1184,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // ── hireMode step A — date reply ──────────────────────────────────────────
     if ((session as any).hireMode && !(session as any).hireModeDate) {
       const parsedDateRaw = await quickComplete(
-        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+        `Today is ${businessTodayStr()}. ` +
           "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
         text,
         { maxTokens: 20 },
@@ -1278,7 +1281,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         startTime: string; endTime: string; durationHours: number;
       };
       const parsedDateRaw = await quickComplete(
-        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+        `Today is ${businessTodayStr()}. ` +
           "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
         text,
         { maxTokens: 20 },

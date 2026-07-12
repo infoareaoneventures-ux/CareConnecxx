@@ -17,7 +17,7 @@ import {
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
 import { answerHumanQuestionOnly } from "../agents/humanReply";
-import { businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
+import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
@@ -179,11 +179,15 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
   const arrivedAt = new Date().toISOString();
   await appt.ref.update({ arrivedAt, status: "in-progress" });
 
-  // Track lateness if caregiver arrived >= 15 min after scheduled start
+  // Track lateness if caregiver arrived >= 15 min after scheduled start.
+  // Pacific wall-clock parse — `new Date("YYYY-MM-DDTHH:mm")` on Cloud
+  // Functions reads PT times as UTC, which flagged every on-time daytime
+  // arrival as ~420 min late (false lateness alerts to admins + families) and
+  // hid real evening lateness.
   const scheduledStart = apptData.startTime ?? apptData.time ?? "";
   if (scheduledStart && session.caregiverId) {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const schedMs  = new Date(`${todayStr}T${scheduledStart.slice(0, 5)}:00`).getTime();
+    const todayStr = today;
+    const schedMs  = parseScheduledTimeMs(`${todayStr}T${scheduledStart.slice(0, 5)}:00`);
     const minutesLate = Math.round((Date.now() - schedMs) / 60000);
     if (minutesLate >= 15) {
       const cgSnap  = await db.collection("caregivers").doc(session.caregiverId).get();
@@ -1883,7 +1887,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         // fall through to normal message processing
       } else {
         await db.collection("agent_sessions").doc(phone).update({ awaitingLateMinutes: false });
-        const today2 = new Date().toISOString().slice(0, 10);
+        const today2 = businessTodayStr();
         const lateApptSnap = await db.collection("appointments")
           .where("caregiverId", "==", session.caregiverId ?? "")
           .where("date",        "==", today2).limit(1).get();
@@ -1944,7 +1948,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       } else {
       await db.collection("agent_sessions").doc(phone).update({ awaitingIssueDescription: false });
 
-      const issueToday = new Date().toISOString().slice(0, 10);
+      const issueToday = businessTodayStr();
       const issueApptSnap = await db.collection("appointments")
         .where("caregiverId", "==", session.caregiverId ?? "")
         .where("date",        "==", issueToday)

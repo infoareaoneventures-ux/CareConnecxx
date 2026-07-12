@@ -4,6 +4,7 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -48,7 +49,8 @@ export async function handleCaregiverSwapRequest(
 
   if (step === "identify_shift") {
     // Find upcoming confirmed appointments for this caregiver
-    const today = new Date().toISOString().split("T")[0];
+    // Business-timezone today — UTC hid tonight's shift after 5pm PT
+    const today = businessTodayStr();
     const snap = await db.collection("appointments")
       .where("caregiverId", "==", caregiverId)
       .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])

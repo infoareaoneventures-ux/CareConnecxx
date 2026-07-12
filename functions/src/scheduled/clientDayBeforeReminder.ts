@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTomorrowStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -14,14 +15,15 @@ const db = admin.firestore();
 // initiates a client cancellation flow handled inbound. Question replies are
 // routed through the standard QA path via the dispatcher.
 export const sendClientDayBeforeReminders = functions.pubsub
-  .schedule("0 0 * * *")          // 0:00 UTC = 8 PM ET (DST handled by timeZone)
+  .schedule("0 0 * * *")          // midnight ET = 9 PM PT (DST handled by timeZone)
   .timeZone("America/New_York")
   .onRun(async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-    const tomorrowDisplay = tomorrow.toLocaleDateString("en-US", {
-      weekday: "long", month: "long", day: "numeric",
+    // Business-timezone tomorrow. At the midnight-ET run the UTC date is
+    // already PT+1, so the old +1-day UTC math computed PT+2 — families were
+    // reminded for the day after tomorrow and never for the actual tomorrow.
+    const tomorrowStr = businessTomorrowStr();
+    const tomorrowDisplay = new Date(`${tomorrowStr}T12:00:00Z`).toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles", weekday: "long", month: "long", day: "numeric",
     });
 
     // Only send for confirmed appointments — skip pending_caregiver_confirmation

@@ -4,6 +4,7 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendViaInteractionAgent } from "./caraAgent";
 import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -62,7 +63,8 @@ export async function handleCaregiverCancelShift(
 
   // ── identify_shift — list shifts, store candidates ─────────────────────────
   if (step === "identify_shift") {
-    const today = new Date().toISOString().slice(0, 10);
+    // Business-timezone today — UTC hid tonight's shift after 5pm PT
+    const today = businessTodayStr();
     const snap = await db.collection("appointments")
       .where("caregiverId", "==", caregiverId)
       .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])

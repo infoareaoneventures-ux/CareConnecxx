@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTomorrowStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -11,13 +12,15 @@ export const sendDayBeforeShiftReminders = functions.pubsub
   .schedule("0 22 * * *")
   .timeZone("America/New_York")
   .onRun(async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    // Business-timezone tomorrow. At the 22:00 ET run the UTC date is already
+    // PT+1, so `new Date()`+setDate(+1)+toISOString computed PT+2 — reminders
+    // went out for the day AFTER tomorrow and never for the actual tomorrow.
+    const tomorrowStr = businessTomorrowStr();
 
-    // Format as "Wednesday, May 21" for natural reading
-    const tomorrowDisplay = tomorrow.toLocaleDateString("en-US", {
-      weekday: "long", month: "long", day: "numeric",
+    // Format as "Wednesday, May 21" for natural reading (noon-anchored so the
+    // rendered date can't slip a day in either direction)
+    const tomorrowDisplay = new Date(`${tomorrowStr}T12:00:00Z`).toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles", weekday: "long", month: "long", day: "numeric",
     });
 
     // NOTE: no `.where("dayBeforeConfirmSent","!=",true)` — Firestore `!=` excludes

@@ -17,6 +17,7 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
@@ -3123,7 +3124,8 @@ async function executeToolCall(
       case "get_upcoming_appointments": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_upcoming_appointments" } }).catch(() => {});
-        const today = new Date().toISOString().slice(0, 10);
+        // Business-timezone today — UTC drops tonight's visit during PT evenings
+        const today = businessTodayStr();
         const snap = await db
           .collection("appointments")
           .where("clientId", "==", input.clientId)
@@ -3971,8 +3973,11 @@ async function executeToolCall(
       case "get_caregiver_appointments": {
         if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
         const daysAhead   = Math.min((input.daysAhead as number) ?? 7, 30);
-        const today       = new Date().toISOString().slice(0, 10);
-        const futureLimit = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        // Business-timezone window — UTC "today" dropped tonight's shift in PT evenings
+        const today       = businessTodayStr();
+        const futureLimitD = new Date(`${today}T12:00:00Z`);
+        futureLimitD.setUTCDate(futureLimitD.getUTCDate() + daysAhead);
+        const futureLimit = futureLimitD.toISOString().slice(0, 10);
         const snap = await db.collection("appointments")
           .where("caregiverId", "==", input.caregiverId)
           .where("date",        ">=", today)
@@ -5585,7 +5590,7 @@ async function executeToolCall(
     if (name === "get_care_team") {
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const today = new Date().toISOString().slice(0, 10);
+      const today = businessTodayStr();
       const teamSnap = await db.collection("appointments")
         .where("clientId", "==", clientId)
         .where("status", "in", ["confirmed", "completed", "in-progress"])
@@ -6073,7 +6078,15 @@ async function executeToolCall(
           // Check if scheduled date falls on a removed day
           const scheduledDate = req.scheduledAt ?? req.proposedTime;
           if (scheduledDate) {
-            const dayOfWeek = DAY_NAMES[new Date(scheduledDate).getDay()];
+            // PT weekday — getDay() is the UTC weekday on Cloud Functions, so a
+            // Z-form PT-evening interview read as the NEXT weekday (wrong
+            // interviews cancelled / real conflicts kept).
+            const { parseScheduledTimeMs: parseAvailMs } = await import("../utils/scheduledTime");
+            const schedMs = parseAvailMs(String(scheduledDate));
+            const dayOfWeek = Number.isFinite(schedMs)
+              ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "long" })
+                  .format(new Date(schedMs)).toLowerCase()
+              : DAY_NAMES[new Date(scheduledDate).getDay()];
             if (removedDays.includes(dayOfWeek)) {
               conflictedRequests.push({ id: doc.id, clientPhone: req.clientPhone, scheduledDate });
             }
@@ -6400,8 +6413,15 @@ async function executeToolCall(
       if (appt.status !== "confirmed") {
         return toolError("INVALID_INPUT", "Payment method can only be changed on a confirmed booking that hasn't started.");
       }
+      // "Already started" in PACIFIC wall-clock terms — `new Date("YYYY-MM-DD")`
+      // is UTC midnight = 5pm PT the EVENING BEFORE, which blocked families
+      // from changing payment method the night before the visit.
+      const { parseScheduledTimeMs: parseStartMs } = await import("../utils/scheduledTime");
       const startIso = appt.isoDate || appt.date;
-      if (startIso && new Date(startIso).getTime() <= Date.now()) {
+      const startRef = appt.startTime
+        ? `${String(appt.date)}T${String(appt.startTime).slice(0, 5)}:00`
+        : String(startIso ?? "");
+      if (startIso && parseStartMs(startRef) <= Date.now()) {
         return toolError("INVALID_INPUT", "That booking has already started — the payment method can't be changed now.");
       }
 

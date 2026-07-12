@@ -2,33 +2,37 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { apptStartMs, businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
 export const upcomingVisitReminder = functions.pubsub
   .schedule("*/30 * * * *")
   .onRun(async () => {
-    const now       = new Date();
-    const nowIso    = now.toISOString();
-    const plus90min = new Date(now.getTime() + 90 * 60 * 1000).toISOString();
+    const nowMs     = Date.now();
+    const plus90Ms  = nowMs + 90 * 60 * 1000;
 
-    // NOTE: no `.where("preVisitReminderSent","!=",true)` — Firestore `!=` excludes
-    // docs missing the field (appointments are created without it) AND can't be
-    // combined with the startDateTime range (inequality on two fields). Filter
-    // already-sent in code instead.
+    // Window derived from the stored `date` + `startTime`/`time` wall-clock
+    // fields. The old query ranged on `startDateTime`, which NO writer ever
+    // sets on appointments — this cron was silently dead. Query today's (and,
+    // near midnight, tomorrow's) confirmed visits by business date, then
+    // filter to the 90-minute window in code.
+    // NOTE: no `.where("preVisitReminderSent","!=",true)` — Firestore `!=`
+    // excludes docs missing the field. Filter already-sent in code instead.
     const snap = await db.collection("appointments")
-      .where("status",             "==", "confirmed")
-      .where("startDateTime",      ">=", nowIso)
-      .where("startDateTime",      "<=", plus90min)
+      .where("status", "==", "confirmed")
+      .where("date",   "in", [businessTodayStr(), businessTomorrowStr()])
       .get();
 
     if (snap.empty) return;
 
-    console.log(`[upcomingVisitReminder] Processing ${snap.size} upcoming appointments`);
+    console.log(`[upcomingVisitReminder] Scanning ${snap.size} confirmed visits for the 90-min window`);
 
     for (const doc of snap.docs) {
       const appt = doc.data();
       if (appt.preVisitReminderSent === true) continue;
+      const startMs = apptStartMs(appt.date, appt.startTime ?? appt.time);
+      if (!Number.isFinite(startMs) || startMs < nowMs || startMs > plus90Ms) continue;
       try {
         const userSnap = await db.collection("users").doc(appt.clientId as string).get();
         const phone    = (userSnap.data() as any)?.phone as string | undefined;

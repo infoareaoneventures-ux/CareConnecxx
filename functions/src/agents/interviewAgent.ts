@@ -469,8 +469,11 @@ export async function handleInterviewConfirm(
     }
   }
 
-  // Schedule 1h-before reminders and a post-interview follow-up trigger
-  const interviewMs    = new Date(pending.mutualTime).getTime();
+  // Schedule 1h-before reminders and a post-interview follow-up trigger.
+  // mutualTime is a naive Pacific wall-clock ISO (parseAvailability) — a bare
+  // `new Date()` reads it as UTC, firing the reminders and the +75min
+  // follow-up ~7-8h EARLY (before the interview even started).
+  const interviewMs    = parseScheduledTimeMs(pending.mutualTime);
   const nowMs          = Date.now();
   const oneHourBefore  = interviewMs - 60 * 60 * 1000;
   const ninetyMinAway  = interviewMs - 90 * 60 * 1000;

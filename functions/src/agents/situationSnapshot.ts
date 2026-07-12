@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -107,8 +108,12 @@ export async function buildCaregiverSnapshot(
 ): Promise<string> {
   if (!caregiverId) return "";
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const weekAhead = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // Business-timezone today — UTC omits tonight's visits from the snapshot
+    // during Pacific evenings ("no upcoming visits" while a shift is running)
+    const today = businessTodayStr();
+    const weekAheadD = new Date(`${today}T12:00:00Z`);
+    weekAheadD.setUTCDate(weekAheadD.getUTCDate() + 7);
+    const weekAhead = weekAheadD.toISOString().slice(0, 10);
     const [interviewSnap, appSnap, visitSnap] = await Promise.all([
       // Statuses where the caregiver themselves must respond. Includes the SMS
       // interview flow's "awaiting_caregiver_availability" (interviewAgent.ts) —
@@ -165,7 +170,7 @@ export async function buildCaregiverSnapshot(
 export async function buildClientSnapshot(userId: string): Promise<string> {
   if (!userId) return "";
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessTodayStr();
     const [jobsSnap, tsSnap, visitSnap] = await Promise.all([
       db.collection("job_posts")
         .where("clientId", "==", userId)

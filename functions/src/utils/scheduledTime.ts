@@ -93,6 +93,20 @@ export function apptSlotHourKey(date: unknown, time: unknown, timeZone: string =
   return slotHourKey(ms, timeZone);
 }
 
+// UTC instant of a stored appointment `date` ("YYYY-MM-DD") + `time` field
+// ("14:00" or "2:00 PM" — Pacific wall clock). NaN when unparseable, so
+// callers can skip rather than guess.
+export function apptStartMs(date: unknown, time: unknown, timeZone: string = DEFAULT_TZ): number {
+  if (typeof date !== "string" || !date) return NaN;
+  const m = String(time ?? "").trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!m) return NaN;
+  let hour = parseInt(m[1], 10);
+  if (m[3] === "PM" && hour < 12) hour += 12;
+  if (m[3] === "AM" && hour === 12) hour = 0;
+  if (hour > 23 || Number(m[2]) > 59) return NaN;
+  return parseScheduledTimeMs(`${date}T${String(hour).padStart(2, "0")}:${m[2]}:00`, timeZone);
+}
+
 // Minutes-since-midnight of `now` in the business timezone (0–1439). For jobs
 // that compare a wall-clock shift/task time to "now" — using getHours() gives
 // UTC minutes on Cloud Functions and fires those jobs at the wrong local hour.

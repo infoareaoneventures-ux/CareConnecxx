@@ -384,6 +384,153 @@ async function createSecondaryMemberSession(
   );
 }
 
+// ── Pending TCPA consent reply (session seeded by onUserCreated) ─────────────
+// The web-signup auth trigger (triggers/userCreated.ts) texts the consent ask
+// and creates agent_sessions/{phone} with optedIn:false BEFORE the user's
+// first inbound — which means the no-session web bridge above never runs for
+// them. This handler owns that first reply: it is the consent answer, and
+// nothing may be recorded as consented until it's an explicit agreement
+// (founder policy: consent decisions are explicit-binary). On YES it records
+// consent and hands the user off to the same conversational flow the web
+// bridge provides (returning-user greeting or name-first onboarding).
+async function handlePendingConsentReply(
+  phone:   string,
+  chatId:  string,
+  session: AgentSession,
+  text:    string,
+): Promise<void> {
+  const norm = text.trim().toUpperCase();
+  const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
+  const lang: "en" | "es" = (session as any).preferredLanguage === "es" ? "es" : "en";
+
+  // Carrier STOP protocol always wins.
+  if (stopWords.has(norm)) {
+    await optOutPhoneNumber(phone);
+    // TCPA opt-out confirmation must land reliably — force SMS, never iMessage.
+    await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
+    return;
+  }
+
+  // Explicit-binary consent classification: agreement / refusal / other.
+  // LLM-parsed per CLAUDE.md (no keyword intent matching); strict YES is the
+  // fail-safe if the parse call itself fails.
+  let verdict: "yes" | "no" | "other" = "other";
+  try {
+    const { parseWithClaude } = await import("../utils/parseWithClaude");
+    const raw = await parseWithClaude(
+      "The person was asked to reply YES to consent to receiving care-update text messages. " +
+      "Classify their reply. Clear agreement (\"yes\", \"yes please\", \"sure\", \"ok\", \"sounds good\", \"sí\") → yes. " +
+      "Clear refusal (\"no\", \"no thanks\", \"don't text me\") → no. " +
+      "Anything else — a question, a name, an unrelated message — → other. " +
+      "Reply with exactly one word: yes, no, or other.",
+      text,
+    );
+    const v = String(raw ?? "").trim().toLowerCase();
+    verdict = v === "yes" || v === "no" ? v : "other";
+  } catch {
+    verdict = (norm === "YES" || norm === "SI" || norm === "SÍ") ? "yes" : "other";
+  }
+
+  if (verdict === "no") {
+    await optOutPhoneNumber(phone);
+    await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
+    return;
+  }
+
+  if (verdict === "other") {
+    // Max ONE re-ask, then go quiet (deny-by-default). A later YES or STOP
+    // still lands back in this handler, so the door stays open.
+    const reasks = ((session as any).consentReaskCount as number | undefined) ?? 0;
+    if (reasks >= 1) return;
+    await db.collection("agent_sessions").doc(phone)
+      .update({ consentReaskCount: reasks + 1 }).catch(() => {});
+    const reask = await generateCaraMessage({
+      audience: "family",
+      language: lang,
+      context:
+        `You asked a new client to reply YES to get care updates by text, and they replied "${text}" instead. ` +
+        "Warmly acknowledge them in one short sentence, then ask them to reply YES if they'd like the updates so you can help with the rest. Do not answer anything else yet.",
+      fallback: lang === "es"
+        ? "¡Con gusto te ayudo! Primero responde SÍ si quieres recibir novedades del cuidado por mensaje — y seguimos de ahí."
+        : "Happy to help! First, just reply YES if you'd like me to text you care updates — then we'll dive right in.",
+      maxTokens: 80,
+    });
+    await sendMessage(chatId, reask);
+    return;
+  }
+
+  // ── YES: record consent, then hand off to the conversational flow ──────────
+  const now = new Date().toISOString();
+  const userSnap = session.userId
+    ? await db.collection("users").doc(session.userId).get().catch(() => null)
+    : null;
+  const userData = (userSnap?.exists ? userSnap.data() : {}) as Record<string, unknown>;
+  const isReturning = session.userId
+    ? await userHasRealOnboardingProgress(session.userId, userData)
+    : false;
+  const firstName =
+    String(userData.firstName ?? userData.name ?? "").trim().split(/\s+/)[0] || "";
+
+  // seniorId: the auth trigger seeds it as the client's own uid — correct it to
+  // the real senior for returning users, and clear it for fresh onboarding
+  // (matches the session shapes the web bridge writes).
+  const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+  const seniorId  = (userData.seniorId as string | undefined) ?? seniorIds[0] ?? "";
+  await db.collection("agent_sessions").doc(phone).update({
+    optedIn:   true,
+    optedInAt: now,
+    optedOut:  false,
+    userType:  (userData.userType as string | undefined) ?? "client",
+    onboardingStep: isReturning
+      ? "complete"
+      : (firstName ? "client_confirm_name" : "client_ask_name"),
+    ...(isReturning
+      ? { seniorId }
+      : { seniorId: admin.firestore.FieldValue.delete() }),
+    ...(!isReturning && firstName ? { onboardingData: { firstName } } : {}),
+  });
+
+  // Flip the /start web tab to its success state if it's still waiting.
+  const webRef  = db.collection("web_onboarding_sessions").doc(phone);
+  const webSnap = await webRef.get().catch(() => null);
+  if (webSnap?.exists && webSnap.data()?.status === "awaiting_inbound") {
+    await webRef.update({
+      status:      "connected",
+      connectedAt: admin.firestore.Timestamp.now(),
+      chatId,
+    }).catch(() => {/* non-critical */});
+  }
+
+  await initializeZepOnFirstContact(phone).catch((err) =>
+    console.error("Zep init failed (pending consent opt-in):", err)
+  );
+
+  // First impressions matter — route the handoff through Evia's actual voice,
+  // mirroring the web bridge's welcome (frozen fallbacks if the LLM fails).
+  const welcome = await generateCaraMessage({
+    audience: "family",
+    language: lang,
+    context: isReturning
+      ? `${firstName || "The client"} just replied YES to receiving care updates by text. Thank them warmly in one sentence and let them know you'll keep them posted after visits — and that they can text you anytime to book care or ask anything.`
+      : firstName
+        ? `${firstName} just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, then naturally check that "${firstName}" is the name they go by — woven into a sentence, NOT as a parenthetical instruction. Sound like a real person, not a form.`
+        : "A new client just replied YES to receiving care updates, and you're meeting them over text for the first time. Thank them briefly, introduce yourself as Evia, their care coordinator, and ask their name. Sound like a real person, not a form.",
+    fallback: isReturning
+      ? (lang === "es"
+          ? "¡Perfecto! Te mantendré al tanto después de cada visita. Y escríbeme cuando necesites algo — aquí estoy."
+          : "Perfect — you're all set. I'll keep you posted after every visit, and you can text me anytime to book care or ask anything.")
+      : firstName
+        ? (lang === "es"
+            ? `¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Te llamo ${firstName}, verdad?`
+            : `Perfect — thanks! I'm Evia, your care coordinator. Do you go by ${firstName}?`)
+        : (lang === "es"
+            ? "¡Perfecto! Soy Evia, tu coordinadora de cuidados. ¿Cómo te llamas?"
+            : "Perfect — thanks! I'm Evia, your care coordinator. What's your name?"),
+    maxTokens: 120,
+  });
+  await sendMessage(chatId, welcome);
+}
+
 // Ask which senior the phone is texting about, naming the actual candidates.
 async function askGroupDisambiguation(
   chatId:     string,
@@ -716,7 +863,7 @@ const handleInboundInner = traceable(
   }
 
   // ── Shared image / document (iMessage / RCS) ───────────────────────────────
-  // Caregivers text a headshot or a CNA/CPR card instead of using the web upload
+  // Caregivers text a headshot or a CNA/HHA card instead of using the web upload
   // link. Detect it once here; onboarding photo/doc/identity steps consume it
   // directly (vision-gated), and the completed-session "anytime" path below
   // classifies + smart-routes it. (Voice memos / location pins already claimed
@@ -1136,6 +1283,19 @@ const handleInboundInner = traceable(
       await sendMessage(chatId, tr.opt_in_welcome_back(lang), { preferredService: "SMS" });
       return;
     }
+    return;
+  }
+
+  // ── Pending TCPA consent (web-signup auth trigger seeded optedIn:false) ─────
+  // This session exists only because onUserCreated sent the consent ask, so the
+  // no-session web bridge above was skipped. The reply IS the consent answer —
+  // record it (and hand off to the conversational flow) before any other
+  // routing, or optedIn stays false forever and every proactive sender skips
+  // this user. Media-only replies fall through as "other" (empty text → one
+  // gentle re-ask), and STOP is honoured inside the handler.
+  if (session.optedIn === false) {
+    await stopTyping(chatId).catch(() => {});
+    await handlePendingConsentReply(phone, chatId, session, text);
     return;
   }
 

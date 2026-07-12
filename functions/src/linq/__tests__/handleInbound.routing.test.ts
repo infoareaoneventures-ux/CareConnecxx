@@ -430,6 +430,98 @@ describe("opt-out protocol (order: health gate -> START re-opt-in -> STOP)", () 
   });
 });
 
+// Sessions seeded by the onUserCreated auth trigger (web signup) carry
+// optedIn:false and no onboardingStep — the reply to the TCPA consent ask must
+// be handled BEFORE any other routing, or consent is never recorded and every
+// proactive sender skips the user forever.
+describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => {
+  function seedPendingConsentSession(overrides: Record<string, unknown> = {}) {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId:   CHAT,
+      userId:   "u1",
+      seniorId: "u1",
+      service:  "SMS",
+      optedOut: false,
+      optedIn:  false,
+      ...overrides,
+    });
+  }
+
+  it("YES records consent and routes a fresh client into name-first onboarding", async () => {
+    seedPendingConsentSession();
+    hoisted.docState.set("users/u1", { firstName: "Basra Yousuf", userType: "client" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("Yes please"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      userType:       "client",
+      onboardingStep: "client_confirm_name",
+      onboardingData: { firstName: "Basra" },
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Basra");
+    expect(classifyIntentDetailed).not.toHaveBeenCalled();
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("YES from a client with real progress marks the session complete and greets them", async () => {
+    seedPendingConsentSession();
+    hoisted.docState.set("users/u1", { firstName: "Basra", userType: "client", seniorId: "senior-1" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("YES"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      onboardingStep: "complete",
+      seniorId:       "senior-1",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("STOP during pending consent opts out (carrier protocol wins)", async () => {
+    seedPendingConsentSession();
+    await handleInbound(makeEvent("STOP"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("refusal opts out instead of silently staying pending", async () => {
+    seedPendingConsentSession();
+    parseWithClaude.mockResolvedValueOnce("no");
+    await handleInbound(makeEvent("no thanks"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("non-answer gets ONE re-ask, then goes quiet (deny-by-default)", async () => {
+    seedPendingConsentSession();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("when is the caregiver coming?"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ consentReaskCount: 1 });
+
+    sendMessage.mockClear();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("hello?"));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("a later YES after going quiet still opts them in", async () => {
+    seedPendingConsentSession({ consentReaskCount: 1 });
+    hoisted.docState.set("users/u1", { firstName: "Basra", userType: "client" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+    await handleInbound(makeEvent("YES"));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: true });
+  });
+});
+
 describe("safety + account gates", () => {
   it("lapsed-subscription client gets the billing notice and nothing else", async () => {
     seedSession();

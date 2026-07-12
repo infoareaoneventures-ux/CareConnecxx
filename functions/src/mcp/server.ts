@@ -7328,6 +7328,14 @@ async function executeToolCall(
       let sq = db.collection("interviews").where(field, "==", id);
       if (liStatus) sq = sq.where("status", "==", liStatus);
       const smsSnap = await sq.limit(25).get().catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+      // An Evia-SMS interview appears in BOTH collections: interviewAgent
+      // mirrors the `interviews` doc into `video_interviews` with a
+      // linkedInterviewId back-pointer. Surface only the mirror (it carries
+      // callUrl + the calendar shape) and drop the `interviews` twin, so the
+      // agent never sees — or cancels — the same interview under two ids.
+      const mirroredIds = new Set(
+        liSnap.docs.map(d => d.data().linkedInterviewId).filter((v): v is string => typeof v === "string" && !!v),
+      );
       const interviews = [
         ...liSnap.docs.map(d => {
           const iv = d.data();
@@ -7345,7 +7353,7 @@ async function executeToolCall(
             applicationId: iv.applicationId ?? null,
           };
         }),
-        ...smsSnap.docs.map(d => {
+        ...smsSnap.docs.filter(d => !mirroredIds.has(d.id)).map(d => {
           const iv = d.data();
           return {
             interviewId:   d.id,
@@ -7390,20 +7398,52 @@ async function executeToolCall(
       if (!cancelledBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
       if (iv.status === "cancelled") return { success: true, alreadyCancelled: true, interviewId: ciInterviewId };
       if (iv.status === "completed") return toolError("INVALID_INPUT", "Cannot cancel a completed interview");
-      await ivSnap.ref.update({
+      // Evia-SMS interviews exist TWICE: the `interviews` doc plus a
+      // `video_interviews` mirror carrying a linkedInterviewId back-pointer
+      // (interviewAgent). Cancelling only the doc the caller named leaves the
+      // twin live — a ghost calendar entry with a working Join button, or 1h
+      // reminder SMS (keyed on the `interviews` doc id) firing for a dead
+      // interview — so resolve the twin and cancel both.
+      let twinSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (ivSnap.ref.parent.id === "video_interviews") {
+        if (typeof iv.linkedInterviewId === "string" && iv.linkedInterviewId) {
+          const s = await db.collection("interviews").doc(iv.linkedInterviewId).get().catch(() => null);
+          twinSnap = s?.exists ? s : null;
+        }
+      } else {
+        const mirror = await db.collection("video_interviews")
+          .where("linkedInterviewId", "==", ciInterviewId)
+          .limit(1)
+          .get()
+          .catch(() => null);
+        twinSnap = mirror && !mirror.empty ? mirror.docs[0] : null;
+      }
+      const cancelPatch = {
         status:       "cancelled",
         cancelledAt:  nowIso,
         cancelledBy,
         cancelReason: ciReason ?? null,
-      });
-      // Retire pending 1h reminders + follow-up for the dead interview. The
-      // video_interviews path is also covered by onVideoInterviewLinkEnsure
-      // (web declines never pass through this tool); SMS `interviews` docs
-      // have no status trigger, so this call is their only cleanup.
+      };
+      await ivSnap.ref.update(cancelPatch);
+      if (twinSnap && twinSnap.data()?.status !== "cancelled") {
+        await twinSnap.ref.update(cancelPatch).catch(() => {});
+      }
+      // Retire pending 1h reminders + follow-up for the dead interview — for
+      // BOTH twins' refId namespaces (SMS reminders are keyed
+      // interview_{interviews doc id}, web reminders video_interview_{video
+      // doc id}). The video_interviews path is also covered by
+      // onVideoInterviewLinkEnsure (web declines never pass through this
+      // tool); SMS `interviews` docs have no status trigger, so this call is
+      // their only cleanup.
       {
         const { cancelTriggersByRef } = await import("../triggers/triggerEngine");
-        const prefix = ivSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview";
-        await cancelTriggersByRef(`${prefix}_${ciInterviewId}`).catch(() => {});
+        const refIds = new Set<string>([
+          `${ivSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview"}_${ciInterviewId}`,
+        ]);
+        if (twinSnap) {
+          refIds.add(`${twinSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview"}_${twinSnap.id}`);
+        }
+        await Promise.all([...refIds].map(r => cancelTriggersByRef(r).catch(() => {})));
       }
       // Notify the counterpart, following schedule_interview (caregiver via
       // trySend) / respond_to_interview_request (client via agent_sessions).

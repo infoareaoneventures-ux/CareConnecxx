@@ -81,7 +81,9 @@ service cloud.firestore {
       // Owners may update most fields, but identity-verification and
       // subscription fields are webhook-only (Admin SDK bypasses rules) —
       // a self-serve client cannot flip `identityCheckStatus` to 'verified'
-      // to bypass the Stripe Identity flow.
+      // to bypass the Stripe Identity flow. `referralCredit` is granted only
+      // by v1-resolveReferrerByCode (server-side) — a client could otherwise
+      // mint themselves arbitrary credit with a raw SDK write.
       allow update: if isAdmin() || (
         isOwner(userId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
@@ -92,6 +94,7 @@ service cloud.firestore {
           'subscriptionActive',
           'subscriptionId',
           'stripeCustomerId',
+          'referralCredit',
         ])
       );
       allow delete: if isAdmin();

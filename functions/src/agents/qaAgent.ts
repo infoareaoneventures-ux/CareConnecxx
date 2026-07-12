@@ -2915,6 +2915,47 @@ export async function runQaAgent(params: {
 //
 // Caller in webhooks.ts decides eligibility and falls through to runQaAgent
 // when any condition fails. Saves ~3–5s on simple greetings.
+// Quick-path grounding gate, extracted for direct testing. CONTEXT must be
+// ONLY real Firestore-derived facts (the client contextSection / caregiver
+// snapshot) — NEVER the full persona: its hardcoded style Examples ("Maria's
+// coming Thursday at 3") would let a fabricated reply that parrots an example
+// read as SUPPORTED, which is the exact failure this gate exists to catch.
+// Deterministic fallbacks skip the check (built verbatim from Firestore facts,
+// and re-gating them could only loop). Fails open on checker error/timeout.
+export async function gateQuickReplyGrounding(params: {
+  reply: string;
+  usedDeterministicFallback: boolean;
+  groundingContext: string;
+  recent: Array<{ role: "user" | "assistant"; content: string }>;
+  fallback: () => string;
+  checker?: (systemPrompt: string, payload: string, opts: { maxTokens: number; signal: AbortSignal }) => Promise<string>;
+}): Promise<{ reply: string; triggered: boolean; swapped: boolean }> {
+  const { reply, usedDeterministicFallback, groundingContext, recent, fallback } = params;
+  if (usedDeterministicFallback || !detectConfidenceClaim(reply)) {
+    return { reply, triggered: false, swapped: false };
+  }
+  const checker = params.checker
+    ?? ((sys: string, payload: string, opts: { maxTokens: number; signal: AbortSignal }) => quickComplete(sys, payload, opts));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const verdictRaw = await checker(
+      HANDOFF_GROUNDING_SYSTEM_PROMPT,
+      buildHandoffGroundingPayload(groundingContext, recent, reply),
+      { maxTokens: 8, signal: controller.signal },
+    );
+    if (parseHandoffGroundingVerdict(verdictRaw) === "unsupported") {
+      return { reply: fallback(), triggered: true, swapped: true };
+    }
+    return { reply, triggered: true, swapped: false };
+  } catch {
+    // Fail open — a checker outage must not degrade greetings.
+    return { reply, triggered: true, swapped: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runQuickReply(params: {
   text:    string;
   phone:   string;
@@ -3067,38 +3108,36 @@ export async function runQuickReply(params: {
   // context-aware grounding verdict the main loop's handoff gate uses; on
   // UNSUPPORTED, swap in the deterministic context-led fallback (a greeting
   // never warrants a human handoff — the fix is to say less, not to hold the
-  // thread). Fail open on checker error/garbage, like the main gate.
-  if (!usedDeterministicFallback && detectConfidenceClaim(reply)) {
-    metrics.confidenceClaimDetected = true;
-    metrics.groundingTriggered = true;
-    try {
-      const gateController = new AbortController();
-      const gateTimer = setTimeout(() => gateController.abort(), 8_000);
-      const verdictRaw = await quickComplete(
-        HANDOFF_GROUNDING_SYSTEM_PROMPT,
-        buildHandoffGroundingPayload(
-          persona,
-          recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-          reply,
-        ),
-        { maxTokens: 8, signal: gateController.signal },
-      );
-      clearTimeout(gateTimer);
-      if (parseHandoffGroundingVerdict(verdictRaw) === "unsupported") {
-        console.warn("runQuickReply: unsupported claim in quick reply — using context fallback", { userId, preview: reply.slice(0, 100) });
-        db.collection("agent_uncertainty_log").add({
-          userId, phone,
-          question:   text.slice(0, 200),
-          reply:      reply.slice(0, 500),
-          detectedAt: new Date().toISOString(),
-          quickReplyGroundingFallback: true,
-        }).catch(() => {});
-        reply = contextFallbackGreeting();
-        metrics.groundingRewriteApplied = true;
-      }
-    } catch {
-      // Fail open — a checker outage must not degrade greetings.
+  // thread). CONTEXT is the facts only, not the persona (see
+  // gateQuickReplyGrounding). Fail open on checker error/garbage, like the
+  // main gate.
+  {
+    const groundingContext = userType === "caregiver"
+      ? (cgSnapshot ? `Caregiver snapshot:\n${cgSnapshot}` : "")
+      : `Care recipient: ${seniorName}${contextSection}`;
+    const gate = await gateQuickReplyGrounding({
+      reply,
+      usedDeterministicFallback,
+      groundingContext,
+      recent: recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      fallback: contextFallbackGreeting,
+    });
+    if (gate.triggered) {
+      metrics.confidenceClaimDetected = true;
+      metrics.groundingTriggered = true;
     }
+    if (gate.swapped) {
+      console.warn("runQuickReply: unsupported claim in quick reply — using context fallback", { userId, preview: reply.slice(0, 100) });
+      db.collection("agent_uncertainty_log").add({
+        userId, phone,
+        question:   text.slice(0, 200),
+        reply:      reply.slice(0, 500),
+        detectedAt: new Date().toISOString(),
+        quickReplyGroundingFallback: true,
+      }).catch(() => {});
+      metrics.groundingRewriteApplied = true;
+    }
+    reply = gate.reply;
   }
 
   // Quick replies bypass the full supervisor (lint + constitution check) that

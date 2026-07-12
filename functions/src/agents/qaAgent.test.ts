@@ -33,6 +33,7 @@ vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildTo
 import {
   hasListShape,
   detectConfidenceClaim,
+  gateQuickReplyGrounding,
   detectMedicalAssertion,
   collectTurnToolObservations,
   detectPromiseWithoutToolCall,
@@ -435,5 +436,68 @@ describe("buildCaregiverCoreContext", () => {
     expect(out).toContain("ACCOUNT STATUS: account paused.");
     expect(out).not.toContain("SKILLS AND EXPERIENCE");
     expect(out).not.toContain("WEEKLY AVAILABILITY");
+  });
+});
+
+describe("gateQuickReplyGrounding", () => {
+  const FACTS = "Known context:\n- NEXT VISIT: Ana is coming on Friday at 10.";
+  const RECENT = [{ role: "user" as const, content: "hi" }];
+  const fallback = () => "Hey! Ana is coming Friday — anything you want me to pass along?";
+  const base = {
+    usedDeterministicFallback: false,
+    groundingContext: FACTS,
+    recent: RECENT,
+    fallback,
+  };
+
+  it("swaps an UNSUPPORTED reply for the deterministic fallback", async () => {
+    const checker = vi.fn().mockResolvedValue("UNSUPPORTED");
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
+    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+    expect(checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a SUPPORTED reply unchanged", async () => {
+    const checker = vi.fn().mockResolvedValue("SUPPORTED");
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Ana is coming Friday at 10.", checker });
+    expect(out).toEqual({ reply: "Ana is coming Friday at 10.", triggered: true, swapped: false });
+  });
+
+  it("fails open when the checker throws — the reply still goes out", async () => {
+    const checker = vi.fn().mockRejectedValue(new Error("checker down"));
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
+    expect(out).toEqual({ reply: "Maria is coming Thursday at 3.", triggered: true, swapped: false });
+  });
+
+  it("never re-gates a deterministic fallback (checker not called — no loop)", async () => {
+    const checker = vi.fn();
+    const out = await gateQuickReplyGrounding({
+      ...base,
+      reply: "Maria is coming Thursday at 3.",
+      usedDeterministicFallback: true,
+      checker,
+    });
+    expect(out.swapped).toBe(false);
+    expect(out.triggered).toBe(false);
+    expect(checker).not.toHaveBeenCalled();
+  });
+
+  it("skips the checker entirely when the reply asserts no specific fact", async () => {
+    const checker = vi.fn();
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Hey! How's everything going?", checker });
+    expect(out).toEqual({ reply: "Hey! How's everything going?", triggered: false, swapped: false });
+    expect(checker).not.toHaveBeenCalled();
+  });
+
+  it("feeds the checker the FACTS context and draft — never persona example copy", async () => {
+    const checker = vi.fn().mockResolvedValue("SUPPORTED");
+    await gateQuickReplyGrounding({ ...base, reply: "Ana is coming Friday at 10.", checker });
+    const payload = checker.mock.calls[0][1] as string;
+    expect(payload).toContain("NEXT VISIT: Ana is coming on Friday at 10.");
+    expect(payload).toContain("DRAFT:\nAna is coming Friday at 10.");
+    // The persona's hardcoded Examples block must never reach the checker —
+    // a fabricated reply matching an example would read as SUPPORTED.
+    expect(payload).not.toContain("Examples of good context-led greetings");
+    expect(payload).not.toContain("Maria's coming Thursday at 3");
   });
 });

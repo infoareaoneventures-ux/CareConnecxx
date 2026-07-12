@@ -274,10 +274,16 @@ describe("caregiver gate webhooks — end-to-end to an active caregiver doc", ()
     }));
     expect(stored().onboardingStep).toBe("caregiver_awaiting_bgcheck");
     // FCRA paper trail matches the webapp's initiateCheckrCandidate stamp.
+    // Consent (operational) stays on the parent doc; identity PII lands in the
+    // owner-only private subcollection (2f205a0 migration) — the world-readable
+    // parent must NOT carry the legal name.
     const cgAfterConsent = hoisted.caregiverDoc();
     expect(cgAfterConsent).not.toBeNull();
     expect(cgAfterConsent!.data.backgroundCheckData.consentGiven).toBe(true);
-    expect(cgAfterConsent!.data.backgroundCheckData.legalFirstName).toBe("Maria");
+    expect(cgAfterConsent!.data.backgroundCheckData.legalFirstName).toBeUndefined();
+    const privatePII = hoisted.docState.get(`${cgAfterConsent!.path}/private/background`);
+    expect(privatePII?.legalFirstName).toBe("Maria");
+    expect(privatePII?.legalLastName).toBe("Lopez");
 
     // Checkr cleared → Evia sets up the Stripe Connect payout account.
     await advanceOnboardingStep(PHONE, "background_check", "clear");

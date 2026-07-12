@@ -3052,11 +3052,12 @@ export const dbService = {
                 });
             }
 
-            // Add referral credit to new user
+            // Referral benefits (referredBy + $25 referralCredit) are granted
+            // server-side by v1-resolveReferrerByCode above — referralCredit
+            // is client-write-blocked in firestore.rules, so writing it here
+            // would fail the whole update.
             await db.collection('users').doc(newUserId).update({
                 referralCode: generateReferralCode(),
-                referredBy: referrerId,
-                referralCredit: 25 // $25 credit
             });
         } catch (error) {
             console.error('Failed to process referral:', error);

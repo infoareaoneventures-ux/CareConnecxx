@@ -32,5 +32,17 @@ export const resolveReferrerByCode = functions.https.onCall(async (data, context
   const referrerId = snap.docs[0].id;
   // Never let someone credit themselves as their own referrer.
   if (referrerId === context.auth.uid) return { referrerId: null };
+
+  // Grant the referral benefits HERE, server-side (Admin SDK bypasses rules).
+  // `referralCredit` is client-write-blocked in firestore.rules — before this,
+  // the client self-wrote the $25 credit, so any user could mint arbitrary
+  // credit with a raw SDK write. Only the first successful resolution
+  // attributes: an already-referred user can't re-earn or switch referrers by
+  // replaying codes.
+  const userRef = admin.firestore().collection("users").doc(context.auth.uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.data()?.referredBy) {
+    await userRef.set({ referredBy: referrerId, referralCredit: 25 }, { merge: true });
+  }
   return { referrerId };
 });

@@ -47,7 +47,7 @@ export async function absorbCaregiverFields(
       `"zipCode":"5-digit US zip code",` +
       `"yearsExperience":number,` +
       `"specialties":["short care specialty like 'dementia' or 'mobility assistance'"],` +
-      `"certifications":["certification name like 'CNA' or 'CPR'"],` +
+      `"certifications":["certification name like 'CNA' or 'HHA'"],` +
       `"availability":{"days":["Monday"],"hours":"9am-5pm"},` +
       `"jobType":"occasional | part_time | full_time",` +
       `"hourlyRate":number,` +

@@ -6509,6 +6509,21 @@ async function executeToolCall(
           console.error("save_onboarding_field: service canonicalization failed (keeping raw specialties):", err);
         }
       }
+      // Availability shape guard: the model sometimes saves the caregiver's
+      // words verbatim ("mornings and evenings") instead of the {days,hours}
+      // object deriveWeeklyAvailability needs — the caregivers doc then keeps a
+      // stale/missing weeklyAvailability and the webapp grid never updates.
+      // Coerce every save into the canonical object at write time; on failure
+      // the raw value stays (deriveWeeklyAvailability now parses strings too).
+      if (role === "caregiver" && fieldName === "availability") {
+        try {
+          const { normalizeAvailabilityInput } = await import("../agents/caregiverAvailability");
+          const canonical = await normalizeAvailabilityInput(normalizedValue);
+          if (canonical) onboardingDataPatch = { availability: canonical };
+        } catch (err) {
+          console.error("save_onboarding_field: availability normalization failed (keeping raw):", err);
+        }
+      }
       if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
         try {
           const { quickComplete } = await import("../utils/openaiClient");

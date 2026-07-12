@@ -106,7 +106,15 @@ export const backfillCaregiverServiceAvailability = functions
         // ── weeklyAvailability re-derivation (Evia-sourced only) ─────────────
         // Gated on the raw `availability` {days,hours} — a webapp-edited doc has
         // weeklyAvailability but no raw availability, so it is left alone.
-        if (d.availability) {
+        // STRING-shaped raw availability (deriveWeeklyAvailability parses it
+        // since 2026-07-12) only FILLS an empty map — seeded/webapp-authored
+        // maps are richer than a free-text re-derivation ("Weekdays and
+        // Saturday mornings" would narrow the demo caregivers' 8am–6pm weekday
+        // schedule to mornings-only).
+        const hasPopulatedDay = Object.values(
+          (d.weeklyAvailability ?? {}) as Record<string, unknown>,
+        ).some((slots) => Array.isArray(slots) && slots.length > 0);
+        if (d.availability && !(typeof d.availability === "string" && hasPopulatedDay)) {
           const rederived = deriveWeeklyAvailability(d.availability);
           if (rederived) {
             const before = JSON.stringify(d.weeklyAvailability ?? null);

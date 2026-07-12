@@ -12,6 +12,14 @@
         "function": "v1-caregiverProfileMeta"
       },
       {
+        "source": "/upload/**",
+        "function": "v1-uploadPageMeta"
+      },
+      {
+        "source": "/bgcheck",
+        "function": "v1-uploadPageMeta"
+      },
+      {
         "source": "/stripe-refresh",
         "function": "v1-stripeConnectRefresh"
       },

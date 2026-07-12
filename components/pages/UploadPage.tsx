@@ -164,7 +164,7 @@ export default function UploadPage() {
         <p className="text-white/50 text-sm">
           {isPhoto
             ? "Families want to see who they're trusting. A clear headshot works great."
-            : 'CNA license, CPR card, or any relevant certification.'}
+            : 'CNA license, HHA certificate, or any relevant caregiving certification.'}
         </p>
       </div>
 

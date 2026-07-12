@@ -284,6 +284,10 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("hourlyRate", d.hourlyRate);
   copy("email",      d.email);
   copy("bio",        d.bio);
+  // The webapp progress card treats the Profile step's bio requirement as met
+  // when the caregiver explicitly skipped it over SMS — mirror the flag so an
+  // Evia skip doesn't leave the dashboard stuck on "add your bio".
+  if (d.bioSkipped === true) out.bioSkipped = true;
   copy("jobType",    d.jobType);
   // Webapp display parity: the profile "Looking for" pills read jobTypes (array
   // of hyphenated ids), which nothing server-side reads — matching uses jobType.
@@ -969,7 +973,7 @@ export async function handleOnboardingStep(
       let docIntent: string = norm === "SKIP" ? "skip" : "";
       if (!docIntent) {
         const parsed = await parseWithClaude(
-          "The caregiver was asked to upload certifications (CNA license, CPR card, etc.) via a link, and told it's fine to say so if they don't have any. Classify the reply: " +
+          "The caregiver was asked to upload certifications (CNA license, HHA certificate, etc.) via a link, and told it's fine to say so if they don't have any. Classify the reply: " +
           "wants to skip / has none / will add later (\"skip\", \"don't have any\", \"no certs\", \"nope\", \"not yet\") → skip. " +
           "Asked a question (what counts, is it required, link not working) → question. " +
           "ONLY a thanks or acknowledgment with nothing else (\"thanks\", \"sounds good\", \"ok great\") → ack. " +
@@ -2601,21 +2605,17 @@ async function handleCaregiverSendPhoto(phone: string, chatId: string, session: 
     context:
       `The caregiver${firstName ? ` (first name ${firstName})` : ""} just finished sharing their background and experience — their profile is coming together. ` +
       "Naturally ask them to add a profile photo next: families want to see who they're trusting, and a clear friendly headshot makes a real difference in getting booked. " +
-      "Tell them you're dropping the upload link right below. Do NOT include any URL — the link is appended after your text.",
+      "Tell them you're dropping the upload link right below. Do NOT include any URL — the link is sent right after your text.",
     fallback:
       `Almost there${firstName ? `, ${firstName}` : ""}! One more thing — families want to see who they're trusting, and a clear friendly headshot makes a big difference. Tap here to add your photo:`,
     maxTokens: 110,
   });
-  // Send the upload URL INLINE as plain text (one structured text part), NOT as a
-  // standalone `link` part. A link part renders as a rich preview CARD that needs
-  // fetchable OG metadata; the token-gated /upload/photo page has none (unlike the
-  // /p/ profile links, which got a dedicated OG rewrite, and Stripe checkout URLs,
-  // which carry their own), so the card arrived BLANK — "message arrives but no
-  // link". A plain-text https URL is tappable on both iMessage and SMS regardless
-  // of OG, and a structured text part bypasses sendMessage's URL→link-card splitter
-  // (only plain-string sends are split). The JWT token is base64url with dots, so
-  // redactPii (SSN/card/email formats) never mangles it.
-  await sendMessage(chatId, { parts: [{ type: "text", value: `${ask}\n${photoUrl}` }] });
+  await sendMessage(chatId, ask);
+  // Rich preview card (2026-07-12): /upload/** is served through the
+  // v1-uploadPageMeta OG rewrite (same pattern as the /p/ profile links), so a
+  // link part renders a branded "Add your profile photo — Evia" card instead of
+  // the raw token URL that used to be inlined here.
+  await sendMessage(chatId, { parts: [{ type: "link", value: photoUrl }] });
 }
 
 async function handleCaregiverSendDocuments(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -2627,20 +2627,22 @@ async function handleCaregiverSendDocuments(phone: string, chatId: string, sessi
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      "The caregiver just added their profile photo. Next, ask naturally whether they have any certifications — CNA license, CPR card, anything like that — because certs make their profile stand out to families. " +
+      "The caregiver just added their profile photo. Next, ask naturally whether they have any caregiving certifications — CNA license, HHA certificate, caregiver training, anything like that (Evia is non-medical in-home care, so never suggest medical credentials) — because certs make their profile stand out to families. " +
       "Tell them you're dropping an upload link right below this message, and weave in naturally that it's totally fine if they don't have any — they can just say so and you'll move on. " +
-      "Do NOT write a stiff 'reply SKIP' instruction, do NOT include any URL — the link is appended after your text.",
+      "Do NOT write a stiff 'reply SKIP' instruction, do NOT include any URL — the link is sent right after your text.",
     fallback:
-      "Nice — photo's in! Do you have any certifications, like a CNA license or CPR card? They really make your profile stand out. Here's an upload link — and if you don't have any, just say so and we'll keep moving:",
+      "Nice — photo's in! Do you have any certifications, like a CNA license or HHA certificate? They really make your profile stand out. Here's an upload link — and if you don't have any, just say so and we'll keep moving:",
     maxTokens: 120,
   });
-  // Inline URL as text, same reason as the photo gate: the token-gated
-  // /upload/document page has no OG metadata, so a link-part card renders blank.
-  await sendMessage(chatId, { parts: [{ type: "text", value: `${ask}\n${docUrl}` }] });
+  await sendMessage(chatId, ask);
+  // Rich preview card (2026-07-12): /upload/** is served through the
+  // v1-uploadPageMeta OG rewrite, so a link part renders a branded
+  // "Add your certifications — Evia" card instead of the raw token URL.
+  await sendMessage(chatId, { parts: [{ type: "link", value: docUrl }] });
 }
 
 // ── Inbound media during onboarding (texted photo / document) ─────────────────
-// A caregiver snaps a headshot or a CNA/CPR card and texts it instead of using
+// A caregiver snaps a headshot or a CNA/HHA card and texts it instead of using
 // the web upload link. Route by the current step; gate with gpt-4o vision and
 // warmly re-ask on a bad shot rather than advancing. Anything sent at a step
 // that isn't expecting a file gets a gentle nudge back on track.
@@ -2717,7 +2719,7 @@ async function handleInboundDocument(
       const why = verdict.reason ? ` ${verdict.reason}` : "";
       await sendMessage(chatId,
         `Thanks for that!${why} Could you resend a clear photo of your certification ` +
-        `(CNA license, CPR card, etc.)? Or reply SKIP to move on — you can always add it later.`
+        `(CNA license, HHA certificate, etc.)? Or reply SKIP to move on — you can always add it later.`
       );
       return;
     }
@@ -2778,9 +2780,10 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
       "Once it clears (usually 1–3 days), you're approved and families can book you.",
     maxTokens: 150,
   }));
-  // Token page (no OG metadata) → inline as text so it renders tappable instead
-  // of a blank preview card — same rule as the /upload links in sendOnboardingLink.
-  await sendMessage(chatId, { parts: [{ type: "text", value: `Review & authorize here:\n${consentUrl}` }] });
+  // Rich preview card (2026-07-12): /bgcheck is served through the
+  // v1-uploadPageMeta OG rewrite, so a link part renders a branded
+  // "Authorize your background check — Evia" card instead of the raw token URL.
+  await sendMessage(chatId, { parts: [{ type: "link", value: consentUrl }] });
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
 }
 
@@ -2802,7 +2805,8 @@ async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string
   }
   const token      = generateToken({ phone, task: "bgcheck_consent" });
   const consentUrl = `${APP_URL}/bgcheck?t=${token}`;
-  await sendMessage(chatId, { parts: [{ type: "text", value: `Review & authorize your background check here:\n${consentUrl}` }] });
+  await sendMessage(chatId, "Review & authorize your background check here:");
+  await sendMessage(chatId, { parts: [{ type: "link", value: consentUrl }] });
 }
 
 // ── Background-check consent confirm (v1-confirmBgcheckOnboarding) ───────────
@@ -3369,21 +3373,12 @@ export async function sendOnboardingLink(
       throw new Error(`sendOnboardingLink: unknown linkType ${linkType as string}`);
   }
 
-  // Token-gated /upload and /bgcheck pages have no OG metadata, so a `link` part
-  // renders as a BLANK preview card (the "message arrives but no link" bug). Send
-  // those inline as plain text — tappable on iMessage and SMS regardless of OG.
-  // External provider URLs (Stripe checkout/Connect, Checkr) carry their own OG
-  // and render as proper cards, so they stay `link` parts.
-  const inlineAsText =
-    linkType === "caregiver_photo" ||
-    linkType === "caregiver_documents" ||
-    url.startsWith(`${APP_URL}/bgcheck`);
-  if (inlineAsText) {
-    const label = linkType === "caregiver_background_check" ? "Review & authorize here:" : "Tap to upload:";
-    await sendMessage(chatId, { parts: [{ type: "text", value: `${label}\n${url}` }] });
-  } else {
-    await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
-  }
+  // Every onboarding link renders as a rich preview card: app-hosted token
+  // pages (/upload/**, /bgcheck) are served through the v1-uploadPageMeta OG
+  // rewrite (2026-07-12), and external provider URLs (Stripe checkout/Connect,
+  // Checkr) carry their own OG. isCardSafeUrl in linq/client.ts remains the
+  // chokepoint that downgrades any no-OG URL to tappable plain text.
+  await sendMessage(chatId, { parts: [{ type: "link", value: url }] });
   // A link just landed in the chat — any open "I'll text you the link" promise
   // is now fulfilled (recorded by sendOnboardingLinkFailureMessage / the
   // link-promise net). Harmless no-op when none is open.
@@ -4547,7 +4542,7 @@ const PHOTO_STEP_FACTS =
   "A profile photo is how families see who they're trusting — a clear, friendly headshot makes them much more likely to request an interview. " +
   "The link Evia sent opens a phone-friendly upload page and returns them right back to Messages when they're done. Next after the photo is certifications.";
 const DOCUMENTS_STEP_FACTS =
-  "Certifications (CNA license, CPR card, etc.) are OPTIONAL — they help a profile stand out, but a caregiver can skip them and keep going. " +
+  "Certifications (CNA license, HHA certificate, etc. — Evia is non-medical in-home care, so never suggest medical credentials) are OPTIONAL — they help a profile stand out, but a caregiver can skip them and keep going. " +
   "The link Evia sent opens a phone-friendly upload page. After this comes the optional Approved Driver (MVR) question, then activating their membership.";
 const MVR_STEP_FACTS =
   "The Approved Driver check is an OPTIONAL one-time add-on: it adds a Motor Vehicle Record (driving) check so families who need a driver see a verified-driver " +

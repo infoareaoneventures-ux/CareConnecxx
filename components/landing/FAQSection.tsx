@@ -9,7 +9,7 @@ interface FAQSectionProps {
 export const faqs = [
     {
         question: "How do you screen your caregivers?",
-        answer: "Every caregiver undergoes a rigorous 5-step screening process: comprehensive background check (criminal + DMV), identity verification, reference checks from previous employers, skills assessment, and a personal interview. We also require current CPR/First Aid certification and ongoing training.",
+        answer: "Every caregiver undergoes a rigorous 5-step screening process: comprehensive background check (criminal + DMV), identity verification, reference checks from previous employers, skills assessment, and a personal interview. All care on Evia is non-medical in-home care.",
         category: "Safety"
     },
     {

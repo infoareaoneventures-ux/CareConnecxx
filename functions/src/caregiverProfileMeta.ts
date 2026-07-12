@@ -134,7 +134,7 @@ export function buildProfileMeta(
 let indexCache: { html: string; fetchedAt: number } | null = null;
 const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
 
-async function getIndexHtml(): Promise<string> {
+export async function getIndexHtml(): Promise<string> {
   if (indexCache && Date.now() - indexCache.fetchedAt < INDEX_CACHE_TTL_MS) {
     return indexCache.html;
   }

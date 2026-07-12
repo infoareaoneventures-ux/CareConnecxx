@@ -168,8 +168,8 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their $66.49/year membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
             fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour $66.49/year membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
-            context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, CPR, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
-            fallback = `${greeting} Almost done — just your certifications left (CNA, CPR, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
+            context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, HHA, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
+            fallback = `${greeting} Almost done — just your certifications left (CNA, HHA, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
           } else if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
             // Their profile IS finished at this point (bg check cleared, payouts
             // live, matchable) — never imply otherwise (founder report 2026-07-10:

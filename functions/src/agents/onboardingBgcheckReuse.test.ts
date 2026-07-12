@@ -121,9 +121,10 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     await resendStuckStep("+15551112222");
 
     expect(hoisted.checkrInvite).not.toHaveBeenCalled();
-    // Consent link goes out inline as text (token pages have no OG preview).
+    // Consent link goes out as a link part — /bgcheck renders a branded rich
+    // card via the v1-uploadPageMeta OG rewrite (2026-07-12).
     const part = lastLinkPart();
-    expect(part.type).toBe("text");
+    expect(part.type).toBe("link");
     expect(part.value).toContain("/bgcheck?t=");
     // Parked at the consent step so inbound texts re-serve the consent link.
     expect(hoisted.updateMock).toHaveBeenCalledWith(

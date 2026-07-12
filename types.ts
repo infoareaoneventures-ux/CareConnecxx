@@ -177,7 +177,7 @@ export interface Caregiver {
 
   // NEW: Skills & Services
   skills?: string[];  // e.g., ["Driving", "Meal Preparation", "Medical Assistance"]
-  certifications?: string[];  // e.g., ["CPR", "First Aid", "CNA"]
+  certifications?: string[];  // e.g., ["CNA", "HHA"]
 
   // NEW: Availability
   weeklyAvailability?: WeeklySchedule;

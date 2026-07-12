@@ -28,6 +28,10 @@ export * from './checkr';
 // Shared caregiver profile links (/p/{id}) — per-caregiver OG tags for rich previews
 export { caregiverProfileMeta } from './caregiverProfileMeta';
 
+// Onboarding upload pages (/upload/photo|document) — static OG tags so texted
+// upload links render as branded rich cards instead of raw token URLs
+export { uploadPageMeta } from './uploadPageMeta';
+
 // Export Notification Functions
 export * from './notifications';
 

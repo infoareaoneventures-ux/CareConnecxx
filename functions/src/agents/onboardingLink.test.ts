@@ -79,15 +79,14 @@ describe("sendOnboardingLink", () => {
   // 20s timeout: the first test pays the dynamic-import cost of the heavy
   // onboardingConversation module graph, which can exceed the 5s default when
   // the full suite runs in parallel under load.
-  it("sends a token upload link (caregiver_photo) INLINE as text, not a blank link-card", async () => {
-    // Token-gated /upload pages have no OG metadata → a `link` part renders as a
-    // blank preview card ("message arrives but no link"). Token upload links must
-    // go out as plain tappable text instead.
+  it("sends a token upload link (caregiver_photo) as a link part (OG card via v1-uploadPageMeta)", async () => {
+    // /upload/** is served through the v1-uploadPageMeta OG rewrite (2026-07-12),
+    // so the link part renders a branded preview card instead of the raw token URL.
     const { sendOnboardingLink } = await import("./onboardingConversation");
     const res = await sendOnboardingLink("+15551112222", "caregiver_photo");
 
     expect(res).toEqual({ success: true, linkType: "caregiver_photo" });
-    expect(lastLinkPart()).toEqual({ type: "text", value: expect.stringContaining("/upload/photo?t=tok-123") });
+    expect(lastLinkPart()).toEqual({ type: "link", value: expect.stringContaining("/upload/photo?t=tok-123") });
   }, 20_000);
 
   it("sends the Stripe identity link for client_identity", async () => {

@@ -281,7 +281,11 @@ const AppContent: React.FC = () => {
           <Route path="/care/:city" element={<CityPage onNavigate={handleNavigation} />} />
           <Route path="/start"              element={<PhoneSignupPage />} />
           <Route path="/upload/:type"        element={<UploadPage />} />
+          {/* SPA-served aliases: v1-uploadPageMeta redirects here if it can't
+              fetch index.html (avoids re-entering the OG rewrites). */}
+          <Route path="/upload-direct/:type" element={<UploadPage />} />
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
+          <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
           <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
           <Route path="/health-summary/:token" element={<ErrorBoundary><HealthSummaryPage /></ErrorBoundary>} />

@@ -233,6 +233,7 @@ const HTTP_URL_RE = /^https?:\/\//i;
 // individual send site can reintroduce it:
 //   - external provider URLs (Stripe, Checkr, Meet, …) → card (they own OG);
 //   - app-hosted /p/** → card (v1-caregiverProfileMeta OG rewrite);
+//   - app-hosted /upload/** + /bgcheck → card (v1-uploadPageMeta OG rewrite, 2026-07-12);
 //   - every other app-hosted route + raw-file storage hosts → NO card; the URL
 //     is delivered inline as tappable plain text instead (works on SMS too).
 const NO_OG_HOSTS = new Set([
@@ -253,7 +254,11 @@ function isCardSafeUrl(url: string): boolean {
     const bare = (h: string) => h.replace(/^www\./, "");
     const isAppHost = LEGACY_APP_HOSTS.has(host) || (!!appHost && bare(host) === bare(appHost));
     if (!isAppHost) return true; // external provider — real OG (Stripe/Meet/Checkr)
-    return u.pathname === "/p" || u.pathname.startsWith("/p/");
+    if (u.pathname === "/p" || u.pathname.startsWith("/p/")) return true;
+    // /upload/photo|document + /bgcheck — static OG via the v1-uploadPageMeta
+    // rewrite. (/upload-direct/** and /bgcheck-direct are the SPA-served
+    // fallback aliases and have NO OG.)
+    return u.pathname.startsWith("/upload/") || u.pathname === "/bgcheck";
   } catch {
     return false; // unparseable — never risk a blank card
   }

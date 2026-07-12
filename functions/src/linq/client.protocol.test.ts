@@ -260,12 +260,23 @@ describe("splitTextAndUrls — plain-string URL extraction", () => {
       expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://www.eviacares.com/p/cg123" });
     });
 
-    it("downgrades an explicit link part for an app-hosted route to a text part", async () => {
+    it("downgrades an explicit link part for a no-OG app-hosted route to a text part", async () => {
       const { sendMessage } = await import("./client");
-      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" }] });
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/done?task=x&t=abc.def-ghi" }] });
 
       expect(messageBodies()[0].message.parts[0]).toEqual(
-        { type: "text", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" });
+        { type: "text", value: "https://www.eviacares.com/done?task=x&t=abc.def-ghi" });
+    });
+
+    it("keeps app-hosted /upload/ and /bgcheck link parts as cards (v1-uploadPageMeta OG rewrite exists)", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" }] });
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/bgcheck?t=abc.def-ghi" }] });
+
+      expect(messageBodies()[0].message.parts[0]).toEqual(
+        { type: "link", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" });
+      expect(messageBodies()[1].message.parts[0]).toEqual(
+        { type: "link", value: "https://www.eviacares.com/bgcheck?t=abc.def-ghi" });
     });
 
     it("downgrades a raw storage-file link part (no HTML to crawl) to a text part", async () => {

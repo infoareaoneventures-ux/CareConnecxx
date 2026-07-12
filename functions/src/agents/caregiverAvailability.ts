@@ -168,18 +168,99 @@ export function normalizeDays(days: unknown): string[] {
   return DAY_KEYS.filter((d) => out.has(d));
 }
 
-// Main entry — returns undefined when there's nothing usable (caller spread-omits).
-export function deriveWeeklyAvailability(
-  availability: unknown,
-): WeeklyAvailabilityMap | undefined {
-  if (!availability || typeof availability !== "object") return undefined;
-  const a = availability as { days?: unknown; hours?: unknown };
-  const days = normalizeDays(a.days);
-  if (!days.length) return undefined;
-  const slots = parseHoursToSlots(typeof a.hours === "string" ? a.hours : "");
+function buildMap(days: string[], slots: TimeSlot[]): WeeklyAvailabilityMap {
   const map: WeeklyAvailabilityMap = {};
   for (const day of days) map[day] = slots.map((s) => ({ ...s }));
   return map;
+}
+
+// Main entry — returns undefined when there's nothing usable (caller spread-omits).
+//
+// Accepts every availability shape that exists in prod, not just the canonical
+// { days, hours } object (2026-07-11: a live caregiver's session held the plain
+// string "mornings and evenings", so the mirror never wrote weeklyAvailability
+// and the webapp grid stayed stale):
+//  • { days, hours }  — canonical LLM-parsed object (primary path)
+//  • plain string     — the model saved the caregiver's words verbatim
+//  • string[]         — day-name list (update_caregiver_availability legacy)
+// When day names are absent but a time signal exists, default to ALL 7 days —
+// a caregiver stating only times means "any day", and a rough map beats a
+// missing one (the matcher scores a missing map as 0% available).
+export function deriveWeeklyAvailability(
+  availability: unknown,
+): WeeklyAvailabilityMap | undefined {
+  if (!availability) return undefined;
+
+  if (typeof availability === "string") {
+    const text = availability.trim();
+    if (!text) return undefined;
+    const days = normalizeDays([text]);
+    return buildMap(days.length ? days : [...DAY_KEYS], parseHoursToSlots(text));
+  }
+
+  if (Array.isArray(availability)) {
+    const days = normalizeDays(availability);
+    if (!days.length) return undefined;
+    return buildMap(days, parseHoursToSlots(""));
+  }
+
+  if (typeof availability !== "object") return undefined;
+  const a = availability as { days?: unknown; hours?: unknown };
+  const days = normalizeDays(a.days);
+  const hours = typeof a.hours === "string" ? a.hours.trim() : "";
+  if (!days.length && !hours) return undefined;
+  return buildMap(days.length ? days : [...DAY_KEYS], parseHoursToSlots(hours));
+}
+
+// Save-time coercion for the loop's save_onboarding_field tool: turn whatever
+// the model passed for `availability` into the canonical { days, hours } object
+// before it lands in the session. Free text goes through the LLM (per the Evia
+// parsing policy); already-structured values are cleaned deterministically.
+// Returns undefined when there is no usable signal (caller keeps the raw value).
+// llmParse is injectable for tests; production uses parseWithClaude.
+export async function normalizeAvailabilityInput(
+  value: unknown,
+  llmParse?: (systemPrompt: string, userText: string) => Promise<string>,
+): Promise<{ days: string[]; hours: string } | undefined> {
+  const cleanDays = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim())
+      : [];
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const a = value as Record<string, unknown>;
+    const days = cleanDays(a.days);
+    const hours = typeof a.hours === "string" ? a.hours.trim() : "";
+    return days.length || hours ? { days, hours } : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const days = cleanDays(value);
+    return days.length ? { days, hours: "" } : undefined;
+  }
+
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const text = value.trim();
+  try {
+    const parse = llmParse ?? (await import("../utils/parseWithClaude")).parseWithClaude;
+    const raw = await parse(
+      "Extract a caregiver's work availability from their message. Reply with raw JSON only: " +
+        '{"days":["Monday"],"hours":"9am-5pm"}. days = the day names they stated; use ["weekdays"], ' +
+        '["weekends"], or ["every day"] when they speak in those terms, and ["every day"] when they ' +
+        'name times but no days. hours = their stated time window or time-of-day words ' +
+        '("mornings and evenings"); "" if none stated.',
+      text,
+    );
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const days = cleanDays(parsed.days);
+    const hours = typeof parsed.hours === "string" ? parsed.hours.trim() : "";
+    if (days.length || hours) return { days: days.length ? days : ["every day"], hours };
+  } catch (err) {
+    console.warn("[normalizeAvailabilityInput] LLM parse failed, using raw-text fallback:", err);
+  }
+  // LLM unavailable/unusable: keep the raw text in BOTH fields so
+  // deriveWeeklyAvailability can still pull day tokens and time keywords out.
+  return { days: [text], hours: text };
 }
 
 // Human-readable summary of a derived availability map, for Evia's spoken

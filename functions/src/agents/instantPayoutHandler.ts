@@ -39,7 +39,9 @@ export async function startInstantPayout(
     }));
     return;
   }
-  const stripeAccountId = cg.stripeAccountId as string | undefined;
+  const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+  const payoutFields = await getCaregiverPayoutFields(caregiverId, cg);
+  const stripeAccountId = payoutFields.stripeAccountId as string | undefined;
   if (!stripeAccountId) {
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",

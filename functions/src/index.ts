@@ -259,6 +259,11 @@ export * from './migrations/migrateCarePlansToCanonical';
 // SSN-4 / ZIP off the world-readable parent doc. Dry-run first: ?dryRun=1
 export * from './migrations/backfillCaregiverPrivateBackground';
 
+// Caregiver payout fields → caregivers/{id}/private/payout + stripe_accounts
+// reverse map. Phase 1 (copy) safe immediately; ?deleteParent=1 only after the
+// reader-cutover deploy is verified. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverPayoutPrivate';
+
 // fixAcceptedCounterPay migration already executed — not exported
 
 // ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
@@ -499,10 +504,13 @@ export const chatWithCara = functions
   });
 
 // ── One-time Zep setup: create context template + backfill existing users ─────
-// Call once with header x-setup-key: cara-zep-setup-2026, then leave in place
-// (subsequent calls are safe — already-initialized users are skipped)
+// Gated on MIGRATION_ADMIN_SECRET like every other migration endpoint (the key
+// used to be a constant baked into source — anyone reading the repo could
+// trigger an unbounded PII push into Zep). Fails closed when the env var is
+// unset. (Subsequent calls are safe — already-initialized users are skipped.)
 export const zepSetup = functions.https.onRequest(async (req, res) => {
-  if (req.headers["x-setup-key"] !== "cara-zep-setup-2026") {
+  const setupKey = req.headers["x-setup-key"];
+  if (!process.env.MIGRATION_ADMIN_SECRET || setupKey !== process.env.MIGRATION_ADMIN_SECRET) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

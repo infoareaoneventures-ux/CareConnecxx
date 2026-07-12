@@ -3066,6 +3066,8 @@ async function handleCaregiverSendStripeConnect(phone: string, chatId: string, s
           async () => {
             await db.collection("caregivers").doc(caregiverId)
               .set({ stripeAccountId: accountId, phone }, { merge: true });
+            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
+            await writeCaregiverPayoutPrivate(caregiverId, { stripeAccountId: accountId });
           },
           undefined,
           { phone },
@@ -3145,6 +3147,8 @@ export async function mintStripeConnectAccountLink(phone: string): Promise<strin
             await db.collection("caregivers").doc(linkCaregiverId)
               .set({ stripeAccountId: accountId, phone }, { merge: true })
               .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
+            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
+            await writeCaregiverPayoutPrivate(linkCaregiverId, { stripeAccountId: accountId });
           },
           undefined,
           { phone },
@@ -3196,13 +3200,18 @@ export async function verifyStripeConnectComplete(phone: string): Promise<Stripe
   // Stamp the caregiver doc with the same fields the Connect webhook writes so
   // the webapp reflects reality even if account.updated delivery lags.
   if (session?.caregiverId) {
-    await db.collection("caregivers").doc(session.caregiverId as string).set({
+    const connectStamp = {
       chargesEnabled:              true,
       payoutsEnabled:              true,
       detailsSubmitted:            !!account.details_submitted,
       stripeOnboardingComplete:    true,
       stripeOnboardingCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true }).catch((err) => console.error("verifyStripeConnectComplete caregiver stamp failed (non-fatal):", err));
+    };
+    await db.collection("caregivers").doc(session.caregiverId as string)
+      .set(connectStamp, { merge: true })
+      .catch((err) => console.error("verifyStripeConnectComplete caregiver stamp failed (non-fatal):", err));
+    const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
+    await writeCaregiverPayoutPrivate(session.caregiverId as string, connectStamp);
   }
   return { status: "complete" };
 }
@@ -3337,6 +3346,8 @@ export async function sendOnboardingLink(
             await db.collection("caregivers").doc(linkCaregiverId)
               .set({ stripeAccountId: accountId, phone }, { merge: true })
               .catch((mergeErr) => console.error("stripeAccountId merge onto caregiver doc failed (non-fatal):", mergeErr));
+            const { writeCaregiverPayoutPrivate } = await import("../caregiverPrivate");
+            await writeCaregiverPayoutPrivate(linkCaregiverId, { stripeAccountId: accountId });
           },
           undefined,
           { phone },

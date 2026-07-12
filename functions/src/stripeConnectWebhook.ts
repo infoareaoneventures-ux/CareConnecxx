@@ -52,12 +52,14 @@ export const stripeConnectWebhook = functions
                 const account = event.data.object;
                 const accountId: string = account.id;
 
-                const snap = await db.collection("caregivers")
-                    .where("stripeAccountId", "==", accountId)
-                    .limit(1)
-                    .get();
+                // stripe_accounts reverse map first, legacy parent-field query
+                // fallback (stripeAccountId moved to private/payout, which a
+                // collection query can't reach).
+                const { resolveCaregiverByStripeAccount, writeCaregiverPayoutPrivate } = await import("./caregiverPrivate");
+                const caregiverId = await resolveCaregiverByStripeAccount(accountId);
 
-                if (!snap.empty) {
+                if (caregiverId) {
+                    const cgRef = db.collection("caregivers").doc(caregiverId);
                     const chargesEnabled = !!account.charges_enabled;
                     const payoutsEnabled = !!account.payouts_enabled;
                     const detailsSubmitted = !!account.details_submitted;
@@ -72,12 +74,14 @@ export const stripeConnectWebhook = functions
                     if (complete) {
                         update.stripeOnboardingCompletedAt = admin.firestore.FieldValue.serverTimestamp();
                     }
-                    await snap.docs[0].ref.update(update);
+                    // Dual-write: parent (read-fallback until backfill deleteParent) + private/payout.
+                    await cgRef.update(update);
+                    await writeCaregiverPayoutPrivate(caregiverId, update);
 
                     // Advance Evia onboarding if caregiver has an iMessage session
                     if (complete) {
                         try {
-                            const cgPhone = snap.docs[0].data().phone as string | undefined;
+                            const cgPhone = (await cgRef.get()).data()?.phone as string | undefined;
                             if (cgPhone) {
                                 const { advanceOnboardingStep } = await import("./agents/onboardingConversation");
                                 await advanceOnboardingStep(cgPhone, "stripe_connect", "");
@@ -94,13 +98,10 @@ export const stripeConnectWebhook = functions
                 const amountDollars = (payout.amount / 100).toFixed(2);
                 const isInstant = payout.method === "instant";
 
-                const snap = await db.collection("caregivers")
-                    .where("stripeAccountId", "==", stripeAccountId)
-                    .limit(1)
-                    .get();
+                const { resolveCaregiverByStripeAccount } = await import("./caregiverPrivate");
+                const caregiverId = await resolveCaregiverByStripeAccount(stripeAccountId);
 
-                if (!snap.empty) {
-                    const caregiverId = snap.docs[0].id;
+                if (caregiverId) {
 
                     // Keep the caregivers/{id}/payouts ledger in sync. Instant
                     // payouts have a doc (written by executeInstantPayout);

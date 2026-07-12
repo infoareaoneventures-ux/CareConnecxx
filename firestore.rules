@@ -77,16 +77,32 @@ service cloud.firestore {
     match /users/{userId} {
       // Users can read their own document; admins can read any user.
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated();
-      // Owners may update most fields, but identity-verification and
-      // subscription fields are webhook-only (Admin SDK bypasses rules) —
-      // a self-serve client cannot flip `identityCheckStatus` to 'verified'
-      // to bypass the Stripe Identity flow. `referralCredit` is granted only
-      // by v1-resolveReferrerByCode (server-side) — a client could otherwise
-      // mint themselves arbitrary credit with a raw SDK write.
+      // Create: only your OWN doc, and never carrying privilege or
+      // webhook-owned fields. Without the uid binding anyone could pre-seed
+      // another user's doc; without the key block a user could create their
+      // own doc with isAdmin:true (isAdmin() derives from these fields).
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        !request.resource.data.keys().hasAny([
+          'isAdmin', 'userType', 'role', 'isBanned',
+          'verified', 'verificationStatus', 'totalEarnings',
+          'identityCheckStatus', 'stripeIdentityVerificationId', 'identityVerifiedAt',
+          'membershipStatus', 'subscriptionActive', 'subscriptionId',
+          'stripeCustomerId', 'referralCredit',
+        ])
+      );
+      // Owners may update most fields, but privilege fields (isAdmin/userType/
+      // role feed the isAdmin() and role=='admin' checks — a raw SDK write to
+      // them is instant self-escalation), moderation/earnings fields, and
+      // identity-verification + subscription fields are server-only (Admin SDK
+      // bypasses rules). `referralCredit` is granted only by
+      // v1-resolveReferrerByCode.
       allow update: if isAdmin() || (
         isOwner(userId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'isAdmin', 'userType', 'role', 'isBanned',
+          'verified', 'verificationStatus', 'totalEarnings',
           'identityCheckStatus',
           'stripeIdentityVerificationId',
           'identityVerifiedAt',
@@ -196,7 +212,16 @@ service cloud.firestore {
       // userId == the owning client's uid (multi-senior households, U6/KTD-10).
       allow read: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
       allow write: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
-      allow create: if isAuthenticated();
+      // Create must name the caller as the owning client (uid-keyed legacy doc,
+      // or userId/clientId back-reference on random-id household docs) — no
+      // seeding profiles that claim to belong to someone else.
+      allow create: if isAdmin() || (
+        isAuthenticated() && (
+          isOwner(profileId) ||
+          request.resource.data.userId == request.auth.uid ||
+          request.resource.data.clientId == request.auth.uid
+        )
+      );
       
       // Subcollection: care_plans
       match /care_plans/{planId} {
@@ -227,8 +252,15 @@ service cloud.firestore {
         resource.data.caregiverId == request.auth.uid ||
         isAdmin()
       );
-      // Any authenticated user can create (booking flow)
-      allow create: if isAuthenticated();
+      // Create only as a named participant (booking flow) — an unbound create
+      // let any user inject fabricated appointments onto another caregiver's
+      // or client's dashboard.
+      allow create: if isAdmin() || (
+        isAuthenticated() && (
+          request.resource.data.clientId == request.auth.uid ||
+          request.resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Only involved parties or admin can update
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||
@@ -664,8 +696,11 @@ service cloud.firestore {
     // MATCH ASSIGNMENTS (Care Coordinator System)
     // ==========================================
     match /match_assignments/{assignmentId} {
-      // Coordinators and admins can create/read/update
-      allow read: if isAuthenticated();
+      // Docs carry clientId/seniorId/careNeeds (PHI) — read is the owning
+      // client or admin, never the whole authed userbase.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.clientId == request.auth.uid
+      );
       allow create: if isAdmin();
       allow update: if isAdmin();
       allow delete: if isAdmin();
@@ -687,8 +722,15 @@ service cloud.firestore {
     // INTERVIEW REQUESTS
     // ==========================================
     match /interview_requests/{requestId} {
-      // Client, caregiver, coordinator, and admin can read
-      allow read: if isAuthenticated();
+      // Docs carry clientPhone/clientNotes — read is participants + admin
+      // only (every client-side reader already queries by its own
+      // clientId/caregiverId).
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Coordinators and admins can create/update
       allow create: if isAdmin();
       allow update: if isAdmin();
@@ -699,8 +741,13 @@ service cloud.firestore {
     // HIRE REQUESTS
     // ==========================================
     match /hire_requests/{requestId} {
-      // Client, caregiver, coordinator, and admin can read
-      allow read: if isAuthenticated();
+      // Participants + admin only — who is hiring whom is not public.
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Coordinators and admins can create/update
       allow create: if isAdmin();
       allow update: if isAdmin();
@@ -712,11 +759,21 @@ service cloud.firestore {
     // ==========================================
     match /match_outcomes/{outcomeId} {
       // Analytics rows written best-effort from the client matching flow
-      // (services/api.ts recordMatchOutcome/updateMatchOutcome); read by
-      // coordinator/admin dashboards. Backend readers use the admin SDK.
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
+      // (services/api.ts recordMatchOutcome); read by coordinator/admin
+      // dashboards. Backend readers use the admin SDK. World-open
+      // create/update let anyone pollute the AI matching learning loop —
+      // create is now bound to the caller's own clientId, mutation is
+      // admin-only.
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.coordinatorId == request.auth.uid
+        )
+      );
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.resource.data.clientId == request.auth.uid
+      );
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 

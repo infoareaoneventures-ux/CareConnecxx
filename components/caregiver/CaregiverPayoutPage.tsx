@@ -22,18 +22,27 @@ export const CaregiverPayoutPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
+  // Profile = users+caregivers merge PLUS the owner-only private/payout
+  // subdoc (stripeAccountId + Connect flags moved off the world-readable
+  // parent doc).
   const loadProfile = async () => {
     if (!currentUser?.uid) return;
-    const p = await dbService.getUser(currentUser.uid);
-    if (p) setProfile(p as any);
+    const [p, payout] = await Promise.all([
+      dbService.getUser(currentUser.uid),
+      dbService.getOwnCaregiverPayoutFields(currentUser.uid),
+    ]);
+    if (p) setProfile({ ...(p as any), ...payout });
   };
 
   useEffect(() => {
     let active = true;
     (async () => {
       if (!currentUser?.uid) return;
-      const p = await dbService.getUser(currentUser.uid);
-      if (active && p) setProfile(p as any);
+      const [p, payout] = await Promise.all([
+        dbService.getUser(currentUser.uid),
+        dbService.getOwnCaregiverPayoutFields(currentUser.uid),
+      ]);
+      if (active && p) setProfile({ ...(p as any), ...payout });
     })();
     return () => { active = false; };
   }, [currentUser?.uid]);

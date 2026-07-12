@@ -10,10 +10,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const hoisted = vi.hoisted(() => {
   const advanceOnboardingStep = vi.fn(async () => {});
   const docUpdate = vi.fn(async () => {});
+  const privateSet = vi.fn(async () => {});
   const caregiverDoc = {
     ref:  { update: docUpdate },
     id:   "cg-1",
     data: () => ({ phone: "+15551112222" }),
+  };
+  // The handler resolves the caregiver via resolveCaregiverByStripeAccount
+  // (stripe_accounts map first — empty here — then the parent-field query
+  // fallback), then updates caregivers/{id} by doc ref and dual-writes
+  // private/payout. Model that whole surface.
+  const caregiverDocRef = {
+    update: docUpdate,
+    get: async () => ({ exists: true, data: () => ({ phone: "+15551112222" }) }),
+    collection: () => ({ doc: () => ({ set: privateSet }) }),
   };
   // caregivers query → one matching doc; all other collections → empty/no-op.
   // where() args are captured so the test binds the webhook's match query to the
@@ -26,9 +36,13 @@ const hoisted = vi.hoisted(() => {
           caregiverWhereArgs.push(args);
           return { limit: () => ({ get: async () => ({ empty: false, docs: [caregiverDoc] }) }) };
         },
+        doc: () => caregiverDocRef,
       };
     }
-    return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
+    return {
+      where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }),
+      doc: () => ({ get: async () => ({ exists: false, data: () => null }), set: vi.fn(async () => {}) }),
+    };
   });
 
   const constructEvent = vi.fn();

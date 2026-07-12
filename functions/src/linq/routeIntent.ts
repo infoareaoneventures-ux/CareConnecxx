@@ -749,9 +749,12 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           if (resolvedNorm === "HIRE") {
             let caregiverId = pendingOutcome.caregiverId ?? "";
             if (!caregiverId && pendingOutcome.interviewId) {
+              // interviewId is an interview-doc id, NOT an interview_requests
+              // doc id — the request doc stamps it as a field (interviewAgent),
+              // so resolve by equality query like every other consumer.
               const reqSnap = await db.collection("interview_requests")
-                .doc(pendingOutcome.interviewId).get();
-              if (reqSnap.exists) caregiverId = reqSnap.data()?.caregiverId ?? "";
+                .where("interviewId", "==", pendingOutcome.interviewId).limit(1).get();
+              if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data()?.caregiverId ?? "";
             }
             await db.collection("agent_sessions").doc(phone).update({
               hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },

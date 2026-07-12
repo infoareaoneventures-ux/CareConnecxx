@@ -37,8 +37,9 @@ export const getPayoutBalance = functions.https.onCall(async (_data, context) =>
         throw new functions.https.HttpsError('unauthenticated', 'User must be logged in');
     }
     const { getStripeClient } = await import("./stripe");
-    const snap = await admin.firestore().collection('caregivers').doc(context.auth.uid).get();
-    const stripeAccountId = snap.data()?.stripeAccountId as string | undefined;
+    const { getCaregiverPayoutFields } = await import("./caregiverPrivate");
+    const payoutFields = await getCaregiverPayoutFields(context.auth.uid);
+    const stripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!stripeAccountId) {
         return { connected: false, instantAvailable: 0, pending: 0 };
     }

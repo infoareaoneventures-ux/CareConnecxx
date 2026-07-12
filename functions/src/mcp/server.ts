@@ -5735,12 +5735,13 @@ async function executeToolCall(
       const limit11 = Math.min((input.limit as number) ?? 5, 20);
       const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg = cgSnap.data()!;
-      if (!cg.stripeAccountId) return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
+      const { getCaregiverPayoutFields: getPayoutHist } = await import("../caregiverPrivate");
+      const payoutFieldsHist = await getPayoutHist(caregiverId as string, cgSnap.data() ?? null);
+      if (!payoutFieldsHist.stripeAccountId) return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
       try {
         const { getStripeClient } = await import("../stripe");
         const sc = getStripeClient();
-        const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: cg.stripeAccountId as string });
+        const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: payoutFieldsHist.stripeAccountId as string });
         const payouts = payoutList.data.map((p) => ({
           id:        p.id,
           amount:    `$${(p.amount / 100).toFixed(2)}`,
@@ -5871,12 +5872,14 @@ async function executeToolCall(
         .limit(50)
         .get();
       const totalEarned = earnSnap.docs.reduce((sum, d) => sum + ((d.data().cost as number) ?? 0), 0);
+      const { getCaregiverPayoutFields: getPayoutEarn } = await import("../caregiverPrivate");
+      const payoutFieldsEarn = await getPayoutEarn(caregiverId as string, cg5);
       return {
         success:          true,
         totalEarned:      Math.round(totalEarned * 100) / 100,
         pendingBalance:   cg5.pendingBalance    ?? 0,
-        stripeSetup:      !!cg5.stripeAccountId,
-        payoutsEnabled:   !!cg5.payoutsEnabled,
+        stripeSetup:      !!payoutFieldsEarn.stripeAccountId,
+        payoutsEnabled:   !!payoutFieldsEarn.payoutsEnabled,
         recentVisitCount: earnSnap.size,
         periodDays:       daysBack,
       };

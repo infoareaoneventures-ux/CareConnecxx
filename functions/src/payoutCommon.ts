@@ -111,7 +111,9 @@ export async function executeInstantPayout(opts: {
     if (!caregiverSnap.exists) {
         throw new InstantPayoutError("NOT_FOUND", "Caregiver profile not found");
     }
-    const stripeAccountId = caregiverSnap.data()?.stripeAccountId as string | undefined;
+    const { getCaregiverPayoutFields } = await import("./caregiverPrivate");
+    const payoutFields = await getCaregiverPayoutFields(caregiverId, caregiverSnap.data() ?? null);
+    const stripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!stripeAccountId) {
         throw new InstantPayoutError("NO_ACCOUNT", "Please connect your bank account first");
     }

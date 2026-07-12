@@ -274,23 +274,15 @@ export const hasActiveMembership = (status: SubscriptionStatus): boolean => {
 // regenerate a fresh account link so returning / incomplete caregivers can
 // resume onboarding.
 export const initiateOnboarding = async (): Promise<{ url: string }> => {
-  if (!auth || !db) throw new Error('Firebase not initialized');
-  const fdb = db;
+  if (!auth) throw new Error('Firebase not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
 
-  const existing = await fdb.collection('caregivers').doc(user.uid).get();
-  const existingAccountId = existing.data()?.stripeAccountId as string | undefined;
-
+  // Always go through v1-createStripeConnectAccount — it reuses an existing
+  // account server-side and mints a fresh link, so the client never needs to
+  // read stripeAccountId (which moved off the world-readable caregiver doc to
+  // caregivers/{id}/private/payout).
   const fns = getFunctions();
-  if (existingAccountId) {
-    const fn = httpsCallable(fns, 'v1-getStripeOnboardingLink');
-    const res = await fn({ accountId: existingAccountId });
-    const { url } = (res.data as { url?: string }) ?? {};
-    if (!url) throw new Error('No onboarding URL returned');
-    return { url };
-  }
-
   const create = httpsCallable(fns, 'v1-createStripeConnectAccount');
   const res = await create({ email: user.email });
   const { onboardingUrl } = (res.data as { onboardingUrl?: string }) ?? {};
@@ -307,13 +299,15 @@ export interface ConnectAccountStatus {
 
 // Force a refresh of Stripe Connect account status on Firestore. Used on
 // return from the Stripe-hosted onboarding flow as a fallback to the webhook.
-export const checkOnboardingStatus = async (accountId: string): Promise<ConnectAccountStatus> => {
+// accountId is optional — omitted, the server resolves the caller's own
+// account from caregivers/{uid}/private/payout.
+export const checkOnboardingStatus = async (accountId?: string): Promise<ConnectAccountStatus> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
   const fn = httpsCallable(fns, 'v1-checkStripeAccountStatus');
-  const res = await fn({ accountId });
+  const res = await fn(accountId ? { accountId } : {});
   return res.data as ConnectAccountStatus;
 };
 

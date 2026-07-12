@@ -1494,15 +1494,24 @@ export const CaregiverPaymentsPage: React.FC = () => {
   useEffect(() => {
     if (!uid) return;
     let active = true;
-    // Initial load gives the full merged profile (users + caregivers doc).
+    // Initial load gives the full merged profile (users + caregivers doc),
+    // plus the owner-only private/payout subdoc (stripeAccountId + Connect
+    // flags moved off the world-readable parent).
     (async () => {
-      const p = await dbService.getUser(uid);
-      if (active && p) setProfile(p as any);
+      const [p, payout] = await Promise.all([
+        dbService.getUser(uid),
+        dbService.getOwnCaregiverPayoutFields(uid),
+      ]);
+      if (active && p) setProfile({ ...(p as any), ...payout });
     })();
-    // Live-patch the caregiver-doc fields (rate, payout/Stripe status, verification,
-    // background check) so Evia's writes reflect here without a manual refresh.
-    const unsub = dbService.subscribeCaregiverProfile(uid, (cg) => {
-      if (active && cg) setProfile(prev => ({ ...(prev as any), ...cg }));
+    // Live-patch the caregiver-doc fields (rate, verification, background
+    // check) so Evia's writes reflect here without a manual refresh. Re-merge
+    // the payout subdoc on each patch so the parent doc (which no longer
+    // carries the Stripe fields) can't clobber them.
+    const unsub = dbService.subscribeCaregiverProfile(uid, async (cg) => {
+      if (!active || !cg) return;
+      const payout = await dbService.getOwnCaregiverPayoutFields(uid);
+      if (active) setProfile(prev => ({ ...(prev as any), ...cg, ...payout }));
     });
     return () => { active = false; try { (unsub as any)?.(); } catch {} };
   }, [uid]);
@@ -1525,8 +1534,11 @@ export const CaregiverPaymentsPage: React.FC = () => {
     (async () => {
       try {
         await checkOnboardingStatus(profile.stripeAccountId!);
-        const p = await dbService.getUser(uid);
-        if (p) setProfile(p as any);
+        const [p, payout] = await Promise.all([
+          dbService.getUser(uid),
+          dbService.getOwnCaregiverPayoutFields(uid),
+        ]);
+        if (p) setProfile({ ...(p as any), ...payout });
         addToast('Payout setup updated', 'success');
       } catch (err) {
         console.error('Status refresh failed:', err);

@@ -180,7 +180,8 @@ export async function buildLivePayoutSetupFact(phone: string, session: AgentSess
     if (!caregiverId) return "";
     const snap = await db.collection("caregivers").doc(caregiverId).get();
     if (!snap.exists) return "";
-    const cg = (snap.data() ?? {}) as Record<string, unknown>;
+    const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+    const cg = await getCaregiverPayoutFields(caregiverId, (snap.data() ?? {}) as Record<string, unknown>);
     if (cg.stripeOnboardingComplete === true || cg.payoutsEnabled === true) {
       return "LIVE STATUS RIGHT NOW: their payouts are LIVE — earnings pay out daily automatically and instant " +
         "payouts are free. Congratulate them; do NOT nudge them to finish setup.";

@@ -1,5 +1,10 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import {
+    getCaregiverPayoutFields,
+    writeCaregiverPayoutPrivate,
+    resolveCaregiverByStripeAccount,
+} from "./caregiverPrivate";
 const Stripe = require("stripe");
 
 if (!admin.apps.length) {
@@ -41,8 +46,8 @@ const assertCanAccessAccount = async (
     accountId: string,
 ): Promise<void> => {
     const uid = context.auth!.uid;
-    const cgSnap = await db.collection("caregivers").doc(uid).get();
-    if (cgSnap.exists && cgSnap.data()?.stripeAccountId === accountId) return;
+    const payout = await getCaregiverPayoutFields(uid);
+    if (payout.stripeAccountId === accountId) return;
 
     const userSnap = await db.collection("users").doc(uid).get();
     const u = userSnap.exists ? userSnap.data() ?? {} : {};
@@ -54,6 +59,29 @@ const assertCanAccessAccount = async (
     );
 };
 
+// Resolve the account to act on: an explicit accountId (ownership-checked) or,
+// when omitted, the CALLER's own account — so the webapp never needs to read
+// stripeAccountId client-side at all (it moved off the world-readable parent
+// doc to caregivers/{id}/private/payout).
+const resolveAccountForCaller = async (
+    context: functions.https.CallableContext,
+    requested: string | undefined,
+): Promise<string> => {
+    if (requested) {
+        await assertCanAccessAccount(context, requested);
+        return requested;
+    }
+    const payout = await getCaregiverPayoutFields(context.auth!.uid);
+    const own = payout.stripeAccountId as string | undefined;
+    if (!own) {
+        throw new functions.https.HttpsError(
+            "failed-precondition",
+            "No Stripe account on file — start payout setup first.",
+        );
+    }
+    return own;
+};
+
 const syncAccountStatus = async (accountId: string) => {
     const account = await stripe.accounts.retrieve(accountId);
     const chargesEnabled = !!account.charges_enabled;
@@ -61,12 +89,9 @@ const syncAccountStatus = async (accountId: string) => {
     const detailsSubmitted = !!account.details_submitted;
     const complete = chargesEnabled && payoutsEnabled;
 
-    const snap = await db.collection("caregivers")
-        .where("stripeAccountId", "==", accountId)
-        .limit(1)
-        .get();
+    const caregiverId = await resolveCaregiverByStripeAccount(accountId);
 
-    if (!snap.empty) {
+    if (caregiverId) {
         const update: Record<string, unknown> = {
             chargesEnabled,
             payoutsEnabled,
@@ -76,7 +101,10 @@ const syncAccountStatus = async (accountId: string) => {
         if (complete) {
             update.stripeOnboardingCompletedAt = admin.firestore.FieldValue.serverTimestamp();
         }
-        await snap.docs[0].ref.update(update);
+        // Dual-write: parent stays the fallback until the backfill's
+        // deleteParent phase; private/payout is the canonical copy.
+        await db.collection("caregivers").doc(caregiverId).update(update);
+        await writeCaregiverPayoutPrivate(caregiverId, update);
     }
 
     return { chargesEnabled, payoutsEnabled, detailsSubmitted, stripeOnboardingComplete: complete };
@@ -93,7 +121,8 @@ export const createStripeConnectAccount = functions
 
         const caregiverRef = db.collection("caregivers").doc(uid);
         const caregiverSnap = await caregiverRef.get();
-        const existing = caregiverSnap.data()?.stripeAccountId as string | undefined;
+        const payout = await getCaregiverPayoutFields(uid, caregiverSnap.data() ?? null);
+        const existing = payout.stripeAccountId as string | undefined;
 
         if (existing) {
             const link = await buildAccountLink(existing);
@@ -112,14 +141,18 @@ export const createStripeConnectAccount = functions
             metadata: { caregiverId: uid, platform: "careconnex" },
         });
 
-        await caregiverRef.set({
+        const connectFields = {
             stripeAccountId: account.id,
             stripeOnboardingComplete: false,
             payoutsEnabled: false,
             chargesEnabled: false,
             detailsSubmitted: false,
             stripeAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+        };
+        // Dual-write parent + private/payout (+ stripe_accounts reverse map,
+        // maintained inside writeCaregiverPayoutPrivate).
+        await caregiverRef.set(connectFields, { merge: true });
+        await writeCaregiverPayoutPrivate(uid, connectFields);
 
         const link = await buildAccountLink(account.id);
         return { accountId: account.id, onboardingUrl: link.url, onboardingComplete: false };
@@ -131,11 +164,9 @@ export const getStripeOnboardingLink = functions
             throw new functions.https.HttpsError("unauthenticated", "User must be logged in");
         }
 
-        const accountId: string | undefined = data?.accountId;
-        if (!accountId) {
-            throw new functions.https.HttpsError("invalid-argument", "accountId is required");
-        }
-        await assertCanAccessAccount(context, accountId);
+        // accountId optional: omitted → the caller's own account (resolved
+        // server-side from private/payout); provided → ownership-checked.
+        const accountId = await resolveAccountForCaller(context, data?.accountId);
 
         const link = await buildAccountLink(accountId);
         return { url: link.url };
@@ -147,11 +178,9 @@ export const checkStripeAccountStatus = functions
             throw new functions.https.HttpsError("unauthenticated", "User must be logged in");
         }
 
-        const accountId: string | undefined = data?.accountId;
-        if (!accountId) {
-            throw new functions.https.HttpsError("invalid-argument", "accountId is required");
-        }
-        await assertCanAccessAccount(context, accountId);
+        // accountId optional: omitted → the caller's own account (resolved
+        // server-side from private/payout); provided → ownership-checked.
+        const accountId = await resolveAccountForCaller(context, data?.accountId);
 
         return syncAccountStatus(accountId);
     });

@@ -3732,6 +3732,18 @@ export const dbService = {
         } catch { /* best effort */ }
     },
 
+    // Own-doc payout fields (stripeAccountId, payoutsEnabled, chargesEnabled,
+    // stripeOnboardingComplete, detailsSubmitted) — moved off the
+    // world-readable caregivers/{id} parent to the owner-only private/payout
+    // subdoc. Readable only by the owner or an admin.
+    getOwnCaregiverPayoutFields: async (uid: string): Promise<Record<string, any>> => {
+        if (!isConfigured || !db || !uid) return {};
+        try {
+            const snap = await db.collection('caregivers').doc(uid).collection('private').doc('payout').get();
+            return snap.exists ? (snap.data() as Record<string, any>) : {};
+        } catch { return {}; }
+    },
+
 };
 
 export const stripeService = externalStripeService;

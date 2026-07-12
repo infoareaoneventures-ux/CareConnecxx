@@ -362,17 +362,18 @@ export async function handleInterviewConfirm(
   const familySession = await db.collection("agent_sessions").doc(phone).get();
   const clientId      = familySession.data()?.userId as string | undefined;
 
-  // Create confirmed interview in Firestore
-  const interviewRef = await db.collection("interviews").add({
-    clientPhone:   phone,
-    caregiverName: pending.caregiverName,
-    ...(caregiverId ? { caregiverId } : {}),
-    ...(clientId ? { clientId } : {}),
-    scheduledTime: pending.mutualTime,
-    status:        "scheduled",
-    followUpSent:  false,
-    createdAt:     new Date().toISOString(),
-  });
+  // Create the confirmed interview in video_interviews — the CANONICAL
+  // interview collection (2026-07-11 consolidation): it's what the caregiver
+  // in-app calendar, the MCP tools, and the link/reminder trigger all read.
+  // The legacy `interviews` collection is retired for new writes (readers keep
+  // a temporary fallback for pre-cutover docs). Pre-mint the id so the Meet
+  // link + .ics exist BEFORE the doc does — the doc then lands in ONE set()
+  // carrying callUrl + linkDelivery + remindersScheduledAt suppression
+  // markers, so onVideoInterviewLinkEnsure's precheck no-ops (delivery happens
+  // inline below; reminders are scheduled below). On link failure the markers
+  // still suppress delivery/reminders while the trigger self-heals only the
+  // missing callUrl — the exact semantics the b183e1a mirror had.
+  const interviewRef = db.collection("video_interviews").doc();
 
   // Generate Google Meet link + .ics via the shared builder (ops alert on failure)
   let callUrl = "";
@@ -383,14 +384,33 @@ export async function handleInterviewConfirm(
       startTime:       pending.mutualTime,
       durationMinutes: 30,
       interviewId:     interviewRef.id,
+      icsStoragePrefix: "video_interviews",
     });
     callUrl = assets.callUrl;
     icsUrl  = assets.icsUrl;
-    await interviewRef.update({ callUrl, ...(icsUrl ? { icsUrl } : {}) });
   } catch {
     // Alert already raised inside createInterviewCallAssets; never log the URL
     console.error(`Call link generation error for interview ${interviewRef.id}`);
   }
+
+  const interviewCreatedAt = new Date().toISOString();
+  await interviewRef.set({
+    clientPhone:   phone,
+    caregiverName: pending.caregiverName,
+    ...(caregiverId ? { caregiverId } : {}),
+    ...(clientId ? { clientId } : {}),
+    scheduledTime: pending.mutualTime,
+    status:        "scheduled",
+    ...(callUrl ? { callUrl } : {}),
+    ...(icsUrl ? { icsUrl } : {}),
+    source:             "evia_sms",
+    interviewRequestId: pending.docId,
+    createdAt:          interviewCreatedAt,
+    // Trigger-suppression markers (onVideoInterviewLinkEnsure precheck):
+    // delivery happens inline below, reminders are scheduled below.
+    linkDelivery:        { client: { status: "sent", at: interviewCreatedAt }, caregiver: { status: "sent", at: interviewCreatedAt } },
+    remindersScheduledAt: interviewCreatedAt,
+  });
 
   // Update request doc
   await db.collection("interview_requests").doc(pending.docId).update({
@@ -455,7 +475,9 @@ export async function handleInterviewConfirm(
   const oneHourBefore  = interviewMs - 60 * 60 * 1000;
   const ninetyMinAway  = interviewMs - 90 * 60 * 1000;
 
-  const triggerRefId = `interview_${interviewRef.id}`; // cancelTriggersByRef key on cancel
+  // cancelTriggersByRef key on cancel — video_interview_{id} namespace, which
+  // is what cancel_interview derives for video_interviews docs (mcp/server.ts).
+  const triggerRefId = `video_interview_${interviewRef.id}`;
 
   if (nowMs < ninetyMinAway) {
     // 1h-before reminder to the family
@@ -501,38 +523,10 @@ export async function handleInterviewConfirm(
     refId:       triggerRefId,
   }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
 
-  // Surface this Evia-scheduled interview in the caregiver's in-app calendar,
-  // which reads the `video_interviews` collection (CaregiverCalendarPage) — the
-  // SMS flow above writes `interviews`, so without this the interview is
-  // invisible in-app (the Meet link still reaches both parties via the SMS
-  // above; this is in-app parity only). Mirror it with callUrl + per-recipient
-  // linkDelivery markers + remindersScheduledAt already set, so the
-  // onVideoInterviewLinkEnsure trigger's precheck no-ops instead of
-  // re-generating the link or re-notifying — the exact pattern the MCP
-  // schedule_interview tool uses (see interviewLinkTrigger.ts header). Gated on
-  // caregiverId (the calendar's query key); best-effort, never blocks the SMS
-  // confirmation that already went out.
-  if (caregiverId) {
-    const nowIso = new Date().toISOString();
-    await db.collection("video_interviews").add({
-      clientPhone:   phone,
-      caregiverName: pending.caregiverName,
-      caregiverId,
-      ...(clientId ? { clientId } : {}),
-      scheduledTime: pending.mutualTime,
-      status:        "scheduled",
-      ...(callUrl ? { callUrl } : {}),
-      ...(icsUrl ? { icsUrl } : {}),
-      source:            "evia_sms",
-      interviewRequestId: pending.docId,
-      linkedInterviewId:  interviewRef.id,
-      createdAt:          nowIso,
-      // Trigger-suppression markers (onVideoInterviewLinkEnsure precheck):
-      // delivery already done inline above, reminders already scheduled.
-      linkDelivery:        { client: { status: "sent", at: nowIso }, caregiver: { status: "sent", at: nowIso } },
-      remindersScheduledAt: nowIso,
-    }).catch((err) => console.error("interviewAgent: video_interviews mirror write failed:", err));
-  }
+  // (2026-07-11 consolidation: the b183e1a-era video_interviews MIRROR block
+  // that used to live here is gone — the interview above IS the
+  // video_interviews doc now, unconditionally, so the in-app calendar and the
+  // Join-Meet button work with or without a known caregiverId.)
 }
 
 // ── Write interview outcome feedback signal ───────────────────────────────────
@@ -561,7 +555,14 @@ export async function writeInterviewOutcomeSignal(
 // ── Post-interview follow-up ──────────────────────────────────────────────────
 
 export async function sendPostInterviewFollowUp(interviewId: string): Promise<void> {
-  const snap = await db.collection("interviews").doc(interviewId).get();
+  // Canonical collection first (2026-07-11 consolidation); legacy `interviews`
+  // fallback kept for follow-up triggers scheduled before the cutover (they
+  // carry the old collection's doc id). Safe to remove once pre-cutover
+  // interviews' +75min follow-ups have all fired.
+  let snap = await db.collection("video_interviews").doc(interviewId).get();
+  if (!snap.exists) {
+    snap = await db.collection("interviews").doc(interviewId).get();
+  }
   if (!snap.exists) return;
   const data = snap.data()!;
 

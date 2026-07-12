@@ -931,7 +931,9 @@ export async function completeShiftPaymentAfterCharge(appointmentId: string): Pr
   if (!shift.stripeChargeId) return;                             // no charge initiated
 
   const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
-  const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
+  const { getCaregiverPayoutFields } = await import('./caregiverPrivate');
+  const payoutFields = await getCaregiverPayoutFields(shift.caregiverId, caregiverSnap.data() ?? null);
+  const caregiverStripeAccountId = payoutFields.stripeAccountId as string | undefined;
   if (!caregiverStripeAccountId) return;
 
   const grossCents = computeGrossCents(shift);
@@ -973,7 +975,9 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
 
   try {
     const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
-    const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
+    const { getCaregiverPayoutFields } = await import('./caregiverPrivate');
+    const payoutFields = await getCaregiverPayoutFields(shift.caregiverId, caregiverSnap.data() ?? null);
+    const caregiverStripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!caregiverStripeAccountId) {
       throw new Error('Caregiver has no Stripe Connect account');
     }

@@ -256,11 +256,13 @@ describe("U2 caregiver action tools", () => {
 
   // ── start_shift / complete_shift ───────────────────────────────────────────
   describe("start_shift", () => {
-    it("marks an appointment in_progress and records startedAt", async () => {
+    it("marks an appointment in-progress (canonical hyphen — what the crons/triggers read) and records startedAt", async () => {
       hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "confirmed" });
       const r = await handleToolCall("start_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("appointments/a1").status).toBe("in_progress");
+      // Hyphen, NOT underscore: the in-shift-update/task-nudge crons, the
+      // arrival trigger, and handleArrived's twin path all match "in-progress".
+      expect(hoisted.docState.get("appointments/a1").status).toBe("in-progress");
       expect(hoisted.docState.get("appointments/a1").startedAt).toBeTruthy();
     });
 

@@ -5238,8 +5238,13 @@ async function executeToolCall(
       if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
         return toolError("INVALID_INPUT", `Cannot start a visit that hasn't been confirmed yet (status: ${visit.status})`);
       }
-      // shifts dashboard reads "in-progress"; appointments use "in_progress".
-      const startedStatus = coll === "shifts" ? "in-progress" : "in_progress";
+      // "in-progress" (hyphen) is the canonical started status for BOTH
+      // collections. The old underscore write to appointments was invisible to
+      // every hyphen reader — handleArrived's twin path, the in-shift-update +
+      // task-nudge crons, the arrival trigger (appointmentUpdated.ts:95), the
+      // family notification, and care-notes validStatuses — so an agent-tool
+      // start silently disabled the whole in-shift experience.
+      const startedStatus = "in-progress";
       await snap.ref.update({ status: startedStatus, startedAt: nowIso });
       logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", collection: coll, docId } }).catch(() => {});
       return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: startedStatus, startedAt: nowIso };
@@ -5690,7 +5695,7 @@ async function executeToolCall(
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const activeOrRecent = await db.collection("appointments")
           .where("caregiverId", "==", caregiverId)
-          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
           .orderBy("date", "desc")
           .limit(5)
           .get();
@@ -5699,7 +5704,8 @@ async function executeToolCall(
           const date = data.date as string | undefined;
           const status = data.status as string | undefined;
           // Confirmed/in-progress regardless of date; completed only if within 30 days.
-          if (status === "confirmed" || status === "in_progress") return true;
+          // (both spellings: hyphen is canonical, underscore = legacy MCP starts)
+          if (status === "confirmed" || status === "in-progress" || status === "in_progress") return true;
           if (status === "completed" && date && date >= thirtyDaysAgo) return true;
           return false;
         });
@@ -5710,7 +5716,7 @@ async function executeToolCall(
         const relationship = await db.collection("appointments")
           .where("caregiverId", "==", caregiverId)
           .where("clientId",    "==", resolvedClientId)
-          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
           .limit(1)
           .get();
         if (relationship.empty) {

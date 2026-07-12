@@ -113,10 +113,12 @@ async function getNextAppointment(userId: string) {
 }
 
 async function getActiveVisit(userId: string) {
+  // "in-progress" (hyphen) is canonical (handleArrived + start_visit);
+  // underscore matches legacy docs from the old MCP start path.
   const snap = await db
     .collection("appointments")
     .where("clientId", "==", userId)
-    .where("status",   "==", "in_progress")
+    .where("status",   "in", ["in-progress", "in_progress"])
     .limit(1)
     .get();
   return snap.empty ? null : snap.docs[0].data();

@@ -163,10 +163,14 @@ async function notifyCoordinators(intakeData: any, matchAssignmentId: string, pr
             id: notificationRef.id,
             type: 'new_intake',
             title: priority === 'urgent' ? '🚨 Urgent: New Intake' : 'New Client Intake',
+            // `body`/`isRead` are the canonical fields the notification UI reads
+            // (types.ts Notification, NotificationDropdown); `message`/`read` kept for legacy readers.
+            body: `${intakeData.contactName || 'A new client'} completed intake for ${intakeData.recipientName || 'care services'}. Priority: ${priority}`,
             message: `${intakeData.contactName || 'A new client'} completed intake for ${intakeData.recipientName || 'care services'}. Priority: ${priority}`,
             matchAssignmentId: matchAssignmentId,
             intakeId: intakeData.userId,
             priority: priority,
+            isRead: false,
             read: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
@@ -206,9 +210,11 @@ export const onHireRequestApproved = functions.firestore
                 id: caregiverNotificationRef.id,
                 type: 'hire_offer',
                 title: '🎉 You\'ve Been Selected!',
+                body: `A client wants to hire you as their caregiver. Review the details and accept or decline.`,
                 message: `A client wants to hire you as their caregiver. Review the details and accept or decline.`,
                 hireRequestId: context.params.requestId,
                 clientId: newData.clientId,
+                isRead: false,
                 read: false,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
@@ -259,9 +265,11 @@ export const onCaregiverAcceptsHire = functions.firestore
                 id: clientNotificationRef.id,
                 type: 'caregiver_accepted',
                 title: '✅ Caregiver Accepted!',
+                body: `Great news! Your selected caregiver has accepted. Your coordinator will finalize the schedule.`,
                 message: `Great news! Your selected caregiver has accepted. Your coordinator will finalize the schedule.`,
                 hireRequestId: context.params.requestId,
                 caregiverId: newData.caregiverId,
+                isRead: false,
                 read: false,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             });

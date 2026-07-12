@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
+import { canonicalApptFields } from "../utils/appointmentDoc";
 
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
@@ -192,11 +193,13 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
       clientId:            sched.clientId,
       caregiverId:         sched.caregiverId,
       caregiverName:       sched.caregiverName,
+      seniorName:          sched.seniorName || null,
       date,
       startTime:           sched.startTime,
       endTime:             sched.endTime,
       durationHours:       sched.durationHours,
       hourlyRate:          sched.hourlyRate,
+      ...canonicalApptFields({ startTime: sched.startTime as string, durationHours: sched.durationHours as number | undefined, hourlyRate: sched.hourlyRate as number | undefined }),
       status:              "confirmed",
       recurringScheduleId: scheduleId,
       humanApproved:       true,

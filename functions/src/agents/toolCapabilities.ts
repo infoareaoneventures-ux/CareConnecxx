@@ -246,6 +246,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
 export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   // Broad / fall-through intents — no filter
   STOP:                 [],
+  HELP:                 [],
   TASK_REPLY:           [],
   QUESTION:             [],
   UPDATE_ONBOARDING:    [],

@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { isUSFederalHoliday } from "../utils/holidays";
+import { canonicalApptFields } from "../utils/appointmentDoc";
 
 const db = admin.firestore();
 
@@ -138,6 +139,8 @@ async function extendSchedule(
       endTime:             schedule.endTime,
       durationHours:       schedule.durationHours,
       hourlyRate:          schedule.hourlyRate,
+      seniorName:          schedule.seniorName || null,
+      ...canonicalApptFields({ startTime: schedule.startTime, durationHours: schedule.durationHours, hourlyRate: schedule.hourlyRate }),
       status:              "confirmed",
       recurringScheduleId: scheduleId,
       humanApproved:       true,

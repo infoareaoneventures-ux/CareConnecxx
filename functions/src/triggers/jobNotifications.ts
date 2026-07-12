@@ -475,12 +475,14 @@ export async function handleAvailabilityConfirmation(
     const caregiverName = session.name ?? session.firstName ?? "Caregiver";
 
     // Write application
+    const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
     await db.collection("job_applications").add({
       jobId,
       caregiverId,
       clientId,
       phone,
       caregiverName,
+      ...jobApplicationSnapshot(job),
       status:    "pending",
       appliedAt: new Date().toISOString(),
       source:    "sms_notification",

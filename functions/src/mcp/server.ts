@@ -18,6 +18,7 @@ import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { businessTodayStr } from "../utils/scheduledTime";
+import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
@@ -4468,8 +4469,10 @@ async function executeToolCall(
       const res = name === "accept_shift"
         ? await acceptCaregiverShiftOffer(actingPhone as string, chatId as string)
         : await declineCaregiverShiftOffer(actingPhone as string, chatId as string);
-      if (res.status === "no_pending_offer") return { success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
-      if (res.status === "not_pending" || res.status === "already_closed") return { success: false, reason: res.status, message: "That offer is no longer open." };
+      // _toolError so the loop's high-stakes is_error guard fires (these are
+      // HIGH_STAKES_MUTATIONS — a plain success:false skips that hardening).
+      if (res.status === "no_pending_offer") return { _toolError: true, success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
+      if (res.status === "not_pending" || res.status === "already_closed") return { _toolError: true, success: false, reason: res.status, message: "That offer is no longer open." };
       return { success: true, resolution: res.status };
       });
     }
@@ -4996,7 +4999,21 @@ async function executeToolCall(
       if (job.status !== "open") return toolError("INVALID_INPUT", "This job post is no longer accepting applications");
       const dupSnap2 = await db.collection("job_applications").where("jobId", "==", jobId).where("caregiverId", "==", caregiverId).limit(1).get();
       if (!dupSnap2.empty) return toolError("INVALID_INPUT", "You have already applied to this job");
-      const appRef = await db.collection("job_applications").add({ jobId, caregiverId, clientId: job.clientId, proposedRate: proposedRate ?? null, coverNote: coverNote ?? "", status: "pending", appliedAt: nowIso, source: "cara_sms" });
+      const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
+      const applicantSnap = await db.collection("caregivers").doc(caregiverId as string).get().catch(() => null);
+      const applicant = applicantSnap?.exists ? applicantSnap.data()! : {};
+      const appRef = await db.collection("job_applications").add({
+        jobId, caregiverId, clientId: job.clientId,
+        caregiverName: (applicant.name as string) ?? "",
+        ...(applicant.photo ? { caregiverPhoto: applicant.photo } : {}),
+        rating: typeof applicant.rating === "number" ? applicant.rating : null,
+        ...jobApplicationSnapshot(job),
+        proposedRate: proposedRate ?? null,
+        // coverLetter is the canonical key the web reads; coverNote kept for SMS-side readers.
+        coverLetter: (coverNote as string | undefined) ?? "",
+        coverNote: coverNote ?? "",
+        status: "pending", appliedAt: nowIso, source: "cara_sms",
+      });
       const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", job.clientId).limit(1).get();
       if (!clientSessSnap.empty) {
         const { sendViaInteractionAgent } = await import("../agents/caraAgent");
@@ -6039,10 +6056,20 @@ async function executeToolCall(
       const cgSnap6 = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap6.exists) return toolError("NOT_FOUND", "Caregiver not found");
       const upd6: Record<string, unknown> = { updatedAt: nowIso, availabilityUpdatedAt: nowIso };
+      // arrayUnion and arrayRemove can't share the same update key — assigning both
+      // to upd6["availability"] silently discarded the additions when a single call
+      // carried availableDays AND unavailableDays. Compute the final list instead.
+      const currentAvail = Array.isArray(cgSnap6.data()?.availability)
+        ? [...(cgSnap6.data()!.availability as string[])]
+        : [];
+      let nextAvail: string[] | null = null;
       if (Array.isArray(availableDays) && availableDays.length > 0)
-        upd6["availability"] = admin.firestore.FieldValue.arrayUnion(...(availableDays as string[]));
-      if (Array.isArray(unavailableDays) && unavailableDays.length > 0)
-        upd6["availability"] = admin.firestore.FieldValue.arrayRemove(...(unavailableDays as string[]));
+        nextAvail = [...new Set([...currentAvail, ...(availableDays as string[])])];
+      if (Array.isArray(unavailableDays) && unavailableDays.length > 0) {
+        const removed = new Set(unavailableDays as string[]);
+        nextAvail = (nextAvail ?? currentAvail).filter((d) => !removed.has(d));
+      }
+      if (nextAvail !== null) upd6["availability"] = nextAvail;
       if (typeof preferredTimeOfDay === "string")
         upd6["preferredTimeOfDay"] = preferredTimeOfDay;
       // Web parity: the caregiver calendar and swap/replacement matching read the
@@ -6316,8 +6343,10 @@ async function executeToolCall(
           clientId,
           caregiverId:         sched.caregiverId,
           caregiverName:       sched.caregiverName,
+          seniorName:          sched.seniorName || null,
           date, startTime: resolvedStart, endTime: resolvedEnd,
           durationHours: newDurationHours, hourlyRate: sched.hourlyRate,
+          ...canonicalApptFields({ startTime: resolvedStart, durationHours: newDurationHours, hourlyRate: sched.hourlyRate as number | undefined }),
           status: "confirmed", recurringScheduleId: scheduleId,
           humanApproved: true, createdByAgent: true, createdAt: nowIso,
         });
@@ -6732,7 +6761,7 @@ async function executeToolCall(
       const swapDoc = await swapRef.get();
       if (!swapDoc.exists) return toolError("NOT_FOUND", "Swap request not found");
       const swap = swapDoc.data()!;
-      if (swap.status !== "open") return { success: false, message: "This swap is no longer open." };
+      if (swap.status !== "open") return { _toolError: true, success: false, message: "This swap is no longer open." };
       await db.runTransaction(async (tx) => {
         tx.update(swapRef, { status: "accepted", toCaregiverId: caregiverId, toCaregiverName: caregiverName, acceptedAt: nowIso });
         tx.update(db.collection("appointments").doc(swap.appointmentId), { caregiverId, caregiverName, swapNote: `Swapped from ${swap.fromCaregiverName}` });

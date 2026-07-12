@@ -7,6 +7,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
+import { canonicalApptFields } from "../utils/appointmentDoc";
 
 async function hasConflict(
   caregiverId: string,
@@ -164,6 +165,14 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     return;
   }
 
+  // Fetched before the write so the appointment docs carry the display names
+  // the webapp and notification triggers read (clientName/seniorName).
+  const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
+    db.collection("caregivers").doc(task.caregiverId).get(),
+    db.collection("users").doc(task.clientId).get(),
+  ]);
+  const offerClientName = (clientSnapForOffer.data()?.name as string | undefined) || undefined;
+
   // Write each appointment — this is the ONLY place appointments are written by the agent.
   // Family approval does NOT confirm the visit: the caregiver must accept the shift offer
   // first (see shiftOffer.ts), so everything is written pending_caregiver_confirmation.
@@ -177,10 +186,20 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       clientId:           task.clientId,
       caregiverId:        task.caregiverId,
       caregiverName:      task.caregiverName,
+      ...(offerClientName ? { clientName: offerClientName } : {}),
       date:               appt.date,
       startTime:          appt.startTime,
       endTime:            appt.endTime,
       durationHours:      appt.durationHours,
+      ...(typeof task.hourlyRate === "number" ? { hourlyRate: task.hourlyRate } : {}),
+      ...canonicalApptFields({
+        startTime:     appt.startTime,
+        durationHours: appt.durationHours,
+        hourlyRate:    task.hourlyRate,
+        cost:          typeof task.hourlyRate === "number"
+          ? undefined
+          : task.totalCost / Math.max(task.appointments.length, 1),
+      }),
       status:             "pending_caregiver_confirmation",
       caregiverConfirmed: false,
       createdByAgent:     true,
@@ -196,10 +215,6 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   // Send the caregiver a YES/NO shift offer. Confirmation, family notification,
   // and payment setup all happen in finalizeAcceptedBooking() once they accept.
-  const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
-    db.collection("caregivers").doc(task.caregiverId).get(),
-    db.collection("users").doc(task.clientId).get(),
-  ]);
   const offerCgPhone = caregiverSnapForOffer.data()?.phone as string | undefined;
 
   if (!offerCgPhone) {

@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "./client";
+import { canonicalApptFields } from "../utils/appointmentDoc";
 
 const db = admin.firestore();
 
@@ -73,11 +74,13 @@ export async function handleRecurringConfirm(
       clientId,
       caregiverId:         pending.caregiverId,
       caregiverName:       pending.caregiverName,
+      seniorName:          seniorName || null,
       date,
       startTime:           pending.startTime,
       endTime:             pending.endTime,
       durationHours:       pending.durationHours,
       hourlyRate:          pending.hourlyRate,
+      ...canonicalApptFields({ startTime: pending.startTime, durationHours: pending.durationHours, hourlyRate: pending.hourlyRate }),
       status:              "confirmed",
       recurringScheduleId: scheduleRef.id,
       humanApproved:       true,

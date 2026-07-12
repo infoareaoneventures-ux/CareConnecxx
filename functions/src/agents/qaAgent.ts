@@ -2348,7 +2348,10 @@ export async function runQaAgent(params: {
           phone,
           type:        "custom",
           scheduledAt: new Date(Date.now() + 30_000).toISOString(),
-          message:     `qa_retry:${JSON.stringify({ text: text.slice(0, 500), chatId, userId, seniorId, userType, caregiverId, zepThreadId })}`,
+          // onboardingMode/onboardingRole/shadowMode must survive the round-trip:
+          // a retry that drops them runs outside onboarding (full tool surface,
+          // no role injection) — or sends for real on a shadow turn.
+          message:     `qa_retry:${JSON.stringify({ text: text.slice(0, 500), chatId, userId, seniorId, userType, caregiverId, zepThreadId, onboardingMode, onboardingRole, shadowMode })}`,
           firedAt:     null,
           cancelledAt: null,
           createdAt:   new Date().toISOString(),

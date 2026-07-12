@@ -76,6 +76,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'agent_inbound_locks', 'agent_outbound_dedup', 'agent_rate', 'rate_limits',
     'linq_pair_rate', 'linq_phone_health', 'smsThrottles',
     'processed_stripe_events', 'processed_checkr_events',
+    'payoutLocks',       // instant-payout replay-window locks (payoutCommon) — server-only
+    // Stripe Connect accountId → caregiverId reverse map (payout-private wave
+    // 2026-07-11) — server-only webhook lookup, never read by the web.
+    'stripe_accounts',
     // Internal queues / async work
     'admin_email_queue', 'adminNotifications', 'job_notifications',
     'health_alerts_pending', 'execution_agents', 'browser_sessions',
@@ -120,6 +124,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'shift_checkins', 'shift_hours', 'tax_summaries',
     'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry
     'subscriptions',     // customers/{uid}/subscriptions — covered by 'customers' entry
+    // caregivers/{id}/private/{background|payout} — identity PII + Stripe payout
+    // fields (2026-07-11 waves). Covered by the 'caregivers' contract entry and
+    // the private/{docId} rules block (owner||admin read, client write:false).
+    'private',
 ]);
 
 // ── Tracked unregistered web-read collections (U10 backlog) ─────────────────

@@ -7,6 +7,7 @@ import { createCheckrInvitation } from "../checkrApi";
 import Stripe from "stripe";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 import { sendMessage, signalThinking, AgentSession } from "../linq/client";
+import { createBrandedLink } from "../utils/linkRedirects";
 import {
   classifyEmotionalContext,
   classifyEmotionalTopic,
@@ -44,7 +45,7 @@ import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboard
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
@@ -586,6 +587,15 @@ export async function absorbClientFields(text: string, existing: Record<string, 
   for (const [k, v] of Object.entries(parsed)) {
     if (!isFieldFilled(v)) continue;
     if (isFieldFilled(existing[k])) continue;
+    // Numeric fields: keep only values that coerce to an in-range number. The
+    // extractor once hallucinated daysPerWeek: "santa clara" from a city answer —
+    // prose must never land in a numeric field.
+    if (isNumericOnboardingField(k)) {
+      const n = coerceNumericOnboardingField(k, v);
+      if (n === null) continue;
+      out[k] = n;
+      continue;
+    }
     out[k] = v;
   }
   return out;
@@ -877,6 +887,12 @@ export async function handleOnboardingStep(
     case "client_confirm_intake":   return handleClientConfirmIntake(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
+    case "caregiver_awaiting_identity": {
+      // Retired caregiver identity step: advance legacy sessions into the
+      // canonical background-check flow instead of leaving them stranded.
+      await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+      return handleCaregiverSendBgcheck(phone, chatId, session);
+    }
     case "client_awaiting_identity": {
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
       if (idReplyKind === "ack") {
@@ -1439,7 +1455,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
-      context: `The client confirmed their name is ${seeded}. Greet them warmly by name and ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
+      context: `The client just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge the name in a couple of warm words, then ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
       fallback: `Lovely to meet you, ${seeded}. Who are we caring for?`,
       maxTokens: 80,
     });
@@ -1668,7 +1684,9 @@ async function createClientIdentitySession(phone: string): Promise<string> {
     return_url: `${APP_URL}/client/identity-callback?source=cara&caraPhone=${caraPhone}`,
   });
   await db.collection("agent_sessions").doc(phone).update({ identitySessionId: session.id });
-  return session.url!;
+  // Branded wrapper: the texted link unfurls as an Evia card (/verify/{id} →
+  // v1-linkRedirect) instead of raw verify.stripe.com. Fail-open to the raw URL.
+  return createBrandedLink("verify", session.url!, phone);
 }
 
 // Persist the confirmed client intake as REAL care records — carePlans/{uid},
@@ -1836,7 +1854,8 @@ export async function persistClientCareRecords(
 async function handleClientShowCaregivers(
   phone: string,
   chatId: string,
-  session: AgentSession
+  session: AgentSession,
+  opts: { withIntro?: boolean } = {},
 ): Promise<void> {
   const d          = (session as any).onboardingData ?? {};
   const city       = (d.city       as string) ?? "";
@@ -1885,11 +1904,44 @@ async function handleClientShowCaregivers(
     return;
   }
 
-  await sendMessage(chatId, preview.message);
+  // Rich card gallery (match-presentation parity, 2026-07-12): instead of one
+  // prose blob of names, each previewed caregiver gets their headshot as an
+  // image bubble + a caption with the tappable /p/{id} profile link (which
+  // unfurls as a branded card via v1-caregiverProfileMeta). Real faces and
+  // verifiable profiles are the strongest pre-paywall signup evidence we have.
+  // withIntro=false when the agent loop's own closing line already announced
+  // the matches (continueAfterClientCollection) — a second header would stack.
+  if (opts.withIntro !== false) {
+    const introLabel = preview.locationLabel || "you";
+    await sendMessage(chatId,
+      preview.widened
+        ? `I don't have caregivers right in ${introLabel} yet, but here's who's nearby for ${seniorName} 👇`
+        : `Here's who's available near ${introLabel} for ${seniorName} 👇`
+    );
+  }
+  // One image per caregiver (founder, 2026-07-12): the /p/{id} link unfurls as
+  // a rich card that ALREADY carries the caregiver's photo (caregiverProfileMeta
+  // OG tags), so a separate photo bubble showed the same face twice. Send only
+  // the caption + profile link; the card below it is the visual.
+  for (const item of preview.items) {
+    try {
+      const caption =
+        `${item.name}${item.yearsExperience ? ` — ${item.yearsExperience} yrs experience` : ""}` +
+        `${item.strongestFit ? `, strongest fit for ${item.strongestFit}` : ""}` +
+        (item.id ? `\nTap to view ${item.name.split(" ")[0]}'s profile: ${APP_URL}/p/${item.id}` : "");
+      await sendMessage(chatId, caption);
+      await new Promise<void>((r) => setTimeout(r, 400));
+    } catch (err) {
+      console.warn("[handleClientShowCaregivers] gallery send failed for caregiver", {
+        phone, id: item.id, err: (err as Error)?.message,
+      });
+    }
+  }
 
-  // Value first (real caregivers shown above), then price, THEN identity, THEN
-  // payment, so a family never has to scan a government ID before they even
-  // know what Evia costs. handleClientPresentPlan sets up the price.
+  // Value first (real caregivers shown above), then price + an explicit
+  // consent ask. handleClientPresentPlan now STOPS after the ask — the
+  // identity link only goes out after the family says yes
+  // (handleClientPlanReply), never unrequested.
   await updateSession(phone, { onboardingStep: "client_ask_plan" });
   await handleClientPresentPlan(phone, chatId, session);
 }
@@ -1903,7 +1955,9 @@ async function handleClientShowCaregivers(
 export async function continueAfterClientCollection(phone: string, chatId: string): Promise<void> {
   const snap = await db.collection("agent_sessions").doc(phone).get();
   if (!snap.exists) return;
-  await handleClientShowCaregivers(phone, chatId, snap.data() as AgentSession);
+  // withIntro:false — the agent loop's closing line (directive: "pulling up
+  // caregivers near you now") is the gallery's header; don't stack a second one.
+  await handleClientShowCaregivers(phone, chatId, snap.data() as AgentSession, { withIntro: false });
 }
 
 // When a caregiver activates, re-engage families we honestly held (awaitingSupply)
@@ -1942,6 +1996,34 @@ function resolveClientPriceId(): string {
     ?? "";
 }
 
+async function createClientMembershipCheckout(
+  phone: string,
+  caraPhone: string,
+  selectedPriceId?: string,
+): Promise<Stripe.Checkout.Session> {
+  const priceId = (selectedPriceId || resolveClientPriceId()).trim();
+  const common = {
+    payment_method_types: ["card"] as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
+    success_url: `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
+    cancel_url: `${APP_URL}/start`,
+    metadata: { phone, task: "client_payment_setup" },
+  };
+
+  if (!priceId) {
+    return getStripe().checkout.sessions.create({
+      ...common,
+      mode: "setup",
+    });
+  }
+
+  return getStripe().checkout.sessions.create({
+    ...common,
+    mode: "subscription",
+    line_items: [{ price: priceId, quantity: 1 }],
+    subscription_data: { metadata: { phone, kind: "client_membership" } },
+  });
+}
+
 // Single source of truth for the displayed price: read the amount straight from
 // the live Stripe price object so the copy can never drift from what the family
 // is actually charged. Returns "" on any error (copy degrades to generic).
@@ -1967,49 +2049,28 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   await mergeOnboardingData(phone, { selectedPlan: "Evia", selectedPlanPriceId: priceId });
   const priceLabel = await describeClientPrice(priceId);
 
+  // Pitch + explicit consent ask, then STOP (consent gate, 2026-07-12). This
+  // is a money moment — the setup/identity link goes out only after the family
+  // says yes (handleClientPlanReply owns the reply), never unrequested. One
+  // message, one job: price + what it covers + a clear yes/no question.
   const msg = await generateCaraMessage({
     audience: "family",
     context:
-      `Evia just showed a family real local caregivers for ${seniorName}. State the price in one warm, simple ` +
-      `message: Evia is ${priceLabel || "a simple monthly membership"}, and for that Evia coordinates ` +
-      `everything for ${seniorName} — scheduling, weekly summaries, and keeping the whole family in the loop. ` +
-      `2-3 sentences, no bullet lists, no pressure. End by saying you are sending the quick identity-check link now.`,
+      `Evia just showed a family real local caregivers for ${seniorName} (photos + profiles, sent above). ` +
+      `Now state the price in one warm, simple message: Evia is ${priceLabel || "a simple monthly membership"}, ` +
+      `and for that Evia coordinates everything for ${seniorName} — scheduling, weekly summaries, and keeping ` +
+      `the whole family in the loop. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
+      `already set up, and do NOT mention sending any link. END with one clear yes/no question asking if ` +
+      `they'd like to get set up (e.g. "Want me to get you set up?").`,
     fallback:
       `Evia is ${priceLabel || "one simple monthly membership"} — I coordinate everything for ${seniorName}: ` +
-      `scheduling, weekly summaries, and keeping your whole family in the loop. I'll send the quick identity-check link now so we can keep moving.`,
+      `scheduling, weekly summaries, and keeping your whole family in the loop. Want me to get you set up?`,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 130,
   });
   await sendMessage(chatId, msg);
-
-  await signalThinking(chatId, session.service);
-  let identityUrl: string;
-  try {
-    identityUrl = await createClientIdentitySession(phone);
-  } catch (err) {
-    console.error("handleClientPresentPlan createClientIdentitySession error — falling back to payment:", err);
-    // Identity verification was skipped (not completed) — persist that flag so
-    // ops can see who bypassed the identity check, and raise an admin_alerts
-    // doc so it's visible in the Control Room instead of only in logs.
-    await mergeOnboardingData(phone, {
-      needsIdentityVerification: true,
-      identityGateSkippedAt: new Date().toISOString(),
-    });
-    await db.collection("admin_alerts").add({
-      type:      "identity_gate_skipped",
-      phone,
-      error:     String(err),
-      createdAt: new Date().toISOString(),
-      resolved:  false,
-      severity:  "high",
-    }).catch(() => {});
-    await updateSession(phone, { onboardingStep: "client_send_payment" });
-    await handleClientSendPayment(phone, chatId, session);
-    return;
-  }
-  await sendMessage(chatId, "Start here with the quick identity check. It usually takes about 30 seconds:");
-  await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
-  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
+  // Step stays client_ask_plan (set by the caller) — handleClientPlanReply
+  // parses the yes/no and sends the identity link on an explicit yes.
 }
 
 async function handleClientPlanReply(
@@ -2060,6 +2121,21 @@ async function handleClientPlanReply(
     identityUrl = await createClientIdentitySession(phone);
   } catch (err) {
     console.error("createClientIdentitySession error — falling back to payment:", err);
+    // Identity verification was skipped (not completed) — persist that flag so
+    // ops can see who bypassed the identity check, and raise an admin_alerts
+    // doc so it's visible in the Control Room instead of only in logs.
+    await mergeOnboardingData(phone, {
+      needsIdentityVerification: true,
+      identityGateSkippedAt: new Date().toISOString(),
+    });
+    await db.collection("admin_alerts").add({
+      type:      "identity_gate_skipped",
+      phone,
+      error:     String(err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch(() => {});
     await updateSession(phone, { onboardingStep: "client_send_payment" });
     await handleClientSendPayment(phone, chatId, session);
     return;
@@ -2082,24 +2158,12 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
     // Real recurring membership — mode "subscription" actually starts billing.
     // (Falls back to setup/card-on-file only if no price is configured, so the
     // flow never hard-fails — but with STRIPE_MEMBERSHIP_PRICE_ID set this bills.)
-    const stripeSession = priceId
-      ? await getStripe().checkout.sessions.create({
-          mode:                 "subscription",
-          payment_method_types: ["card"],
-          line_items:           [{ price: priceId, quantity: 1 }],
-          success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
-          cancel_url:           `${APP_URL}/start`,
-          metadata:             { phone, task: "client_payment_setup" },
-          subscription_data:    { metadata: { phone } },
-        })
-      : await getStripe().checkout.sessions.create({
-          mode:                 "setup",
-          payment_method_types: ["card"],
-          success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
-          cancel_url:           `${APP_URL}/start`,
-          metadata:             { phone, task: "client_payment_setup" },
-        });
-    checkoutUrl = stripeSession.url ?? checkoutUrl;
+    const stripeSession = await createClientMembershipCheckout(phone, caraPhone, priceId);
+    if (stripeSession.url) {
+      // Branded wrapper (/pay/{id} → v1-linkRedirect): the texted link unfurls
+      // as an Evia membership card instead of raw checkout.stripe.com.
+      checkoutUrl = await createBrandedLink("pay", stripeSession.url, phone);
+    }
   } catch (err) {
     // Stripe checkout failed — the app-URL fallback below still goes out (the
     // transport delivers it inline as text, not a blank card), but a failure
@@ -2172,7 +2236,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
-      context: `The caregiver confirmed their name is ${seeded}. Greet them by name and ask what city and zip code they work in.`,
+      context: `The caregiver just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge briefly, then ask what city and zip code they work in.`,
       fallback: `Great to meet you, ${seeded}. What city and zip code do you work in?`,
       maxTokens: 80,
     });
@@ -2343,7 +2407,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
       context: "The caregiver asked to include the optional driving-record MVR add-on, but it is not configured. Warmly explain that Evia will continue with the standard background check and the team can follow up about adding the driving check later.",
-      fallback: "Heads up � I couldn't add the driving-record check to your membership right now, so I'm setting you up with the standard background check. Our team can follow up if you'd like to add it later.",
+      fallback: "Heads up - I couldn't add the driving-record check to your membership right now, so I'm setting you up with the standard background check. Our team can follow up if you'd like to add it later.",
       maxTokens: 90,
     }));
     await db.collection("admin_alerts").add({
@@ -3262,14 +3326,9 @@ export async function sendOnboardingLink(
 
     case "client_payment": {
       url = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
-      const stripeSession = await getStripe().checkout.sessions.create({
-        mode:                 "setup",
-        payment_method_types: ["card"],
-        success_url:          `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
-        cancel_url:           `${APP_URL}/start`,
-        metadata:             { phone, task: "client_payment_setup" },
-      });
-      url = stripeSession.url ?? url;
+      const selectedPriceId = d.selectedPlanPriceId as string | undefined;
+      const stripeSession = await createClientMembershipCheckout(phone, caraPhone, selectedPriceId);
+      if (stripeSession.url) url = await createBrandedLink("pay", stripeSession.url, phone);
       break;
     }
 
@@ -3480,6 +3539,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
   switch (task) {
     case "payment": {
+      if (!taskData) {
+        console.error(`advanceOnboardingStep(payment): refusing activation without subscription id for phone=${phone}`);
+        return;
+      }
+
       // Mark task processed before any writes to prevent race on retry
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion(task),
@@ -3523,7 +3587,7 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           uid,
           membershipStatus:   "active",
           subscriptionActive: true,
-          ...(taskData ? { stripeSubscriptionId: taskData } : {}),
+          stripeSubscriptionId: taskData,
           ...(clientCustId ? { stripeCustomerId: clientCustId } : {}),
           phone,
           firstName:          (d.firstName ?? "") as string,

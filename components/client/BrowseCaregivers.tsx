@@ -62,7 +62,7 @@ export const BrowseCaregivers: React.FC = () => {
       const fdb = db;
       if (!fdb) return;
       try {
-        const snap = await fdb.collection('caregivers')
+        const snap = await fdb.collection('publicCaregiverProfiles')
           .orderBy('rating', 'desc')
           .limit(40)
           .get();

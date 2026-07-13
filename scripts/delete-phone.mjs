@@ -96,8 +96,11 @@ const PHONE_FIELD_KEYS = ['phone', 'phoneNumber'];
 // learned_facts/{key} has a `facts` subcol; memory_embeddings/{key} has `blocks`.
 const MEMORY_COLLECTIONS = ['learned_facts', 'user_preferences', 'memory_embeddings'];
 
-// uid-keyed profile docs discovered from the Auth lookup.
-const UID_KEYED = ['users', 'caregivers'];
+// uid-keyed docs discovered from the Auth lookup. senior_profiles/clientIntakes/
+// carePlans are uid-keyed and may lack a phone field (client-parity wave 2026-07-10
+// writes senior_profiles + carePlans at intake-confirm, pre-payment) — the
+// phone-field sweep alone missed them (leftovers found 2026-07-10).
+const UID_KEYED = ['users', 'caregivers', 'senior_profiles', 'clientIntakes', 'carePlans', 'care_plans'];
 
 if (!existsSync(serviceAccountPath)) {
   console.error('\n❌ functions/serviceAccountKey.json not found.\n');

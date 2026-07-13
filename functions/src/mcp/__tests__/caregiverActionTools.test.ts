@@ -43,6 +43,11 @@ const hoisted = vi.hoisted(() => {
       sets.push({ path, data, opts });
       docState.set(path, opts?.merge ? applyFieldValue(docState.get(path), data) : data);
     }),
+    create: vi.fn(async (data: any) => {
+      if (docState.has(path)) throw Object.assign(new Error("already exists"), { code: 6 });
+      sets.push({ path, data });
+      docState.set(path, data);
+    }),
     update: vi.fn(async (data: any) => {
       updates.push({ path, data });
       docState.set(path, applyFieldValue(docState.get(path), data));
@@ -374,12 +379,12 @@ describe("U2 caregiver action tools", () => {
       expect(sh.amountCents).toBe(10000);
     });
 
-    it("pushback disputes the hours and raises an admin alert", async () => {
-      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_requested", correctedHours: 4 });
+    it("pushback sends the hours to admin review and raises an alert", async () => {
+      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_proposed", correctedHours: 4 });
       const r = await handleToolCall("respond_to_shift_hour_correction", { caregiverId: "cg1", appointmentId: "a1", decision: "pushback", message: "I was there 5h" }) as any;
       expect(r.success).toBe(true);
-      expect(r.status).toBe("disputed");
-      expect(hoisted.docState.get("shiftHours/a1").status).toBe("disputed");
+      expect(r.status).toBe("disputed_admin_review");
+      expect(hoisted.docState.get("shiftHours/a1").status).toBe("disputed_admin_review");
       expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "shift_hour_dispute")).toBe(true);
     });
 
@@ -551,16 +556,17 @@ describe("U11 payment auditing & safety", () => {
 
   // Scenario 5 — a refund request creates admin-visible state and never auto-refunds.
   describe("create_refund_request", () => {
-    it("writes a pending_review refundRequests record and does NOT auto-refund", async () => {
+    it("writes an authorized requested refund record and does NOT auto-refund", async () => {
+      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "completed" });
       const r = await handleToolCall("create_refund_request", {
         clientId: "c1", appointmentId: "a1", reason: "Visit was cut short",
       }) as any;
       expect(r.success).toBe(true);
       expect(r.requestId).toBeTruthy();
-      const req = hoisted.adds.find((a) => a.path === "refundRequests");
+      const req = hoisted.docState.get("refundRequests/a1:c1");
       expect(req).toBeTruthy();
-      expect(req!.data.status).toBe("pending_review");
-      expect(req!.data.clientId).toBe("c1");
+      expect(req.status).toBe("requested");
+      expect(req.clientId).toBe("c1");
       // No Stripe refund was issued — admin review is required first.
       expect(payoutCreate).not.toHaveBeenCalled();
     });

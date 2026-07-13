@@ -258,7 +258,10 @@ function isCardSafeUrl(url: string): boolean {
     // /upload/photo|document + /bgcheck — static OG via the v1-uploadPageMeta
     // rewrite. (/upload-direct/** and /bgcheck-direct are the SPA-served
     // fallback aliases and have NO OG.)
-    return u.pathname.startsWith("/upload/") || u.pathname === "/bgcheck";
+    if (u.pathname.startsWith("/upload/") || u.pathname === "/bgcheck") return true;
+    // /verify/{id} + /pay/{id} — branded Stripe redirects with static OG via
+    // the v1-linkRedirect rewrite (2026-07-12).
+    return u.pathname.startsWith("/verify/") || u.pathname.startsWith("/pay/");
   } catch {
     return false; // unparseable — never risk a blank card
   }

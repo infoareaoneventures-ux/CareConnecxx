@@ -6,6 +6,7 @@ import { isConvergenceFlipped } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -412,6 +413,7 @@ async function handleMsConfirm(
       hourlyRate:          sched.hourlyRate,
       ...canonicalApptFields({ startTime: newStart, durationHours: newDuration, hourlyRate: sched.hourlyRate as number | undefined }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleId,
       humanApproved:       true,
       createdByAgent:      true,

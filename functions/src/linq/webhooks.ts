@@ -65,6 +65,7 @@ import { classifyMedia } from "../utils/visionVerify";
 import { detectPersonaShift } from "../utils/personaShiftDetector";
 import { collectKnownNames } from "../utils/knownNames";
 import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
+import { recordApprovalNoticeProviderStatus } from "../billing/approvalNoticeDispatcher";
 
 const db = admin.firestore();
 
@@ -675,19 +676,90 @@ async function classifyFeedbackSentiment(
   return "neutral";
 }
 
+type FeedbackClaimResult = "claimed" | "busy" | "done" | "expired" | "not_ready";
+
+async function claimVisitFeedback(triggerId: string, leaseOwner: string): Promise<FeedbackClaimResult> {
+  const ref = db.collection("proactive_triggers").doc(triggerId);
+  return db.runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists) return "done";
+
+    const data = snap.data() ?? {};
+    if (data.feedbackReceived != null) return "done";
+    if (!data.firedAt) return "not_ready";
+
+    const now = new Date();
+    const expiresAtMs = typeof data.expiresAt === "string" ? Date.parse(data.expiresAt) : NaN;
+    if (Number.isFinite(expiresAtMs) && expiresAtMs <= now.getTime()) {
+      const nowIso = now.toISOString();
+      transaction.update(ref, {
+        feedbackReceived: nowIso,
+        feedbackStatus: "expired",
+        cancelledAt: data.cancelledAt ?? nowIso,
+      });
+      return "expired";
+    }
+
+    const leaseUntilMs = typeof data.feedbackLeaseUntil === "string"
+      ? Date.parse(data.feedbackLeaseUntil)
+      : NaN;
+    if (Number.isFinite(leaseUntilMs) && leaseUntilMs > now.getTime()) return "busy";
+
+    transaction.update(ref, {
+      feedbackStatus: "processing",
+      feedbackLeaseOwner: leaseOwner,
+      feedbackLeaseUntil: new Date(now.getTime() + 2 * 60 * 1000).toISOString(),
+    });
+    return "claimed";
+  });
+}
+
+async function releaseVisitFeedbackClaim(triggerId: string, leaseOwner: string): Promise<void> {
+  const ref = db.collection("proactive_triggers").doc(triggerId);
+  await db.runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists) return;
+    const data = snap.data() ?? {};
+    if (data.feedbackReceived != null || data.feedbackLeaseOwner !== leaseOwner) return;
+    transaction.update(ref, {
+      feedbackStatus: "pending",
+      feedbackLeaseOwner: null,
+      feedbackLeaseUntil: null,
+    });
+  });
+}
+
 async function handleVisitFeedback(params: {
   phone:         string;
-  chatId:        string;
   text:          string;
   caregiverId:   string;
   clientId:      string;
   appointmentId: string;
   triggerId:     string;
+  leaseOwner:    string;
 }): Promise<void> {
+  if (!params.clientId || !params.caregiverId || !params.appointmentId) {
+    throw new Error("Post-visit feedback trigger is missing ownership metadata");
+  }
+
   const sentiment = await classifyFeedbackSentiment(params.text);
   const numericRating = sentiment === "positive" ? 5 : sentiment === "negative" ? 2 : 3;
 
-  if (sentiment !== "neutral" && params.clientId && params.caregiverId) {
+  const feedbackId = params.appointmentId.replace(/\//g, "%2F");
+  const nowIso = new Date().toISOString();
+  await db.collection("post_visit_feedback").doc(feedbackId).set({
+    caregiverId:   params.caregiverId,
+    clientId:      params.clientId,
+    appointmentId: params.appointmentId,
+    rating:        numericRating,
+    sentiment,
+    rawText:       params.text.slice(0, 500),
+    status:        "submitted",
+    createdAt:     nowIso,
+    updatedAt:     nowIso,
+  }, { merge: true });
+
+  if (sentiment !== "neutral") {
     await writeFeedbackSignal({
       clientId:      params.clientId,
       caregiverId:   params.caregiverId,
@@ -695,31 +767,26 @@ async function handleVisitFeedback(params: {
       source:        "post_visit_feedback",
       appointmentId: params.appointmentId,
       rawText:       params.text,
-    }).catch((err) => console.error("writeFeedbackSignal error:", err));
+      idempotencyKey: `post-visit:${params.appointmentId}`,
+    });
   }
 
-  // Write to post_visit_feedback collection for rating aggregation
-  if (params.caregiverId && params.clientId) {
-    await db.collection("post_visit_feedback").add({
-      caregiverId:   params.caregiverId,
-      clientId:      params.clientId,
-      appointmentId: params.appointmentId,
-      rating:        numericRating,
-      sentiment,
-      rawText:       params.text.slice(0, 500),
-      status:        "submitted",
-      createdAt:     new Date().toISOString(),
-    }).catch(() => {});
+  const { onFeedbackSubmitted } = await import("../agents/feedbackAggregator");
+  await onFeedbackSubmitted(params.caregiverId, numericRating, params.appointmentId, params.clientId);
 
-    // Aggregate ratings back into the caregiver doc
-    const { onFeedbackSubmitted } = await import("../agents/feedbackAggregator");
-    onFeedbackSubmitted(params.caregiverId, numericRating, params.appointmentId, params.clientId)
-      .catch((err) => console.error("onFeedbackSubmitted error:", err));
-  }
-
-  await db.collection("proactive_triggers").doc(params.triggerId)
-    .update({ feedbackReceived: new Date().toISOString() })
-    .catch(() => {});
+  const triggerRef = db.collection("proactive_triggers").doc(params.triggerId);
+  await db.runTransaction(async transaction => {
+    const snap = await transaction.get(triggerRef);
+    if (!snap.exists || snap.data()?.feedbackLeaseOwner !== params.leaseOwner) {
+      throw new Error("Post-visit feedback lease was lost before completion");
+    }
+    transaction.update(triggerRef, {
+      feedbackReceived: nowIso,
+      feedbackStatus: "completed",
+      feedbackLeaseOwner: null,
+      feedbackLeaseUntil: null,
+    });
+  });
 
   const response =
     sentiment === "positive"
@@ -894,9 +961,13 @@ const handleInboundInner = traceable(
     // Tolerant field chain — same shapes the other event handlers accept.
     const inboundMessageId = (ev.data?.id ?? ev.data?.message_id ?? ev.data?.message?.id) as string | undefined;
     if (inboundMessageId) update.lastInboundMessageId = inboundMessageId;
+    // Always refresh service from the live event: sessions created via the web
+    // bridge (or before Linq reported capability) default to "SMS" and used to
+    // keep it forever, so iMessage users got the SMS "On it, one sec…" filler
+    // instead of the native typing bubble (signalThinking branches on this).
+    if (stored.service !== service) update.service = service;
     if (stored.chatId && stored.chatId !== chatId) {
-      update.chatId  = chatId;
-      update.service = service;
+      update.chatId = chatId;
     }
     await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
 
@@ -1216,6 +1287,10 @@ const handleInboundInner = traceable(
   }
 
   const session  = sessionSnap.data() as AgentSession;
+  // Keep the in-memory session's service in sync with the live event too — the
+  // Firestore refresh above only helps NEXT turn; handlers on THIS turn (e.g.
+  // signalThinking's typing-bubble-vs-filler branch) read this object.
+  (session as { service?: string }).service = service;
   const norm     = text.trim().toUpperCase();
   const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
 
@@ -2462,17 +2537,45 @@ const handleInboundInner = traceable(
 
     if (!pendingFeedback.empty) {
       const triggerDoc = pendingFeedback.docs[0];
-      const meta       = triggerDoc.data().metadata ?? {};
-      await handleVisitFeedback({
-        phone,
-        chatId,
-        text,
-        caregiverId:   meta.caregiverId ?? "",
-        clientId:      meta.clientId ?? session.userId ?? "",
-        appointmentId: meta.appointmentId ?? "",
-        triggerId:     triggerDoc.id,
-      });
-      return;
+      const trigger    = triggerDoc.data();
+      const meta       = trigger.metadata ?? {};
+      const authenticatedClientId = typeof session.userId === "string" ? session.userId : "";
+
+      if (trigger.firedAt && authenticatedClientId && meta.clientId === authenticatedClientId) {
+        const leaseOwner = crypto.randomUUID();
+        const claim = await claimVisitFeedback(triggerDoc.id, leaseOwner);
+        if (claim === "expired") {
+          await sendMessage(chatId, "That feedback window has expired, but you can still tell me about the visit anytime.");
+          return;
+        }
+        if (claim === "busy") {
+          await sendMessage(chatId, "I'm already saving that feedback. I'll confirm as soon as it's recorded.");
+          return;
+        }
+        if (claim === "claimed") {
+          try {
+            await handleVisitFeedback({
+              phone,
+              text,
+              caregiverId:   meta.caregiverId ?? "",
+              clientId:      meta.clientId,
+              appointmentId: meta.appointmentId ?? "",
+              triggerId:     triggerDoc.id,
+              leaseOwner,
+            });
+          } catch (err) {
+            console.error("handleVisitFeedback error:", err);
+            await releaseVisitFeedbackClaim(triggerDoc.id, leaseOwner).catch(() => {});
+            await sendMessage(chatId, "I couldn't save that feedback just now. Please send it again in a moment.");
+          }
+          return;
+        }
+      } else if (trigger.firedAt && meta.clientId !== authenticatedClientId) {
+        console.warn("Rejected post-visit feedback from non-owner session", {
+          triggerId: triggerDoc.id,
+          sessionUserId: authenticatedClientId || null,
+        });
+      }
     }
   }
 
@@ -2672,6 +2775,11 @@ async function handleMessageFailed(event: unknown): Promise<void> {
     failedAt:  ev.data?.failed_at ?? now,
     createdAt: now,
   }).catch(() => {});
+
+  if (messageId) {
+    await recordApprovalNoticeProviderStatus(messageId, "failed", String(errorCode ?? reason ?? "provider_failed"))
+      .catch((err) => console.error("billing approval failure receipt update failed", err));
+  }
 
   // ── Forced-iMessage → SMS retry ─────────────────────────────────────────────
   // Forced iMessage has no automatic fallback, so a failure here means the
@@ -3073,6 +3181,8 @@ export const linqWebhook = functions
       // Delivered = the forced-iMessage send succeeded; drop its retry record.
       // (Stragglers without a delivered/failed event auto-expire via TTL.)
       await db.collection("agent_imessage_retry").doc(delivMsgId).delete().catch(() => {/* non-critical */});
+      await recordApprovalNoticeProviderStatus(delivMsgId, "delivered")
+        .catch((err) => console.error("billing approval delivery receipt update failed", err));
       break;
     }
 

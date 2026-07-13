@@ -582,7 +582,7 @@ export async function runMatchingForClient(
       `Care needs: ${needs.join(", ") || "general"}` +
       factsContext +
       `\n\nYour job:\n` +
-      `- First turn: write ONE warm, specific opening line letting the family know you found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near them. Do NOT list them, do NOT include any URLs — a photo of each caregiver with their profile link is sent right after your message.\n` +
+      `- First turn: write ONE warm, specific opening line letting the family know you found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near them. Do NOT list them, do NOT include any URLs — each caregiver's profile card (photo + tappable link) is sent right after your message.\n` +
       `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
       `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
       `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
@@ -626,17 +626,14 @@ export async function runMatchingForClient(
       canDrop:     false,
     });
 
-    // Per-caregiver gallery: for each match send their headshot (if we have one)
-    // as an image bubble, then a factual caption with the tappable profile link.
-    // sendMessage auto-splits the URL into a rich link card on iMessage/RCS and
-    // leaves it as a plain tappable URL on SMS. Photo bubble is skipped for legacy
-    // caregivers without a stored photo — they still get the caption + link.
+    // Per-caregiver gallery: a factual caption with the tappable profile link.
+    // sendMessage auto-splits the URL into a rich link card on iMessage/RCS —
+    // and that card already carries the caregiver's photo via the /p/{id} OG
+    // tags, so the old separate headshot bubble showed the same face twice
+    // (founder, 2026-07-12: one image per caregiver). SMS gets the caption +
+    // plain tappable URL.
     for (const m of matchData) {
       try {
-        if (m.photo) {
-          await sendMessage(chatId, { parts: [{ type: "media", url: m.photo }] });
-          await new Promise<void>((r) => setTimeout(r, 400));
-        }
         const trust    = m.trustScore >= 60 ? ` · ${m.trustScore}⭐ Trust` : "";
         const specs     = m.specialties.length ? `\n${m.specialties.slice(0, 3).join(", ")}` : "";
         const bgPending = m.pendingBg ? `\n⏳ Background check in progress` : "";

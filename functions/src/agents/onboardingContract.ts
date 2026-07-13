@@ -155,7 +155,45 @@ export function normalizeOnboardingFieldValue(fieldName: string, value: unknown)
     const key = value.trim().toLowerCase().replace(/[\s_-]+/g, " ").trim();
     return JOB_TYPE_CANON[key] ?? value;
   }
+  if (fieldName in NUMERIC_FIELD_RANGE) {
+    const n = coerceNumericOnboardingField(fieldName, value);
+    return n ?? value; // unparseable passes through; write sites reject via the coercer
+  }
   return value;
+}
+
+// Numeric-field sanity ranges. A prod session was found with
+// daysPerWeek: "santa clara" — an extraction hallucination that then rendered
+// as "santa clara days/week" in the intake schedule. These fields must be
+// finite numbers in range or they are not saved at all.
+const NUMERIC_FIELD_RANGE: Record<string, [number, number]> = {
+  daysPerWeek: [1, 7],
+  hoursPerDay: [1, 24],
+  age:         [1, 120],
+};
+
+/**
+ * Coerce a numeric onboarding field to a finite in-range number ("3 days" → 3,
+ * "3" → 3, 3 → 3). Returns null when no in-range number can be extracted —
+ * callers must skip the save (never persist prose into a numeric field). This
+ * is type/range validation of an already-extracted value, not intent parsing.
+ */
+export function coerceNumericOnboardingField(fieldName: string, value: unknown): number | null {
+  const range = NUMERIC_FIELD_RANGE[fieldName];
+  if (!range) return null;
+  let n: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) n = value;
+  else if (typeof value === "string") {
+    const m = value.match(/\d+(\.\d+)?/);
+    if (m) n = Number(m[0]);
+  }
+  if (n === null || !Number.isFinite(n)) return null;
+  return n >= range[0] && n <= range[1] ? n : null;
+}
+
+/** True when this field must be a number (daysPerWeek/hoursPerDay/age). */
+export function isNumericOnboardingField(fieldName: string): boolean {
+  return fieldName in NUMERIC_FIELD_RANGE;
 }
 
 // The webapp caregiver profile stores/reads jobTypes as an array of hyphenated

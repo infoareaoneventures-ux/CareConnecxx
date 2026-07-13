@@ -17,9 +17,11 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
+import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
+import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
 // at most once per confirmation. When one runs as a confirmed action, its
@@ -48,7 +50,6 @@ import {
   createCaregiverReferralInvite,
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
-import { autoApproveAtIso } from "../config/slaConstants";
 
 const db = admin.firestore();
 
@@ -1462,7 +1463,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "respond_to_shift_hour_correction",
     description:
       "Respond to a client/admin correction on your submitted shift hours: accept the corrected hours, or push back to dispute them. " +
-      "Only works when the shift hours are in a correction_requested or disputed state.",
+      "Only works when the shift hours are in a correction_proposed state (legacy correction_requested/disputed records are also accepted).",
     input_schema: {
       type: "object",
       properties: {
@@ -2927,6 +2928,16 @@ export async function handleToolCall(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
+  if (
+    (name === "perform_web_action" || name === "search_healthcare_provider") &&
+    !realWorldHealthcareActionsEnabled()
+  ) {
+    return {
+      _toolError: true,
+      code: "MEDICAL_ACTIONS_DISABLED",
+      message: "Evia coordinates non-medical care. Contact a licensed healthcare provider or pharmacy directly.",
+    };
+  }
   // U11: under shadow, never execute a non-read-only tool — return a synthetic
   // "would-have-run" result the harness records as the shadow end-state.
   if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
@@ -3510,7 +3521,7 @@ async function executeToolCall(
         const refundReason = (reason as string) || "Caregiver called out, no suitable backup available";
         await apptRef.update({ status: "cancelled_refund_requested", refundRequestedAt: nowIso, refundReason, needsBackup: false });
         const refundRef = await db.collection("refundRequests").add({
-          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "pending", createdAt: nowIso, source: "cara",
+          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "requested", requestedAt: nowIso, createdAt: nowIso, source: "cara",
         });
         await db.collection("admin_alerts").add({
           type: "refund_request", title: "Refund request — caregiver callout (via Evia)",
@@ -5104,48 +5115,73 @@ async function executeToolCall(
 
     if (name === "submit_shift_hours") {
       return runActionNativeMcpWrite(name, input, async () => {
-      const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
-      const apptSnap3 = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap3.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt3 = apptSnap3.data()!;
-      if (appt3.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-      if (!["completed","in-progress","in_progress"].includes(appt3.status as string)) return toolError("INVALID_INPUT", "Shift hours can only be submitted for completed or in-progress visits");
-      const existingShift = await db.collection("shiftHours").doc(appointmentId as string).get();
-      if (existingShift.exists && existingShift.data()!.status !== "correction_requested") return toolError("INVALID_INPUT", "Shift hours already submitted for this appointment");
-      const [inH, inM]   = (clockInTime  as string).split(":").map(Number);
-      const [outH, outM] = (clockOutTime as string).split(":").map(Number);
-      const totalMins3   = (outH * 60 + outM) - (inH * 60 + inM) - (Number(breakMinutes) || 0);
-      if (totalMins3 <= 0) return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
-      const durationHours3 = Math.round((totalMins3 / 60) * 100) / 100;
-      const hourlyRate3    = (appt3.hourlyRate as number) ?? 22;
-      const amountCents3   = Math.round(durationHours3 * hourlyRate3 * 100);
-      const grossPay3      = Math.round(durationHours3 * hourlyRate3 * 100) / 100;
-      await db.collection("shiftHours").doc(appointmentId as string).set({
-        appointmentId, caregiverId, clientId: appt3.clientId,
-        caregiverName: (appt3.caregiverName as string) ?? "Caregiver",
-        clientName: (appt3.clientName as string) ?? "Client",
-        clockInTime, clockOutTime, breakMinutes: Number(breakMinutes) || 0,
-        durationHours: durationHours3,
-        submittedTotalHours: durationHours3,
-        date: appt3.date, hourlyRate: hourlyRate3, payRate: hourlyRate3,
-        amountCents: amountCents3,
-        // Charge-engine fields (processShiftPayment reads grossPay/paymentMethod/currency)
-        basePay: grossPay3, grossPay: grossPay3, currency: "usd",
-        paymentMethod: normalizePaymentMethod(appt3.paymentMethod),
-        status: "pending_client_review", submittedAt: nowIso,
-        autoApproveAt: autoApproveAtIso(),
-        paymentAttemptCount: 0,
-      }, { merge: false });
-      const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();
-      if (!clientSessSnap3.empty) {
-        const { sendViaInteractionAgent } = await import("../agents/caraAgent");
-        const cgData3 = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-        const cgName3 = cgData3?.name ?? cgData3?.firstName ?? "Your caregiver";
-        await sendViaInteractionAgent(clientSessSnap3.docs[0].id, { content: `${cgName3} submitted shift hours: ${clockInTime}–${clockOutTime} = ${durationHours3}h ($${(amountCents3/100).toFixed(2)}). Reply APPROVE or let me know if anything needs adjusting.`, urgency: "standard", sourceAgent: "mcp:submit_shift_hours", canDrop: false }).catch(() => {});
-      }
-      logAudit({ eventType: "shift_hours_submitted", userId: caregiverId as string, data: { source: "mcp:submit_shift_hours", appointmentId, durationHours: durationHours3, amountCents: amountCents3 } }).catch(() => {});
-      return { success: true, durationHours: durationHours3, amountCents: amountCents3, amountDollars: `$${(amountCents3/100).toFixed(2)}` };
+        const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
+        if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) {
+          return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
+        }
+        if (Number(breakMinutes) > 0) {
+          return toolError("INVALID_INPUT", "Break adjustments require billing review and cannot be submitted here");
+        }
+
+        const apptSnap = await db.collection("appointments").doc(String(appointmentId)).get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
+        const appointment = apptSnap.data()!;
+        if (appointment.caregiverId !== caregiverId) {
+          return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
+        }
+
+        const startMs = apptStartMs(appointment.date, clockInTime);
+        let endMs = apptStartMs(appointment.date, clockOutTime);
+        const bookedWindow = bookedWindowMillis(appointment);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !bookedWindow) {
+          return toolError("INVALID_INPUT", "Appointment or submitted times are not valid");
+        }
+        if (endMs <= startMs) {
+          if (bookedWindow.end <= bookedWindow.start + 24 * 60 * 60 * 1000 && bookedWindow.end > startMs) {
+            endMs += 24 * 60 * 60 * 1000;
+          } else {
+            return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
+          }
+        }
+
+        try {
+          const result = await createValidatedShiftHours({
+            appointmentId: String(appointmentId),
+            actorUid: String(caregiverId),
+            submittedStartTime: new Date(startMs).toISOString(),
+            submittedEndTime: new Date(endMs).toISOString(),
+            source: "mcp",
+          });
+          logAudit({
+            eventType: "shift_hours_submitted",
+            userId: String(caregiverId),
+            data: {
+              source: "mcp:submit_shift_hours",
+              appointmentId,
+              durationHours: result.totalHours,
+              amountCents: result.grossPayCents,
+              status: result.status,
+            },
+          }).catch(() => {});
+          return {
+            success: true,
+            durationHours: result.totalHours,
+            amountCents: result.grossPayCents,
+            amountDollars: `$${(result.grossPayCents / 100).toFixed(2)}`,
+            status: result.status,
+            alreadyExisted: result.alreadyExisted,
+          };
+        } catch (error) {
+          if (error instanceof ValidatedShiftHoursError) {
+            const code = error.code === "not_found"
+              ? "NOT_FOUND"
+              : error.code === "forbidden"
+                ? "PERMISSION_DENIED"
+                : "INVALID_INPUT";
+            return toolError(code, error.message);
+          }
+          throw error;
+        }
       });
     }
 
@@ -5159,7 +5195,12 @@ async function executeToolCall(
       const shift = shiftSnap.data()!;
       if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
       if (shift.status !== "pending_client_review") return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
-      await shiftSnap.ref.update({ status: decision === "approve" ? "approved" : "disputed", reviewedAt: nowIso, correctedHours: correctedHours ?? null, disputeReason: reason ?? null });
+      await shiftSnap.ref.update({
+        status: decision === "approve" ? "approved" : "correction_proposed",
+        reviewedAt: nowIso,
+        correctedHours: correctedHours ?? null,
+        disputeReason: reason ?? null,
+      });
       if (decision === "dispute") {
         const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
         if (!cgSessSnap4.empty) {
@@ -5376,7 +5417,7 @@ async function executeToolCall(
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
       const shift = shiftSnap.data()!;
       if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this caregiver");
-      const correctionStates = ["correction_requested", "disputed"];
+      const correctionStates = ["correction_proposed", "correction_requested", "disputed"];
       if (!correctionStates.includes(shift.status as string)) {
         return toolError("INVALID_INPUT", `These shift hours are not awaiting a correction response (status: ${shift.status})`);
       }
@@ -5400,8 +5441,8 @@ async function executeToolCall(
         }
         await shiftSnap.ref.update(upd);
       } else {
-        // Pushback → keep it disputed for admin resolution.
-        await shiftSnap.ref.update({ status: "disputed", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
+        // Pushback requires admin mediation; never write the retired `disputed` state.
+        await shiftSnap.ref.update({ status: "disputed_admin_review", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
         await db.collection("admin_alerts").add({ type: "shift_hour_dispute", appointmentId, caregiverId, clientId: shift.clientId ?? null, priority: "medium", resolved: false, createdAt: nowIso }).catch(() => {});
       }
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
@@ -5416,7 +5457,7 @@ async function executeToolCall(
         }
       }
       logAudit({ eventType: "shift_hour_correction_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_shift_hour_correction", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed", notification };
+      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed_admin_review", notification };
       });
     }
 
@@ -5756,7 +5797,7 @@ async function executeToolCall(
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
       logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, sentTo: resolvedClientId, notification };
+      return { success: true, sent: notification.sent, sentTo: resolvedClientId, notification };
     }
 
     // ── get_payout_history ──────────────────────────────────────────────────
@@ -6351,6 +6392,7 @@ async function executeToolCall(
           durationHours: newDurationHours, hourlyRate: sched.hourlyRate,
           ...canonicalApptFields({ startTime: resolvedStart, durationHours: newDurationHours, hourlyRate: sched.hourlyRate as number | undefined }),
           status: "confirmed", recurringScheduleId: scheduleId,
+          billingAuthority: BILLING_AUTHORITY_VERSION,
           humanApproved: true, createdByAgent: true, createdAt: nowIso,
         });
       }
@@ -6517,12 +6559,23 @@ async function executeToolCall(
       if (typeof fieldName !== "string" || !fieldName.trim()) {
         return toolError("INVALID_INPUT", "fieldName is required");
       }
-      const { isAllowedField, missingRequiredFields, normalizeOnboardingFieldValue, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
+      const { isAllowedField, missingRequiredFields, normalizeOnboardingFieldValue, isNumericOnboardingField, coerceNumericOnboardingField, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
       if (!isAllowedField(role, fieldName)) {
         return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
       }
       if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
         return toolError("INVALID_INPUT", "fieldValue is required");
+      }
+      // Numeric fields (daysPerWeek/hoursPerDay/age) must coerce to an in-range
+      // number — never persist prose into them (a prod session stored
+      // daysPerWeek: "santa clara" and the intake showed "santa clara days/week").
+      if (isNumericOnboardingField(fieldName) && coerceNumericOnboardingField(fieldName, fieldValue) === null) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `"${String(fieldValue)}" isn't a valid ${fieldName} value — it must be a number. Re-read their message; if it doesn't actually answer ${fieldName}, save it to the right field instead and ask for ${fieldName} naturally.`,
+        };
       }
       // Canonicalize enum-ish values the model may save in free-form casing
       // ("Full time" → "full_time"); otherwise the raw string is copied onto the
@@ -6675,15 +6728,23 @@ async function executeToolCall(
     if (name === "create_refund_request") {
       const { clientId: rfClientId, appointmentId: rfApptId, reason: rfReason } = input as Record<string, string | undefined>;
       if (!rfClientId || !rfApptId) return toolError("INVALID_INPUT", "clientId and appointmentId are required");
-      const ref = await db.collection("refundRequests").add({
-        clientId:      rfClientId,
-        appointmentId: rfApptId,
-        reason:        rfReason ?? "",
-        status:        "pending_review",
-        requestedAt:   nowIso,
-        source:        "cara_self_service",
-      });
-      return { success: true, requestId: ref.id, message: "Refund request submitted. Admin review within 24 hours." };
+      const refundAppt = await db.collection("appointments").doc(rfApptId).get();
+      if (!refundAppt.exists) return toolError("NOT_FOUND", "Appointment not found");
+      if (refundAppt.data()?.clientId !== rfClientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
+      const ref = db.collection("refundRequests").doc(`${rfApptId}:${rfClientId}`);
+      try {
+        await ref.create({
+          clientId:      rfClientId,
+          appointmentId: rfApptId,
+          reason:        rfReason ?? "",
+          status:        "requested",
+          requestedAt:   nowIso,
+          source:        "cara_self_service",
+        });
+      } catch (error: any) {
+        if (error?.code !== 6 && !/already exists/i.test(String(error?.message ?? ""))) throw error;
+      }
+      return { success: true, requestId: ref.id, status: "requested", message: "Refund request submitted. Admin review within 24 hours." };
     }
 
     // ── get_care_plan_history ───────────────────────────────────────────────

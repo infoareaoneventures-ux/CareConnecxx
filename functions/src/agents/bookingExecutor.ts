@@ -8,6 +8,7 @@ import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
 import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 async function hasConflict(
   caregiverId: string,
@@ -203,6 +204,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       status:             "pending_caregiver_confirmation",
       caregiverConfirmed: false,
       createdByAgent:     true,
+      billingAuthority:   BILLING_AUTHORITY_VERSION,
       agentTaskId:        taskId,
       humanApproved:      true,
       approvedAt:         now,

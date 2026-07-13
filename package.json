@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/build.mjs",
     "preview": "vite preview",
     "eval": "cd functions && npx ts-node src/evals/runner.ts",
     "eval:onboarding": "vitest run functions/src/agents/qaAgent.onboarding.eval.test.ts",

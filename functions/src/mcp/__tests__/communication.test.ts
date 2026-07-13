@@ -115,6 +115,7 @@ describe("communication tools", () => {
       hoisted.docState.set("caregivers/cg1", { name: "Alice" });
       const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
+      expect(r.sent).toBe(true);
       expect(r.notification.sent).toBe(true);
       expect(trySend).toHaveBeenCalledWith("+15555550100", "Alice: hi", "mcp:send_client_message");
     });

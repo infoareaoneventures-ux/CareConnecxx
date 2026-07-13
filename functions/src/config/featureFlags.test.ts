@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   realWorldHealthcareActionsEnabled,
+  timesheetAutoApprovalEnabled,
   isRoutingShadowEnabled,
   isConvergenceFlipped,
 } from "./featureFlags";
@@ -21,6 +22,22 @@ describe("realWorldHealthcareActionsEnabled (H-U9)", () => {
     expect(realWorldHealthcareActionsEnabled()).toBe(false);
     process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS = "yes";
     expect(realWorldHealthcareActionsEnabled()).toBe(false);
+  });
+});
+
+describe("timesheetAutoApprovalEnabled", () => {
+  afterEach(() => { delete process.env.TIMESHEET_AUTO_APPROVAL_ENABLED; });
+
+  it("defaults OFF when the env var is unset", () => {
+    delete process.env.TIMESHEET_AUTO_APPROVAL_ENABLED;
+    expect(timesheetAutoApprovalEnabled()).toBe(false);
+  });
+
+  it("is ON only when exactly 'true'", () => {
+    process.env.TIMESHEET_AUTO_APPROVAL_ENABLED = "true";
+    expect(timesheetAutoApprovalEnabled()).toBe(true);
+    process.env.TIMESHEET_AUTO_APPROVAL_ENABLED = "1";
+    expect(timesheetAutoApprovalEnabled()).toBe(false);
   });
 });
 

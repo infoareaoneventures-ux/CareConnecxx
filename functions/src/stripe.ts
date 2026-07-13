@@ -318,6 +318,19 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
           ...(customerId ? { stripeCustomerId: customerId } : {}),
         }).catch(() => {});
       }
+      if (!subscriptionId) {
+        console.error(`client_payment_setup completed without subscription id for phone=${phone}; membership remains inactive`);
+        await admin.firestore().collection('admin_alerts').add({
+          type: 'client_membership_missing_subscription',
+          phone,
+          stripeCheckoutSessionId: session.id,
+          stripeCustomerId: customerId || null,
+          severity: 'high',
+          resolved: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return;
+      }
       // Pass the subscription id through so the user doc records a REAL subscription.
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
       await advanceOnboardingStep(phone, 'payment', subscriptionId);
@@ -347,6 +360,19 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       if (customerId) update.stripeCustomerId = customerId;
       if (Object.keys(update).length) {
         await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => {});
+      }
+      if (!subscriptionId) {
+        console.error(`caregiver_membership completed without subscription id for phone=${phone}; membership remains inactive`);
+        await admin.firestore().collection('admin_alerts').add({
+          type: 'caregiver_membership_missing_subscription',
+          phone,
+          stripeCheckoutSessionId: session.id,
+          stripeCustomerId: customerId || null,
+          severity: 'high',
+          resolved: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return;
       }
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
       await advanceOnboardingStep(phone, 'membership', '');
@@ -417,8 +443,26 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
+  const subscriptionId = typeof session.subscription === 'string'
+    ? session.subscription
+    : (session.subscription as any)?.id ?? '';
+  if (!subscriptionId) {
+    console.error(`Membership checkout ${session.id} completed without subscription id for user=${userId}; membership remains inactive`);
+    await admin.firestore().collection('admin_alerts').add({
+      type: 'membership_missing_subscription',
+      userId,
+      stripeCheckoutSessionId: session.id,
+      severity: 'high',
+      resolved: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
+    return;
+  }
+
   await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: 'active',
+    subscriptionActive: true,
+    subscriptionId,
     stripeCustomerId: session.customer,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -1273,6 +1317,13 @@ async function handleShiftPaymentIntentSucceeded(intent: Stripe.PaymentIntent) {
   const ref = admin.firestore().collection('shiftHours').doc(appointmentId);
   const snap = await ref.get();
   if (!snap.exists) return;
+  const shift = snap.data()!;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  const intentGeneration = Math.max(1, Number(intent.metadata?.paymentGeneration ?? 1));
+  if (intentGeneration !== generation || (shift.stripeChargeId && shift.stripeChargeId !== intent.id)) {
+    console.warn(`Ignoring stale shift payment success for ${appointmentId}`, { intentId: intent.id, intentGeneration, generation });
+    return;
+  }
 
   await ref.update({
     chargeConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1286,7 +1337,7 @@ async function handleShiftPaymentIntentSucceeded(intent: Stripe.PaymentIntent) {
   // a module-load cycle between stripe.ts and shiftHours.ts.
   try {
     const { completeShiftPaymentAfterCharge } = await import('./shiftHours');
-    await completeShiftPaymentAfterCharge(appointmentId);
+    await completeShiftPaymentAfterCharge(appointmentId, intent.id, intentGeneration);
   } catch (err) {
     console.error(`completeShiftPaymentAfterCharge failed for ${appointmentId}:`, err);
   }
@@ -1301,8 +1352,16 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
   const snap = await ref.get();
   if (!snap.exists) return;
   const shift = snap.data()!;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  const intentGeneration = Math.max(1, Number(intent.metadata?.paymentGeneration ?? 1));
+  if (intentGeneration !== generation || (shift.stripeChargeId && shift.stripeChargeId !== intent.id)) {
+    console.warn(`Ignoring stale shift payment failure for ${appointmentId}`, { intentId: intent.id, intentGeneration, generation });
+    return;
+  }
 
   const reason = intent.last_payment_error?.message || 'payment_intent.payment_failed';
+  let transferReversed = false;
+  let transferReversalFailed = false;
 
   // If a payout already went out (charge had settled, transfer was created) and
   // the charge LATER failed, the caregiver was paid from money we never
@@ -1316,8 +1375,21 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
         reversedStripeTransferId: shift.stripeTransferId,
         stripeTransferReversedAt: new Date().toISOString(),
         stripeTransferId: admin.firestore.FieldValue.delete(),
+        stripeChargeId: admin.firestore.FieldValue.delete(),
+        paymentGeneration: generation + 1,
+        paymentAttemptCount: 0,
+        nextPaymentAttemptAt: new Date().toISOString(),
+        paymentHistory: admin.firestore.FieldValue.arrayUnion({
+          generation,
+          paymentIntentId: intent.id,
+          transferId: shift.stripeTransferId,
+          outcome: 'reversed_after_charge_failure',
+          at: new Date().toISOString(),
+        }),
       });
+      transferReversed = true;
     } catch (err) {
+      transferReversalFailed = true;
       console.error(`reverseShiftTransfer failed for ${appointmentId}:`, err);
       await admin.firestore().collection('admin_alerts').add({
         type: 'transfer_reversal_failed',
@@ -1332,12 +1404,36 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
     }
   }
 
+  const retryAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   await ref.update({
-    status: 'payment_failed',
+    status: transferReversalFailed ? 'requires_admin_review' : 'payment_failed',
     stripeFailureReason: reason,
     stripeChargeStatus: 'failed',
+    nextPaymentAttemptAt: transferReversalFailed ? null : retryAt,
+    autoApproveAt: transferReversalFailed ? null : shift.autoApproveAt ?? null,
     updatedAt: new Date().toISOString(),
   });
+
+  const { shiftPaymentOperationKey, updateShiftPaymentOperation } = await import('./billing/paymentOperation');
+  const operationKey = shiftPaymentOperationKey(appointmentId, generation);
+  if (transferReversalFailed) {
+    await updateShiftPaymentOperation(operationKey, 'requires_admin_review', {
+      providerOperationId: intent.id,
+      nextAttemptAt: null,
+      lastErrorCode: 'transfer_reversal_failed',
+    });
+  } else if (transferReversed) {
+    await updateShiftPaymentOperation(operationKey, 'completed', {
+      providerOperationId: intent.id,
+      outcome: 'reversed_after_charge_failure',
+    });
+  } else {
+    await updateShiftPaymentOperation(operationKey, 'retry', {
+      providerOperationId: intent.id,
+      nextAttemptAt: retryAt,
+      lastErrorCode: 'payment_intent_failed',
+    });
+  }
 }
 
 /**

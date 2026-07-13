@@ -14,11 +14,12 @@ export interface ProactiveTrigger {
   phone:             string;
   type:              "appointment_reminder" | "weekly_checkin" | "medication_reminder" | "custom"
                    | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation"
-                   | "issue_escalation" | "issue_escalation_final" | "issue_followup";
+                   | "issue_escalation" | "issue_escalation_final" | "issue_followup"
+                   | "post_visit_feedback";
   scheduledAt:       string;   // ISO
   message:           string;
-  firedAt?:          string;
-  cancelledAt?:      string;
+  firedAt?:          string | null;
+  cancelledAt?:      string | null;
   createdAt:         string;
   // Links a trigger to the record it serves (e.g. "video_interview_<id>") so
   // cancelTriggersByRef can retire reminders when that record is cancelled.
@@ -27,6 +28,14 @@ export interface ProactiveTrigger {
   source?:           "claude" | "system";   // "claude" = scheduled by Evia via schedule_followup tool
   intent?:           string;                // why this trigger exists (used for dynamic content + suppression)
   suppressionReason?: string;               // set when context-aware suppression cancels the trigger
+  expiresAt?:        string;
+  feedbackReceived?: string | null;
+  metadata?: {
+    appointmentId?: string;
+    clientId?:      string;
+    caregiverId?:   string;
+    [key: string]: unknown;
+  };
 }
 
 // 30-day calibration period — no proactive triggers during this window
@@ -43,7 +52,7 @@ function isInCalibrationPeriod(sessionCreatedAt: string): boolean {
 // and interviews cluster in a user's first weeks, exactly inside the window.
 export async function scheduleTrigger(
   trigger: Omit<ProactiveTrigger, "id" | "createdAt">,
-  opts: { bypassCalibration?: boolean } = {}
+  opts: { bypassCalibration?: boolean; idempotencyKey?: string } = {}
 ): Promise<string> {
   // Check calibration
   if (!opts.bypassCalibration) {
@@ -56,10 +65,26 @@ export async function scheduleTrigger(
     }
   }
 
-  const ref = await db.collection("proactive_triggers").add({
+  const triggerDoc = {
     ...trigger,
-    createdAt: new Date().toISOString(),
-  });
+    firedAt:     trigger.firedAt ?? null,
+    cancelledAt: trigger.cancelledAt ?? null,
+    createdAt:   new Date().toISOString(),
+  };
+
+  if (opts.idempotencyKey) {
+    const id = opts.idempotencyKey.replace(/\//g, "%2F");
+    const ref = db.collection("proactive_triggers").doc(id);
+    await db.runTransaction(async transaction => {
+      const existing = await transaction.get(ref);
+      if (!existing.exists) {
+        transaction.create(ref, triggerDoc);
+      }
+    });
+    return id;
+  }
+
+  const ref = await db.collection("proactive_triggers").add(triggerDoc);
   return ref.id;
 }
 
@@ -140,7 +165,11 @@ async function shouldFireTrigger(
 // post-interview follow-ups, escalations) are work items, not nudges.
 // qa_retry stays reply-cancellable on purpose — a new inbound starts a fresh
 // turn and the commitment tracker backstops the promised answer.
-const REPLY_EXEMPT_TYPES = new Set(["appointment_reminder", "medication_reminder"]);
+const REPLY_EXEMPT_TYPES = new Set([
+  "appointment_reminder",
+  "medication_reminder",
+  "post_visit_feedback",
+]);
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
   "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
   "health_escalation:", "issue_escalation:", "issue_escalation_final:",
@@ -962,6 +991,8 @@ async function handleCaregiverCheckin(appointmentId: string, caregiverPhone: str
     type:        "caregiver_checkin_escalation",
     scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     message:     `caregiver_checkin_escalation:${appointmentId}`,
+    firedAt:     null,
+    cancelledAt: null,
     createdAt:   new Date().toISOString(),
   });
 }

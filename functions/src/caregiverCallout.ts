@@ -181,6 +181,17 @@ async function findBackupCaregivers(appointment: Appointment, originalCaregiverI
             .where('status', '==', 'approved');
 
         const snapshot = await query.get();
+        const dayAppointments = await db.collection('appointments')
+            .where('date', '==', date)
+            .where('status', 'in', ['confirmed', 'pending', 'in-progress'])
+            .limit(500)
+            .get();
+        const bookedCaregiverIds = new Set(
+            dayAppointments.docs
+                .filter(doc => doc.data().time === time)
+                .map(doc => doc.data().caregiverId as string)
+                .filter(Boolean)
+        );
         
         const potentialCaregivers: CaregiverProfile[] = [];
 
@@ -206,8 +217,7 @@ async function findBackupCaregivers(appointment: Appointment, originalCaregiverI
             if (!isAvailable) continue;
 
             // Check if already booked at that time
-            const isBooked = await checkIfBooked(data.id, date, time);
-            if (isBooked) continue;
+            if (bookedCaregiverIds.has(data.id)) continue;
 
             potentialCaregivers.push(data);
         }
@@ -248,31 +258,18 @@ function checkAvailability(availability: any, date: string, time: string): boole
 }
 
 /**
- * Check if caregiver is already booked at that time
- */
-async function checkIfBooked(caregiverId: string, date: string, time: string): Promise<boolean> {
-    try {
-        const appointmentsSnapshot = await db.collection('appointments')
-            .where('caregiverId', '==', caregiverId)
-            .where('date', '==', date)
-            .where('time', '==', time)
-            .where('status', 'in', ['confirmed', 'pending'])
-            .get();
-
-        return !appointmentsSnapshot.empty;
-    } catch (error) {
-        console.error('Error checking if caregiver is booked:', error);
-        return true; // Assume booked if error
-    }
-}
-
-/**
  * Cloud Function: Handle caregiver callout/cancellation
  * Triggered when caregiver updates appointment status to 'cancelled' or 'called_out'
  */
 export const onCaregiverCallout = functions.firestore
     .document('appointments/{appointmentId}')
     .onUpdate(async (change, context) => {
+        // appointmentUpdated is the sole owner of every caregiver-cancellation
+        // variant. Keep this exported trigger as an inert compatibility shim so
+        // an in-flight deployment cannot launch a second replacement workflow.
+        return null;
+
+        /* istanbul ignore next -- legacy implementation retained until function cleanup deploy */
         const before = change.before.data() as Appointment;
         const after = change.after.data() as Appointment;
         const appointmentId = context.params.appointmentId;
@@ -653,7 +650,9 @@ export const requestCalloutRefund = functions.https.onCall(async (data, context)
             clientId: appointment.clientId,
             amount: appointment.amount || 0,
             reason: reason || 'Caregiver called out',
-            status: 'pending',
+            status: 'requested',
+            requestedAt: new Date().toISOString(),
+            source: 'caregiver_callout',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 

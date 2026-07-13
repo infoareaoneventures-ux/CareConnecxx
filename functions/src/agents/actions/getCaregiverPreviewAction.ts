@@ -13,9 +13,13 @@ const caregiverPreviewInputSchema = z.object({
 });
 
 const caregiverPreviewItemSchema = z.object({
+  /** Firestore doc id — powers the /p/{id} public profile link in the SMS gallery. */
+  id: z.string().optional(),
   name: z.string(),
   yearsExperience: z.string().optional(),
   strongestFit: z.string().optional(),
+  /** Headshot URL (same resolution chain the webapp uses) for the photo bubble. */
+  photo: z.string().optional(),
 });
 
 const caregiverPreviewOutputSchema = z.object({
@@ -68,7 +72,7 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
       : await emptyQuerySnapshot();
 
     const localCaregivers = localSnap.docs
-      .map(doc => doc.data())
+      .map(doc => ({ ...doc.data(), id: doc.id }))
       .filter(c => !isSeededCaregiver(c))
       .slice(0, 5);
 
@@ -84,7 +88,7 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
 
     const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(15).get();
     const widerCaregivers = widerSnap.docs
-      .map(doc => doc.data())
+      .map(doc => ({ ...doc.data(), id: doc.id }))
       .filter(c => !isSeededCaregiver(c))
       .slice(0, 5);
     return buildCaregiverPreviewResult({
@@ -159,6 +163,7 @@ export function buildCaregiverPreviewResult(opts: {
 }
 
 function toPreviewItem(caregiver: RawCaregiver): z.infer<typeof caregiverPreviewItemSchema> {
+  const id = stringValue(caregiver.id);
   const name = stringValue(caregiver.name) || "Caregiver";
   const experience = stringValue(caregiver.yearsExperience) || stringValue(caregiver.experience);
   const strongestFit =
@@ -166,10 +171,19 @@ function toPreviewItem(caregiver: RawCaregiver): z.infer<typeof caregiverPreview
     firstServiceName(caregiver.primaryServices) ||
     firstString(caregiver.skills) ||
     firstString(caregiver.services);
+  // Same photo resolution chain as the webapp readers (photo || imageUrl ||
+  // profilePhoto || photoURL — see PublicCaregiverProfile.tsx).
+  const photo =
+    stringValue(caregiver.photo) ||
+    stringValue(caregiver.imageUrl) ||
+    stringValue((caregiver as Record<string, unknown>).profilePhoto) ||
+    stringValue((caregiver as Record<string, unknown>).photoURL);
   return {
+    ...(id ? { id } : {}),
     name,
     ...(experience ? { yearsExperience: experience } : {}),
     ...(strongestFit ? { strongestFit } : {}),
+    ...(photo ? { photo } : {}),
   };
 }
 

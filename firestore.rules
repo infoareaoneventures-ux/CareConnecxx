@@ -27,6 +27,13 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
       );
     }
+
+    function isBillingReviewer() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'billing_reviewer' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.billingReviewer == true
+      );
+    }
     
     // Only admins can delete documents
     function canDelete() {
@@ -118,8 +125,10 @@ service cloud.firestore {
       // Subcollection: notifications
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);
-        allow write: if isOwner(userId) || isAdmin();
-        allow create: if isAuthenticated();
+        allow create: if isAdmin();
+        allow update: if isOwner(userId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'read']);
+        allow delete: if isOwner(userId) || isAdmin();
       }
 
       // Subcollection: match_history (AI feedback loop signals)
@@ -135,7 +144,7 @@ service cloud.firestore {
     // ==========================================
     match /caregivers/{caregiverId} {
       // Public read for any authenticated user
-      allow read: if isAuthenticated();
+      allow read: if isOwner(caregiverId) || isAdmin();
       
       // CRITICAL FIX: Allow authenticated users to create their own caregiver profile during signup
       // This must come before the update rule to ensure create is not blocked
@@ -269,6 +278,11 @@ service cloud.firestore {
       );
       // Only admin can delete
       allow delete: if isAdmin();
+    }
+
+    match /publicCaregiverProfiles/{caregiverId} {
+      allow read: if true;
+      allow write: if false;
     }
     
     // ==========================================
@@ -554,9 +568,7 @@ service cloud.firestore {
       // requestNotifiedAt are written exclusively by Cloud Functions (the
       // Admin SDK bypasses rules). A client-forged callUrl would render as a
       // "Join video call" button on the other party's dashboard.
-      allow create: if isAuthenticated() &&
-        request.resource.data.clientId == request.auth.uid &&
-        !request.resource.data.keys().hasAny(['callUrl', 'icsUrl', 'linkDelivery', 'linkWork', 'remindersScheduledAt', 'requestNotifiedAt']);
+      allow create: if false;
 
       // Both parties can update — restricted to legitimately client-mutable
       // fields. Identity (clientId/caregiverId) and server-owned link fields
@@ -613,7 +625,7 @@ service cloud.firestore {
     // caregiver directory (browse/match), consistent with the per-doc
     // `allow read: if isAuthenticated()` above.
     match /caregivers/{docId} {
-      allow list: if isAuthenticated();
+      allow list: if isAdmin();
     }
     // users: ADMIN ONLY. This was `if isAuthenticated()`, which let any signed-in
     // user enumerate the entire users collection (name/email/phone/role/
@@ -671,11 +683,10 @@ service cloud.firestore {
         isAdmin()
       );
 
-      allow create: if isAuthenticated()
-        && request.resource.data.caregiverId == request.auth.uid
-        && request.resource.data.appointmentId == appointmentId
-        && request.resource.data.status == 'pending_client_review'
-        && request.resource.data.paymentAttemptCount == 0;
+      // Financial records are created only by trusted Cloud Functions through
+      // the Admin SDK. Participant-created timesheets let callers choose the
+      // client and amount that the scheduled payment rail later processes.
+      allow create: if false;
 
       // Admin can update anything.
       // Caregiver may confirm cash receipt: approved/auto_approved → paid,
@@ -690,6 +701,23 @@ service cloud.firestore {
           .hasOnly(['status', 'paidMethod', 'paidAt', 'cashConfirmedAt', 'updatedAt'])
       );
       allow delete: if isAdmin();
+    }
+
+    match /billingApprovalOutbox/{noticeId} {
+      allow read: if isAdmin() || isBillingReviewer();
+      allow create, update, delete: if false;
+    }
+
+    match /billingOperations/{operationId} {
+      allow read: if isAdmin() || isBillingReviewer();
+      allow create, update, delete: if false;
+    }
+
+    match /refundRequests/{requestId} {
+      allow read: if isAdmin() || isBillingReviewer() || (
+        isAuthenticated() && resource.data.clientId == request.auth.uid
+      );
+      allow create, update, delete: if false;
     }
     
     // ==========================================

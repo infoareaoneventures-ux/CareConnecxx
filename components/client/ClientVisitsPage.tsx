@@ -995,7 +995,7 @@ export const ClientVisitsPage: React.FC = () => {
         if (missing.length > 0 && db) {
           const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
           Promise.all(uniqueIds.map(async id => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) {
               const d = cSnap.data() as any;
               const photo = d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || '';
@@ -1024,7 +1024,7 @@ export const ClientVisitsPage: React.FC = () => {
           if (missing.length > 0 && db) {
             const uniqueIds = [...new Set(missing.map(s => s.caregiverId))];
             Promise.all(uniqueIds.map(async id => {
-              const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+              const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
               if (cSnap?.exists) {
                 const d = cSnap.data() as any;
                 const photo = d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || '';

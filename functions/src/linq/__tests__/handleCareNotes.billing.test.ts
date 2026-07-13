@@ -85,6 +85,7 @@ const hoisted = vi.hoisted(() => {
 
   const runTransaction = async (fn: (t: any) => Promise<void>) => fn({
     get:    (refOrQuery: any) => refOrQuery.get(),
+    create: (ref: any, data: any) => { ref.create(data); },
     set:    (ref: any, data: any) => { ref.set(data); },
     update: (ref: any, data: any) => { ref.update(data); },
   });
@@ -186,9 +187,10 @@ function seed() {
     chatId: "client-chat", userType: "client", userId: CLIENT_ID, phone: CLIENT_PHONE,
   });
   hoisted.docState.set(`appointments/${APPT_ID}`, {
-    clientId: CLIENT_ID, seniorId: CLIENT_ID, status: "in-progress",
-    durationHours: DURATION_H, date: "2026-06-15", clientName: "Smith Family",
-    paymentMethod: "credit",
+    clientId: CLIENT_ID, seniorId: CLIENT_ID, caregiverId: CAREGIVER_ID, status: "in-progress",
+    durationHours: DURATION_H, date: "2026-06-15", startTime: "09:00", endTime: "12:00",
+    clientName: "Smith Family", caregiverName: "Jane Doe", hourlyRate: HOURLY_RATE,
+    paymentMethod: "credit", billingAuthority: "server-v1",
   });
   hoisted.docState.set(`caregivers/${CAREGIVER_ID}`, { name: "Jane Doe", hourlyRate: HOURLY_RATE });
 }
@@ -231,20 +233,22 @@ describe("handleCareNotes → shiftHours payment rail", () => {
     expect(shift.paymentMethod).toBe("credit");
   });
 
-  it("notifies the family to APPROVE and arms the pendingShiftApproval flag", async () => {
+  it("creates one durable family-approval outbox record without sending inline", async () => {
     await routeCaregiverMessage(makeCtx("ate well, good mood"));
 
-    // Among Evia's family messages (a shift-end care update also fires), exactly
-    // one is the payment-approval prompt to the client phone asking for APPROVE.
     const approvalCalls = sendViaInteractionAgent.mock.calls.filter(
       ([toPhone, payload]: any[]) => toPhone === CLIENT_PHONE && String(payload?.content).includes("APPROVE"),
     );
-    expect(approvalCalls).toHaveLength(1);
+    expect(approvalCalls).toHaveLength(0);
 
-    // routeClient's approval flow keys off this session flag.
-    const clientSession = hoisted.docState.get(`agent_sessions/${CLIENT_PHONE}`);
-    expect(clientSession.pendingShiftApproval).toMatchObject({ appointmentId: APPT_ID });
-    expect(clientSession.pendingShiftApproval.amount).toBe("75.00");
+    const outbox = hoisted.docState.get(`billingApprovalOutbox/${APPT_ID}:approval-request:v1`);
+    expect(outbox).toMatchObject({
+      appointmentId: APPT_ID,
+      recipientUid: CLIENT_ID,
+      state: "pending",
+      attemptCount: 0,
+    });
+    expect(hoisted.docState.get(`shiftHours/${APPT_ID}`).approvalNoticeState).toBe("pending");
   });
 
   it("is idempotent — a re-submission for the same visit neither double-bills nor re-notifies", async () => {

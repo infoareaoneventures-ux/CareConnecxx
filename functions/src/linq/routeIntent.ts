@@ -3,6 +3,7 @@ import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
 import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
@@ -42,6 +43,7 @@ import {
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
 import { handleRecurringConfirm } from "./inboundHelpers";
+import { buildNonMedicalDeflection, medicalActionsAvailable } from "../agents/medicalBoundary";
 
 const db = admin.firestore();
 
@@ -201,6 +203,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
       hourlyRate:          sched.hourlyRate,
       ...canonicalApptFields({ startTime: sched.startTime as string, durationHours: sched.durationHours as number | undefined, hourlyRate: sched.hourlyRate as number | undefined }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleId,
       humanApproved:       true,
       createdByAgent:      true,
@@ -1005,8 +1008,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     if (intent === "PERMISSION_UPDATE") {
       const userId   = session.userId ?? session.caregiverId ?? phone;
       const userType = session.userType ?? "client";
-      await updatePermissionFromText(userId, userType, phone, chatId, text);
-      return;
+      const handled = await updatePermissionFromText(userId, userType, phone, chatId, text);
+      if (handled) return;
+      // Classifier/parser failures fall through to the QA agent so the user
+      // still gets a response instead of a silent terminal turn.
     }
 
     if (intent === "MEMORY_QUERY") {
@@ -1732,6 +1737,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
        intent === "NEW_PRESCRIPTION") &&
       session.userType !== "caregiver"
     ) {
+      if (!medicalActionsAvailable()) {
+        await sendMessage(chatId, buildNonMedicalDeflection(intent, text));
+        return;
+      }
       if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
       try {
         const { startHealthcareFlow } = await import("../agents/healthcareHandler");

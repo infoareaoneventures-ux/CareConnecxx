@@ -10,6 +10,7 @@ import { hasCredential } from "../browser/credentialVault";
 import { proposePendingAction } from "./pendingActions";
 import type { AgentSession } from "../linq/client";
 import { answerHumanQuestionOnly } from "./humanReply";
+import { buildNonMedicalDeflection, medicalActionsAvailable } from "./medicalBoundary";
 
 // Route a healthcare write action through the SAME propose→confirm→execute gate
 // the MCP path uses (R1: NEVER auto-commit from this conversational flow). Builds
@@ -285,6 +286,11 @@ export async function startHealthcareFlow(
   intent: string,
   sendMessage: (msg: string) => Promise<unknown>
 ): Promise<void> {
+  if (!medicalActionsAvailable()) {
+    await clearFlowState(phone).catch(() => undefined);
+    await sendMessage(buildNonMedicalDeflection(intent, text));
+    return;
+  }
   const userId = session.userId ?? phone;
 
   // ── FIND_NEARBY_PROVIDER ──────────────────────────────────────────────────
@@ -492,6 +498,11 @@ export async function resumeHealthcareFlow(
 ): Promise<void> {
   const step = (session as any).healthcareFlowStep as string;
   const data = ((session as any).healthcareFlowData ?? {}) as HealthcareFlowData;
+  if (!medicalActionsAvailable()) {
+    await clearFlowState(phone).catch(() => undefined);
+    await sendMessage(buildNonMedicalDeflection(data.intent ?? "", text));
+    return;
+  }
   const userId = session.userId ?? phone;
 
   // ── hc_search_location: waiting for city/zip ──────────────────────────────

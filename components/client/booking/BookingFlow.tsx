@@ -166,7 +166,7 @@ export default function BookingFlow() {
       if (!uid) { navigate('/login'); return; }
 
       const [cgDoc, cgUserDoc, jobs, clientDoc] = await Promise.all([
-        fdb.collection('caregivers').doc(caregiverId!).get().catch(() => null),
+        fdb.collection('publicCaregiverProfiles').doc(caregiverId!).get().catch(() => null),
         fdb.collection('users').doc(caregiverId!).get(),
         dbService.getJobPostsByClient(uid),
         fdb.collection('users').doc(uid).get(),

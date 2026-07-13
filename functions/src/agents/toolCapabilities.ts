@@ -1,5 +1,6 @@
 import type { Intent } from "./intentClassifier";
 import type { McpTool } from "../mcp/server";
+import { MEDICAL_TOOL_NAMES, medicalActionsAvailable } from "./medicalBoundary";
 
 // Six capability buckets used to filter the 80+ MCP tools before each Sonnet
 // turn. The goal is to reduce the tool surface Claude has to attend to per
@@ -370,13 +371,16 @@ export function selectToolsForIntent(
   allTools: McpTool[],
   intent: Intent | null | undefined,
 ): McpTool[] {
-  if (!intent) return allTools;
+  const launchTools = medicalActionsAvailable()
+    ? allTools
+    : allTools.filter(tool => !MEDICAL_TOOL_NAMES.has(tool.name));
+  if (!intent) return launchTools;
 
   const required = INTENT_CAPABILITIES[intent];
-  if (!required || required.length === 0) return allTools;
+  if (!required || required.length === 0) return launchTools;
 
   const requiredSet = new Set<Capability>(required);
-  return allTools.filter(t => {
+  return launchTools.filter(t => {
     if (CORE_TOOL_NAMES.has(t.name)) return true;
     const caps = TOOL_CAPABILITIES[t.name];
     if (!caps || caps.length === 0) return true; // unmapped → safe default

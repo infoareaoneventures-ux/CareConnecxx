@@ -7,6 +7,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService } from "./linq/client";
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
+import { getAppUrl } from "./config/appUrl";
 
 const db = admin.firestore();
 
@@ -287,11 +288,17 @@ export async function setupCaraContactCard(params?: {
     console.warn("setupCaraContactCard: LINQ_PHONE_NUMBER not set");
     return;
   }
+  // Contact-card fix (2026-07-12): CARA_AVATAR_URL was never set in the live
+  // env, so the card had NO photo — fall back to the hosted app icon so the
+  // thread always shows a face for Evia. And the old last_name default of
+  // "Evia" rendered the sender as "Evia Evia" — a real last name is not a
+  // thing Evia has, so send the brand as the surname-free display name.
+  const imageUrl = params?.imageUrl?.trim() || process.env.CARA_AVATAR_URL?.trim() || `${getAppUrl()}/icon-512.png`;
   await createOrUpdateContactCard({
     phone_number: phoneNumber,
     first_name:   params?.firstName ?? "Evia",
-    last_name:    params?.lastName  ?? "Evia",
-    image_url:    params?.imageUrl  ?? process.env.CARA_AVATAR_URL,
+    ...(params?.lastName ? { last_name: params.lastName } : {}),
+    image_url:    imageUrl,
   });
 }
 

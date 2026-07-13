@@ -155,7 +155,7 @@ export async function handleTimesheetApproval(
       await sendMessage(approveMsg);
     } else {
       await db.collection("shiftHours").doc(tsId).update({
-        status:     "disputed",
+        status:     "disputed_admin_review",
         disputedAt: new Date().toISOString(),
         disputedBy: clientId,
       });

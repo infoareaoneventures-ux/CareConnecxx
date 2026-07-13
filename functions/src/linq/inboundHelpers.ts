@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "./client";
 import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -82,6 +83,7 @@ export async function handleRecurringConfirm(
       hourlyRate:          pending.hourlyRate,
       ...canonicalApptFields({ startTime: pending.startTime, durationHours: pending.durationHours, hourlyRate: pending.hourlyRate }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleRef.id,
       humanApproved:       true,
       createdByAgent:      true,

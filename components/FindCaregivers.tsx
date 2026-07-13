@@ -240,7 +240,7 @@ export default function FindCaregivers() {
       // (below), which is derived solely from `caregivers`, and every
       // profile_complete caregiver's caregivers doc carries name+geo (verified
       // against prod 2026-07-11: 0 caregivers relied on the users doc).
-      const caregiversSnap = await fdb.collection('caregivers')
+      const caregiversSnap = await fdb.collection('publicCaregiverProfiles')
         .where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null);
 
       // Build set of visible caregiver IDs — bookability contract: onboardingStatus 'profile_complete'

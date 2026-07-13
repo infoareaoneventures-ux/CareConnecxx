@@ -206,7 +206,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
     const otherId = room.participants[otherIdx];
     if (!otherId) return;
     (async () => {
-      const cgSnap = await db.collection('caregivers').doc(otherId).get().catch(() => null);
+      const cgSnap = await db.collection('publicCaregiverProfiles').doc(otherId).get().catch(() => null);
       if (cgSnap?.exists) {
         const d = cgSnap.data() as any;
         setContactPhoto(d?.photo || d?.imageUrl || d?.profilePhotoUrl || '');

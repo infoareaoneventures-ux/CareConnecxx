@@ -77,7 +77,7 @@ const LandingView = (props: any) => <LandingViewComponent {...props} />;
 
 import { ToastContainer } from './components/ui/Toast';
 import { PageLoader } from './components/ui/PageLoader';
-import { Home, Settings, MessageSquare, ClipboardList, Loader2 } from 'lucide-react';
+import { Home, Settings, MessageSquare, ClipboardList, Loader2, RefreshCw, LogOut, AlertTriangle } from 'lucide-react';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CareConnexProvider, useCareConnex } from './context/CareConnexContext';
@@ -139,7 +139,10 @@ const AdminRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isLoading, authResolved, toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen } = useCareConnex();
+  const {
+    isLoading, authResolved, authRecovery, retryAuth, signOutFromRecovery,
+    toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
+  } = useCareConnex();
 
   // Caregiver Callout Handling
   const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
@@ -262,6 +265,26 @@ const AppContent: React.FC = () => {
         <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin mb-4" />
         <p className="text-[var(--color-neutral-500)] font-medium">Connecting to secure server...</p>
       </div>
+    );
+  }
+
+  if (authRecovery) {
+    return (
+      <main className="min-h-screen bg-paper-50 flex items-center justify-center px-6">
+        <section className="w-full max-w-md text-center" role="alert" aria-live="assertive">
+          <AlertTriangle className="w-10 h-10 text-amber-600 mx-auto mb-4" aria-hidden="true" />
+          <h1 className="text-xl font-semibold text-ink-900">Account connection problem</h1>
+          <p className="mt-2 text-sm text-ink-600">{authRecovery.message}</p>
+          <div className="mt-6 flex flex-col sm:flex-row justify-center gap-3">
+            <button type="button" onClick={retryAuth} className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-ink-900 text-white font-medium">
+              <RefreshCw className="w-4 h-4" aria-hidden="true" /> Retry
+            </button>
+            <button type="button" onClick={() => void signOutFromRecovery()} className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-md border border-ink-300 text-ink-800 font-medium">
+              <LogOut className="w-4 h-4" aria-hidden="true" /> Sign out
+            </button>
+          </div>
+        </section>
+      </main>
     );
   }
 
@@ -392,7 +415,7 @@ const AppContent: React.FC = () => {
           <Route path="/terms" element={<TermsOfServicePage />} />
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/stripe/callback" element={<StripeCallback onNavigate={handleNavigation} />} />
-          <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} onPaymentComplete={(id) => { /* handled in context now but PaymentSuccess might need update */ }} />} />
+          <Route path="/payment/success" element={<PaymentSuccess onNavigate={handleNavigation} />} />
           <Route path="/payment/cancel" element={<PaymentCancel onNavigate={handleNavigation} />} />
 
           {/* 404 Page */}

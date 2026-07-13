@@ -54,7 +54,7 @@ async function answerMidFlow(text: string, reAsk: string): Promise<string> {
 
 const KNOWN_SPECIALTIES = [
   "dementia", "alzheimer's", "mobility", "post-surgery", "companionship",
-  "medication management", "hospice", "diabetes care", "wound care",
+  "medication reminders", "hospice support", "diabetes support",
   "transportation", "meal prep", "personal care", "bathing", "transfers",
   "respite care", "parkinson's", "stroke recovery", "cognitive support",
 ];

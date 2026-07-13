@@ -22,6 +22,13 @@ export interface AuthenticatedUser {
     phone?: string;
 }
 
+export type AuthRecoveryKind = 'offline' | 'unauthenticated' | 'unauthorized' | 'unavailable';
+
+export interface AuthRecoveryState {
+    kind: AuthRecoveryKind;
+    message: string;
+}
+
 interface CareConnexContextType {
     currentUser: AuthenticatedUser | null;
     caregiverProfile: Caregiver | null;
@@ -30,6 +37,9 @@ interface CareConnexContextType {
     caregivers: Caregiver[];
     isLoading: boolean;
     authResolved: boolean;
+    authRecovery: AuthRecoveryState | null;
+    retryAuth: () => void;
+    signOutFromRecovery: () => Promise<void>;
     toasts: ToastMessage[];
     addToast: (message: string, type: ToastType) => void;
     removeToast: (id: string) => void;
@@ -52,6 +62,8 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
     const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [authResolved, setAuthResolved] = useState(false);
+    const [authRecovery, setAuthRecovery] = useState<AuthRecoveryState | null>(null);
+    const [authRetryNonce, setAuthRetryNonce] = useState(0);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
     const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
     const [blockedUserProfiles, setBlockedUserProfiles] = useState<Record<string, { name: string; photo: string }>>({});
@@ -61,25 +73,63 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
 
     // Auth Listener - fetches user profile from Firestore to get userType
     useEffect(() => {
-        const fetchProfileWithRetry = async (uid: string, attempts = 3, delayMs = 400) => {
-            for (let i = 0; i < attempts; i++) {
-                const profile = await dbService.getUser(uid);
-                if (profile) return profile;
-                if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
+        let cancelled = false;
+        const delays = [0, 1000, 3000];
+        const fetchProfileWithRetry = async (uid: string) => {
+            let lastError: unknown = new Error('Profile unavailable');
+            for (const delayMs of delays) {
+                if (delayMs) await new Promise(r => setTimeout(r, delayMs));
+                try {
+                    const profile = await Promise.race([
+                        dbService.getUser(uid),
+                        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Profile request timed out')), 3000)),
+                    ]);
+                    if (profile) return profile;
+                    lastError = Object.assign(new Error('Profile not found'), { code: 'not-found' });
+                } catch (error) {
+                    lastError = error;
+                }
             }
-            return null;
+            throw lastError;
+        };
+
+        const recoveryFor = (error: unknown): AuthRecoveryState => {
+            const code = String((error as any)?.code ?? '');
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                return { kind: 'offline', message: 'You appear to be offline. Reconnect, then try again.' };
+            }
+            if (code.includes('permission-denied')) {
+                return { kind: 'unauthorized', message: 'Your account cannot access its profile. Please sign out and contact support.' };
+            }
+            if (!authService.getCurrentUser()) {
+                return { kind: 'unauthenticated', message: 'Your sign-in session expired. Sign out and sign in again.' };
+            }
+            return { kind: 'unavailable', message: 'We could not load your account profile. Your role was not changed. Please try again.' };
         };
 
         const unsubscribe = authService.onAuthStateChanged(async (firebaseUser) => {
+            if (cancelled) return;
+            setAuthRecovery(null);
             if (firebaseUser) {
+                const cachedRole = localStorage.getItem(`evia:last-role:${firebaseUser.uid}`);
+                if (cachedRole === 'client' || cachedRole === 'caregiver' || cachedRole === 'admin') {
+                    setCurrentUser({
+                        uid: firebaseUser.uid,
+                        email: firebaseUser.email,
+                        displayName: firebaseUser.displayName,
+                        photoURL: firebaseUser.photoURL,
+                        userType: cachedRole,
+                    });
+                }
                 // Fetch user profile from Firestore to get userType.
                 // Retry because onAuthStateChanged fires before signup Firestore writes complete.
                 try {
                     const profile = await fetchProfileWithRetry(firebaseUser.uid);
                     const validUserTypes = ['client', 'caregiver', 'admin'] as const;
-                    const userType = profile?.userType && validUserTypes.includes(profile.userType)
-                        ? profile.userType
-                        : 'client';
+                    if (!profile?.userType || !validUserTypes.includes(profile.userType)) {
+                        throw Object.assign(new Error('Profile has no valid role'), { code: 'invalid-role' });
+                    }
+                    const userType = profile.userType;
                     // Auth displayName is unset for phone-OTP signups; the SMS
                     // onboarding writes the name to the users doc instead
                     // (clients: firstName, caregivers: name) — fall back to it
@@ -98,7 +148,9 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                         isVerified: profile?.verified ?? false,
                         phone: profile?.phone
                     };
+                    if (cancelled) return;
                     setCurrentUser(authenticatedUser);
+                    localStorage.setItem(`evia:last-role:${firebaseUser.uid}`, userType);
                     if (userType === 'caregiver' && profile) setCaregiverProfile(profile as any);
                     setSentryUser({ uid: authenticatedUser.uid, email: authenticatedUser.email });
 
@@ -110,13 +162,8 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                     }
                 } catch (error) {
                     console.error('Failed to fetch user profile:', error);
-                    setCurrentUser({
-                        uid: firebaseUser.uid,
-                        email: firebaseUser.email,
-                        displayName: firebaseUser.displayName,
-                        photoURL: firebaseUser.photoURL,
-                        userType: 'client'
-                    });
+                    if (cancelled) return;
+                    setAuthRecovery(recoveryFor(error));
                 }
             } else {
                 setCurrentUser(null);
@@ -124,13 +171,26 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                 setSentryUser(null);
                 pushNotificationService.removeToken('').catch(() => {});
             }
-            setAuthResolved(true);
+            if (!cancelled) setAuthResolved(true);
         });
 
         return () => {
+            cancelled = true;
             if (unsubscribe) unsubscribe();
         };
-    }, []);
+    }, [authRetryNonce]);
+
+    const retryAuth = () => {
+        setAuthResolved(false);
+        setAuthRecovery(null);
+        setAuthRetryNonce(value => value + 1);
+    };
+
+    const signOutFromRecovery = async () => {
+        await dbService.logout();
+        setAuthRecovery(null);
+        setCurrentUser(null);
+    };
 
     const refreshCaregiverProfile = async () => {
         if (currentUser?.uid) {
@@ -385,6 +445,9 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             caregivers,
             isLoading,
             authResolved,
+            authRecovery,
+            retryAuth,
+            signOutFromRecovery,
             toasts,
             addToast,
             removeToast,

@@ -502,7 +502,7 @@ export async function updatePermissionFromText(
   phone:    string,
   chatId:   string,
   text:     string
-): Promise<void> {
+): Promise<boolean> {
   const permOptions = userType === "client"
     ? "canSendWeeklyDigest (weekly summaries/digest), canSendHealthAlerts (health alerts), canBookAutomatically (auto-booking)"
     : "canDeclineJobsAutomatically (auto-decline jobs), canSendArrivalNotifications (arrival notifications), canShareJournalWithFamily (share journal with family)";
@@ -516,21 +516,21 @@ export async function updatePermissionFromText(
     text
   );
 
-  if (raw === "__error__" || raw === "none" || !raw.startsWith("{")) return;
+  if (raw === "__error__" || raw === "none" || !raw.startsWith("{")) return false;
 
   let permission: string, action: string;
   try {
     const parsed = JSON.parse(raw);
     permission = parsed.permission ?? "";
     action     = parsed.action     ?? "";
-  } catch { return; }
+  } catch { return false; }
 
   const validPerms: (keyof AgentPermissions)[] = [
     "canSendWeeklyDigest", "canSendHealthAlerts", "canBookAutomatically",
     "canDeclineJobsAutomatically", "canSendArrivalNotifications", "canShareJournalWithFamily",
   ];
   const matched = validPerms.find(p => p === permission);
-  if (!matched || (action !== "enable" && action !== "disable")) return;
+  if (!matched || (action !== "enable" && action !== "disable")) return false;
 
   const newVal = action === "enable";
   const ref = db.collection("agent_permissions").doc(userId);
@@ -551,4 +551,5 @@ export async function updatePermissionFromText(
     const resumeLabel = label.includes("book") ? "asking before booking" : `sending ${label} again`;
     await sendMessage(chatId, `Sure thing. I'll go back to ${resumeLabel}.`);
   }
+  return true;
 }

@@ -3,20 +3,18 @@
  *
  * Each morning, for shifts completed the previous day, send the family ONE warm
  * "how did yesterday's visit go?" check-in and capture the reply as solicited
- * quality-of-care feedback. Dedupes per shift, respects DND/opt-out (via
- * sendViaInteractionAgent), and enforces the shared weekly per-family proactive
+ * quality-of-care feedback. Dedupes per shift, respects DND/opt-out, and
+ * enforces the shared weekly per-family proactive
  * budget (KTD-14) — next-day feedback outranks satisfaction surveys and payment
  * nudges, so it survives the budget longer than they do.
  *
- * The reply is captured by setting `awaitingNextDayFeedback` on the family's
- * session; the inbound reply-branch routing (positive / negative-escalate /
- * ambiguous-clarify) lives on the client inbound path and is tracked separately.
+ * A deterministic proactive trigger owns both delivery and the reply window.
  */
 
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { scheduleTrigger } from "../triggers/triggerEngine";
 import {
   evaluateWeeklyFamilyBudget,
   type WeeklyBudgetTally,
@@ -50,7 +48,8 @@ export const sendNextDayFamilyFeedback = functions.pubsub
       try {
         if (appt.nextDayFeedbackSent === true) continue; // per-shift dedupe
         const clientId = appt.clientId as string;
-        if (!clientId) continue;
+        const caregiverId = appt.caregiverId as string;
+        if (!clientId || !caregiverId) continue;
         const phone = await clientPhoneFor(clientId);
         if (!phone) continue;
 
@@ -76,18 +75,30 @@ export const sendNextDayFamilyFeedback = functions.pubsub
           maxTokens: 80,
         });
 
-        await sendViaInteractionAgent(phone, {
-          content: message,
-          urgency: "low",
-          sourceAgent: "next_day_feedback",
-          canDrop: true,
+        await scheduleTrigger({
+          userId:            clientId,
+          phone,
+          type:              "post_visit_feedback",
+          scheduledAt:       nowIso,
+          message,
+          firedAt:           null,
+          cancelledAt:       null,
+          feedbackReceived:  null,
+          expiresAt:         new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          metadata: {
+            appointmentId: doc.id,
+            clientId,
+            caregiverId,
+          },
+        }, {
+          bypassCalibration: true,
+          idempotencyKey: `post-visit-feedback:${doc.id}`,
         });
 
-        await doc.ref.update({ nextDayFeedbackSent: true });
+        await doc.ref.update({ nextDayFeedbackSent: true, nextDayFeedbackScheduledAt: nowIso });
         await db.collection("agent_sessions").doc(phone).set(
           {
             weeklyProactiveTally: budget.next,
-            awaitingNextDayFeedback: { appointmentId: doc.id, seniorName, askedAt: nowIso },
           },
           { merge: true },
         );

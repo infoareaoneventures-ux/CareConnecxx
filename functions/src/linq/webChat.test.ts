@@ -263,7 +263,7 @@ describe("handleWebChatTurn", () => {
     seedUser();
     seedSession({ userId: undefined, userType: "caregiver", caregiverId: "cg-9" });
 
-    const res = await handleWebChatTurn({ uid: UID, message: "any shifts?" });
+    const res = await handleWebChatTurn({ uid: UID, tokenPhone: PHONE, message: "any shifts?" });
 
     expect(res.status).toBe("ok");
     expect(hoisted.qaMock).toHaveBeenCalledWith(

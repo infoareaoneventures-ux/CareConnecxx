@@ -45,6 +45,8 @@ export interface AgentOutput {
   // "SMS" for billing and emergency alerts so they never depend on iMessage).
   // Omit for the default iMessage → RCS → SMS auto-selection.
   preferredService?: LinqService;
+  /** Internal receipt hook for durable workflows that must correlate provider status. */
+  onTransportReceipt?: (messageId: string) => void | Promise<void>;
 }
 
 // ── ExecutionTask — returned by Interaction Agent, consumed by Execution Agent ──
@@ -309,7 +311,10 @@ export async function sendViaInteractionAgent(
   const sendOpts = output.preferredService ? { preferredService: output.preferredService } : {};
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await new Promise<void>(r => setTimeout(r, 1000));
-    await sendMessage(targetChatId, buildClickableMessage(chunks[i]), sendOpts);
+    const receipt = await sendMessage(targetChatId, buildClickableMessage(chunks[i]), sendOpts);
+    if (receipt.message_id && output.onTransportReceipt) {
+      await output.onTransportReceipt(receipt.message_id);
+    }
   }
 
   // Update lastMessageSentAt, and the proactive daily tally if this was a capped

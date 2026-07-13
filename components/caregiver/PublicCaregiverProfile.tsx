@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Star, MapPin, ShieldCheck, Calendar, Loader2 } from 'lucide-react';
-import { dbService } from '../../services/api';
+import { functions } from '../../lib/firebase';
 import { LookingForSection } from './LookingForSection';
 import type { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -15,11 +15,16 @@ export const PublicCaregiverProfile: React.FC = () => {
   useEffect(() => {
     let active = true;
     (async () => {
-      if (!id) { setLoading(false); setNotFound(true); return; }
+      if (!id || !functions) { setLoading(false); setNotFound(true); return; }
       try {
-        const user = await dbService.getUser(id);
+        // Server callable, NOT direct Firestore: caregivers/{id} and users/{id}
+        // reads are rules-gated, so unauthenticated visitors from a texted
+        // /p/{id} link used to land on "Profile not found". The callable is
+        // public and returns only the safe profile subset.
+        const getProfile = functions.httpsCallable('v1-publicCaregiverProfile');
+        const res: any = await getProfile({ id });
         if (!active) return;
-        if (user) setProfile(user as any);
+        if (res?.data?.found && res.data.profile) setProfile(res.data.profile as Caregiver);
         else setNotFound(true);
       } catch {
         if (active) setNotFound(true);

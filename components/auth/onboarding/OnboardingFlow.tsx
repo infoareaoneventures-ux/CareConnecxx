@@ -8,6 +8,7 @@ import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
+import { supportPhone } from '../../../utils/launchConfig';
 
 export type OnboardingRole = 'client' | 'caregiver';
 type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
@@ -18,8 +19,6 @@ interface Props {
 }
 
 const RECAPTCHA_CONTAINER = 'careconnex-recaptcha-container';
-const SUPPORT_PHONE_DISPLAY = '(800) 555-0199';
-const SUPPORT_PHONE_HREF = 'tel:+18005550199';
 const CONSENT_VERSION = 'v1.0';
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -258,12 +257,11 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
         </div>
         <span className="font-semibold text-ink-900 group-hover:text-ink-600 transition">Evia</span>
       </Link>
-      <a
-        href={SUPPORT_PHONE_HREF}
-        className="text-sm font-medium text-ink-600 hover:text-ink-900 transition"
-      >
-        Need help? Call {SUPPORT_PHONE_DISPLAY}
-      </a>
+      {supportPhone && (
+        <a href={supportPhone.telHref} className="text-sm font-medium text-ink-600 hover:text-ink-900 transition">
+          Need help? Call {supportPhone.display}
+        </a>
+      )}
     </header>
     <main className="flex-1 flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-md space-y-7">
@@ -280,11 +278,13 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
         {children}
       </div>
     </main>
-    <footer className="text-center px-6 pb-6 text-xs text-ink-400">
-      <a href={SUPPORT_PHONE_HREF} className="underline-offset-2 hover:underline">
-        Prefer to talk to a person? Call us at {SUPPORT_PHONE_DISPLAY}.
-      </a>
-    </footer>
+    {supportPhone && (
+      <footer className="text-center px-6 pb-6 text-xs text-ink-400">
+        <a href={supportPhone.telHref} className="underline-offset-2 hover:underline">
+          Prefer to talk to a person? Call us at {supportPhone.display}.
+        </a>
+      </footer>
+    )}
   </div>
 );
 

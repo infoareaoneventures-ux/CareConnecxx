@@ -283,7 +283,12 @@ export const sendEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("failed-precondition", "Email service not configured");
   }
 
-  const { to, subject, html, text, from, fromName, replyTo, cc, bcc } = data;
+  const caller = await admin.firestore().collection("users").doc(context.auth.uid).get();
+  if (context.auth.token.admin !== true && caller.data()?.role !== "admin" && caller.data()?.isAdmin !== true) {
+    throw new functions.https.HttpsError("permission-denied", "Admins only");
+  }
+
+  const { to, subject, html, text, replyTo } = data;
 
   if (!to || !subject || (!html && !text)) {
     throw new functions.https.HttpsError("invalid-argument", "Missing required fields: to, subject, and html or text");
@@ -299,14 +304,12 @@ export const sendEmail = functions.https.onCall(async (data, context) => {
 
   try {
     const { data: emailData, error } = await resend.emails.send({
-      from: `${fromName || FROM_NAME} <${from || FROM_EMAIL}>`,
+      from: `${FROM_NAME} <${FROM_EMAIL}>`,
       to: [to],
       subject: subject.replace(/[<>"']/g, "").substring(0, 200),
       html: html?.substring(0, 50000),
       text: text?.substring(0, 10000),
       reply_to: replyTo,
-      cc,
-      bcc,
     });
 
     if (error) throw new Error(error.message);

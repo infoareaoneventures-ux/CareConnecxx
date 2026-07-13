@@ -211,7 +211,14 @@ export async function loadCaraOperationalContext(params: {
   const caregiverData = caregiverDoc?.exists ? caregiverDoc.data() : undefined;
   const pendingCaregiverShift = caregiverShiftDocs
     .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
-    .find((shift) => ["pending_client_review", "approved", "payment_failed", "disputed"].includes(String(shift.status ?? "")));
+    .find((shift) => [
+      "pending_client_review",
+      "approved",
+      "payment_failed",
+      "correction_proposed",
+      "disputed_admin_review",
+      "disputed",
+    ].includes(String(shift.status ?? "")));
   const lastPayout = caregiverPayoutDocs[0]?.data();
 
   const nextClientAppointment = clientAppointmentDocs

@@ -362,7 +362,7 @@ export const dbService = {
     getCaregivers: async (limitSize: number = 10, lastDoc: firebase.firestore.QueryDocumentSnapshot | null = null): Promise<{ caregivers: Caregiver[], lastDoc: firebase.firestore.QueryDocumentSnapshot | null }> => {
         if (isConfigured && db) {
             try {
-                let query = db.collection('caregivers')
+                let query = db.collection('publicCaregiverProfiles')
                     .where('onboardingStatus', '==', 'profile_complete')
                     .limit(limitSize);
 
@@ -697,8 +697,9 @@ export const dbService = {
                         clientName: jobData.clientName,
                         clientId: jobData.clientId,
                         date: jobData.date,
-                        isoDate: new Date().toISOString().split('T')[0],
+                        isoDate: jobData.date,
                         time: jobData.startTime,
+                        duration: DEFAULT_HOURS_PER_VISIT,
                         status: 'confirmed',
                         paymentStatus: 'pending',
                         cost: jobData.rate * DEFAULT_HOURS_PER_VISIT,
@@ -838,6 +839,10 @@ export const dbService = {
 
                 const newAppt = {
                     ...appointmentData,
+                    date: appointmentData.date || appointmentData.isoDate,
+                    isoDate: appointmentData.isoDate || appointmentData.date,
+                    time: appointmentData.time || appointmentData.startTime,
+                    duration: appointmentData.duration || 1,
                     id: docId,
                     createdAt: new Date().toISOString(),
                     status
@@ -1087,26 +1092,20 @@ export const dbService = {
         const now = new Date().toISOString();
         appointments.forEach(appt => {
             const ref = db!.collection('appointments').doc();
-            batch.set(ref, { ...appt, id: ref.id, createdAt: now });
+            batch.set(ref, {
+                ...appt,
+                date: appt.date || appt.isoDate,
+                isoDate: appt.isoDate || appt.date,
+                time: appt.time || appt.startTime,
+                duration: appt.duration || 1,
+                id: ref.id,
+                createdAt: now,
+            });
         });
         await batch.commit();
 
-        // Notify caregiver once for the whole series
-        const first = appointments[0];
-        const n = appointments.length;
-        const firstDate = first.date ? new Date(first.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-        try {
-            await db.collection('users').doc(first.caregiverId).collection('notifications').add({
-                type: 'booking',
-                title: 'New Booking Request',
-                message: `${first.clientName} sent a recurring booking request — ${n} date${n !== 1 ? 's' : ''} starting ${firstDate}.`,
-                read: false,
-                isRead: false,
-                timestamp: now,
-                createdAt: now,
-                data: { recurringGroupId: (first as any).recurringGroupId, clientId: first.clientId },
-            });
-        } catch { /* non-fatal */ }
+        // The appointment onCreate trigger owns one leased summary per group
+        // and party. Sending here as well races the batch triggers.
     },
 
     // Accept an entire recurring booking group (caregiver confirms all dates at once)
@@ -1688,7 +1687,7 @@ export const dbService = {
     // shows stale values until a manual refresh (the "silent action" gap).
     subscribeCaregiverProfile: (caregiverId: string, onUpdate: (profile: Record<string, any> | null) => void) => {
         if (isConfigured && db) {
-            return db.collection('caregivers').doc(caregiverId).onSnapshot(doc => {
+            return db.collection('publicCaregiverProfiles').doc(caregiverId).onSnapshot(doc => {
                 onUpdate(doc.exists ? ({ id: doc.id, ...doc.data() }) : null);
             }, (error) => { if (error.code === 'permission-denied') return; });
         }
@@ -2312,7 +2311,7 @@ export const dbService = {
         if (familyMembers.length === 0) return;
 
         // Get caregiver info
-        const caregiverDoc = await db?.collection('caregivers').doc(caregiverId).get();
+        const caregiverDoc = await db?.collection('publicCaregiverProfiles').doc(caregiverId).get();
         const caregiverName = caregiverDoc?.exists 
             ? (caregiverDoc.data() as { name?: string })?.name || 'Caregiver'
             : 'Caregiver';

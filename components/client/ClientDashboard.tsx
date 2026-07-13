@@ -204,7 +204,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           docs.slice(0, 2).map(async (d: any) => {
             if (!d.caregiverId) return;
             try {
-              const cgDoc = await db!.collection('caregivers').doc(d.caregiverId).get();
+              const cgDoc = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
               const cg = cgDoc.data() || {};
               profiles[d.caregiverId] = {
                 rating: cg.rating ?? cg.averageRating ?? undefined,
@@ -243,7 +243,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         if (missing.length > 0) {
           const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
           Promise.all(uniqueIds.map(async (id: string) => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) {
               const d = cSnap.data() as any;
               return [id, d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || ''] as [string, string];
@@ -336,7 +336,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const userDoc = await db.collection('users').doc(currentUser.uid).get();
             const savedIds: string[] = (userDoc.data() as any)?.savedCaregiverIds || [];
             if (savedIds.length > 0) {
-              const snap = await db.collection('caregivers')
+              const snap = await db.collection('publicCaregiverProfiles')
                 .where(firebase.firestore.FieldPath.documentId(), 'in', savedIds.slice(0, 10))
                 .get();
               setSavedCaregivers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Caregiver)));
@@ -365,7 +365,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   useEffect(() => {
     if (!db || !currentUser?.uid) return;
     let isMounted = true;
-    db.collection('caregivers')
+    db.collection('publicCaregiverProfiles')
       .orderBy('rating', 'desc')
       .limit(8)
       .get()

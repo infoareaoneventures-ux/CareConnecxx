@@ -17,6 +17,13 @@ export function realWorldHealthcareActionsEnabled(): boolean {
   return process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS === "true";
 }
 
+// Launch billing kill switch. Auto-approval moves money without an explicit
+// client action, so it stays fail-closed until the canonical appointment-backed
+// timesheet and delivered-notice cutover has been verified in production.
+export function timesheetAutoApprovalEnabled(): boolean {
+  return process.env.TIMESHEET_AUTO_APPROVAL_ENABLED === "true";
+}
+
 // U6: routing-convergence shadow comparison. OFF by default and scoped per flow:
 // ROUTING_CONVERGENCE_SHADOW is a comma-separated list of flow keys for which the
 // shadow harness runs (e.g. "reminder_management,modify_schedule"). A flow is

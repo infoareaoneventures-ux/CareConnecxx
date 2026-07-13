@@ -46,6 +46,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "uid-keyed since the identity unification; legacy random-ID docs are migrated at finalization. Checkr webhook looks up by backgroundCheckData.checkrCandidateId (query, ID-agnostic).",
   },
+  publicCaregiverProfiles: {
+    path: "publicCaregiverProfiles",
+    docId: "uid",
+    caraWrites: true,
+    webReads: true,
+    notes: "Server-maintained public projection used by caregiver discovery and profile surfaces; source caregiver documents remain private.",
+  },
   clientIntakes: {
     path: "clientIntakes",
     docId: "uid",

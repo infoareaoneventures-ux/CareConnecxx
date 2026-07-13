@@ -32,6 +32,16 @@ export { caregiverProfileMeta } from './caregiverProfileMeta';
 // upload links render as branded rich cards instead of raw token URLs
 export { uploadPageMeta } from './uploadPageMeta';
 
+// Branded redirect pages (/verify/{id}, /pay/{id}) — Evia OG card + instant
+// forward to the underlying Stripe Identity / Checkout URL
+export { linkRedirect } from './linkRedirect';
+
+// Public data source for the shareable /p/{id} caregiver profile page
+// (client-side Firestore reads are rules-gated; this serves the safe subset)
+export { publicCaregiverProfile } from './publicCaregiverProfile';
+export * from './caregiverPublicProjection';
+export * from './createVideoInterviewRequest';
+
 // Export Notification Functions
 export * from './notifications';
 
@@ -175,6 +185,7 @@ export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { sendPaywallWinback } from './scheduled/paywallWinback';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
+export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
 
 // Proactive trigger engine (runs every 5 min)
 export { runTriggerEngine } from './triggers/triggerEngine';
@@ -199,7 +210,7 @@ export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution';
 
 // Refund auto-processing (executes Stripe refund when status → "approved")
-export { onRefundRequestWrite } from './triggers/refundProcessor';
+export { onRefundRequestWrite, reviewRefundRequest } from './triggers/refundProcessor';
 
 // CARE PLAN HISTORY trigger (saves version on every care plan write)
 export * from './triggers/carePlanHistory';
@@ -272,6 +283,7 @@ export * from './migrations/backfillCaregiverPrivateBackground';
 // reverse map. Phase 1 (copy) safe immediately; ?deleteParent=1 only after the
 // reader-cutover deploy is verified. Dry-run first: ?dryRun=1
 export * from './migrations/backfillCaregiverPayoutPrivate';
+export * from './migrations/backfillAppointmentScheduleFields';
 
 // fixAcceptedCounterPay migration already executed — not exported
 
@@ -388,6 +400,19 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
       else userPatch.firstName = name;
     }
     await userRef.set(userPatch, { merge: true });
+    // Auth displayName backfill: Firebase Phone Auth creates the user with NO
+    // displayName, and several webapp surfaces render Auth displayName directly
+    // (Settings "Name" row, dashboard greeting) — without this, SMS/web-bridge
+    // signups show "—" forever even though the users doc has the name.
+    if (name) {
+      const authUser = await admin.auth().getUser(context.auth.uid).catch(() => null);
+      if (authUser && !authUser.displayName) {
+        await admin.auth().updateUser(context.auth.uid, { displayName: name }).catch((err) =>
+          console.error("createWebOnboardingSession: displayName backfill failed", {
+            uid: context.auth?.uid, err: err instanceof Error ? err.message : String(err),
+          }));
+      }
+    }
   } catch (err) {
     console.error("createWebOnboardingSession: failed to seed users doc", {
       phone,

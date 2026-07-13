@@ -144,7 +144,7 @@ vi.mock("../../agents/taskApprovalHandler", () => ({
   handleTaskApproval: vi.fn(async () => {}), finalizeTaskApproval: vi.fn(async () => {}),
 }));
 vi.mock("../../agents/permissionsConversation", () => ({
-  updatePermissionFromText: vi.fn(async () => {}), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
+  updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
 }));
 vi.mock("../../agents/interviewAgent", () => ({
   handleInterviewSelection: vi.fn(async () => {}), handleInterviewConfirm: vi.fn(async () => {}),

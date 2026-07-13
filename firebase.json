@@ -24,6 +24,14 @@
         "function": "v1-stripeConnectRefresh"
       },
       {
+        "source": "/verify/**",
+        "function": "v1-linkRedirect"
+      },
+      {
+        "source": "/pay/**",
+        "function": "v1-linkRedirect"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

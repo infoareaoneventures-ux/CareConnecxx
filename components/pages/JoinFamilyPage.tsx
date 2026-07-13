@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Heart, Phone, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { linqPhone } from '../../utils/launchConfig';
 
 type PageState = "loading" | "ready" | "joining" | "joined" | "error" | "invalid";
 
@@ -73,8 +74,7 @@ export default function JoinFamilyPage() {
     }
   }
 
-  const LINQ_NUMBER = import.meta.env.VITE_LINQ_PHONE_NUMBER ?? "+18005550199";
-  const smsLink = `sms:${LINQ_NUMBER}?body=${encodeURIComponent("Hey Evia!")}`;
+  const smsLink = linqPhone ? `sms:${linqPhone.e164}?body=${encodeURIComponent("Hey Evia!")}` : null;
 
   if (state === "loading") {
     return (
@@ -105,12 +105,11 @@ export default function JoinFamilyPage() {
           <p className="text-ink-600 mb-6">
             You've joined {seniorName}'s care group on Evia. You'll now receive care updates and can message Evia directly.
           </p>
-          <a
-            href={smsLink}
-            className="inline-flex items-center justify-center btn-depth-primary rounded-full px-8 py-3.5 font-semibold text-[15px] min-h-[44px]"
-          >
-            Say hi to Evia
-          </a>
+          {smsLink && (
+            <a href={smsLink} className="inline-flex items-center justify-center btn-depth-primary rounded-full px-8 py-3.5 font-semibold text-[15px] min-h-[44px]">
+              Say hi to Evia
+            </a>
+          )}
         </div>
       </div>
     );

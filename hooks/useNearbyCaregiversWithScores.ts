@@ -152,7 +152,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         // authed client, and was redundant — visibility gates on approvedIds
         // (from `caregivers`), and every profile_complete caregiver's caregivers
         // doc carries name+geo (verified against prod 2026-07-11).
-        const caregiversSnap = await fdb.collection('caregivers')
+        const caregiversSnap = await fdb.collection('publicCaregiverProfiles')
           .where('onboardingStatus', '==', 'profile_complete').limit(100).get().catch(() => null);
 
         // Bookability contract: onboardingStatus 'profile_complete' (the query above)

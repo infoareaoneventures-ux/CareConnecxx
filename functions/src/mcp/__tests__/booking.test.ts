@@ -270,12 +270,19 @@ describe("booking tools", () => {
       // the wiring: the ledger is consulted with a tool-scoped key, and its
       // cached result is returned verbatim.
       ledger.claimToolExecution.mockResolvedValue({ cached: true, result: { success: true, cached: true } } as any);
-      const result = await handleToolCall("perform_web_action", {
-        _confirmedActionId: "pa_1", phone: "+15125550123", userId: "u1", loginAction: "pharmacy_refill",
-      });
-      expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
-      expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("perform_web_action");
-      expect(result).toEqual({ success: true, cached: true });
+      const previousFlag = process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
+      process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS = "true";
+      try {
+        const result = await handleToolCall("perform_web_action", {
+          _confirmedActionId: "pa_1", phone: "+15125550123", userId: "u1", loginAction: "pharmacy_refill",
+        });
+        expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
+        expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("perform_web_action");
+        expect(result).toEqual({ success: true, cached: true });
+      } finally {
+        if (previousFlag === undefined) delete process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
+        else process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS = previousFlag;
+      }
     });
 
     it("a non-idempotent confirmed tool (cancel_appointment) does NOT consult the ledger", async () => {

@@ -222,7 +222,7 @@ vi.mock("../../agents/taskApprovalHandler", () => ({ handleTaskApproval: vi.fn(a
 vi.mock("../../agents/permissionsConversation", () => ({
   handleClientPermissionsReply:    vi.fn(async () => {}),
   handleCaregiverPermissionsReply: vi.fn(async () => {}),
-  updatePermissionFromText:        vi.fn(async () => {}),
+  updatePermissionFromText:        vi.fn(async () => true),
   getPermissions:                  vi.fn(async () => ({})),
 }));
 vi.mock("../../agents/interviewAgent", () => ({

@@ -187,7 +187,7 @@ export default function Schedule() {
 
     // Load caregiver weeklyAvailability + booked slots summary
     Promise.all([
-      fdb.collection('caregivers').doc(visitCaregiverId).get().catch(() => null),
+      fdb.collection('publicCaregiverProfiles').doc(visitCaregiverId).get().catch(() => null),
       fdb.collection('caregiver_booked_slots').doc(visitCaregiverId).get().catch(() => null),
     ]).then(([cgSnap, bookedSnap]) => {
       if (cgSnap?.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});

@@ -120,7 +120,7 @@ export const MyCareTeam: React.FC = () => {
             const cgId = bookingData.caregiverId;
             if (!cgId) continue;
             // Fetch full caregiver profile for extra details
-            const cgDoc = await fdb.collection('caregivers').doc(cgId).get().catch(() => null);
+            const cgDoc = await fdb.collection('publicCaregiverProfiles').doc(cgId).get().catch(() => null);
             const cgData = cgDoc?.data() || {};
 
             const fullName =

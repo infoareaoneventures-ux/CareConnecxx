@@ -544,7 +544,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "respond_to_shift_hour_correction",
     promptActor: "caregiver",
     status: "shipped",
-    notes: "Transitions shiftHours from correction_requested/disputed: accept → pending_client_review with corrected hours; pushback → disputed + admin_alert.",
+    notes: "Transitions shiftHours from correction_proposed (plus legacy correction_requested/disputed reads): accept → pending_client_review with corrected hours; pushback → disputed_admin_review + admin_alert.",
   },
   {
     id: "caregiver-request-instant-payout",

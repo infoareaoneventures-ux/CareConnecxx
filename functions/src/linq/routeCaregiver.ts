@@ -19,8 +19,8 @@ import {
 import { answerHumanQuestionOnly } from "../agents/humanReply";
 import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
-import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from "../config/slaConstants";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
+import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -1297,7 +1297,8 @@ async function handleCareNotes(
   let clientId = "";
   let seniorId = "";
   if (apptId) {
-    const apptSnap = await db.collection("appointments").doc(apptId).get();
+    const appointmentRef = db.collection("appointments").doc(apptId);
+    const apptSnap = await appointmentRef.get();
     const apptData = apptSnap.data();
     clientId = apptData?.clientId ?? "";
     seniorId = apptData?.seniorId ?? clientId;
@@ -1348,6 +1349,8 @@ async function handleCareNotes(
         activities:    entry.activities ?? [],
         observations:  entry.observations ?? "",
       });
+      const completedAt = new Date().toISOString();
+      t.update(appointmentRef, { status: "completed", completedAt, updatedAt: completedAt });
       t.update(sessionRef, { awaitingCareNotes: false, careNotesApptId: "" });
     });
 
@@ -1416,130 +1419,26 @@ async function handleCareNotes(
   // PaymentIntent with confirm:false that was never confirmed — so visits
   // completed over SMS were never actually charged and no fee was taken.
   let billingSubmitted = false;   // the visit is in the shiftHours rail (will be paid)
-  let familyNotified = false;      // the family was actually pinged to APPROVE
-  const grossPay = Math.round(hourlyRate * durationHours * 100) / 100;
+  let billingNeedsAdminReview = false;
+  let grossPay = Math.round(hourlyRate * durationHours * 100) / 100;
   if (apptId && clientId && grossPay > 0) {
-    const shiftRef = db.collection("shiftHours").doc(apptId);
-    const submittedAt = new Date().toISOString();
-    const apptDate = (apptSnap?.data()?.date as string) ?? submittedAt.slice(0, 10);
-    // Resolve the billing rail from the appointment's paymentMethod. Guard the
-    // type explicitly: String() coercion of a non-string (object/number/bool)
-    // would silently yield "[object Object]"/"123" and route to "credit"
-    // without signal. Treat any non-string as the credit default, but log it.
-    const rawPaymentMethod = apptSnap?.data()?.paymentMethod;
-    if (rawPaymentMethod != null && typeof rawPaymentMethod !== "string") {
-      console.warn("[handleCareNotes] unexpected paymentMethod type on appointment", { apptId, type: typeof rawPaymentMethod });
-    }
-    const { normalizePaymentMethod } = await import("../billing/paymentMethods");
-    const paymentMethod = normalizePaymentMethod(rawPaymentMethod);
-    let created = false;
     try {
-      // create() is atomic: it fails (ALREADY_EXISTS) if the doc already exists,
-      // closing the get-then-set race where two concurrent submissions could both
-      // pass an existence check and the second overwrite the first (re-firing side
-      // effects). Mirrors the transactional care_journal dedup above.
-      await shiftRef.create({
-        id: apptId, appointmentId: apptId, shiftId: apptId,
-        caregiverId, caregiverName: cgName,
-        clientId, clientName: (apptSnap?.data()?.clientName ?? apptSnap?.data()?.seniorName ?? "Client"),
-        payRate: hourlyRate, hourlyRate, currency: "usd",
-        paymentMethod,
-        submittedTotalHours: durationHours, finalTotalHours: durationHours, durationHours,
-        basePay: grossPay, grossPay, amountCents: Math.round(grossPay * 100),
-        date: apptDate, status: "pending_client_review", submittedAt,
-        autoApproveAt: autoApproveAtIso(),
-        paymentAttemptCount: 0, createdAt: submittedAt, updatedAt: submittedAt,
+      const bookedWindow = bookedWindowMillis(apptSnap?.data() ?? {});
+      if (!bookedWindow) throw new Error("appointment_has_no_canonical_booked_window");
+      const result = await createValidatedShiftHours({
+        appointmentId: apptId,
+        actorUid: caregiverId,
+        submittedStartTime: new Date(bookedWindow.start).toISOString(),
+        submittedEndTime: new Date(bookedWindow.end).toISOString(),
+        source: "care_note",
       });
-      created = true;
       billingSubmitted = true;
-      logAgentAction({
-        actionType: "shift_hours_submitted",
-        status: "executed",
-        userId: caregiverId,
-        phone,
-        role: "caregiver",
-        targetCollection: "shiftHours",
-        targetDocId: apptId,
-        metadata: { clientId, grossPay, durationHours, source: "care_notes_completion" },
-      }).catch(() => {});
-    } catch (err: any) {
-      // ALREADY_EXISTS (gRPC code 6): hours were already submitted for this visit
-      // (e.g. via the MCP submit_shift_hours tool) — it's in the rail, not an error.
-      if (err?.code === 6 || /already exists/i.test(err?.message ?? "")) {
-        billingSubmitted = true;
-      } else {
-        console.error("[handleCareNotes] shiftHours create error:", err);
-      }
-    }
+      billingNeedsAdminReview = result.status === "requires_admin_review";
+      grossPay = result.grossPayCents / 100;
 
-    // Prompt the family over SMS (handled by routeClient's pendingShiftApproval
-    // flow). Only on a fresh create — if the doc already existed the first
-    // submitter already notified them. Mark familyNotified only on real success.
-    if (created) {
-      const clientPhone = await getClientPhoneByClientId(clientId);
-      if (clientPhone) {
-        try {
-          await db.collection("agent_sessions").doc(clientPhone).set({
-            pendingShiftApproval:      { appointmentId: apptId, amount: grossPay.toFixed(2), caregiverName: cgName },
-            pendingShiftApprovalSetAt: submittedAt,
-          }, { merge: true });
-          await sendViaInteractionAgent(clientPhone, {
-            content:
-              `${cgName} just finished the visit on ${apptDate} (${durationHours}h, $${grossPay.toFixed(2)}).\n\n` +
-              `Reply APPROVE to confirm and release payment, or DISPUTE if something looks off.`,
-            urgency:     "standard",
-            sourceAgent: "visit_completion",
-            canDrop:     false,
-          });
-          familyNotified = true;
-          logAgentAction({
-            actionType: "shift_hours_approval_prompt",
-            status: "executed",
-            userId: clientId,
-            phone: clientPhone,
-            role: "client",
-            targetCollection: "shiftHours",
-            targetDocId: apptId,
-            metadata: { caregiverId, grossPay, source: "care_notes_completion" },
-          }).catch(() => {});
-        } catch (notifyErr) {
-          console.error("[handleCareNotes] family approval notification failed:", notifyErr);
-          await db.collection("admin_alerts").add({
-            type: "shift_hours_approval_notification_failed",
-            severity: "high",
-            appointmentId: apptId,
-            caregiverId,
-            clientId,
-            clientPhone,
-            createdAt: new Date().toISOString(),
-            resolved: false,
-            error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
-          }).catch(() => {});
-          logAgentAction({
-            actionType: "shift_hours_approval_prompt",
-            status: "failed",
-            userId: clientId,
-            phone: clientPhone,
-            role: "client",
-            targetCollection: "shiftHours",
-            targetDocId: apptId,
-            errorReason: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
-            metadata: { caregiverId, grossPay, source: "care_notes_completion" },
-          }).catch(() => {});
-        }
-      } else {
-        console.error("[handleCareNotes] no client phone found to request shift approval", { clientId, apptId });
-        await db.collection("admin_alerts").add({
-          type: "shift_hours_approval_notification_failed",
-          severity: "high",
-          appointmentId: apptId,
-          caregiverId,
-          clientId,
-          createdAt: new Date().toISOString(),
-          resolved: false,
-          error: "no_client_phone",
-        }).catch(() => {});
-      }
+      // The durable approval outbox owns family notification and delivery state.
+    } catch (err) {
+      console.error("[handleCareNotes] validated shiftHours create error:", err);
     }
   }
 
@@ -1557,15 +1456,15 @@ async function handleCareNotes(
     ? "No upcoming visits scheduled yet."
     : `Next visit: ${nextSnap.docs[0].data().date} at ${nextSnap.docs[0].data().startTime ?? ""}`;
 
-  const paymentLine = !billingSubmitted
-    ? `Thanks for the update.`
-    : familyNotified
-      ? `I've sent your hours to the family to confirm — you'll be paid once they approve (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h if they don't reply).`
-      : `Your hours are recorded — you'll be paid once they're approved (auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h).`;
+  const safePaymentLine = billingNeedsAdminReview
+    ? `Your hours are recorded and are waiting for Evia's billing team to review them.`
+    : billingSubmitted
+      ? `Your hours are recorded - the family approval request is queued.`
+      : `Thanks for the update.`;
 
   await sendMessage(chatId,
     `Got it — notes saved.\n\n` +
-    `${paymentLine}\n` +
+    `${safePaymentLine}\n` +
     `${nextLine}\n\n` +
     `Have a great rest of your day.`
   );

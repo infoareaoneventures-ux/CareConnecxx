@@ -1,4 +1,4 @@
-import { db } from '../lib/firebase';
+import { db, functions } from '../lib/firebase';
 import { VideoInterview, VideoInterviewStatus, AGREED_INTERVIEW_STATUSES } from '../types';
 
 export const videoService = {
@@ -65,16 +65,18 @@ export const videoService = {
 
             console.log('📝 [VideoService] Attempting to write to Firestore:', interviewData);
 
-            const docRef = await db.collection('video_interviews').add(interviewData);
+            if (!functions) throw new Error('Firebase Functions is not configured');
+            const createInterview = functions.httpsCallable('v1-createVideoInterviewRequest');
+            const response = await createInterview(interviewData);
+            const result = response.data as { interview?: VideoInterview };
+            if (!result.interview?.id) throw new Error('Interview creation returned no record');
+            const docRef = { id: result.interview.id };
 
             console.log('✅ [VideoService] Interview scheduled successfully! Doc ID:', docRef.id);
 
             // Notification handled by onVideoInterviewWrite Cloud Function
 
-            return {
-                id: docRef.id,
-                ...interviewData,
-            };
+            return result.interview;
         } catch (error: any) {
             console.error('❌ [VideoService] Error scheduling interview:');
             console.error('Error type:', error?.constructor?.name);

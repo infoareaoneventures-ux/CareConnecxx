@@ -221,14 +221,19 @@ export async function handleRefundRequest(
     const appointmentId = session.refundAppointmentId as string;
     const refundReason  = (session.refundReason as string) ?? "";
 
-    await db.collection("refundRequests").add({
-      clientId,
-      appointmentId,
-      reason:      refundReason,
-      status:      "pending_review",
-      requestedAt: new Date().toISOString(),
-      source:      "cara_self_service",
-    });
+    const refundRef = db.collection("refundRequests").doc(`${appointmentId}:${clientId}`);
+    try {
+      await refundRef.create({
+        clientId,
+        appointmentId,
+        reason:      refundReason,
+        status:      "requested",
+        requestedAt: new Date().toISOString(),
+        source:      "cara_self_service",
+      });
+    } catch (error: any) {
+      if (error?.code !== 6 && !/already exists/i.test(String(error?.message ?? ""))) throw error;
+    }
 
     await db.collection("agent_sessions").doc(phone).update({
       refundStep:             admin.firestore.FieldValue.delete(),

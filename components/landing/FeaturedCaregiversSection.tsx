@@ -47,7 +47,7 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
 
     useEffect(() => {
         if (!db) { setLoading(false); return; }
-        db.collection('caregivers')
+        db.collection('publicCaregiverProfiles')
             .where('verified', '==', true)
             .orderBy('rating', 'desc')
             .limit(3)

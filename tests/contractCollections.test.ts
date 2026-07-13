@@ -83,7 +83,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Internal queues / async work
     'admin_email_queue', 'adminNotifications', 'job_notifications',
     'health_alerts_pending', 'execution_agents', 'browser_sessions',
-    'credential_vault',
+    'credential_vault', 'billingApprovalOutbox',
+    // Server-only operation leases, retry state, redirects, and abuse limits.
+    'billingOperations', 'externalSideEffectOperations', 'interviewRequestLimits',
+    'link_redirects',
     // Out-of-area onboarding leads (Santa Clara County service-area gate) —
     // server-written, not part of the web read contract.
     'waitlist',
@@ -100,7 +103,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // server/agent-only entries — agent-native audit 2026-07)
     'caregiver_booked_slots', 'replacement_candidates', 'recurring_schedules',
     'booking_patterns', 'day_patterns', 'match_history', 'match_outcomes',
-    'clientMatches', 'match_assignments',
+    'clientMatches', 'match_assignments', 'jobs',
     // Triggers / engagement internals
     'trigger_engagement',
     // Health / wellbeing analytics streams

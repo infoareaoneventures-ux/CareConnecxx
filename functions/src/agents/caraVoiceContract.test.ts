@@ -81,7 +81,10 @@ describe("Evia runtime voice contract", () => {
     expect(content).not.toContain("Just reply YES when you're ready");
     expect(content).not.toContain("Reply YES to see your matches");
     expect(content).not.toContain("return `• ${name}");
-    expect(content).toContain("Start here with the quick identity check");
+    // Consent gate (2026-07-12): the pitch ends with an explicit ask and the
+    // identity link goes out only AFTER the family says yes — never unrequested.
+    expect(content).toContain("Want me to get you set up?");
+    expect(content).toContain("Quick 30-second identity check first");
     expect(content).toContain('type: "link", value: identityUrl');
   });
 });

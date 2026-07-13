@@ -100,6 +100,28 @@ export async function handleWebChatTurn(args: {
   }
   const session = sessionSnap.data()!;
 
+  // Bind the resolved phone session to the authenticated Firebase identity.
+  // users/{uid}.phone is owner-editable legacy data, so it cannot authorize a
+  // session by itself. A missing binding may self-heal only when Firebase Auth
+  // supplied the verified phone_number claim for this exact phone.
+  if (session.userId !== uid) {
+    if (!session.userId && tokenPhone === phone) {
+      await sessionRef.update({ userId: uid });
+      session.userId = uid;
+    } else {
+      console.error("webChat: auth/session identity mismatch", {
+        uid,
+        hasTokenPhone: Boolean(tokenPhone),
+        sessionHasUserId: Boolean(session.userId),
+      });
+      return {
+        available: false,
+        status: "notSetUp",
+        reply: "Please complete your account setup to chat with Evia.",
+      };
+    }
+  }
+
   // Mid-onboarding conversations are driven by the onboarding flow on the SMS
   // path; running the QA agent here would advance a parallel conversation and
   // clobber session flags. The web thread stays read-only until setup is done.
@@ -133,14 +155,6 @@ export async function handleWebChatTurn(args: {
 
   const toolsCalled: string[] = [];
   try {
-    // Self-heal the caregiver session gap: web auth proves this uid owns the
-    // phone, so a session missing userId gets it stamped here (keeps the
-    // outbound auto-mirror working for caregivers onboarded before the fix).
-    if (!session.userId) {
-      await sessionRef.update({ userId: uid }).catch(() => {});
-      session.userId = uid;
-    }
-
     // Mirror the user's message BEFORE the agent runs so the reply always
     // lands after it. A retry with the same clientMessageId must not
     // duplicate the bubble.

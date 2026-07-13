@@ -310,7 +310,7 @@ export const PostsPage: React.FC = () => {
         if (missing.length > 0 && db) {
           const uniqueIds = [...new Set(missing.map(i => i.caregiverId))];
           Promise.all(uniqueIds.map(async id => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) { const d = cSnap.data() as any; return [id, d.photoURL || d.photo || d.imageUrl || '']; }
             const uSnap = await db!.collection('users').doc(id).get().catch(() => null);
             if (uSnap?.exists) { const d = uSnap.data() as any; return [id, d.photoURL || d.photo || d.imageUrl || '']; }
@@ -354,7 +354,7 @@ export const PostsPage: React.FC = () => {
         try {
           // Try caregivers collection first, then users
           let cData: any = null;
-          const cSnap = await db!.collection('caregivers').doc(d.caregiverId).get();
+          const cSnap = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
           if (cSnap.exists) {
             cData = cSnap.data();
           } else {
@@ -651,7 +651,7 @@ export const PostsPage: React.FC = () => {
       // Load caregiver's weeklyAvailability + booked slots from lightweight summary doc
       try {
         const [cgSnap, bookedSnap] = await Promise.all([
-          db.collection('caregivers').doc(interview.caregiverId).get(),
+          db.collection('publicCaregiverProfiles').doc(interview.caregiverId).get(),
           db.collection('caregiver_booked_slots').doc(interview.caregiverId).get().catch(() => null),
         ]);
         if (cgSnap.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});

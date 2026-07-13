@@ -3,7 +3,13 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
-import { parseScheduledTimeMs } from "./utils/scheduledTime";
+import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "./utils/scheduledTime";
+import {
+    claimExternalSideEffectOperation,
+    completeExternalSideEffectOperation,
+    externalOperationDocId,
+    failExternalSideEffectOperation,
+} from "./operations/externalSideEffect";
 
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -44,19 +50,73 @@ async function createNotification(userId: string, notification: {
     title: string;
     body: string;
     type: 'booking' | 'message' | 'system' | 'alert';
-}) {
+}, notificationId?: string) {
     try {
-        await db.collection('users').doc(userId).collection('notifications').add({
+        const collection = db.collection('users').doc(userId).collection('notifications');
+        const ref = notificationId ? collection.doc(externalOperationDocId(notificationId)) : collection.doc();
+        await ref.set({
             ...notification,
             isRead: false,
             createdAt: new Date().toISOString()
-        });
+        }, { merge: true });
         if (process.env.NODE_ENV !== 'production') {
             console.log(`Notification created for user ${userId}: ${notification.title}`);
         }
     } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
             console.error(`Failed to create notification for user ${userId}:`, error);
+        }
+    }
+}
+
+async function notifyRecurringAppointmentSummary(appointment: Record<string, any>): Promise<void> {
+    const groupId = String(appointment.recurringGroupId ?? appointment.recurringNotificationTaskId ?? "");
+    if (!groupId) return;
+    const groupField = appointment.recurringGroupId ? "recurringGroupId" : "recurringNotificationTaskId";
+    const groupSnap = await db.collection("appointments").where(groupField, "==", groupId).get();
+    const visits = groupSnap.docs.map(doc => doc.data()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    if (visits.length === 0) return;
+    const first = visits[0];
+    const pending = visits.some(visit => visit.status === "pending_caregiver_confirmation");
+    const summary = `${visits.length} visit${visits.length === 1 ? "" : "s"} starting ${first.date} at ${first.time ?? first.startTime}`;
+    const parties = [
+        appointment.caregiverId ? {
+            party: "caregiver",
+            userId: String(appointment.caregiverId),
+            title: pending ? "New Recurring Booking Request" : "Recurring Care Scheduled",
+            body: pending
+                ? `${appointment.clientName ?? "A client"} requested ${summary}.`
+                : `You are scheduled for ${summary} with ${appointment.clientName ?? "a client"}.`,
+        } : null,
+        appointment.clientId ? {
+            party: "client",
+            userId: String(appointment.clientId),
+            title: pending ? "Recurring Booking Request Sent" : "Recurring Care Scheduled",
+            body: pending
+                ? `Your request for ${summary} with ${appointment.caregiverName ?? "your caregiver"} was sent for approval.`
+                : `${appointment.caregiverName ?? "Your caregiver"} is confirmed for ${summary}.`,
+        } : null,
+    ].filter(Boolean) as Array<{ party: string; userId: string; title: string; body: string }>;
+
+    for (const party of parties) {
+        const operationKey = `recurring-summary:${groupId}:${party.party}`;
+        const claim = await claimExternalSideEffectOperation({
+            operationKey,
+            operationType: "recurring_summary",
+            targetId: groupId,
+        });
+        if (!claim) continue;
+        try {
+            await createNotification(party.userId, {
+                title: party.title,
+                body: party.body,
+                type: "booking",
+            }, operationKey);
+            await sendSMSToUser(party.userId, party.body);
+            await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
+        } catch (error) {
+            await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
+            throw error;
         }
     }
 }
@@ -79,6 +139,16 @@ export const onAppointmentCreated = functions.firestore
                     appointment.caregiverId,
                     appointment.caregiverName ?? 'Caregiver'
                 ).catch(err => console.error('[onAppointmentCreated] ensureChatRoom failed:', err));
+            }
+
+            // The agent booking executor owns pending shift offers and family
+            // confirmation. Generic create notices would send one request per
+            // appointment and tell the family it was confirmed too early.
+            if (appointment.createdByAgent && appointment.status === 'pending_caregiver_confirmation') return;
+
+            if (appointment.recurringGroupId || appointment.recurringNotificationTaskId) {
+                await notifyRecurringAppointmentSummary(appointment);
+                return;
             }
 
             // Notify caregiver
@@ -255,6 +325,10 @@ export const onAppointmentCancelled = functions.firestore
 
         // Check if status changed to cancelled
         if (before && after && before.status !== 'cancelled' && after.status === 'cancelled') {
+            // appointmentUpdated owns caregiver cancellations and its coherent
+            // replacement message. This sibling only handles client/admin
+            // cancellation notifications.
+            if (after.cancelledBy === 'caregiver') return;
             try {
                 const cancelledBy = after.cancelledBy;
                 const reason = after.cancellationReason || 'No reason provided';
@@ -306,11 +380,13 @@ export const sendShiftReminders = functions.pubsub
             // Query appointments starting in the next hour that haven't been reminded
             const appointmentsSnapshot = await db.collection('appointments')
                 .where('status', '==', 'confirmed')
-                .where('reminderSent', '!=', true)
+                .where('date', '>=', businessTodayStr())
+                .where('date', '<=', businessTomorrowStr())
                 .get();
 
             for (const doc of appointmentsSnapshot.docs) {
                 const appointment = doc.data();
+                if (appointment.reminderSent === true) continue;
 
                 // Parse appointment datetime as PACIFIC wall-clock. The old
                 // `new Date("YYYY-MM-DD HH:mm")` read PT times as server-local
@@ -329,6 +405,14 @@ export const sendShiftReminders = functions.pubsub
 
                 // Check if appointment is between 15 min and 1 hour from now
                 if (appointmentDateTime >= fifteenMinutesFromNow && appointmentDateTime <= oneHourFromNow) {
+                    const operationKey = `appointment-reminder:${doc.id}:one-hour`;
+                    const claim = await claimExternalSideEffectOperation({
+                        operationKey,
+                        operationType: 'appointment_reminder',
+                        targetId: doc.id,
+                    });
+                    if (!claim) continue;
+                    try {
                     // Send reminder to caregiver
                     if (appointment.caregiverId) {
                         await sendSMSToUser(
@@ -339,7 +423,12 @@ export const sendShiftReminders = functions.pubsub
 
                     // Mark as reminded
                     await doc.ref.update({ reminderSent: true });
+                    await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
                     console.log(`Shift reminder sent for appointment ${doc.id}`);
+                    } catch (error) {
+                        await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
+                        throw error;
+                    }
                 }
             }
         } catch (error) {

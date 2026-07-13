@@ -51,4 +51,9 @@ describe("computeScheduledEndMs — business-timezone schedule math", () => {
     expect(computeScheduledEndMs(undefined, "10:00 AM", 1)).toBeNull();
     expect(computeScheduledEndMs("2026-07-11", "sometime", 1)).toBeNull();
   });
+
+  it("accepts canonical date/time/duration values used by new writers", () => {
+    const end = computeScheduledEndMs("2026-07-11", "17:00", 2.5);
+    expect(end).toBe(Date.parse("2026-07-12T02:30:00Z"));
+  });
 });

@@ -72,10 +72,11 @@ export function buildOnboardingDirective(
       `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
       `turn — do not ask another question first.`
     : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
-      `else this turn, then send ONE short warm line acknowledging you've got what you need to ` +
-      `find their match — keep it brief, do NOT promise ` +
-      `a specific timeframe or that options are coming "shortly" (the next message handles what's ` +
-      `actually available), do NOT list fields back like a form, and do NOT ask for more details.`;
+      `else this turn, then send ONE short warm line saying you've got what you need and you're ` +
+      `pulling up caregivers near them now (that promise is safe — their matches are sent ` +
+      `automatically right after your message). Keep it to one sentence, do NOT list fields back ` +
+      `like a form, do NOT ask ANY question, and do NOT announce what you'll ask next — anything ` +
+      `you ask here gets buried under the match cards that follow.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text. Your job this`,
@@ -94,6 +95,7 @@ export function buildOnboardingDirective(
     `  - Acknowledge what they just said before you ask the next thing. Reflect the story`,
     `    back when it's heavy ("so she's alone mornings while you work") — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
+    `  - When you ask what kind of help is needed, weave two or three natural examples of what our caregivers do into the question so the family knows what's possible — companionship, meals, help bathing or getting dressed, rides to appointments, errands, light housekeeping, medication reminders (e.g. "what would help her most day to day — company and meals, or more hands-on help like bathing and getting dressed?"). Vary which examples you pick, keep it inside one conversational sentence, never a list. All care is NON-MEDICAL — never offer nursing or medical services.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - ONLY the items in STILL NEEDED are required. Never ask for anything not on that list (zip, exact address, budget, etc. are optional) — never hold up the signup for an optional detail.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,

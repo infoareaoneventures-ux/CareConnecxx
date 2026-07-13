@@ -51,6 +51,8 @@ jobs:
           VITE_FIREBASE_MESSAGING_SENDER_ID: '0'
           VITE_FIREBASE_APP_ID: ci-placeholder
           VITE_STRIPE_PUBLISHABLE_KEY: pk_test_ci_placeholder
+          VITE_SUPPORT_PHONE: '+15555550101'
+          VITE_LINQ_PHONE_NUMBER: '+15555550102'
 
       - name: Build Cloud Functions
         run: npm --prefix functions run build

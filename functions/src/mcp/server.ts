@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { runMatchingForClient } from "../agents/matchingAgent";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
 import {
@@ -7063,7 +7064,7 @@ async function executeToolCall(
       if (!existing.empty && existing.docs[0].id !== userId) {
         return toolError("INVALID_INPUT", "An account already exists with that email address");
       }
-      const token = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 12)}`;
+      const token = crypto.randomBytes(16).toString("base64url");
       await db.collection("email_change_requests").doc(token).set({
         userId, newEmail, requestedAt: nowIso, status: "pending",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),

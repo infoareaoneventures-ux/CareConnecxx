@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
 import { getAppUrl } from "../config/appUrl";
@@ -141,7 +142,7 @@ async function runMonthlyHealthTrends(): Promise<number> {
       if (data.journal.length < 3) continue;
 
       const analysis   = await analyzeTrends(data);
-      const shareToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const shareToken = crypto.randomBytes(16).toString("base64url");
       const period     = new Date().toISOString().slice(0, 7);
 
       const now        = new Date();

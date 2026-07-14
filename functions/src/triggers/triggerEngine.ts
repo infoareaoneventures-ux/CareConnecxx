@@ -529,6 +529,24 @@ export const runTriggerEngine = functions.pubsub
         await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString(), err).catch((settleError) => {
           console.error("triggerEngine: failed to record ambiguous delivery failure for", doc.id, settleError);
         });
+        // A failed_ambiguous trigger is permanently consumed (never retried, so a
+        // half-delivered send can't duplicate) — surface it so an admin can
+        // re-send manually. admin_alerts high/critical priority auto-emails
+        // via onAdminAlertCreated.
+        await db.collection("admin_alerts").add({
+          type:        "proactive_trigger_delivery_failed",
+          triggerId:   doc.id,
+          triggerType: trigger.type ?? null,
+          userId:      trigger.userId ?? null,
+          phone:       trigger.phone ?? null,
+          message:     (trigger.message ?? "").slice(0, 200),
+          error:       (err instanceof Error ? err.message : String(err)).slice(0, 500),
+          createdAt:   new Date().toISOString(),
+          resolved:    false,
+          priority:    isHealthTrigger ? "critical" : "high",
+        }).catch((alertError) => {
+          console.error("triggerEngine: failed to raise admin alert for", doc.id, alertError);
+        });
       }
     }
 

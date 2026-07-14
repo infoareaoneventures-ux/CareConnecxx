@@ -92,12 +92,32 @@ describe("retry_shift_payment tool", () => {
     expect(hoisted.updates).toHaveLength(0);
   });
 
-  it("resets payment_failed → approved and bumps retryCount", async () => {
-    hoisted.docState.set(`shiftHours/${APPT}`, { clientId: CLIENT, status: "payment_failed", retryCount: 1 });
+  it("resets the billing-operation retry lease before approving the payment", async () => {
+    hoisted.docState.set(`shiftHours/${APPT}`, {
+      clientId: CLIENT,
+      status: "payment_failed",
+      retryCount: 1,
+      paymentGeneration: 2,
+      nextPaymentAttemptAt: "2099-01-01T00:00:00.000Z",
+    });
     const r = await handleToolCall("retry_shift_payment", { appointmentId: APPT, clientId: CLIENT }) as any;
     expect(r.success).toBe(true);
     const upd = hoisted.updates.find(u => u.path === `shiftHours/${APPT}`);
-    expect(upd?.data).toMatchObject({ status: "approved", retryCount: 2 });
+    expect(upd?.data).toMatchObject({
+      status: "approved",
+      retryCount: 2,
+      nextPaymentAttemptAt: expect.any(String),
+    });
+    expect(Date.parse(upd?.data.nextPaymentAttemptAt)).toBeLessThanOrEqual(Date.now() + 5_000);
+    expect(hoisted.docState.get(
+      `billingOperations/shift-payment:${APPT}:generation:2`,
+    )).toMatchObject({
+      state: "retry",
+      nextAttemptAt: expect.any(String),
+      lastErrorCode: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    });
   });
 });
 

@@ -537,10 +537,49 @@ describe("U11 payment auditing & safety", () => {
     });
 
     it("approves shift hours the client owns", async () => {
-      hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "pending_client_review" });
+      hoisted.docState.set("shiftHours/a1", {
+        clientId: "c1",
+        caregiverId: "cg1",
+        status: "pending_client_review",
+        submittedStartTime: "2026-07-13T09:00:00.000Z",
+        submittedEndTime: "2026-07-13T13:00:00.000Z",
+        payRate: 30,
+        lineItems: [],
+      });
       const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
       expect(r.success).toBe(true);
       expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
+    });
+
+    it("writes a complete, capped correction proposal for a disputed shift", async () => {
+      hoisted.docState.set("shiftHours/a1", {
+        clientId: "c1",
+        caregiverId: "cg1",
+        status: "pending_client_review",
+        submittedStartTime: "2026-07-13T09:00:00.000Z",
+        payRate: 30,
+        lineItems: [],
+      });
+
+      const r = await handleToolCall("review_shift_hours", {
+        clientId: "c1",
+        appointmentId: "a1",
+        decision: "dispute",
+        correctedHours: 4,
+        reason: "Left early",
+      }) as any;
+
+      expect(r.success).toBe(true);
+      expect(hoisted.docState.get("shiftHours/a1")).toMatchObject({
+        status: "correction_proposed",
+        proposedStartTime: "2026-07-13T09:00:00.000Z",
+        proposedEndTime: "2026-07-13T13:00:00.000Z",
+        proposedTotalHours: 4,
+        proposedGrossPay: 120,
+        proposedLineItems: [],
+        proposedLineItemsTotal: 0,
+        correctionRespondByAt: expect.any(String),
+      });
     });
 
     it("duplicate approval is rejected — already-approved hours cannot be re-approved (no second charge)", async () => {

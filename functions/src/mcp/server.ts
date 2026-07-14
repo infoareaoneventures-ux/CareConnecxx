@@ -21,6 +21,8 @@ import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
+import { resolveShiftBillableAmount, shiftEndFromHours } from "../billing/shiftBillingAmounts";
+import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
@@ -5189,18 +5191,64 @@ async function executeToolCall(
       return runActionNativeMcpWrite(name, input, async () => {
       const { clientId, appointmentId, decision, correctedHours, reason } = input as Record<string, unknown>;
       if (!clientId || !appointmentId || !decision) return toolError("INVALID_INPUT", "clientId, appointmentId, and decision are required");
+      if (decision !== "approve" && decision !== "dispute") return toolError("INVALID_INPUT", "decision must be approve or dispute");
       if (decision === "dispute" && correctedHours == null) return toolError("INVALID_INPUT", "correctedHours is required when disputing");
       const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
       const shift = shiftSnap.data()!;
       if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
       if (shift.status !== "pending_client_review") return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
-      await shiftSnap.ref.update({
-        status: decision === "approve" ? "approved" : "correction_proposed",
-        reviewedAt: nowIso,
-        correctedHours: correctedHours ?? null,
-        disputeReason: reason ?? null,
-      });
+
+      try {
+        const startTime = String(shift.submittedStartTime ?? "");
+        const endTime = decision === "approve"
+          ? String(shift.submittedEndTime ?? "")
+          : shiftEndFromHours(startTime, Number(correctedHours));
+        const billable = resolveShiftBillableAmount({
+          startTime,
+          endTime,
+          bookedRateDollars: Number(shift.payRate),
+          lineItems: shift.lineItems,
+        });
+
+        if (decision === "approve") {
+          await shiftSnap.ref.update({
+            status: "approved",
+            reviewedAt: nowIso,
+            finalStartTime: startTime,
+            finalEndTime: endTime,
+            finalTotalHours: billable.totalHours,
+            lineItems: billable.lineItems,
+            lineItemsTotal: billable.lineItemsTotal,
+            basePay: billable.basePay,
+            grossPay: billable.grossPay,
+            amountCents: billable.grossPayCents,
+            requiresExplicitApproval: billable.requiresExplicitApproval,
+          });
+        } else {
+          await shiftSnap.ref.update({
+            status: "correction_proposed",
+            reviewedAt: nowIso,
+            correctedHours: billable.totalHours,
+            disputeReason: reason ?? null,
+            proposalReason: reason ?? null,
+            proposedAt: nowIso,
+            proposedStartTime: startTime,
+            proposedEndTime: endTime,
+            proposedTotalHours: billable.totalHours,
+            proposedLineItems: billable.lineItems,
+            proposedLineItemsTotal: billable.lineItemsTotal,
+            proposedGrossPay: billable.grossPay,
+            requiresExplicitApproval: billable.requiresExplicitApproval,
+            correctionRespondByAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          });
+        }
+      } catch (error) {
+        if (error instanceof Error) {
+          return toolError("INVALID_INPUT", error.message);
+        }
+        throw error;
+      }
       if (decision === "dispute") {
         const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
         if (!cgSessSnap4.empty) {
@@ -6460,8 +6508,12 @@ async function executeToolCall(
         );
       }
 
-      await ref.update({ status: "approved", retryCount: (shift.retryCount ?? 0) + 1 });
-      logAudit({ eventType: "shift_payment_retried", userId: clientId as string, data: { source: "mcp:retry_shift_payment", appointmentId, retryCount: (shift.retryCount ?? 0) + 1 } }).catch(() => {});
+      const retry = await resetShiftPaymentForRetry({
+        appointmentId: appointmentId as string,
+        shiftRef: ref,
+        shift,
+      });
+      logAudit({ eventType: "shift_payment_retried", userId: clientId as string, data: { source: "mcp:retry_shift_payment", appointmentId, retryCount: retry.retryCount } }).catch(() => {});
       return {
         success: true,
         appointmentId,

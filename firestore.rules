@@ -694,7 +694,7 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         isAuthenticated() &&
         resource.data.caregiverId == request.auth.uid &&
-        resource.data.paymentMethod == 'cash' &&
+        resource.data.paymentMethod in ['cash', 'venmo', 'zelle'] &&
         (resource.data.status == 'approved' || resource.data.status == 'auto_approved') &&
         request.resource.data.status == 'paid' &&
         request.resource.data.diff(resource.data).affectedKeys()

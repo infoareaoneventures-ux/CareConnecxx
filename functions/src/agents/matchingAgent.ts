@@ -20,6 +20,8 @@ import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
 import { getReputationBoosts } from "../ai/caregiverReputation";
 import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
+import { isSeededCaregiver } from "./actions/getCaregiverPreviewAction";
+import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 
 const db = admin.firestore();
 
@@ -148,13 +150,110 @@ function computeRuleSignals(
   return { ruleScore, signals };
 }
 
+/**
+ * Outcome of a matching pass. "matched" and "no_match" both messaged the
+ * family; "failed" means the catch path ran — the family got a promise of
+ * matches "within the hour", backed by a tracked commitment the sweep in
+ * commitmentTracker.ts fulfills or escalates. Existing callers that ignore
+ * the return value are unaffected.
+ */
+export type MatchRunResult = "matched" | "no_match" | "failed";
+
+/**
+ * suppressConversationalSends: set by callers that are themselves about to
+ * speak to the family in the same turn (the QA agent's find_replacement_caregivers
+ * tool). With it on, matching still does all its work (interview requests,
+ * failure counters, admin alerts, commitments, pendingMatches) and still sends
+ * the artifacts only it can send (intro line + photo gallery on a match), but
+ * SKIPS the pure-status texts — the no-match update, the "Which ones would you
+ * like to meet?" closer, and the catch-path stall copy — so the family hears
+ * ONE voice per turn instead of the tool and the agent both texting.
+ * Direct callers (routeIntent, commitmentTracker sweep, caraAgent dispatch)
+ * have no agent reply behind them and must leave this off.
+ */
+export interface MatchRunOptions {
+  suppressConversationalSends?: boolean;
+}
+
+// This family's OWN match history, as a prompt block for the scorer. Global
+// outcome patterns say what families in general hire; this says what THIS
+// family has already passed on or hired. Names only — the scorer sees each
+// candidate's full signals and can reason about resemblance itself. No
+// orderBy (avoids composite indexes); recency isn't load-bearing here.
+async function buildFamilyMatchHistory(phone: string, userId?: string): Promise<string> {
+  const [reqSnap, outcomeSnap] = await Promise.all([
+    db.collection("interview_requests")
+      .where("clientPhone", "==", phone)
+      .limit(25)
+      .get()
+      .catch(() => null),
+    userId
+      ? db.collection("match_outcomes")
+          .where("clientId", "==", userId)
+          .limit(25)
+          .get()
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  const passed  = new Set<string>();
+  const met     = new Set<string>();
+  for (const d of reqSnap?.docs ?? []) {
+    const r = d.data();
+    const name = (r.caregiverName as string) || "";
+    if (!name) continue;
+    if (r.status === "client_declined" || r.status === "declined") passed.add(name);
+    else if (r.status === "scheduled") met.add(name);
+  }
+  let hiredCount = 0, passedCount = 0;
+  for (const d of outcomeSnap?.docs ?? []) {
+    const o = d.data();
+    if (o.outcome === "hired") hiredCount++;
+    else passedCount++;
+  }
+
+  if (passed.size === 0 && met.size === 0 && hiredCount === 0 && passedCount === 0) return "";
+
+  const lines: string[] = ["THIS FAMILY'S OWN HISTORY:"];
+  if (passed.size > 0) lines.push(`- Previously passed on: ${[...passed].slice(0, 8).join(", ")}`);
+  if (met.size > 0)    lines.push(`- Interviewed: ${[...met].slice(0, 8).join(", ")}`);
+  if (hiredCount || passedCount) lines.push(`- Web match outcomes: ${hiredCount} hired, ${passedCount} passed`);
+  lines.push(
+    "Weigh what their passes have in common (rate, experience level, specialty mix) " +
+    "and avoid re-offering the same shape of mismatch; if a candidate closely resembles " +
+    "someone they passed on, say so in the reasoning."
+  );
+  return lines.join("\n");
+}
+
 export async function runMatchingForClient(
   phone:   string,
   chatId:  string,
   intake:  Record<string, unknown>,
-  session?: Record<string, unknown>
-): Promise<void> {
+  session?: Record<string, unknown>,
+  opts?:   MatchRunOptions
+): Promise<MatchRunResult> {
+  const suppressSends = !!opts?.suppressConversationalSends;
   try {
+    // Matching starting = the family is actively trying to hire. Record a
+    // DURABLE goal (7-day horizon, generous turn budget) so Evia carries the
+    // hiring context across days — not the legacy 3-turn/24h decay. Cleared
+    // explicitly when a booking confirms (bookingExecutor). Dynamic import:
+    // a static one would close the mcp/server → matchingAgent → qaAgent cycle.
+    await import("./qaAgent")
+      .then((m) => m.setActiveGoal(
+        phone,
+        "matching",
+        `Find and hire a caregiver for ${(intake.seniorName as string) || "their loved one"}`,
+        {
+          seniorName: (intake.seniorName as string) ?? null,
+          careNeeds:  (intake.careNeeds as string[]) ?? [],
+          zipCode:    (intake.zipCode as string) ?? null,
+        },
+        50,
+        7 * 24 * 60 * 60 * 1000,
+      ))
+      .catch(() => { /* goal is context sugar — never block matching on it */ });
     const zip    = (intake.zipCode ?? "") as string;
     const city   = (intake.city    ?? "") as string;
 
@@ -183,6 +282,7 @@ export async function runMatchingForClient(
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
+        !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
         !rejectedIds.includes(c.id) &&
         !isTemporarilyUnavailable(c as any, nowIso) && (
           c.city?.toLowerCase() === city.toLowerCase() ||
@@ -195,7 +295,11 @@ export async function runMatchingForClient(
       // and the paused/opted-out availability filter)
       caregivers = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
-        .filter((c) => !rejectedIds.includes(c.id) && !isTemporarilyUnavailable(c as any, nowIso));
+        .filter((c) =>
+          !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
+          !rejectedIds.includes(c.id) &&
+          !isTemporarilyUnavailable(c as any, nowIso)
+        );
     }
 
     // Step 1: compute rule-based signals for pre-filtering
@@ -228,9 +332,17 @@ export async function runMatchingForClient(
       .sort((a, b) => b.ruleScore - a.ruleScore)
       .slice(0, 15);
 
-    // Step 3: Claude Sonnet scores all top candidates holistically
+    // Step 3: Claude Sonnet scores all top candidates holistically.
+    // Platform-wide hire patterns PLUS this family's own history — a family
+    // that has passed on two caregivers is telling us something the global
+    // reputation signal can't; the scorer should weigh what those passes have
+    // in common instead of re-offering the same shape of mismatch.
     const outcomePatterns = await getOutcomePatternSummary(db).catch(() => "");
-    const systemPrompt = buildMatchingSystemPrompt(outcomePatterns);
+    const familyHistory   = await buildFamilyMatchHistory(phone, (session as any)?.userId as string | undefined)
+      .catch(() => "");
+    const systemPrompt = buildMatchingSystemPrompt(
+      familyHistory ? `${outcomePatterns}\n\n${familyHistory}` : outcomePatterns
+    );
 
     const needs = (intake.careNeeds ?? []) as string[];
     const senior = {
@@ -324,11 +436,16 @@ export async function runMatchingForClient(
       });
 
       if (failureCount >= 2) {
-        // Pool is repeatedly exhausted — escalate urgently and keep searching
-        await sendMessage(chatId,
-          "I haven't been able to find the right match yet, but I'm still actively searching. " +
-          "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
-        );
+        // Pool is repeatedly exhausted — escalate urgently and keep searching.
+        // suppressSends: the agent turn that invoked us delivers this update
+        // itself (tool result carries the facts) — texting it here too gave
+        // the family two back-to-back, contradictory messages.
+        if (!suppressSends) {
+          await sendMessage(chatId,
+            "I haven't been able to find the right match yet, but I'm still actively searching. " +
+            "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
+          );
+        }
         // Auto-trigger a broader rematch on the next cycle by clearing rejected list
         // only if all local + broader search is exhausted
         if (rejectedIds.length > 0) {
@@ -338,13 +455,18 @@ export async function runMatchingForClient(
             rejectedCaregiverIds: trimmedRejections,
           });
         }
-      } else {
+      } else if (!suppressSends) {
         await sendMessage(chatId,
           "I don't have anyone available in your area right now, but I've flagged your request " +
           "and our team will reach out within 24 hours to find the right match."
         );
       }
-      return;
+      // The family got an honest update (with the team paged via admin_alerts)
+      // — any earlier "I'll pull matches" promise has been answered. Under
+      // suppressSends the invoking agent turn delivers that update (its tool
+      // result instructs it to), so the promise is equally answered.
+      await resolveCommitment(phone, "matching", "no_match_handled");
+      return "no_match";
     }
 
     // Successful match — reset the failure counter
@@ -385,7 +507,7 @@ export async function runMatchingForClient(
     const appUrl     = getAppUrl();
     const userId     = (session as any)?.userId ?? phone;
 
-    // Surface remembered client preferences so Cara can reference them naturally
+    // Surface remembered client preferences so Evia can reference them naturally
     const learnedFacts = await getRelevantFacts(userId).catch(() => [] as Awaited<ReturnType<typeof getRelevantFacts>>);
     const factsContext = learnedFacts.length > 0
       ? `\n\n🧠 KNOWN PREFERENCES (learned from past conversations):\n${learnedFacts.map(f => `- ${f.fact}`).join("\n")}\nIf the top match aligns with a known preference, mention it naturally (e.g. "You mentioned preferring female caregivers — Maria fits that perfectly.").`
@@ -427,8 +549,11 @@ export async function runMatchingForClient(
         topReason:    ms.reasoning[0] ?? "available and local",
         allReasons:   ms.reasoning,
         overallScore: ms.overallScore,
-        profileUrl:   `${appUrl}/caregiver/${c.id}`,
-        // Headshot (persisted from web upload OR a photo texted to Cara). Sent as
+        // /p/{id} is the canonical share path — hosting rewrites it through
+        // v1-caregiverProfileMeta so the texted link previews with this
+        // caregiver's name + photo instead of the generic marketing card.
+        profileUrl:   `${appUrl}/p/${c.id}`,
+        // Headshot (persisted from web upload OR a photo texted to Evia). Sent as
         // an image bubble before each caregiver's profile link so families see a
         // face, not a generic preview card. Null for legacy caregivers w/o a photo.
         photo:        ((c as any).profilePhoto ?? (c as any).photoURL ?? null) as string | null,
@@ -452,12 +577,12 @@ export async function runMatchingForClient(
       .join("\n\n");
 
     const agentSystemPrompt =
-      `You are Cara's matching agent. You found these caregivers for ${seniorName}:\n\n` +
+      `You are Evia's matching agent. You found these caregivers for ${seniorName}:\n\n` +
       `${matchSummary}\n\n` +
       `Care needs: ${needs.join(", ") || "general"}` +
       factsContext +
       `\n\nYour job:\n` +
-      `- First turn: write ONE warm, specific opening line letting the family know you found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near them. Do NOT list them, do NOT include any URLs — a photo of each caregiver with their profile link is sent right after your message.\n` +
+      `- First turn: write ONE warm, specific opening line letting the family know you found ${matchData.length} caregiver${matchData.length > 1 ? "s" : ""} for ${seniorName} near them. Do NOT list them, do NOT include any URLs — each caregiver's profile card (photo + tappable link) is sent right after your message.\n` +
       `- Follow-up turns: answer questions about the specific caregivers from the details above\n` +
       `- If asked about a caregiver not in this list, say you only have details for the ones you presented\n\n` +
       `Rules: plain text only, no bullet points, no headers. Warm, direct, specific. ` +
@@ -501,17 +626,14 @@ export async function runMatchingForClient(
       canDrop:     false,
     });
 
-    // Per-caregiver gallery: for each match send their headshot (if we have one)
-    // as an image bubble, then a factual caption with the tappable profile link.
-    // sendMessage auto-splits the URL into a rich link card on iMessage/RCS and
-    // leaves it as a plain tappable URL on SMS. Photo bubble is skipped for legacy
-    // caregivers without a stored photo — they still get the caption + link.
+    // Per-caregiver gallery: a factual caption with the tappable profile link.
+    // sendMessage auto-splits the URL into a rich link card on iMessage/RCS —
+    // and that card already carries the caregiver's photo via the /p/{id} OG
+    // tags, so the old separate headshot bubble showed the same face twice
+    // (founder, 2026-07-12: one image per caregiver). SMS gets the caption +
+    // plain tappable URL.
     for (const m of matchData) {
       try {
-        if (m.photo) {
-          await sendMessage(chatId, { parts: [{ type: "media", url: m.photo }] });
-          await new Promise<void>((r) => setTimeout(r, 400));
-        }
         const trust    = m.trustScore >= 60 ? ` · ${m.trustScore}⭐ Trust` : "";
         const specs     = m.specialties.length ? `\n${m.specialties.slice(0, 3).join(", ")}` : "";
         const bgPending = m.pendingBg ? `\n⏳ Background check in progress` : "";
@@ -525,7 +647,12 @@ export async function runMatchingForClient(
       }
     }
 
-    await sendMessage(chatId, "Which ones would you like to meet? Just reply with a name or number.");
+    // suppressSends: the invoking agent turn asks this itself as its one
+    // closing line (tool result instructs it), landing AFTER the gallery —
+    // sending it here too would double the question.
+    if (!suppressSends) {
+      await sendMessage(chatId, "Which ones would you like to meet? Just reply with a name or number.");
+    }
 
     // Store match list in session for follow-up; embed active goal context so
     // interview selection can pre-populate booking dates without re-prompting the family
@@ -552,10 +679,38 @@ export async function runMatchingForClient(
     // mistakes "send me <caregiver>'s profile" for a different care recipient.
     const { addKnownNames } = await import("../utils/knownNames");
     await addKnownNames(phone, top3.map((c) => c.name));
+
+    // Matches delivered — any open "I'll pull matches" promise is kept.
+    await resolveCommitment(phone, "matching", "matches_sent");
+    return "matched";
   } catch (err) {
     console.error("runMatchingForClient error:", err);
-    await sendMessage(chatId,
-      "I'm searching for caregivers — I'll text you top matches within the hour."
-    );
+    db.collection("admin_alerts").add({
+      type:        "matching_run_failed",
+      clientPhone: phone,
+      error:       err instanceof Error ? err.message : String(err),
+      severity:    "high",
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+    }).catch(() => {});
+    // Only promise "within the hour" when the commitment sweep is actually
+    // tracking it (it retries the match pass, then escalates to a human).
+    // If even the commitment write fails, be honest instead of promising.
+    const tracked = await recordCommitment({
+      phone, chatId, kind: "matching",
+      promiseText: "I'll text you top matches within the hour.",
+      userId:      (session?.userId as string | undefined),
+      source:      "matchingAgent:catch",
+      dueInMs:     30 * 60_000,
+    });
+    // suppressSends: the invoking agent turn tells the family (tool result
+    // instructs it) — the commitment + admin alert above are already recorded.
+    if (!suppressSends) {
+      await sendMessage(chatId, tracked
+        ? "I'm searching for caregivers — I'll text you top matches within the hour."
+        : "I'm having trouble pulling up matches right now. I've alerted our care team so a real person follows up with you."
+      ).catch(() => {});
+    }
+    return "failed";
   }
 }

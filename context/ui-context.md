@@ -1,4 +1,4 @@
-# CareConnex — UI Context
+# Evia — UI Context
 
 > The real design system. Source of truth for tokens is [`index.css`](../index.css) (`@theme` block). All colors must use these tokens (Tailwind classes like `bg-primary-600`, `text-neutral-900`) — no hardcoded hex in components.
 
@@ -24,6 +24,12 @@ A **warm, friendly, light** consumer healthcare product (not dark mode). The fee
 | Info | `--color-info-50..700` | Blue. |
 | Emerald | `--color-emerald-50..700` | Reserved for high wellness/peace-of-mind scores. |
 | Purple | `--color-purple-500` | Sparingly. |
+| Paper | `--color-paper-50..200` | Warm cream page surfaces — platform-wide. |
+| Ink | `--color-ink-400/600/900` | Soft ink text (never pure black) — platform-wide. |
+
+## Platform design language (2026-07-02 redesign — landing first, extended platform-wide same day)
+
+The whole product uses the calm editorial style introduced on the landing page: paper cream page backgrounds (`bg-paper-50`, alt `bg-paper-100`; cards stay white), **Fraunces** display serif for page-level headlines (`.font-display`), hairline dividers (`.hairline`), and ONE CTA style — the dark `.btn-depth-primary` pill (`rounded-full`), now baked into the `ui/Button` primitive (all variants). Secondary actions are quiet text links ("… →"), never a second colored button. Body/UI text stays Plus Jakarta Sans. Semantic status colors (success/warning/error) are kept for genuine status; iMessage blue only inside phone/chat UI. Numbered section markers (`.section-number`) are a landing-only flourish.
 
 Common usage: page bg `bg-neutral-50`, surfaces `bg-white`, primary text `text-neutral-900`, muted `text-neutral-500`, borders `border-neutral-200`.
 

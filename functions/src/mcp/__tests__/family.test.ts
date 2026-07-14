@@ -89,12 +89,18 @@ vi.mock("../../agents/familyGroupManager", () => ({
   removeMemberFromGroup:    vi.fn().mockResolvedValue({ removed: true }),
 }));
 
+vi.mock("../../observability/actionLedger", () => ({
+  logAgentAction: vi.fn().mockResolvedValue(undefined),
+}));
+
 const trySend = vi.fn().mockResolvedValue({ sent: true });
 vi.mock("../../utils/toolNotify", () => ({
   trySend:        (...args: unknown[]) => trySend(...args),
   trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
+import { buildOrUpdateFamilyGroup } from "../../agents/familyGroupManager";
+import { logAgentAction } from "../../observability/actionLedger";
 import { handleToolCall } from "../server";
 
 describe("family tools", () => {
@@ -102,6 +108,9 @@ describe("family tools", () => {
   // so a test that doesn't consume its Once value can't leak it into the next.
   beforeEach(() => {
     hoisted.reset(); trySend.mockReset(); trySend.mockResolvedValue({ sent: true });
+    vi.mocked(buildOrUpdateFamilyGroup).mockReset();
+    vi.mocked(buildOrUpdateFamilyGroup).mockResolvedValue(undefined);
+    vi.mocked(logAgentAction).mockClear();
     // Confirmed-action gate (U12): seed a pending doc matching the
     // remove_family_member bypass calls below.
     hoisted.docState.set("pending_actions/test", { toolName: "remove_family_member", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
@@ -132,7 +141,7 @@ describe("family tools", () => {
       expect(r.success).toBe(true);
       expect(r.added).toBe(true);
       expect(r.notification.sent).toBe(true);
-      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("CareConnex care group"), "mcp:add_family_member");
+      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("Evia care group"), "mcp:add_family_member");
     });
 
     it("surfaces notification.sent=false when welcome SMS fails", async () => {
@@ -142,6 +151,40 @@ describe("family tools", () => {
       expect(r.success).toBe(true);
       expect(r.added).toBe(true);
       expect(r.notification.sent).toBe(false);
+    });
+
+    it("keeps profile add successful but surfaces group sync failure to admin recovery", async () => {
+      hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
+      vi.mocked(buildOrUpdateFamilyGroup).mockRejectedValueOnce(new Error("linq group down"));
+
+      const r = await handleToolCall("add_family_member", {
+        seniorId: "s1",
+        name: "Aunt Mae",
+        memberPhone: "+15555550111",
+        clientId: "c1",
+      }) as any;
+
+      expect(r.success).toBe(true);
+      expect(r.added).toBe(true);
+      expect(r.groupSync).toEqual({ success: false, errorReason: "linq group down" });
+      expect(vi.mocked(logAgentAction)).toHaveBeenCalledWith(expect.objectContaining({
+        actionType: "family_group_sync",
+        status: "failed",
+        targetCollection: "family_groups",
+        targetDocId: "s1",
+        errorReason: "linq group down",
+      }));
+      expect(hoisted.adds).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: "admin_alerts",
+          data: expect.objectContaining({
+            type: "family_group_sync_failed",
+            seniorId: "s1",
+            recipeId: "share_latest_update",
+            errorReason: "linq group down",
+          }),
+        }),
+      ]));
     });
 
     it("adds the MEMBER (memberPhone), not the acting user, when phone is auto-injected (qaAgent path)", async () => {
@@ -159,7 +202,7 @@ describe("family tools", () => {
       expect(r.success).toBe(true);
       // Welcome SMS must go to the MEMBER, not the acting user — definitive proof
       // the right person was added despite phone being auto-injected.
-      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("CareConnex care group"), "mcp:add_family_member");
+      expect(trySend).toHaveBeenCalledWith("+15555550111", expect.stringContaining("Evia care group"), "mcp:add_family_member");
       expect(trySend).not.toHaveBeenCalledWith("+15550009999", expect.anything(), expect.anything());
     });
   });

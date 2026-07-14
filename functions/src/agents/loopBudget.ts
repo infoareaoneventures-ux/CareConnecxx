@@ -20,10 +20,28 @@ const QUICK_INTENTS: ReadonlySet<string> = new Set([
   "VIEW_EARNINGS", "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY",
 ]);
 
-export function resolveLoopBudget(intent: Intent | null | undefined): { maxIterations: number; flowClass: FlowClass } {
-  if (intent && MULTISTEP_INTENTS.has(intent)) return { maxIterations: 10, flowClass: "multistep" };
-  if (intent && QUICK_INTENTS.has(intent))     return { maxIterations: 3,  flowClass: "quick" };
-  return { maxIterations: 5, flowClass: "standard" };
+export interface LoopBudget {
+  maxIterations: number;
+  flowClass: FlowClass;
+  // ch9 layered termination: a per-turn spend ceiling (USD, estimated) that ORs
+  // into the loop's force-text-reply stop alongside the iteration and tool-call
+  // caps. Sized WELL above a normal turn's cost (prompt caching keeps real turns
+  // to fractions of a cent) — this is a runaway backstop, the spend analogue of
+  // the wall-clock ceiling, and directly guards the failure class behind the
+  // 2026-07-03 credit exhaustion. Overridable via CARA_TURN_COST_CAP_USD.
+  maxCostUsd: number;
+}
+
+function costCap(fallback: number): number {
+  const raw = process.env.CARA_TURN_COST_CAP_USD;
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveLoopBudget(intent: Intent | null | undefined): LoopBudget {
+  if (intent && MULTISTEP_INTENTS.has(intent)) return { maxIterations: 10, flowClass: "multistep", maxCostUsd: costCap(0.75) };
+  if (intent && QUICK_INTENTS.has(intent))     return { maxIterations: 3,  flowClass: "quick",     maxCostUsd: costCap(0.10) };
+  return { maxIterations: 5, flowClass: "standard", maxCostUsd: costCap(0.30) };
 }
 
 /**

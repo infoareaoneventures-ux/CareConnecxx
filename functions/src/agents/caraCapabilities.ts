@@ -1,4 +1,4 @@
-// Canonical, user-facing list of what Cara can do, in plain language.
+// Canonical, user-facing list of what Evia can do, in plain language.
 //
 // This is the single source of truth for capability discovery (Track A of the
 // agent-native legibility plan). It feeds:
@@ -142,14 +142,18 @@ function normalizeRole(role: string | undefined | null): CapabilityRole {
 export function buildCapabilityMenu(role: string | undefined | null, lang: string = "en"): string {
   const r = normalizeRole(role);
   const es = lang === "es";
-  const header = es
-    ? "Esto es lo que puedo hacer por ti:"
-    : "Here's what I can help you with:";
-  const lines = CARA_CAPABILITIES[r].map(
-    (e) => `• ${es ? e.labelEs : e.label} — "${es ? e.exampleEs : e.example}"`
-  );
-  const footer = es
-    ? 'Solo dime qué necesitas, o escribe "ayuda" para ver esto otra vez.'
-    : 'Just tell me what you need, or text "help" to see this again.';
-  return `${header}\n\n${lines.join("\n")}\n\n${footer}`;
+  const entries = CARA_CAPABILITIES[r].filter((e) => e.featured).slice(0, 4);
+  const examples = entries.map((e) => `"${es ? e.exampleEs : e.example}"`);
+  const joinWord = es ? "o" : "or";
+  const joined = examples.length <= 1
+    ? examples.join("")
+    : `${examples.slice(0, -1).join(", ")}, ${joinWord} ${examples[examples.length - 1]}`;
+  const lead = es
+    ? "Puedo coordinar cuidado contigo por aquí."
+    : "I can coordinate care with you right here.";
+  const ask = es
+    ? "Dime qué necesitas en una frase."
+    : "Tell me what you need in one sentence.";
+  const exampleLead = es ? "Por ejemplo:" : "For example:";
+  return `${lead} ${exampleLead} ${joined}. ${ask}`;
 }

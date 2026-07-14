@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Heart, Phone, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { linqPhone } from '../../utils/launchConfig';
 
 type PageState = "loading" | "ready" | "joining" | "joined" | "error" | "invalid";
 
@@ -73,24 +74,23 @@ export default function JoinFamilyPage() {
     }
   }
 
-  const LINQ_NUMBER = import.meta.env.VITE_LINQ_PHONE_NUMBER ?? "+18005550199";
-  const smsLink = `sms:${LINQ_NUMBER}?body=${encodeURIComponent("Hey Cara!")}`;
+  const smsLink = linqPhone ? `sms:${linqPhone.e164}?body=${encodeURIComponent("Hey Evia!")}` : null;
 
   if (state === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-indigo-50 to-white">
-        <Loader className="w-8 h-8 animate-spin text-indigo-400" />
+      <div className="min-h-screen flex items-center justify-center bg-paper-50">
+        <Loader className="w-8 h-8 animate-spin text-ink-400" />
       </div>
     );
   }
 
   if (state === "invalid") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-indigo-50 to-white p-6">
+      <div className="min-h-screen flex items-center justify-center bg-paper-50 p-6">
         <div className="text-center max-w-sm">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-slate-800 mb-2">Invalid invitation</h1>
-          <p className="text-slate-500 text-sm">This link may have expired or is no longer valid. Ask the primary account holder to resend the invite.</p>
+          <h1 className="font-display text-xl font-semibold text-ink-900 tracking-[-0.02em] mb-2">Invalid invitation</h1>
+          <p className="text-ink-600 text-sm">This link may have expired or is no longer valid. Ask the primary account holder to resend the invite.</p>
         </div>
       </div>
     );
@@ -98,19 +98,18 @@ export default function JoinFamilyPage() {
 
   if (state === "joined") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-indigo-50 to-white p-6">
+      <div className="min-h-screen flex items-center justify-center bg-paper-50 p-6">
         <div className="text-center max-w-sm">
           <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-slate-800 mb-2">You're in! 💙</h1>
-          <p className="text-slate-600 mb-6">
-            You've joined {seniorName}'s care group on Cara. You'll now receive care updates and can message Cara directly.
+          <h1 className="font-display text-xl font-semibold text-ink-900 tracking-[-0.02em] mb-2">You're in! 💙</h1>
+          <p className="text-ink-600 mb-6">
+            You've joined {seniorName}'s care group on Evia. You'll now receive care updates and can message Evia directly.
           </p>
-          <a
-            href={smsLink}
-            className="inline-block bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold text-sm hover:bg-indigo-700 transition-colors"
-          >
-            Say hi to Cara
-          </a>
+          {smsLink && (
+            <a href={smsLink} className="inline-flex items-center justify-center btn-depth-primary rounded-full px-8 py-3.5 font-semibold text-[15px] min-h-[44px]">
+              Say hi to Evia
+            </a>
+          )}
         </div>
       </div>
     );
@@ -145,7 +144,7 @@ export default function JoinFamilyPage() {
           Join {seniorName}'s care group
         </h1>
         <p className="text-slate-500 text-sm mb-6">
-          Get care updates and message Cara — the AI care assistant helping coordinate care for {seniorName}.
+          Get care updates and message Evia — the care coordinator helping coordinate care for {seniorName}.
         </p>
 
         <div className="text-left mb-4">
@@ -173,7 +172,7 @@ export default function JoinFamilyPage() {
         </button>
 
         <p className="text-xs text-slate-400 mt-4">
-          By joining, you agree to receive care updates via iMessage from Cara. Reply STOP anytime to unsubscribe.
+          By joining, you agree to receive care updates via iMessage from Evia. Reply STOP anytime to unsubscribe.
         </p>
       </div>
     </div>

@@ -6,8 +6,8 @@ import { getAppUrl } from "./config/appUrl";
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
-const FROM_NAME = process.env.RESEND_FROM_NAME || "CareConnex";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@eviacares.com";
+const FROM_NAME = process.env.RESEND_FROM_NAME || "Evia";
 const APP_URL = getAppUrl();
 
 // In-memory rate limiter (resets on cold start)
@@ -41,7 +41,7 @@ function emailWrapper(bodyContent: string, footerContent = ""): string {
           <tr>
             <td style="padding-bottom:24px;text-align:center;">
               <span style="display:inline-block;background:linear-gradient(135deg,#0d9488,#14b8a6);border-radius:12px;padding:10px 14px;">
-                <span style="color:white;font-size:20px;font-weight:800;letter-spacing:-0.5px;">CareConnex</span>
+                <span style="color:white;font-size:20px;font-weight:800;letter-spacing:-0.5px;">Evia</span>
               </span>
             </td>
           </tr>
@@ -66,9 +66,9 @@ function emailWrapper(bodyContent: string, footerContent = ""): string {
                 &nbsp;·&nbsp;
                 <a href="${APP_URL}/terms" style="color:#64748b;text-decoration:none;">Terms of Service</a>
                 &nbsp;·&nbsp;
-                <a href="${APP_URL}" style="color:#64748b;text-decoration:none;">careconnex.com</a>
+                <a href="${APP_URL}" style="color:#64748b;text-decoration:none;">eviacares.com</a>
               </p>
-              <p style="margin:4px 0 0;">&copy; ${new Date().getFullYear()} CareConnex. All rights reserved.</p>
+              <p style="margin:4px 0 0;">&copy; ${new Date().getFullYear()} Evia. All rights reserved.</p>
             </td>
           </tr>
         </table>
@@ -134,7 +134,7 @@ function clientWelcomeHtml(name: string): string {
                 border-radius:4px;margin-bottom:36px;"></div>
 
     <h1 style="margin:0 0 8px;font-size:28px;font-weight:800;color:#0f172a;
-               line-height:1.2;">Welcome to CareConnex, ${name}!</h1>
+               line-height:1.2;">Welcome to Evia, ${name}!</h1>
     <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;">
       You're one step closer to finding trusted, vetted care for your loved ones.
     </p>
@@ -146,7 +146,7 @@ function clientWelcomeHtml(name: string): string {
     ])}
 
     <p style="font-size:15px;color:#475569;line-height:1.6;margin:0 0 8px;">
-      Every caregiver on CareConnex is background-checked and reviewed by our Trust &amp; Safety team —
+      Every caregiver on Evia is background-checked and reviewed by our Trust &amp; Safety team —
       so you can focus on what matters most.
     </p>
 
@@ -154,11 +154,11 @@ function clientWelcomeHtml(name: string): string {
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
       Questions? Reply to this email or reach us at
-      <a href="mailto:support@careconnex.com" style="color:#0d9488;text-decoration:none;">support@careconnex.com</a>
+      <a href="mailto:support@eviacares.com" style="color:#0d9488;text-decoration:none;">support@eviacares.com</a>
     </p>
   `;
 
-  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created a CareConnex family account.</p>`);
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created an Evia family account.</p>`);
 }
 
 function caregiverWelcomeHtml(name: string): string {
@@ -188,11 +188,11 @@ function caregiverWelcomeHtml(name: string): string {
 
     <p style="margin:24px 0 0;font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;">
       Questions? Reply to this email or reach us at
-      <a href="mailto:support@careconnex.com" style="color:#7c3aed;text-decoration:none;">support@careconnex.com</a>
+      <a href="mailto:support@eviacares.com" style="color:#7c3aed;text-decoration:none;">support@eviacares.com</a>
     </p>
   `;
 
-  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created a CareConnex caregiver account.</p>`);
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because you created an Evia caregiver account.</p>`);
 }
 
 function passwordResetHtml(name: string, resetUrl: string): string {
@@ -210,7 +210,7 @@ function passwordResetHtml(name: string, resetUrl: string): string {
     <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
                text-align:center;">Reset your password</h1>
     <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
-      Hi ${name} — we received a request to reset your CareConnex password.
+      Hi ${name} — we received a request to reset your Evia password.
     </p>
 
     ${ctaButton("Reset Password", resetUrl, "#0d9488")}
@@ -237,7 +237,7 @@ function passwordResetHtml(name: string, resetUrl: string): string {
     </table>
   `;
 
-  return emailWrapper(body, `<p style="margin:0;">You're receiving this because a password reset was requested for your CareConnex account.</p>`);
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because a password reset was requested for your Evia account.</p>`);
 }
 
 // ─── Reusable server-side send helper ────────────────────────────────────────
@@ -283,7 +283,12 @@ export const sendEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("failed-precondition", "Email service not configured");
   }
 
-  const { to, subject, html, text, from, fromName, replyTo, cc, bcc } = data;
+  const caller = await admin.firestore().collection("users").doc(context.auth.uid).get();
+  if (context.auth.token.admin !== true && caller.data()?.role !== "admin" && caller.data()?.isAdmin !== true) {
+    throw new functions.https.HttpsError("permission-denied", "Admins only");
+  }
+
+  const { to, subject, html, text, replyTo } = data;
 
   if (!to || !subject || (!html && !text)) {
     throw new functions.https.HttpsError("invalid-argument", "Missing required fields: to, subject, and html or text");
@@ -299,14 +304,12 @@ export const sendEmail = functions.https.onCall(async (data, context) => {
 
   try {
     const { data: emailData, error } = await resend.emails.send({
-      from: `${fromName || FROM_NAME} <${from || FROM_EMAIL}>`,
+      from: `${FROM_NAME} <${FROM_EMAIL}>`,
       to: [to],
       subject: subject.replace(/[<>"']/g, "").substring(0, 200),
       html: html?.substring(0, 50000),
       text: text?.substring(0, 10000),
       reply_to: replyTo,
-      cc,
-      bcc,
     });
 
     if (error) throw new Error(error.message);
@@ -410,9 +413,9 @@ export const sendPasswordResetEmail = functions.https.onCall(async (data) => {
     const { error } = await resend.emails.send({
       from: `${FROM_NAME} <${FROM_EMAIL}>`,
       to: [email],
-      subject: "Reset your CareConnex password",
+      subject: "Reset your Evia password",
       html: passwordResetHtml(name, resetLink),
-      text: `Hi ${name},\n\nWe received a request to reset your CareConnex password.\n\nReset your password: ${resetLink}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email.\n\n— The CareConnex Team`,
+      text: `Hi ${name},\n\nWe received a request to reset your Evia password.\n\nReset your password: ${resetLink}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email.\n\n— The Evia Team`,
     });
 
     if (error) console.error("Password reset email error:", error);
@@ -450,15 +453,15 @@ export const sendWelcomeEmail = functions.firestore
     const firstName = fullName.split(" ")[0] || "there";
 
     const subject = userType === "caregiver"
-      ? `Welcome to CareConnex, ${firstName}!`
-      : `Welcome to CareConnex!`;
+      ? `Welcome to Evia, ${firstName}!`
+      : `Welcome to Evia!`;
 
     const html = userType === "caregiver"
       ? caregiverWelcomeHtml(firstName)
       : clientWelcomeHtml(firstName);
 
-    const textClient = `Welcome to CareConnex, ${firstName}!\n\nYou're one step closer to finding trusted care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse caregivers\n3. Book your first visit\n\nGet started: ${APP_URL}/client\n\n— The CareConnex Team`;
-    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Complete your profile\n2. Pass your background check\n3. Connect your payout account\n\nGet started: ${APP_URL}/caregiver\n\n— The CareConnex Team`;
+    const textClient = `Welcome to Evia, ${firstName}!\n\nYou're one step closer to finding trusted care for your loved ones.\n\nNext steps:\n1. Complete your profile\n2. Browse caregivers\n3. Book your first visit\n\nGet started: ${APP_URL}/client\n\n— The Evia Team`;
+    const textCaregiver = `Welcome aboard, ${firstName}!\n\nFamilies in your area are looking for someone like you.\n\nNext steps:\n1. Complete your profile\n2. Pass your background check\n3. Connect your payout account\n\nGet started: ${APP_URL}/caregiver\n\n— The Evia Team`;
 
     try {
       const { error } = await resend.emails.send({

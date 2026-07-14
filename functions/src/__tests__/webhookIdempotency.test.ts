@@ -20,6 +20,7 @@ const hoisted = vi.hoisted(() => {
   const docs = new Map<string, any>();
   const collState = new Map<string, any[]>();
   const updates: Array<{ path: string; data: any }> = [];
+  const sets: Array<{ path: string; data: any }> = [];
   const adds: Array<{ path: string; data: any }> = [];
   const failCollections = new Set<string>(); // force handler failures mid-flight
 
@@ -36,6 +37,7 @@ const hoisted = vi.hoisted(() => {
     }),
     get: vi.fn(async () => ({ exists: docs.has(path), data: () => docs.get(path) })),
     set: vi.fn(async (data: any, opts?: any) => {
+      sets.push({ path, data });
       docs.set(path, opts?.merge ? { ...(docs.get(path) ?? {}), ...data } : data);
     }),
     update: vi.fn(async (data: any) => {
@@ -97,9 +99,9 @@ const hoisted = vi.hoisted(() => {
   };
 
   return {
-    docs, collState, updates, adds, failCollections, collection, firestoreFn, StripeClass,
+    docs, collState, updates, sets, adds, failCollections, collection, firestoreFn, StripeClass,
     reset: () => {
-      docs.clear(); collState.clear(); updates.length = 0; adds.length = 0; failCollections.clear();
+      docs.clear(); collState.clear(); updates.length = 0; sets.length = 0; adds.length = 0; failCollections.clear();
     },
   };
 });
@@ -161,17 +163,63 @@ describe("stripeWebhook — exactly-once", () => {
   });
 
   it("acks a replayed delivery without reprocessing", async () => {
+    // update() + set() both count — the subscription handlers write with
+    // set/merge so a missing SMS-path doc can't 500 the webhook.
+    const writes = () => hoisted.updates.length + hoisted.sets.length;
     const res1 = makeRes();
     await (stripeWebhook as any)(stripeReq(subscriptionEvent("evt_a")), res1);
     expect(res1.json).toHaveBeenCalledWith({ received: true });
-    const writesAfterFirst = hoisted.updates.length;
+    const writesAfterFirst = writes();
     expect(writesAfterFirst).toBeGreaterThan(0); // subscription + user doc advanced
     expect(hoisted.docs.get("processed_stripe_events/evt_a")).toMatchObject({ status: "processed" });
 
     const res2 = makeRes();
     await (stripeWebhook as any)(stripeReq(subscriptionEvent("evt_a")), res2);
     expect(res2.json).toHaveBeenCalledWith({ received: true, status: "already_processed" });
-    expect(hoisted.updates.length).toBe(writesAfterFirst); // state advanced exactly once
+    expect(writes()).toBe(writesAfterFirst); // state advanced exactly once
+  });
+
+  it("resolves an SMS-created subscription (phone metadata, no firebaseUID) and mirrors onto the caregiver doc", async () => {
+    hoisted.docs.set("agent_sessions/+15550001111", { userId: "cg9" });
+    hoisted.docs.set("caregivers/cg9", { uid: "cg9", membershipPaid: true });
+    const event = {
+      id: "evt_sms_upd",
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_sms", status: "active",
+          metadata: { phone: "+15550001111", kind: "caregiver_membership" },
+          current_period_start: 1750000000, current_period_end: 1752000000,
+          cancel_at_period_end: false, canceled_at: null,
+        },
+      },
+    };
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(event), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("users/cg9")).toMatchObject({ membershipStatus: "active", subscriptionActive: true });
+    expect(hoisted.docs.get("caregivers/cg9")).toMatchObject({ membershipStatus: "active", membershipPaid: true });
+  });
+
+  it("cancellation of an SMS-created subscription flips the caregiver doc to canceled", async () => {
+    hoisted.docs.set("agent_sessions/+15550001111", { userId: "cg9" });
+    hoisted.docs.set("caregivers/cg9", { uid: "cg9", membershipPaid: true });
+    const event = {
+      id: "evt_sms_del",
+      type: "customer.subscription.deleted",
+      data: {
+        object: {
+          id: "sub_sms", status: "canceled",
+          metadata: { phone: "+15550001111", kind: "caregiver_membership" },
+          canceled_at: 1752000000,
+        },
+      },
+    };
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(event), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("users/cg9")).toMatchObject({ membershipStatus: "canceled", subscriptionActive: false });
+    expect(hoisted.docs.get("caregivers/cg9")).toMatchObject({ membershipStatus: "canceled" });
   });
 
   it("releases the claim on failure so Stripe's retry advances state exactly once", async () => {
@@ -198,7 +246,7 @@ describe("checkrWebhook — exactly-once", () => {
   });
 
   beforeEach(() => {
-    // Caregiver matched by checkrCandidateId; no phone → no Cara-advance path.
+    // Caregiver matched by checkrCandidateId; no phone → no Evia-advance path.
     hoisted.collState.set("caregivers", [
       { id: "cg1", name: "Test CG", backgroundCheckData: { checkrCandidateId: "cand_1" } },
     ]);
@@ -265,7 +313,7 @@ describe("stripeConnectWebhook — exactly-once", () => {
   });
 
   beforeEach(() => {
-    // Caregiver matched by stripeAccountId; no phone → skip the Cara-advance path.
+    // Caregiver matched by stripeAccountId; no phone → skip the Evia-advance path.
     hoisted.collState.set("caregivers", [
       { id: "cg1", stripeAccountId: "acct_1" },
     ]);

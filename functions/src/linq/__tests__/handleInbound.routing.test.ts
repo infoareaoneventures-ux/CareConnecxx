@@ -5,7 +5,7 @@
 // interception, degraded-classifier handling — because that order IS the
 // product behavior. They exist so the planned decomposition of handleInbound
 // can prove, branch by branch, that nothing moved. If one of these fails
-// after a refactor, the refactor changed Cara's behavior.
+// after a refactor, the refactor changed Evia's behavior.
 //
 // Every collaborator module is mocked; assertions are "which handler fired"
 // (and which did NOT), not message wording.
@@ -17,6 +17,24 @@ const hoisted = vi.hoisted(() => {
   const collState = new Map<string, any[]>();
   const updates: Array<{ path: string; data: any }> = [];
 
+  // Real Firestore's `{merge: true}` merges nested maps field-by-field rather than
+  // replacing them wholesale (e.g. .set({onboardingData: {seniorName: "X"}}, {merge:
+  // true}) adds seniorName into the existing onboardingData map instead of dropping
+  // its other keys). A shallow {...prev, ...data} spread doesn't reproduce that for
+  // nested-object values, so deep-merge plain objects one level of recursion at a
+  // time — matching the semantics the persistence net (webhooks.ts) actually relies on.
+  function deepMergePlainObjects(prev: any, data: any): any {
+    const out: any = { ...(prev ?? {}) };
+    for (const [k, v] of Object.entries(data ?? {})) {
+      const prevVal = out[k];
+      const bothPlainObjects =
+        v !== null && typeof v === "object" && !Array.isArray(v) &&
+        prevVal !== null && typeof prevVal === "object" && !Array.isArray(prevVal);
+      out[k] = bothPlainObjects ? deepMergePlainObjects(prevVal, v) : v;
+    }
+    return out;
+  }
+
   const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
     path,
@@ -25,7 +43,7 @@ const hoisted = vi.hoisted(() => {
       data:   () => docState.get(path),
     })),
     set: vi.fn(async (data: any, opts?: any) => {
-      docState.set(path, opts?.merge ? { ...(docState.get(path) ??  {}), ...data } : data);
+      docState.set(path, opts?.merge ? deepMergePlainObjects(docState.get(path), data) : data);
     }),
     update: vi.fn(async (data: any) => {
       updates.push({ path, data });
@@ -44,6 +62,7 @@ const hoisted = vi.hoisted(() => {
       const items = collState.get(path) ?? [];
       return {
         empty: items.length === 0,
+        size:  items.length,
         docs:  items.map((d: any, i: number) => ({
           id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`),
         })),
@@ -144,9 +163,24 @@ vi.mock("../../sms", () => ({
 
 const handleOnboardingStep   = vi.fn(async (..._a: any[]) => {});
 const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
+const continueAfterClientCollection = vi.fn(async (..._a: any[]) => {});
+const absorbClientFields     = vi.fn(async (..._a: any[]) => ({}));
+const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
   sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
+  continueAfterClientCollection: (...a: any[]) => continueAfterClientCollection(...a),
+  absorbClientFields:     (...a: any[]) => absorbClientFields(...a),
+  drivePostCollectionHandoff: (...a: any[]) => drivePostCollectionHandoff(...a),
+  // Gate-handoff caregiver doc pre-create (P0-C). null = no uid resolved, so
+  // the handoff proceeds without patching session.caregiverId - the __RESUME__
+  // routing under test is unaffected.
+  ensureCaregiverDocForOnboarding: vi.fn(async () => null),
+}));
+
+const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));
+vi.mock("../../agents/caregiverFieldAbsorber", () => ({
+  absorbCaregiverFields: (...a: any[]) => absorbCaregiverFields(...a),
 }));
 
 const detectCrisis      = vi.fn((..._a: any[]): string | null => null);
@@ -163,6 +197,21 @@ vi.mock("../../utils/openaiClient", () => ({
   quickComplete: (...a: any[]) => quickComplete(...a),
 }));
 
+const parseWithClaude = vi.fn(async (..._a: any[]) => "none");
+vi.mock("../../utils/parseWithClaude", () => ({
+  parseWithClaude: (...a: any[]) => parseWithClaude(...a),
+}));
+
+const isQuestionOrOther = vi.fn(async (..._a: any[]) => false);
+vi.mock("../../agents/stepHandler", () => ({
+  isQuestionOrOther: (...a: any[]) => isQuestionOrOther(...a),
+}));
+
+const answerHumanQuestionOnly = vi.fn(async (..._a: any[]) => "Good question — you're in two care groups, so I just need to know which senior you mean.");
+vi.mock("../../agents/humanReply", () => ({
+  answerHumanQuestionOnly: (...a: any[]) => answerHumanQuestionOnly(...a),
+}));
+
 const handleToolCall = vi.fn(async (..._a: any[]) => ({ success: true, notification: { sent: true } }));
 vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => handleToolCall(...a),
@@ -173,7 +222,7 @@ vi.mock("../../agents/taskApprovalHandler", () => ({ handleTaskApproval: vi.fn(a
 vi.mock("../../agents/permissionsConversation", () => ({
   handleClientPermissionsReply:    vi.fn(async () => {}),
   handleCaregiverPermissionsReply: vi.fn(async () => {}),
-  updatePermissionFromText:        vi.fn(async () => {}),
+  updatePermissionFromText:        vi.fn(async () => true),
   getPermissions:                  vi.fn(async () => ({})),
 }));
 vi.mock("../../agents/interviewAgent", () => ({
@@ -260,12 +309,15 @@ vi.mock("../../utils/voiceTranscription", () => ({
   extractVoiceMemoPart: vi.fn(() => null),
   transcribeVoiceMemo:  vi.fn(async () => ""),
 }));
+const extractLocationPart = vi.fn((..._a: any[]): any => null);
+const reverseGeocode      = vi.fn(async (..._a: any[]): Promise<any> => null);
 vi.mock("../../utils/locationShare", () => ({
-  extractLocationPart: vi.fn(() => null),
-  reverseGeocode:      vi.fn(async () => null),
+  extractLocationPart: (...a: any[]) => extractLocationPart(...a),
+  reverseGeocode:      (...a: any[]) => reverseGeocode(...a),
 }));
+const extractMediaPart = vi.fn((..._a: any[]): any => null);
 vi.mock("../../utils/mediaIntake", () => ({
-  extractMediaPart:  vi.fn(() => null),
+  extractMediaPart:  (...a: any[]) => extractMediaPart(...a),
   downloadMedia:     vi.fn(async () => null),
   storeInboundMedia: vi.fn(async () => null),
 }));
@@ -279,7 +331,7 @@ vi.mock("../../utils/language", () => ({
   t: new Proxy({}, { get: (_t, prop) => () => `[${String(prop)}]` }),
 }));
 
-import { handleInbound } from "../webhooks";
+import { handleInbound, userHasRealOnboardingProgress } from "../webhooks";
 
 const PHONE = "+15550001111";
 const CHAT  = "chat-1";
@@ -321,8 +373,12 @@ beforeEach(() => {
   isLikelyRealCrisis.mockResolvedValue(true);
   classifyCrisisMultilingual.mockResolvedValue(null);
   quickComplete.mockResolvedValue("NONE");
+  parseWithClaude.mockResolvedValue("none");
   handleToolCall.mockResolvedValue({ success: true, notification: { sent: true } });
   sendMessage.mockResolvedValue({ message_id: "m1" });
+  extractLocationPart.mockReturnValue(null);
+  reverseGeocode.mockResolvedValue(null);
+  extractMediaPart.mockReturnValue(null);
 });
 
 describe("pre-checks", () => {
@@ -371,6 +427,98 @@ describe("opt-out protocol (order: health gate -> START re-opt-in -> STOP)", () 
     expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
     expect(runQaAgent).not.toHaveBeenCalled();
+  });
+});
+
+// Sessions seeded by the onUserCreated auth trigger (web signup) carry
+// optedIn:false and no onboardingStep — the reply to the TCPA consent ask must
+// be handled BEFORE any other routing, or consent is never recorded and every
+// proactive sender skips the user forever.
+describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => {
+  function seedPendingConsentSession(overrides: Record<string, unknown> = {}) {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId:   CHAT,
+      userId:   "u1",
+      seniorId: "u1",
+      service:  "SMS",
+      optedOut: false,
+      optedIn:  false,
+      ...overrides,
+    });
+  }
+
+  it("YES records consent and routes a fresh client into name-first onboarding", async () => {
+    seedPendingConsentSession();
+    hoisted.docState.set("users/u1", { firstName: "Basra Yousuf", userType: "client" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("Yes please"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      userType:       "client",
+      onboardingStep: "client_confirm_name",
+      onboardingData: { firstName: "Basra" },
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Basra");
+    expect(classifyIntentDetailed).not.toHaveBeenCalled();
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("YES from a client with real progress marks the session complete and greets them", async () => {
+    seedPendingConsentSession();
+    hoisted.docState.set("users/u1", { firstName: "Basra", userType: "client", seniorId: "senior-1" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("YES"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      onboardingStep: "complete",
+      seniorId:       "senior-1",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("STOP during pending consent opts out (carrier protocol wins)", async () => {
+    seedPendingConsentSession();
+    await handleInbound(makeEvent("STOP"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("refusal opts out instead of silently staying pending", async () => {
+    seedPendingConsentSession();
+    parseWithClaude.mockResolvedValueOnce("no");
+    await handleInbound(makeEvent("no thanks"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("non-answer gets ONE re-ask, then goes quiet (deny-by-default)", async () => {
+    seedPendingConsentSession();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("when is the caregiver coming?"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ consentReaskCount: 1 });
+
+    sendMessage.mockClear();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("hello?"));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("a later YES after going quiet still opts them in", async () => {
+    seedPendingConsentSession({ consentReaskCount: 1 });
+    hoisted.docState.set("users/u1", { firstName: "Basra", userType: "client" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+    await handleInbound(makeEvent("YES"));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: true });
   });
 });
 
@@ -493,7 +641,26 @@ describe("onboarding + rate limit", () => {
       isSecondaryMember: true,
       groupChatId: "family-group-chat",
     });
-    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care assistant"));
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  // U8: a phone in multiple care groups is no longer dropped with nothing
+  // persisted (the old dead-loop bug) — it now gets a pending disambiguation
+  // marker so the next inbound's answer has somewhere to land. See the
+  // "multi-care-group disambiguation (U8)" describe block below for the full
+  // two-turn resolution coverage; this test only pins that the phone is never
+  // silently attached to either group without asking.
+  it("does not silently attach a secondary member when their phone is in multiple care groups", async () => {
+    hoisted.collState.set("family_group_members", [
+      { id: "m1", primaryPhone: "+15550001111", memberPhone: PHONE },
+      { id: "m2", primaryPhone: "+15550002222", memberPhone: PHONE },
+    ]);
+
+    await handleInbound(makeEvent("hi"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.isSecondaryMember).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("more than one care group"));
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
@@ -525,7 +692,7 @@ describe("pending-approval gate and shift-offer interception (order-critical)", 
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
   });
 
-  it("a question during a pending approval falls through so Cara can answer it", async () => {
+  it("a question during a pending approval falls through so Evia can answer it", async () => {
     seedSession();
     getAllPending.mockResolvedValue([{ id: "pa1" }]);
     handlePendingApprovals.mockResolvedValue({ outcome: "fallthrough" });
@@ -602,7 +769,7 @@ describe("QA tail (quick-reply bypass vs full agent)", () => {
 // ── Web-onboarding bridge: name capture from /start (U2/U3) ──────────────────
 // When the user typed their name on /start, the createWebOnboardingSession
 // callable stored it on the web_onboarding_sessions bridge doc. The FIRST inbound
-// "Hey Cara" must seed that name into the new agent_sessions doc, route to the
+// "Hey Evia" must seed that name into the new agent_sessions doc, route to the
 // *_confirm_name step (not *_ask_name), and greet by name. No name → legacy path.
 describe("web-onboarding name bridge", () => {
   // Seed a bridge doc + leave agent_sessions empty so the first-contact branch fires.
@@ -618,7 +785,7 @@ describe("web-onboarding name bridge", () => {
 
   it("client with a name → confirm step, seeded firstName, greeted by name", async () => {
     seedWebSession({ role: "client", name: "Sarah" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("client_confirm_name");
     expect(session()?.onboardingData?.firstName).toBe("Sarah");
     expect(greeting()).toContain("Sarah");
@@ -626,7 +793,7 @@ describe("web-onboarding name bridge", () => {
 
   it("caregiver with a name → confirm step, seeded name, greeted by name", async () => {
     seedWebSession({ role: "caregiver", name: "Maria" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
     expect(session()?.onboardingData?.name).toBe("Maria");
     expect(greeting()).toContain("Maria");
@@ -634,7 +801,7 @@ describe("web-onboarding name bridge", () => {
 
   it("no name on the bridge doc → legacy ask-name step, no seeded onboardingData", async () => {
     seedWebSession({ role: "client" });
-    await handleInbound(makeEvent("Hey Cara"));
+    await handleInbound(makeEvent("Hey Evia"));
     expect(session()?.onboardingStep).toBe("client_ask_name");
     expect(session()?.onboardingData).toBeUndefined();
   });
@@ -653,15 +820,9 @@ describe("onboarding agent-loop flag routing", () => {
     delete process.env.CONVERGENCE_FLIPPED;
   });
 
-  it("flag OFF: client collection step routes to the scripted runner, never the loop", async () => {
-    seedSession({ onboardingStep: "client_ask_name" });
-    await handleInbound(makeEvent("Sarah"));
-    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
-  it("ONBOARDING_AGENT_LOOP=client: client collection step routes to the loop, scripted runner NOT called", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "client";
+  // Loop-only (2026-07-08): there is no flag and no scripted collection runner —
+  // a client collection step ALWAYS routes to the loop.
+  it("loop-only: client collection step routes to the loop, scripted runner NOT called", async () => {
     seedSession({ onboardingStep: "client_ask_name" });
     await handleInbound(makeEvent("Sarah"));
     expect(runQaAgent).toHaveBeenCalledTimes(1);
@@ -682,20 +843,630 @@ describe("onboarding agent-loop flag routing", () => {
     expect(handleOnboardingStep).not.toHaveBeenCalled();
   });
 
-  it("loop throws: falls through to the scripted runner so the user is never wedged", async () => {
+  // Persistence safety net: the live bug — the loop chats an answer but the model
+  // never calls save_onboarding_field, so the field is lost and the cursor sticks.
+  // The deterministic extractor must capture it server-side regardless.
+  it("persistence net: loop saves nothing → user's answer is still captured", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+    // runQaAgent mock does no Firestore write → onboardingData unchanged this turn.
+    absorbClientFields.mockResolvedValueOnce({ seniorName: "Jane" });
+    await handleInbound(makeEvent("it's for my mom Jane"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbClientFields).toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
+      .toMatchObject({ seniorName: "Jane" });
+  });
+
+  // U6 (review-validated partial-save gap): the model saved ONE of the three
+  // fields present in a front-loaded message (e.g. it called
+  // save_onboarding_field for firstName only). The old gate compared
+  // Object.keys(curData).length to preData and skipped the net entirely because
+  // SOME keys grew — dropping seniorName/age silently. The net must now run
+  // whenever required fields are still missing after the turn, regardless of
+  // whether the model saved zero or some fields, and absorbClientFields already
+  // returns only fields not already in curData, so the model-saved field is
+  // never touched/double-written by the net.
+  it("persistence net: model saves ONE of three fields present in the text → net persists the rest, none re-asked next turn", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    // Front-loaded "I'm Sarah, my mom Dorothy is 82". With Fix 1 the PRE-turn
+    // absorber recovers the two fields the model skips (seniorName/age) and merges
+    // them BEFORE the model turn; the model then saves firstName via
+    // save_onboarding_field (a MERGE write — the mock must merge onboardingData,
+    // not overwrite it, or it would clobber the pre-turn recovery). Either way the
+    // final data has all three and nothing is re-asked next turn.
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      const prev = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      hoisted.docState.set(`agent_sessions/${PHONE}`, {
+        ...prev,
+        onboardingData: { ...(prev?.onboardingData ?? {}), firstName: "Sarah" },
+      });
+      return "qa reply";
+    });
+    // The absorber (pre-turn Fix 1) fills in the two fields the model skipped.
+    absorbClientFields.mockResolvedValueOnce({ seniorName: "Dorothy", age: 82 });
+
+    await handleInbound(makeEvent("I'm Sarah, my mom Dorothy is 82"));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbClientFields).toHaveBeenCalled();
+    const finalData = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData;
+    // The model-saved field is untouched AND the recovered fields are present.
+    expect(finalData).toMatchObject({ firstName: "Sarah", seniorName: "Dorothy", age: 82 });
+  });
+
+  // §0.2 pre-turn service-area gate: at the location step, an unrecognized city
+  // with no zip (evaluateServiceArea → "need_zip") must ask for the ZIP and
+  // return BEFORE the model turn — so the model can't first compose a "great,
+  // that works!" acknowledgment that the gate then contradicts. runQaAgent must
+  // therefore NOT run, and the cursor must not advance past collection on an
+  // unconfirmed service area.
+  it("pre-turn gate: need_zip at the location step asks for ZIP before the model turn and does not advance the cursor", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({
+      onboardingStep: "client_ask_location",
+      onboardingData: { firstName: "Sarah", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"] },
+    });
+    // Unrecognized city, no zip → evaluateServiceArea returns "need_zip".
+    absorbClientFields.mockResolvedValueOnce({ city: "Nowhereville" });
+
+    await handleInbound(makeEvent("we're in Nowhereville"));
+
+    // Gated BEFORE the model turn — no premature acknowledgment.
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(absorbClientFields).toHaveBeenCalled();
+    // Asked for the ZIP.
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("ZIP"));
+    // Cursor did NOT advance past collection to the post-collection gate.
+    const finalStep = hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep;
+    expect(finalStep).not.toBe("client_ask_start");
+    // No second (contradictory) reply from the scripted runner.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  // 2d (loop-only): the scripted collection runner no longer exists, so a loop
+  // that throws before replying is RETRIED once. On retry success the turn is
+  // handled entirely by the loop — the scripted runner is never called.
+  it("loop throws before replying → retries the loop once, no scripted fallback", async () => {
     process.env.ONBOARDING_AGENT_LOOP = "client";
     seedSession({ onboardingStep: "client_ask_name" });
-    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout"));
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // first attempt throws; retry succeeds
     await handleInbound(makeEvent("Sarah"));
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("loop throws BOTH times → apology sent + admin_alert paged, never silent, never scripted", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name" });
+    runQaAgent.mockRejectedValue(new Error("sonnet down")); // both attempts throw
+    await handleInbound(makeEvent("Sarah"));
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("snag"));
+    expect(hoisted.docState.get("admin_alerts/auto-add")?.type).toBe("onboarding_loop_failed_after_retry");
+  });
+
+  // 2a: a location PIN at a collection step is reverse-geocoded to text and fed to
+  // the loop as a normal text turn (works at ANY collection step). The scripted
+  // location handler is not involved.
+  it("location pin at a collection step is converted to text and routed to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+    extractLocationPart.mockReturnValue({ lat: 37.33, lng: -121.88 });
+    reverseGeocode.mockResolvedValue({ city: "San Jose", zipCode: "95112", region: "CA" });
+
+    await handleInbound(makeEvent("", { parts: [{ type: "location", lat: 37.33, lng: -121.88 }] }));
+
     expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(String(runQaAgent.mock.calls[0][0].text)).toContain("San Jose");
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  // 2c: a truly empty turn (no text, no parts) at a collection step gets a
+  // deterministic "type it out" nudge — the loop never runs on nothing and the
+  // scripted runner is not called.
+  it("empty turn at a collection step gets a type-it-out nudge, not the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_needs", onboardingData: { firstName: "Sarah" } });
+
+    await handleInbound(makeEvent("", { parts: [] }));
+
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("couldn't read that"));
+  });
+
+  // 2a-media: a photo/document sent WITH a caption at a collection step routes the
+  // caption to the loop (the attachment is set aside) instead of falling to the
+  // media handler and dropping the caption. Without the fix the caption's fields
+  // are lost and the user gets the defensive "I lost that" nudge.
+  it("captioned media at a collection step routes the caption text to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    extractMediaPart.mockReturnValue({ url: "https://x/img.jpg", type: "image" });
+
+    await handleInbound(makeEvent("6 years, mostly dementia", { parts: [{ type: "image", value: "https://x/img.jpg" }, { type: "text", value: "6 years, mostly dementia" }] }));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(String(runQaAgent.mock.calls[0][0].text)).toContain("6 years");
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+});
+
+// ── Caregiver onboarding agent-loop routing (dark: flag-gated off) ──────────
+// The caregiver mirror of the block above. DEFAULT MUST NOT CHANGE: with
+// ONBOARDING_AGENT_LOOP unset (or naming only "client"), a caregiver mid-
+// signup always runs the scripted runner. Only "caregiver" in the role list
+// routes caregiver collection turns to the loop.
+describe("caregiver onboarding agent-loop flag routing", () => {
+  const FULL_CAREGIVER_DATA = {
+    name: "Maria", city: "San Jose", yearsExperience: 6, specialties: ["dementia"],
+    availability: { days: ["Monday"], hours: "9am-5pm" }, jobType: "part_time",
+    hourlyRate: 25, email: "maria@example.com", bio: "I treat every client like family.",
+  };
+
+  afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
+
+  // Loop-only: a caregiver collection step ALWAYS routes to the loop as role
+  // caregiver (no flag; scripted collection deleted).
+  it("caregiver collection step routes to the loop as role caregiver", async () => {
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    await handleInbound(makeEvent("6 years, mostly dementia"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(runQaAgent.mock.calls[0][0]).toMatchObject({
+      onboardingMode: true,
+      onboardingRole: "caregiver",
+      userType: "caregiver",
+    });
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("flag on: a caregiver GATE step (awaiting photo) never routes to the loop", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_awaiting_photo" });
+    await handleInbound(makeEvent("did you get my photo?"));
+    expect(runQaAgent).not.toHaveBeenCalled();
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
   });
 
-  it("flag set to caregiver only: a client collection step still uses the scripted runner", async () => {
-    process.env.ONBOARDING_AGENT_LOOP = "caregiver";
-    seedSession({ onboardingStep: "client_ask_name" });
-    await handleInbound(makeEvent("Sarah"));
-    expect(runQaAgent).not.toHaveBeenCalled();
+  it("caregiver persistence net: loop saves nothing → the CAREGIVER absorber captures the answer", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_experience", onboardingData: { name: "Maria" } });
+    absorbCaregiverFields.mockResolvedValueOnce({ yearsExperience: 6, specialties: ["dementia"] });
+    await handleInbound(makeEvent("6 years, mostly dementia"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(absorbCaregiverFields).toHaveBeenCalled();
+    expect(absorbClientFields).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData)
+      .toMatchObject({ yearsExperience: 6, specialties: ["dementia"] });
+  });
+
+  it("collection completes → drives the photo gate via the scripted runner's __RESUME__ sentinel", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: { ...FULL_CAREGIVER_DATA, bio: "" } });
+    // Simulate the model saving the bio and complete_collection advancing the
+    // cursor to the first gate step (what mcp/server.ts does on complete:true).
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, {
+        ...hoisted.docState.get(`agent_sessions/${PHONE}`),
+        onboardingStep: "caregiver_send_photo",
+        onboardingData: FULL_CAREGIVER_DATA,
+      });
+      return "qa reply";
+    });
+    await handleInbound(makeEvent("I treat every client like family."));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    // The proactive handoff drives the send-photo step exactly once, with the
+    // no-user-text resume sentinel — and the client handoff never fires.
     expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+    expect(handleOnboardingStep.mock.calls[0][3]).toMatchObject({ onboardingStep: "caregiver_send_photo" });
+    expect(continueAfterClientCollection).not.toHaveBeenCalled();
+  });
+
+  it("stuck-signup net: all caregiver fields present but the model never called complete_collection → cursor advances to the photo gate", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_bio", onboardingData: FULL_CAREGIVER_DATA });
+    // Loop replies but writes nothing; data is already complete.
+    await handleInbound(makeEvent("anything else you need?"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingStep).toBe("caregiver_send_photo");
+    // And the gate is driven in the same turn (no dead-end silence).
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+  });
+
+  it("loop throws before replying: caregiver loop is retried once (no scripted fallback)", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client,caregiver";
+    seedSession({ userType: "caregiver", onboardingStep: "caregiver_ask_name" });
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
+    await handleInbound(makeEvent("Maria"));
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+});
+
+// ── Onboarding checkpoint RESUME (2f, loop-only) ─────────────────────────────
+// A paused signup carries an onboardingCheckpoint; on RESUME the loop owns
+// conversational collection, so a checkpoint parked on a COLLECTION step must
+// not call the (deleted) scripted collection handler. Two sub-cases:
+//   - still-missing fields → a warm "here's the next thing" nudge, cursor left
+//     on the collection step so the next inbound routes to the loop;
+//   - everything already collected → DRIVE the post-collection handoff now (do
+//     not just promise "I'll take it from here" and stall on a webhook-passive
+//     gate the flow won't advance on its own).
+// A checkpoint on a GATE step still resumes through the scripted runner.
+describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
+  const COMPLETE_CLIENT = {
+    firstName: "Sarah", seniorName: "Dorothy", age: 82,
+    careNeeds: ["companionship"], city: "San Jose", daysPerWeek: 3, timeOfDay: "mornings",
+  };
+
+  function seedCheckpoint(step: string, data: Record<string, unknown>, userType = "client") {
+    seedSession({
+      userType,
+      onboardingStep: step,
+      onboardingCheckpoint: { step, onboardingData: data, savedAt: "2026-07-01T00:00:00.000Z" },
+    });
+  }
+
+  it("RESUME at a collection step with everything collected → drives the handoff, no 'what's left' nudge", async () => {
+    seedCheckpoint("client_ask_schedule", COMPLETE_CLIENT, "client");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).toHaveBeenCalledTimes(1);
+    expect(drivePostCollectionHandoff.mock.calls[0].slice(0, 3)).toEqual([PHONE, CHAT, "client"]);
+    // Did NOT fall to the scripted runner for a (deleted) collection handler.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("RESUME at a collection step with fields still missing → sends a nudge, does NOT drive the handoff", async () => {
+    seedCheckpoint("client_ask_needs", { firstName: "Sarah", seniorName: "Dorothy" }, "client");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
+    // The welcome-back nudge went out (generateCaraMessage → fallback in the mock).
+    expect(sendMessage).toHaveBeenCalled();
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+
+  it("RESUME at a GATE step still resumes through the scripted runner", async () => {
+    seedCheckpoint("caregiver_awaiting_photo", { name: "Maria" }, "caregiver");
+    await handleInbound(makeEvent("RESUME"));
+    expect(drivePostCollectionHandoff).not.toHaveBeenCalled();
+    expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+    expect(handleOnboardingStep.mock.calls[0][2]).toBe("__RESUME__");
+  });
+});
+
+// ── Multi-care-group disambiguation (U8) ─────────────────────────────────────
+// Validated bug: a phone matching 2+ care groups got asked "which senior?" and
+// the turn returned with NOTHING persisted. The next inbound re-hit
+// `!sessionSnap.exists` and re-asked forever — no code path ever consumed the
+// answer. Fix: persist candidates + attempts on agent_sessions/{phone} before
+// returning, and route the next inbound's reply through the resolver first.
+describe("multi-care-group disambiguation (U8)", () => {
+  const PRIMARY_A = "+15550009999";
+  const PRIMARY_B = "+15550008888";
+
+  function seedTwoGroups() {
+    hoisted.collState.set("agent_sessions", [
+      { id: PRIMARY_A, chatId: "chat-a", groupMembers: [PHONE], userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" } },
+      { id: PRIMARY_B, chatId: "chat-b", groupMembers: [PHONE], userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" } },
+    ]);
+  }
+
+  it("multi-group inbound asks with senior names and persists a marker with attempts 1, writing nothing else", async () => {
+    seedTwoGroups();
+    await handleInbound(makeEvent("hi"));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const question = String(sendMessage.mock.calls[0][1]);
+    expect(question).toContain("Jane");
+    expect(question).toContain("Bob");
+
+    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
+    expect(marker).toMatchObject({ attempts: 1 });
+    expect(marker.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ primaryPhone: PRIMARY_A, seniorName: "Jane" }),
+        expect.objectContaining({ primaryPhone: PRIMARY_B, seniorName: "Bob" }),
+      ]),
+    );
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("second inbound naming a candidate creates that candidate's session, no re-ask, marker cleared", async () => {
+    // Seed the primary session AND the pending marker as if turn 1 already ran.
+    hoisted.docState.set(`agent_sessions/${PRIMARY_B}`, {
+      chatId: "chat-b", userId: "uB", seniorId: "seniorB", onboardingData: { seniorName: "Bob" },
+    });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    parseWithClaude.mockResolvedValueOnce("1"); // index 1 → Bob
+
+    await handleInbound(makeEvent("Bob, my dad"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toBeUndefined();
+    expect(session).toMatchObject({
+      userId: "uB",
+      seniorId: "seniorB",
+      primaryPhone: PRIMARY_B,
+      isSecondaryMember: true,
+    });
+    // Exactly one send this turn: the "added to the care group" greeting — no re-ask.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("more than one care group");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("STOP mid-disambiguation opts the user out instead of being parsed as an answer", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+
+    await handleInbound(makeEvent("STOP"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
+    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
+    // The reply was never treated as a disambiguation answer.
+    expect(parseWithClaude).not.toHaveBeenCalled();
+    // Standard opt-out handling ran (carrier protocol: STOP always works).
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+  });
+
+  it("a mid-flow question gets answered and re-asked without burning a match attempt", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    isQuestionOrOther.mockResolvedValueOnce(true);
+
+    await handleInbound(makeEvent("why do you need to know that?"));
+
+    expect(answerHumanQuestionOnly).toHaveBeenCalledTimes(1);
+    // Answer + re-ask, and the marker's attempts stay at 1.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const marker = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation;
+    expect(marker).toMatchObject({ attempts: 1 });
+    expect(parseWithClaude).not.toHaveBeenCalled();
+  });
+
+  it("awaiting-supply hold: a follow-up question gets the honest hold answer, never the orphan START OVER", async () => {
+    // Supply-hold sessions complete WITHOUT payment by design (no caregivers
+    // available → "no charge until then"), so no userId and no users record
+    // exists. The orphan-recovery branch must not fire for them.
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      userType: "client",
+      onboardingStep: "complete",
+      awaitingSupply: true,
+      onboardingData: { firstName: "Imran", seniorName: "Sarda", city: "Santa Clara" },
+    });
+
+    await handleInbound(makeEvent("Do you have caregivers available in San Jose yet?"));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const reply = String(sendMessage.mock.calls[0][1]);
+    expect(reply).not.toContain("Something's off");
+    expect(reply).not.toContain("START OVER");
+    // generateCaraMessage mock returns the fallback — the honest hold answer.
+    expect(reply).toContain("first in line");
+    expect(reply).toContain("Sarda");
+    // The session was not reset or advanced.
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.onboardingStep).toBe("complete");
+    expect(session?.awaitingSupply).toBe(true);
+  });
+
+  it("a marker with no candidates is cleared and the turn falls through instead of dead-ending", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: { candidates: [], askedAt: "now", attempts: 1 },
+    });
+
+    await handleInbound(makeEvent("hello?"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    // Marker cleared (the mock records FieldValue.delete() as a sentinel).
+    expect(session?.pendingGroupDisambiguation?.candidates).toBeUndefined();
+    expect(parseWithClaude).not.toHaveBeenCalled();
+  });
+
+  it("two consecutive no-match replies: one re-ask, then first-candidate fallback + admin_alerts, no infinite loop", async () => {
+    hoisted.docState.set(`agent_sessions/${PRIMARY_A}`, {
+      chatId: "chat-a", userId: "uA", seniorId: "seniorA", onboardingData: { seniorName: "Jane" },
+    });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      pendingGroupDisambiguation: {
+        candidates: [
+          { primaryPhone: PRIMARY_A, seniorName: "Jane" },
+          { primaryPhone: PRIMARY_B, seniorName: "Bob" },
+        ],
+        askedAt: "now",
+        attempts: 1,
+      },
+    });
+    parseWithClaude.mockResolvedValueOnce("none");
+
+    // First no-match reply → re-ask, attempts bumped to 2, still pending.
+    await handleInbound(makeEvent("I don't know"));
+    let session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toMatchObject({ attempts: 2 });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Jane");
+
+    sendMessage.mockClear();
+    parseWithClaude.mockResolvedValueOnce("none");
+
+    // Second no-match reply → give up, fall back to first candidate, alert, marker cleared.
+    await handleInbound(makeEvent("still not sure"));
+    session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session?.pendingGroupDisambiguation).toBeUndefined();
+    expect(session).toMatchObject({ primaryPhone: PRIMARY_A, isSecondaryMember: true });
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({
+      type: "group_disambiguation_unresolved",
+    });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("single-group phone is unaffected (unchanged secondary-member attach behavior)", async () => {
+    hoisted.collState.set("agent_sessions", [{
+      id: PRIMARY_A,
+      chatId: "primary-chat",
+      groupMembers: [PHONE],
+      userId: "u1",
+      seniorId: "senior1",
+      groupChatId: "family-group-chat",
+      onboardingData: { seniorName: "Jane" },
+    }]);
+
+    await handleInbound(makeEvent("hi"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      userId: "u1",
+      seniorId: "senior1",
+      primaryPhone: PRIMARY_A,
+      isSecondaryMember: true,
+      groupChatId: "family-group-chat",
+    });
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingGroupDisambiguation).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, expect.stringContaining("care coordinator"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+});
+
+// ── Double-reply fall-through guard (U9) ─────────────────────────────────────
+// Validated bug: runQaAgent sends its own reply, then a post-send write
+// (persistence net / cursor update / Zep push) could throw into a shared catch
+// that fell through to handleOnboardingStep — sending a SECOND, contradictory
+// reply from stale pre-turn state. Fix: a loopReplied flag gates the catch.
+describe("onboarding agent-loop double-send guard (U9)", () => {
+  const defaultCollectionImpl = hoisted.collection.getMockImplementation();
+  afterEach(() => {
+    delete process.env.ONBOARDING_AGENT_LOOP;
+    // Restore the plain collection() implementation — the first test in this
+    // block installs a stateful override that must not leak into later tests.
+    if (defaultCollectionImpl) hoisted.collection.mockImplementation(defaultCollectionImpl);
+  });
+
+  it("persistence-net write throws after runQaAgent resolves → exactly one send, admin_alerts written, handleOnboardingStep NOT called", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name", onboardingData: {} });
+
+    // runQaAgent resolves — its own reply already went out via the mocked
+    // client — then the FIRST post-send read (`db.collection("agent_sessions")
+    // .doc(phone).get()`, used to re-check the cursor/onboardingData) throws.
+    // This simulates the validated failure mode: a post-send write/read fails
+    // after the loop has already replied. Only calls to agent_sessions/{phone}
+    // .get() made AFTER runQaAgent resolves should throw — earlier calls (the
+    // session lookup at the top of the turn) must behave normally, so gate the
+    // throw on a flag flipped inside the runQaAgent mock itself.
+    let afterLoopReplied = false;
+    runQaAgent.mockImplementationOnce(async (..._a: any[]) => {
+      afterLoopReplied = true;
+      return "qa reply";
+    });
+    const realCollection = hoisted.collection.getMockImplementation()!;
+    hoisted.collection.mockImplementation((name: string) => {
+      const ref = realCollection(name);
+      if (name === "agent_sessions") {
+        const realDoc = ref.doc;
+        ref.doc = (id?: string) => {
+          const docRef = realDoc(id);
+          if (id === PHONE) {
+            const realGet = docRef.get;
+            docRef.get = vi.fn(async () => {
+              if (afterLoopReplied) throw new Error("firestore unavailable");
+              return realGet();
+            });
+          }
+          return docRef;
+        };
+      }
+      return ref;
+    });
+
+    await handleInbound(makeEvent("Sarah"));
+
+    // Loop's own reply already went out; the guarded catch must record the
+    // failure and STOP — never fall through to a second, contradictory reply
+    // from the scripted runner.
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+    expect(hoisted.docState.get("admin_alerts/auto-add")).toMatchObject({
+      type: "onboarding_loop_post_send_write_failed",
+    });
+  });
+
+  it("agent loop throws before replying → loop is retried, handleOnboardingStep is NOT called (2d)", async () => {
+    process.env.ONBOARDING_AGENT_LOOP = "client";
+    seedSession({ onboardingStep: "client_ask_name" });
+    runQaAgent.mockRejectedValueOnce(new Error("sonnet timeout")); // retry succeeds
+
+    await handleInbound(makeEvent("Sarah"));
+
+    expect(runQaAgent).toHaveBeenCalledTimes(2);
+    expect(handleOnboardingStep).not.toHaveBeenCalled();
+  });
+});
+
+// ── userHasRealOnboardingProgress — the "seeded users doc ≠ returning user" guard ──
+// createWebOnboardingSession seeds users/{uid} at /start OTP time, seconds before
+// the first inbound. Treating bare doc-existence as "returning" marked every fresh
+// web signup onboardingStep:"complete" and skipped onboarding entirely (2026-07-08
+// live bug: new caregiver greeted "Good to hear from you again!").
+describe("userHasRealOnboardingProgress", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("seeded stub (uid/phone/userType/name only) → false", async () => {
+    expect(await userHasRealOnboardingProgress("uid-1", {
+      uid: "uid-1", phone: PHONE, userType: "caregiver", name: "Imran",
+    })).toBe(false);
+  });
+
+  it("client with seniorIds → true", async () => {
+    expect(await userHasRealOnboardingProgress("uid-2", {
+      uid: "uid-2", phone: PHONE, userType: "client", seniorIds: ["s1"],
+    })).toBe(true);
+  });
+
+  it("client with legacy singular seniorId → true", async () => {
+    expect(await userHasRealOnboardingProgress("uid-3", {
+      uid: "uid-3", userType: "client", seniorId: "s1",
+    })).toBe(true);
+  });
+
+  it("caregiver with caregivers/{uid} profile doc → true", async () => {
+    hoisted.docState.set("caregivers/uid-4", { phone: PHONE, status: "pending_review" });
+    expect(await userHasRealOnboardingProgress("uid-4", {
+      uid: "uid-4", userType: "caregiver", name: "Imran",
+    })).toBe(true);
   });
 });

@@ -7,19 +7,18 @@ export const BlogSection: React.FC = () => {
   const featured = blogArticles.slice(0, 3);
 
   return (
-    <section className="py-20 bg-slate-50 border-t border-slate-200">
+    <section className="py-20 bg-paper-50 border-t hairline">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-end justify-between mb-12">
           <div>
-            <p className="text-sm font-semibold text-primary-600 uppercase tracking-widest mb-2">Resources</p>
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900">Senior Care Guides</h2>
-            <p className="text-slate-500 mt-2 max-w-xl">
+            <h2 className="font-display text-3xl md:text-4xl font-semibold text-ink-900 tracking-[-0.02em]">Senior care guides</h2>
+            <p className="text-ink-600 mt-3 max-w-xl">
               Expert articles to help Bay Area families navigate in-home care decisions.
             </p>
           </div>
           <Link
             to="/blog"
-            className="hidden md:flex items-center gap-2 text-primary-600 hover:text-primary-700 font-semibold text-sm transition-colors"
+            className="hidden md:flex items-center gap-2 text-ink-600 hover:text-ink-900 font-medium text-sm transition-colors"
           >
             View all articles <ArrowRight className="w-4 h-4" />
           </Link>

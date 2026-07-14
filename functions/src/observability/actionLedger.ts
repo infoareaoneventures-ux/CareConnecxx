@@ -11,7 +11,8 @@ export type AgentActionStatus =
   | "confirmed"
   | "executed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "duplicate_blocked";
 
 export interface AgentActionLedgerEntry {
   actionType: string;

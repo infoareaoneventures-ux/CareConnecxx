@@ -1,0 +1,240 @@
+import * as admin from "firebase-admin";
+import * as functions from "firebase-functions";
+import { sendViaInteractionAgent } from "../agents/caraAgent";
+
+const db = admin.firestore();
+const LEASE_MS = 2 * 60 * 1000;
+const DELIVERY_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const MAX_ATTEMPTS = 5;
+
+type OutboxState = "pending" | "retry" | "processing" | "sent" | "delivered" | "requires_admin_review";
+
+interface ApprovalOutboxRecord {
+  appointmentId: string;
+  recipientUid: string;
+  payloadSnapshot?: {
+    caregiverName?: string;
+    date?: string | null;
+    totalHours?: number;
+    grossPayCents?: number;
+  };
+  state: OutboxState;
+  attemptCount?: number;
+  nextAttemptAt?: string | null;
+  leaseExpiresAt?: string | null;
+}
+
+function retryAt(attemptCount: number, nowMs = Date.now()): string {
+  const delaysMinutes = [1, 5, 15, 60, 240];
+  const delay = delaysMinutes[Math.min(Math.max(attemptCount - 1, 0), delaysMinutes.length - 1)];
+  return new Date(nowMs + delay * 60 * 1000).toISOString();
+}
+
+async function resolveRecipientPhone(recipientUid: string): Promise<string | null> {
+  const userSnap = await db.collection("users").doc(recipientUid).get();
+  const userPhone = userSnap.data()?.phone;
+  if (typeof userPhone === "string" && userPhone) return userPhone;
+
+  const sessionSnap = await db.collection("agent_sessions")
+    .where("userId", "==", recipientUid)
+    .limit(1)
+    .get();
+  return sessionSnap.empty ? null : sessionSnap.docs[0].id;
+}
+
+async function claimOutbox(outboxId: string, workerId: string): Promise<ApprovalOutboxRecord | null> {
+  const ref = db.collection("billingApprovalOutbox").doc(outboxId);
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists) return null;
+    const record = snap.data() as ApprovalOutboxRecord;
+    const now = Date.now();
+    const nextAttempt = record.nextAttemptAt ? Date.parse(record.nextAttemptAt) : 0;
+    const leaseExpiry = record.leaseExpiresAt ? Date.parse(record.leaseExpiresAt) : 0;
+    const claimableState = record.state === "pending" || record.state === "retry";
+    if (!claimableState || nextAttempt > now || leaseExpiry > now) return null;
+
+    const updatedAt = new Date(now).toISOString();
+    transaction.update(ref, {
+      state: "processing",
+      attemptCount: Number(record.attemptCount ?? 0) + 1,
+      leaseOwner: workerId,
+      leaseExpiresAt: new Date(now + LEASE_MS).toISOString(),
+      updatedAt,
+    });
+    return { ...record, state: "processing", attemptCount: Number(record.attemptCount ?? 0) + 1 };
+  });
+}
+
+async function moveToRetryOrReview(outboxId: string, errorCode: string): Promise<void> {
+  const outboxRef = db.collection("billingApprovalOutbox").doc(outboxId);
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(outboxRef);
+    if (!snap.exists) return;
+    const record = snap.data() as ApprovalOutboxRecord;
+    if (record.state === "delivered") return;
+
+    const attemptCount = Number(record.attemptCount ?? 0);
+    const terminal = attemptCount >= MAX_ATTEMPTS;
+    const now = new Date().toISOString();
+    transaction.update(outboxRef, {
+      state: terminal ? "requires_admin_review" : "retry",
+      nextAttemptAt: terminal ? null : retryAt(attemptCount),
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastErrorCode: errorCode.slice(0, 100),
+      updatedAt: now,
+    });
+    if (terminal) {
+      transaction.update(db.collection("shiftHours").doc(record.appointmentId), {
+        status: "requires_admin_review",
+        approvalNoticeState: "failed",
+        autoApproveAt: null,
+        updatedAt: now,
+      });
+    }
+  });
+}
+
+export async function dispatchApprovalNotice(outboxId: string, workerId: string): Promise<boolean> {
+  const record = await claimOutbox(outboxId, workerId);
+  if (!record) return false;
+
+  const phone = await resolveRecipientPhone(record.recipientUid);
+  if (!phone) {
+    await moveToRetryOrReview(outboxId, "recipient_phone_not_found");
+    return false;
+  }
+
+  const payload = record.payloadSnapshot ?? {};
+  const caregiverName = payload.caregiverName ?? "Your caregiver";
+  const amount = (Number(payload.grossPayCents ?? 0) / 100).toFixed(2);
+  const hours = Number(payload.totalHours ?? 0);
+  const date = payload.date ?? "the completed visit";
+  const providerMessageIds: string[] = [];
+
+  try {
+    const sent = await sendViaInteractionAgent(phone, {
+      content:
+        `${caregiverName} submitted ${hours}h for ${date} ($${amount}).\n\n` +
+        "Reply APPROVE to confirm and release payment, or DISPUTE if something looks off.",
+      urgency: "standard",
+      sourceAgent: "billing_approval_notice",
+      canDrop: false,
+      preferredService: "SMS",
+      onTransportReceipt: (messageId) => { providerMessageIds.push(messageId); },
+    });
+    if (!sent || providerMessageIds.length === 0) {
+      await moveToRetryOrReview(outboxId, sent ? "missing_provider_receipt" : "message_suppressed");
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const outboxRef = db.collection("billingApprovalOutbox").doc(outboxId);
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(outboxRef);
+      if (!snap.exists || snap.data()?.state !== "processing") return;
+      transaction.update(outboxRef, {
+        state: "sent",
+        providerMessageId: providerMessageIds[0],
+        providerOperationId: providerMessageIds[0],
+        providerStatus: "sent",
+        nextAttemptAt: new Date(Date.now() + DELIVERY_TIMEOUT_MS).toISOString(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        lastErrorCode: null,
+        updatedAt: now,
+      });
+      transaction.update(db.collection("shiftHours").doc(record.appointmentId), {
+        approvalNoticeState: "sent",
+        updatedAt: now,
+      });
+      transaction.set(db.collection("agent_sessions").doc(phone), {
+        pendingShiftApproval: {
+          appointmentId: record.appointmentId,
+          amount,
+          caregiverName,
+        },
+        pendingShiftApprovalSetAt: now,
+      }, { merge: true });
+    });
+    return true;
+  } catch (error) {
+    await moveToRetryOrReview(outboxId, error instanceof Error ? error.name : "send_failed");
+    return false;
+  }
+}
+
+export async function recordApprovalNoticeProviderStatus(
+  providerMessageId: string,
+  status: "delivered" | "failed",
+  errorCode?: string,
+): Promise<boolean> {
+  const snap = await db.collection("billingApprovalOutbox")
+    .where("providerMessageId", "==", providerMessageId)
+    .limit(1)
+    .get();
+  if (snap.empty) return false;
+
+  const outboxDoc = snap.docs[0];
+  if (status === "failed") {
+    await moveToRetryOrReview(outboxDoc.id, errorCode ?? "provider_delivery_failed");
+    return true;
+  }
+
+  const now = new Date().toISOString();
+  await db.runTransaction(async (transaction) => {
+    const current = await transaction.get(outboxDoc.ref);
+    if (!current.exists || current.data()?.state === "delivered") return;
+    const record = current.data() as ApprovalOutboxRecord;
+    transaction.update(outboxDoc.ref, {
+      state: "delivered",
+      providerStatus: "delivered",
+      completedAt: now,
+      nextAttemptAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: now,
+    });
+    transaction.update(db.collection("shiftHours").doc(record.appointmentId), {
+      approvalNoticeState: "delivered",
+      approvalNoticeDeliveredAt: now,
+      updatedAt: now,
+    });
+  });
+  return true;
+}
+
+export async function processApprovalNoticeOutbox(): Promise<{ attempted: number; sent: number }> {
+  const now = new Date().toISOString();
+  const workerId = `approval-notice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const ready = await db.collection("billingApprovalOutbox")
+    .where("state", "in", ["pending", "retry"])
+    .where("nextAttemptAt", "<=", now)
+    .orderBy("nextAttemptAt", "asc")
+    .limit(20)
+    .get();
+
+  let sent = 0;
+  for (const doc of ready.docs) {
+    if (await dispatchApprovalNotice(doc.id, workerId)) sent += 1;
+  }
+
+  const staleSent = await db.collection("billingApprovalOutbox")
+    .where("state", "==", "sent")
+    .where("nextAttemptAt", "<=", now)
+    .limit(20)
+    .get();
+  for (const doc of staleSent.docs) {
+    await moveToRetryOrReview(doc.id, "delivery_receipt_timeout");
+  }
+
+  return { attempted: ready.size, sent };
+}
+
+export const dispatchBillingApprovalNotices = functions.pubsub
+  .schedule("every 1 minutes")
+  .timeZone("UTC")
+  .onRun(async () => {
+    await processApprovalNoticeOutbox();
+  });

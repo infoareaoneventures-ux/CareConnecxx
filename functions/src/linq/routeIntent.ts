@@ -2,11 +2,14 @@ import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
+import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
   !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
-import { buildCapabilityMenu } from "../agents/caraCapabilities";
+import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
+import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
@@ -19,7 +22,6 @@ import {
   writeInterviewOutcomeSignal,
 } from "../agents/interviewAgent";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
-import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
@@ -31,6 +33,7 @@ import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { handleJobResponse } from "../triggers/jobNotifications";
 import {
   addUserMessageToZep,
@@ -40,6 +43,7 @@ import {
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
 import { handleRecurringConfirm } from "./inboundHelpers";
+import { buildNonMedicalDeflection, medicalActionsAvailable } from "../agents/medicalBoundary";
 
 const db = admin.firestore();
 
@@ -116,7 +120,9 @@ async function handleRecurringCancel(phone: string, chatId: string, session: Age
     return;
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  // Business-timezone today — UTC ("PT tomorrow" in the evening) left
+  // tomorrow's visit confirmed when cancelling a recurring schedule at night.
+  const today = businessTodayStr();
 
   // Cancel all future unconfirmed visits from this schedule
   const futureSnap = await db.collection("appointments")
@@ -169,7 +175,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
     return;
   }
   const sched = schedSnap.data()!;
-  const today = new Date().toISOString().split("T")[0];
+  const today = businessTodayStr();
   const now   = new Date().toISOString();
 
   const { generateRecurringDates } = await import("../scheduled/recurringScheduler");
@@ -189,12 +195,15 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
       clientId:            sched.clientId,
       caregiverId:         sched.caregiverId,
       caregiverName:       sched.caregiverName,
+      seniorName:          sched.seniorName || null,
       date,
       startTime:           sched.startTime,
       endTime:             sched.endTime,
       durationHours:       sched.durationHours,
       hourlyRate:          sched.hourlyRate,
+      ...canonicalApptFields({ startTime: sched.startTime as string, durationHours: sched.durationHours as number | undefined, hourlyRate: sched.hourlyRate as number | undefined }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleId,
       humanApproved:       true,
       createdByAgent:      true,
@@ -327,13 +336,23 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
 
     // ── /help: capability discovery ──────────────────────────────────────────
-    // Static, side-effect-free reply listing what Cara can do for this role.
+    // Static, side-effect-free reply listing what Evia can do for this role.
     // Reached only via the exact-string command bypass in classifyIntentDetailed.
     if (intent === "HELP") {
-      await sendMessage(
-        chatId,
-        buildCapabilityMenu(session.userType, session.preferredLanguage ?? "en")
-      );
+      const role: DiscoveryRole = session.userType === "caregiver"
+        ? "caregiver"
+        : (session as any).isSecondaryMember
+          ? "family-secondary"
+          : "client";
+      const ops = await loadCaraOperationalContext({
+        phone,
+        userId: session.userId,
+        caregiverId: session.caregiverId,
+      }).catch(() => null);
+      await sendMessage(chatId, buildHelpSmsReply(
+        role,
+        ops ? buildOperationalRecipeLead(ops, role) : undefined,
+      ));
       return;
     }
 
@@ -414,7 +433,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
         const cancelConfirmMsgA = await generateCaraMessage({
           audience: "family",
-          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
           fallback: "Cancelled. Want me to find a replacement for that day?",
           maxTokens: 60,
         });
@@ -431,11 +450,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (BOOKING_CONFIRM):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "booking_confirm_nl", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
+            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -524,7 +548,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         if (caregiverId) writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
         const hireMsgA = await generateCaraMessage({
           audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
           fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
           maxTokens: 80,
         });
@@ -542,7 +566,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       } else {
         const noJobMsg = await generateCaraMessage({
           audience: "caregiver",
-          context: "Caregiver responded to a job offer but there was no pending job in session. Cara acknowledges and lets them know it will reach out when something comes up.",
+          context: "Caregiver responded to a job offer but there was no pending job in session. Evia acknowledges and lets them know it will reach out when something comes up.",
           fallback: "No worries — I'll reach out when something comes up.",
           maxTokens: 60,
         });
@@ -584,7 +608,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         });
         const cancelConfirmMsgB = await generateCaraMessage({
           audience: "family",
-          context: "Visit has been cancelled. Cara is confirming and offering to find a replacement for that day.",
+          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
           fallback: "Cancelled. Want me to find a replacement for that day?",
           maxTokens: 60,
         });
@@ -602,11 +626,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (YES):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "booking_confirm_yes", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
+            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -729,9 +758,12 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           if (resolvedNorm === "HIRE") {
             let caregiverId = pendingOutcome.caregiverId ?? "";
             if (!caregiverId && pendingOutcome.interviewId) {
+              // interviewId is an interview-doc id, NOT an interview_requests
+              // doc id — the request doc stamps it as a field (interviewAgent),
+              // so resolve by equality query like every other consumer.
               const reqSnap = await db.collection("interview_requests")
-                .doc(pendingOutcome.interviewId).get();
-              if (reqSnap.exists) caregiverId = reqSnap.data()?.caregiverId ?? "";
+                .where("interviewId", "==", pendingOutcome.interviewId).limit(1).get();
+              if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data()?.caregiverId ?? "";
             }
             await db.collection("agent_sessions").doc(phone).update({
               hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },
@@ -743,7 +775,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             }
             const hireMsgB = await generateCaraMessage({
               audience: "family",
-              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
               fallback: `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`,
               maxTokens: 80,
             });
@@ -809,7 +841,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         }
         const hireMsgC = await generateCaraMessage({
           audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Cara is affirming the choice and asking when they'd like care to start.`,
+          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
           fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
           maxTokens: 80,
         });
@@ -885,9 +917,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // — detect criterion changes and re-run matching with the new filters.
       if (isFresh) {
         const { detectMatchRefilter } = await import("../utils/matchRefilterDetector");
-        // Load Cara's last message so the detector can tell a search-criteria
+        // Load Evia's last message so the detector can tell a search-criteria
         // change ("show me cheaper ones") apart from the family simply ANSWERING
-        // a question Cara just asked (e.g. "What date/time works best?" → "Today
+        // a question Evia just asked (e.g. "What date/time works best?" → "Today
         // at 11am"). Without it, a scheduling-time reply was being misread as an
         // availability refilter and triggering a fresh caregiver search.
         const lastAssistantMessage = await db
@@ -976,8 +1008,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     if (intent === "PERMISSION_UPDATE") {
       const userId   = session.userId ?? session.caregiverId ?? phone;
       const userType = session.userType ?? "client";
-      await updatePermissionFromText(userId, userType, phone, chatId, text);
-      return;
+      const handled = await updatePermissionFromText(userId, userType, phone, chatId, text);
+      if (handled) return;
+      // Classifier/parser failures fall through to the QA agent so the user
+      // still gets a response instead of a silent terminal turn.
     }
 
     if (intent === "MEMORY_QUERY") {
@@ -985,7 +1019,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const zepFacts  = await searchZepMemory(zepUserId, text).catch(() => "");
       const memUserId = session.userId ?? session.caregiverId ?? phone;
       const { handleMemoryQuery } = await import("../memory/memoryFiles");
-      await handleMemoryQuery(memUserId, chatId, sendMessage, zepFacts || undefined);
+      await handleMemoryQuery(memUserId, chatId, sendMessage, text, zepFacts || undefined);
       return;
     }
 
@@ -1129,11 +1163,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (hireMode):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "hire_mode_auto_book", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: `Booking ${hire.caregiverName} for that schedule didn't lock in. Tell the family plainly, and say you're checking ${hire.caregiverName}'s other openings (or a similar caregiver) right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
+            fallback: `Booking ${hire.caregiverName} for that schedule didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -1153,7 +1192,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // ── hireMode step A — date reply ──────────────────────────────────────────
     if ((session as any).hireMode && !(session as any).hireModeDate) {
       const parsedDateRaw = await quickComplete(
-        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+        `Today is ${businessTodayStr()}. ` +
           "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
         text,
         { maxTokens: 20 },
@@ -1250,7 +1289,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         startTime: string; endTime: string; durationHours: number;
       };
       const parsedDateRaw = await quickComplete(
-        `Today is ${new Date().toISOString().slice(0, 10)}. ` +
+        `Today is ${businessTodayStr()}. ` +
           "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
         text,
         { maxTokens: 20 },
@@ -1277,11 +1316,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         } catch (err) {
           console.error("executeBookings failed (rebook):", err);
           await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
+          await db.collection("admin_alerts").add({
+            type: "route_intent_fallback", handler: "rebook_auto_book", phone,
+            error: String(err).slice(0, 300), severity: "medium",
+            createdAt: new Date().toISOString(), resolved: false,
+          }).catch(() => {});
           await sendMessage(chatId, await generateCaraMessage({
             audience: "family",
             language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "You hit a snag finalizing that booking. Warmly reassure the family you're on it — you'll sort out an alternative and get back to them shortly. Sound human and calm, not like an error message.",
-            fallback: "I ran into a problem locking that in. Let me find an alternative — I'll get back to you shortly.",
+            context: `Rebooking ${rebook.caregiverName} for ${dateStr} didn't lock in. Tell the family plainly, and say you're checking other openings for that visit right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
+            fallback: `Rebooking ${rebook.caregiverName} for that date didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
             maxTokens: 80,
           }));
           const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
@@ -1352,7 +1396,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // machine below, unchanged). Reversible by clearing CONVERGENCE_FLIPPED; the
       // state machine is retained until a later post-flip cleanup deletes it.
       if (isConvergenceFlipped("reminder_management")) {
-        const qaReplyReminder = await runQaAgent({
+        // runQaAgent delivers its own reply via sendSplit(chatId); do NOT also
+        // route it through sendViaInteractionAgent (that path is for proactive
+        // agent-initiated sends and would double-send this reply). Matches the
+        // default QA path below.
+        await runQaAgent({
           text, phone, chatId,
           userId:      session.userId ?? "",
           seniorId:    session.seniorId ?? session.userId ?? "",
@@ -1360,9 +1408,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           caregiverId: session.caregiverId,
           session:     session as unknown as Record<string, unknown>,
           intent,
-        });
-        await sendViaInteractionAgent(phone, {
-          content: qaReplyReminder, urgency: "standard", sourceAgent: "qa_reminder", canDrop: false,
         });
         return;
       }
@@ -1385,7 +1430,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       });
       const rescheduleNlMsg = await generateCaraMessage({
         audience: "caregiver",
-        context: "Caregiver wants to reschedule a visit. Cara is asking them to suggest 2–3 times that work and will relay them to the family.",
+        context: "Caregiver wants to reschedule a visit. Evia is asking them to suggest 2–3 times that work and will relay them to the family.",
         fallback: "No problem — text me 2–3 times that work for you and I'll let the family know right away.",
         maxTokens: 80,
       });
@@ -1395,7 +1440,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
     if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
-      const qaReplyReschedule = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1406,12 +1453,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyReschedule,
-        urgency:     "standard",
-        sourceAgent: "qa_reschedule",
-        canDrop:     false,
       });
       return;
     }
@@ -1559,6 +1600,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // Initialise the state machine by calling with step = "identify_visit"
       await handleRefundRequest(
         refundClientId,
+        phone,
         text,
         session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
@@ -1571,7 +1613,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       (intent === "VIEW_INVOICE" && session.userType !== "caregiver") ||
       (intent === "VIEW_CARE_PLAN_HISTORY" && session.userType !== "caregiver")
     ) {
-      const qaReplyInvoice = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1582,12 +1626,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyInvoice,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
       });
       return;
     }
@@ -1646,7 +1684,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       intent === "VIEW_JOURNAL"    ||
       intent === "BROWSE_JOB_BOARD"
     ) {
-      const qaReplyPlatform = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1658,18 +1698,14 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         session:     session as unknown as Record<string, unknown>,
         intent,
       });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReplyPlatform,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
-      });
       return;
     }
 
     // ── Credential management — "what logins do you have", "remove my CVS login" ─
     if (intent === "CREDENTIAL_MANAGEMENT" && session.userType !== "caregiver") {
-      const qaReply = await runQaAgent({
+      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
+      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      await runQaAgent({
         text,
         phone,
         chatId,
@@ -1680,12 +1716,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
-      });
-      await sendViaInteractionAgent(phone, {
-        content:     qaReply,
-        urgency:     "standard",
-        sourceAgent: "qa",
-        canDrop:     false,
       });
       return;
     }
@@ -1707,6 +1737,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
        intent === "NEW_PRESCRIPTION") &&
       session.userType !== "caregiver"
     ) {
+      if (!medicalActionsAvailable()) {
+        await sendMessage(chatId, buildNonMedicalDeflection(intent, text));
+        return;
+      }
       if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
       try {
         const { startHealthcareFlow } = await import("../agents/healthcareHandler");

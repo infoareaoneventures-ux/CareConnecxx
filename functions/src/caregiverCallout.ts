@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
 import { Resend } from "resend";
 import { isCaregiverBookable } from "./utils/caregiverEligibility";
+import { appLink } from "./config/appUrl";
 
 // Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
@@ -13,8 +14,8 @@ const db = admin.firestore();
 // Initialize Resend for email notifications
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
-const FROM_NAME = process.env.RESEND_FROM_NAME || "CareConnex";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@eviacares.com";
+const FROM_NAME = process.env.RESEND_FROM_NAME || "Evia";
 
 /**
  * Caregiver Callout / Backup Matching System
@@ -180,6 +181,17 @@ async function findBackupCaregivers(appointment: Appointment, originalCaregiverI
             .where('status', '==', 'approved');
 
         const snapshot = await query.get();
+        const dayAppointments = await db.collection('appointments')
+            .where('date', '==', date)
+            .where('status', 'in', ['confirmed', 'pending', 'in-progress'])
+            .limit(500)
+            .get();
+        const bookedCaregiverIds = new Set(
+            dayAppointments.docs
+                .filter(doc => doc.data().time === time)
+                .map(doc => doc.data().caregiverId as string)
+                .filter(Boolean)
+        );
         
         const potentialCaregivers: CaregiverProfile[] = [];
 
@@ -205,8 +217,7 @@ async function findBackupCaregivers(appointment: Appointment, originalCaregiverI
             if (!isAvailable) continue;
 
             // Check if already booked at that time
-            const isBooked = await checkIfBooked(data.id, date, time);
-            if (isBooked) continue;
+            if (bookedCaregiverIds.has(data.id)) continue;
 
             potentialCaregivers.push(data);
         }
@@ -247,31 +258,18 @@ function checkAvailability(availability: any, date: string, time: string): boole
 }
 
 /**
- * Check if caregiver is already booked at that time
- */
-async function checkIfBooked(caregiverId: string, date: string, time: string): Promise<boolean> {
-    try {
-        const appointmentsSnapshot = await db.collection('appointments')
-            .where('caregiverId', '==', caregiverId)
-            .where('date', '==', date)
-            .where('time', '==', time)
-            .where('status', 'in', ['confirmed', 'pending'])
-            .get();
-
-        return !appointmentsSnapshot.empty;
-    } catch (error) {
-        console.error('Error checking if caregiver is booked:', error);
-        return true; // Assume booked if error
-    }
-}
-
-/**
  * Cloud Function: Handle caregiver callout/cancellation
  * Triggered when caregiver updates appointment status to 'cancelled' or 'called_out'
  */
 export const onCaregiverCallout = functions.firestore
     .document('appointments/{appointmentId}')
     .onUpdate(async (change, context) => {
+        // appointmentUpdated is the sole owner of every caregiver-cancellation
+        // variant. Keep this exported trigger as an inert compatibility shim so
+        // an in-flight deployment cannot launch a second replacement workflow.
+        return null;
+
+        /* istanbul ignore next -- legacy implementation retained until function cleanup deploy */
         const before = change.before.data() as Appointment;
         const after = change.after.data() as Appointment;
         const appointmentId = context.params.appointmentId;
@@ -378,7 +376,7 @@ function generateCalloutEmailHtml(caregiverName: string, date: string, time: str
                                     ${caregiverList}
 
                                     <div style="text-align: center; margin: 32px 0;">
-                                        <a href="https://careconnex-d4c8b.web.app/client/dashboard" 
+                                        <a href="${appLink("/client/dashboard")}"
                                            style="display: inline-block; background: #0d9488; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600;">
                                             Select Backup Caregiver
                                         </a>
@@ -394,7 +392,7 @@ function generateCalloutEmailHtml(caregiverName: string, date: string, time: str
                             <tr>
                                 <td style="background: #f8fafc; padding: 24px; text-align: center;">
                                     <p style="color: #64748b; font-size: 13px; margin: 0;">
-                                        Need help? Contact us at <a href="mailto:support@careconnex.com" style="color: #0d9488;">support@careconnex.com</a>
+                                        Need help? Contact us at <a href="mailto:support@eviacares.com" style="color: #0d9488;">support@eviacares.com</a>
                                     </p>
                                 </td>
                             </tr>
@@ -429,15 +427,15 @@ AVAILABLE BACKUP CAREGIVERS:
 ${caregiverList}
 
 To select a backup caregiver, visit:
-https://careconnex-d4c8b.web.app/client/dashboard
+${appLink("/client/dashboard")}
 
 PREFER A REFUND?
 If none of these caregivers work for you, you can request a full refund from your dashboard.
 
-Need help? Contact us at support@careconnex.com
+Need help? Contact us at support@eviacares.com
 
 ---
-CareConnex - Care that feels like family
+Evia - Care that feels like family
 `;
 }
 
@@ -652,7 +650,9 @@ export const requestCalloutRefund = functions.https.onCall(async (data, context)
             clientId: appointment.clientId,
             amount: appointment.amount || 0,
             reason: reason || 'Caregiver called out',
-            status: 'pending',
+            status: 'requested',
+            requestedAt: new Date().toISOString(),
+            source: 'caregiver_callout',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 

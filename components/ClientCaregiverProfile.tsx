@@ -176,7 +176,7 @@ export default function ClientCaregiverProfile({
     try {
       const [userSnap, cgSnap] = await Promise.all([
         db!.collection('users').doc(id).get().catch(() => null),
-        db!.collection('caregivers').doc(id).get().catch(() => null),
+        db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null),
       ]);
       if (!userSnap?.exists && !cgSnap?.exists) {
         if (!passedData) setCaregiver(null);

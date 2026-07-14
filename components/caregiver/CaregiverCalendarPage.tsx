@@ -6,9 +6,10 @@ import {
   Video, Phone, Home, Loader2, User, MapPin, CheckCircle, Lock,
 } from 'lucide-react';
 import firebase from 'firebase/compat/app';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
+import { useAuthUser } from '../../hooks/useAuthUser';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { blocksToWeeklySlots, weeklySlotsToBl } from '../../services/availabilityService';
 import { shiftDisplayStatus, shiftStatusBlockClass, shiftStatusBadgeClass, shiftStatusDotClass, shiftStatusLabel } from '../../utils/shiftUtils';
@@ -57,8 +58,9 @@ interface InterviewEvent {
   clientId: string;
   clientName?: string;
   scheduledTime: string;
-  status: 'requested' | 'accepted' | 'in-progress' | 'completed' | 'cancelled' | 'declined';
+  status: 'requested' | 'accepted' | 'scheduled' | 'confirmed' | 'in-progress' | 'completed' | 'cancelled' | 'declined';
   interviewType: 'video' | 'phone' | 'in-person';
+  callUrl?: string;
   notes?: string;
   jobId?: string;
   jobTitle?: string;
@@ -163,7 +165,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   const [saving,            setSaving]            = useState(false);
   const [expandedDates,     setExpandedDates]     = useState<Record<string, boolean>>({});
 
-  const user = auth?.currentUser;
+  const user = useAuthUser();
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
   useEffect(() => { fetchInterviews(); fetchAvailability(); }, []);
@@ -198,7 +200,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
       const list: InterviewEvent[] = [];
       snap.forEach(doc => {
         const data = doc.data();
-        if (['requested', 'accepted', 'in-progress', 'completed'].includes(data.status)) {
+        if (['requested', 'accepted', 'scheduled', 'confirmed', 'in-progress', 'completed'].includes(data.status)) {
           list.push(parseInterview(doc.id, data));
         }
       });
@@ -1041,11 +1043,12 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
             </div>
           )}
 
-          {/* Join Call for video + accepted/in-progress */}
-          {interview.interviewType === 'video' && (interview.status === 'accepted' || interview.status === 'in-progress') && (
-            <button onClick={() => navigate('/caregiver/video')}
+          {/* Join the Google Meet link (server-generated; meet.google.com only) */}
+          {interview.callUrl?.startsWith('https://meet.google.com/') &&
+            ['accepted', 'scheduled', 'confirmed', 'in-progress'].includes(interview.status) && (
+            <button onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
               className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
-              <Video className="w-4 h-4" /> Join Call
+              <Video className="w-4 h-4" /> Join video call
             </button>
           )}
 

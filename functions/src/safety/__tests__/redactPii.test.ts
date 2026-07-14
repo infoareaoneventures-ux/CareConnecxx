@@ -40,8 +40,8 @@ describe("redactPii", () => {
   });
 
   it("redacts non-careconnex emails but keeps careconnex ones", () => {
-    const got = redactPii("You can reach support@careconnex.com, or the doctor at dr.lee@gmailclinic.com.");
-    expect(got.text).toContain("support@careconnex.com");
+    const got = redactPii("You can reach support@eviacares.com, or the doctor at dr.lee@gmailclinic.com.");
+    expect(got.text).toContain("support@eviacares.com");
     expect(got.text).not.toContain("dr.lee@gmailclinic.com");
     expect(got.redactions).toEqual(["email"]);
   });

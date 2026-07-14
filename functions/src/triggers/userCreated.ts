@@ -26,6 +26,15 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     const existing = await db.collection("agent_sessions").doc(phone).get();
     if (existing.exists) return;
 
+    // /start web signups text Evia themselves moments after this trigger fires
+    // (MO consent) — the webhook's web bridge owns that first touch with Evia's
+    // real voice, and a session created here would block the bridge entirely
+    // (it only runs when no agent_sessions doc exists). Only reach out first
+    // for accounts with no pending web handoff (e.g. admin-created clients).
+    const webSession = await db.collection("web_onboarding_sessions").doc(phone).get();
+    const webStatus = webSession.exists ? (webSession.data()?.status as string | undefined) : undefined;
+    if (webStatus === "awaiting_inbound" || webStatus === "connected") return;
+
     const capability = await checkCapability(phone);
     const service: LinqService = capability.iMessage
       ? "iMessage"
@@ -33,20 +42,23 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       ? "RCS"
       : "SMS";
 
-    const firstName: string = data.firstName ?? data.name?.split(" ")[0] ?? "there";
+    // firstName may hold a full name — always take the first word
+    const firstName: string = (data.firstName ?? data.name ?? "there").trim().split(/\s+/)[0] || "there";
 
-    // TCPA: first message must request consent — no care data sent until user replies YES
+    // TCPA: first message must request consent — no care data sent until user replies YES.
+    // Keep this a template (never LLM-generated): consent language must be exact and auditable.
     const optInText =
-      `Hi ${firstName} — I'm Cara, your AI care assistant.\n\n` +
-      `Reply YES to receive real-time care updates — visit summaries, wellness alerts, ` +
-      `and health signals for your loved one.\n\n` +
+      `Hi ${firstName} — I'm Evia, your care coordinator.\n\n` +
+      `Reply YES and I'll text you real-time care updates and a summary after every visit — ` +
+      `and I can help you find background-checked caregivers, set up interviews, and ` +
+      `schedule visits, all right here over text.\n\n` +
       `Reply STOP anytime to opt out. Msg & data rates may apply.`;
 
     const chat = await createChat(phone, {
       parts: [{ type: "text", value: optInText }],
     });
 
-    // Register Cara as a named contact so users see "Cara" not a raw number
+    // Register Evia as a named contact so users see "Evia" not a raw number
     await setupCaraContactCard();
     await shareContactCard(chat.chat_id).catch(() => {/* non-critical */});
 

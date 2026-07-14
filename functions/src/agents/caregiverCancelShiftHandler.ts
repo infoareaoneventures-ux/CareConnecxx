@@ -1,9 +1,10 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendViaInteractionAgent } from "./caraAgent";
+import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -42,13 +43,12 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 }
 
 async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, an AI care assistant helping a caregiver cancel one of their upcoming shifts. " +
-      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue the cancellation — that prompt comes next.",
+  return answerHumanMidFlow({
+    audience: "caregiver",
+    situation: "caregiver is canceling one of their upcoming shifts",
     text,
-    { maxTokens: 150 },
-  ).catch(() => "Let me get back to you on that. In the meantime —");
-  return `${answer}\n\n${reAsk}`;
+    reAsk,
+  });
 }
 
 export async function handleCaregiverCancelShift(
@@ -63,7 +63,8 @@ export async function handleCaregiverCancelShift(
 
   // ── identify_shift — list shifts, store candidates ─────────────────────────
   if (step === "identify_shift") {
-    const today = new Date().toISOString().slice(0, 10);
+    // Business-timezone today — UTC hid tonight's shift after 5pm PT
+    const today = businessTodayStr();
     const snap = await db.collection("appointments")
       .where("caregiverId", "==", caregiverId)
       .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])

@@ -8,7 +8,7 @@
  *   1. Detects a shared-location part (tolerant of several shapes — Linq's inbound
  *      schema for rich attachments isn't strictly documented, same caveat as the
  *      voice-memo handling in voiceTranscription.ts).
- *   2. Reverse-geocodes the coordinates to a city + zip so the rest of Cara —
+ *   2. Reverse-geocodes the coordinates to a city + zip so the rest of Evia —
  *      which is city/zip-centric (local-job teaser, display, proxy matcher) — keeps
  *      working unchanged, while the raw lat/lng unlocks true haversine matching.
  *
@@ -17,6 +17,25 @@
  */
 
 import axios from "axios";
+
+/**
+ * Whether EVIA can use Linq's native location-share prompt on this chat.
+ *
+ * The native request (`POST /chats/{id}/location/request`) works on 1:1 iMessage
+ * ONLY — SMS, RCS, and group chats return HTTP 409. Gating on the session's
+ * already-resolved `service` avoids an extra capability round-trip; a stale value
+ * that 409s is caught by `requestLocation`'s fallback, so a wrong guess costs one
+ * harmless failed call rather than a user-visible error.
+ *
+ * Param is intentionally structural (not the full `AgentSession`) so callers can
+ * pass a raw Firestore session doc without a type import; `service === "iMessage"`
+ * plus the absence of a `groupChatId` (group chats 409) is the whole gate.
+ */
+export function canRequestNativeLocation(
+  session: { service?: string; groupChatId?: string | null } | null | undefined
+): boolean {
+  return session?.service === "iMessage" && !session.groupChatId;
+}
 
 export interface SharedLocation {
   lat:    number;

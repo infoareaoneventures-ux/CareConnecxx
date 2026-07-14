@@ -3,6 +3,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { createBookingTask } from "./bookingExecutor";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -22,17 +23,12 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerQuestionMidFlow(text: string, optionsSummary: string): Promise<string> {
-  try {
-    return await quickComplete(
-      "You are Cara, an AI care assistant. A family member was just shown caregiver options " +
-      `(${optionsSummary}) and asked to pick one. Instead they asked a question. Answer it briefly ` +
-      "(1–2 sentences). Be warm and helpful. Do NOT tell them to pick a caregiver — that prompt is sent separately.",
-      text,
-      { maxTokens: 180 },
-    );
-  } catch {
-    return "Sorry, I'm having trouble pulling that up right now.";
-  }
+  return answerHumanQuestionOnly({
+    audience: "family",
+    situation: `family was shown caregiver options (${optionsSummary}) and asked to pick one`,
+    text,
+    maxTokens: 180,
+  });
 }
 
 export async function handleTaskApproval(

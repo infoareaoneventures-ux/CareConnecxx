@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Clock, X, Plus, Trash2 } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
+import { isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -134,7 +135,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
     }
   };
 
-  const isCash = shift.paymentMethod === 'cash';
+  const isOffline = isOfflinePaymentMethod(shift.paymentMethod);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -305,8 +306,8 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
 
           {/* Payment note */}
           <p className="text-xs text-slate-500">
-            {isCash
-              ? 'Payment method: Cash. Client will approve your hours for the record; cash is paid directly.'
+            {isOffline
+              ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client will approve your hours for the record; payment is made directly.`
               : 'Payment method: Credit. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.'}
           </p>
         </div>

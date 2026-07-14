@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Activity, ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy, MessageCircle } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
+import { CARA_CAPABILITIES, CapabilityRole, capabilityLabel, capabilityExample } from '../constants/caraCapabilities';
 import { ViewType } from '../types';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 
@@ -18,20 +19,20 @@ const familiesContent = [
     category: 'Getting Started & Finding Care',
     faqs: [
       {
-        q: 'What is CareConnex?',
-        a: 'CareConnex is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, conduct video interviews, and hire — all without costly agency fees.',
+        q: 'What is Evia?',
+        a: 'Evia is a premium marketplace connecting families directly with experienced, vetted senior caregivers. Unlike traditional agencies, our platform lets you browse real profiles, read verified reviews, interview caregivers over a video call, and hire — all without costly agency fees.',
       },
       {
         q: 'How do I find a caregiver for my senior family member?',
-        a: 'Create a free family account and complete our short care-needs intake. Our AI engine instantly surfaces caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message or schedule a video interview directly.',
+        a: 'Create a free family account and complete our short care-needs intake. Our AI engine instantly surfaces caregivers matched to your location, schedule, and specific care requirements — whether that is companionship, dementia support, or driving assistance. You can then browse profiles, read reviews, and send a message — or schedule a video interview from a caregiver profile or simply by texting Evia. Once a time is set, both you and the caregiver receive a Google Meet link by text.',
       },
       {
         q: 'What types of senior care services are available?',
-        a: 'Caregivers on CareConnex offer companionship, meal preparation, medication reminders, light housekeeping, transportation, mobility assistance, dementia care, and more. All services are non-medical in nature.',
+        a: 'Caregivers on Evia offer companionship, meal preparation, medication reminders, light housekeeping, transportation, mobility assistance, dementia care, and more. All services are non-medical in nature.',
       },
       {
         q: 'How does AI matching work?',
-        a: "CareConnex's matching engine analyzes your senior's care needs, personality profile, location, and preferred schedule, and cross-references them against each caregiver's verified skills, availability, distance, and past reliability score. The best matches appear at the top of your results.",
+        a: "Evia's matching engine analyzes your senior's care needs, personality profile, location, and preferred schedule, and cross-references them against each caregiver's verified skills, availability, distance, and past reliability score. The best matches appear at the top of your results.",
       },
       {
         q: 'Can I manage care for a family member who lives in another city?',
@@ -44,11 +45,11 @@ const familiesContent = [
     faqs: [
       {
         q: 'Are caregivers background checked?',
-        a: 'Every caregiver on CareConnex must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also monitor for new records throughout the year.',
+        a: 'Every caregiver on Evia must pass a comprehensive annual background check processed by Checkr before their profile becomes visible to families. We also monitor for new records throughout the year.',
       },
       {
         q: 'How does the review system work?',
-        a: 'Only families who have completed a paid booking through CareConnex can leave a review. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
+        a: 'Only families who have completed a paid booking through Evia can leave a review. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
       },
       {
         q: 'What do caregiver badges mean?',
@@ -60,7 +61,7 @@ const familiesContent = [
       },
       {
         q: 'What if I have a safety concern?',
-        a: 'Our Trust & Safety team is available 7 days a week. Use the "Report" button on any profile or booking, or email support@careconnex.com. Urgent safety issues are prioritized and escalated immediately.',
+        a: 'Our Trust & Safety team is available 7 days a week. Use the "Report" button on any profile or booking, or email support@eviacares.com. Urgent safety issues are prioritized and escalated immediately.',
       },
     ],
   },
@@ -69,7 +70,7 @@ const familiesContent = [
     faqs: [
       {
         q: 'How do I interview a caregiver before hiring?',
-        a: 'Click "Schedule Interview" on any caregiver profile to book a secure, built-in video interview — no Zoom link or phone number exchange required. After the call, you can hire directly from the same screen.',
+        a: 'Click "Schedule Interview" on any caregiver profile, or simply text Evia to set up a time. Once the interview is booked, both you and the caregiver receive a Google Meet link by text — it opens in any phone browser, no Google account or app install needed — plus a calendar invite with a reminder. A "Join video call" button also appears on your interview card. Personal phone numbers are never exchanged; Evia coordinates everything. After the call, you can hire directly from the same screen.',
       },
       {
         q: 'What is a Micro-Visit?',
@@ -97,12 +98,12 @@ const familiesContent = [
         a: 'All payments are processed securely through Stripe. Add a credit card or bank account to your profile and payments are automatically released to the caregiver after shift hours are verified — no cash, checks, or Venmo required.',
       },
       {
-        q: 'Does CareConnex charge a service fee?',
-        a: 'CareConnex charges families a nominal platform service fee on each booking to cover background checks, payment processing, and 7-day support. Caregivers keep 100% of their hourly rate.',
+        q: 'Does Evia charge a service fee?',
+        a: 'Evia charges families a nominal platform service fee on each booking to cover background checks, payment processing, and 7-day support. Caregivers keep 100% of their hourly rate.',
       },
       {
         q: 'Are there membership plans?',
-        a: 'Yes. Our Premium membership reduces per-booking service fees and unlocks priority support and advanced search filters. You can also use CareConnex on a pay-as-you-go basis with no monthly commitment.',
+        a: 'Yes. Our Premium membership reduces per-booking service fees and unlocks priority support and advanced search filters. You can also use Evia on a pay-as-you-go basis with no monthly commitment.',
       },
       {
         q: 'What if I am charged incorrectly?',
@@ -160,11 +161,11 @@ const caregiversContent = [
       },
       {
         q: 'Can families find me without me applying?',
-        a: 'Yes. Families searching CareConnex can discover your profile based on their care needs and location. Keeping your profile complete and your availability up to date increases how often you appear in search results.',
+        a: 'Yes. Families searching Evia can discover your profile based on their care needs and location. Keeping your profile complete and your availability up to date increases how often you appear in search results.',
       },
       {
         q: 'What happens after I apply to a job?',
-        a: 'The family will receive your profile and can message you or schedule a video interview directly through the platform. If hired, both parties confirm the booking and it appears on your calendar.',
+        a: 'The family will receive your profile and can message you or schedule a video interview. When an interview is booked, Evia texts both you and the family a Google Meet link that opens in any phone browser — no phone numbers are exchanged. If hired, both parties confirm the booking and it appears on your calendar.',
       },
       {
         q: 'Can I decline a job offer?',
@@ -181,7 +182,7 @@ const caregiversContent = [
       },
       {
         q: 'How do I clock in and out?',
-        a: 'At the start of your shift, open the CareConnex app and tap "Clock In." At the end, tap "Clock Out." Your hours are logged automatically and shared with the family for review before payment is released.',
+        a: 'At the start of your shift, open the Evia app and tap "Clock In." At the end, tap "Clock Out." Your hours are logged automatically and shared with the family for review before payment is released.',
       },
       {
         q: 'What if I need to cancel a shift?',
@@ -189,7 +190,7 @@ const caregiversContent = [
       },
       {
         q: 'Can I work with multiple families?',
-        a: 'Yes. CareConnex allows you to manage multiple clients simultaneously as long as shifts do not overlap. Your calendar will flag any conflicts before you confirm a new booking.',
+        a: 'Yes. Evia allows you to manage multiple clients simultaneously as long as shifts do not overlap. Your calendar will flag any conflicts before you confirm a new booking.',
       },
     ],
   },
@@ -198,11 +199,11 @@ const caregiversContent = [
     faqs: [
       {
         q: 'How do I get paid?',
-        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe. Standard transfer times are 2–5 business days.',
+        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe — no action needed, funds typically arrive within 2 business days. Need money sooner? Request a free instant payout from the Payments page (or text PAYOUT to Evia) and it arrives in about 30 minutes. Families paying by cash, Venmo, or Zelle pay you directly — you just confirm receipt in the app.',
       },
       {
-        q: 'Does CareConnex take a cut of my rate?',
-        a: 'No. Caregivers keep 100% of the hourly rate they set. CareConnex charges the family a platform service fee — your earnings are never reduced.',
+        q: 'Does Evia take a cut of my rate?',
+        a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges the family a platform service fee — your earnings are never reduced.',
       },
       {
         q: 'How do I set or update my hourly rate?',
@@ -221,12 +222,12 @@ const generalContent = [
     category: 'Privacy & Data',
     faqs: [
       {
-        q: 'What personal information does CareConnex collect?',
+        q: 'What personal information does Evia collect?',
         a: 'We collect information you provide during signup (name, email, address, payment details) and information generated by your use of the platform (booking history, messages, Care Journal entries). We never sell your personal data to third parties.',
       },
       {
         q: 'How is my financial information protected?',
-        a: 'All payment data is handled by Stripe, a PCI-DSS Level 1 certified payment processor. CareConnex never stores raw credit card numbers on our servers.',
+        a: 'All payment data is handled by Stripe, a PCI-DSS Level 1 certified payment processor. Evia never stores raw credit card numbers on our servers.',
       },
       {
         q: 'Can I delete my account?',
@@ -238,7 +239,7 @@ const generalContent = [
     category: 'Terms of Service & Community Guidelines',
     faqs: [
       {
-        q: 'What is CareConnex\'s community standard?',
+        q: 'What is Evia\'s community standard?',
         a: 'All members — families and caregivers alike — must treat one another with dignity and respect. Discrimination, harassment, or fraudulent activity of any kind is prohibited and will result in immediate account suspension.',
       },
       {
@@ -246,8 +247,8 @@ const generalContent = [
         a: 'Violations are reviewed by our Trust & Safety team. Depending on severity, consequences range from a warning to permanent account removal and, where applicable, referral to law enforcement.',
       },
       {
-        q: 'Can I use CareConnex to hire caregivers off-platform?',
-        a: 'CareConnex strictly prohibits off-platform arrangements initiated through the platform. Doing so voids background check protections, payment security, and dispute resolution support for both parties.',
+        q: 'Can I use Evia to hire caregivers off-platform?',
+        a: 'Evia strictly prohibits off-platform arrangements initiated through the platform. Doing so voids background check protections, payment security, and dispute resolution support for both parties.',
       },
     ],
   },
@@ -256,19 +257,19 @@ const generalContent = [
     faqs: [
       {
         q: 'The app is not loading. What should I do?',
-        a: 'Try refreshing the page or clearing your browser cache. If using the mobile app, close and reopen it or check for updates in the App Store / Google Play. If the issue persists, contact support@careconnex.com with a description of the problem.',
+        a: 'Try refreshing the page or clearing your browser cache. If using the mobile app, close and reopen it or check for updates in the App Store / Google Play. If the issue persists, contact support@eviacares.com with a description of the problem.',
       },
       {
         q: 'I forgot my password. How do I reset it?',
         a: 'Click "Forgot Password" on the login page and enter your email address. You will receive a reset link within a few minutes. Check your spam folder if it does not arrive.',
       },
       {
-        q: 'Which browsers and devices does CareConnex support?',
-        a: 'CareConnex works on all modern browsers (Chrome, Safari, Firefox, Edge) and is fully responsive on mobile devices. For the best experience, keep your browser updated to the latest version.',
+        q: 'Which browsers and devices does Evia support?',
+        a: 'Evia works on all modern browsers (Chrome, Safari, Firefox, Edge) and is fully responsive on mobile devices. For the best experience, keep your browser updated to the latest version.',
       },
       {
         q: 'How do I report a bug or send product feedback?',
-        a: 'Email feedback@careconnex.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
+        a: 'Email feedback@eviacares.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
       },
     ],
   },
@@ -277,16 +278,16 @@ const generalContent = [
 // ─── SHARED NAV BAR ─────────────────────────────────────────────────────────
 
 const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void }> = ({ onNavigate, onLogin }) => (
-  <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+  <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex justify-between items-center h-20">
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-          <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50"><Activity className="text-white w-6 h-6" /></div>
-          <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+          <div className="bg-ink-900 p-2 rounded-xl"><BloomMark className="text-white w-6 h-6" /></div>
+          <span className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</span>
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => onNavigate('help-center')} className="text-slate-500 hover:text-primary-600 text-sm font-medium hidden md:block">Help Center</button>
-          <button onClick={onLogin} className="text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+          <button onClick={() => onNavigate('help-center')} className="text-ink-600 hover:text-ink-900 text-sm font-medium hidden md:block">Help Center</button>
+          <button onClick={onLogin} className="text-ink-600 hover:text-ink-900 font-medium">Log In</button>
           <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
         </div>
       </div>
@@ -297,21 +298,60 @@ const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void 
 // ─── ACCORDION ──────────────────────────────────────────────────────────────
 
 const Accordion: React.FC<{ q: string; a: string; id: string; open: boolean; onToggle: () => void }> = ({ q, a, id, open, onToggle }) => (
-  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+  <div className="bg-white rounded-xl shadow-sm border hairline overflow-hidden">
     <button id={id} onClick={onToggle} className="w-full text-left px-6 py-5 flex items-center justify-between gap-4">
-      <h3 className={`text-base font-semibold pr-4 ${open ? 'text-primary-600' : 'text-slate-900'}`}>{q}</h3>
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${open ? 'bg-primary-100 text-primary-600' : 'bg-slate-100 text-slate-500'}`}>
+      <h3 className="text-base font-semibold pr-4 text-ink-900">{q}</h3>
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-paper-100 ${open ? 'text-ink-900' : 'text-ink-600'}`}>
         {open ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
       </div>
     </button>
-    {open && <div className="px-6 pb-6 text-slate-600 leading-relaxed border-t border-slate-100 pt-4 text-sm">{a}</div>}
+    {open && <div className="px-6 pb-6 text-ink-600 leading-relaxed border-t hairline pt-4 text-sm">{a}</div>}
   </div>
+);
+
+// ─── WHAT YOU CAN ASK EVIA ──────────────────────────────────────────────────
+// Sourced from constants/caraCapabilities.ts (the CI-synced mirror of the
+// backend capability list) so the help docs never drift from what Evia can do.
+
+const capabilityRoleTitles: Record<CapabilityRole, string> = {
+  client: 'For families',
+  caregiver: 'For caregivers',
+};
+
+const AskEviaSection: React.FC<{ roles: CapabilityRole[] }> = ({ roles }) => (
+  <section className="max-w-6xl mx-auto px-4 pt-12">
+    <div className="bg-white rounded-2xl border hairline shadow-sm p-6 md:p-8">
+      <div className="flex items-center gap-3 mb-2">
+        <MessageCircle className="w-6 h-6 text-ink-900" />
+        <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">What you can ask Evia</h2>
+      </div>
+      <p className="text-ink-600 text-sm mb-6">
+        Evia is your care assistant — text her, or use the in-app chat. Tell her what you need in one sentence, for example:
+      </p>
+      <div className={`grid gap-8 ${roles.length > 1 ? 'md:grid-cols-2' : ''}`}>
+        {roles.map(role => (
+          <div key={role}>
+            {roles.length > 1 && (
+              <h3 className="text-xs font-bold tracking-widest uppercase text-ink-400 mb-3">{capabilityRoleTitles[role]}</h3>
+            )}
+            <ul className="space-y-3">
+              {CARA_CAPABILITIES[role].map(entry => (
+                <li key={entry.id} className="flex flex-col">
+                  <span className="text-sm font-semibold text-ink-900">{capabilityLabel(entry)}</span>
+                  <span className="text-sm text-ink-600">"{capabilityExample(entry)}"</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
 );
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 
 export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState(0);
 
@@ -319,26 +359,26 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
     families: {
       title: 'Families Help Center',
       subtitle: 'Everything you need to find, hire, and manage trusted senior care.',
-      icon: <Users className="w-7 h-7 text-primary-600" />,
+      icon: <Users className="w-7 h-7 text-ink-900" />,
       view: 'help-families' as ViewType,
       content: familiesContent,
-      seoTitle: 'Families Help Center | CareConnex',
+      seoTitle: 'Families Help Center | Evia',
     },
     caregivers: {
       title: 'Caregivers Help Center',
       subtitle: 'Set up your profile, find great jobs, and get paid on time.',
-      icon: <Briefcase className="w-7 h-7 text-accent-500" />,
+      icon: <Briefcase className="w-7 h-7 text-ink-900" />,
       view: 'help-caregivers' as ViewType,
       content: caregiversContent,
-      seoTitle: 'Caregivers Help Center | CareConnex',
+      seoTitle: 'Caregivers Help Center | Evia',
     },
     general: {
       title: 'General Help Center',
       subtitle: 'Platform policies, privacy, technical support, and community standards.',
-      icon: <Globe className="w-7 h-7 text-teal-600" />,
+      icon: <Globe className="w-7 h-7 text-ink-900" />,
       view: 'help-general' as ViewType,
       content: generalContent,
-      seoTitle: 'General Help Center | CareConnex',
+      seoTitle: 'General Help Center | Evia',
     },
   }[section];
 
@@ -349,31 +389,31 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      <SEO title={config.seoTitle} description={config.subtitle} keywords={`CareConnex, help, ${section}`} />
-      <NavBar onNavigate={onNavigate} onLogin={() => setIsLoginModalOpen(true)} />
+    <div className="min-h-screen bg-paper-50 flex flex-col font-sans">
+      <SEO title={config.seoTitle} description={config.subtitle} keywords={`Evia, help, ${section}`} />
+      <NavBar onNavigate={onNavigate} onLogin={() => onNavigate('login')} />
 
       <main className="flex-grow">
         {/* Hero breadcrumb */}
-        <section className="bg-white border-b border-slate-200 py-10">
+        <section className="bg-paper-50 border-b hairline py-10">
           <div className="max-w-6xl mx-auto px-4">
-            <nav className="flex items-center gap-2 text-sm text-slate-500 mb-4">
-              <button onClick={() => onNavigate('help-center')} className="flex items-center gap-1 hover:text-primary-600 transition-colors">
+            <nav className="flex items-center gap-2 text-sm text-ink-600 mb-4">
+              <button onClick={() => onNavigate('help-center')} className="flex items-center gap-1 hover:text-ink-900 transition-colors">
                 <LifeBuoy className="w-4 h-4" /> Help Center
               </button>
               <ChevronRight className="w-4 h-4" />
-              <span className="text-slate-900 font-medium">{config.title}</span>
+              <span className="text-ink-900 font-medium">{config.title}</span>
             </nav>
             <div className="flex items-center gap-3 mb-2">
               {config.icon}
-              <h1 className="text-3xl md:text-4xl font-bold text-slate-900">{config.title}</h1>
+              <h1 className="text-3xl md:text-4xl font-display font-semibold text-ink-900 tracking-[-0.02em]">{config.title}</h1>
             </div>
-            <p className="text-slate-500 mt-2">{config.subtitle}</p>
+            <p className="text-ink-600 mt-2">{config.subtitle}</p>
           </div>
         </section>
 
         {/* Section tabs */}
-        <div className="bg-white border-b border-slate-100 sticky top-20 z-40">
+        <div className="bg-paper-50 border-b hairline sticky top-20 z-40">
           <div className="max-w-6xl mx-auto px-4">
             <div className="flex gap-1">
               {sectionTabs.map(tab => (
@@ -382,8 +422,8 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
                   onClick={() => onNavigate(tab.view)}
                   className={`flex items-center gap-2 px-4 py-4 text-sm font-medium border-b-2 transition-colors ${
                     section === tab.view.replace('help-', '')
-                      ? 'border-primary-600 text-primary-600'
-                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                      ? 'border-ink-900 text-ink-900'
+                      : 'border-transparent text-ink-600 hover:text-ink-900'
                   }`}
                 >
                   {tab.icon}{tab.label}
@@ -393,28 +433,33 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
           </div>
         </div>
 
+        {/* What you can ask Evia (role-aware; both roles on the general page) */}
+        <AskEviaSection
+          roles={section === 'families' ? ['client'] : section === 'caregivers' ? ['caregiver'] : ['client', 'caregiver']}
+        />
+
         {/* Content */}
         <section className="max-w-6xl mx-auto px-4 py-12 md:py-16">
           <div className="flex flex-col lg:flex-row gap-12">
             {/* Sidebar */}
             <div className="lg:w-1/4">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden sticky top-40">
-                <div className="p-5 bg-slate-50 border-b border-slate-100">
-                  <p className="text-xs font-bold tracking-widest uppercase text-slate-400">Categories</p>
+              <div className="bg-white rounded-2xl border hairline shadow-sm overflow-hidden sticky top-40">
+                <div className="p-5 bg-paper-100 border-b hairline">
+                  <p className="text-xs font-bold tracking-widest uppercase text-ink-400">Categories</p>
                 </div>
-                <ul className="divide-y divide-slate-100">
+                <ul className="divide-y divide-[rgba(26,31,43,0.08)]">
                   {config.content.map((cat, idx) => (
                     <li key={idx}>
                       <button
                         onClick={() => { setActiveCat(idx); setOpenFaq(null); }}
                         className={`w-full text-left px-5 py-4 flex items-center justify-between text-sm font-medium transition-colors ${
                           activeCat === idx
-                            ? 'bg-primary-50 text-primary-700 border-l-4 border-primary-600'
-                            : 'text-slate-600 hover:bg-slate-50 border-l-4 border-transparent'
+                            ? 'bg-paper-100 text-ink-900 border-l-4 border-ink-900'
+                            : 'text-ink-600 hover:bg-paper-50 border-l-4 border-transparent'
                         }`}
                       >
                         <span>{cat.category}</span>
-                        <ChevronRight className={`w-4 h-4 ${activeCat === idx ? 'text-primary-500' : 'text-slate-300'}`} />
+                        <ChevronRight className={`w-4 h-4 ${activeCat === idx ? 'text-ink-900' : 'text-ink-400'}`} />
                       </button>
                     </li>
                   ))}
@@ -424,7 +469,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
 
             {/* FAQ Accordion */}
             <div className="lg:w-3/4">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-4 border-b border-slate-200">
+              <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-6 pb-4 border-b hairline">
                 {config.content[activeCat].category}
               </h2>
               <div className="space-y-4">
@@ -449,9 +494,9 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
                   <button
                     key={tab.view}
                     onClick={() => onNavigate(tab.view)}
-                    className="flex items-center gap-2 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:border-primary-300 hover:bg-primary-50 transition-all text-sm font-medium text-slate-600 hover:text-primary-700"
+                    className="flex items-center gap-2 px-4 py-3 min-h-[44px] rounded-xl border hairline bg-white hover:shadow-sm transition-all text-sm font-medium text-ink-600 hover:text-ink-900"
                   >
-                    {tab.icon}{tab.label} Help <ChevronRight className="w-4 h-4 ml-auto text-slate-300" />
+                    {tab.icon}{tab.label} Help <ChevronRight className="w-4 h-4 ml-auto text-ink-400" />
                   </button>
                 ))}
               </div>
@@ -460,17 +505,16 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
         </section>
 
         {/* CTA */}
-        <section className="py-16 bg-primary-50 border-t border-primary-100">
+        <section className="py-16 bg-paper-100 border-t hairline">
           <div className="max-w-3xl mx-auto px-4 text-center">
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">Still have questions?</h2>
-            <p className="text-slate-600 mb-6">Our support team is available 7 days a week.</p>
-            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@careconnex.com'; }}>Contact Support</Button>
+            <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-3">Still have questions?</h2>
+            <p className="text-ink-600 mb-6">Our support team is available 7 days a week.</p>
+            <Button size="lg" onClick={() => { window.location.href = 'mailto:support@eviacares.com'; }}>Contact Support</Button>
           </div>
         </section>
       </main>
 
       <Footer onNavigate={onNavigate} />
-      {isLoginModalOpen && <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />}
     </div>
   );
 };

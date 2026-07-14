@@ -123,6 +123,13 @@ vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => (handleToolCall as Function).apply(null, a),
 }));
 
+// U4 — executeBookings failure path re-runs matching; stub it so the test
+// only asserts on the recovery copy + alert, not the matching internals.
+const runMatchingForClient = vi.fn(async () => {});
+vi.mock("../../agents/matchingAgent", () => ({
+  runMatchingForClient: (...a: any[]) => (runMatchingForClient as Function).apply(null, a),
+}));
+
 const quickComplete = vi.fn(async () => "");
 vi.mock("../../utils/openaiClient", () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -137,14 +144,16 @@ vi.mock("../../agents/taskApprovalHandler", () => ({
   handleTaskApproval: vi.fn(async () => {}), finalizeTaskApproval: vi.fn(async () => {}),
 }));
 vi.mock("../../agents/permissionsConversation", () => ({
-  updatePermissionFromText: vi.fn(async () => {}), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
+  updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
 }));
 vi.mock("../../agents/interviewAgent", () => ({
   handleInterviewSelection: vi.fn(async () => {}), handleInterviewConfirm: vi.fn(async () => {}),
   writeInterviewOutcomeSignal: vi.fn(() => Promise.resolve()),
 }));
+const executeBookings = vi.fn(async () => {});
 vi.mock("../../agents/bookingExecutor", () => ({
-  executeBookings: vi.fn(async () => {}), createBookingTask: vi.fn(async () => "task-1"),
+  executeBookings: (...a: any[]) => (executeBookings as Function).apply(null, a),
+  createBookingTask: vi.fn(async () => "task-1"),
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
@@ -196,7 +205,18 @@ beforeEach(() => {
   handleToolCall.mockResolvedValue({ success: true });
   quickComplete.mockResolvedValue("");
   sendMessage.mockResolvedValue({ message_id: "m1" });
+  executeBookings.mockReset().mockResolvedValue(undefined);
+  runMatchingForClient.mockReset().mockResolvedValue(undefined);
 });
+
+function seedAwaitingBookingTask() {
+  hoisted.docState.set("agent_tasks/task-1", {
+    clientPhone: PHONE,
+    status: "awaiting_approval",
+    type: "booking_confirmation",
+    createdAt: new Date().toISOString(),
+  });
+}
 
 // ── R14: family-add incomplete input asks exactly ONE missing question ────────
 describe("characterization — ADD_FAMILY_MEMBER coded flow", () => {
@@ -295,5 +315,49 @@ describe("characterization — duplicate ADD_FAMILY_MEMBER inbound", () => {
     classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
     await routeIntentAndRespond({ ...ctx("555-222-3333"), session: session2 });
     expect(handleToolCall).toHaveBeenCalledOnce(); // still ONE, not two
+  });
+});
+
+// ── U4: executeBookings failure no longer sends a stalled-promise fallback ────
+// Locks in the plan's R6/R7 fix for the YES-confirm booking-execution error
+// path (routeIntent.ts ~line 620): the old copy ("I'll get back to you
+// shortly") promised unscheduled future work. The new copy must (a) admit the
+// hiccup, (b) not promise anything the turn doesn't actually schedule, and
+// (c) the turn must write a `route_intent_fallback` admin alert alongside the
+// pre-existing `booking_execution_failed` alert.
+describe("characterization — executeBookings failure fallback (U4)", () => {
+  it("YES-confirm booking execution error sends non-promising recovery copy and writes an admin alert", async () => {
+    seed();
+    seedAwaitingBookingTask();
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    executeBookings.mockRejectedValue(new Error("stripe timeout"));
+
+    await routeIntentAndRespond(ctx("YES"));
+
+    // executeBookings was attempted, then matching was re-run in the same turn.
+    expect(executeBookings).toHaveBeenCalledWith("task-1", PHONE);
+    expect(runMatchingForClient).toHaveBeenCalledOnce();
+
+    // The reply never promises unscheduled future work.
+    expect(sendMessage).toHaveBeenCalledOnce();
+    const sentText = String(sendMessage.mock.calls[0][1]);
+    expect(sentText.toLowerCase()).not.toContain("get back to you");
+    expect(sentText.toLowerCase()).not.toContain("i'll get back to you shortly");
+
+    // Both the legacy booking_execution_failed alert and the new typed
+    // route_intent_fallback alert are written.
+    const alertDocs = Array.from((hoisted.docState as Map<string, any>).entries())
+      .filter(([path]) => path.startsWith("admin_alerts/"))
+      .map(([, data]) => data);
+    expect(alertDocs.some((d) => d.type === "booking_execution_failed")).toBe(true);
+    const fallbackAlert = alertDocs.find((d) => d.type === "route_intent_fallback");
+    expect(fallbackAlert).toMatchObject({
+      type: "route_intent_fallback",
+      handler: "booking_confirm_yes",
+      phone: PHONE,
+      severity: "medium",
+      resolved: false,
+    });
+    expect(fallbackAlert.error).toContain("stripe timeout");
   });
 });

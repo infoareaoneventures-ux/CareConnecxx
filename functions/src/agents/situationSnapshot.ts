@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -6,16 +7,16 @@ const db = admin.firestore();
  * Situation snapshot — a compact, read-only summary of what currently needs the
  * user's attention, injected into the agent loop's standing context.
  *
- * Why this exists: the system prompt already tells Cara to "LEAD, DON'T ASK" —
+ * Why this exists: the system prompt already tells Evia to "LEAD, DON'T ASK" —
  * to surface the most relevant thing instead of replying "what do you need?".
  * But to KNOW what to lead with (new applicants? an interview waiting? a
  * timesheet to approve?) she previously had to spend several tool round-trips
  * discovering it. The client standing context was rich; the caregiver context
  * was almost bare (just today's visit). This closes that gap by precomputing a
- * few headline counts so Cara can open proactively without the round-trips.
+ * few headline counts so Evia can open proactively without the round-trips.
  *
  * The snapshot is a cached count, not authority to act. The injected directive
- * tells Cara to verify with a tool before asserting specifics or taking action,
+ * tells Evia to verify with a tool before asserting specifics or taking action,
  * consistent with the existing KNOWLEDGE BOUNDARY rule.
  *
  * Read-only and bounded: each builder runs a small set of proven-indexed
@@ -37,7 +38,7 @@ export interface ClientSnapshotInput {
   totalApplicants:   number;
   pendingTimesheets: number;
   upcomingVisits:    number;
-  // When there's exactly one open job, its title — so Cara can name it ("3
+  // When there's exactly one open job, its title — so Evia can name it ("3
   // applicants on your weekend-coverage post") instead of an abstract count.
   openJobTitle:      string | null;
 }
@@ -107,8 +108,12 @@ export async function buildCaregiverSnapshot(
 ): Promise<string> {
   if (!caregiverId) return "";
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const weekAhead = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // Business-timezone today — UTC omits tonight's visits from the snapshot
+    // during Pacific evenings ("no upcoming visits" while a shift is running)
+    const today = businessTodayStr();
+    const weekAheadD = new Date(`${today}T12:00:00Z`);
+    weekAheadD.setUTCDate(weekAheadD.getUTCDate() + 7);
+    const weekAhead = weekAheadD.toISOString().slice(0, 10);
     const [interviewSnap, appSnap, visitSnap] = await Promise.all([
       // Statuses where the caregiver themselves must respond. Includes the SMS
       // interview flow's "awaiting_caregiver_availability" (interviewAgent.ts) —
@@ -165,7 +170,7 @@ export async function buildCaregiverSnapshot(
 export async function buildClientSnapshot(userId: string): Promise<string> {
   if (!userId) return "";
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessTodayStr();
     const [jobsSnap, tsSnap, visitSnap] = await Promise.all([
       db.collection("job_posts")
         .where("clientId", "==", userId)

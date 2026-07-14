@@ -1,8 +1,8 @@
-// Anthropic Agent Skills catalog — file-based skill packs Cara reads from
+// Anthropic Agent Skills catalog — file-based skill packs Evia reads from
 // `functions/src/skills/<name>/SKILL.md`. Each SKILL.md follows the Anthropic
 // Skills spec: YAML frontmatter (name + description) + Markdown body.
 //
-// Why this layer? Before this, "Cara should do X when Y" lived as inline
+// Why this layer? Before this, "Evia should do X when Y" lived as inline
 // system-prompt text in qaAgent.ts. That doesn't scale — three more triggers
 // and the prompt becomes a wall. Skills move those triggers into discrete,
 // reviewable files keyed by description so the picker can match them.

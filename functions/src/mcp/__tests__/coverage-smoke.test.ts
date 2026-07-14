@@ -121,7 +121,7 @@ vi.mock("../../memory/preferences", () => ({
 }));
 
 vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+  runMatchingForClient: vi.fn().mockResolvedValue("no_match"),
 }));
 
 vi.mock("../../agents/familyGroupManager", () => ({
@@ -209,6 +209,22 @@ vi.mock("../../agents/jobMatchRecommender", () => ({
   recommendJobsForCaregiver: vi.fn().mockResolvedValue([{ jobId: "j1", score: 0.9 }]),
 }));
 
+vi.mock("../checkrMcpClient", () => ({
+  isCheckrMcpConfigured:   vi.fn().mockReturnValue(true),
+  initializeCheckrSession: vi.fn().mockResolvedValue("mcp-sess-1"),
+  callCheckrTool: vi.fn().mockResolvedValue({
+    isError: false,
+    text:    JSON.stringify({ status: "complete", result: "clear" }),
+    data:    { status: "complete", result: "clear" },
+  }),
+  CheckrMcpError: class CheckrMcpError extends Error {
+    constructor(message: string, public readonly status?: number, public readonly sessionExpired = false) {
+      super(message);
+      this.name = "CheckrMcpError";
+    }
+  },
+}));
+
 import { handleToolCall } from "../server";
 
 describe("MCP tool smoke coverage", () => {
@@ -260,6 +276,54 @@ describe("MCP tool smoke coverage", () => {
 
   it("get_background_check_status rejects missing input", async () => {
     expect(((await handleToolCall("get_background_check_status", {})) as any)._toolError).toBe(true);
+  });
+
+  // ── Checkr Candidate MCP bridge ────────────────────────────────────────────
+  it("request_checkr_verification happy path opens a session and persists it", async () => {
+    const r = await handleToolCall("request_checkr_verification", { caregiverId: "cg1", email: "cg@example.com" }) as any;
+    expect(r.success).toBe(true);
+    const sess = hoisted.docState.get("checkr_mcp_sessions/cg1");
+    expect(sess?.sessionId).toBe("mcp-sess-1");
+    expect(sess?.verified).toBe(false);
+  });
+
+  it("request_checkr_verification rejects missing input", async () => {
+    expect(((await handleToolCall("request_checkr_verification", {})) as any)._toolError).toBe(true);
+    expect(((await handleToolCall("request_checkr_verification", { caregiverId: "cg1", email: "not-an-email" })) as any)._toolError).toBe(true);
+  });
+
+  it("verify_checkr_otp happy path marks the session verified", async () => {
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: false,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const r = await handleToolCall("verify_checkr_otp", { caregiverId: "cg1", code: "123456" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.docState.get("checkr_mcp_sessions/cg1")?.verified).toBe(true);
+  });
+
+  it("verify_checkr_otp rejects missing input and missing session", async () => {
+    expect(((await handleToolCall("verify_checkr_otp", {})) as any)._toolError).toBe(true);
+    expect(((await handleToolCall("verify_checkr_otp", { caregiverId: "cg-none", code: "123456" })) as any)._toolError).toBe(true);
+  });
+
+  it("get_checkr_report happy path returns the report on a verified session", async () => {
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: true,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const r = await handleToolCall("get_checkr_report", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.report).toEqual({ status: "complete", result: "clear" });
+  });
+
+  it("get_checkr_report rejects missing input and an unverified session", async () => {
+    expect(((await handleToolCall("get_checkr_report", {})) as any)._toolError).toBe(true);
+    hoisted.docState.set("checkr_mcp_sessions/cg1", {
+      sessionId: "mcp-sess-1", email: "cg@example.com", verified: false,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    expect(((await handleToolCall("get_checkr_report", { caregiverId: "cg1" })) as any)._toolError).toBe(true);
   });
 
   it("get_health_signals happy path", async () => {
@@ -452,7 +516,7 @@ describe("MCP tool smoke coverage", () => {
     });
   });
 
-  describe("find_replacement_caregivers filters (U17)", () => {
+  describe("find_replacement_caregivers filters (U17) + one-voice contract (double-send fix 2026-07-06)", () => {
     it("accepts optional filters and echoes them back", async () => {
       hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
       hoisted.docState.set("users/c1", { name: "Fam" });
@@ -461,7 +525,6 @@ describe("MCP tool smoke coverage", () => {
         needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15,
       }) as any;
       expect(r.success).toBe(true);
-      expect(r.triggered).toBe(true);
       expect(r.filtersApplied).toMatchObject({ needs: "dementia care", nearZip: "95020", availabilityWindow: "weekday mornings", radiusMiles: 15 });
     });
 
@@ -471,6 +534,60 @@ describe("MCP tool smoke coverage", () => {
       const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.filtersApplied).toMatchObject({ needs: null, nearZip: null });
+    });
+
+    it("suppresses matching's own conversational sends — the agent turn is the voice", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" });
+      const call = vi.mocked(runMatchingForClient).mock.calls.at(-1)!;
+      expect(call[4]).toMatchObject({ suppressConversationalSends: true });
+    });
+
+    it("no_match: reports the real outcome + an honest one-message instruction (never 'triggered: true')", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("no_match");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.outcome).toBe("no_match");
+      expect(r.matchesFound).toBe(0);
+      expect(r.sent).toBeUndefined();          // nothing was texted — agent's reply is the only message
+      expect(r.instruction).toMatch(/ONE short warm message/i);
+      expect(r.triggered).toBeUndefined();     // old blind shape must not come back
+    });
+
+    it("matched: flags the already-sent gallery (sent:true) and forbids repeating it", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("matched");
+      hoisted.docState.set("agent_sessions/+15555550000", {
+        zipCode: "10001",
+        pendingMatches: [{ id: "cg1", name: "Maria", rate: 28 }, { id: "cg2", name: "James", rate: 25 }],
+      });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.outcome).toBe("matched");
+      expect(r.sent).toBe(true);               // hooks qaAgent's deliveredToUser guard
+      expect(r.matchesPresented).toEqual([
+        { name: "Maria", hourlyRate: 28 },
+        { name: "James", hourlyRate: 25 },
+      ]);
+      expect(r.instruction).toMatch(/Do NOT repeat/i);
+    });
+
+    it("failed: honest failure with follow-up note, not a fake success", async () => {
+      const { runMatchingForClient } = await import("../../agents/matchingAgent");
+      vi.mocked(runMatchingForClient).mockResolvedValueOnce("failed");
+      hoisted.docState.set("agent_sessions/+15555550000", { zipCode: "10001" });
+      hoisted.docState.set("users/c1", { name: "Fam" });
+      const r = await handleToolCall("find_replacement_caregivers", { phone: "+15555550000", chatId: "chat1", clientId: "c1" }) as any;
+      expect(r.success).toBe(false);
+      expect(r.outcome).toBe("failed");
+      expect(r._toolError).toBeUndefined();    // a failed search is not a tool error — no recovery loop
+      expect(r.instruction).toMatch(/NOTHING has been texted/i);
     });
   });
 

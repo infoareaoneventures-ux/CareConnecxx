@@ -4,6 +4,9 @@ import { safeParseJson } from "../utils/jsonUtils";
 import { sendMessage, AgentSession } from "../linq/client";
 import { isConvergenceFlipped } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr } from "../utils/scheduledTime";
+import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -117,10 +120,7 @@ export async function startModifyScheduleFlow(
 
   await sendMessage(chatId,
     `Your current recurring schedule with ${cgName} is: ${daysLabel}, ${timeLabel}.\n\n` +
-    `What would you like to change?\n\n` +
-    `1️⃣  Change the days\n` +
-    `2️⃣  Change the times\n` +
-    `3️⃣  Change both days and times`
+    `What would you like to change — the days, the times, or both?`
   );
 }
 
@@ -154,7 +154,7 @@ async function handleMsAskWhat(
   if (await isQuestionOrOther(text)) {
     const data = await getScheduleData(phone);
     const cgName = (data.caregiverName as string) ?? "your caregiver";
-    await sendMessage(chatId, `No problem! What would you like to change about your recurring schedule with ${cgName}?\n\n1️⃣  Days\n2️⃣  Times\n3️⃣  Both`);
+    await sendMessage(chatId, `No problem! What would you like to change about your recurring schedule with ${cgName} — the days, the times, or both?`);
     return;
   }
 
@@ -364,7 +364,10 @@ async function handleMsConfirm(
   const [eh2, em2] = newEnd.split(":").map(Number);
   const newDuration = ((eh2 * 60 + em2) - (sh2 * 60 + sm2)) / 60;
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Business-timezone today — the UTC date ("PT tomorrow" in the evening)
+  // skipped tomorrow's old appointment when rewriting a recurring schedule,
+  // leaving a stale visit alongside the new one.
+  const today = businessTodayStr();
   const now   = new Date().toISOString();
 
   // Cancel all future confirmed appointments from the old schedule
@@ -402,12 +405,15 @@ async function handleMsConfirm(
       clientId:            clientId,
       caregiverId:         sched.caregiverId,
       caregiverName:       sched.caregiverName,
+      seniorName:          sched.seniorName || null,
       date,
       startTime:           newStart,
       endTime:             newEnd,
       durationHours:       newDuration,
       hourlyRate:          sched.hourlyRate,
+      ...canonicalApptFields({ startTime: newStart, durationHours: newDuration, hourlyRate: sched.hourlyRate as number | undefined }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleId,
       humanApproved:       true,
       createdByAgent:      true,

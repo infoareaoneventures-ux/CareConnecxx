@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../utils/parseWithClaude", () => ({ parseWithClaude: vi.fn() }));
 vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn() }));
 
-import { runStep, isQuestionOrOther } from "./stepHandler";
+import { runStep, isQuestionOrOther, classifyAwaitingReply } from "./stepHandler";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { quickComplete } from "../utils/openaiClient";
 
@@ -24,6 +24,33 @@ describe("isQuestionOrOther", () => {
   it("fails toward answer (NO) when the classifier errors", async () => {
     mockParse.mockRejectedValueOnce(new Error("down"));
     expect(await isQuestionOrOther("$25/hr")).toBe(false);
+  });
+});
+
+describe("classifyAwaitingReply", () => {
+  // Regression: "Sounds good thank you" at caregiver_awaiting_bgcheck got the
+  // whole Checkr flow re-explained (founder screenshot, 2026-07-09). A pure
+  // acknowledgment must classify as "ack" so awaiting-step handlers reply with
+  // one brief line instead of re-explaining or re-sending the link.
+  it("maps a pure acknowledgment to ack", async () => {
+    mockParse.mockResolvedValue("ack");
+    expect(await classifyAwaitingReply("Sounds good thank you", "finish the Checkr form")).toBe("ack");
+  });
+  it("maps a question to question", async () => {
+    mockParse.mockResolvedValue("question");
+    expect(await classifyAwaitingReply("how long does it take?", "finish the Checkr form")).toBe("question");
+  });
+  it("maps anything else to other", async () => {
+    mockParse.mockResolvedValue("other");
+    expect(await classifyAwaitingReply("can you send the link again", "finish the Checkr form")).toBe("other");
+  });
+  it("falls back to other on an unexpected classifier reply", async () => {
+    mockParse.mockResolvedValue("banana");
+    expect(await classifyAwaitingReply("hm", "finish the Checkr form")).toBe("other");
+  });
+  it("falls back to other when the classifier errors", async () => {
+    mockParse.mockRejectedValueOnce(new Error("down"));
+    expect(await classifyAwaitingReply("thanks", "finish the Checkr form")).toBe("other");
   });
 });
 

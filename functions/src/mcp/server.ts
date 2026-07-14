@@ -5,6 +5,7 @@ import {
   readMemoryFile,
   writeMemoryFile,
   editMemoryFile,
+  deleteMemoryFile,
   searchMemoryHybrid,
   getMemoryContext,
   listMemoryFiles,
@@ -14,7 +15,13 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
+import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
+import { canonicalApptFields } from "../utils/appointmentDoc";
+import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
+import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
+import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
 // at most once per confirmation. When one runs as a confirmed action, its
@@ -26,7 +33,8 @@ import { isCaregiverBookable } from "../utils/caregiverEligibility";
 // MCP tool AND high-risk — otherwise it never receives a _confirmedActionId and
 // this guard is dead code. That guard caught the original mis-wiring: payouts
 // and submit_shift_hours are NOT confirmation-gated (they carry their own
-// idempotency — Stripe keys, appointmentId dedup), so keying them here did
+// idempotency — payoutCommon.executeInstantPayout's replay window + doc-keyed
+// Stripe idempotency key, appointmentId dedup), so keying them here did
 // nothing. The genuine confirmed-and-irreversible action is the real-world web
 // submit (pharmacy refill / appointment commit), where a double-fire hits a
 // third party. This ledger is defense-in-depth layered over claimPendingAction's
@@ -42,7 +50,6 @@ import {
   createCaregiverReferralInvite,
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
-import { autoApproveAtIso } from "../config/slaConstants";
 
 const db = admin.firestore();
 
@@ -357,7 +364,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "update_preferences",
-    description: "Update Cara's notification preferences for the user (DND, active hours, etc.).",
+    description: "Update Evia's notification preferences for the user (DND, active hours, etc.).",
     input_schema: {
       type: "object",
       properties: {
@@ -384,7 +391,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "read_memory_file",
-    description: "Read one of Cara's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
+    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
     input_schema: {
       type: "object",
       properties: {
@@ -396,7 +403,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "update_memory_file",
-    description: "Append new information to one of Cara's long-term memory files for a user.",
+    description: "Append new information to one of Evia's long-term memory files for a user.",
     input_schema: {
       type: "object",
       properties: {
@@ -410,7 +417,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "edit_memory_file",
     description:
-      "Surgically correct a stored fact in one of Cara's memory files by find/replace, instead of appending a duplicate. " +
+      "Surgically correct a stored fact in one of Evia's memory files by find/replace, instead of appending a duplicate. " +
       "Use when a previously stored detail changes (e.g. the family says 'Mom is 82, not 78'). Returns how many occurrences were replaced.",
     input_schema: {
       type: "object",
@@ -467,10 +474,10 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cara_knows",
     description:
-      "Return a clean digest of everything Cara remembers about this family — senior profile, " +
+      "Return a clean digest of everything Evia remembers about this family — senior profile, " +
       "health, family relationships, recent episodes, procedural notes. " +
       "Call when the family asks 'what do you know about Mom?', 'what's on file?', 'remind me what we've told you', " +
-      "'do you remember [topic]?', or any variation that asks Cara to surface her stored memory. " +
+      "'do you remember [topic]?', or any variation that asks Evia to surface her stored memory. " +
       "Returns the raw memory context so you can summarize it warmly in 2–3 sentences (never as a bulleted list).",
     input_schema: {
       type: "object",
@@ -523,6 +530,67 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "request_location",
+    description:
+      "Ask the user to share their current location via the native one-tap prompt. " +
+      "Works on 1:1 iMessage only — on SMS or RCS the prompt can't fire, and this tool " +
+      "tells you to instead ask the user to type their city and zip code. The shared pin " +
+      "arrives later as a separate message; this tool only sends the prompt. " +
+      "Session context (phone, chatId) is injected automatically — do NOT ask the user for these. " +
+      "Tell the user you're requesting their location before calling this.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Optional short reason for logs (e.g. 'find nearby caregivers', 'update address')" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "react_to_message",
+    description:
+      "Add an iMessage tapback reaction to the user's most recent message — silent, no text is sent. " +
+      "Use it the way a person would: heart a photo of their loved one, thumbs-up a quick confirmation, laugh at a joke. " +
+      "After reacting, only send a text reply if one is genuinely needed — a reaction alone is often the whole answer. " +
+      "Works on iMessage only; on SMS/RCS this tool tells you to express the sentiment in your text reply instead. " +
+      "Session context (phone) is injected automatically — the tool targets the user's last message by itself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["love", "like", "dislike", "laugh", "emphasize", "question", "custom"],
+          description: "Tapback type: love (❤️), like (👍), dislike (👎), laugh (haha), emphasize (!!), question (?), or 'custom' for any other emoji.",
+        },
+        customEmoji: { type: "string", description: "Required when type is 'custom' — a single emoji character (e.g. '🎉')." },
+      },
+      required: ["type"],
+    },
+  },
+  {
+    name: "set_visit_update_frequency",
+    description:
+      "Set how often the family gets mid-visit updates while a caregiver is with their loved one. " +
+      "Use when they say things like 'update me every hour', 'fewer updates please', 'stop the visit updates', " +
+      "or 'go back to normal updates'. Default is every 2 hours during a visit. " +
+      "Session context (phone) is injected automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        frequencyMinutes: {
+          type: "number",
+          description: "Minutes between mid-visit updates (30–480). E.g. 60 for hourly. Omit when using mode.",
+        },
+        mode: {
+          type: "string",
+          enum: ["default", "off"],
+          description: "'default' resets to the standard cadence (every 2 hours); 'off' stops mid-visit updates entirely (arrival and end-of-visit summaries still send).",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "get_recurring_schedule",
     description: "Get the active recurring care schedule for a client — days of the week, times, caregiver, and status.",
     input_schema: {
@@ -546,7 +614,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_user_reminders",
-    description: "List the personal reminders the user has set up through Cara (e.g. 'remind me every Monday about medications').",
+    description: "List the personal reminders the user has set up through Evia (e.g. 'remind me every Monday about medications').",
     input_schema: {
       type: "object",
       properties: {
@@ -558,7 +626,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_reminder",
     description:
-      "Create a personal recurring reminder for the user. Use when the family asks Cara to remind them of something on a schedule. " +
+      "Create a personal recurring reminder for the user. Use when the family asks Evia to remind them of something on a schedule. " +
       "Confirm the schedule with the family before calling.",
     input_schema: {
       type: "object",
@@ -570,7 +638,7 @@ export const MCP_TOOLS: McpTool[] = [
         dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
         hour:       { type: "number", description: "24-hour format, 0–23" },
         minute:     { type: "number", description: "0–59" },
-        message:    { type: "string", description: "The full text Cara will send as the reminder" },
+        message:    { type: "string", description: "The full text Evia will send as the reminder" },
       },
       required: ["phone", "userId", "label", "recurrence", "hour", "minute", "message"],
     },
@@ -630,7 +698,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_support_tickets",
-    description: "List the family's support tickets (most recent first) so Cara can give status updates instead of opening duplicates.",
+    description: "List the family's support tickets (most recent first) so Evia can give status updates instead of opening duplicates.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
   },
   {
@@ -646,16 +714,16 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_job_post",
     description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string", description: "'card' (charged through the platform) or an offline method paid directly to the caregiver: 'cash', 'venmo', 'zelle'" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
   },
   {
     name: "list_proactive_drafts",
-    description: "List Cara's pending proactive message drafts queued for this family that haven't sent yet.",
+    description: "List Evia's pending proactive message drafts queued for this family that haven't sent yet.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." } }, required: ["userId"] },
   },
   {
     name: "cancel_proactive_draft",
-    description: "Cancel a pending proactive message draft so Cara doesn't send it. Only works on drafts that haven't already sent.",
+    description: "Cancel a pending proactive message draft so Evia doesn't send it. Only works on drafts that haven't already sent.",
     input_schema: { type: "object", properties: { userId: { type: "string", description: "Injected automatically." }, draftId: { type: "string" } }, required: ["userId", "draftId"] },
   },
   {
@@ -670,7 +738,7 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         phone:       { type: "string",  description: "The family's phone number" },
         userId:      { type: "string",  description: "The family's user ID" },
-        message:     { type: "string",  description: "The exact text Cara will send as the follow-up" },
+        message:     { type: "string",  description: "The exact text Evia will send as the follow-up" },
         scheduledAt: { type: "string",  description: "ISO 8601 datetime for when to send (e.g. '2026-05-20T09:00:00.000Z')" },
         reason:      { type: "string",  description: "One-sentence reason why this follow-up makes sense (for context at fire time)" },
       },
@@ -732,6 +800,22 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_work_in_progress",
+    description:
+      "One unified view of everything Evia currently has in flight for this user — " +
+      "open follow-up promises, active background tasks, pending approvals, presented " +
+      "caregiver matches, and to-dos, with overdue items first. Call when the user asks " +
+      "'what's happening', 'what are you working on for me', or 'any updates', and " +
+      "before making a new promise so you can account for what's already owed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "The user's phone number (auto-injected)" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "search_web",
     description:
       "Fast web search for information about healthcare providers, pharmacies, " +
@@ -764,7 +848,7 @@ export const MCP_TOOLS: McpTool[] = [
       "- 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
       "- 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
       "- 'insurance_check': check authorization or coverage status\n\n" +
-      "If credentials aren't stored yet, Cara will collect them securely via iMessage before proceeding.",
+      "If credentials aren't stored yet, Evia will collect them securely via iMessage before proceeding.",
     input_schema: {
       type: "object",
       properties: {
@@ -903,8 +987,8 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", description: "Which field to update: 'medications', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', or 'notes'" },
-        value:    { description: "The new value. For array fields (medications, careNeeds, doctorContacts), pass an array. For string fields, pass a string." },
+        field:    { type: "string", description: "Which field to update: 'medications', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', 'notes', 'emergencyContacts', 'dailyRoutine', 'accessCodes', or 'dietaryRestrictions'" },
+        value:    { description: "The new value. For array fields (medications, careNeeds, doctorContacts, emergencyContacts, dailyRoutine), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}. dailyRoutine items: {time, description, category: meal|medication|activity|hygiene}." },
         action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
       },
       required: ["clientId", "field", "value", "action"],
@@ -1087,7 +1171,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "cancel_subscription",
     description:
-      "Cancel the family's CareConnex membership. Cancels at end of billing period — scheduled visits are unaffected. " +
+      "Cancel the family's Evia membership. Cancels at end of billing period — scheduled visits are unaffected. " +
       "MANDATORY: tell the family when their subscription ends and confirm before calling.",
     input_schema: {
       type: "object",
@@ -1234,8 +1318,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "request_instant_payout",
     description:
-      "Request an instant payout of your earned balance. A 1.5% processing fee applies. " +
-      "If no amount specified, requests full available balance.",
+      "Request an instant payout of the caregiver's instantly-available balance — free, arrives within ~30 minutes. " +
+      "If no amount specified, pays out the full instantly-available balance. Regular earnings need no request: " +
+      "Stripe pays the balance out automatically every day (arrives ~2 business days after each shift payment).",
     input_schema: {
       type: "object",
       properties: {
@@ -1378,7 +1463,7 @@ export const MCP_TOOLS: McpTool[] = [
     name: "respond_to_shift_hour_correction",
     description:
       "Respond to a client/admin correction on your submitted shift hours: accept the corrected hours, or push back to dispute them. " +
-      "Only works when the shift hours are in a correction_requested or disputed state.",
+      "Only works when the shift hours are in a correction_proposed state (legacy correction_requested/disputed records are also accepted).",
     input_schema: {
       type: "object",
       properties: {
@@ -1388,20 +1473,6 @@ export const MCP_TOOLS: McpTool[] = [
         message:       { type: "string", description: "Optional note (recommended when pushing back)" },
       },
       required: ["caregiverId", "appointmentId", "decision"],
-    },
-  },
-  {
-    name: "request_standard_payout",
-    description:
-      "Request a standard (free, 1-2 business day) payout of your earned balance via Stripe. " +
-      "Unlike an instant payout there is no processing fee. If no amount is specified, requests the full available balance.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string",  description: "Your caregiver document ID" },
-        amountCents: { type: "integer", description: "Amount in cents (optional — omit for full balance)" },
-      },
-      required: ["caregiverId"],
     },
   },
   {
@@ -1442,7 +1513,9 @@ export const MCP_TOOLS: McpTool[] = [
     name: "schedule_interview",
     description:
       "Schedule a video interview between a client and a caregiver applicant. " +
-      "Notifies the caregiver and creates the interview record. Confirm date/time with client before calling.",
+      "Creates the interview record, generates the Google Meet link (joinable from any phone browser, no account needed), " +
+      "and texts the caregiver the link automatically. Returns callUrl — share it with the client in your reply. " +
+      "Confirm date/time with client before calling.",
     input_schema: {
       type: "object",
       properties: {
@@ -1528,14 +1601,12 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_care_plan_history",
     description:
-      "Get the revision history of a senior's care plan — who changed what and when. Returns up to 10 versions.",
+      "Get the revision history of the client's care plan — who changed what and when. Returns up to 10 versions.",
     input_schema: {
       type: "object",
       properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        limit:    { type: "number", description: "Number of versions to return (default 5, max 10)" },
+        limit: { type: "number", description: "Number of versions to return (default 5, max 10)" },
       },
-      required: ["seniorId"],
     },
   },
   {
@@ -1545,11 +1616,10 @@ export const MCP_TOOLS: McpTool[] = [
     input_schema: {
       type: "object",
       properties: {
-        seniorId:  { type: "string", description: "The senior's profile document ID" },
-        versionId: { type: "string", description: "The carePlanVersions document ID to restore" },
-        clientId:  { type: "string", description: "The client's user ID (ownership check)" },
+        versionId: { type: "string", description: "The care-plan version document ID to restore (from get_care_plan_history)" },
+        clientId:  { type: "string", description: "The client's user ID (auto-injected from session)" },
       },
-      required: ["seniorId", "versionId", "clientId"],
+      required: ["versionId"],
     },
   },
   {
@@ -1567,7 +1637,7 @@ export const MCP_TOOLS: McpTool[] = [
         startDate:    { type: "string", description: "New start date YYYY-MM-DD" },
         daysOfWeek:   { type: "array", items: { type: "string" }, description: "New days array" },
         timeOfDay:    { type: "array", items: { type: "string" }, description: "New time-of-day array" },
-        paymentMethod:{ type: "string", enum: ["card","cash"], description: "New payment method" },
+        paymentMethod:{ type: "string", enum: ["card","cash","venmo","zelle"], description: "New payment method — card is charged through the platform; cash/Venmo/Zelle are paid directly to the caregiver" },
       },
       required: ["jobId", "clientId"],
     },
@@ -1810,13 +1880,51 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "retry_shift_payment",
+    description:
+      "Retry a failed visit payment. Use when the family says a payment failed and asks to run it again — " +
+      "typically after they've fixed their card (get_payment_update_link). Only works on a shift whose " +
+      "payment is currently in the failed state; re-charges the amount already owed for that visit. " +
+      "Use get_shifts first if you don't know which visit's payment failed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string", description: "The appointment/shift ID whose payment failed" },
+        clientId:      { type: "string", description: "The client's user ID (ownership check)" },
+      },
+      required: ["appointmentId", "clientId"],
+    },
+  },
+  {
+    name: "update_booking_payment_method",
+    description:
+      "Switch how an upcoming confirmed booking is paid: credit (charged through Stripe) or an offline " +
+      "method the family pays the caregiver directly (cash, venmo, zelle). Only allowed before the " +
+      "booking starts. Confirm the new method with the family before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string", description: "The appointment ID of the confirmed, not-yet-started booking" },
+        clientId:      { type: "string", description: "The client's user ID (ownership check)" },
+        paymentMethod: {
+          type: "string",
+          enum: ["credit", "cash", "venmo", "zelle"],
+          description: "The new payment method",
+        },
+      },
+      required: ["appointmentId", "clientId", "paymentMethod"],
+    },
+  },
+  {
     name: "send_onboarding_link",
     description:
       "Generate AND send a tappable onboarding/signup link directly to this chat. Use this whenever a family " +
       "or caregiver asks you to (re)send a subscription/payment, identity verification, profile photo, document " +
       "upload, background check, or payout-setup link. The tool sends the link itself — after it succeeds, just " +
       "briefly confirm (e.g. \"Sent! Tap the link to verify your identity\"). NEVER create a support ticket for a " +
-      "link you can send with this tool. Pick the linkType that matches what they asked for.",
+      "link you can send with this tool. Pick the linkType that matches what they asked for. NEVER tell the user " +
+      "a link is coming or being pulled up without calling this tool in the same turn — narrating a link does not " +
+      "send anything.",
     input_schema: {
       type: "object",
       properties: {
@@ -1846,6 +1954,56 @@ export const MCP_TOOLS: McpTool[] = [
       "Look up the caregiver's OWN background-check status (Checkr). Use when a caregiver asks \"what's the status " +
       "of my background check\", \"did my check come back\", or \"am I cleared yet\". Returns the current status so " +
       "you can answer directly instead of deflecting to support. Do not promise a specific completion time.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  // ── Checkr Candidate MCP bridge (docs.checkr.com/mcp) ──────────────────────
+  // Pulls the caregiver's FULL redacted report straight from Checkr, gated by
+  // Checkr's own candidate identity verification (email OTP). Flow:
+  // request_checkr_verification → verify_checkr_otp → get_checkr_report.
+  {
+    name: "request_checkr_verification",
+    description:
+      "Start a secure Checkr identity-verification session so the caregiver's FULL background-check report can be " +
+      "pulled with get_checkr_report. Checkr emails a one-time code to the caregiver's email on file with Checkr. " +
+      "Use when get_background_check_status isn't enough — e.g. the caregiver asks which screenings ran, what a " +
+      "\"consider\" result means for THEIR report, or why it's delayed. Confirm their email first; max 3 code sends " +
+      "per session.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        email:       { type: "string", description: "The caregiver's email — must match the email on their Checkr candidate record" },
+      },
+      required: ["caregiverId", "email"],
+    },
+  },
+  {
+    name: "verify_checkr_otp",
+    description:
+      "Complete Checkr identity verification with the one-time code the caregiver received by email after " +
+      "request_checkr_verification. Max 3 attempts per session; on success get_checkr_report becomes available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+        code:        { type: "string", description: "The one-time code from the caregiver's email" },
+      },
+      required: ["caregiverId", "code"],
+    },
+  },
+  {
+    name: "get_checkr_report",
+    description:
+      "Fetch the caregiver's latest background-check report details live from Checkr (status, result, individual " +
+      "screenings, exceptions, candidate portal link) — all PII redacted by Checkr. Requires a verified session " +
+      "(request_checkr_verification then verify_checkr_otp first). For a quick status answer use " +
+      "get_background_check_status instead.",
     input_schema: {
       type: "object",
       properties: {
@@ -1931,7 +2089,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         userId:               { type: "string", description: "The user's ID" },
-        newsletter:           { type: "boolean", description: "Receive the CareConnex newsletter" },
+        newsletter:           { type: "boolean", description: "Receive the Evia newsletter" },
         newMatchAlerts:       { type: "boolean", description: "Notify when new caregiver matches are found" },
         reviewNotifications:  { type: "boolean", description: "Notify when caregivers receive reviews" },
         privacyShowBookings:  { type: "boolean", description: "Show the family's booking calendar to caregivers" },
@@ -2194,6 +2352,131 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId", "entryId"],
     },
   },
+  // ── CRUD/parity gap closures (agent-native audit 2026-07) ─────────────────
+  {
+    name: "archive_senior_profile",
+    description:
+      "Archive a senior's profile when care ends (soft-delete). The profile stops appearing in active care flows " +
+      "but the care record is RETAINED — nothing is hard-deleted. " +
+      "MANDATORY: read back whose profile you're archiving and wait for explicit confirmation before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        seniorId: { type: "string", description: "The senior's profile document ID" },
+        clientId: { type: "string", description: "The client's user ID" },
+        reason:   { type: "string", description: "Optional reason (e.g. care ended, moved to facility)" },
+      },
+      required: ["seniorId", "clientId"],
+    },
+  },
+  {
+    name: "update_family_member",
+    description:
+      "Edit an existing family group member's details — display name, role, relationship to the senior, or whether " +
+      "they receive care update notifications. Use remove_family_member to remove them entirely. " +
+      "Confirm the specific change before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The primary client's user ID" },
+        memberPhone: { type: "string", description: "Phone number (E.164) of the family member to update" },
+        memberName:  { type: "string", description: "Corrected display name (optional)" },
+        role:        { type: "string", enum: ["primary", "family", "emergency_contact"], description: "Member's role in the care group (optional)" },
+        relationship:{ type: "string", description: "Relationship to the senior, e.g. daughter, son, neighbor (optional)" },
+        notificationsEnabled: { type: "boolean", description: "Whether this member receives care update messages (optional)" },
+      },
+      required: ["clientId", "memberPhone"],
+    },
+  },
+  {
+    name: "list_interviews",
+    description:
+      "List scheduled/pending video or phone interviews for the caller. Pass clientId for a family's interviews or " +
+      "caregiverId for a caregiver's. Use before cancel_interview or when someone asks 'when is my interview?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's user ID (provide this OR caregiverId)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        status:      { type: "string", description: "Optional filter: scheduled, confirmed, declined, cancelled, completed" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "cancel_interview",
+    description:
+      "Cancel a scheduled interview. Either participant can cancel their own interview; the other side is notified. " +
+      "Confirm before calling. To propose a new time instead, caregivers should use respond_to_interview_request.",
+    input_schema: {
+      type: "object",
+      properties: {
+        interviewId: { type: "string", description: "The video_interviews document ID" },
+        clientId:    { type: "string", description: "The client's user ID (when the family cancels)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver cancels)" },
+        reason:      { type: "string", description: "Optional short reason passed to the other side" },
+      },
+      required: ["interviewId"],
+    },
+  },
+  {
+    name: "delete_memory_file",
+    description:
+      "Delete one of Evia's memory files for a user entirely — the file content AND its search index. Permanent. " +
+      "Use when the family asks you to forget a whole topic/file, or to clean up an ad-hoc offloaded file. " +
+      "For correcting a single fact use edit_memory_file instead. " +
+      "MANDATORY: read back which file you're deleting and wait for explicit confirmation before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The user's ID" },
+        file:   { type: "string", description: "Memory file slug (e.g. profile, health, family, recent_episodes, procedural, or an ad-hoc slug)" },
+      },
+      required: ["userId", "file"],
+    },
+  },
+  {
+    name: "list_blocked_users",
+    description:
+      "List the users this family has blocked (the block_user list), with names where available. " +
+      "Use before block_user/unblock_user or when they ask 'who have I blocked?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The user's ID" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
+    name: "list_shift_swaps",
+    description:
+      "List active shift swap requests for a caregiver — both their own outstanding coverage requests and open " +
+      "swap offers from peers they could accept. Use before accept_shift_swap/cancel_shift_swap or when they ask " +
+      "'any open swaps?' or 'did anyone pick up my shift?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "confirm_cash_received",
+    description:
+      "Caregiver confirms they received an offline payment (cash, Venmo, or Zelle) for an approved shift. Marks the " +
+      "shift-hours record paid. Only works for offline-payment shifts whose hours are already approved. Confirm the " +
+      "shift with the caregiver before calling.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
+        appointmentId: { type: "string", description: "The appointment/shiftHours document ID the payment was for" },
+      },
+      required: ["caregiverId", "appointmentId"],
+    },
+  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -2250,7 +2533,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_shift_task",
   "submit_media_update",
   "respond_to_shift_hour_correction",
-  "request_standard_payout",
   "create_caregiver_referral",
   // Missing CRUD tools — reads + in-place updates
   "get_support_tickets",
@@ -2258,8 +2540,67 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_caregiver_availability",
   "update_reminder",
   "update_care_journal_entry",
+  // CRUD/parity gap closures (agent-native audit 2026-07)
+  "list_interviews",
+  "cancel_interview",
+  "list_shift_swaps",
+  "confirm_cash_received",
+  // Unified work-in-progress view (agentic-reliability wave 2026-07)
+  "get_work_in_progress",
+  // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
+  "react_to_message",
+  // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
+  "request_checkr_verification",
+  "verify_checkr_otp",
+  "get_checkr_report",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
+
+// Tools that exist ONLY for the caregiver role. Excluded from client turns so the
+// client surface stays under OpenAI's 128-tool hard cap (otherwise capToolsForOpenAi
+// drops an arbitrary tail — which silently hid block_user/report_user and the 2026-07
+// CRUD tools from clients). Shared tools (memory, web, reminders, messaging reads,
+// send_onboarding_link, get_caregiver_info/reviews) stay client-visible.
+const CAREGIVER_ONLY_TOOL_NAMES = new Set([
+  "get_caregiver_appointments",
+  "update_caregiver_profile",
+  "accept_shift",
+  "decline_shift",
+  "apply_to_job",
+  "request_instant_payout",
+  "submit_shift_hours",
+  "get_caregiver_earnings",
+  "update_caregiver_availability",
+  "browse_job_board",
+  "get_my_applications",
+  "respond_to_interview_request",
+  "send_client_message",
+  "get_payout_history",
+  "request_shift_swap",
+  "accept_shift_swap",
+  "cancel_shift_swap",
+  "get_job_recommendations",
+  "submit_gps_checkin",
+  "get_tax_summary",
+  "get_background_check_status",
+  "withdraw_job_application",
+  "respond_to_booking_request",
+  "start_shift",
+  "complete_shift",
+  "update_shift_task",
+  "submit_media_update",
+  "respond_to_shift_hour_correction",
+  "create_caregiver_referral",
+  "get_shifts",
+  "get_caregiver_availability",
+  "confirm_cash_received",
+  "list_shift_swaps",
+  // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
+  "request_checkr_verification",
+  "verify_checkr_otp",
+  "get_checkr_report",
+]);
+export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name));
 
 export async function handleToolCallForCaregiver(
   name: string,
@@ -2297,7 +2638,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResource[] = [
   {
     uri: "cara://user/{userId}/memory/{file}",
     name: "Memory File",
-    description: "Cara's long-term memory file: profile, health, family, recent_episodes, or procedural.",
+    description: "Evia's long-term memory file: profile, health, family, recent_episodes, or procedural.",
     mimeType: "application/json",
   },
 ];
@@ -2379,7 +2720,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
     case "weekly-care-summary": {
       const { clientName, seniorName, completedCount, journalContext, apptContext } = args;
       return [
-        `You are Cara. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
+        `You are Evia. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
         ``,
         `Write it like you actually know both of them and genuinely care how the week went.`,
         `If it was a good week, let that warmth come through.`,
@@ -2405,7 +2746,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
         verifiedNote ? `Background check: ${verifiedNote}` : null,
       ].filter(Boolean).join("\n");
       return [
-        `You are Cara. Write a short, direct morning briefing text for caregiver ${caregiverName}.`,
+        `You are Evia. Write a short, direct morning briefing text for caregiver ${caregiverName}.`,
         ``,
         `They have a visit today with ${seniorName} at ${address}.`,
         extras ? `Additional context:\n${extras}` : null,
@@ -2492,7 +2833,7 @@ function toolFailureReason(result: unknown): string | undefined {
 // Raw exception messages can carry PII or secrets (a failed credential/login
 // web action, a Stripe error echoing a customer email, a provider token in a
 // URL). These reasons are persisted to the ledger / admin alerts AND fed back
-// into Cara's operational context, so redact common sensitive patterns first.
+// into Evia's operational context, so redact common sensitive patterns first.
 function sanitizeErrorReason(reason: string): string {
   return reason
     .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
@@ -2556,7 +2897,12 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
-  "get_caregiver_reviews", "find_replacement_caregivers", "list_saved_caregivers",
+  // find_replacement_caregivers was WRONGLY on this list (double-send audit
+  // 2026-07-06): it texts the family (match gallery / status), writes
+  // interview_requests + agent_sessions + admin_alerts, and resolves
+  // commitments — a shadow run was sending real SMS. It is mutating; it must
+  // be synthesized under shadow like every other side-effecting tool.
+  "get_caregiver_reviews", "list_saved_caregivers",
   "get_recurring_schedule", "list_user_reminders",
   "get_billing_summary", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
@@ -2565,6 +2911,12 @@ const READ_ONLY_TOOLS = new Set<string>([
   "read_memory_file", "search_memory", "search_web",
   "list_client_jobs", "list_job_applicants", "browse_job_board",
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
+  // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
+  "list_interviews", "list_blocked_users", "list_shift_swaps",
+  // get_checkr_report is a pure remote read (Checkr redacts PII; nothing is
+  // consumed or mutated). request_checkr_verification / verify_checkr_otp are
+  // NOT read-only — they send a real OTP email / burn a verify attempt.
+  "get_checkr_report",
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -2576,6 +2928,16 @@ export async function handleToolCall(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
+  if (
+    (name === "perform_web_action" || name === "search_healthcare_provider") &&
+    !realWorldHealthcareActionsEnabled()
+  ) {
+    return {
+      _toolError: true,
+      code: "MEDICAL_ACTIONS_DISABLED",
+      message: "Evia coordinates non-medical care. Contact a licensed healthcare provider or pharmacy directly.",
+    };
+  }
   // U11: under shadow, never execute a non-read-only tool — return a synthetic
   // "would-have-run" result the harness records as the shadow end-state.
   if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
@@ -2774,7 +3136,8 @@ async function executeToolCall(
       case "get_upcoming_appointments": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_upcoming_appointments" } }).catch(() => {});
-        const today = new Date().toISOString().slice(0, 10);
+        // Business-timezone today — UTC drops tonight's visit during PT evenings
+        const today = businessTodayStr();
         const snap = await db
           .collection("appointments")
           .where("clientId", "==", input.clientId)
@@ -2916,18 +3279,71 @@ async function executeToolCall(
         if (needsOk)  matchIntake.careNeeds          = needs;
         if (availOk)  matchIntake.availabilityWindow = availabilityWindow;
         if (radiusOk) matchIntake.radiusMiles        = radiusMiles;
-        await runMatchingForClient(phone as string, chatId as string, matchIntake, clientProfile);
+        // ONE VOICE: this runs the search synchronously. suppressConversationalSends
+        // keeps matching from texting its own status/closer lines — the agent turn
+        // that called us is about to speak, and the family must hear one voice, not
+        // a canned tool message AND an agent reply back-to-back (double-send bug,
+        // founder screenshot 2026-07-06). On a match the tool still delivers the
+        // intro + photo gallery (artifacts only it can send); the tool result below
+        // tells the agent exactly what the family has already seen and what its one
+        // reply should be.
+        const matchOutcome = await runMatchingForClient(
+          phone as string, chatId as string, matchIntake, clientProfile,
+          { suppressConversationalSends: true },
+        );
+        // Report only the filters that actually passed validation and were
+        // applied — not the raw input (a malformed nearZip is reported as null).
+        const filtersApplied = {
+          needs:              needsOk  ? (needs as string) : null,
+          nearZip:            zipOk    ? (nearZip as string) : null,
+          availabilityWindow: availOk  ? (availabilityWindow as string) : null,
+          radiusMiles:        radiusOk ? (radiusMiles as number) : null,
+        };
+        if (matchOutcome === "matched") {
+          // Names the family was just shown — freshly written to the session by
+          // runMatchingForClient. Given to the agent for follow-up context only.
+          const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
+          const presented = ((freshSess.data()?.pendingMatches ?? []) as Array<{ name?: string; rate?: number }>)
+            .map((m) => ({ name: m.name ?? "Caregiver", hourlyRate: m.rate ?? null }));
+          return {
+            success: true,
+            outcome: "matched",
+            // sent:true = self-delivering tool (same contract as send_onboarding_link):
+            // the intro line + per-caregiver photo gallery already went to this chat.
+            sent: true,
+            matchesPresented: presented,
+            instruction:
+              "The family has ALREADY been texted an intro line plus each caregiver's photo, rate, and " +
+              "numbered profile link — those messages land BEFORE your reply. Do NOT repeat the names, " +
+              "rates, or links, and do NOT say 'I found N caregivers' again. Your entire reply must be " +
+              "ONE short closing line asking which caregiver they'd like to meet (reply with a name or number).",
+            filtersApplied,
+          };
+        }
+        if (matchOutcome === "no_match") {
+          return {
+            success: true,
+            outcome: "no_match",
+            matchesFound: 0,
+            teamAlerted: true,
+            instruction:
+              "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
+              "only message they get. In ONE short warm message: be honest that you haven't found the right " +
+              "match yet, that you're still actively searching, and that the team has been alerted and will " +
+              "personally reach out. Do not invent caregiver names and do not promise a specific timeline.",
+            filtersApplied,
+          };
+        }
         return {
-          success: true,
-          triggered: true,
-          // Report only the filters that actually passed validation and were
-          // applied — not the raw input (a malformed nearZip is reported as null).
-          filtersApplied: {
-            needs:              needsOk  ? (needs as string) : null,
-            nearZip:            zipOk    ? (nearZip as string) : null,
-            availabilityWindow: availOk  ? (availabilityWindow as string) : null,
-            radiusMiles:        radiusOk ? (radiusMiles as number) : null,
-          },
+          success: false,
+          outcome: "failed",
+          followUpTracked: true,
+          instruction:
+            "The search hit a technical snag; a retry is already scheduled and the care team was alerted. " +
+            "NOTHING has been texted to the family — in ONE short message tell them you're pulling up " +
+            "matches and will text names as soon as they come through. Stay warm and calm; never sound " +
+            "broken or blame technology.",
+          filtersApplied,
         };
       }
 
@@ -2939,7 +3355,7 @@ async function executeToolCall(
       }
 
       case "quote_booking": {
-        // U9b: pure cost estimate — lets Cara show the family the price before
+        // U9b: pure cost estimate — lets Evia show the family the price before
         // request_booking commits. No write; safe to call freely.
         const quote = await buildBookingQuote(input);
         if (!quote.ok) return toolError(quote.code, quote.message);
@@ -2958,6 +3374,7 @@ async function executeToolCall(
       }
 
       case "request_booking": {
+        return runActionNativeMcpWrite(name, input, async () => {
         const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
         // Session-injected ownership fields are checked here; the booking shape
         // (caregiverId/dates/times) + caregiver lookup are validated by the shared
@@ -2993,18 +3410,51 @@ async function executeToolCall(
         });
         if (!taskId) {
           // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
-          // and has already messaged the family. Surface that to the agent.
-          return { success: false, blocked: true, reason: "booking_blocked_pending_background_check" };
+          // and has already messaged the family. Tell the agent explicitly so it
+          // doesn't re-explain the block in its own words — the family must not
+          // get two back-to-back messages saying the same thing (ONE VOICE).
+          return {
+            success: false,
+            blocked: true,
+            reason: "booking_blocked_pending_background_check",
+            sent: true,
+            instruction:
+              "The family has ALREADY been texted a full explanation (background check still in progress, " +
+              "they'll be notified the moment it clears, plus an offer to find another caregiver meanwhile). " +
+              "Do NOT repeat or rephrase any of that. Reply with nothing beyond what genuinely adds — at " +
+              "most one short line answering whatever else they asked, or nothing new at all.",
+          };
         }
         logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
         return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
+        });
       }
 
       case "trigger_emergency_alert": {
+        return runActionNativeMcpWrite(name, input, async () => {
         // Parity with the EmergencySOS UI (dbService.triggerEmergencyAlert). clientId
         // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
         const { clientId, note, location } = input;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
+        // Idempotency: a model retry / double-call must not spawn duplicate active
+        // alerts (which double-pages ops). If this client already has an active
+        // alert raised in the last 2 minutes, return it instead of raising another
+        // — a genuine emergency that recent is already covered by the active one.
+        // Single-equality query (no composite index) so the emergency path can't
+        // fail on a missing index; per-client alert count is tiny.
+        const recentAlerts = await db.collection("emergency_alerts")
+          .where("initiatorId", "==", clientId)
+          .limit(50)
+          .get();
+        const twoMinAgoMs = Date.now() - 2 * 60 * 1000;
+        const activeRecent = recentAlerts.docs.find((d) => {
+          const data = d.data();
+          const ts = Date.parse((data.timestamp as string) ?? "");
+          return data.status === "active" && !isNaN(ts) && ts >= twoMinAgoMs;
+        });
+        if (activeRecent) {
+          return { success: true, alertId: activeRecent.id, status: "active", advise911: true, deduped: true };
+        }
         const alertRef = await db.collection("emergency_alerts").add({
           initiatorId:     clientId,
           initiatorType:   "client",
@@ -3016,11 +3466,12 @@ async function executeToolCall(
           source:          "cara",
         });
         await db.collection("admin_alerts").add({
-          type: "emergency_alert", title: "🚨 Emergency alert raised via Cara",
+          type: "emergency_alert", title: "🚨 Emergency alert raised via Evia",
           clientId, alertId: alertRef.id, note: note ?? "", createdAt: nowIso, resolved: false,
         }).catch(() => {});
         logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
         return { success: true, alertId: alertRef.id, status: "active", advise911: true };
+        });
       }
 
       case "get_callout_backups": {
@@ -3070,10 +3521,10 @@ async function executeToolCall(
         const refundReason = (reason as string) || "Caregiver called out, no suitable backup available";
         await apptRef.update({ status: "cancelled_refund_requested", refundRequestedAt: nowIso, refundReason, needsBackup: false });
         const refundRef = await db.collection("refundRequests").add({
-          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "pending", createdAt: nowIso, source: "cara",
+          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "requested", requestedAt: nowIso, createdAt: nowIso, source: "cara",
         });
         await db.collection("admin_alerts").add({
-          type: "refund_request", title: "Refund request — caregiver callout (via Cara)",
+          type: "refund_request", title: "Refund request — caregiver callout (via Evia)",
           clientId, appointmentId, refundRequestId: refundRef.id, createdAt: nowIso, resolved: false,
         }).catch(() => {});
         logAudit({ eventType: "callout_refund_requested", userId: clientId as string, data: { source: "mcp:request_callout_refund", appointmentId, refundRequestId: refundRef.id } }).catch(() => {});
@@ -3180,7 +3631,7 @@ async function executeToolCall(
 
       case "cara_knows": {
         // Memory transparency surface (Sprint 3 / roadmap §5.3). Returns the
-        // family's full editable memory context — the same blob Cara already
+        // family's full editable memory context — the same blob Evia already
         // sees in-prompt, but surfaced so they can verify or correct it.
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
         logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:cara_knows").catch(() => {});
@@ -3191,7 +3642,7 @@ async function executeToolCall(
         return {
           success: true,
           files,
-          context: context || "(no memory files on file yet — Cara is still building her picture of this family)",
+          context: context || "(no memory files on file yet — Evia is still building her picture of this family)",
         };
       }
 
@@ -3219,7 +3670,7 @@ async function executeToolCall(
 
       case "write_todos": {
         // Working-memory checklist (DeepAgents TodoListMiddleware port). Stored on
-        // agent_sessions; injected into Cara's system prompt at the start of each
+        // agent_sessions; injected into Evia's system prompt at the start of each
         // turn so she can see what's outstanding across the conversation.
         const { phone, items } = input as { phone?: string; items?: Array<{ task: string; status: string }> };
         if (!phone || !Array.isArray(items)) {
@@ -3257,7 +3708,7 @@ async function executeToolCall(
           cancelledAt:      nowIso,
           cancelledReason:  reason ?? "client_request",
         });
-        // Notify caregiver — surface success/failure so Cara doesn't claim
+        // Notify caregiver — surface success/failure so Evia doesn't claim
         // the caregiver was reached when the message never went out.
         let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
         if (appt.caregiverId) {
@@ -3286,6 +3737,152 @@ async function executeToolCall(
         const notification = await trySend(cgPhone, `Message from family: ${message as string}`, "mcp:send_caregiver_message");
         logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => {});
         return { success: true, sent: notification.sent, caregiverName: cgSnap.data()?.name ?? "", notification };
+      }
+
+      case "request_location": {
+        const { phone, chatId, reason } = input;
+        if (!phone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required");
+        const sessionSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const session = sessionSnap.data();
+        const { canRequestNativeLocation } = await import("../utils/locationShare");
+        const typedAskFallback = {
+          success: true,
+          nativePromptSent: false,
+          fallback: "ask_typed_city_zip",
+          message: "Native location prompt unavailable on this chat — ask the user to type their city and zip code.",
+        };
+        // Gate: 1:1 iMessage only. SMS/RCS/group → fall back to a typed ask.
+        if (!canRequestNativeLocation(session as { service?: string; groupChatId?: string })) {
+          return typedAskFallback;
+        }
+        const { requestLocation } = await import("../linq/client");
+        const result = await requestLocation(chatId as string);
+        // Stale-iMessage or any non-2xx (e.g. 409) → same typed-ask fallback.
+        if (!result.requested) return typedAskFallback;
+        // Persist the pending request so the scheduled nudge job (and onboarding)
+        // can fall back to a typed ask if no pin arrives. TTL bounds the wait.
+        await db.collection("agent_sessions").doc(phone as string).set({
+          pendingLocationRequest: {
+            source:    "mcp",
+            reason:    (reason as string) ?? "",
+            sentAt:    new Date().toISOString(),
+            nudgeSent: false,
+          },
+          stateExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }, { merge: true });
+        return {
+          success: true,
+          nativePromptSent: true,
+          message: "Sent the native location prompt. The user's shared location will arrive as a separate message.",
+        };
+      }
+
+      case "react_to_message": {
+        const { phone, type, customEmoji } = input;
+        if (!phone || !type) return toolError("INVALID_INPUT", "phone and type are required");
+        const VALID_REACTIONS = new Set(["love", "like", "dislike", "laugh", "emphasize", "question", "custom"]);
+        if (!VALID_REACTIONS.has(type as string)) {
+          return toolError("INVALID_INPUT", `type must be one of: ${[...VALID_REACTIONS].join(", ")}`);
+        }
+        if (type === "custom" && !customEmoji) {
+          return toolError("INVALID_INPUT", "customEmoji is required when type is 'custom'");
+        }
+        const sessionSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const session = sessionSnap.data() as
+          | { service?: string; chatId?: string; lastInboundMessageId?: string }
+          | undefined;
+        const textFallback = (why: string) => ({
+          success:  true,
+          reacted:  false,
+          fallback: "express_in_text",
+          message:  `${why} — express the sentiment briefly in your text reply instead.`,
+        });
+        // Reactions are an iMessage feature; SMS/RCS can't render a tapback.
+        if (session?.service !== "iMessage") {
+          return textFallback("Reactions aren't supported on this chat (iMessage only)");
+        }
+        const targetMessageId = session?.lastInboundMessageId;
+        if (!targetMessageId) {
+          return textFallback("No recent message on file to react to");
+        }
+        const { addReaction } = await import("../linq/client");
+        try {
+          await addReaction({
+            messageId:   targetMessageId,
+            type:        type as import("../linq/client").LinqReactionType,
+            customEmoji: customEmoji as string | undefined,
+          });
+        } catch (err) {
+          // A reaction is a nicety — soft-fall back to text rather than surfacing
+          // a tool error that would trip the recovery loop.
+          console.warn("react_to_message: addReaction failed", {
+            phone, targetMessageId, err: err instanceof Error ? err.message : String(err),
+          });
+          return textFallback("Couldn't add the reaction");
+        }
+        await db.collection("agent_reactions").add({
+          chatId:    session?.chatId ?? null,
+          messageId: targetMessageId,
+          reaction:  type === "custom" ? (customEmoji as string) : (type as string),
+          phone,
+          direction: "outbound",
+          operation: "added",
+          reactedAt: new Date().toISOString(),
+        }).catch(() => {/* audit only */});
+        return {
+          success: true,
+          reacted: true,
+          message: "Reaction added to the user's message. Only send a text reply if one is genuinely needed — the reaction may be the whole answer.",
+        };
+      }
+
+      case "set_visit_update_frequency": {
+        const { phone, frequencyMinutes, mode } = input;
+        if (!phone) return toolError("INVALID_INPUT", "phone is required");
+        if (mode === undefined && frequencyMinutes === undefined) {
+          return toolError("INVALID_INPUT", "Provide frequencyMinutes (30–480) or mode ('default' | 'off')");
+        }
+
+        const sessionRef = db.collection("agent_sessions").doc(phone as string);
+        const sessionSnap = await sessionRef.get();
+        if (!sessionSnap.exists) return toolError("NOT_FOUND", "No session found for this phone");
+
+        if (mode === "off") {
+          await sessionRef.update({
+            inShiftUpdatesPaused:  true,
+            inShiftUpdateCadence:  admin.firestore.FieldValue.delete(),
+          });
+          return {
+            success: true,
+            setting: "off",
+            message: "Mid-visit updates are off. Arrival notices and the end-of-visit summary still send. They can turn updates back on anytime.",
+          };
+        }
+        if (mode === "default") {
+          await sessionRef.update({
+            inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
+            inShiftUpdateCadence: admin.firestore.FieldValue.delete(),
+          });
+          return {
+            success: true,
+            setting: "default",
+            message: "Mid-visit updates reset to the standard cadence — roughly every 2 hours during a visit.",
+          };
+        }
+
+        const minutes = Number(frequencyMinutes);
+        if (!Number.isFinite(minutes) || minutes < 30 || minutes > 480) {
+          return toolError("INVALID_INPUT", "frequencyMinutes must be between 30 and 480");
+        }
+        await sessionRef.update({
+          inShiftUpdatesPaused: admin.firestore.FieldValue.delete(),
+          inShiftUpdateCadence: Math.round(minutes),
+        });
+        return {
+          success: true,
+          setting: `${Math.round(minutes)}m`,
+          message: `Mid-visit updates will now come about every ${Math.round(minutes)} minutes during a visit.`,
+        };
       }
 
       case "get_recurring_schedule": {
@@ -3388,8 +3985,11 @@ async function executeToolCall(
       case "get_caregiver_appointments": {
         if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
         const daysAhead   = Math.min((input.daysAhead as number) ?? 7, 30);
-        const today       = new Date().toISOString().slice(0, 10);
-        const futureLimit = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        // Business-timezone window — UTC "today" dropped tonight's shift in PT evenings
+        const today       = businessTodayStr();
+        const futureLimitD = new Date(`${today}T12:00:00Z`);
+        futureLimitD.setUTCDate(futureLimitD.getUTCDate() + daysAhead);
+        const futureLimit = futureLimitD.toISOString().slice(0, 10);
         const snap = await db.collection("appointments")
           .where("caregiverId", "==", input.caregiverId)
           .where("date",        ">=", today)
@@ -3405,27 +4005,131 @@ async function executeToolCall(
       case "get_pending_tasks": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_pending_tasks" } }).catch(() => {});
-        const [taskSnap, interviewSnap] = await Promise.all([
-          db.collection("agent_tasks")
-            .where("clientId", "==", input.clientId)
-            .where("status",   "in", ["awaiting_approval", "pending"])
-            .limit(5)
-            .get(),
-          db.collection("interviews")
-            .where("clientId", "==", input.clientId)
-            .where("status",   "==", "awaiting_hire_decision")
-            .limit(5)
-            .get(),
-        ]);
-        const tasks      = taskSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        const interviews = interviewSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        const total      = tasks.length + interviews.length;
+        // Note: an earlier version also queried `interviews` for status
+        // "awaiting_hire_decision" — that status is written nowhere (the
+        // awaiting-decision state lives in agent_sessions.pendingInterviewOutcome),
+        // so the branch always returned empty and was removed.
+        const taskSnap = await db.collection("agent_tasks")
+          .where("clientId", "==", input.clientId)
+          .where("status",   "in", ["awaiting_approval", "pending"])
+          .limit(5)
+          .get();
+        // Oldest first with age surfaced — a 3-day-old approval should lead
+        // the reply, not sit wherever Firestore returned it.
+        const withAge = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
+          const data = d.data();
+          const createdMs = typeof data.createdAt === "string" ? Date.parse(data.createdAt) : NaN;
+          const ageHours = Number.isFinite(createdMs)
+            ? Math.max(0, Math.floor((Date.now() - createdMs) / 3_600_000))
+            : null;
+          return { id: d.id, ...data, ageHours };
+        };
+        const byOldest = (a: { ageHours: number | null }, b: { ageHours: number | null }) =>
+          (b.ageHours ?? -1) - (a.ageHours ?? -1);
+        const tasks = taskSnap.docs.map(withAge).sort(byOldest);
+        const total = tasks.length;
         return {
           success: true,
           total,
           tasks,
-          interviews,
+          interviews: [], // kept for response-shape compatibility (see note above)
           summary: total === 0 ? "Nothing pending" : `${total} item(s) need your attention`,
+        };
+      }
+
+      case "get_work_in_progress": {
+        const phoneW = (input.phone as string | undefined) ?? "";
+        if (!phoneW) return toolError("INVALID_INPUT", "phone is required");
+        const nowIso = new Date().toISOString();
+        const ageHrs = (iso?: string) => {
+          const ms = typeof iso === "string" ? Date.parse(iso) : NaN;
+          return Number.isFinite(ms) ? Math.max(0, Math.floor((Date.now() - ms) / 3_600_000)) : null;
+        };
+
+        const [qaCommit, matchCommit, activeTaskSnap, taskSnap2, sessionSnap2] = await Promise.all([
+          db.collection("pending_commitments").doc(`${phoneW}_qa_answer`).get(),
+          db.collection("pending_commitments").doc(`${phoneW}_matching`).get(),
+          db.collection("agent_tasks_active").doc(phoneW).get(),
+          db.collection("agent_tasks")
+            .where("clientPhone", "==", phoneW)
+            .where("status", "in", ["pending", "awaiting_approval", "pending_bg_clear"])
+            .limit(10)
+            .get(),
+          db.collection("agent_sessions").doc(phoneW).get(),
+        ]);
+
+        interface WipItem {
+          kind: string; summary: string;
+          dueAt: string | null; ageHours: number | null; overdue: boolean;
+        }
+        const items: WipItem[] = [];
+
+        for (const snap of [qaCommit, matchCommit]) {
+          if (!snap.exists || snap.data()?.status !== "open") continue;
+          const c = snap.data()!;
+          items.push({
+            kind:     "promise",
+            summary:  `Follow-up owed: ${String(c.promiseText ?? "").slice(0, 140)}`,
+            dueAt:    (c.dueAt as string | undefined) ?? null,
+            ageHours: ageHrs(c.createdAt as string | undefined),
+            overdue:  ((c.dueAt as string | undefined) ?? "") < nowIso,
+          });
+        }
+        if (activeTaskSnap.exists) {
+          const t = activeTaskSnap.data()!;
+          items.push({
+            kind:     "background_task",
+            summary:  String(t.description ?? t.statusText ?? t.type ?? "background task in progress").slice(0, 140),
+            dueAt:    null,
+            ageHours: ageHrs((t.startedAt ?? t.createdAt) as string | undefined),
+            overdue:  false,
+          });
+        }
+        for (const d of taskSnap2.docs) {
+          const t = d.data();
+          items.push({
+            kind:     "pending_task",
+            summary:  `${String(t.type ?? "task")} — ${String(t.status ?? "pending")}`.slice(0, 140),
+            dueAt:    (t.expiresAt as string | undefined) ?? null,
+            ageHours: ageHrs(t.createdAt as string | undefined),
+            overdue:  !!(t.expiresAt && (t.expiresAt as string) < nowIso),
+          });
+        }
+        const sess = sessionSnap2.data() ?? {};
+        const todos = Array.isArray(sess.todos) ? sess.todos : [];
+        for (const t of todos as Array<Record<string, unknown>>) {
+          if (t?.status === "completed") continue;
+          const label = String(t?.content ?? t?.text ?? t?.task ?? "").slice(0, 140);
+          if (!label) continue;
+          items.push({ kind: "todo", summary: label, dueAt: null, ageHours: null, overdue: false });
+        }
+        const matches = Array.isArray(sess.pendingMatches) ? sess.pendingMatches : [];
+        if (matches.length > 0) {
+          const names = (matches as Array<Record<string, unknown>>)
+            .map((m) => String(m?.name ?? "")).filter(Boolean).slice(0, 5);
+          items.push({
+            kind:     "matches_presented",
+            summary:  `Caregiver matches awaiting your pick: ${names.join(", ")}`,
+            dueAt:    null,
+            ageHours: ageHrs(sess.pendingMatchesSetAt as string | undefined),
+            overdue:  false,
+          });
+        }
+
+        // Overdue first, then nearest due date, then oldest.
+        items.sort((a, b) =>
+          Number(b.overdue) - Number(a.overdue) ||
+          (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999") ||
+          (b.ageHours ?? -1) - (a.ageHours ?? -1)
+        );
+
+        return {
+          success: true,
+          total:   items.length,
+          items,
+          summary: items.length === 0
+            ? "Nothing in flight — no open promises, tasks, or pending decisions."
+            : `${items.length} item(s) in flight${items.some(i => i.overdue) ? ", including overdue follow-ups — address those first" : ""}.`,
         };
       }
 
@@ -3702,7 +4406,10 @@ async function executeToolCall(
       const { clientId, field, value, action } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove";
       };
-      const ALLOWED_FIELDS = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes"];
+      // emergencyContacts/dailyRoutine/accessCodes/dietaryRestrictions are the
+      // web Care Plan tab's fields — same doc since the 2026-07-12 cutover, so
+      // Evia can manage everything the family can edit on the web (parity).
+      const ALLOWED_FIELDS = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "emergencyContacts", "dailyRoutine", "accessCodes", "dietaryRestrictions"];
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }
@@ -3769,18 +4476,23 @@ async function executeToolCall(
     }
 
     if (name === "accept_shift" || name === "decline_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { phone: actingPhone, chatId } = input as Record<string, unknown>;
       if (!actingPhone || !chatId) return toolError("INVALID_INPUT", "phone and chatId are required (auto-injected)");
       const { acceptCaregiverShiftOffer, declineCaregiverShiftOffer } = await import("../agents/shiftOffer");
       const res = name === "accept_shift"
         ? await acceptCaregiverShiftOffer(actingPhone as string, chatId as string)
         : await declineCaregiverShiftOffer(actingPhone as string, chatId as string);
-      if (res.status === "no_pending_offer") return { success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
-      if (res.status === "not_pending" || res.status === "already_closed") return { success: false, reason: res.status, message: "That offer is no longer open." };
+      // _toolError so the loop's high-stakes is_error guard fires (these are
+      // HIGH_STAKES_MUTATIONS — a plain success:false skips that hardening).
+      if (res.status === "no_pending_offer") return { _toolError: true, success: false, reason: "no_pending_offer", message: "There's no pending shift offer to act on right now." };
+      if (res.status === "not_pending" || res.status === "already_closed") return { _toolError: true, success: false, reason: res.status, message: "That offer is no longer open." };
       return { success: true, resolution: res.status };
+      });
     }
 
     if (name === "add_family_member") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { seniorId, name: memberName, memberPhone, clientId } = input as Record<string, unknown>;
       if (!seniorId || !memberName || !memberPhone || !clientId) return toolError("INVALID_INPUT", "seniorId, name, memberPhone, and clientId are required");
       const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
@@ -3840,11 +4552,46 @@ async function executeToolCall(
       }
 
       const { buildOrUpdateFamilyGroup } = await import("../agents/familyGroupManager");
-      await buildOrUpdateFamilyGroup(seniorId as string).catch(() => {});
+      let groupSync: { success: boolean; errorReason?: string } = { success: true };
+      await buildOrUpdateFamilyGroup(seniorId as string).catch(async (err) => {
+        const errorReason = err instanceof Error ? err.message : String(err);
+        groupSync = { success: false, errorReason };
+        const { logAgentAction } = await import("../observability/actionLedger");
+        await logAgentAction({
+          actionType: "family_group_sync",
+          status: "failed",
+          userId: clientId as string,
+          role: "client",
+          toolName: "add_family_member",
+          targetCollection: "family_groups",
+          targetDocId: seniorId as string,
+          errorReason,
+          metadata: {
+            seniorId,
+            memberName,
+            memberPhone,
+            source: "mcp:add_family_member",
+            recipeId: "share_latest_update",
+          },
+        }).catch(() => {});
+        await db.collection("admin_alerts").add({
+          type: "family_group_sync_failed",
+          severity: "high",
+          priority: "high",
+          resolved: false,
+          clientId,
+          seniorId,
+          memberPhone,
+          recipeId: "share_latest_update",
+          sourceAgent: "mcp:add_family_member",
+          errorReason,
+          createdAt: nowIso,
+        }).catch(() => {});
+      });
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         memberPhone as string,
-        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} CareConnex care group. I'm Cara, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
+        `Hi - you've been added to ${seniorData.name ?? seniorData.seniorName ?? "your loved one's"} Evia care group. I'm Evia, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
         "mcp:add_family_member",
       );
       const { logAgentAction } = await import("../observability/actionLedger");
@@ -3865,10 +4612,12 @@ async function executeToolCall(
         errorReason: notification.sent ? undefined : notification.reason,
         metadata: { seniorId, memberName, memberPhone, source: "mcp:add_family_member" },
       }).catch(() => {});
-      return { success: true, added: true, name: memberName, phone: memberPhone, notification };
+      return { success: true, added: true, name: memberName, phone: memberPhone, notification, groupSync };
+      });
     }
 
     if (name === "remove_family_member") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { seniorId, clientId } = input as Record<string, unknown>;
       // Target is memberPhone only. `input.phone` is the acting user's phone
       // (auto-injected for the confirmation round-trip), so falling back to it
@@ -3885,11 +4634,11 @@ async function executeToolCall(
       const memberObj = existingMembers.find(m => m.phone === targetPhone);
       if (memberObj) await seniorSnap.ref.update({ familyMembers: admin.firestore.FieldValue.arrayRemove(memberObj) });
       // Tell the removed person they were removed — courtesy plus prevents
-      // confusion when their next inbound stops getting Cara replies.
+      // confusion when their next inbound stops getting Evia replies.
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(
         targetPhone as string,
-        "You've been removed from a CareConnex care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
+        "You've been removed from an Evia care group. You won't get further updates here. Text STOP anytime to unsubscribe completely.",
         "mcp:remove_family_member",
       );
       logAudit({ eventType: "family_member_removed", userId: clientId as string, data: { source: "mcp:remove_family_member", seniorId, removedPhone: targetPhone, notificationSent: notification.sent } }).catch(() => {});
@@ -3906,6 +4655,7 @@ async function executeToolCall(
         metadata: { seniorId, removedPhone: targetPhone, source: "mcp:remove_family_member" },
       }).catch(() => {});
       return { success: true, ...result, notification };
+      });
     }
 
     if (name === "submit_review") {
@@ -4096,11 +4846,18 @@ async function executeToolCall(
       // the amended senior_profiles rule lets the owning family read them (KTD-10).
       const ref = await db.collection("senior_profiles").add({
         userId:       clientId,
+        // clientId field REQUIRED for household reads — list_household_seniors
+        // queries where("clientId","==",...) and the onboarding writes set it;
+        // without it a tool-created senior is invisible to the household list.
+        clientId:     clientId,
         name:         seniorName,
         relationship: relationship ?? null,
         age:          age ?? null,
         needs:        Array.isArray(needs) ? needs : [],
         conditions:   Array.isArray(conditions) ? conditions : [],
+        // Onboarding-write shape parity: finalization stores conditions under
+        // `diagnoses` — mirror it so readers of either field see the same data.
+        diagnoses:    Array.isArray(conditions) ? conditions : [],
         location:     location ?? null,
         createdAt:    nowIso,
         source:       "cara_sms",
@@ -4200,24 +4957,24 @@ async function executeToolCall(
       const daysArr = Array.isArray(days) ? (days as string[]) : [];
       const todArr  = Array.isArray(timeOfDay) ? (timeOfDay as string[]) : [];
       const ref = db.collection("job_posts").doc();
-      await ref.set({
-        intakeId:       ref.id,
-        clientId,
-        status:         "open",
-        careTypes,
-        schedule:       { frequency: frequency ?? "flexible", days: daysArr, timeOfDay: todArr },
-        startDate:      startDate ?? null,
-        location:       { city: city ?? null, lat: null, lng: null },
-        summary:        `New care job — ${(careTypes as string[]).slice(0, 2).join(", ")}`,
-        daysPerWeek:    daysArr.length,
-        timeOfDay:      todArr.join(", "),
-        hourlyRate,
-        paymentMethod:  paymentMethod ?? null,
-        applicantCount: 0,
-        notifiedCount:  0,
-        source:         "cara_sms",
-        createdAt:      nowIso,
-      });
+      // Web JobPost contract via the shared builder — the caregiver Job Board
+      // renders title/location-string/rate; the old hand-rolled shape here
+      // (summary + location OBJECT) rendered blank and could crash the board.
+      const { buildWebJobPostDoc } = await import("../agents/jobPostContract");
+      await ref.set(buildWebJobPostDoc({
+        clientId:      clientId as string,
+        source:        "cara_sms",
+        title:         city ? `Care needed in ${city}` : "Care needed",
+        careTypes:     careTypes as string[],
+        startDate:     (startDate ?? undefined) as string | undefined,
+        frequency:     (frequency ?? undefined) as string | undefined,
+        days:          daysArr,
+        timeOfDay:     todArr,
+        hourlyRate:    hourlyRate as number | string,
+        paymentMethod: (paymentMethod ?? undefined) as string | undefined,
+        city:          (city ?? undefined) as string | undefined,
+        intakeId:      ref.id,
+      }));
       logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});
       return { success: true, jobId: ref.id, message: "Your job is posted — caregivers nearby will see it." };
     }
@@ -4256,7 +5013,21 @@ async function executeToolCall(
       if (job.status !== "open") return toolError("INVALID_INPUT", "This job post is no longer accepting applications");
       const dupSnap2 = await db.collection("job_applications").where("jobId", "==", jobId).where("caregiverId", "==", caregiverId).limit(1).get();
       if (!dupSnap2.empty) return toolError("INVALID_INPUT", "You have already applied to this job");
-      const appRef = await db.collection("job_applications").add({ jobId, caregiverId, clientId: job.clientId, proposedRate: proposedRate ?? null, coverNote: coverNote ?? "", status: "pending", appliedAt: nowIso, source: "cara_sms" });
+      const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
+      const applicantSnap = await db.collection("caregivers").doc(caregiverId as string).get().catch(() => null);
+      const applicant = applicantSnap?.exists ? applicantSnap.data()! : {};
+      const appRef = await db.collection("job_applications").add({
+        jobId, caregiverId, clientId: job.clientId,
+        caregiverName: (applicant.name as string) ?? "",
+        ...(applicant.photo ? { caregiverPhoto: applicant.photo } : {}),
+        rating: typeof applicant.rating === "number" ? applicant.rating : null,
+        ...jobApplicationSnapshot(job),
+        proposedRate: proposedRate ?? null,
+        // coverLetter is the canonical key the web reads; coverNote kept for SMS-side readers.
+        coverLetter: (coverNote as string | undefined) ?? "",
+        coverNote: coverNote ?? "",
+        status: "pending", appliedAt: nowIso, source: "cara_sms",
+      });
       const clientSessSnap = await db.collection("agent_sessions").where("userId", "==", job.clientId).limit(1).get();
       if (!clientSessSnap.empty) {
         const { sendViaInteractionAgent } = await import("../agents/caraAgent");
@@ -4316,69 +5087,106 @@ async function executeToolCall(
     if (name === "request_instant_payout") {
       const { caregiverId, amountCents } = input as Record<string, unknown>;
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap3 = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap3.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg3 = cgSnap3.data()!;
-      if (!cg3.stripeAccountId) return toolError("INVALID_INPUT", "Stripe account not set up — complete onboarding first");
-      if (!cg3.payoutsEnabled)  return toolError("INVALID_INPUT", "Payouts are not yet enabled on your account");
-      const { getStripeClient } = await import("../stripe");
-      const sc = getStripeClient();
-      const balance = await sc.balance.retrieve({ stripeAccount: cg3.stripeAccountId as string });
-      const availableCents = balance.available[0]?.amount ?? 0;
-      if (availableCents <= 0) return toolError("INVALID_INPUT", "No available balance to pay out");
-      const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
-      if (payoutCents > availableCents) return toolError("INVALID_INPUT", `Requested $${(payoutCents/100).toFixed(2)} exceeds available balance of $${(availableCents/100).toFixed(2)}`);
-      await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "instant" }, { stripeAccount: cg3.stripeAccountId as string });
-      logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", amountCents: payoutCents } }).catch(() => {});
-      return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, estimatedArrival: "within minutes" };
+      // Single payout implementation shared with the app callable and the SMS
+      // PAYOUT flow — eligibility, replay guard, Stripe idempotency key, and
+      // the caregivers/{id}/payouts record all live there.
+      const { executeInstantPayout, InstantPayoutError } = await import("../payoutCommon");
+      try {
+        const result = await executeInstantPayout({
+          caregiverId: caregiverId as string,
+          requestedCents: amountCents != null ? Number(amountCents) : null,
+          source: "mcp",
+        });
+        logAudit({ eventType: "instant_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_instant_payout", amountCents: result.amountCents, stripePayoutId: result.stripePayoutId } }).catch(() => {});
+        return {
+          success: true,
+          amountCents: result.amountCents,
+          amountDollars: `$${(result.amountCents / 100).toFixed(2)}`,
+          fee: 0,
+          estimatedArrival: "within ~30 minutes",
+        };
+      } catch (err) {
+        if (err instanceof InstantPayoutError) {
+          return toolError(err.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT", err.message);
+        }
+        throw err;
+      }
     }
 
     if (name === "submit_shift_hours") {
-      const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
-      const apptSnap3 = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap3.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt3 = apptSnap3.data()!;
-      if (appt3.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
-      if (!["completed","in-progress","in_progress"].includes(appt3.status as string)) return toolError("INVALID_INPUT", "Shift hours can only be submitted for completed or in-progress visits");
-      const existingShift = await db.collection("shiftHours").doc(appointmentId as string).get();
-      if (existingShift.exists && existingShift.data()!.status !== "correction_requested") return toolError("INVALID_INPUT", "Shift hours already submitted for this appointment");
-      const [inH, inM]   = (clockInTime  as string).split(":").map(Number);
-      const [outH, outM] = (clockOutTime as string).split(":").map(Number);
-      const totalMins3   = (outH * 60 + outM) - (inH * 60 + inM) - (Number(breakMinutes) || 0);
-      if (totalMins3 <= 0) return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
-      const durationHours3 = Math.round((totalMins3 / 60) * 100) / 100;
-      const hourlyRate3    = (appt3.hourlyRate as number) ?? 22;
-      const amountCents3   = Math.round(durationHours3 * hourlyRate3 * 100);
-      const grossPay3      = Math.round(durationHours3 * hourlyRate3 * 100) / 100;
-      await db.collection("shiftHours").doc(appointmentId as string).set({
-        appointmentId, caregiverId, clientId: appt3.clientId,
-        caregiverName: (appt3.caregiverName as string) ?? "Caregiver",
-        clientName: (appt3.clientName as string) ?? "Client",
-        clockInTime, clockOutTime, breakMinutes: Number(breakMinutes) || 0,
-        durationHours: durationHours3,
-        submittedTotalHours: durationHours3,
-        date: appt3.date, hourlyRate: hourlyRate3, payRate: hourlyRate3,
-        amountCents: amountCents3,
-        // Charge-engine fields (processShiftPayment reads grossPay/paymentMethod/currency)
-        basePay: grossPay3, grossPay: grossPay3, currency: "usd",
-        paymentMethod: String(appt3.paymentMethod ?? "").toLowerCase().trim() === "cash" ? "cash" : "credit",
-        status: "pending_client_review", submittedAt: nowIso,
-        autoApproveAt: autoApproveAtIso(),
-        paymentAttemptCount: 0,
-      }, { merge: false });
-      const clientSessSnap3 = await db.collection("agent_sessions").where("userId", "==", appt3.clientId).limit(1).get();
-      if (!clientSessSnap3.empty) {
-        const { sendViaInteractionAgent } = await import("../agents/caraAgent");
-        const cgData3 = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-        const cgName3 = cgData3?.name ?? cgData3?.firstName ?? "Your caregiver";
-        await sendViaInteractionAgent(clientSessSnap3.docs[0].id, { content: `${cgName3} submitted shift hours: ${clockInTime}–${clockOutTime} = ${durationHours3}h ($${(amountCents3/100).toFixed(2)}). Reply APPROVE or let me know if anything needs adjusting.`, urgency: "standard", sourceAgent: "mcp:submit_shift_hours", canDrop: false }).catch(() => {});
-      }
-      logAudit({ eventType: "shift_hours_submitted", userId: caregiverId as string, data: { source: "mcp:submit_shift_hours", appointmentId, durationHours: durationHours3, amountCents: amountCents3 } }).catch(() => {});
-      return { success: true, durationHours: durationHours3, amountCents: amountCents3, amountDollars: `$${(amountCents3/100).toFixed(2)}` };
+      return runActionNativeMcpWrite(name, input, async () => {
+        const { caregiverId, appointmentId, clockInTime, clockOutTime, breakMinutes } = input as Record<string, unknown>;
+        if (!caregiverId || !appointmentId || !clockInTime || !clockOutTime) {
+          return toolError("INVALID_INPUT", "caregiverId, appointmentId, clockInTime, and clockOutTime are required");
+        }
+        if (Number(breakMinutes) > 0) {
+          return toolError("INVALID_INPUT", "Break adjustments require billing review and cannot be submitted here");
+        }
+
+        const apptSnap = await db.collection("appointments").doc(String(appointmentId)).get();
+        if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
+        const appointment = apptSnap.data()!;
+        if (appointment.caregiverId !== caregiverId) {
+          return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
+        }
+
+        const startMs = apptStartMs(appointment.date, clockInTime);
+        let endMs = apptStartMs(appointment.date, clockOutTime);
+        const bookedWindow = bookedWindowMillis(appointment);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !bookedWindow) {
+          return toolError("INVALID_INPUT", "Appointment or submitted times are not valid");
+        }
+        if (endMs <= startMs) {
+          if (bookedWindow.end <= bookedWindow.start + 24 * 60 * 60 * 1000 && bookedWindow.end > startMs) {
+            endMs += 24 * 60 * 60 * 1000;
+          } else {
+            return toolError("INVALID_INPUT", "Clock-out time must be after clock-in time");
+          }
+        }
+
+        try {
+          const result = await createValidatedShiftHours({
+            appointmentId: String(appointmentId),
+            actorUid: String(caregiverId),
+            submittedStartTime: new Date(startMs).toISOString(),
+            submittedEndTime: new Date(endMs).toISOString(),
+            source: "mcp",
+          });
+          logAudit({
+            eventType: "shift_hours_submitted",
+            userId: String(caregiverId),
+            data: {
+              source: "mcp:submit_shift_hours",
+              appointmentId,
+              durationHours: result.totalHours,
+              amountCents: result.grossPayCents,
+              status: result.status,
+            },
+          }).catch(() => {});
+          return {
+            success: true,
+            durationHours: result.totalHours,
+            amountCents: result.grossPayCents,
+            amountDollars: `$${(result.grossPayCents / 100).toFixed(2)}`,
+            status: result.status,
+            alreadyExisted: result.alreadyExisted,
+          };
+        } catch (error) {
+          if (error instanceof ValidatedShiftHoursError) {
+            const code = error.code === "not_found"
+              ? "NOT_FOUND"
+              : error.code === "forbidden"
+                ? "PERMISSION_DENIED"
+                : "INVALID_INPUT";
+            return toolError(code, error.message);
+          }
+          throw error;
+        }
+      });
     }
 
     if (name === "review_shift_hours") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { clientId, appointmentId, decision, correctedHours, reason } = input as Record<string, unknown>;
       if (!clientId || !appointmentId || !decision) return toolError("INVALID_INPUT", "clientId, appointmentId, and decision are required");
       if (decision === "dispute" && correctedHours == null) return toolError("INVALID_INPUT", "correctedHours is required when disputing");
@@ -4387,7 +5195,12 @@ async function executeToolCall(
       const shift = shiftSnap.data()!;
       if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
       if (shift.status !== "pending_client_review") return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
-      await shiftSnap.ref.update({ status: decision === "approve" ? "approved" : "disputed", reviewedAt: nowIso, correctedHours: correctedHours ?? null, disputeReason: reason ?? null });
+      await shiftSnap.ref.update({
+        status: decision === "approve" ? "approved" : "correction_proposed",
+        reviewedAt: nowIso,
+        correctedHours: correctedHours ?? null,
+        disputeReason: reason ?? null,
+      });
       if (decision === "dispute") {
         const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
         if (!cgSessSnap4.empty) {
@@ -4397,6 +5210,7 @@ async function executeToolCall(
       }
       logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, decision } }).catch(() => {});
       return { success: true, decision, appointmentId };
+      });
     }
 
     // ── withdraw_job_application (U2) ───────────────────────────────────────────
@@ -4417,6 +5231,7 @@ async function executeToolCall(
 
     // ── respond_to_booking_request (U2 — AE1) ───────────────────────────────────
     if (name === "respond_to_booking_request") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, decision, message: brMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
       if (decision !== "accept" && decision !== "decline") return toolError("INVALID_INPUT", "decision must be 'accept' or 'decline'");
@@ -4457,10 +5272,12 @@ async function executeToolCall(
       }
       logAudit({ eventType: "booking_request_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_booking_request", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, decision, appointmentId, status: decision === "accept" ? "confirmed" : "declined_by_caregiver", notification };
+      });
     }
 
     // ── start_shift (U2) ────────────────────────────────────────────────────────
     if (name === "start_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
       const coll = appointmentId ? "appointments" : "shifts";
@@ -4482,15 +5299,22 @@ async function executeToolCall(
       if (["pending", "requested", "offered", "pending_caregiver_confirmation"].includes(visit.status as string)) {
         return toolError("INVALID_INPUT", `Cannot start a visit that hasn't been confirmed yet (status: ${visit.status})`);
       }
-      // shifts dashboard reads "in-progress"; appointments use "in_progress".
-      const startedStatus = coll === "shifts" ? "in-progress" : "in_progress";
+      // "in-progress" (hyphen) is the canonical started status for BOTH
+      // collections. The old underscore write to appointments was invisible to
+      // every hyphen reader — handleArrived's twin path, the in-shift-update +
+      // task-nudge crons, the arrival trigger (appointmentUpdated.ts:95), the
+      // family notification, and care-notes validStatuses — so an agent-tool
+      // start silently disabled the whole in-shift experience.
+      const startedStatus = "in-progress";
       await snap.ref.update({ status: startedStatus, startedAt: nowIso });
       logAudit({ eventType: "shift_started", userId: caregiverId as string, data: { source: "mcp:start_shift", collection: coll, docId } }).catch(() => {});
       return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: startedStatus, startedAt: nowIso };
+      });
     }
 
     // ── complete_shift (U2 — AE7, idempotent) ───────────────────────────────────
     if (name === "complete_shift") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, shiftId, notes: completeNotes } = input as Record<string, unknown>;
       if (!caregiverId || (!appointmentId && !shiftId)) return toolError("INVALID_INPUT", "caregiverId and one of appointmentId or shiftId are required");
       const coll = appointmentId ? "appointments" : "shifts";
@@ -4523,10 +5347,12 @@ async function executeToolCall(
       await snap.ref.update({ status: "completed", completedAt: nowIso, ...(completeNotes ? { completionNotes: completeNotes } : {}) });
       logAudit({ eventType: "shift_completed", userId: caregiverId as string, data: { source: "mcp:complete_shift", collection: coll, docId } }).catch(() => {});
       return { success: true, appointmentId: appointmentId ?? null, shiftId: shiftId ?? null, status: "completed", completedAt: nowIso };
+      });
     }
 
     // ── update_shift_task (U2) ──────────────────────────────────────────────────
     if (name === "update_shift_task") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, shiftId, taskKey } = input as Record<string, unknown>;
       const completed = input.completed == null ? true : Boolean(input.completed);
       if (!caregiverId || !shiftId || !taskKey) return toolError("INVALID_INPUT", "caregiverId, shiftId, and taskKey are required");
@@ -4546,6 +5372,7 @@ async function executeToolCall(
       });
       logAudit({ eventType: "shift_task_updated", userId: caregiverId as string, data: { source: "mcp:update_shift_task", shiftId, taskKey, completed } }).catch(() => {});
       return { success: true, shiftId, taskKey, completed };
+      });
     }
 
     // ── submit_media_update (U2) ────────────────────────────────────────────────
@@ -4582,6 +5409,7 @@ async function executeToolCall(
 
     // ── respond_to_shift_hour_correction (U2) ───────────────────────────────────
     if (name === "respond_to_shift_hour_correction") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { caregiverId, appointmentId, decision, message: corrMsg } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !decision) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and decision are required");
       if (decision !== "accept" && decision !== "pushback") return toolError("INVALID_INPUT", "decision must be 'accept' or 'pushback'");
@@ -4589,7 +5417,7 @@ async function executeToolCall(
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
       const shift = shiftSnap.data()!;
       if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this caregiver");
-      const correctionStates = ["correction_requested", "disputed"];
+      const correctionStates = ["correction_proposed", "correction_requested", "disputed"];
       if (!correctionStates.includes(shift.status as string)) {
         return toolError("INVALID_INPUT", `These shift hours are not awaiting a correction response (status: ${shift.status})`);
       }
@@ -4613,8 +5441,8 @@ async function executeToolCall(
         }
         await shiftSnap.ref.update(upd);
       } else {
-        // Pushback → keep it disputed for admin resolution.
-        await shiftSnap.ref.update({ status: "disputed", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
+        // Pushback requires admin mediation; never write the retired `disputed` state.
+        await shiftSnap.ref.update({ status: "disputed_admin_review", caregiverCorrectionResponse: "pushback", correctionRespondedAt: nowIso, caregiverDisputeNote: corrMsg ?? "" });
         await db.collection("admin_alerts").add({ type: "shift_hour_dispute", appointmentId, caregiverId, clientId: shift.clientId ?? null, priority: "medium", resolved: false, createdAt: nowIso }).catch(() => {});
       }
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_client_session" };
@@ -4629,33 +5457,17 @@ async function executeToolCall(
         }
       }
       logAudit({ eventType: "shift_hour_correction_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_shift_hour_correction", appointmentId, decision, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed", notification };
+      return { success: true, decision, appointmentId, status: decision === "accept" ? "pending_client_review" : "disputed_admin_review", notification };
+      });
     }
 
-    // ── request_standard_payout (U2 — must not bypass Stripe/eligibility) ────────
-    if (name === "request_standard_payout") {
-      const { caregiverId, amountCents } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg = cgSnap.data()!;
-      // Same eligibility gate as request_instant_payout — Stripe Connect required.
-      if (!cg.stripeAccountId) return toolError("INVALID_INPUT", "Stripe account not set up — complete onboarding first");
-      if (!cg.payoutsEnabled)  return toolError("INVALID_INPUT", "Payouts are not yet enabled on your account");
-      const { getStripeClient } = await import("../stripe");
-      const sc = getStripeClient();
-      const balance = await sc.balance.retrieve({ stripeAccount: cg.stripeAccountId as string });
-      const availableCents = balance.available[0]?.amount ?? 0;
-      if (availableCents <= 0) return toolError("INVALID_INPUT", "No available balance to pay out");
-      const payoutCents = amountCents != null ? Number(amountCents) : availableCents;
-      if (payoutCents > availableCents) return toolError("INVALID_INPUT", `Requested $${(payoutCents/100).toFixed(2)} exceeds available balance of $${(availableCents/100).toFixed(2)}`);
-      // Standard (free) payout — NOT instant. No processing fee.
-      await sc.payouts.create({ amount: payoutCents, currency: "usd", method: "standard" }, { stripeAccount: cg.stripeAccountId as string });
-      logAudit({ eventType: "standard_payout_requested", userId: caregiverId as string, data: { source: "mcp:request_standard_payout", amountCents: payoutCents } }).catch(() => {});
-      return { success: true, amountCents: payoutCents, amountDollars: `$${(payoutCents/100).toFixed(2)}`, method: "standard", estimatedArrival: "1–2 business days" };
-    }
+    // request_standard_payout was removed 2026-07-06: Stripe rejects manual
+    // standard payouts on the automatic daily schedule our Connect accounts
+    // use, and the daily auto-sweep already delivers earnings for free.
+    // Instant payout (above) remains the only on-demand payout.
 
     if (name === "create_caregiver_referral") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const caregiverId = stringInput(input, "caregiverId");
       const phone = stringInput(input, "phone");
       const referredName = stringInput(input, "referredName");
@@ -4678,6 +5490,7 @@ async function executeToolCall(
         referredRole: "caregiver",
         checkrRequired: true,
       };
+      });
     }
 
     if (name === "resume_execution_agent") {
@@ -4690,43 +5503,116 @@ async function executeToolCall(
     }
 
     if (name === "create_support_ticket") {
+      return runActionNativeMcpWrite(name, input, async () => {
       const { userId, userType, subject, description: ticketDesc, category } = input as Record<string, unknown>;
       if (!userId || !userType || !subject || !ticketDesc) return toolError("INVALID_INPUT", "userId, userType, subject, and description are required");
       const ticketRef = await db.collection("support_tickets").add({ userId, userType, subject, description: ticketDesc, category: category ?? "other", status: "open", source: "cara_sms", createdAt: nowIso, resolved: false });
       await db.collection("admin_alerts").add({ type: "support_ticket_created", ticketId: ticketRef.id, userId, userType, subject, priority: "medium", resolved: false, createdAt: nowIso });
       logAudit({ eventType: "support_ticket_created", userId: userId as string, data: { source: "mcp:create_support_ticket", ticketId: ticketRef.id, subject } }).catch(() => {});
       return { success: true, ticketId: ticketRef.id };
+      });
     }
 
     // ── schedule_interview ──────────────────────────────────────────────────
     if (name === "schedule_interview") {
       const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = input as Record<string, unknown>;
       if (!clientId || !caregiverId || !preferredDate || !preferredTime) return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
-      const scheduledTime = `${preferredDate}T${preferredTime}:00`;
-      const ivRef = await db.collection("video_interviews").add({
+
+      // preferredDate/preferredTime are the client's wall-clock time — store a
+      // timezone-aware instant (naive strings parse as UTC on GCF and shift
+      // reminders ~8h for Pacific users)
+      const { parseScheduledTimeMs, formatInterviewTime } = await import("../utils/scheduledTime");
+      const startMs = parseScheduledTimeMs(`${preferredDate}T${preferredTime}:00`);
+      if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
+      const scheduledTime = new Date(startMs).toISOString();
+
+      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      const cgData = cgSnap.data() ?? {};
+      const cgPhone = cgData.phone as string | undefined;
+      const caregiverName = ((cgData.name as string) ?? `${cgData.firstName ?? ""} ${cgData.lastName ?? ""}`.trim()) || "Caregiver";
+      const clientSnap = await db.collection("users").doc(clientId as string).get();
+      const clientName = (clientSnap.data()?.name as string) ?? "A family";
+
+      // Pre-mint the doc id so the Meet link + .ics land in the create payload —
+      // the link trigger sees a fully-linked doc and no-ops instead of racing us.
+      const ivRef = db.collection("video_interviews").doc();
+      let callUrl = "";
+      let icsUrl  = "";
+      try {
+        const { createInterviewCallAssets } = await import("../agents/interviewLinks");
+        ({ callUrl, icsUrl } = await createInterviewCallAssets({
+          title:            `Care Interview — ${caregiverName}`,
+          startTime:        scheduledTime,
+          durationMinutes:  30,
+          interviewId:      ivRef.id,
+          icsStoragePrefix: "video_interviews",
+        }));
+      } catch {
+        // Ops alert already raised inside the helper. Create the doc link-less;
+        // the trigger retries generation on this create event and later writes.
+      }
+
+      await ivRef.set({
         clientId,
         caregiverId,
         applicationId: applicationId ?? null,
+        clientName,
+        caregiverName,
         scheduledTime,
         interviewType:  interviewType ?? "video",
         status:        "scheduled",
         createdAt:      nowIso,
         feedbackSubmitted: false,
+        ...(callUrl ? {
+          callUrl,
+          ...(icsUrl ? { icsUrl } : {}),
+          // The client receives the link in this chat turn via the tool result
+          linkDelivery: { client: { status: "delivered_in_chat", at: nowIso } },
+          // Hold the trigger's work window while we notify the caregiver below
+          linkWork: { claimedAt: nowIso },
+        } : {}),
       });
       if (applicationId) {
         await db.collection("job_applications").doc(applicationId as string).update({ status: "interview_scheduled", interviewId: ivRef.id }).catch(() => {});
       }
-      const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
-      const cgPhone = cgSnap.data()?.phone as string | undefined;
+
+      const formatted = formatInterviewTime(startMs);
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone) {
-        const clientSnap = await db.collection("users").doc(clientId as string).get();
-        const clientName = clientSnap.data()?.name ?? "A family";
         const { trySend } = await import("../utils/toolNotify");
-        notification = await trySend(cgPhone, `Interview scheduled! ${clientName} wants to meet ${preferredDate} at ${preferredTime}. Reply to confirm.`, "mcp:schedule_interview");
+        notification = await trySend(
+          cgPhone,
+          `Interview scheduled! ${clientName} wants to meet ${formatted}.` +
+          (callUrl ? `\n\nJoin from your phone: ${callUrl}` : "") +
+          `\n\nReply to confirm.`,
+          "mcp:schedule_interview"
+        );
+      }
+      if (callUrl) {
+        const cgOutcome =
+          notification.sent ? "sent"
+          : notification.reason === "queued_for_retry"    ? "queued"
+          : notification.reason === "recipient_opted_out" ? "skipped_opt_out"
+          : notification.reason === "no_caregiver_phone"  ? "missing_phone"
+          : null; // hard send failure — leave unset so the trigger retries
+        await ivRef.update({
+          ...(cgOutcome ? { "linkDelivery.caregiver": { status: cgOutcome, at: new Date().toISOString() } } : {}),
+          "linkWork.claimedAt": admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
       }
       logAudit({ eventType: "interview_scheduled", userId: clientId as string, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, interviewId: ivRef.id, scheduledTime, interviewType: interviewType ?? "video", notification };
+      return {
+        success: true,
+        interviewId: ivRef.id,
+        scheduledTime,
+        interviewType: interviewType ?? "video",
+        callUrl: callUrl || null,
+        icsUrl:  icsUrl || null,
+        notification,
+        note: callUrl
+          ? "Share the Google Meet link with the client in your reply — it is how they join, from any phone browser, no account needed."
+          : "Link generation failed and has been flagged to ops; the link will be sent to both parties automatically once available.",
+      };
     }
 
     // ── respond_to_interview_request ────────────────────────────────────────
@@ -4739,8 +5625,12 @@ async function executeToolCall(
       if (iv.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Interview does not belong to this caregiver");
       const newStatus = decision === "accept" ? "confirmed" : "declined";
       const upd: Record<string, unknown> = { status: newStatus, respondedAt: nowIso };
+      const { parseScheduledTimeMs: parseIvMs, formatInterviewTime: formatIvTime } = await import("../utils/scheduledTime");
+      let proposedIso: string | null = null;
       if (proposedDate && proposedTime) {
-        upd.proposedTime = `${proposedDate}T${proposedTime}:00`;
+        const proposedMs = parseIvMs(`${proposedDate}T${proposedTime}:00`);
+        proposedIso = Number.isNaN(proposedMs) ? `${proposedDate}T${proposedTime}:00` : new Date(proposedMs).toISOString();
+        upd.proposedTime = proposedIso;
       }
       await ivSnap.ref.update(upd);
       const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
@@ -4748,22 +5638,25 @@ async function executeToolCall(
         const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
         const cgName = cgData?.name ?? "The caregiver";
         const { sendToPhone } = await import("../linq/client");
+        const schedMs = parseIvMs(iv.scheduledTime ?? "");
+        const whenText = Number.isNaN(schedMs) ? "the scheduled time" : formatIvTime(schedMs);
         const notifyMsg = decision === "accept"
-          ? `${cgName} confirmed the interview for ${iv.scheduledTime?.slice(0, 10) ?? "the scheduled time"}.`
+          ? `${cgName} confirmed the interview for ${whenText}.` +
+            (iv.callUrl ? `\n\nJoin from your phone: ${iv.callUrl}` : "")
           : proposedDate
             ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
             : `${cgName} isn't available for the interview. ${(ivMsg as string) ?? ""}`.trim();
         await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => {});
       }
       logAudit({ eventType: "interview_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_interview_request", interviewId, decision } }).catch(() => {});
-      return { success: true, decision, interviewId, proposedTime: proposedDate ? `${proposedDate}T${proposedTime}:00` : null };
+      return { success: true, decision, interviewId, callUrl: (iv.callUrl as string | undefined) ?? null, proposedTime: proposedIso };
     }
 
     // ── get_care_team ───────────────────────────────────────────────────────
     if (name === "get_care_team") {
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const today = new Date().toISOString().slice(0, 10);
+      const today = businessTodayStr();
       const teamSnap = await db.collection("appointments")
         .where("clientId", "==", clientId)
         .where("status", "in", ["confirmed", "completed", "in-progress"])
@@ -4863,7 +5756,7 @@ async function executeToolCall(
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const activeOrRecent = await db.collection("appointments")
           .where("caregiverId", "==", caregiverId)
-          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
           .orderBy("date", "desc")
           .limit(5)
           .get();
@@ -4872,7 +5765,8 @@ async function executeToolCall(
           const date = data.date as string | undefined;
           const status = data.status as string | undefined;
           // Confirmed/in-progress regardless of date; completed only if within 30 days.
-          if (status === "confirmed" || status === "in_progress") return true;
+          // (both spellings: hyphen is canonical, underscore = legacy MCP starts)
+          if (status === "confirmed" || status === "in-progress" || status === "in_progress") return true;
           if (status === "completed" && date && date >= thirtyDaysAgo) return true;
           return false;
         });
@@ -4883,7 +5777,7 @@ async function executeToolCall(
         const relationship = await db.collection("appointments")
           .where("caregiverId", "==", caregiverId)
           .where("clientId",    "==", resolvedClientId)
-          .where("status",      "in", ["confirmed", "in_progress", "completed"])
+          .where("status",      "in", ["confirmed", "in-progress", "in_progress", "completed"])
           .limit(1)
           .get();
         if (relationship.empty) {
@@ -4903,7 +5797,7 @@ async function executeToolCall(
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
       logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, sentTo: resolvedClientId, notification };
+      return { success: true, sent: notification.sent, sentTo: resolvedClientId, notification };
     }
 
     // ── get_payout_history ──────────────────────────────────────────────────
@@ -4913,12 +5807,13 @@ async function executeToolCall(
       const limit11 = Math.min((input.limit as number) ?? 5, 20);
       const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const cg = cgSnap.data()!;
-      if (!cg.stripeAccountId) return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
+      const { getCaregiverPayoutFields: getPayoutHist } = await import("../caregiverPrivate");
+      const payoutFieldsHist = await getPayoutHist(caregiverId as string, cgSnap.data() ?? null);
+      if (!payoutFieldsHist.stripeAccountId) return { success: true, payouts: [], message: "No payout account set up yet. Complete Stripe Connect onboarding to start receiving payouts." };
       try {
         const { getStripeClient } = await import("../stripe");
         const sc = getStripeClient();
-        const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: cg.stripeAccountId as string });
+        const payoutList = await sc.payouts.list({ limit: limit11 }, { stripeAccount: payoutFieldsHist.stripeAccountId as string });
         const payouts = payoutList.data.map((p) => ({
           id:        p.id,
           amount:    `$${(p.amount / 100).toFixed(2)}`,
@@ -5049,12 +5944,14 @@ async function executeToolCall(
         .limit(50)
         .get();
       const totalEarned = earnSnap.docs.reduce((sum, d) => sum + ((d.data().cost as number) ?? 0), 0);
+      const { getCaregiverPayoutFields: getPayoutEarn } = await import("../caregiverPrivate");
+      const payoutFieldsEarn = await getPayoutEarn(caregiverId as string, cg5);
       return {
         success:          true,
         totalEarned:      Math.round(totalEarned * 100) / 100,
         pendingBalance:   cg5.pendingBalance    ?? 0,
-        stripeSetup:      !!cg5.stripeAccountId,
-        payoutsEnabled:   !!cg5.payoutsEnabled,
+        stripeSetup:      !!payoutFieldsEarn.stripeAccountId,
+        payoutsEnabled:   !!payoutFieldsEarn.payoutsEnabled,
         recentVisitCount: earnSnap.size,
         periodDays:       daysBack,
       };
@@ -5092,6 +5989,110 @@ async function executeToolCall(
       };
     }
 
+    // ── Checkr Candidate MCP bridge ──────────────────────────────────────────
+    // Sessions live on Checkr's side (1 hour, one candidate, Mcp-Session-Id
+    // header). Each turn is a separate function invocation, so the session id
+    // is persisted per caregiver in checkr_mcp_sessions and reused by the
+    // verify/report tools.
+    if (name === "request_checkr_verification") {
+      const { caregiverId, email } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return toolError("INVALID_INPUT", "A valid email is required");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      if (!checkrMcp.isCheckrMcpConfigured()) {
+        return toolError("UNAVAILABLE",
+          "Checkr report lookup isn't configured yet — use get_background_check_status for the current status.");
+      }
+      try {
+        const mcpSessionId = await checkrMcp.initializeCheckrSession();
+        const result = await checkrMcp.callCheckrTool(mcpSessionId, "request_candidate_verification", { email });
+        if (result.isError) {
+          return { error: true, message: result.text || "Checkr couldn't send a verification code to that email." };
+        }
+        await db.collection("checkr_mcp_sessions").doc(caregiverId as string).set({
+          sessionId: mcpSessionId,
+          email,
+          verified:  false,
+          createdAt: nowIso,
+          // Checkr sessions last 1h; expire ours slightly earlier so we never
+          // hand the agent a session Checkr has already evicted.
+          expiresAt: new Date(Date.now() + 55 * 60 * 1000).toISOString(),
+        });
+        return {
+          success: true,
+          message: "Checkr emailed the caregiver a one-time code. Ask them for it, then call verify_checkr_otp.",
+        };
+      } catch (e) {
+        console.error("[request_checkr_verification] error:", e);
+        return { error: true, message: "I couldn't reach Checkr just now. Try again in a moment." };
+      }
+    }
+
+    if (name === "verify_checkr_otp") {
+      const { caregiverId, code } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      if (!code) return toolError("INVALID_INPUT", "code is required");
+      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
+      const sessSnap = await sessRef.get();
+      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
+      if (!sess || (sess.expiresAt as string) < new Date().toISOString()) {
+        return toolError("NOT_FOUND",
+          "No active Checkr verification session — call request_checkr_verification first.");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      try {
+        const result = await checkrMcp.callCheckrTool(
+          sess.sessionId as string,
+          "verify_candidate_otp",
+          { email: sess.email, code: String(code).trim() },
+        );
+        if (result.isError) {
+          return { error: true, message: result.text || "That code didn't verify — Checkr allows 3 attempts per session." };
+        }
+        await sessRef.set({ verified: true, verifiedAt: nowIso }, { merge: true });
+        return { success: true, message: "Identity verified with Checkr. get_checkr_report is now available." };
+      } catch (e) {
+        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
+          await sessRef.delete().catch(() => {});
+          return toolError("NOT_FOUND",
+            "The Checkr session expired — start over with request_checkr_verification.");
+        }
+        console.error("[verify_checkr_otp] error:", e);
+        return { error: true, message: "I couldn't verify that with Checkr just now. Try again in a moment." };
+      }
+    }
+
+    if (name === "get_checkr_report") {
+      const { caregiverId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const sessRef  = db.collection("checkr_mcp_sessions").doc(caregiverId as string);
+      const sessSnap = await sessRef.get();
+      const sess = sessSnap.exists ? (sessSnap.data() as Record<string, unknown>) : null;
+      if (!sess || !sess.verified || (sess.expiresAt as string) < new Date().toISOString()) {
+        return toolError("PERMISSION_DENIED",
+          "Checkr identity verification needed first — call request_checkr_verification, then verify_checkr_otp.");
+      }
+      const checkrMcp = await import("./checkrMcpClient");
+      try {
+        const result = await checkrMcp.callCheckrTool(sess.sessionId as string, "get_report", {});
+        if (result.isError) {
+          return { error: true, message: result.text || "Checkr couldn't return the report just now." };
+        }
+        logAudit({ eventType: "health_data_accessed", userId: caregiverId as string, data: { source: "mcp:get_checkr_report" } }).catch(() => {});
+        return { success: true, report: result.data ?? result.text };
+      } catch (e) {
+        if (e instanceof checkrMcp.CheckrMcpError && e.sessionExpired) {
+          await sessRef.delete().catch(() => {});
+          return toolError("NOT_FOUND",
+            "The Checkr session expired — start over with request_checkr_verification.");
+        }
+        console.error("[get_checkr_report] error:", e);
+        return { error: true, message: "I couldn't pull the report from Checkr just now. Try again in a moment." };
+      }
+    }
+
     // ── update_caregiver_availability ───────────────────────────────────────
     if (name === "update_caregiver_availability") {
       const { caregiverId, availableDays, unavailableDays, preferredTimeOfDay } = input as Record<string, unknown>;
@@ -5099,10 +6100,20 @@ async function executeToolCall(
       const cgSnap6 = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!cgSnap6.exists) return toolError("NOT_FOUND", "Caregiver not found");
       const upd6: Record<string, unknown> = { updatedAt: nowIso, availabilityUpdatedAt: nowIso };
+      // arrayUnion and arrayRemove can't share the same update key — assigning both
+      // to upd6["availability"] silently discarded the additions when a single call
+      // carried availableDays AND unavailableDays. Compute the final list instead.
+      const currentAvail = Array.isArray(cgSnap6.data()?.availability)
+        ? [...(cgSnap6.data()!.availability as string[])]
+        : [];
+      let nextAvail: string[] | null = null;
       if (Array.isArray(availableDays) && availableDays.length > 0)
-        upd6["availability"] = admin.firestore.FieldValue.arrayUnion(...(availableDays as string[]));
-      if (Array.isArray(unavailableDays) && unavailableDays.length > 0)
-        upd6["availability"] = admin.firestore.FieldValue.arrayRemove(...(unavailableDays as string[]));
+        nextAvail = [...new Set([...currentAvail, ...(availableDays as string[])])];
+      if (Array.isArray(unavailableDays) && unavailableDays.length > 0) {
+        const removed = new Set(unavailableDays as string[]);
+        nextAvail = (nextAvail ?? currentAvail).filter((d) => !removed.has(d));
+      }
+      if (nextAvail !== null) upd6["availability"] = nextAvail;
       if (typeof preferredTimeOfDay === "string")
         upd6["preferredTimeOfDay"] = preferredTimeOfDay;
       // Web parity: the caregiver calendar and swap/replacement matching read the
@@ -5144,7 +6155,15 @@ async function executeToolCall(
           // Check if scheduled date falls on a removed day
           const scheduledDate = req.scheduledAt ?? req.proposedTime;
           if (scheduledDate) {
-            const dayOfWeek = DAY_NAMES[new Date(scheduledDate).getDay()];
+            // PT weekday — getDay() is the UTC weekday on Cloud Functions, so a
+            // Z-form PT-evening interview read as the NEXT weekday (wrong
+            // interviews cancelled / real conflicts kept).
+            const { parseScheduledTimeMs: parseAvailMs } = await import("../utils/scheduledTime");
+            const schedMs = parseAvailMs(String(scheduledDate));
+            const dayOfWeek = Number.isFinite(schedMs)
+              ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "long" })
+                  .format(new Date(schedMs)).toLowerCase()
+              : DAY_NAMES[new Date(scheduledDate).getDay()];
             if (removedDays.includes(dayOfWeek)) {
               conflictedRequests.push({ id: doc.id, clientPhone: req.clientPhone, scheduledDate });
             }
@@ -5368,9 +6387,12 @@ async function executeToolCall(
           clientId,
           caregiverId:         sched.caregiverId,
           caregiverName:       sched.caregiverName,
+          seniorName:          sched.seniorName || null,
           date, startTime: resolvedStart, endTime: resolvedEnd,
           durationHours: newDurationHours, hourlyRate: sched.hourlyRate,
+          ...canonicalApptFields({ startTime: resolvedStart, durationHours: newDurationHours, hourlyRate: sched.hourlyRate as number | undefined }),
           status: "confirmed", recurringScheduleId: scheduleId,
+          billingAuthority: BILLING_AUTHORITY_VERSION,
           humanApproved: true, createdByAgent: true, createdAt: nowIso,
         });
       }
@@ -5416,6 +6438,86 @@ async function executeToolCall(
       return { success: true, url: session.url, expiresIn: "5 minutes" };
     }
 
+    // ── retry_shift_payment ─────────────────────────────────────────────────
+    // Agent mirror of the v1-retryShiftPayment callable (shiftHours.ts): reset a
+    // payment_failed shift to 'approved' so the onShiftHoursApproved trigger
+    // re-charges. Naturally idempotent — a replay finds status !== payment_failed
+    // and refuses instead of double-charging.
+    if (name === "retry_shift_payment") {
+      const { appointmentId, clientId } = input as Record<string, unknown>;
+      if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
+
+      const ref  = db.collection("shiftHours").doc(appointmentId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "No shift record found for that appointment.");
+      const shift = snap.data()!;
+      if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit doesn't belong to this family.");
+      if (shift.status !== "payment_failed") {
+        return toolError(
+          "INVALID_INPUT",
+          `This visit's payment is not in a failed state (current status: ${shift.status}). ` +
+          "Nothing to retry — if they think a payment is wrong, check get_shifts / get_invoice_history.",
+        );
+      }
+
+      await ref.update({ status: "approved", retryCount: (shift.retryCount ?? 0) + 1 });
+      logAudit({ eventType: "shift_payment_retried", userId: clientId as string, data: { source: "mcp:retry_shift_payment", appointmentId, retryCount: (shift.retryCount ?? 0) + 1 } }).catch(() => {});
+      return {
+        success: true,
+        appointmentId,
+        guidance:
+          "The payment is being retried now. Tell the family you've re-run it and you'll let them know if it " +
+          "fails again — do NOT promise it succeeded; the charge happens asynchronously. If it fails again, " +
+          "send get_payment_update_link so they can fix their card.",
+      };
+    }
+
+    // ── update_booking_payment_method ───────────────────────────────────────
+    // Agent mirror of the v1-updateBookingPaymentMethod callable
+    // (paymentMethods.ts): same guards — owner only, confirmed status, not yet
+    // started — so the two paths can never diverge on what's allowed.
+    if (name === "update_booking_payment_method") {
+      const { appointmentId, clientId, paymentMethod } = input as Record<string, unknown>;
+      const { OFFLINE_PAYMENT_METHODS } = await import("../billing/paymentMethods");
+      const validMethods = ["credit", ...OFFLINE_PAYMENT_METHODS];
+      if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
+      if (!validMethods.includes(paymentMethod as string)) {
+        return toolError("INVALID_INPUT", `paymentMethod must be one of: ${validMethods.join(", ")}`);
+      }
+
+      const ref  = db.collection("appointments").doc(appointmentId as string);
+      const snap = await ref.get();
+      if (!snap.exists) return toolError("NOT_FOUND", "Appointment not found.");
+      const appt = snap.data()!;
+      if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This booking doesn't belong to this family.");
+      if (appt.status !== "confirmed") {
+        return toolError("INVALID_INPUT", "Payment method can only be changed on a confirmed booking that hasn't started.");
+      }
+      // "Already started" in PACIFIC wall-clock terms — `new Date("YYYY-MM-DD")`
+      // is UTC midnight = 5pm PT the EVENING BEFORE, which blocked families
+      // from changing payment method the night before the visit.
+      const { parseScheduledTimeMs: parseStartMs } = await import("../utils/scheduledTime");
+      const startIso = appt.isoDate || appt.date;
+      const startRef = appt.startTime
+        ? `${String(appt.date)}T${String(appt.startTime).slice(0, 5)}:00`
+        : String(startIso ?? "");
+      if (startIso && parseStartMs(startRef) <= Date.now()) {
+        return toolError("INVALID_INPUT", "That booking has already started — the payment method can't be changed now.");
+      }
+
+      await ref.update({ paymentMethod, updatedAt: nowIso });
+      logAudit({ eventType: "booking_payment_method_updated", userId: clientId as string, data: { source: "mcp:update_booking_payment_method", appointmentId, paymentMethod } }).catch(() => {});
+      const offline = paymentMethod !== "credit";
+      return {
+        success: true,
+        appointmentId,
+        paymentMethod,
+        guidance: offline
+          ? `Confirm the switch to the family and remind them they'll pay the caregiver directly by ${paymentMethod}; the caregiver confirms receipt after the visit.`
+          : "Confirm the switch to the family — this visit will be charged to their card on file.",
+      };
+    }
+
     // ── send_onboarding_link ────────────────────────────────────────────────
     if (name === "send_onboarding_link") {
       const { linkType, phone } = input as Record<string, unknown>;
@@ -5428,9 +6530,15 @@ async function executeToolCall(
         return toolError("INVALID_INPUT", `linkType must be one of: ${validTypes.join(", ")}`);
       }
       try {
-        const { sendOnboardingLink } = await import("../agents/onboardingConversation");
-        const res = await sendOnboardingLink(phone as string, linkType as never);
-        return { success: true, linkType: res.linkType, sent: true };
+        const { runSendOnboardingLinkAction } = await import("../agents/actions/sendOnboardingLinkAction");
+        return await runSendOnboardingLinkAction(
+          { phone, linkType },
+          {
+            caller: "mcp",
+            role: linkType === "client_payment" || linkType === "client_identity" ? "client" : "caregiver",
+            phone: phone as string,
+          },
+        );
       } catch (err) {
         console.error("send_onboarding_link error:", err);
         return toolError("UNAVAILABLE", "Couldn't generate that link right now — try again in a moment.");
@@ -5451,19 +6559,86 @@ async function executeToolCall(
       if (typeof fieldName !== "string" || !fieldName.trim()) {
         return toolError("INVALID_INPUT", "fieldName is required");
       }
-      const { isAllowedField, missingRequiredFields } = await import("../agents/onboardingContract");
+      const { isAllowedField, missingRequiredFields, normalizeOnboardingFieldValue, isNumericOnboardingField, coerceNumericOnboardingField, CAREGIVER_JOB_TYPES } = await import("../agents/onboardingContract");
       if (!isAllowedField(role, fieldName)) {
         return toolError("INVALID_INPUT", `'${fieldName}' is not a collectable onboarding field for a ${role}.`);
       }
-      if (fieldValue === undefined || fieldValue === null || fieldValue === "") {
+      if (fieldValue === undefined || fieldValue === null || (fieldValue === "" && !(role === "caregiver" && fieldName === "bio"))) {
         return toolError("INVALID_INPUT", "fieldValue is required");
       }
+      // Numeric fields (daysPerWeek/hoursPerDay/age) must coerce to an in-range
+      // number — never persist prose into them (a prod session stored
+      // daysPerWeek: "santa clara" and the intake showed "santa clara days/week").
+      if (isNumericOnboardingField(fieldName) && coerceNumericOnboardingField(fieldName, fieldValue) === null) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `"${String(fieldValue)}" isn't a valid ${fieldName} value — it must be a number. Re-read their message; if it doesn't actually answer ${fieldName}, save it to the right field instead and ask for ${fieldName} naturally.`,
+        };
+      }
+      // Canonicalize enum-ish values the model may save in free-form casing
+      // ("Full time" → "full_time"); otherwise the raw string is copied onto the
+      // caregiver doc where matching expects occasional|part_time|full_time.
+      const normalizedValue = normalizeOnboardingFieldValue(fieldName, fieldValue);
+      if (fieldName === "jobType" && typeof normalizedValue === "string" && !CAREGIVER_JOB_TYPES.has(normalizedValue)) {
+        console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
+      }
+      let onboardingDataPatch: Record<string, unknown> = { [fieldName]: normalizedValue };
+      // Care-services canonicalization: keep the caregiver's RAW specialties as
+      // profile flavor, and also write the canonical skills/services enum the
+      // webapp checkboxes + matching engine read. Never let a canonicalization
+      // failure lose the specialties — the raw value is already in the patch.
+      if (role === "caregiver" && fieldName === "specialties") {
+        try {
+          const { canonicalizeCaregiverServices } = await import("../agents/caregiverServices");
+          const canonical = await canonicalizeCaregiverServices(normalizedValue);
+          if (canonical.length) {
+            onboardingDataPatch = { specialties: normalizedValue, skills: canonical, services: canonical };
+          }
+        } catch (err) {
+          console.error("save_onboarding_field: service canonicalization failed (keeping raw specialties):", err);
+        }
+      }
+      // Availability shape guard: the model sometimes saves the caregiver's
+      // words verbatim ("mornings and evenings") instead of the {days,hours}
+      // object deriveWeeklyAvailability needs — the caregivers doc then keeps a
+      // stale/missing weeklyAvailability and the webapp grid never updates.
+      // Coerce every save into the canonical object at write time; on failure
+      // the raw value stays (deriveWeeklyAvailability now parses strings too).
+      if (role === "caregiver" && fieldName === "availability") {
+        try {
+          const { normalizeAvailabilityInput } = await import("../agents/caregiverAvailability");
+          const canonical = await normalizeAvailabilityInput(normalizedValue);
+          if (canonical) onboardingDataPatch = { availability: canonical };
+        } catch (err) {
+          console.error("save_onboarding_field: availability normalization failed (keeping raw):", err);
+        }
+      }
+      if (role === "caregiver" && fieldName === "bio" && typeof fieldValue === "string") {
+        try {
+          const { quickComplete } = await import("../utils/openaiClient");
+          const raw = await quickComplete(
+            "Classify whether this caregiver is explicitly choosing to skip writing a public profile bio. Reply exactly SKIP or BIO. SKIP only for clear skip/no bio/not now intent. Otherwise BIO.",
+            fieldValue,
+            { maxTokens: 5 },
+          );
+          if (raw.trim().toUpperCase() === "SKIP") {
+            onboardingDataPatch = { bio: "", bioSkipped: true };
+          } else {
+            onboardingDataPatch = { bio: fieldValue.trim(), bioSkipped: false };
+          }
+        } catch (err) {
+          console.error("save_onboarding_field bio skip classification error:", err);
+          return toolError("UNAVAILABLE", "Couldn't process that bio preference right now - ask the caregiver to share a short bio or confirm they want to skip it.");
+        }
+      }
       const ref  = db.collection("agent_sessions").doc(phone as string);
-      await ref.set({ onboardingData: { [fieldName]: fieldValue } }, { merge: true });
+      await ref.set({ onboardingData: onboardingDataPatch }, { merge: true });
       // R-MEM-1/2: durable capture begins here, at name+number — this merge
       // persists every field as it's collected, and the webhook already logs each
       // onboarding message to Zep from first contact. On resume, the onboarding
-      // directive (buildOnboardingDirective) reads this onboardingData so Cara
+      // directive (buildOnboardingDirective) reads this onboardingData so Evia
       // recalls what's known and never re-asks. The rich memory_files bootstrap
       // intentionally stays at completion (initializeMemoryFiles is uid-keyed; the
       // account uid does not exist until payment, so an early phone-keyed bootstrap
@@ -5479,7 +6654,7 @@ async function executeToolCall(
         if (sa === "out") {
           const { parkOutOfArea } = await import("../agents/serviceAreaGate");
           await parkOutOfArea({ phone: phone as string, role, city: (data.city as string) ?? "", zipCode: (data.zipCode as string) ?? "", name: (data.firstName as string) ?? (data.name as string) ?? "", onboardingData: data });
-          return { ok: true, outOfArea: true, complete: false, guidance: "This location is OUTSIDE Cara's service area (Santa Clara County, California only). Warmly tell the user we don't serve their area yet and that you've added them to our waitlist and will reach out when we expand. Do NOT collect any more fields and do NOT call complete_collection." };
+          return { ok: true, outOfArea: true, complete: false, guidance: "This location is OUTSIDE Evia's service area (Santa Clara County, California only). Warmly tell the user we don't serve their area yet and that you've added them to our waitlist and will reach out when we expand. Do NOT collect any more fields and do NOT call complete_collection." };
         }
         if (sa === "need_zip" && fieldName === "city") {
           return { ok: true, fieldName, saved: true, missing: missingRequiredFields(role, data), needZip: true, guidance: "Saved the city, but it isn't recognized — ask the user for their ZIP code to confirm we cover their area before continuing." };
@@ -5553,24 +6728,34 @@ async function executeToolCall(
     if (name === "create_refund_request") {
       const { clientId: rfClientId, appointmentId: rfApptId, reason: rfReason } = input as Record<string, string | undefined>;
       if (!rfClientId || !rfApptId) return toolError("INVALID_INPUT", "clientId and appointmentId are required");
-      const ref = await db.collection("refundRequests").add({
-        clientId:      rfClientId,
-        appointmentId: rfApptId,
-        reason:        rfReason ?? "",
-        status:        "pending_review",
-        requestedAt:   nowIso,
-        source:        "cara_self_service",
-      });
-      return { success: true, requestId: ref.id, message: "Refund request submitted. Admin review within 24 hours." };
+      const refundAppt = await db.collection("appointments").doc(rfApptId).get();
+      if (!refundAppt.exists) return toolError("NOT_FOUND", "Appointment not found");
+      if (refundAppt.data()?.clientId !== rfClientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
+      const ref = db.collection("refundRequests").doc(`${rfApptId}:${rfClientId}`);
+      try {
+        await ref.create({
+          clientId:      rfClientId,
+          appointmentId: rfApptId,
+          reason:        rfReason ?? "",
+          status:        "requested",
+          requestedAt:   nowIso,
+          source:        "cara_self_service",
+        });
+      } catch (error: any) {
+        if (error?.code !== 6 && !/already exists/i.test(String(error?.message ?? ""))) throw error;
+      }
+      return { success: true, requestId: ref.id, status: "requested", message: "Refund request submitted. Admin review within 24 hours." };
     }
 
     // ── get_care_plan_history ───────────────────────────────────────────────
     if (name === "get_care_plan_history") {
-      const { seniorId: cpSeniorId } = input as Record<string, string | undefined>;
-      if (!cpSeniorId) return toolError("INVALID_INPUT", "seniorId is required");
+      // Canonical path: care_plans/{clientId}/versions (bug-audit §6.1). clientId
+      // is session-injected, so history is always scoped to the caller's own plan.
+      const { clientId: cpClientId } = input as Record<string, string | undefined>;
+      if (!cpClientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
       const cpLimit = Math.min((input.limit as number) ?? 5, 10);
-      const cpSnap = await db.collection("senior_profiles").doc(cpSeniorId)
-        .collection("carePlanVersions")
+      const cpSnap = await db.collection("care_plans").doc(cpClientId)
+        .collection("versions")
         .orderBy("savedAt", "desc")
         .limit(cpLimit)
         .get();
@@ -5587,30 +6772,24 @@ async function executeToolCall(
 
     // ── restore_care_plan_version ───────────────────────────────────────────
     if (name === "restore_care_plan_version") {
-      const { seniorId: rSeniorId, versionId: rVersionId, clientId: rClientId } = input as Record<string, string | undefined>;
-      if (!rSeniorId || !rVersionId || !rClientId) return toolError("INVALID_INPUT", "seniorId, versionId, and clientId are required");
-      const rSenior = await db.collection("senior_profiles").doc(rSeniorId).get();
-      if (!rSenior.exists) return toolError("NOT_FOUND", "Senior not found");
-      const rVersionDoc = await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("carePlanVersions").doc(rVersionId).get();
+      // Canonical path: care_plans/{clientId} + its versions subcollection
+      // (bug-audit §6.1/§6.2). clientId is session-injected, and the version is
+      // read from THIS client's own subcollection — so a model-supplied versionId
+      // can only ever address the caller's own plan (cross-household restore is
+      // prevented by construction; no separate ownership check needed).
+      const { versionId: rVersionId, clientId: rClientId } = input as Record<string, string | undefined>;
+      if (!rVersionId || !rClientId) return toolError("INVALID_INPUT", "versionId is required (clientId auto-injected from session)");
+      const rVersionDoc = await db.collection("care_plans").doc(rClientId)
+        .collection("versions").doc(rVersionId).get();
       if (!rVersionDoc.exists) return toolError("NOT_FOUND", "Version not found");
       const rVersionData = rVersionDoc.data()!;
-      // Save current plan as a version before restoring
-      const rCurrentPlan = await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("care_plans").doc("active").get();
-      if (rCurrentPlan.exists) {
-        await db.collection("senior_profiles").doc(rSeniorId)
-          .collection("carePlanVersions").add({
-            ...rCurrentPlan.data(),
-            savedAt:   nowIso,
-            changedBy: rClientId,
-            summary:   "Auto-saved before restore",
-          });
-      }
-      // Restore the selected version
-      await db.collection("senior_profiles").doc(rSeniorId)
-        .collection("care_plans").doc("active").set(rVersionData.carePlan ?? rVersionData);
-      logAudit({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", seniorId: rSeniorId, versionId: rVersionId } }).catch(() => {});
+      const rPlan = (rVersionData.carePlan ?? rVersionData) as Record<string, unknown>;
+      // Overwrite the live plan with the snapshot. This write fires
+      // onCarePlanWrite, which records the restored state as the newest version —
+      // and the pre-restore state is already in history (versioned when it was
+      // last edited), so no explicit "save before restore" is needed.
+      await db.collection("care_plans").doc(rClientId).set({ ...rPlan, updatedAt: nowIso });
+      logAudit({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", versionId: rVersionId } }).catch(() => {});
       return { success: true, message: "Care plan restored to the selected version." };
     }
 
@@ -5646,7 +6825,7 @@ async function executeToolCall(
       const swapDoc = await swapRef.get();
       if (!swapDoc.exists) return toolError("NOT_FOUND", "Swap request not found");
       const swap = swapDoc.data()!;
-      if (swap.status !== "open") return { success: false, message: "This swap is no longer open." };
+      if (swap.status !== "open") return { _toolError: true, success: false, message: "This swap is no longer open." };
       await db.runTransaction(async (tx) => {
         tx.update(swapRef, { status: "accepted", toCaregiverId: caregiverId, toCaregiverName: caregiverName, acceptedAt: nowIso });
         tx.update(db.collection("appointments").doc(swap.appointmentId), { caregiverId, caregiverName, swapNote: `Swapped from ${swap.fromCaregiverName}` });
@@ -5678,6 +6857,7 @@ async function executeToolCall(
       for (const doc of snap.docs) {
         if (doc.id === data.caregiverId) continue;
         const cg = doc.data();
+        if (isSeededCaregiver(cg)) continue;
         if (!isCaregiverBookable(cg)) continue;
         const avail = cg.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
         if (!avail?.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))) continue;
@@ -6205,6 +7385,323 @@ async function executeToolCall(
       return { success: true, updated: true, entryId: ujEntryId };
     }
 
+    // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
+
+    // ── archive_senior_profile ──────────────────────────────────────────────
+    // Soft-delete only: a status flag, never a document delete — care records
+    // are retained (see AGENT_NATIVE_EXCLUSIONS.md "senior profile hard-delete").
+    if (name === "archive_senior_profile") {
+      const { seniorId, clientId, reason } = input as Record<string, unknown>;
+      if (!seniorId || !clientId) return toolError("INVALID_INPUT", "seniorId and clientId are required");
+      const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
+      if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
+      const sd = seniorSnap.data()!;
+      // Same owner resolution as assertSeniorAccess: userId (direct onboarding)
+      // OR clientId (household back-reference docs, which carry no userId).
+      const ownerId = sd.userId ?? sd.clientId;
+      if (ownerId && ownerId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to archive this senior's profile");
+      if (!ownerId && seniorId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to archive this senior's profile");
+      if (sd.status === "archived") return { success: true, alreadyArchived: true, seniorId };
+      await seniorSnap.ref.set({
+        status:        "archived",
+        archivedAt:    nowIso,
+        archivedBy:    clientId,
+        archiveReason: reason ?? null,
+        updatedAt:     nowIso,
+      }, { merge: true });
+      logAudit({ eventType: "senior_profile_archived", userId: clientId as string, data: { source: "mcp:archive_senior_profile", seniorId, reason: reason ?? null } }).catch(() => {});
+      return { success: true, archived: true, seniorId, retained: true };
+    }
+
+    // ── update_family_member ────────────────────────────────────────────────
+    if (name === "update_family_member") {
+      const { clientId, memberPhone, memberName, role, relationship, notificationsEnabled } =
+        input as Record<string, unknown>;
+      if (!clientId || !memberPhone) return toolError("INVALID_INPUT", "clientId and memberPhone are required");
+      const patch: Record<string, unknown> = {};
+      if (memberName   !== undefined) patch.memberName = memberName;
+      if (role         !== undefined) patch.role = role;
+      if (relationship !== undefined) patch.relationship = relationship;
+      if (notificationsEnabled !== undefined) patch.notificationsEnabled = notificationsEnabled;
+      if (Object.keys(patch).length === 0) {
+        return toolError("INVALID_INPUT", "Provide at least one field to update (memberName, role, relationship, or notificationsEnabled).");
+      }
+      if (role !== undefined && !["primary", "family", "emergency_contact"].includes(String(role))) {
+        return toolError("INVALID_INPUT", "role must be one of: primary, family, emergency_contact");
+      }
+      // Ownership is the query scope itself: only membership docs recorded under
+      // THIS client's userId are reachable, so another family's member can never
+      // be edited even with a guessed phone number.
+      const memberSnap = await db.collection("family_group_members")
+        .where("userId", "==", clientId)
+        .where("memberPhone", "==", memberPhone)
+        .limit(1)
+        .get();
+      if (memberSnap.empty) return toolError("NOT_FOUND", "No family group member with that phone number in this care group");
+      await memberSnap.docs[0].ref.update({ ...patch, updatedAt: nowIso });
+      logAudit({ eventType: "family_member_updated", userId: clientId as string, data: { source: "mcp:update_family_member", memberPhone, fields: Object.keys(patch) } }).catch(() => {});
+      return { success: true, updated: true, memberPhone, fields: Object.keys(patch) };
+    }
+
+    // ── list_interviews ─────────────────────────────────────────────────────
+    if (name === "list_interviews") {
+      const liClientId    = input.clientId as string | undefined;
+      const liCaregiverId = input.caregiverId as string | undefined;
+      const liStatus      = input.status as string | undefined;
+      // Caller-scoped read: a caregiver session injects caregiverId, a client
+      // session injects clientId — the query only ever returns the caller's own
+      // interviews. Prefer the caregiver scope when both are present (caregiver
+      // sessions also carry a userId).
+      const field = liCaregiverId ? "caregiverId" : liClientId ? "clientId" : null;
+      const id    = liCaregiverId ?? liClientId;
+      if (!field || !id) return toolError("INVALID_INPUT", "clientId or caregiverId is required");
+      let q = db.collection("video_interviews").where(field, "==", id);
+      if (liStatus) q = q.where("status", "==", liStatus);
+      const liSnap = await q.limit(25).get();
+      // SMS-scheduled interviews live in the separate `interviews` collection
+      // (interviewAgent). Newer docs carry clientId/caregiverId, so the same
+      // scoped query works; legacy docs without those fields simply don't
+      // match — they predate the unified read and stay SMS-flow-only.
+      let sq = db.collection("interviews").where(field, "==", id);
+      if (liStatus) sq = sq.where("status", "==", liStatus);
+      const smsSnap = await sq.limit(25).get().catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+      // An Evia-SMS interview appears in BOTH collections: interviewAgent
+      // mirrors the `interviews` doc into `video_interviews` with a
+      // linkedInterviewId back-pointer. Surface only the mirror (it carries
+      // callUrl + the calendar shape) and drop the `interviews` twin, so the
+      // agent never sees — or cancels — the same interview under two ids.
+      const mirroredIds = new Set(
+        liSnap.docs.map(d => d.data().linkedInterviewId).filter((v): v is string => typeof v === "string" && !!v),
+      );
+      const interviews = [
+        ...liSnap.docs.map(d => {
+          const iv = d.data();
+          return {
+            interviewId:   d.id,
+            source:        "video_interviews",
+            clientId:      iv.clientId ?? null,
+            caregiverId:   iv.caregiverId ?? null,
+            caregiverName: iv.caregiverName ?? null,
+            scheduledTime: iv.scheduledTime ?? null,
+            interviewType: iv.interviewType ?? "video",
+            status:        iv.status ?? "scheduled",
+            callUrl:       iv.callUrl ?? null,
+            proposedTime:  iv.proposedTime ?? null,
+            applicationId: iv.applicationId ?? null,
+          };
+        }),
+        ...smsSnap.docs.filter(d => !mirroredIds.has(d.id)).map(d => {
+          const iv = d.data();
+          return {
+            interviewId:   d.id,
+            source:        "interviews",
+            clientId:      iv.clientId ?? null,
+            caregiverId:   iv.caregiverId ?? null,
+            caregiverName: iv.caregiverName ?? null,
+            scheduledTime: iv.scheduledTime ?? null,
+            interviewType: "video",
+            status:        iv.status ?? "scheduled",
+            callUrl:       iv.callUrl ?? null,
+            proposedTime:  null,
+            applicationId: null,
+          };
+        }),
+      ].sort((a, b) => String(a.scheduledTime ?? "").localeCompare(String(b.scheduledTime ?? "")));
+      return { success: true, interviews, count: interviews.length };
+    }
+
+    // ── cancel_interview ────────────────────────────────────────────────────
+    if (name === "cancel_interview") {
+      const ciInterviewId = input.interviewId as string | undefined;
+      const ciClientId    = input.clientId as string | undefined;
+      const ciCaregiverId = input.caregiverId as string | undefined;
+      const ciReason      = input.reason as string | undefined;
+      if (!ciInterviewId) return toolError("INVALID_INPUT", "interviewId is required");
+      // Interviews live in two collections: video_interviews (web/MCP) and
+      // interviews (SMS flow). list_interviews returns both, so cancel must
+      // route to whichever holds the doc.
+      let ivSnap = await db.collection("video_interviews").doc(ciInterviewId).get();
+      if (!ivSnap.exists) {
+        ivSnap = await db.collection("interviews").doc(ciInterviewId).get();
+      }
+      if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
+      const iv = ivSnap.data()!;
+      // Either participant may cancel their own interview — nobody else's.
+      const cancelledBy = ciCaregiverId && iv.caregiverId === ciCaregiverId
+        ? "caregiver"
+        : ciClientId && iv.clientId === ciClientId
+          ? "client"
+          : null;
+      if (!cancelledBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
+      if (iv.status === "cancelled") return { success: true, alreadyCancelled: true, interviewId: ciInterviewId };
+      if (iv.status === "completed") return toolError("INVALID_INPUT", "Cannot cancel a completed interview");
+      // Evia-SMS interviews exist TWICE: the `interviews` doc plus a
+      // `video_interviews` mirror carrying a linkedInterviewId back-pointer
+      // (interviewAgent). Cancelling only the doc the caller named leaves the
+      // twin live — a ghost calendar entry with a working Join button, or 1h
+      // reminder SMS (keyed on the `interviews` doc id) firing for a dead
+      // interview — so resolve the twin and cancel both.
+      let twinSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+      if (ivSnap.ref.parent.id === "video_interviews") {
+        if (typeof iv.linkedInterviewId === "string" && iv.linkedInterviewId) {
+          const s = await db.collection("interviews").doc(iv.linkedInterviewId).get().catch(() => null);
+          twinSnap = s?.exists ? s : null;
+        }
+      } else {
+        const mirror = await db.collection("video_interviews")
+          .where("linkedInterviewId", "==", ciInterviewId)
+          .limit(1)
+          .get()
+          .catch(() => null);
+        twinSnap = mirror && !mirror.empty ? mirror.docs[0] : null;
+      }
+      const cancelPatch = {
+        status:       "cancelled",
+        cancelledAt:  nowIso,
+        cancelledBy,
+        cancelReason: ciReason ?? null,
+      };
+      await ivSnap.ref.update(cancelPatch);
+      if (twinSnap && twinSnap.data()?.status !== "cancelled") {
+        await twinSnap.ref.update(cancelPatch).catch(() => {});
+      }
+      // Retire pending 1h reminders + follow-up for the dead interview — for
+      // BOTH twins' refId namespaces (SMS reminders are keyed
+      // interview_{interviews doc id}, web reminders video_interview_{video
+      // doc id}). The video_interviews path is also covered by
+      // onVideoInterviewLinkEnsure (web declines never pass through this
+      // tool); SMS `interviews` docs have no status trigger, so this call is
+      // their only cleanup.
+      {
+        const { cancelTriggersByRef } = await import("../triggers/triggerEngine");
+        const refIds = new Set<string>([
+          `${ivSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview"}_${ciInterviewId}`,
+        ]);
+        if (twinSnap) {
+          refIds.add(`${twinSnap.ref.parent.id === "video_interviews" ? "video_interview" : "interview"}_${twinSnap.id}`);
+        }
+        await Promise.all([...refIds].map(r => cancelTriggersByRef(r).catch(() => {})));
+      }
+      // Notify the counterpart, following schedule_interview (caregiver via
+      // trySend) / respond_to_interview_request (client via agent_sessions).
+      const when = typeof iv.scheduledTime === "string" ? iv.scheduledTime.slice(0, 10) : "the scheduled time";
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
+      if (cancelledBy === "client") {
+        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          const { trySend } = await import("../utils/toolNotify");
+          notification = await trySend(cgPhone, `The interview scheduled for ${when} has been cancelled by the family.${ciReason ? ` Reason: ${ciReason}` : ""}`, "mcp:cancel_interview");
+        }
+      } else {
+        const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
+        // SMS-flow `interviews` docs carry clientPhone directly — use it when
+        // no uid-keyed session matches (legacy docs without clientId).
+        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
+        if (clientPhone) {
+          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
+          const cgName = cgData?.name ?? iv.caregiverName ?? "The caregiver";
+          const { sendToPhone } = await import("../linq/client");
+          const sent = await sendToPhone(clientPhone, `${cgName} cancelled the interview scheduled for ${when}.${ciReason ? ` Reason: ${ciReason}` : ""} Want me to find another time?`)
+            .then(() => true)
+            .catch(() => false);
+          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
+        }
+      }
+      logAudit({ eventType: "interview_cancelled", userId: (cancelledBy === "caregiver" ? ciCaregiverId : ciClientId) as string, data: { source: "mcp:cancel_interview", interviewId: ciInterviewId, cancelledBy, notificationSent: notification.sent } }).catch(() => {});
+      return { success: true, cancelled: true, interviewId: ciInterviewId, cancelledBy, notification };
+    }
+
+    // ── delete_memory_file ──────────────────────────────────────────────────
+    if (name === "delete_memory_file") {
+      if (!input.userId || !input.file) return toolError("INVALID_INPUT", "userId and file are required");
+      logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file } }).catch(() => {});
+      const existed = await deleteMemoryFile(input.userId as string, input.file as MemoryFile);
+      logAudit({ eventType: "memory_file_deleted", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file, existed } }).catch(() => {});
+      return { success: true, deleted: existed, existed };
+    }
+
+    // ── list_blocked_users ──────────────────────────────────────────────────
+    if (name === "list_blocked_users") {
+      const lbUserId = input.userId as string | undefined;
+      if (!lbUserId) return toolError("INVALID_INPUT", "userId is required");
+      const userSnap = await db.collection("users").doc(lbUserId).get();
+      const blockedIds: string[] = (userSnap.data()?.blockedUsers ?? []).slice(0, 50);
+      const blocked: Array<{ userId: string; name: string | null }> = [];
+      for (const id of blockedIds) {
+        let displayName: string | null = null;
+        const uSnap = await db.collection("users").doc(id).get().catch(() => null);
+        if (uSnap?.exists) displayName = (uSnap.data()?.name ?? uSnap.data()?.firstName ?? null) as string | null;
+        if (!displayName) {
+          const cSnap = await db.collection("caregivers").doc(id).get().catch(() => null);
+          if (cSnap?.exists) displayName = (cSnap.data()?.name ?? cSnap.data()?.fullName ?? null) as string | null;
+        }
+        blocked.push({ userId: id, name: displayName });
+      }
+      return { success: true, blocked, count: blocked.length };
+    }
+
+    // ── list_shift_swaps ────────────────────────────────────────────────────
+    if (name === "list_shift_swaps") {
+      const lsCaregiverId = input.caregiverId as string | undefined;
+      if (!lsCaregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const swapFields = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
+        const s = d.data();
+        return {
+          swapRequestId:     d.id,
+          appointmentId:     s.appointmentId ?? null,
+          date:              s.date ?? null,
+          time:              s.time ?? null,
+          reason:            s.reason ?? "",
+          status:            s.status ?? "open",
+          fromCaregiverId:   s.fromCaregiverId ?? null,
+          fromCaregiverName: s.fromCaregiverName ?? null,
+          expiresAt:         s.expiresAt ?? null,
+        };
+      };
+      const [mineSnap, openSnap] = await Promise.all([
+        db.collection("shift_swap_requests").where("fromCaregiverId", "==", lsCaregiverId).where("status", "in", ["open", "accepted"]).limit(20).get(),
+        db.collection("shift_swap_requests").where("status", "==", "open").limit(30).get(),
+      ]);
+      const myRequests = mineSnap.docs.map(swapFields);
+      const openOffers = openSnap.docs
+        .map(swapFields)
+        .filter(s => s.fromCaregiverId !== lsCaregiverId)
+        .filter(s => !s.expiresAt || String(s.expiresAt) > nowIso)
+        .slice(0, 10);
+      return { success: true, myRequests, openOffers, count: myRequests.length + openOffers.length };
+    }
+
+    // ── confirm_cash_received ───────────────────────────────────────────────
+    // Mirror of the web's confirmCashReceived (services/api.ts): caregiver-owned
+    // offline shift (cash/Venmo/Zelle), approved/auto_approved → paid. Idempotent
+    // on SMS retry — an already-paid shift returns a no-op success, never a
+    // double transition. (Tool name keeps "cash" for prompt/contract stability.)
+    if (name === "confirm_cash_received") {
+      const { caregiverId: ccCgId, appointmentId: ccApptId } = input as Record<string, unknown>;
+      if (!ccCgId || !ccApptId) return toolError("INVALID_INPUT", "caregiverId and appointmentId are required");
+      const shiftRef  = db.collection("shiftHours").doc(ccApptId as string);
+      const shiftSnap = await shiftRef.get();
+      if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours record not found");
+      const shift = shiftSnap.data()!;
+      if (shift.caregiverId !== ccCgId) return toolError("PERMISSION_DENIED", "Only the caregiver on this shift can confirm payment receipt");
+      if (!isOfflinePaymentMethod(shift.paymentMethod)) return toolError("INVALID_INPUT", "This shift is not an offline (cash/Venmo/Zelle) payment");
+      if (shift.status === "paid") return { success: true, alreadyPaid: true, appointmentId: ccApptId };
+      if (shift.status !== "approved" && shift.status !== "auto_approved") {
+        return toolError("INVALID_INPUT", `Shift hours must be approved before confirming payment (current status: ${shift.status})`);
+      }
+      const ccMethod = normalizePaymentMethod(shift.paymentMethod);
+      await shiftRef.update({
+        status:          "paid",
+        paidMethod:      ccMethod,
+        paidAt:          nowIso,
+        cashConfirmedAt: nowIso,
+        updatedAt:       nowIso,
+      });
+      logAudit({ eventType: "cash_payment_confirmed", userId: ccCgId as string, data: { source: "mcp:confirm_cash_received", appointmentId: ccApptId, method: ccMethod } }).catch(() => {});
+      return { success: true, paid: true, method: ccMethod, appointmentId: ccApptId };
+    }
+
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     })();
     if (trackTool) {
@@ -6229,7 +7726,7 @@ async function executeToolCall(
             source: "mcp_dispatcher",
             toolName: name,
             targetDocId: targetDocIdFromToolInput(input),
-            message: `Cara tool failed: ${name}`,
+            message: `Evia tool failed: ${name}`,
             reason: errorReason,
           });
         }
@@ -6260,10 +7757,52 @@ async function executeToolCall(
         source: "mcp_dispatcher",
         toolName: name,
         targetDocId: targetDocIdFromToolInput(input),
-        message: `Cara tool threw: ${name}`,
+        message: `Evia tool threw: ${name}`,
         reason: errorReason,
       }).catch(() => {});
     }
     return toolError("UNAVAILABLE", `Tool ${name} is temporarily unavailable`);
   }
+}
+
+async function runActionNativeMcpWrite(
+  name: string,
+  input: Record<string, unknown>,
+  execute: () => Promise<unknown>,
+): Promise<unknown> {
+  const { isSupportedMcpWriteAction, runMcpWriteCaraAction } = await import("../agents/actions/mcpWriteActionAdapter");
+  if (!isSupportedMcpWriteAction(name)) return execute();
+  try {
+    return await runMcpWriteCaraAction(name, input, async () => {
+      const result = await execute();
+      if (isToolErrorResult(result)) throw new McpToolResultError(result);
+      return result;
+    });
+  } catch (err) {
+    if (err instanceof McpToolResultError) return err.result;
+    const errorName = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : String(err);
+    if (errorName === "CaraActionValidationError") {
+      return toolError("INVALID_INPUT", message);
+    }
+    if (errorName === "CaraActionAccessError") {
+      return toolError("PERMISSION_DENIED", message);
+    }
+    throw err;
+  }
+}
+
+class McpToolResultError extends Error {
+  constructor(readonly result: unknown) {
+    super("MCP tool returned a structured error");
+    this.name = "McpToolResultError";
+  }
+}
+
+function isToolErrorResult(result: unknown): boolean {
+  return !!(
+    result &&
+    typeof result === "object" &&
+    (result as { _toolError?: boolean })._toolError === true
+  );
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CareConnex ML Model Trainer
+Evia ML Model Trainer
 Generates synthetic data and trains matching model
 """
 
@@ -448,7 +448,7 @@ class MatchPredictionModel:
 def main():
     """Main training pipeline"""
     print("=" * 60)
-    print("CareConnex ML Model Training Pipeline")
+    print("Evia ML Model Training Pipeline")
     print("=" * 60)
     
     # Generate synthetic data

@@ -13,7 +13,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
-import { JobPost } from '../../types';
+import { JobPost, isOfflinePaymentMethod } from '../../types';
 
 type MainTab = 'posts' | 'interviews';
 type PostsFilter = 'open' | 'closed';
@@ -44,6 +44,7 @@ interface Interview {
   createdAt?: string;
   type: 'video' | 'phone' | 'in-person';
   status: 'pending' | 'accepted' | 'declined' | 'completed' | 'no-response' | 'cancelled';
+  callUrl?: string;
   notes?: string;
   jobId?: string;
   jobTitle?: string;
@@ -209,7 +210,7 @@ export const PostsPage: React.FC = () => {
   const [schedulingFor, setSchedulingFor] = useState<Applicant | null>(null);
   const [decliningApplicant, setDecliningApplicant] = useState<string | null>(null);
 
-  // Load posts — live (U6): posts Cara creates/edits surface without a refresh.
+  // Load posts — live (U6): posts Evia creates/edits surface without a refresh.
   useEffect(() => {
     if (!currentUser?.uid) { setLoadingPosts(false); return; }
     setLoadingPosts(true);
@@ -283,7 +284,12 @@ export const PostsPage: React.FC = () => {
             time: localTimeStr,
             createdAt,
             type: (d.interviewType || d.type) as Interview['type'] || 'video',
-            status: d.status === 'requested' ? 'pending' : (d.status as Interview['status']),
+            // Normalize MCP vocabulary at ingestion: scheduled = awaiting
+            // caregiver confirm (pending), confirmed = mutually agreed (accepted)
+            status: d.status === 'requested' || d.status === 'scheduled' ? 'pending'
+              : d.status === 'confirmed' ? 'accepted'
+              : (d.status as Interview['status']),
+            callUrl: d.callUrl || undefined,
             notes: d.notes || undefined,
             jobId: d.jobId || undefined,
             jobTitle: d.jobTitle || undefined,
@@ -304,7 +310,7 @@ export const PostsPage: React.FC = () => {
         if (missing.length > 0 && db) {
           const uniqueIds = [...new Set(missing.map(i => i.caregiverId))];
           Promise.all(uniqueIds.map(async id => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) { const d = cSnap.data() as any; return [id, d.photoURL || d.photo || d.imageUrl || '']; }
             const uSnap = await db!.collection('users').doc(id).get().catch(() => null);
             if (uSnap?.exists) { const d = uSnap.data() as any; return [id, d.photoURL || d.photo || d.imageUrl || '']; }
@@ -348,7 +354,7 @@ export const PostsPage: React.FC = () => {
         try {
           // Try caregivers collection first, then users
           let cData: any = null;
-          const cSnap = await db!.collection('caregivers').doc(d.caregiverId).get();
+          const cSnap = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
           if (cSnap.exists) {
             cData = cSnap.data();
           } else {
@@ -634,7 +640,7 @@ export const PostsPage: React.FC = () => {
         agreedRate: prevBookingData?.rate ?? null,
         paymentMethod: (() => {
           const raw = (prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '').toLowerCase();
-          return raw === 'cash' ? 'cash' : raw === 'card' || raw === 'credit' ? 'credit' : '';
+          return isOfflinePaymentMethod(raw) ? raw : raw === 'card' || raw === 'credit' ? 'credit' : '';
         })(),
         selectedAddress: prevBookingData?.address || '',
         note: prevBookingData?.notes || '',
@@ -645,7 +651,7 @@ export const PostsPage: React.FC = () => {
       // Load caregiver's weeklyAvailability + booked slots from lightweight summary doc
       try {
         const [cgSnap, bookedSnap] = await Promise.all([
-          db.collection('caregivers').doc(interview.caregiverId).get(),
+          db.collection('publicCaregiverProfiles').doc(interview.caregiverId).get(),
           db.collection('caregiver_booked_slots').doc(interview.caregiverId).get().catch(() => null),
         ]);
         if (cgSnap.exists) setCgWeeklyAvail((cgSnap.data() as any)?.weeklyAvailability || {});
@@ -726,7 +732,7 @@ export const PostsPage: React.FC = () => {
         rate: bookingDraft.agreedRate ?? post?.rate ?? null,
         paymentMethod: (() => {
           const raw = (bookingDraft.paymentMethod || (post as any)?.paymentMethod || '').toLowerCase();
-          return raw === 'cash' ? 'cash' : raw ? 'credit' : null;
+          return isOfflinePaymentMethod(raw) ? raw : raw ? 'credit' : null;
         })(),
         careNeeds: [...new Set(Object.values(bookingDraft.recipientDrafts).flatMap(rd => rd.careNeeds))],
         careRecipients: selectedRecipients,
@@ -1234,6 +1240,15 @@ export const PostsPage: React.FC = () => {
                           if (!showBar) return null;
                           return (
                             <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-100 flex-wrap">
+                              {interview.callUrl?.startsWith('https://meet.google.com/') &&
+                                (interview.status === 'pending' || interview.status === 'accepted') && (
+                                <button
+                                  onClick={() => window.open(interview.callUrl, '_blank', 'noopener')}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-semibold hover:bg-purple-700"
+                                >
+                                  <Video className="w-3.5 h-3.5" /> Join video call
+                                </button>
+                              )}
                               {(interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
                                   onClick={() => gate('message', interview.caregiverName, () => navigate(`/client/inbox?caregiver=${interview.caregiverId}`))}

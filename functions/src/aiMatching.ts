@@ -56,7 +56,7 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
     // Load embeddings, caregivers, feedback, and outcome patterns in parallel
     const [intakeEmbedding, caregiversSnap, feedback, outcomePatterns] = await Promise.all([
       ensureIntakeEmbedding(intakeId, intakeData),
-      db.collection("caregivers").where("verified", "==", true).get(),
+      db.collection("caregivers").where("verified", "==", true).limit(100).get(),
       readClientFeedback(clientId),
       getOutcomePatternSummary(db),
     ]);

@@ -22,7 +22,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "How much do caregivers pay?",
-            answer: "Caregivers pay just $24.95/year for full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
+            answer: "Caregivers pay $66.49/year, which covers their required background check and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
         },
         {
             question: "What's included in the $29.95/month fee?",
@@ -61,34 +61,34 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
     return (
         <>
             <SEO
-                title="Pricing & Subscription Plans - CareConnex"
-                description="CareConnex pricing: $49.99/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
+                title="Pricing & Subscription Plans - Evia"
+                description="Evia pricing: $29.95/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
-                canonicalUrl="https://careconnex-d4c8b.web.app/pricing"
+                canonicalUrl="https://www.eviacares.com/pricing"
             />
 
-            <div className="min-h-screen bg-slate-50">
+            <div className="min-h-screen bg-paper-50">
                 {/* Header */}
-                <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40">
+                <header className="bg-white/80 backdrop-blur-md border-b hairline sticky top-0 z-40">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
                         <div className="flex items-center justify-between">
                             <button
                                 onClick={() => onNavigate('landing')}
-                                className="text-2xl font-bold bg-gradient-to-r from-primary-600 to-blue-600 bg-clip-text text-transparent hover:scale-105 transition-transform"
+                                className="font-display text-2xl font-semibold text-ink-900 tracking-tight"
                             >
-                                CareConnex
+                                Evia
                             </button>
 
                             {/* Desktop Nav */}
                             <nav className="hidden md:flex items-center space-x-8">
-                                <button onClick={() => onNavigate('client-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors">Find Care</button>
-                                <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-accent-500 font-medium transition-colors">Find Jobs</button>
-                                <button onClick={() => onNavigate('how-it-works')} className="text-slate-400 hover:text-slate-600 text-sm font-medium">How it Works</button>
-                                <button onClick={() => onNavigate('subscription')} className="text-slate-600 hover:text-slate-900 font-medium transition-colors">Pricing</button>
+                                <button onClick={() => onNavigate('client-signup')} className="text-ink-600 hover:text-ink-900 font-medium transition-colors">Find Care</button>
+                                <button onClick={() => onNavigate('caregiver-signup')} className="text-ink-600 hover:text-ink-900 font-medium transition-colors">Find Jobs</button>
+                                <button onClick={() => onNavigate('how-it-works')} className="text-ink-400 hover:text-ink-600 text-sm font-medium">How it Works</button>
+                                <button onClick={() => onNavigate('subscription')} className="text-ink-600 hover:text-ink-900 font-medium transition-colors">Pricing</button>
                             </nav>
 
                             <div className="flex gap-3">
-                                <Button variant="secondary" size="sm" onClick={() => onNavigate('client-login')}>
+                                <Button variant="secondary" size="sm" onClick={() => onNavigate('login')}>
                                     Sign In
                                 </Button>
                                 <Button size="sm" onClick={() => onNavigate('client-signup')}>
@@ -101,20 +101,18 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                 {/* Hero Section */}
                 <section className="relative overflow-hidden pt-20 pb-16 bg-gradient-to-br from-slate-50 via-teal-50/30 to-blue-50/30">
                     {/* Background Blobs */}
-                    <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-primary-200/20 rounded-full blur-3xl opacity-60 mix-blend-multiply"></div>
-                    <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-200/20 rounded-full blur-3xl opacity-60 mix-blend-multiply"></div>
 
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
                         <div className="text-center max-w-4xl mx-auto">
-                            <div className="inline-flex items-center px-4 py-2 rounded-full bg-white/60 backdrop-blur-sm border border-primary-200 text-primary-700 text-sm font-semibold shadow-sm mb-6">
+                            <div className="inline-flex items-center px-4 py-2 rounded-full bg-paper-100 border hairline text-ink-600 text-sm font-medium mb-6">
                                 <Sparkles className="w-4 h-4 mr-2" />
                                 Simple, Transparent Pricing
                             </div>
-                            <h1 className="text-5xl lg:text-7xl font-bold text-slate-900 mb-6 tracking-tight">
-                                Care that's <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary-600 via-cyan-500 to-blue-500">affordable</span> for everyone.
+                            <h1 className="font-display text-5xl lg:text-7xl font-semibold tracking-[-0.02em] text-ink-900 mb-6 tracking-tight">
+                                Care that's <span className="text-ink-400">affordable</span> for everyone.
                             </h1>
-                            <p className="text-xl text-slate-600 mb-8 leading-relaxed font-light max-w-2xl mx-auto">
-                                One simple price for families. <span className="font-semibold text-slate-800">Just $24.95/year for caregivers.</span> No hidden fees, no surprises.
+                            <p className="text-xl text-ink-600 mb-8 leading-relaxed font-light max-w-2xl mx-auto">
+                                One simple price for families. <span className="font-semibold text-ink-900">$66.49/year for caregivers.</span> No hidden fees, no surprises.
                             </p>
                         </div>
                     </div>
@@ -129,38 +127,38 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                             <div className="relative group">
                                 {/* Popular Badge */}
                                 <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 z-20">
-                                    <div className="bg-gradient-to-r from-primary-600 to-primary-500 text-white px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-primary-500/30">
+                                    <div className="btn-depth-primary px-6 py-2 rounded-full text-sm font-semibold">
                                         Most Popular
                                     </div>
                                 </div>
 
-                                <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl shadow-primary-500/10 border-2 border-primary-100 p-8 lg:p-10 hover:shadow-primary-500/20 hover:-translate-y-1 transition-all duration-300 h-full">
+                                <div className="bg-white rounded-3xl border-2 border-ink-900 p-8 lg:p-10 transition-all duration-300 h-full">
                                     <div className="flex items-center gap-3 mb-6">
-                                        <div className="bg-primary-100 p-3 rounded-2xl">
-                                            <Heart className="w-8 h-8 text-primary-600" />
+                                        <div className="bg-paper-100 p-3 rounded-2xl">
+                                            <Heart className="w-8 h-8 text-ink-900" />
                                         </div>
                                         <div>
-                                            <h3 className="text-2xl font-bold text-slate-900">For Families</h3>
-                                            <p className="text-sm text-slate-500">Seeking quality care</p>
+                                            <h3 className="text-2xl font-bold text-ink-900">For Families</h3>
+                                            <p className="text-sm text-ink-600">Seeking quality care</p>
                                         </div>
                                     </div>
 
                                     <div className="mb-8">
                                         <div className="flex items-baseline gap-2 mb-2">
-                                            <span className="text-6xl font-bold text-slate-900">$29</span>
-                                            <span className="text-2xl text-slate-600">.95</span>
-                                            <span className="text-slate-500 font-medium">/month</span>
+                                            <span className="text-6xl font-bold text-ink-900">$29</span>
+                                            <span className="text-2xl text-ink-600">.95</span>
+                                            <span className="text-ink-600 font-medium">/month</span>
                                         </div>
-                                        <p className="text-sm text-slate-500">Cancel anytime • No hidden fees</p>
+                                        <p className="text-sm text-ink-600">Cancel anytime • No hidden fees</p>
                                     </div>
 
                                     <div className="space-y-4 mb-8">
                                         {clientFeatures.map((feature, idx) => (
                                             <div key={idx} className="flex items-start gap-3">
-                                                <div className="bg-primary-100 rounded-full p-1 mt-0.5 flex-shrink-0">
+                                                <div className="bg-paper-100 rounded-full p-1 mt-0.5 flex-shrink-0">
                                                     <Check className="w-4 h-4 text-primary-600" />
                                                 </div>
-                                                <span className="text-slate-700 font-medium">{feature}</span>
+                                                <span className="text-ink-600 font-medium">{feature}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -179,24 +177,24 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
 
                             {/* Caregiver Pricing Card */}
                             <div className="relative">
-                                <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-xl shadow-accent-500/10 border-2 border-accent-100 p-8 lg:p-10 hover:shadow-accent-500/20 hover:-translate-y-1 transition-all duration-300 h-full">
+                                <div className="bg-white rounded-3xl border hairline p-8 lg:p-10 transition-all duration-300 h-full">
                                     <div className="flex items-center gap-3 mb-6">
                                         <div className="bg-accent-100 p-3 rounded-2xl">
-                                            <Shield className="w-8 h-8 text-accent-500" />
+                                            <Shield className="w-8 h-8 text-ink-900" />
                                         </div>
                                         <div>
-                                            <h3 className="text-2xl font-bold text-slate-900">For Caregivers</h3>
-                                            <p className="text-sm text-slate-500">Providing compassionate care</p>
+                                            <h3 className="text-2xl font-bold text-ink-900">For Caregivers</h3>
+                                            <p className="text-sm text-ink-600">Providing compassionate care</p>
                                         </div>
                                     </div>
 
                                     <div className="mb-8">
                                         <div className="flex items-baseline gap-2 mb-2">
-                                            <span className="text-6xl font-bold bg-gradient-to-r from-accent-500 to-accent-400 bg-clip-text text-transparent">$24</span>
-                                            <span className="text-2xl text-accent-500">.95</span>
-                                            <span className="text-slate-500 font-medium">/year</span>
+                                            <span className="font-display text-6xl font-semibold text-ink-900 tracking-[-0.02em]">$24</span>
+                                            <span className="text-2xl text-ink-400">.95</span>
+                                            <span className="text-ink-600 font-medium">/year</span>
                                         </div>
-                                        <p className="text-sm text-slate-500">Annual membership • Cancel anytime</p>
+                                        <p className="text-sm text-ink-600">Annual membership • Cancel anytime</p>
                                     </div>
 
                                     <div className="space-y-4 mb-8">
@@ -205,7 +203,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                                 <div className="bg-accent-100 rounded-full p-1 mt-0.5 flex-shrink-0">
                                                     <Check className="w-4 h-4 text-accent-500" />
                                                 </div>
-                                                <span className="text-slate-700 font-medium">{feature}</span>
+                                                <span className="text-ink-600 font-medium">{feature}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -230,21 +228,21 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                 <section className="py-20 bg-white/50 backdrop-blur-sm">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="text-center mb-16">
-                            <h2 className="text-4xl lg:text-5xl font-bold text-slate-900 mb-4">
+                            <h2 className="font-display text-4xl lg:text-5xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">
                                 Why our pricing makes sense
                             </h2>
-                            <p className="text-xl text-slate-600 max-w-3xl mx-auto">
+                            <p className="text-xl text-ink-600 max-w-3xl mx-auto">
                                 Traditional agencies charge 30-50% more. We're transparent, affordable, and built for modern families.
                             </p>
                         </div>
 
                         <div className="grid md:grid-cols-3 gap-8">
                             <div className="bg-white/80 backdrop-blur-md rounded-3xl p-8 shadow-lg shadow-slate-200/50 border border-white/60 hover:-translate-y-1 transition-all">
-                                <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
+                                <div className="bg-paper-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
                                     <Users className="w-8 h-8 text-blue-600" />
                                 </div>
-                                <h3 className="text-xl font-bold text-slate-900 mb-3">Direct Connection</h3>
-                                <p className="text-slate-600 leading-relaxed">
+                                <h3 className="text-xl font-bold text-ink-900 mb-3">Direct Connection</h3>
+                                <p className="text-ink-600 leading-relaxed">
                                     No middleman means lower costs. You connect directly with caregivers and negotiate rates that work for both of you.
                                 </p>
                             </div>
@@ -253,18 +251,18 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 <div className="bg-primary-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
                                     <Shield className="w-8 h-8 text-primary-600" />
                                 </div>
-                                <h3 className="text-xl font-bold text-slate-900 mb-3">Premium Protection</h3>
-                                <p className="text-slate-600 leading-relaxed">
+                                <h3 className="text-xl font-bold text-ink-900 mb-3">Premium Protection</h3>
+                                <p className="text-ink-600 leading-relaxed">
                                     Your subscription includes background checks, identity verification, and secure payments—peace of mind at an affordable price.
                                 </p>
                             </div>
 
                             <div className="bg-white/80 backdrop-blur-md rounded-3xl p-8 shadow-lg shadow-slate-200/50 border border-white/60 hover:-translate-y-1 transition-all">
-                                <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
+                                <div className="bg-paper-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
                                     <Clock className="w-8 h-8 text-blue-600" />
                                 </div>
-                                <h3 className="text-xl font-bold text-slate-900 mb-3">Flexible & Simple</h3>
-                                <p className="text-slate-600 leading-relaxed">
+                                <h3 className="text-xl font-bold text-ink-900 mb-3">Flexible & Simple</h3>
+                                <p className="text-ink-600 leading-relaxed">
                                     One flat monthly fee. No contracts, no hidden charges. Use as much or as little as you need, cancel anytime.
                                 </p>
                             </div>
@@ -274,14 +272,13 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
 
                 {/* FAQ Section */}
                 <section className="py-20 relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-primary-100/30 rounded-full blur-3xl mix-blend-multiply pointer-events-none"></div>
 
                     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
                         <div className="text-center mb-12">
-                            <h2 className="text-4xl lg:text-5xl font-bold text-slate-900 mb-4">
+                            <h2 className="font-display text-4xl lg:text-5xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">
                                 Frequently Asked Questions
                             </h2>
-                            <p className="text-xl text-slate-600">
+                            <p className="text-xl text-ink-600">
                                 Everything you need to know about our pricing
                             </p>
                         </div>
@@ -294,18 +291,18 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 >
                                     <button
                                         onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}
-                                        className="w-full px-6 py-5 flex items-center justify-between text-left hover:bg-slate-50/50 transition-colors"
+                                        className="w-full px-6 py-5 flex items-center justify-between text-left hover:bg-paper-100/50 transition-colors"
                                     >
-                                        <span className="font-semibold text-slate-900 text-lg pr-4">{faq.question}</span>
+                                        <span className="font-semibold text-ink-900 text-lg pr-4">{faq.question}</span>
                                         {expandedFaq === idx ? (
                                             <ChevronUp className="w-5 h-5 text-primary-600 flex-shrink-0" />
                                         ) : (
-                                            <ChevronDown className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                                            <ChevronDown className="w-5 h-5 text-ink-400 flex-shrink-0" />
                                         )}
                                     </button>
                                     {expandedFaq === idx && (
                                         <div className="px-6 pb-5 pt-0">
-                                            <p className="text-slate-600 leading-relaxed">{faq.answer}</p>
+                                            <p className="text-ink-600 leading-relaxed">{faq.answer}</p>
                                         </div>
                                     )}
                                 </div>
@@ -319,11 +316,11 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                     <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-40"></div>
 
                     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
-                        <h2 className="text-4xl lg:text-5xl font-bold text-white mb-6">
+                        <h2 className="font-display text-4xl lg:text-5xl font-semibold tracking-[-0.02em] text-white mb-6">
                             Ready to find your perfect caregiver?
                         </h2>
                         <p className="text-xl text-primary-50 mb-10 max-w-2xl mx-auto">
-                            Join thousands of families who've found trusted care through CareConnex. Get started today.
+                            Join thousands of families who've found trusted care through Evia. Get started today.
                         </p>
                         <div className="flex flex-col sm:flex-row gap-4 justify-center">
                             <Button
@@ -353,7 +350,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                 <footer className="bg-slate-900 text-slate-300 py-12">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
                         <p className="text-sm">
-                            © 2024 CareConnex. All rights reserved. • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Privacy Policy</button> • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Terms of Service</button>
+                            © 2024 Evia. All rights reserved. • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Privacy Policy</button> • <button onClick={() => onNavigate('landing')} className="hover:text-white transition-colors">Terms of Service</button>
                         </p>
                     </div>
                 </footer>

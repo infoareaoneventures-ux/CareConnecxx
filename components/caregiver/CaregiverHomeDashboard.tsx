@@ -229,7 +229,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
 
       {/* Greeting */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Good {timeOfDay}, {firstName}!</h1>
+        <h1 className="font-display text-2xl font-semibold text-ink-900 tracking-[-0.02em]">Good {timeOfDay}, {firstName}!</h1>
         <p className="text-sm text-slate-500 mt-0.5">{today}</p>
       </div>
 

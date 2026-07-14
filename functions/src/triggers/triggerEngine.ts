@@ -3,6 +3,8 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
+import { parseScheduledTimeMs } from "../utils/scheduledTime";
+import { decideArrivalCapture } from "./noShowPolicy";
 
 const db = admin.firestore();
 
@@ -12,16 +14,28 @@ export interface ProactiveTrigger {
   phone:             string;
   type:              "appointment_reminder" | "weekly_checkin" | "medication_reminder" | "custom"
                    | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation"
-                   | "issue_escalation" | "issue_escalation_final" | "issue_followup";
+                   | "issue_escalation" | "issue_escalation_final" | "issue_followup"
+                   | "post_visit_feedback";
   scheduledAt:       string;   // ISO
   message:           string;
-  firedAt?:          string;
-  cancelledAt?:      string;
+  firedAt?:          string | null;
+  cancelledAt?:      string | null;
   createdAt:         string;
+  // Links a trigger to the record it serves (e.g. "video_interview_<id>") so
+  // cancelTriggersByRef can retire reminders when that record is cancelled.
+  refId?:            string;
   // Claude-scheduled trigger fields
-  source?:           "claude" | "system";   // "claude" = scheduled by Cara via schedule_followup tool
+  source?:           "claude" | "system";   // "claude" = scheduled by Evia via schedule_followup tool
   intent?:           string;                // why this trigger exists (used for dynamic content + suppression)
   suppressionReason?: string;               // set when context-aware suppression cancels the trigger
+  expiresAt?:        string;
+  feedbackReceived?: string | null;
+  metadata?: {
+    appointmentId?: string;
+    clientId?:      string;
+    caregiverId?:   string;
+    [key: string]: unknown;
+  };
 }
 
 // 30-day calibration period — no proactive triggers during this window
@@ -31,23 +45,46 @@ function isInCalibrationPeriod(sessionCreatedAt: string): boolean {
   return Date.now() - createdMs < thirtyDaysMs;
 }
 
-// Schedule a proactive trigger — no-op during calibration period
+// Schedule a proactive trigger — no-op during calibration period.
+// Transactional triggers (e.g. interview reminders for an interview the user
+// just booked) pass bypassCalibration: the 30-day gate exists to suppress
+// unsolicited proactive outreach, not confirmations of actions the user took —
+// and interviews cluster in a user's first weeks, exactly inside the window.
 export async function scheduleTrigger(
-  trigger: Omit<ProactiveTrigger, "id" | "createdAt">
+  trigger: Omit<ProactiveTrigger, "id" | "createdAt">,
+  opts: { bypassCalibration?: boolean; idempotencyKey?: string } = {}
 ): Promise<string> {
   // Check calibration
-  const sessionSnap = await db.collection("agent_sessions").doc(trigger.phone).get();
-  if (sessionSnap.exists) {
-    const session = sessionSnap.data()!;
-    if (session.createdAt && isInCalibrationPeriod(session.createdAt as string)) {
-      return ""; // Silently skip during calibration
+  if (!opts.bypassCalibration) {
+    const sessionSnap = await db.collection("agent_sessions").doc(trigger.phone).get();
+    if (sessionSnap.exists) {
+      const session = sessionSnap.data()!;
+      if (session.createdAt && isInCalibrationPeriod(session.createdAt as string)) {
+        return ""; // Silently skip during calibration
+      }
     }
   }
 
-  const ref = await db.collection("proactive_triggers").add({
+  const triggerDoc = {
     ...trigger,
-    createdAt: new Date().toISOString(),
-  });
+    firedAt:     trigger.firedAt ?? null,
+    cancelledAt: trigger.cancelledAt ?? null,
+    createdAt:   new Date().toISOString(),
+  };
+
+  if (opts.idempotencyKey) {
+    const id = opts.idempotencyKey.replace(/\//g, "%2F");
+    const ref = db.collection("proactive_triggers").doc(id);
+    await db.runTransaction(async transaction => {
+      const existing = await transaction.get(ref);
+      if (!existing.exists) {
+        transaction.create(ref, triggerDoc);
+      }
+    });
+    return id;
+  }
+
+  const ref = await db.collection("proactive_triggers").add(triggerDoc);
   return ref.id;
 }
 
@@ -64,7 +101,7 @@ async function generateTriggerMessage(
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 120,
       system:
-        "You are Cara, an AI care assistant. Write a single brief follow-up text message (1–2 sentences).\n" +
+        "You are Evia, a care coordinator. Write a single brief follow-up text message (1–2 sentences).\n" +
         "Tone: warm, specific, natural — like a care coordinator who remembers the context.\n" +
         "Use the family's care context and the reason for the follow-up to make it feel relevant.\n" +
         "No bullet points. No emoji. No preamble. Output only the message text.",
@@ -122,6 +159,47 @@ async function shouldFireTrigger(
   }
 }
 
+// Time-critical/transactional triggers a user reply must NOT invalidate: an
+// interview or medication reminder is still owed after the family texts Evia
+// about something unrelated, and system directives (caregiver check-ins,
+// post-interview follow-ups, escalations) are work items, not nudges.
+// qa_retry stays reply-cancellable on purpose — a new inbound starts a fresh
+// turn and the commitment tracker backstops the promised answer.
+const REPLY_EXEMPT_TYPES = new Set([
+  "appointment_reminder",
+  "medication_reminder",
+  "post_visit_feedback",
+]);
+const REPLY_EXEMPT_MESSAGE_PREFIXES = [
+  "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
+  "health_escalation:", "issue_escalation:", "issue_escalation_final:",
+  "issue_followup:", "replacement_task:", "retry_extend_schedule:",
+];
+export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
+  if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
+  return REPLY_EXEMPT_MESSAGE_PREFIXES.some((p) => t.message?.startsWith(p));
+}
+
+// Cancels every pending trigger stamped with this refId (see ProactiveTrigger.refId).
+// Fired/already-cancelled triggers are left untouched; safe to call repeatedly.
+export async function cancelTriggersByRef(refId: string): Promise<number> {
+  const snap = await db.collection("proactive_triggers")
+    .where("refId", "==", refId)
+    .get();
+  const now = new Date().toISOString();
+  const batch = db.batch();
+  let cancelled = 0;
+  for (const doc of snap.docs) {
+    const d = doc.data() as ProactiveTrigger;
+    if (!d.firedAt && !d.cancelledAt) {
+      batch.update(doc.ref, { cancelledAt: now });
+      cancelled++;
+    }
+  }
+  if (cancelled > 0) await batch.commit().catch(() => {});
+  return cancelled;
+}
+
 // Called at the top of the main webhook handler (after crisis check) to cancel pending triggers
 // Twin-trigger pattern: if user replied, cancel their scheduled nudge
 export async function cancelTriggerIfUserReplied(userId: string, phone: string): Promise<void> {
@@ -136,10 +214,13 @@ export async function cancelTriggerIfUserReplied(userId: string, phone: string):
 
   if (!snap.empty) {
     const batch = db.batch();
+    let toCancel = 0;
     for (const doc of snap.docs) {
+      if (isReplyExempt(doc.data() as ProactiveTrigger)) continue;
       batch.update(doc.ref, { cancelledAt: now });
+      toCancel++;
     }
-    await batch.commit().catch(() => {});
+    if (toCancel > 0) await batch.commit().catch(() => {});
   }
 
   // Mark any recently-fired triggers as engaged — user replied
@@ -242,6 +323,14 @@ export const runTriggerEngine = functions.pubsub
   .onRun(async () => {
     const now = new Date().toISOString();
 
+    // System-wide degraded mode (provider billing/auth outage): hold generic
+    // proactive sends so users aren't pinged by a system that can't hold a
+    // conversation. Held triggers stay unfired and go out on the first run
+    // after recovery. Health/safety and operational triggers still fire.
+    const degraded = await import("../observability/systemStatus")
+      .then((m) => m.isSystemDegraded())
+      .catch(() => false);
+
     const snap = await db
       .collection("proactive_triggers")
       .where("scheduledAt", "<=", now)
@@ -253,20 +342,25 @@ export const runTriggerEngine = functions.pubsub
       // Skip already fired or cancelled
       if (trigger.firedAt || trigger.cancelledAt) continue;
 
-      // Twin-trigger: check if user sent a message since trigger was created
-      const lastReply = await db
-        .collection("agent_conversations")
-        .doc(trigger.phone)
-        .collection("messages")
-        .where("role",      "==", "user")
-        .where("timestamp", ">=", new Date(trigger.createdAt).getTime())
-        .limit(1)
-        .get();
+      // Twin-trigger: check if user sent a message since trigger was created.
+      // Time-critical reminders and system directives are exempt — texting
+      // Evia about anything must not kill an interview reminder or a
+      // caregiver check-in (isReplyExempt).
+      if (!isReplyExempt(trigger)) {
+        const lastReply = await db
+          .collection("agent_conversations")
+          .doc(trigger.phone)
+          .collection("messages")
+          .where("role",      "==", "user")
+          .where("timestamp", ">=", new Date(trigger.createdAt).getTime())
+          .limit(1)
+          .get();
 
-      if (!lastReply.empty) {
-        // User already replied — cancel the trigger
-        await doc.ref.update({ cancelledAt: now });
-        continue;
+        if (!lastReply.empty) {
+          // User already replied — cancel the trigger
+          await doc.ref.update({ cancelledAt: now });
+          continue;
+        }
       }
 
       // Get user's session to find chatId
@@ -348,6 +442,10 @@ export const runTriggerEngine = functions.pubsub
             console.error("interview_followup failed:", err)
           );
         } else if (trigger.source === "claude" && trigger.intent) {
+          // Held while degraded — regenerating + sending a chatty follow-up
+          // during a provider outage produces broken conversations. Trigger
+          // stays unfired and goes out after recovery.
+          if (degraded) continue;
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 
           // Load last 5 conversation turns for suppression check
@@ -383,6 +481,9 @@ export const runTriggerEngine = functions.pubsub
           });
         } else {
           const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"].includes(trigger.type ?? "");
+          // Health triggers fire even while degraded; generic check-ins hold
+          // (stay unfired) until the system recovers.
+          if (degraded && !isHealthTrigger) continue;
           await sendViaInteractionAgent(trigger.phone, {
             content:     trigger.message,
             urgency:     isHealthTrigger ? "immediate" : "standard",
@@ -396,35 +497,119 @@ export const runTriggerEngine = functions.pubsub
       }
     }
 
-    // ── No-show detection — check for unacknowledged confirmed visits ─────────
-    const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    // ── Arrival capture + no-show detection ───────────────────────────────────
+    // Window is bounded on BOTH ends: visits that started between 3h and 8min
+    // ago. Do NOT filter on `noShowChecked == null` — Firestore `==null` matches
+    // only docs where the field is explicitly null (appointments are created
+    // WITHOUT it), so that filter returned zero rows and no-show detection never
+    // fired. We instead skip already-checked docs in code. The lower bound +
+    // ascending order keep the scan bounded so already-checked visits can't fill
+    // the limit and starve fresh ones (the old unbounded `limit(10)` would).
+    //
+    // A caregiver who arrived on time but forgot to text ARRIVED must NOT be
+    // treated as a no-show — that falsely tells the family their caregiver
+    // cancelled. So we first send an arrival-capture ping and only escalate to
+    // emergency replacement if that ping goes unanswered (see noShowPolicy).
+    // Derive the started-8min-to-3h-ago window from the stored `date` +
+    // `startTime`/`time` wall-clock fields — the old range query on
+    // `startDateTime` matched NOTHING because no writer ever sets that field
+    // on appointments (this no-show sweep was silently dead).
+    const nowNoShowMs   = Date.now();
+    const eightMinAgoMs   = nowNoShowMs - 8 * 60 * 1000;
+    const threeHoursAgoMs = nowNoShowMs - 3 * 60 * 60 * 1000;
+    const { apptStartMs, businessTodayStr } = await import("../utils/scheduledTime");
 
     const noShowSnap = await db
       .collection("appointments")
-      .where("status",          "==", "confirmed")
-      .where("startDateTime",   "<=", twentyMinAgo)
-      .where("noShowChecked",   "==", null)
-      .limit(10)
+      .where("status", "==", "confirmed")
+      .where("date",   "==", businessTodayStr())
+      .limit(200)
       .get();
 
     for (const apptDoc of noShowSnap.docs) {
       const appt = apptDoc.data();
-      if (appt.arrivedAt) continue; // caregiver arrived, not a no-show
-
-      await apptDoc.ref.update({ noShowChecked: now });
+      if (appt.noShowChecked) continue; // replacement already run
+      if (appt.arrivedAt) continue;     // caregiver checked in, not a no-show
 
       try {
-        const clientSnap = await db.collection("users").doc(appt.clientId).get();
-        const phone = (clientSnap.data() as any)?.phone as string | undefined;
-        if (!phone) continue;
+        const startMs = apptStartMs(appt.date, appt.startTime ?? appt.time);
+        if (!Number.isFinite(startMs)) continue;
+        if (startMs > eightMinAgoMs || startMs < threeHoursAgoMs) continue; // outside the window
 
-        const { runEmergencyReplacement } = await import("../agents/replacementAgent");
-        await runEmergencyReplacement({
-          appointmentId: apptDoc.id,
-          clientId:      appt.clientId,
-          clientPhone:   phone,
-          appt,
+        const arrivalPingSentAtMs = appt.arrivalPingSentAt
+          ? Date.parse(appt.arrivalPingSentAt as string) : null;
+
+        // Resolve the caregiver's phone + last inbound (engagement signal).
+        let cgPhone: string | undefined;
+        let lastInboundAtMs: number | null = null;
+        if (appt.caregiverId) {
+          const cgSnap = await db.collection("caregivers").doc(appt.caregiverId as string).get();
+          cgPhone = cgSnap.data()?.phone as string | undefined;
+          if (cgPhone) {
+            const cgSession = await db.collection("agent_sessions").doc(cgPhone).get();
+            const li = cgSession.data()?.lastInboundAt as string | undefined;
+            lastInboundAtMs = li ? Date.parse(li) : null;
+          }
+        }
+
+        const decision = decideArrivalCapture({
+          startMs,
+          arrived: false,
+          arrivalPingSentAtMs,
+          lastInboundAtMs,
+          canPing: !!cgPhone,
+          nowMs: Date.now(),
         });
+
+        if (decision.action === "ping" && cgPhone) {
+          const seniorName = (appt.clientName ?? appt.seniorName ?? "your client") as string;
+          const pinged = await sendViaInteractionAgent(cgPhone, {
+            content:     `Hi — are you with ${seniorName}? Text ARRIVED so I can let the family know you're there.`,
+            urgency:     "immediate",
+            sourceAgent: "arrival_capture",
+            canDrop:     false,
+          });
+          if (pinged) {
+            await apptDoc.ref.update({ arrivalPingSentAt: now });
+          } else {
+            // Undeliverable ping (no session doc / opted out): stamping it would
+            // start a 15-min clock on a message that never existed — the exact
+            // false "caregiver cancelled" this flow exists to prevent. Fall back
+            // to the plain timeout an unreachable caregiver gets.
+            const fallback = decideArrivalCapture({
+              startMs, arrived: false, arrivalPingSentAtMs: null,
+              lastInboundAtMs, canPing: false, nowMs: Date.now(),
+            });
+            if (fallback.action === "replace") {
+              await apptDoc.ref.update({ noShowChecked: now });
+              const clientSnap2 = await db.collection("users").doc(appt.clientId).get();
+              const clientPhone2 = (clientSnap2.data() as any)?.phone as string | undefined;
+              if (clientPhone2) {
+                const { runEmergencyReplacement } = await import("../agents/replacementAgent");
+                await runEmergencyReplacement({
+                  appointmentId: apptDoc.id,
+                  clientId:      appt.clientId,
+                  clientPhone:   clientPhone2,
+                  appt,
+                });
+              }
+            }
+          }
+        } else if (decision.action === "replace") {
+          await apptDoc.ref.update({ noShowChecked: now });
+          const clientSnap = await db.collection("users").doc(appt.clientId).get();
+          const phone = (clientSnap.data() as any)?.phone as string | undefined;
+          if (!phone) continue;
+
+          const { runEmergencyReplacement } = await import("../agents/replacementAgent");
+          await runEmergencyReplacement({
+            appointmentId: apptDoc.id,
+            clientId:      appt.clientId,
+            clientPhone:   phone,
+            appt,
+          });
+        }
+        // "wait"/"skip": do nothing this pass.
       } catch (err) {
         console.error("triggerEngine no-show handling error for", apptDoc.id, err);
       }
@@ -449,6 +634,16 @@ export const runTriggerEngine = functions.pubsub
     await clearExpiredSessionStates().catch((err) =>
       console.error("clearExpiredSessionStates error:", err)
     );
+
+    // Honor Evia's follow-up promises — re-answer or escalate any overdue
+    // commitment so a promised follow-up never goes silent. Then convert any
+    // dropped turns (inbound with no outbound reply) into tracked commitments.
+    await import("../agents/commitmentTracker")
+      .then(async (m) => {
+        await m.sweepOverdueCommitments();
+        await m.sweepDroppedTurns();
+      })
+      .catch((err) => console.error("commitment sweeps error:", err));
   });
 
 export { runTriggerEngine as triggerEngineScheduled };
@@ -585,7 +780,7 @@ async function escalateHealthAlert(seniorId: string, alertDocId: string, familyP
 
   if (ecPhone && ecPhone !== familyPhone) {
     await sendToPhone(ecPhone,
-      `Hi — this is Cara, the AI care assistant for ${seniorName}.\n\n` +
+      `Hi — this is Evia, the care coordinator for ${seniorName}.\n\n` +
       `There were some health concerns noted in a recent care visit (${signals.slice(0, 2).join(", ")}) ` +
       `and the primary contact hasn't responded in 24 hours.\n\n` +
       `Please reach out to them or contact the care team directly.`
@@ -728,7 +923,8 @@ async function autoBookBestReplacement(taskId: string, task: any): Promise<void>
 
 async function clearExpiredSessionStates(): Promise<void> {
   const now = new Date().toISOString();
-  const { STATE_MACHINE_FLAGS, clearAllStateFlags } = await import("../utils/sessionState");
+  const { STATE_MACHINE_FLAGS, clearAllStateFlags, describeInterruptedFlow } =
+    await import("../utils/sessionState");
 
   const snap = await db.collection("agent_sessions")
     .where("stateExpiresAt", "<=", now)
@@ -741,8 +937,24 @@ async function clearExpiredSessionStates(): Promise<void> {
     const hasFlag = STATE_MACHINE_FLAGS.some(f => session[f] !== undefined && session[f] !== false);
     if (!hasFlag) continue;
     try {
+      // Capture what was in flight BEFORE wiping it — an interrupted booking/
+      // dispute/swap used to vanish silently here. If the flow is one worth
+      // resuming, tell the user instead of going quiet.
+      const interrupted = describeInterruptedFlow(session);
       await clearAllStateFlags(doc.id, db);
-      console.log(`[clearExpiredSessionStates] Cleared flags for ${doc.id}`);
+      console.log(`[clearExpiredSessionStates] Cleared flags for ${doc.id}`, { interrupted });
+      if (interrupted && !session.optedOut) {
+        await sendViaInteractionAgent(doc.id, {
+          content:
+            `Looks like we got interrupted while we were ${interrupted} — ` +
+            `nothing was lost. Want to pick it back up? Just reply here.`,
+          urgency:     "standard",
+          sourceAgent: "state_expiry_nudge",
+          canDrop:     true,
+        }).catch((err) =>
+          console.error(`[clearExpiredSessionStates] nudge failed for ${doc.id}:`, err)
+        );
+      }
     } catch (err) {
       console.error(`[clearExpiredSessionStates] Failed for ${doc.id}:`, err);
     }
@@ -779,6 +991,8 @@ async function handleCaregiverCheckin(appointmentId: string, caregiverPhone: str
     type:        "caregiver_checkin_escalation",
     scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     message:     `caregiver_checkin_escalation:${appointmentId}`,
+    firedAt:     null,
+    cancelledAt: null,
     createdAt:   new Date().toISOString(),
   });
 }

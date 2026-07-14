@@ -1,7 +1,7 @@
-// Cara ↔ Web collection-contract guard.
+// Evia ↔ Web collection-contract guard.
 //
 // functions/src/data/contract.ts is the canonical registry of Firestore
-// collections shared between Cara (Cloud Functions) and the web app. This test
+// collections shared between Evia (Cloud Functions) and the web app. This test
 // statically scans both codebases and fails when the registry drifts from
 // reality:
 //   1. every contract collection marked caraWrites must be referenced in
@@ -48,21 +48,22 @@ const rulesSource    = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8
 
 // ── Runtime-only collections allowlist ──────────────────────────────────────
 //
-// These collections are written by Cara (functions/src) but are INTENTIONALLY
-// not part of the Cara↔web data contract: the web app never reads them. They are
+// These collections are written by Evia (functions/src) but are INTENTIONALLY
+// not part of the Evia↔web data contract: the web app never reads them. They are
 // agent runtime state, server-only ledgers/queues, idempotency/lock/dedup docs,
 // rate-limit counters, subcollections, and internal observability streams.
 //
-// The scanner test below FAILS if Cara writes a top-level collection that is
+// The scanner test below FAILS if Evia writes a top-level collection that is
 // neither registered in CONTRACT_COLLECTIONS nor listed here — that is the
 // signal to consciously decide: is this a new shared collection (add a contract
 // entry + rules block) or genuinely runtime-only (add it here)?
 const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Merged from cara-100: server/runtime-only audit, shadow, alert, and
-    // activity-feed streams Cara writes (not part of the web read contract).
+    // activity-feed streams Evia writes (not part of the web read contract).
     'consent_audit_log', 'emergency_alerts', 'routing_shadow', 'user_activity_feed',
     // Agent session / runtime state
-    'agent_sessions', 'agent_conversations', 'agent_turn_checkpoints',
+    // (agent_conversations moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
+    'agent_sessions', 'agent_turn_checkpoints',
     'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',
     'agent_read_receipts', 'agent_group_events', 'agent_imessage_retry',
     // Observability / log streams (admin dashboards read some via direct
@@ -75,40 +76,63 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'agent_inbound_locks', 'agent_outbound_dedup', 'agent_rate', 'rate_limits',
     'linq_pair_rate', 'linq_phone_health', 'smsThrottles',
     'processed_stripe_events', 'processed_checkr_events',
+    'payoutLocks',       // instant-payout replay-window locks (payoutCommon) — server-only
+    // Stripe Connect accountId → caregiverId reverse map (payout-private wave
+    // 2026-07-11) — server-only webhook lookup, never read by the web.
+    'stripe_accounts',
     // Internal queues / async work
     'admin_email_queue', 'adminNotifications', 'job_notifications',
     'health_alerts_pending', 'execution_agents', 'browser_sessions',
-    'credential_vault',
+    'credential_vault', 'billingApprovalOutbox',
+    // Server-only operation leases, retry state, redirects, and abuse limits.
+    'billingOperations', 'externalSideEffectOperations', 'interviewRequestLimits',
+    'link_redirects',
     // Out-of-area onboarding leads (Santa Clara County service-area gate) —
     // server-written, not part of the web read contract.
     'waitlist',
+    // Checkr MCP bridge OTP/session state (caregiver-only report tools,
+    // 2026-07-09) — server-only, never read by the web.
+    'checkr_mcp_sessions',
+    // In-shift caregiver→family update cadence/ledger state (2026-07-10) —
+    // server-only; families receive the updates over SMS, the web reads
+    // visits/shiftHours mirrors, not this.
+    'in_shift_updates',
     // Matching / scheduling internals (web reads the user-facing mirrors, not these)
+    // (memory_embeddings/facts/learned_facts, proactive_triggers/user_triggers,
+    // health_signals, and user_preferences moved to CONTRACT_COLLECTIONS as
+    // server/agent-only entries — agent-native audit 2026-07)
     'caregiver_booked_slots', 'replacement_candidates', 'recurring_schedules',
     'booking_patterns', 'day_patterns', 'match_history', 'match_outcomes',
-    'clientMatches', 'match_assignments', 'memory_embeddings',
-    // Memory / facts (Zep + Firestore; web does not read these directly)
-    'facts', 'learned_facts',
+    'clientMatches', 'match_assignments', 'jobs',
     // Triggers / engagement internals
-    'proactive_triggers', 'trigger_engagement', 'user_triggers',
+    'trigger_engagement',
     // Health / wellbeing analytics streams
-    'health_signals', 'health_trends', 'health_summaries', 'wellbeing_checkins',
+    'health_trends', 'health_summaries', 'wellbeing_checkins',
     'post_visit_feedback',
     // Billing / payment internals written server-side (web reads invoices/payments,
     // not these intermediate/event records)
     'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
     // Misc internal config / metrics
     'system_config', 'experiment_scorecards', 'weekly_digests',
-    'user_preferences', 'wow_fires', '_meta',
+    'wow_fires', '_meta',
     // Server-only request/workflow records the web does not read directly
-    'blocks', 'comments', 'client_cancel_requests', 'email_change_requests',
-    'emergency_events', 'instant_payouts', 'refundRequests', 'shift_swap_requests',
+    // ('blocks' + 'shift_swap_requests' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
+    'comments', 'client_cancel_requests', 'email_change_requests',
+    'emergency_events', 'instant_payouts', 'refundRequests',
     // Subcollection leaf names that appear as bare collection("name") segments.
     // Their parent docs are governed by the contract entry for the parent path.
     'messages',          // threads/{id}/messages — covered by 'threads' entry
-    'care_keepsakes', 'care_plans', 'appointment_care_plans', 'carePlanVersions',
+    // ('care_plans' moved to CONTRACT_COLLECTIONS as a top-level shared doc —
+    // web cutover 2026-07-12)
+    'care_keepsakes', 'appointment_care_plans', 'carePlanVersions',
+    'versions',      // care_plans/{id}/versions — caregiver history, server-only
     'shift_checkins', 'shift_hours', 'tax_summaries',
     'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry
     'subscriptions',     // customers/{uid}/subscriptions — covered by 'customers' entry
+    // caregivers/{id}/private/{background|payout} — identity PII + Stripe payout
+    // fields (2026-07-11 waves). Covered by the 'caregivers' contract entry and
+    // the private/{docId} rules block (owner||admin read, client write:false).
+    'private',
 ]);
 
 // ── Tracked unregistered web-read collections (U10 backlog) ─────────────────
@@ -123,7 +147,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
 // collections, and moved to RUNTIME_ONLY_COLLECTIONS instead:
 //   responses      → support_tickets/{id}/responses
 //   subscriptions  → customers/{uid}/subscriptions
-// 'seniors' is the Cara/QA-agent context store (keyed by seniorId), distinct
+// 'seniors' is the Evia/QA-agent context store (keyed by seniorId), distinct
 // from the web senior store senior_profiles; it is server-only (webReads:false).
 //
 // This set is now intentionally empty. The scanner still FAILS if a *new*
@@ -131,7 +155,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
 // RUNTIME_ONLY_COLLECTIONS, nor CONTRACT_COLLECTIONS.
 const UNREGISTERED_WEB_READ_COLLECTIONS = new Set<string>([]);
 
-describe('Cara ↔ Web collection contract', () => {
+describe('Evia ↔ Web collection contract', () => {
     const entries = Object.entries(CONTRACT_COLLECTIONS);
 
     it('has the core launch collections registered', () => {
@@ -146,9 +170,9 @@ describe('Cara ↔ Web collection contract', () => {
         }
     });
 
-    it('every Cara-written collection is registered in the contract or an explicit allowlist (U5)', () => {
+    it('every Evia-written collection is registered in the contract or an explicit allowlist (U5)', () => {
         // Scan functions/src for collection("name") / collection('name') /
-        // collection(db, "name") and extract the distinct top-level names Cara
+        // collection(db, "name") and extract the distinct top-level names Evia
         // writes. (Subcollection leaves appear as bare segments too — they are
         // covered by their parent path's contract entry or the allowlist.)
         const re = /\.collection\(\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)|collection\(\s*db\s*,\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)/g;
@@ -174,7 +198,7 @@ describe('Cara ↔ Web collection contract', () => {
 
         expect(
             unregistered,
-            `Cara writes these collections but they are neither registered in ` +
+            `Evia writes these collections but they are neither registered in ` +
             `CONTRACT_COLLECTIONS nor allowlisted in tests/contractCollections.test.ts.\n` +
             `Decide per collection: add a contract entry + firestore.rules block if the ` +
             `web reads it, or add it to RUNTIME_ONLY_COLLECTIONS if it is server/runtime-only:\n` +
@@ -190,12 +214,12 @@ describe('Cara ↔ Web collection contract', () => {
     });
 
     it.each(entries.filter(([, c]) => c.caraWrites))(
-        'Cara backend references %s (caraWrites)',
+        'Evia backend references %s (caraWrites)',
         (_key, c) => {
             const top = c.path.split('/')[0];
             expect(
                 referencesCollection(backendSource, top),
-                `contract says Cara writes '${top}' but functions/src never references it`
+                `contract says Evia writes '${top}' but functions/src never references it`
             ).toBe(true);
         }
     );
@@ -222,18 +246,18 @@ describe('Cara ↔ Web collection contract', () => {
         }
     );
 
-    it('uid-keyed parity docs are written uid-keyed by Cara (no .add() drift)', () => {
+    it('uid-keyed parity docs are written uid-keyed by Evia (no .add() drift)', () => {
         // clientIntakes/{uid}: the onboarding write must use .doc(uid).set, with
         // .add() allowed only as the no-uid fallback. Cheap heuristic: the
         // uid-keyed write must exist.
         expect(backendSource).toMatch(/collection\(["']clientIntakes["']\)\s*\.doc\(/);
         // caregivers/{uid}: finalization keys by auth uid
         expect(backendSource).toMatch(/collection\(["']caregivers["']\)\s*\.doc\(authUid\)/);
-        // senior_profiles/{uid}: Cara parity write exists
+        // senior_profiles/{uid}: Evia parity write exists
         expect(backendSource).toMatch(/collection\(["']senior_profiles["']\)\s*\.doc\(uid\)/);
     });
 
-    it('Cara conversations are mirrored into the web threads model', () => {
+    it('Evia conversations are mirrored into the web threads model', () => {
         expect(backendSource).toContain('mirrorToWebThread');
         expect(backendSource).toMatch(/threads/);
         expect(backendSource).toContain('groupChatId');
@@ -244,7 +268,7 @@ describe('Cara ↔ Web collection contract', () => {
     });
 });
 
-describe('Cara launch action-parity map (context/capability-map.md)', () => {
+describe('Evia launch action-parity map (context/capability-map.md)', () => {
     const mapPath = path.join(ROOT, 'context', 'capability-map.md');
 
     it('the human-readable capability map exists', () => {

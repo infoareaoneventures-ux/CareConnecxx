@@ -17,6 +17,13 @@ export function realWorldHealthcareActionsEnabled(): boolean {
   return process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS === "true";
 }
 
+// Launch billing kill switch. Auto-approval moves money without an explicit
+// client action, so it stays fail-closed until the canonical appointment-backed
+// timesheet and delivered-notice cutover has been verified in production.
+export function timesheetAutoApprovalEnabled(): boolean {
+  return process.env.TIMESHEET_AUTO_APPROVAL_ENABLED === "true";
+}
+
 // U6: routing-convergence shadow comparison. OFF by default and scoped per flow:
 // ROUTING_CONVERGENCE_SHADOW is a comma-separated list of flow keys for which the
 // shadow harness runs (e.g. "reminder_management,modify_schedule"). A flow is
@@ -72,74 +79,8 @@ export function isConvergenceFlipped(flow: string): boolean {
   return convergenceFlippedFlows().has(flow);
 }
 
-// Agent-native onboarding collapse (the conversational-collapse plan). When a
-// role key is present, that role's CONVERSATIONAL field-collection runs inside
-// the qaAgent loop (onboardingMode) instead of the scripted step runner — so
-// Cara leads collection as one agent and never re-greets / double-sends. The
-// deterministic transactional gates (payment/OTP/Checkr/Stripe/uploads) are NOT
-// affected. OFF by default: the scripted runner ships until a real-model eval
-// (U8) clears the flip. Comma-separated role keys, e.g. "client" or
-// "client,caregiver". Distinct from CONVERGENCE_FLIPPED (the dispatcher's
-// next-field selector) — this routes the whole collection turn to the loop.
-export function onboardingAgentLoopRoles(): ReadonlySet<string> {
-  const raw = process.env.ONBOARDING_AGENT_LOOP ?? "";
-  return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
-}
-
-export function isOnboardingAgentLoopEnabled(role: "client" | "caregiver"): boolean {
-  return onboardingAgentLoopRoles().has(role);
-}
-
-// Canary cohort scoping for the onboarding loop. The role flag above is all-or-
-// none; these let a canary target a SMALL fraction of clients (the runbook's
-// "small cohort / short window" step) without flipping 100% of traffic at once.
-// Allowlist wins over percentage. BOTH default to "everyone in the enabled role",
-// so behavior is identical to the role flag alone until a canary narrows it.
-//
-//   ONBOARDING_AGENT_LOOP_PHONES     comma-separated phone numbers; exact match
-//                                    or suffix match (list the last N digits).
-//                                    When set, ONLY these phones route.
-//   ONBOARDING_AGENT_LOOP_COHORT_PCT 0..100 (default 100). A stable per-phone
-//                                    hash bucket < pct routes to the loop.
-export function onboardingCohortPhones(): ReadonlySet<string> {
-  const raw = process.env.ONBOARDING_AGENT_LOOP_PHONES ?? "";
-  return new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
-}
-
-export function onboardingCohortPct(): number {
-  const raw = process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT;
-  if (raw === undefined || raw.trim() === "") return 100;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return 100;
-  return Math.max(0, Math.min(100, Math.floor(n)));
-}
-
-// Stable 0..99 bucket from a phone (FNV-1a over its chars, via Math.imul for
-// 32-bit wraparound). Deterministic: a given phone is always in or out for the
-// life of a canary, so a user's experience doesn't flip turn to turn.
-export function phoneCohortBucket(phone: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < phone.length; i++) {
-    h ^= phone.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return Math.abs(h | 0) % 100;
-}
-
-export function isPhoneInOnboardingCohort(phone: string | undefined): boolean {
-  const allow = onboardingCohortPhones();
-  if (allow.size > 0) {
-    if (!phone) return false;
-    for (const a of allow) {
-      if (phone === a || phone.endsWith(a)) return true;
-    }
-    return false;
-  }
-  const pct = onboardingCohortPct();
-  if (pct >= 100) return true;
-  if (pct <= 0) return false;
-  // A narrowed canary is active but we have no phone to bucket — exclude rather
-  // than over-route.
-  if (!phone) return false;
-  return phoneCohortBucket(phone) < pct;
-}
+// NOTE: the ONBOARDING_AGENT_LOOP* flags (role gate + canary cohort scoping) were
+// removed on 2026-07-08 when the agent loop became the SOLE onboarding collection
+// path (loop-only). Routing is now unconditional for text turns at a collection
+// step — see shouldRouteOnboardingToLoop in agents/onboardingContract.ts. The env
+// vars ONBOARDING_AGENT_LOOP / _PHONES / _COHORT_PCT are no longer read.

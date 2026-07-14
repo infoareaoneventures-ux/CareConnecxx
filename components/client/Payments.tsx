@@ -7,8 +7,10 @@ import {
 } from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
 import { useCareConnex } from '../../context/CareConnexContext';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
+import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
+import { paymentMethodLabel } from '../../types';
 import { getClientBillingPortalUrl } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 
@@ -302,7 +304,7 @@ const ShiftRow: React.FC<{
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Method</p>
           <div className="flex items-center gap-1 text-xs text-slate-600 mt-0.5">
             {row.paymentMethod === 'credit' ? <CreditCard className="w-3 h-3" /> : <Banknote className="w-3 h-3" />}
-            <span>{row.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+            <span>{row.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(row.paymentMethod)}</span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
@@ -565,7 +567,7 @@ export const Payments: React.FC = () => {
   const [loadingCard, setLoadingCard] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
 
-  const user = auth?.currentUser ?? null;
+  const user = useAuthUser();
 
   // Subscribe to shiftHours for this client
   useEffect(() => {

@@ -133,7 +133,7 @@ export const EARNED_SHIFT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 // Resolve a shift's gross caregiver pay in cents. The rails disagree on field
-// names: in-app submitShiftHours writes grossPay (dollars); the Cara MCP and
+// names: in-app submitShiftHours writes grossPay (dollars); the Evia MCP and
 // care-notes rails write amountCents. Mirror processShiftPayment's resolution
 // and never return a non-finite or negative value.
 export function shiftGrossCents(shift: any): number {

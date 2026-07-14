@@ -6,7 +6,7 @@ import { embedText, embedMany, splitIntoBlocks, rankBySimilarity, EMBED_MODEL } 
 const storage = admin.storage();
 const db      = admin.firestore();
 
-// The five canonical files Cara initializes and consolidates into. Callers may also
+// The five canonical files Evia initializes and consolidates into. Callers may also
 // read/write arbitrary slugs (the `(string & {})` keeps autocomplete for the canonical
 // names while still accepting any other string — e.g. offloaded tool results).
 export type CanonicalMemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
@@ -137,6 +137,43 @@ export async function editMemoryFile(
   const updated = existing.split(find).join(replace);
   await writeMemoryFile(userId, file, updated);
   return count;
+}
+
+// Remove a memory file entirely — the storage object AND its block embeddings.
+// Complements read/update/edit: used when a family asks Evia to forget a whole
+// file or when an ad-hoc offloaded tool-result file is no longer needed.
+// Returns true when a file existed and was deleted, false when nothing was there
+// (idempotent — a second call is a safe no-op).
+export async function deleteMemoryFile(userId: string, file: MemoryFile): Promise<boolean> {
+  const slug   = sanitizeFileName(file);
+  const bucket = storage.bucket();
+  const ref    = bucket.file(filePath(userId, file));
+
+  let existed = false;
+  try {
+    const [exists] = await ref.exists();
+    existed = exists;
+    if (exists) await ref.delete();
+  } catch (err) {
+    console.warn("[memoryFiles] delete failed:", err instanceof Error ? err.message : err);
+    return false;
+  }
+
+  // Drop this file's embeddings so semantic search can't resurface deleted
+  // content. Failure is non-fatal — orphaned embeddings only affect recall.
+  try {
+    const col   = db.collection("memory_embeddings").doc(userId).collection("blocks");
+    const prior = await col.where("file", "==", slug).get();
+    if (!prior.empty) {
+      const batch = db.batch();
+      prior.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn("[memoryFiles] embedding cleanup on delete failed:", err instanceof Error ? err.message : err);
+  }
+
+  return existed;
 }
 
 export interface MemorySearchHit {
@@ -294,12 +331,17 @@ export async function initializeMemoryFiles(
   ]);
 }
 
-// Triggered when user asks "what do you know about mom?" (or similar)
+// Triggered when user asks what Evia knows/remembers ("what do you know about
+// mom?", "do you know my name?", "what's my mom's name?").
+// `question`: the user's actual message — the answer must address THIS, not just
+//   dump the whole profile (asking "what's my mom's name" should get the name,
+//   not a warm recap of the entire care situation).
 // zepContext: recent conversational memory from Zep (optional, injected by caller)
 export async function handleMemoryQuery(
   userId: string,
   chatId: string,
   sendMessage: (id: string, msg: string) => Promise<unknown>,
+  question: string,
   zepContext?: string
 ): Promise<void> {
   const fileContext = await getMemoryContext(userId);
@@ -316,10 +358,13 @@ export async function handleMemoryQuery(
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
-      "You are Cara, a care assistant. Summarize what you know about this family's care situation " +
-      "in 2–3 warm, conversational sentences. No bullet points. No headers. Speak as if recounting " +
-      "what a trusted friend would remember.",
-    messages: [{ role: "user", content: combined }],
+      "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
+      "their care situation. Answer THEIR QUESTION directly and specifically using that context. " +
+      "If they ask for one fact (a name, an age, a city), lead with that fact in one short sentence — " +
+      "do NOT recap the whole profile. If the question is open-ended (e.g. \"what do you know about my mom\"), " +
+      "give a warm 2–3 sentence summary. If the answer isn't in what you know, say so briefly and offer to " +
+      "note it. Plain conversational text — no bullet points, no headers.",
+    messages: [{ role: "user", content: `What I know:\n${combined}\n\nTheir question: ${question}` }],
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();
@@ -400,7 +445,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   const events = msgSnap.docs
     .filter((d) => d.data().role === "user" || d.data().role === "assistant")
     .map((d) => {
-      const label   = d.data().role === "user" ? "Family" : "Cara";
+      const label   = d.data().role === "user" ? "Family" : "Evia";
       const content = (d.data().content as string | undefined) ?? "";
       return `[${label}]: ${content.slice(0, 600)}`;
     })
@@ -414,7 +459,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     model:      "claude-sonnet-4-6",
     max_tokens: 600,
     system:
-      "You maintain memory files for a caregiving AI assistant named Cara. " +
+      "You maintain memory files for a caregiving AI assistant named Evia. " +
       "Based on recent conversation events, extract new facts and decide which memory files to update. " +
       "Memory files: profile (identity/contact prefs), health (diagnoses/meds/allergies), " +
       "family (relationships/dynamics), recent_episodes (last 30 days events), procedural (routines). " +

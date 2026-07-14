@@ -1,19 +1,5 @@
-import firebase, { db, functions } from '../lib/firebase';
-import { VideoInterview, VideoInterviewStatus } from '../types';
-
-
-/**
- * @deprecated V5: in-app Twilio Video replaced by FaceTime/Google Meet links delivered via Cara iMessage.
- * This function is intentionally stubbed — calling it will throw.
- */
-export const generateAccessToken = async (
-    _identity: string,
-    _roomName: string
-): Promise<string> => {
-    throw new Error(
-        "Twilio Video removed in V5. Interviews are conducted via FaceTime/Google Meet links sent by Cara."
-    );
-};
+import { db, functions } from '../lib/firebase';
+import { VideoInterview, VideoInterviewStatus, AGREED_INTERVIEW_STATUSES } from '../types';
 
 export const videoService = {
     /**
@@ -61,8 +47,6 @@ export const videoService = {
         }
 
         try {
-            const roomName = `interview_${clientId}_${caregiverId}_${Date.now()}`;
-
             const interviewData: Omit<VideoInterview, 'id'> = {
                 clientId,
                 clientName,
@@ -70,7 +54,6 @@ export const videoService = {
                 caregiverName,
                 scheduledTime: scheduledTime.toISOString(),
                 status: 'requested',
-                roomName,
                 createdAt: new Date().toISOString(),
                 notes: notes || '',
                 interviewType: interviewType || 'video',
@@ -82,16 +65,18 @@ export const videoService = {
 
             console.log('📝 [VideoService] Attempting to write to Firestore:', interviewData);
 
-            const docRef = await db.collection('video_interviews').add(interviewData);
+            if (!functions) throw new Error('Firebase Functions is not configured');
+            const createInterview = functions.httpsCallable('v1-createVideoInterviewRequest');
+            const response = await createInterview(interviewData);
+            const result = response.data as { interview?: VideoInterview };
+            if (!result.interview?.id) throw new Error('Interview creation returned no record');
+            const docRef = { id: result.interview.id };
 
             console.log('✅ [VideoService] Interview scheduled successfully! Doc ID:', docRef.id);
 
             // Notification handled by onVideoInterviewWrite Cloud Function
 
-            return {
-                id: docRef.id,
-                ...interviewData,
-            };
+            return result.interview;
         } catch (error: any) {
             console.error('❌ [VideoService] Error scheduling interview:');
             console.error('Error type:', error?.constructor?.name);
@@ -207,44 +192,6 @@ export const videoService = {
     },
 
     /**
-     * Join a video interview room
-     */
-    async joinInterview(
-        interviewId: string,
-        userId: string,
-        userName: string
-    ): Promise<{ roomName: string; token: string }> {
-        try {
-            const interview = await this.getInterview(interviewId);
-
-            if (!interview) {
-                throw new Error('Interview not found');
-            }
-
-            if (interview.status === 'cancelled') {
-                throw new Error('Interview has been cancelled');
-            }
-
-            if (interview.status === 'completed') {
-                throw new Error('Interview has already ended');
-            }
-
-            // Update status to in-progress if it's the first person joining
-            if (interview.status === 'scheduled' || interview.status === 'accepted') {
-                await this.updateInterviewStatus(interviewId, 'in-progress');
-            }
-
-            const roomName = interview.roomName || `interview_${interviewId}`;
-            const token = await generateAccessToken(userName, roomName);
-
-            return { roomName, token };
-        } catch (error) {
-            console.error('Error joining interview:', error);
-            throw error;
-        }
-    },
-
-    /**
      * Get upcoming interviews (scheduled within next 24 hours)
      */
     async getUpcomingInterviews(userId: string, userType: 'client' | 'caregiver'): Promise<VideoInterview[]> {
@@ -256,7 +203,7 @@ export const videoService = {
             return allInterviews.filter(interview => {
                 const scheduledTime = new Date(interview.scheduledTime);
                 return (
-                    interview.status === 'scheduled' &&
+                    AGREED_INTERVIEW_STATUSES.includes(interview.status) &&
                     scheduledTime >= now &&
                     scheduledTime <= tomorrow
                 );

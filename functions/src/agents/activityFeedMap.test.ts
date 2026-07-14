@@ -9,9 +9,9 @@ import type { AuditEventType } from "../observability/auditLog";
 
 describe("activity feed allow-list (security-critical)", () => {
   it("projects allow-listed family events with a static description", () => {
-    expect(describeForFeed("message_sent")).toMatch(/Cara/);
-    expect(describeForFeed("booking_created")).toMatch(/Cara/);
-    expect(describeForFeed("caregiver_matched")).toMatch(/Cara/);
+    expect(describeForFeed("message_sent")).toMatch(/Evia/);
+    expect(describeForFeed("booking_created")).toMatch(/Evia/);
+    expect(describeForFeed("caregiver_matched")).toMatch(/Evia/);
   });
 
   it("EXCLUDES sensitive / clinical events", () => {
@@ -20,7 +20,7 @@ describe("activity feed allow-list (security-critical)", () => {
     expect(describeForFeed("safety_violation")).toBeNull();
   });
 
-  it("EXCLUDES caregiver-only and user-relayed events (not 'what Cara did for the family')", () => {
+  it("EXCLUDES caregiver-only and user-relayed events (not 'what Evia did for the family')", () => {
     expect(describeForFeed("caregiver_sent_message")).toBeNull();
     expect(describeForFeed("instant_payout_requested")).toBeNull();
     expect(describeForFeed("review_submitted")).toBeNull();

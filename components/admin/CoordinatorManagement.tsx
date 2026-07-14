@@ -362,7 +362,7 @@ export const CoordinatorManagement: React.FC<CoordinatorManagementProps> = ({
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="sarah@careconnex.com"
+                    placeholder="sarah@eviacares.com"
                     className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   />
                 </div>

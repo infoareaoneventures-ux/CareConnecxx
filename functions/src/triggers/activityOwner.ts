@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 
-// Owner-resolution for the Cara Activity feed projection, split out of the
+// Owner-resolution for the Evia Activity feed projection, split out of the
 // trigger so it is unit-testable without loading firebase-functions (the trigger
 // calls functions.firestore.document() at import, which can't run under vitest).
 
@@ -65,7 +65,7 @@ export async function resolveFamilyOwnerUid(
   if (!uid) return null;
 
   // Family-only gate: the feed is for families. Skip if the resolved user is a
-  // caregiver (e.g. a message Cara sent TO a caregiver, keyed by their phone).
+  // caregiver (e.g. a message Evia sent TO a caregiver, keyed by their phone).
   const userSnap = await db.collection("users").doc(uid).get();
   if (userSnap.exists && (userSnap.data() as any)?.userType === "caregiver") return null;
   return uid;

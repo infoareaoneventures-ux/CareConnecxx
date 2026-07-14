@@ -1,4 +1,4 @@
-export const SMS_BODY = 'Hey Cara';
+export const SMS_BODY = 'Hey Evia';
 
 export function buildSmsHref(linqPhone: string): string {
   const body = encodeURIComponent(SMS_BODY);

@@ -34,6 +34,8 @@ const hoisted = vi.hoisted(() => {
           return undefined;
         }),
         _patches: patches,
+        // Carried so the transaction mock's tx.get(ref) can read current state.
+        _draft: d,
       };
       return {
         id: d.id,
@@ -51,13 +53,24 @@ const hoisted = vi.hoisted(() => {
 
   const collectionMock = vi.fn(() => queryProxy);
 
-  return { updateMock, sendSMS, setDrafts, collectionMock };
+  // Minimal transaction shim: tx.get(ref) reads the draft the ref carries;
+  // tx.update(ref, patch) applies through the same ref.update path so patch
+  // assertions (updateMock) still see the claim's status change.
+  const runTransaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+    const tx = {
+      get:    async (ref: any) => ({ exists: true, data: () => ref._draft }),
+      update: (ref: any, patch: Record<string, unknown>) => { void ref.update(patch); },
+    };
+    return fn(tx);
+  });
+
+  return { updateMock, sendSMS, setDrafts, collectionMock, runTransaction };
 });
 
 vi.mock("firebase-admin", () => ({
   __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: () => ({ collection: hoisted.collectionMock }),
+  default: { firestore: () => ({ collection: hoisted.collectionMock, runTransaction: hoisted.runTransaction }) },
+  firestore: () => ({ collection: hoisted.collectionMock, runTransaction: hoisted.runTransaction }),
 }));
 vi.mock("firebase-functions", () => ({
   __esModule: true,

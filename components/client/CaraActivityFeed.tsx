@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Sparkles, Loader2 } from 'lucide-react';
 import { dbService, type AgentActivityItem } from '../../services/api';
 
-// Family-facing "Cara Activity" feed (U9): a transparent, chronological view of
-// what Cara did on the family's behalf, backed by the projected user_activity_feed
+// Family-facing "Evia Activity" feed (U9): a transparent, chronological view of
+// what Evia did on the family's behalf, backed by the projected user_activity_feed
 // (allow-listed, PII-free). Framed as "recent activity" — not a guaranteed-complete
 // ledger — because audit writes are best-effort (see U8).
 
@@ -32,7 +32,7 @@ export const CaraActivityFeed: React.FC<CaraActivityFeedProps> = ({ ownerUid, li
   const Header = (
     <h2 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
       <Sparkles className="w-4 h-4 text-primary-600" />
-      Recent activity from Cara
+      Recent activity from Evia
     </h2>
   );
 
@@ -50,7 +50,7 @@ export const CaraActivityFeed: React.FC<CaraActivityFeedProps> = ({ ownerUid, li
       <section className="mb-6">
         {Header}
         <p className="text-xs text-slate-500 bg-white border border-slate-100 rounded-xl p-3">
-          Couldn’t load Cara’s recent activity right now. Please try again later.
+          Couldn’t load Evia’s recent activity right now. Please try again later.
         </p>
       </section>
     );
@@ -59,12 +59,12 @@ export const CaraActivityFeed: React.FC<CaraActivityFeedProps> = ({ ownerUid, li
   // ready
   if (items.length === 0) {
     // Explanatory empty state (not null) so the feature is discoverable before
-    // Cara has taken any action for a new family.
+    // Evia has taken any action for a new family.
     return (
       <section className="mb-6">
         {Header}
         <p className="text-xs text-slate-500 bg-white border border-slate-100 rounded-xl p-3">
-          Actions Cara takes — booking visits, sending messages, updating your schedule — will show up here.
+          Actions Evia takes — booking visits, sending messages, updating your schedule — will show up here.
         </p>
       </section>
     );

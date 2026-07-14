@@ -71,8 +71,8 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
     <div className="space-y-4">
       {/* My Job Posts */}
       {!hideCareRequests && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="bg-white rounded-xl border hairline shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b hairline flex items-center justify-between">
             <h3 className="font-semibold text-slate-900 text-sm flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-primary-600" />
               Care Requests
@@ -107,7 +107,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
                 ))}
                 <button
                   onClick={() => navigate('/client/posts')}
-                  className="w-full mt-1 text-xs text-slate-400 hover:text-primary-600 text-center py-1 transition-colors"
+                  className="w-full mt-1 text-xs text-ink-400 hover:text-primary-600 text-center py-1 transition-colors"
                 >
                   View all →
                 </button>
@@ -115,7 +115,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             ) : (
               <div className="text-center py-3">
                 <Briefcase className="w-6 h-6 text-slate-200 mx-auto mb-1.5" />
-                <p className="text-xs text-slate-400 leading-snug">Create a care request so caregivers can apply to you</p>
+                <p className="text-xs text-ink-400 leading-snug">Create a care request so caregivers can apply to you</p>
                 <button
                   onClick={() => navigate('/client/post-job')}
                   className="mt-2 text-xs text-primary-600 font-medium hover:underline"
@@ -130,8 +130,8 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
 
       {/* Saved Searches */}
       {savedSearches.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="bg-white rounded-xl border hairline shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b hairline flex items-center justify-between">
             <h3 className="font-semibold text-slate-900 text-sm flex items-center gap-2">
               <Bookmark className="w-4 h-4 text-primary-600" />
               Saved Search
@@ -141,7 +141,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             {savedSearches.slice(0, 2).map((s, i) => (
               <div key={i} className="bg-slate-50 rounded-lg px-3 py-2">
                 <p className="text-xs font-semibold text-slate-800 truncate">{s.name}</p>
-                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                <p className="text-xs text-ink-400 mt-0.5 truncate">
                   {[s.filters?.searchTerm, ...(s.filters?.certifications || [])].filter(Boolean).join(' · ') || 'All caregivers'}
                 </p>
                 <button

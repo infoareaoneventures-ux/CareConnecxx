@@ -42,6 +42,28 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never re-introduce");
   });
 
+  it("offers the voice-memo option once, never repeated", () => {
+    const d = buildOnboardingDirective("client", {}).toLowerCase();
+    expect(d).toContain("voice memo");
+    expect(d).toContain("once per conversation");
+    expect(d).toContain("never repeat it");
+  });
+
+  it("handles self-seekers: senior = sender, direct address, never asks who they're caring for", () => {
+    const d = buildOnboardingDirective("client", {}).toLowerCase();
+    expect(d).toContain("self-care");
+    expect(d).toContain("themselves");
+    expect(d).toContain('relationship as "self"');
+    expect(d).toContain("never ask who they're caring for");
+  });
+
+  it("handles multi-recipient households: first person as senior, everyone else in additionalRecipients", () => {
+    const d = buildOnboardingDirective("client", {}).toLowerCase();
+    expect(d).toContain("multiple loved ones");
+    expect(d).toContain("additionalrecipients");
+    expect(d).toContain("more than one");
+  });
+
   it("contains no chatbot phrasing except inside a 'never say' prohibition", () => {
     const lines = buildOnboardingDirective("client", {}).toLowerCase().split("\n");
     for (const phrase of BANNED) {

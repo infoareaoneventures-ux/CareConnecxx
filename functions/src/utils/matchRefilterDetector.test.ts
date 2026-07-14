@@ -79,7 +79,7 @@ describe("detectMatchRefilter", () => {
     expect(await detectMatchRefilter("cheaper please")).toBeNull();
   });
 
-  it("passes Cara's last message into the prompt so answers aren't misread as refilters", async () => {
+  it("passes Evia's last message into the prompt so answers aren't misread as refilters", async () => {
     quickComplete.mockResolvedValue(JSON.stringify({ isRefilter: false }));
     const result = await detectMatchRefilter(
       "Today at 11am",

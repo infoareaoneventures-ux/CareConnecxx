@@ -10,7 +10,7 @@ const db = admin.firestore();
 async function populateUser() {
   const userData = {
     name: "Imran",
-    email: "imran@careconnex.com",
+    email: "imran@eviacares.com",
     phone: "+14155551234",  // Update with your actual WhatsApp number
     lovedOneName: "Mom",
     careRecipientName: "Mom",

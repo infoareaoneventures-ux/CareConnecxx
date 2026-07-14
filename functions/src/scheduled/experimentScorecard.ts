@@ -1,7 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 
-// Weekly experiment scorecard. Cara's prompt experiments (experimentRegistry.ts)
+// Weekly experiment scorecard. Evia's prompt experiments (experimentRegistry.ts)
 // emit per-turn outcomes, but graduation was a manual log-slice + code edit, so
 // the improvement loop silently stalled. This job aggregates the bounded
 // per-variant turn mirror (cara_turn_metrics) into a per-experiment scorecard so

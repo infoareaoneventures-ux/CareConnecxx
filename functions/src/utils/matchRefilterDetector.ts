@@ -27,7 +27,7 @@ export interface RefilterIntent {
   languages?:         string[];                       // additive
   distance?:          { direction: "closer" | "wider" };
   experienceYears?:   { min?: number };
-  /** Plain-English summary Cara echoes back to the family. */
+  /** Plain-English summary Evia echoes back to the family. */
   summary:            string;
 }
 
@@ -37,14 +37,14 @@ export async function detectMatchRefilter(
 ): Promise<RefilterIntent | null> {
   if (text.trim().length < 4) return null;
 
-  // Context guard: if Cara's last message asked the family a question (e.g.
+  // Context guard: if Evia's last message asked the family a question (e.g.
   // "What date and time works best for you?" while setting up an interview),
   // a reply like "Today at 11am" is ANSWERING that question, not changing the
   // search criteria. Give the model that prior turn so it doesn't misread a
   // scheduling/answer reply as a re-search request.
   const contextLine = lastAssistantMessage
-    ? `\nFor context, Cara's previous message to them was:\n"""${lastAssistantMessage.slice(0, 500)}"""\n` +
-      "If their reply is simply ANSWERING a question Cara just asked (for example Cara asked for a " +
+    ? `\nFor context, Evia's previous message to them was:\n"""${lastAssistantMessage.slice(0, 500)}"""\n` +
+      "If their reply is simply ANSWERING a question Evia just asked (for example Evia asked for a " +
       "preferred interview date/time and they replied with a time like \"Today at 11am\" or \"Tuesday afternoon\"), " +
       "that is NOT a refilter — reply {\"isRefilter\": false}.\n"
     : "";
@@ -52,7 +52,7 @@ export async function detectMatchRefilter(
   let raw = "";
   try {
     raw = await quickComplete(
-      "Cara just showed a family member 3 caregiver options. They replied — is their reply a request " +
+      "Evia just showed a family member 3 caregiver options. They replied — is their reply a request " +
       "to change the search criteria (e.g. \"cheaper\", \"any with dementia experience\", \"available Saturday\", " +
       "\"a woman\", \"Spanish-speaking\")?\n" +
       contextLine + "\n" +
@@ -66,7 +66,7 @@ export async function detectMatchRefilter(
       "  \"languages\": [\"spanish\", ...] | null,\n" +
       "  \"distance\": {\"direction\": \"closer\"|\"wider\"} | null,\n" +
       "  \"experienceYears\": {\"min\": <number>} | null,\n" +
-      "  \"summary\": \"one short phrase Cara can repeat back, e.g. 'cheaper ones with dementia experience'\"\n" +
+      "  \"summary\": \"one short phrase Evia can repeat back, e.g. 'cheaper ones with dementia experience'\"\n" +
       "}\n\n" +
       "If NO (selection like \"1\", question, off-topic), reply with: {\"isRefilter\": false}\n" +
       "Only include fields the user explicitly mentioned. Use null for fields they didn't mention. " +

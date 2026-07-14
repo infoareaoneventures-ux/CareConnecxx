@@ -12,15 +12,20 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
  * <Input label="Email" type="email" error="Invalid email" />
  */
 export const Input: React.FC<InputProps> = ({ label, error, className = '', id, ...props }) => {
-  // Generate unique ID if not provided for label association
-  const inputId = id || `input-${React.useId()}`;
+  // Generate unique ID if not provided for label association. useId() MUST be
+  // called unconditionally (Rules of Hooks) — the previous `id || ...useId()`
+  // short-circuited the hook when `id` was passed, so a caller that sometimes
+  // passed id and sometimes didn't would crash the subtree with a hook-count
+  // mismatch.
+  const generatedId = React.useId();
+  const inputId = id || `input-${generatedId}`;
   const errorId = error ? `${inputId}-error` : undefined;
 
   return (
     <div className="w-full mb-4">
       <label
         htmlFor={inputId}
-        className="block text-base font-semibold text-slate-800 mb-2"
+        className="block text-sm font-medium text-ink-900 mb-2"
       >
         {label}
       </label>
@@ -29,10 +34,10 @@ export const Input: React.FC<InputProps> = ({ label, error, className = '', id, 
         aria-invalid={error ? 'true' : 'false'}
         aria-describedby={errorId}
         className={`
-          w-full px-4 py-4 rounded-xl border-2 bg-white text-lg text-slate-900 focus:outline-none focus:ring-2 transition-all duration-200
+          w-full px-4 py-3.5 rounded-2xl border bg-white text-base text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 transition-all duration-200
           ${error
             ? 'border-red-400 focus:border-red-500 focus:ring-red-200'
-            : 'border-slate-300 focus:border-primary-500 focus:ring-primary-100 hover:border-slate-400'
+            : 'border-[rgba(26,31,43,0.15)] focus:border-ink-900 focus:ring-[rgba(26,31,43,0.10)] hover:border-[rgba(26,31,43,0.30)]'
           }
           ${className}
         `}

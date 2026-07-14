@@ -1,4 +1,4 @@
-// Per-turn telemetry for Cara's two reply pathways (full QA agent + quick fast path).
+// Per-turn telemetry for Evia's two reply pathways (full QA agent + quick fast path).
 //
 // Every turn emits one structured log line so we can measure the four complaint
 // dimensions from the roadmap: latency, memory recall, voice consistency, and
@@ -34,6 +34,9 @@ export interface TurnMetrics {
   startedAt:      number;     // ms epoch — used by emitTurnMetrics to compute durationMs
   durationMs?:    number;     // filled by emit
   contextLoadMs?: number;     // wall-clock for the parallel context fetch
+  modelProvider?: "openai" | "anthropic";
+  modelUsed?:     string;
+  modelFallbackUsed?: boolean;
 
   // Flow class for this turn (from resolveLoopBudget, or "onboarding" when the
   // agent-native onboarding loop handled it). Lets canary dashboards filter the
@@ -55,6 +58,12 @@ export interface TurnMetrics {
   toolArgsTruncated?: number; // tool_use input args clipped by truncateOldToolCallArgs
   exhausted?:      boolean;   // loop exited the for-block without producing reply text
   recoveryFired?:  boolean;   // recovery sub-agent fired after 2+ consecutive error iterations
+  // ch9 cost budget: token usage + estimated spend summed across the turn's
+  // model calls, and whether the per-turn cost ceiling force-stopped the loop.
+  inputTokens?:        number;
+  outputTokens?:       number;
+  costUsd?:            number;
+  costBudgetExceeded?: boolean; // per-turn cost cap forced a final text reply
 
   // Quality signals
   prefetchHit?:             boolean;
@@ -81,10 +90,20 @@ export interface TurnMetrics {
   // unsafe patterns remained visible around the final repair/supervision path.
   confidenceClaimDetected?:  boolean; // unattributed proper-name + factual claim
   promiseWithoutToolCall?:   boolean; // "let me check" with metrics.toolCalls === 0
+  recipeWithoutBackingTool?: boolean; // advertised a recipe that has no shipped backing tool
+  contextIgnoredWhenPresent?: boolean; // live ops context existed but reply stayed generic
+  paymentAuthorityLeakDetected?: boolean; // payment approval/payment wording leaked to unauthorized family context
   multiQuestionDataCollection?: boolean; // asks for multiple intake fields in one reply
-  supportDeflectionDetected?:   boolean; // punts to support/team/Cara instead of acting
+  supportDeflectionDetected?:   boolean; // punts to support/team/Evia instead of acting
   genericHelpAskDetected?:      boolean; // "what can I help with" style generic prompt
   medicationInstructionDetected?: boolean; // gives medication/dosing instruction instead of redirecting
+  frustrationDetected?: boolean; // user shows explicit frustration with Evia/system
+  rephraseLoopDetected?: boolean; // user repeats/rephrases a request from recent history
+  repeatedGreetingDetected?: boolean; // user repeats a greeting because Evia did not move forward
+  agentSelfRepeatDetected?: boolean; // EVIA about to send a near-duplicate of her own recent outbound (ch10 broken-record)
+  agentSelfRepeatRewritten?: boolean; // the self-repeat guard produced a varied reply instead of resending
+  humanHandoffTriggered?: boolean; // low-confidence gate handed the thread to a human (ch10 overcommitted-guess)
+  humanHandoffSuppressed?: boolean; // handoff regex fired but the grounding check found the claim supported (FP candidate)
 
   // Sprint 8: tone-warmth-v1 adherence proxy. True when the reply opens with an
   // empathy reflection AND the turn was non-calm. Lets us measure whether the
@@ -95,6 +114,18 @@ export interface TurnMetrics {
   // learned facts were retrieved. Lets us measure recall health over time.
   memoryRecallTier?:     "zep" | "memoryFiles" | "learnedFacts" | "none";
   memoryFactsRetrieved?: number;
+
+  // U3: truncation/degradation telemetry — makes mechanical forgetting
+  // measurable instead of silent. historyRolledUp is true when this turn's
+  // background maybeRollUpHistory call actually folded messages into the
+  // summary row (not just checked and no-opped). zepContextEmpty is true when
+  // getZepContext resolved to "" (not the unavailable-marker case, which
+  // zepUnavailable already covers — this is Zep responding but having nothing).
+  // learnedFactsCount mirrors memoryFactsRetrieved's value at load time so it
+  // survives independently of memoryRecallTier's derivation.
+  historyRolledUp?:   boolean;
+  zepContextEmpty?:   boolean;
+  learnedFactsCount?: number;
 
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
@@ -124,12 +155,23 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["medicationInstructionDetected", "medication_instruction_detected"],
   ["confidenceClaimDetected", "confidence_claim_detected"],
   ["promiseWithoutToolCall", "promise_without_tool_call"],
+  ["recipeWithoutBackingTool", "recipe_without_backing_tool"],
+  ["contextIgnoredWhenPresent", "context_ignored_when_present"],
+  ["paymentAuthorityLeakDetected", "payment_authority_leak_detected"],
   ["multiQuestionDataCollection", "multi_question_data_collection"],
+  ["frustrationDetected", "frustration_detected"],
+  ["rephraseLoopDetected", "rephrase_loop_detected"],
+  ["repeatedGreetingDetected", "repeated_greeting_detected"],
+  ["agentSelfRepeatDetected", "agent_self_repeat_detected"],
+  ["agentSelfRepeatRewritten", "agent_self_repeat_rewritten"],
+  ["humanHandoffTriggered", "human_handoff_triggered"],
+  ["humanHandoffSuppressed", "human_handoff_suppressed"],
   ["groundingTriggered", "grounding_triggered"],
   ["formatRevisionTriggered", "format_revision_triggered"],
   ["postProcessModified", "post_process_modified"],
   ["exhausted", "agent_loop_exhausted"],
   ["recoveryFired", "recovery_fired"],
+  ["costBudgetExceeded", "cost_budget_exceeded"],
   ["resumedFromCheckpoint", "resumed_from_checkpoint"],
   ["onboardingReGreet", "onboarding_re_greet"],
 ];
@@ -239,9 +281,16 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       userType:                  metrics.userType,
       inputChannel:              metrics.inputChannel ?? null,
       pathway:                   metrics.pathway,
+      modelProvider:             metrics.modelProvider ?? null,
+      modelUsed:                 metrics.modelUsed ?? null,
+      modelFallbackUsed:         !!metrics.modelFallbackUsed,
       flowClass:                 metrics.flowClass ?? null,
       onboardingReGreet:         !!metrics.onboardingReGreet,
       iterations:                metrics.iterations ?? null,
+      inputTokens:               metrics.inputTokens ?? null,
+      outputTokens:              metrics.outputTokens ?? null,
+      costUsd:                   metrics.costUsd ?? null,
+      costBudgetExceeded:        !!metrics.costBudgetExceeded,
       exhausted:                 !!metrics.exhausted,
       experiments:               metrics.experiments ?? null,
       qualityFlags,
@@ -261,7 +310,20 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       medicationInstructionDetected: !!metrics.medicationInstructionDetected,
       confidenceClaimDetected:      !!metrics.confidenceClaimDetected,
       promiseWithoutToolCall:       !!metrics.promiseWithoutToolCall,
+      recipeWithoutBackingTool:     !!metrics.recipeWithoutBackingTool,
+      contextIgnoredWhenPresent:    !!metrics.contextIgnoredWhenPresent,
+      paymentAuthorityLeakDetected: !!metrics.paymentAuthorityLeakDetected,
       multiQuestionDataCollection:  !!metrics.multiQuestionDataCollection,
+      frustrationDetected:          !!metrics.frustrationDetected,
+      rephraseLoopDetected:         !!metrics.rephraseLoopDetected,
+      repeatedGreetingDetected:     !!metrics.repeatedGreetingDetected,
+      agentSelfRepeatDetected:      !!metrics.agentSelfRepeatDetected,
+      agentSelfRepeatRewritten:     !!metrics.agentSelfRepeatRewritten,
+      humanHandoffTriggered:        !!metrics.humanHandoffTriggered,
+      humanHandoffSuppressed:       !!metrics.humanHandoffSuppressed,
+      historyRolledUp:              !!metrics.historyRolledUp,
+      zepContextEmpty:              !!metrics.zepContextEmpty,
+      learnedFactsCount:            metrics.learnedFactsCount ?? 0,
     });
   }
 }

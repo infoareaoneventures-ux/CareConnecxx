@@ -9,7 +9,7 @@ export async function geocodeToLatLng(
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=us`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
     );
     const data = await res.json();
     if (!Array.isArray(data) || !data.length) return null;

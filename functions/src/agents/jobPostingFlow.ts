@@ -83,7 +83,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Cara, an AI care assistant helping a client post a care job. " +
+      "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
       "Answer briefly (1–2 sentences). Be warm and helpful.",
     messages: [{ role: "user", content: text }],
@@ -187,10 +187,8 @@ async function handleJpAskStart(
   await mergeJobData(phone, { jobStartDate: stored });
   await updateJobStep(phone, "jp_ask_frequency");
   await sendMessage(chatId,
-    `Got it — starting ${stored}! How often do you need help?\n\n` +
-    "1️⃣  Occasional (1–2 days/week)\n" +
-    "2️⃣  Part-time (3–4 days/week)\n" +
-    "3️⃣  Full-time (5+ days/week)"
+    `Got it — starting ${stored}! How often do you need help — just occasional (a day or two a week), ` +
+    `part-time (3–4 days), or full-time (5+ days)?`
   );
 }
 
@@ -201,10 +199,7 @@ async function handleJpAskFrequency(
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "How often do you need help?\n\n" +
-      "1️⃣  Occasional (1–2 days/week)\n" +
-      "2️⃣  Part-time (3–4 days/week)\n" +
-      "3️⃣  Full-time (5+ days/week)"
+      "So — how often do you need help? Occasional (1–2 days a week), part-time (3–4 days), or full-time (5+)?"
     );
     return;
   }
@@ -250,12 +245,8 @@ async function handleJpAskDays(
   await mergeJobData(phone, { jobDays: days });
   await updateJobStep(phone, "jp_ask_time");
   await sendMessage(chatId,
-    `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best?\n\n` +
-    "Reply with one or more:\n\n" +
-    "1️⃣  Morning (6am–noon)\n" +
-    "2️⃣  Afternoon (noon–6pm)\n" +
-    "3️⃣  Evening (6pm–10pm)\n" +
-    "4️⃣  Overnight"
+    `${days.length === 7 ? "Every day" : days.join(", ")} — perfect! What time of day works best — ` +
+    `mornings, afternoons, evenings, overnight, or a mix?`
   );
 }
 
@@ -266,11 +257,7 @@ async function handleJpAskTime(
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "What time of day works best?\n\n" +
-      "1️⃣  Morning (6am–noon)\n" +
-      "2️⃣  Afternoon (noon–6pm)\n" +
-      "3️⃣  Evening (6pm–10pm)\n" +
-      "4️⃣  Overnight"
+      "So — what time of day works best? Mornings, afternoons, evenings, overnight, or a mix?"
     );
     return;
   }
@@ -297,15 +284,9 @@ async function handleJpAskTime(
   const name = seniorFirstName(session);
   await sendMessage(chatId,
     `${timeLabel} — noted!\n\n` +
-    `What kind of care does ${name} need? Reply with any that apply:\n\n` +
-    "• Personal care (bathing, grooming)\n" +
-    "• Mobility assistance\n" +
-    "• Memory care\n" +
-    "• Medication reminders\n" +
-    "• Meal preparation\n" +
-    "• Transportation\n" +
-    "• Companionship\n" +
-    "• Light housekeeping"
+    `What kind of care does ${name} need? Just tell me in your own words — things like personal care ` +
+    `(bathing, grooming), mobility help, memory care, medication reminders, meals, rides, companionship, ` +
+    `or light housekeeping.`
   );
 }
 
@@ -344,10 +325,8 @@ async function handleJpAskCareNeeds(
   await mergeJobData(phone, { jobCareNeeds: careNeeds });
   await updateJobStep(phone, "jp_ask_care_level");
   await sendMessage(chatId,
-    `${needsLabel} — great choices! How intensive is the care?\n\n` +
-    "1️⃣  Light — minimal assistance, mostly companionship\n" +
-    "2️⃣  Moderate — daily help with several tasks\n" +
-    "3️⃣  Full care — hands-on help most of the day"
+    `${needsLabel} — great choices! How intensive is the care — pretty light (mostly companionship), ` +
+    `moderate (daily help with several tasks), or full care (hands-on help most of the day)?`
   );
 }
 
@@ -358,8 +337,7 @@ async function handleJpAskCareLevel(
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
-      "How intensive is the care?\n\n" +
-      "1️⃣  Light\n2️⃣  Moderate\n3️⃣  Full care"
+      "So — how intensive is the care? Light, moderate, or full care?"
     );
     return;
   }
@@ -435,9 +413,7 @@ async function handleJpAskRate(
   await mergeJobData(phone, { jobHourlyRate });
   await updateJobStep(phone, "jp_ask_pay_method");
   await sendMessage(chatId,
-    `${rateLabel} — sounds good! How would you prefer to pay?\n\n` +
-    "1️⃣  Card (processed through CareConnex)\n" +
-    "2️⃣  Cash"
+    `${rateLabel} — sounds good! How would you prefer to pay — card (processed through Evia), or cash?`
   );
 }
 
@@ -447,11 +423,11 @@ async function handleJpAskPayMethod(
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, "How would you prefer to pay?\n\n1️⃣  Card\n2️⃣  Cash");
+    await sendMessage(chatId, "So — how would you prefer to pay? Card through Evia, or cash?");
     return;
   }
   const raw = await parseWithClaude(
-    '"1", card, credit, debit, online, CareConnex = card. "2", cash, in person = cash. ' +
+    '"1", card, credit, debit, online, Evia = card. "2", cash, in person = cash. ' +
     'Reply with exactly one of: card, cash',
     text
   );

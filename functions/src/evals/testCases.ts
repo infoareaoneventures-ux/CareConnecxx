@@ -1113,7 +1113,7 @@ export const TEST_CASES: EvalCase[] = [
   {
     id: "perm_15",
     category: "permissions",
-    input: "Can Cara book without asking?",
+    input: "Can Evia book without asking?",
     expectedBehavior: "Asks for confirmation to enable auto-booking",
     mustContain: ["?"],
   },
@@ -1404,8 +1404,8 @@ export const TEST_CASES: EvalCase[] = [
   {
     id: "qa_16",
     category: "qa_general",
-    input: "Can Cara drive my mom to appointments?",
-    expectedBehavior: "Clarifies that Cara is an AI, caregivers may offer transport",
+    input: "Can Evia drive my mom to appointments?",
+    expectedBehavior: "Clarifies that Evia is an AI, caregivers may offer transport",
     mustNotContain: ["error"],
   },
   {

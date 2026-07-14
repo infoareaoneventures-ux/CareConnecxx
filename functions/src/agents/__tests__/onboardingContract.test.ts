@@ -1,14 +1,20 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   shouldRouteOnboardingToLoop,
   CLIENT_REQUIRED_FIELDS,
   CAREGIVER_REQUIRED_FIELDS,
+  CLIENT_COLLECTION_STEPS,
+  CAREGIVER_COLLECTION_STEPS,
+  collectionStepsForRole,
   requiredFieldsForRole,
   isAllowedField,
   missingRequiredFields,
   firstGateStep,
   isOnboardingTool,
   ONBOARDING_TOOL_NAMES,
+  normalizeOnboardingFieldValue,
+  CAREGIVER_JOB_TYPES,
+  caregiverJobTypesToWebIds,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
@@ -98,6 +104,52 @@ describe("onboardingContract", () => {
     });
   });
 
+  describe("normalizeOnboardingFieldValue (Fix 3 — enum canonicalization)", () => {
+    it("canonicalizes free-form jobType spellings to the enum", () => {
+      expect(normalizeOnboardingFieldValue("jobType", "Full time")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "full-time")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "FT")).toBe("full_time");
+      expect(normalizeOnboardingFieldValue("jobType", "Part Time")).toBe("part_time");
+      expect(normalizeOnboardingFieldValue("jobType", "part-time")).toBe("part_time");
+      expect(normalizeOnboardingFieldValue("jobType", "occasional")).toBe("occasional");
+      expect(normalizeOnboardingFieldValue("jobType", "as needed")).toBe("occasional");
+    });
+
+    it("passes already-canonical values through unchanged", () => {
+      for (const v of CAREGIVER_JOB_TYPES) {
+        expect(normalizeOnboardingFieldValue("jobType", v)).toBe(v);
+      }
+    });
+
+    it("keeps an unrecognized jobType value raw (never silently dropped)", () => {
+      expect(normalizeOnboardingFieldValue("jobType", "weekends only")).toBe("weekends only");
+    });
+
+    it("leaves non-jobType fields and non-string values untouched", () => {
+      expect(normalizeOnboardingFieldValue("city", "Full time")).toBe("Full time");
+      expect(normalizeOnboardingFieldValue("jobType", 40)).toBe(40);
+    });
+  });
+
+  describe("caregiverJobTypesToWebIds (webapp 'Looking for' parity)", () => {
+    it("maps the underscored enum to hyphenated webapp ids", () => {
+      expect(caregiverJobTypesToWebIds("full_time", undefined)).toEqual(["full-time"]);
+      expect(caregiverJobTypesToWebIds("part_time", undefined)).toEqual(["part-time"]);
+      expect(caregiverJobTypesToWebIds("occasional", undefined)).toEqual(["occasional"]);
+    });
+    it("keeps every type when more than one was named, in stable order", () => {
+      expect(caregiverJobTypesToWebIds("part_time", ["occasional", "part_time"]))
+        .toEqual(["occasional", "part-time"]);
+    });
+    it("tolerates already-hyphenated values and dedupes", () => {
+      expect(caregiverJobTypesToWebIds("part-time", ["part_time"])).toEqual(["part-time"]);
+    });
+    it("returns [] when nothing usable", () => {
+      expect(caregiverJobTypesToWebIds(undefined, undefined)).toEqual([]);
+      expect(caregiverJobTypesToWebIds("weekends only", [])).toEqual([]);
+    });
+  });
+
   describe("firstGateStep", () => {
     it("client hands off to the legacy post-collection step", () => {
       expect(firstGateStep("client")).toBe("client_ask_start");
@@ -107,68 +159,96 @@ describe("onboardingContract", () => {
     });
   });
 
-  describe("shouldRouteOnboardingToLoop (U4 routing gate)", () => {
-    const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false, hasLocation: false };
-    afterEach(() => { delete process.env.ONBOARDING_AGENT_LOOP; });
+  describe("shouldRouteOnboardingToLoop (loop-only routing gate)", () => {
+    // Loop-only (2026-07-08): the loop is the SOLE collection path — no feature
+    // flag, no cohort narrowing. Any text turn at a collection step routes here.
+    const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false };
 
-    it("routes a client collection step to the loop when the flag is on", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
+    it("routes a client collection step unconditionally (no flag)", () => {
       expect(shouldRouteOnboardingToLoop(base)).toBe(true);
     });
 
-    it("does NOT route when the flag is off (default)", () => {
-      expect(shouldRouteOnboardingToLoop(base)).toBe(false);
-    });
-
-    it("does NOT route a caregiver (client-first)", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
-      expect(shouldRouteOnboardingToLoop({ ...base, role: "caregiver" })).toBe(false);
-    });
-
-    it("does NOT route a transactional/gate step (not a collection step)", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
+    it("does NOT route a transactional/gate/confirm-name step (not a collection step)", () => {
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_send_payment" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "verify_phone" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_ask_start" })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_confirm_name" })).toBe(false);
     });
 
-    it("does NOT route media or location turns (stay on legacy handlers)", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
+    it("does NOT route media turns (fall to handleInboundMedia) or empty text", () => {
+      // Location pins are converted to text before the predicate (webhooks 2a),
+      // so hasLocation is no longer a routing input.
       expect(shouldRouteOnboardingToLoop({ ...base, hasMedia: true })).toBe(false);
-      expect(shouldRouteOnboardingToLoop({ ...base, hasLocation: true })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, hasText: false })).toBe(false);
     });
 
-    it("routes only the role named in the flag", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "caregiver";
-      expect(shouldRouteOnboardingToLoop(base)).toBe(false); // client not enabled
+    it("does NOT route unknown roles", () => {
+      expect(shouldRouteOnboardingToLoop({ ...base, role: undefined })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, role: "admin" })).toBe(false);
     });
   });
 
-  describe("shouldRouteOnboardingToLoop — canary cohort scoping", () => {
-    const base = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false, hasLocation: false, phone: "+15551234567" };
-    afterEach(() => {
-      delete process.env.ONBOARDING_AGENT_LOOP;
-      delete process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT;
-      delete process.env.ONBOARDING_AGENT_LOOP_PHONES;
+  describe("caregiver collection steps (the loop's caregiver surface)", () => {
+    it("mirror the scripted caregiver_ask_* sequence, in flow order", () => {
+      expect([...CAREGIVER_COLLECTION_STEPS]).toEqual([
+        "caregiver_ask_name", "caregiver_ask_location", "caregiver_ask_story",
+        "caregiver_ask_experience", "caregiver_ask_specialties", "caregiver_ask_profile",
+        "caregiver_ask_availability", "caregiver_ask_job_type", "caregiver_ask_rate",
+        "caregiver_ask_email", "caregiver_ask_bio",
+      ]);
     });
 
-    it("default (no cohort narrowing) routes the whole enabled role", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
+    it("exclude every deterministic gate/awaiting step and the confirm-name step", () => {
+      for (const gate of [
+        "caregiver_confirm_name",
+        "caregiver_send_photo", "caregiver_awaiting_photo",
+        "caregiver_send_documents", "caregiver_awaiting_documents",
+        "caregiver_ask_mvr", "caregiver_send_mvr", "caregiver_awaiting_mvr",
+        "caregiver_send_membership", "caregiver_awaiting_membership",
+        "caregiver_send_bgcheck", "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
+        "caregiver_send_stripe_connect", "caregiver_awaiting_stripe",
+        "verify_phone",
+      ]) {
+        expect(CAREGIVER_COLLECTION_STEPS).not.toContain(gate);
+      }
+    });
+
+    it("collectionStepsForRole routes by role", () => {
+      expect(collectionStepsForRole("client")).toBe(CLIENT_COLLECTION_STEPS);
+      expect(collectionStepsForRole("caregiver")).toBe(CAREGIVER_COLLECTION_STEPS);
+    });
+
+    it("caregiver loop may save the optional scripted-flow fields (story/profile/service-area)", () => {
+      for (const f of ["certifications", "skills", "zipCode", "gender", "languages", "canDrive"]) {
+        expect(isAllowedField("caregiver", f)).toBe(true);
+      }
+    });
+  });
+
+  describe("shouldRouteOnboardingToLoop — caregiver role (loop-only)", () => {
+    const base = { role: "caregiver", step: "caregiver_ask_experience", hasText: true, hasMedia: false };
+
+    it("routes every caregiver collection step unconditionally", () => {
       expect(shouldRouteOnboardingToLoop(base)).toBe(true);
+      for (const step of CAREGIVER_COLLECTION_STEPS) {
+        expect(shouldRouteOnboardingToLoop({ ...base, step })).toBe(true);
+      }
     });
 
-    it("pct=0 excludes the phone even with the role enabled", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
-      process.env.ONBOARDING_AGENT_LOOP_COHORT_PCT = "0";
-      expect(shouldRouteOnboardingToLoop(base)).toBe(false);
+    it("never routes a caregiver gate/awaiting/confirm step", () => {
+      for (const step of [
+        "caregiver_confirm_name", "caregiver_send_photo", "caregiver_awaiting_photo",
+        "caregiver_awaiting_documents", "caregiver_ask_mvr", "caregiver_awaiting_membership",
+        "caregiver_awaiting_bgcheck_consent", "caregiver_awaiting_bgcheck",
+        "caregiver_awaiting_stripe", "verify_phone", "ask_role",
+      ]) {
+        expect(shouldRouteOnboardingToLoop({ ...base, step })).toBe(false);
+      }
     });
 
-    it("allowlist routes only listed phones (suffix match)", () => {
-      process.env.ONBOARDING_AGENT_LOOP = "client";
-      process.env.ONBOARDING_AGENT_LOOP_PHONES = "4567";
-      expect(shouldRouteOnboardingToLoop(base)).toBe(true);
-      expect(shouldRouteOnboardingToLoop({ ...base, phone: "+15550000000" })).toBe(false);
+    it("never routes caregiver media / empty-text turns", () => {
+      expect(shouldRouteOnboardingToLoop({ ...base, hasMedia: true })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, hasText: false })).toBe(false);
     });
   });
 });

@@ -10,15 +10,60 @@ interface Props {
 interface State {
     hasError: boolean;
     error: Error | null;
+    recovering: boolean;
 }
+
+// Lazy-route chunk fetches fail with these messages when a cached app shell
+// references hashed assets purged by a newer deploy (the SPA rewrite returns
+// index.html for the missing chunk, so Safari says "Importing a module script
+// failed" instead of 404).
+const isChunkLoadError = (error: Error | null): boolean => {
+    const msg = error?.message ?? '';
+    return (
+        /Importing a module script failed/i.test(msg) ||
+        /Failed to fetch dynamically imported module/i.test(msg) ||
+        /error loading dynamically imported module/i.test(msg) ||
+        /ChunkLoadError/i.test(msg) ||
+        error?.name === 'ChunkLoadError'
+    );
+};
+
+const RECOVERY_FLAG = 'evia_chunk_recovery_attempted';
+
+// Drop every SW cache + registration so the reload fetches the current deploy,
+// then reload. Guarded to one attempt per tab session so a genuinely broken
+// deploy can't cause a reload loop.
+const attemptChunkRecovery = async (): Promise<boolean> => {
+    try {
+        if (sessionStorage.getItem(RECOVERY_FLAG)) return false;
+        sessionStorage.setItem(RECOVERY_FLAG, '1');
+    } catch {
+        return false;
+    }
+    try {
+        if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+        }
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+        }
+    } catch {
+        // Even if cleanup partially fails, a reload is still the best next step.
+    }
+    window.location.reload();
+    return true;
+};
 
 export class ErrorBoundary extends Component<Props, State> {
     public state: State = {
         hasError: false,
         error: null,
+        recovering: false,
     };
 
-    public static getDerivedStateFromError(error: Error): State {
+    public static getDerivedStateFromError(error: Error): Partial<State> {
         return { hasError: true, error };
     }
 
@@ -27,6 +72,12 @@ export class ErrorBoundary extends Component<Props, State> {
         Sentry.captureException(error, {
             contexts: { react: { componentStack: errorInfo.componentStack } },
         });
+        if (isChunkLoadError(error)) {
+            this.setState({ recovering: true });
+            attemptChunkRecovery().then((reloading) => {
+                if (!reloading) this.setState({ recovering: false });
+            });
+        }
     }
 
     private handleReload = () => {
@@ -34,6 +85,17 @@ export class ErrorBoundary extends Component<Props, State> {
     };
 
     public render() {
+        if (this.state.recovering) {
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+                    <div className="text-center">
+                        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+                        <p className="text-slate-500">Updating to the latest version…</p>
+                    </div>
+                </div>
+            );
+        }
+
         if (this.state.hasError) {
             return (
                 <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">

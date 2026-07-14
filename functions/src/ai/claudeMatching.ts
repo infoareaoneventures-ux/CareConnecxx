@@ -3,20 +3,20 @@ import { getSharedClient } from "../utils/claudeClient";
 /**
  * Shared Claude-powered scoring engine.
  * Used by both runAiMatching (coordinator-triggered batch)
- * and runMatchingForClient (Cara SMS matching flow).
+ * and runMatchingForClient (Evia SMS matching flow).
  */
 
 const BASE_DOMAIN_KNOWLEDGE = `You are an expert home care coordinator matching caregivers to seniors. Score each candidate on how well they fit the senior's specific needs.
 
 DOMAIN KNOWLEDGE (distilled from 15,000 validated matching scenarios):
 - CRITICAL: Dementia / Alzheimer's / memory care needs → caregiver MUST have dementia care certification. Without it: major red flag, cap overall score at 45.
-- CRITICAL: Medical needs (medication management, wound care, catheter care, feeding tube) → requires CNA, LVN, or RN credential. Without it: cap score at 50.
+- Evia coordinates non-medical home care. Match medication reminders, mobility help, companionship, meals, and personal care. Do not present wound care, catheter care, feeding-tube care, medication administration, diagnosis, or other clinical procedures as standard caregiver services.
 - Skills coverage below 50%: overall score must not exceed 55 regardless of other signals.
 - Schedule overlap below 30%: disqualifying — score below 40.
 - Distance ≤ 5 miles: strong reliability signal.
 - Distance > 20 miles: schedule reliability risk, factor down.
 - Rating ≥ 4.5 with ≥ 10 reviews: strong quality signal.
-- Experience ≥ 3 years for complex care (dementia, medical, mobility): important positive signal.
+- Experience ≥ 3 years for complex non-medical care (dementia support, mobility, personal care): important positive signal.
 - Personality match: calm/patient caregiver + anxious or dementia senior; energetic/chatty caregiver + companionship-focused or extrovert senior.
 - Language match when family specified preference: strong positive signal (+8–12 pts).
 - Gender preference when family specified one: matching the caregiver's gender is a positive signal; a mismatch is a meaningful negative — factor down 15–25 pts unless the caregiver's skills fit is uniquely strong.

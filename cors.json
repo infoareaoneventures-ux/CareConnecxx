@@ -1,6 +1,6 @@
 [
   {
-    "origin": ["https://careconnex-d4c8b.web.app", "http://localhost:5173", "http://localhost:3000"],
+    "origin": ["https://careconnex-d4c8b.web.app", "https://careconnecxx.com", "https://www.careconnecxx.com", "https://app.careconnecxx.com", "https://eviacares.com", "https://www.eviacares.com", "http://localhost:5173", "http://localhost:3000"],
     "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
     "maxAgeSeconds": 3600,
     "responseHeader": ["Content-Type", "Access-Control-Allow-Origin", "Authorization", "x-goog-resumable"]

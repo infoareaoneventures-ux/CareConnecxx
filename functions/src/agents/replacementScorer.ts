@@ -24,11 +24,24 @@ export interface ScoreReplacementsParams {
 export async function scoreReplacements(
   params: ScoreReplacementsParams
 ): Promise<ReplacementOption[]> {
-  const { clientId, excludeId } = params;
+  const { clientId, excludeId, date, time } = params;
 
-  // Load senior needs for skill matching
-  const seniorSnap = await db.collection("senior_profiles").doc(clientId).get();
+  // Load senior needs and all same-day booking conflicts in one query.
+  const [seniorSnap, dayAppointments] = await Promise.all([
+    db.collection("senior_profiles").doc(clientId).get(),
+    db.collection("appointments")
+      .where("date", "==", date)
+      .where("status", "in", ["pending", "confirmed", "in-progress"])
+      .limit(500)
+      .get(),
+  ]);
   const clientNeeds: string[] = seniorSnap.data()?.needs ?? [];
+  const bookedCaregiverIds = new Set(
+    dayAppointments.docs
+      .filter(doc => doc.data().time === time)
+      .map(doc => doc.data().caregiverId as string)
+      .filter(Boolean),
+  );
 
   // Load past bookings to flag previously-booked caregivers
   const pastSnap = await db
@@ -50,7 +63,7 @@ export async function scoreReplacements(
   const candidates = caregiverSnap.docs
     .filter((d) => isCaregiverBookable(d.data()))
     .map((d) => ({ id: d.id, ...d.data() } as any))
-    .filter((c) => c.id !== excludeId);
+    .filter((c) => c.id !== excludeId && !bookedCaregiverIds.has(c.id));
 
   if (candidates.length === 0) return [];
 

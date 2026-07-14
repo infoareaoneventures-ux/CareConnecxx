@@ -122,5 +122,7 @@ export const CARE_LEVEL_OPTIONS: Array<{ value: JobCareLevel; label: string; des
 
 export const PAYMENT_OPTIONS: Array<{ value: JobPaymentMethod; label: string; description: string }> = [
   { value: 'credit', label: 'Credit card', description: 'Charged automatically when hours are approved' },
-  { value: 'cash', label: 'Cash', description: 'Pay caregiver directly — cash-only caregivers can apply' },
+  { value: 'cash', label: 'Cash', description: 'Pay caregiver directly in cash' },
+  { value: 'venmo', label: 'Venmo', description: 'Pay caregiver directly via Venmo' },
+  { value: 'zelle', label: 'Zelle', description: 'Pay caregiver directly via Zelle' },
 ];

@@ -21,7 +21,7 @@ export const ADDITIONAL_SERVICES = [
 ] as const;
 
 // Certifications
-export const CERTIFICATIONS = ['CNA', 'HHA', 'CPR/First Aid', 'RN', 'LPN'] as const;
+export const CERTIFICATIONS = ['CNA', 'HHA', 'RN', 'LPN'] as const;
 
 // Experience level options
 export const EXPERIENCE_LEVELS = [
@@ -77,7 +77,7 @@ export const WRITING_IDEAS = [
 ];
 
 // Example bio for reference
-export const EXAMPLE_BIO = `Hi, I'm Sarah, and I've been a dedicated caregiver for over 8 years. I specialize in companionship and personal care for seniors, with extensive experience in dementia and Alzheimer's care. I'm CNA certified and CPR/First Aid trained.
+export const EXAMPLE_BIO = `Hi, I'm Sarah, and I've been a dedicated caregiver for over 8 years. I specialize in companionship and personal care for seniors, with extensive experience in dementia and Alzheimer's care. I'm CNA certified.
 
 What I love most about caregiving is building genuine connections with the people I care for. I believe every senior deserves dignity, respect, and joy in their daily life. I'm patient, reliable, and always go the extra mile to ensure comfort and safety.
 

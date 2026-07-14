@@ -19,10 +19,23 @@
 export const SHIFT_PLATFORM_FEE_RATE = 0.015;
 export const SHIFT_PLATFORM_FEE_MIN_DOLLARS = 0.5;
 
+// Launch billing policy. Amounts use integer cents at trust boundaries; the
+// existing shiftHours document keeps dollar mirrors until its readers migrate.
+export const BILLING_CURRENCY = "usd" as const;
+export const MAX_BILLABLE_HOURS_PER_VISIT = 24;
+export const MAX_BILLABLE_AMOUNT_CENTS = 250_000;
+export const EXPLICIT_APPROVAL_THRESHOLD_CENTS = 50_000;
+export const MANUAL_REVIEW_REMINDER_HOURS = [24, 48] as const;
+export const MANUAL_REVIEW_TIMEOUT_HOURS = 72;
+export const CAREGIVER_PROFILE_RATE_MIN_DOLLARS = 15;
+export const CAREGIVER_PROFILE_RATE_MAX_DOLLARS = 150;
+
 /**
- * Instant-payout processing fee deducted from a caregiver's payout when they
- * cash out early (requestInstantPayout): max(gross * RATE, MIN). 1.5%, $0.50
- * minimum. Standard (1–2 day) payouts are free and carry no fee.
+ * Instant payouts are FREE to the caregiver (pricing decision 2026-07-06):
+ * the platform absorbs Stripe's instant-payout fee. Regular payouts happen
+ * automatically on Stripe's daily schedule and were always free. The former
+ * INSTANT_PAYOUT_FEE_RATE / INSTANT_PAYOUT_FEE_MIN_DOLLARS constants were
+ * retired with that decision — reintroducing a caregiver-facing fee requires
+ * real fee recoup (an account-debit transfer to the platform), not just a
+ * smaller payout, because any remainder auto-sweeps back to the caregiver.
  */
-export const INSTANT_PAYOUT_FEE_RATE = 0.015;
-export const INSTANT_PAYOUT_FEE_MIN_DOLLARS = 0.5;

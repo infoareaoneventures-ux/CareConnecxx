@@ -21,44 +21,48 @@ const db = admin.firestore();
 
 // getConversationHistory loads only the most recent HISTORY_WINDOW messages, so
 // anything older is lost unless folded into the summary row it reads back.
-export const HISTORY_WINDOW = 10;  // recent messages kept verbatim
-export const ROLLUP_TRIGGER = 20;  // start folding once live messages exceed this
+export const HISTORY_WINDOW = 24;  // recent messages kept verbatim
+export const ROLLUP_TRIGGER = 30;  // start folding once live messages exceed this
 
 // Fire this AFTER the user's reply is sent so it never adds latency, but still
 // await it at the call site: Gen-1 functions throttle CPU once the HTTP response is
 // sent, so un-awaited background work gets killed.
-export async function maybeRollUpHistory(phone: string): Promise<void> {
+//
+// Returns whether a rollup actually happened (messages were folded into the
+// summary row) so callers can record `historyRolledUp` telemetry — false for
+// every early-return (below trigger, nothing to fold, empty/failed summary).
+export async function maybeRollUpHistory(phone: string): Promise<boolean> {
   try {
     const col = db.collection("agent_conversations").doc(phone).collection("messages");
 
     // Cheap aggregation gate — avoids reading every message on turns that don't need a rollup.
     const countSnap = await col.count().get();
-    if (countSnap.data().count <= ROLLUP_TRIGGER) return;
+    if (countSnap.data().count <= ROLLUP_TRIGGER) return false;
 
     const snap       = await col.orderBy("timestamp", "asc").get();
     const nonSummary = snap.docs.filter((d) => d.data().role !== "summary");
-    if (nonSummary.length <= HISTORY_WINDOW) return;
+    if (nonSummary.length <= HISTORY_WINDOW) return false;
 
     const summaryDocs     = snap.docs.filter((d) => d.data().role === "summary");
     const existingSummary = summaryDocs[0]?.data().content as string | undefined;
 
     // Fold everything except the most recent HISTORY_WINDOW messages.
     const toFold = nonSummary.slice(0, nonSummary.length - HISTORY_WINDOW);
-    if (toFold.length === 0) return;
+    if (toFold.length === 0) return false;
 
     const transcript = toFold
-      .map((d) => `${d.data().role === "user" ? "Family" : "Cara"}: ${String(d.data().content ?? "").slice(0, 500)}`)
+      .map((d) => `${d.data().role === "user" ? "Family" : "Evia"}: ${String(d.data().content ?? "").slice(0, 500)}`)
       .join("\n");
 
     const newSummary = await quickComplete(
-      "You maintain a running summary of an ongoing SMS conversation between a family and Cara, a " +
+      "You maintain a running summary of an ongoing SMS conversation between a family and Evia, a " +
         "caregiving assistant. Merge the existing summary with the new messages into ONE concise summary " +
         "(max 200 words). Preserve durable facts, decisions, preferences, and open threads; drop " +
         "pleasantries. Write plain prose in the third person. Output only the summary.",
       `Existing summary:\n${existingSummary ?? "(none)"}\n\nNew messages:\n${transcript}`,
       { maxTokens: 350 },
     );
-    if (!newSummary || !newSummary.trim()) return;
+    if (!newSummary || !newSummary.trim()) return false;
 
     // Upsert the single summary row and delete the folded messages so they are
     // neither double-counted nor re-summarized next time.
@@ -67,8 +71,10 @@ export async function maybeRollUpHistory(phone: string): Promise<void> {
     batch.set(summaryRef, { role: "summary", content: newSummary.trim(), timestamp: Date.now() });
     for (const d of toFold) batch.delete(d.ref);
     await batch.commit();
+    return true;
   } catch (err) {
     console.error("maybeRollUpHistory error:", err);
+    return false;
   }
 }
 
@@ -114,7 +120,7 @@ export async function buildToolResultContent(
 // This mirrors deepagents' `TruncateArgsSettings` pre-pass — a cheap step
 // before the full summarization rollup that often defers a rollup entirely.
 //
-// We only touch messages older than `keepLast` (default 5) so the most recent
+// We only touch messages older than `keepLast` (default 8) so the most recent
 // tool calls — where Claude may still be reasoning about its own args — stay
 // intact. The matching `tool_result` blocks are untouched; result content is
 // already capped by `buildToolResultContent`.
@@ -124,8 +130,8 @@ export async function buildToolResultContent(
 // Pattern source: third_party/deepagents/libs/deepagents/deepagents/middleware/summarization.py
 export function truncateOldToolCallArgs(
   messages: Anthropic.MessageParam[],
-  keepLast = 5,
-  maxArgLen = 200,
+  keepLast = 8,
+  maxArgLen = 500,
 ): number {
   let truncated = 0;
   const cutoff  = Math.max(0, messages.length - keepLast);

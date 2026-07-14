@@ -220,7 +220,7 @@ export async function escalateIssue(issueLogId: string): Promise<void> {
 
   if (ecPhone && ecPhone !== issue.clientPhone) {
     await sendToPhone(ecPhone,
-      `Hi — I'm Cara, the AI care assistant for ${seniorName}. ` +
+      `Hi — I'm Evia, the care coordinator for ${seniorName}. ` +
       `${issue.caregiverName ?? "A caregiver"} flagged a concern during today's visit. ` +
       `The primary contact hasn't responded in 30 minutes. ` +
       `Please reach out to them or contact the care team directly.`
@@ -332,7 +332,7 @@ export async function sendIssueFollowUp(issueLogId: string): Promise<void> {
   if (issue.clientPhone) {
     const familyFollowUpMsg = await generateCaraMessage({
       audience: "family",
-      context: `Cara is following up the day after a care concern was reported involving ${seniorName}. Gently check in to see how ${seniorName} is doing today and whether everything is okay.`,
+      context: `Evia is following up the day after a care concern was reported involving ${seniorName}. Gently check in to see how ${seniorName} is doing today and whether everything is okay.`,
       fallback: `Just checking in — how is ${seniorName} doing today after yesterday's concern?\n\nEverything okay?`,
     });
     await sendViaInteractionAgent(issue.clientPhone, {
@@ -347,7 +347,7 @@ export async function sendIssueFollowUp(issueLogId: string): Promise<void> {
   if (issue.caregiverPhone) {
     const caregiverFollowUpMsg = await generateCaraMessage({
       audience: "caregiver",
-      context: "Cara is sending a follow-up closure check to the caregiver the day after they reported a concern during a visit. Ask if the concern was resolved and remind them to reply YES if everything's okay or give an update if not.",
+      context: "Evia is sending a follow-up closure check to the caregiver the day after they reported a concern during a visit. Ask if the concern was resolved and remind them to reply YES if everything's okay or give an update if not.",
       fallback: "Quick check-in: was the concern from yesterday's visit resolved? Reply YES if everything's okay, or give me an update if not.",
     });
     await sendViaInteractionAgent(issue.caregiverPhone, {

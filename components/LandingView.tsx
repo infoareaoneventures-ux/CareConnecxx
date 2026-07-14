@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, Menu, X, Users, Briefcase } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { ViewType } from '../types';
 import { Button } from './ui/Button';
 import { SEO, generateOrganizationSchema, generateServiceSchema, generateFAQSchema } from './SEO';
@@ -13,7 +14,6 @@ import { TrustSafetySection } from './landing/TrustSafetySection';
 import { FeaturesSection } from './landing/FeaturesSection';
 import { CaregiverSection } from './landing/CaregiverSection';
 import { Footer } from './landing/Footer';
-import { LoginModal } from './landing/LoginModal';
 import { ServicesSection } from './landing/ServicesSection';
 import { FAQSection } from './landing/FAQSection';
 import { BlogSection } from './landing/BlogSection';
@@ -25,13 +25,12 @@ interface LandingViewProps {
 
 export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
    return (
-      <div className="flex flex-col min-h-screen bg-white font-sans pb-20 md:pb-0">
+      <div className="flex flex-col min-h-screen bg-paper-50 font-sans pb-20 md:pb-0">
          <SEO
             title="Find Trusted Senior Caregivers Near You"
-            description="CareConnex connects families with verified local caregivers using AI matching. Find in-home care, respite care, and dementia care for your loved ones."
+            description="Evia connects families with verified local caregivers using AI matching. Find in-home care, respite care, and dementia care for your loved ones."
             keywords="senior care, caregiver, elderly care, home health aide, respite care, dementia care, in-home care, find caregivers"
             schema={{
               '@context': 'https://schema.org',
@@ -41,9 +40,9 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                 generateFAQSchema(faqs),
                 {
                   '@type': 'WebPage',
-                  name: 'CareConnex - Senior Care Marketplace',
+                  name: 'Evia - Senior Care Marketplace',
                   description: 'Connect with verified caregivers instantly. AI-powered matching for senior care.',
-                  url: 'https://www.careconnex.com/',
+                  url: 'https://www.eviacares.com/',
                   aggregateRating: {
                     '@type': 'AggregateRating',
                     ratingValue: '4.9',
@@ -57,52 +56,35 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
          />
 
          {/* Navigation Bar */}
-         <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100 transition-all duration-300">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-               <div className="flex justify-between items-center h-20">
+         <header className="sticky top-0 z-50 bg-paper-50/90 backdrop-blur-md border-b hairline transition-all duration-300">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+               <div className="flex justify-between items-center h-16">
                   {/* Logo */}
                   <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-                     <div className="bg-primary-600 p-2 rounded-2xl shadow-xl shadow-primary-200/50">
-                        <Activity className="text-white w-6 h-6" />
-                     </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <BloomMark className="text-ink-900 w-5 h-5" />
+                     <span className="font-display text-[22px] font-semibold text-ink-900 tracking-tight">Evia</span>
                   </div>
 
                   {/* Desktop Nav */}
                   <nav className="hidden md:flex items-center space-x-8">
-                     <button onClick={() => onNavigate('client-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors">Find Care</button>
-                     <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-accent-500 font-medium transition-colors">Find Jobs</button>
+                     <button onClick={() => onNavigate('client-signup')} className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors">Find Care</button>
+                     <button onClick={() => onNavigate('caregiver-signup')} className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors">For Caregivers</button>
+                     <button onClick={() => onNavigate('help-center')} className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors">Help</button>
                   </nav>
 
-                  {/* Auth Buttons */}
-                  <div className="hidden md:flex items-center space-x-4">
+                  {/* Auth Buttons — one quiet link, one dark pill */}
+                  <div className="hidden md:flex items-center space-x-6">
                      <button
-                        onClick={() => onNavigate('help-center')}
-                        className="text-slate-600 hover:text-primary-600 font-medium px-4 py-2"
+                        onClick={() => onNavigate('login')}
+                        className="text-ink-600 hover:text-ink-900 text-[15px] font-medium transition-colors"
                      >
-                        Help
+                        Log in
                      </button>
-                     <button
-                        onClick={() => setIsLoginModalOpen(true)}
-                        className="text-slate-600 hover:text-primary-600 font-medium px-4 py-2 border border-slate-300 rounded-full hover:border-primary-400 transition-colors"
-                     >
-                        Log In
-                     </button>
-
-                     {/* Two prominent CTAs route into the unified phone-first onboarding */}
                      <button
                         onClick={() => onNavigate('client-signup')}
-                        className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-semibold px-5 py-2.5 rounded-full text-sm transition-colors shadow-md shadow-primary-200"
+                        className="btn-depth-primary font-semibold px-5 py-2.5 rounded-full text-sm"
                      >
-                        <Users className="w-4 h-4" />
-                        Find a Caregiver
-                     </button>
-                     <button
-                        onClick={() => onNavigate('caregiver-signup')}
-                        className="flex items-center gap-2 bg-white border border-accent-300 hover:border-accent-500 text-accent-600 font-semibold px-5 py-2.5 rounded-full text-sm transition-colors"
-                     >
-                        <Briefcase className="w-4 h-4" />
-                        Apply as a Caregiver
+                        Get started
                      </button>
                   </div>
 
@@ -123,7 +105,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                      <button onClick={() => onNavigate('caregiver-signup')} className="block w-full text-left px-3 py-3 text-base font-medium text-slate-700 hover:bg-slate-50 rounded-lg">Find Jobs</button>
                      <button onClick={() => onNavigate('help-center')} className="block w-full text-left px-3 py-3 text-base font-medium text-slate-700 hover:bg-slate-50 rounded-lg">Help</button>
                      <div className="border-t border-slate-100 my-2"></div>
-                     <button onClick={() => { setIsMobileMenuOpen(false); setIsLoginModalOpen(true); }} className="block w-full text-left px-3 py-3 text-base font-medium text-primary-600 hover:bg-primary-50 rounded-lg">Log In</button>
+                     <button onClick={() => { setIsMobileMenuOpen(false); onNavigate('login'); }} className="block w-full text-left px-3 py-3 text-base font-medium text-primary-600 hover:bg-primary-50 rounded-lg">Log In</button>
                      <Button fullWidth onClick={() => { setIsMobileMenuOpen(false); onNavigate('client-signup'); }} variant="primary">
                         Find Care — For Families
                      </Button>
@@ -146,10 +128,6 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
             <BlogSection />
             <CaregiverSection onNavigate={onNavigate} />
             <Footer onNavigate={onNavigate} />
-
-            {isLoginModalOpen && (
-               <LoginModal onNavigate={onNavigate} onClose={() => setIsLoginModalOpen(false)} />
-            )}
          </main>
 
          {/* Mobile Sticky CTA */}

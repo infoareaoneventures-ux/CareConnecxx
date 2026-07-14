@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, Twitter, Facebook, Instagram } from 'lucide-react';
+import { Twitter, Facebook, Instagram } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { LegalDocs } from '../LegalDocs';
 
@@ -12,59 +13,57 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
     return (
         <>
-            <footer className="bg-white border-t border-slate-100 py-12">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="grid md:grid-cols-4 gap-8">
-                        <div className="col-span-1 md:col-span-2">
+            <footer className="bg-paper-50 border-t hairline py-14">
+                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+                        <div className="col-span-2 md:col-span-2">
                             <div className="flex items-center space-x-2 mb-4">
-                                <Activity className="text-primary-600 w-6 h-6" />
-                                <span className="text-xl font-bold text-slate-900">CareConnex</span>
+                                <BloomMark className="text-ink-900 w-5 h-5" />
+                                <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
                             </div>
-                            <p className="text-slate-500 max-w-xs">
-                                Modernizing senior care with direct connections, instant payments, and AI-powered matching.
+                            <p className="text-ink-600 max-w-xs text-sm leading-relaxed">
+                                Care for your loved one, coordinated entirely over text.
                             </p>
                             <div className="flex gap-4 mt-6">
-                                <button className="w-8 h-8 bg-slate-100 rounded-full hover:bg-primary-100 text-slate-400 hover:text-primary-600 transition-colors cursor-pointer flex items-center justify-center">
+                                <button aria-label="Twitter" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
                                     <Twitter className="w-4 h-4" />
                                 </button>
-                                <button className="w-8 h-8 bg-slate-100 rounded-full hover:bg-primary-100 text-slate-400 hover:text-primary-600 transition-colors cursor-pointer flex items-center justify-center">
+                                <button aria-label="Facebook" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
                                     <Facebook className="w-4 h-4" />
                                 </button>
-                                <button className="w-8 h-8 bg-slate-100 rounded-full hover:bg-primary-100 text-slate-400 hover:text-primary-600 transition-colors cursor-pointer flex items-center justify-center">
+                                <button aria-label="Instagram" className="w-8 h-8 bg-paper-100 rounded-full hover:bg-paper-200 text-ink-400 hover:text-ink-900 transition-colors cursor-pointer flex items-center justify-center">
                                     <Instagram className="w-4 h-4" />
                                 </button>
                             </div>
                         </div>
 
                         <div>
-                            <h4 className="font-bold text-slate-900 mb-4">For Families</h4>
-                            <ul className="space-y-2 text-slate-500 text-sm">
-                                <li><button onClick={() => onNavigate('client-signup')} className="hover:text-primary-600">Find Care</button></li>
-                                <li><button onClick={() => onNavigate('client-login')} className="hover:text-primary-600">Log In</button></li>
-                                <li><button onClick={() => onNavigate('landing')} className="hover:text-primary-600">Quality Guarantee</button></li>
-                                <li><button onClick={() => onNavigate('family-faq')} className="hover:text-primary-600">Family FAQ</button></li>
-                                <li><button onClick={() => onNavigate('client-apply')} className="hover:text-primary-600">Create Account</button></li>
+                            <h4 className="font-semibold text-ink-900 mb-4 text-sm">For Families</h4>
+                            <ul className="space-y-2.5 text-ink-600 text-sm">
+                                <li><button onClick={() => onNavigate('client-signup')} className="hover:text-ink-900 transition-colors">Find Care</button></li>
+                                <li><button onClick={() => onNavigate('login')} className="hover:text-ink-900 transition-colors">Log In</button></li>
+                                <li><button onClick={() => onNavigate('family-faq')} className="hover:text-ink-900 transition-colors">Family FAQ</button></li>
+                                <li><button onClick={() => onNavigate('client-apply')} className="hover:text-ink-900 transition-colors">Create Account</button></li>
                             </ul>
                         </div>
 
                         <div>
-                            <h4 className="font-bold text-slate-900 mb-4">For Caregivers</h4>
-                            <ul className="space-y-2 text-slate-500 text-sm">
-                                <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-primary-600">Find Jobs</button></li>
-                                <li><button onClick={() => onNavigate('caregiver-login')} className="hover:text-primary-600">Log In</button></li>
-                                <li><button onClick={() => onNavigate('trust')} className="hover:text-primary-600">Trust & Safety</button></li>
-                                <li><button onClick={() => onNavigate('caregiver-apply')} className="hover:text-primary-600">Apply Online</button></li>
+                            <h4 className="font-semibold text-ink-900 mb-4 text-sm">For Caregivers</h4>
+                            <ul className="space-y-2.5 text-ink-600 text-sm">
+                                <li><button onClick={() => onNavigate('caregiver-signup')} className="hover:text-ink-900 transition-colors">Find Jobs</button></li>
+                                <li><button onClick={() => onNavigate('trust')} className="hover:text-ink-900 transition-colors">Trust & Safety</button></li>
+                                <li><button onClick={() => onNavigate('caregiver-apply')} className="hover:text-ink-900 transition-colors">Apply Online</button></li>
+                                <li><button onClick={() => onNavigate('help-center')} className="hover:text-ink-900 transition-colors">Help Center</button></li>
                             </ul>
                         </div>
                     </div>
-                    <div className="border-t border-slate-100 mt-12 pt-8 text-center text-slate-400 text-sm flex flex-col md:flex-row justify-between items-center">
-                        <span>&copy; 2025 CareConnex. All rights reserved.</span>
-                        <div className="flex gap-6 mt-4 md:mt-0">
-                            <button onClick={() => setLegalModal('privacy')} className="cursor-pointer hover:text-slate-600">Privacy Policy</button>
-                            <button onClick={() => setLegalModal('terms')} className="cursor-pointer hover:text-slate-600">Terms of Service</button>
-                            <button onClick={() => onNavigate('how-it-works')} className="cursor-pointer hover:text-slate-600 transition-colors">How It Works</button>
-                            <button onClick={() => onNavigate('help-center')} className="cursor-pointer hover:text-slate-600 transition-colors">Help Center</button>
-                            <button onClick={() => onNavigate('admin')} className="cursor-pointer hover:text-slate-600 transition-colors">Admin</button>
+                    <div className="border-t hairline mt-12 pt-8 text-ink-400 text-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                        <span>&copy; 2026 · Designed in San Jose, California</span>
+                        <div className="flex gap-6">
+                            <button onClick={() => setLegalModal('privacy')} className="cursor-pointer hover:text-ink-900 transition-colors">Privacy</button>
+                            <button onClick={() => setLegalModal('terms')} className="cursor-pointer hover:text-ink-900 transition-colors">Terms</button>
+                            <button onClick={() => onNavigate('how-it-works')} className="cursor-pointer hover:text-ink-900 transition-colors">How It Works</button>
+                            <button onClick={() => onNavigate('admin')} className="cursor-pointer hover:text-ink-900 transition-colors">Admin</button>
                         </div>
                     </div>
                 </div>

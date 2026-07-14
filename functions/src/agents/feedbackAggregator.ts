@@ -50,7 +50,8 @@ export async function handleLowRating(
   appointmentId: string,
   clientId:      string
 ): Promise<void> {
-  await db.collection("admin_alerts").add({
+  const alertId = `low_caregiver_rating_${appointmentId}`.replace(/\//g, "%2F");
+  await db.collection("admin_alerts").doc(alertId).set({
     type:          "low_caregiver_rating",
     caregiverId,
     rating,
@@ -59,7 +60,7 @@ export async function handleLowRating(
     resolved:      false,
     priority:      "medium",
     createdAt:     new Date().toISOString(),
-  });
+  }, { merge: true });
 }
 
 // ── Detect repeated negative feedback from same client → suggest switch ──────

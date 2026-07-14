@@ -1,7 +1,11 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
+import { OFFLINE_PAYMENT_METHODS } from './billing/paymentMethods';
+import { parseScheduledTimeMs } from './utils/scheduledTime';
 
 const db = admin.firestore();
+
+const VALID_PAYMENT_METHODS = ['credit', ...OFFLINE_PAYMENT_METHODS];
 
 /**
  * Client switches the payment method on a confirmed, not-yet-started booking.
@@ -14,8 +18,8 @@ export const updateBookingPaymentMethod = functions.https.onCall(async (data, co
   }
 
   const { appointmentId, paymentMethod } = data;
-  if (!appointmentId || (paymentMethod !== 'cash' && paymentMethod !== 'credit')) {
-    throw new functions.https.HttpsError('invalid-argument', 'appointmentId and paymentMethod (cash|credit) required');
+  if (!appointmentId || !VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+    throw new functions.https.HttpsError('invalid-argument', `appointmentId and paymentMethod (${VALID_PAYMENT_METHODS.join('|')}) required`);
   }
 
   const ref = db.collection('appointments').doc(appointmentId);
@@ -32,8 +36,14 @@ export const updateBookingPaymentMethod = functions.https.onCall(async (data, co
     throw new functions.https.HttpsError('failed-precondition', 'Can only change payment before the booking starts');
   }
 
+  // "Already started" in PACIFIC wall-clock terms — `new Date("YYYY-MM-DD")`
+  // is UTC midnight = 5pm PT the EVENING BEFORE, which blocked families from
+  // changing payment method the night before the visit.
   const startIso = appt.isoDate || appt.date;
-  if (startIso && new Date(startIso).getTime() <= Date.now()) {
+  const startRef = appt.startTime
+    ? `${String(appt.date)}T${String(appt.startTime).slice(0, 5)}:00`
+    : String(startIso ?? '');
+  if (startIso && parseScheduledTimeMs(startRef) <= Date.now()) {
     throw new functions.https.HttpsError('failed-precondition', 'Booking has already started');
   }
 

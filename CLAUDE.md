@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Context Files (read before any architectural decision)
 
-CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, Cara rules). The `context/` directory holds the living product spec — read these first:
+CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, Evia rules). The `context/` directory holds the living product spec — read these first:
 
 1. [`context/project-overview.md`](context/project-overview.md) — what we're building, goals, scope, and **release-gating success criteria**.
 2. [`context/ui-context.md`](context/ui-context.md) — theme, color tokens, typography, component conventions.
@@ -14,7 +14,16 @@ CLAUDE.md is the canonical guide for *how* the code works (stack, conventions, C
 
 ## Project Overview
 
-CareConnex is a SaaS platform connecting families with caregivers. It's a React + TypeScript SPA backed by Firebase, with Stripe for payments, AI/ML-powered caregiver matching, Twilio Video for interviews, and Checkr for background checks.
+Evia is a SaaS platform connecting families with caregivers. It's a React + TypeScript SPA backed by Firebase, with Stripe for payments, AI/ML-powered caregiver matching, Google Meet links for interviews (generated server-side, texted to both parties by Evia), and Checkr for background checks.
+
+### Naming (Evia rebrand, 2026-07-02)
+
+The product and its AI agent were renamed **Cara / CareConnex → Evia** (public domain: **eviacares.com**). Only user-facing text changed. The following intentionally KEEP the legacy names — do NOT rename them:
+- **Code identifiers and file names**: `CaraChat.tsx`, `caraAgent.ts`, `useCaraUnread`, `CareConnexContext.tsx`, `useCareConnex()`, `CARA_CAPABILITIES`, etc.
+- **Env var names**: everything prefixed `CARA_` (`CARA_AGENT_MODEL`, `CARA_AVATAR_URL`, …) — the live function env depends on them.
+- **Persisted Firestore values and contracts**: `senderId: 'cara'`, `source: 'cara_sms'`, `threads/cara_{uid}`, `isCaraThread`, the `source=cara` URL param, firestore.rules checks — existing prod data uses these.
+- **Firebase project/hosting**: `careconnex-d4c8b` / `https://careconnex-d4c8b.web.app` stays the live test URL until eviacares.com is linked to Firebase Hosting (not yet done). Marketing/SEO/legal URLs already point at eviacares.com.
+- Historical docs (`docs/plans/`, `docs/reports/`, `docs/brainstorms/`) still say Cara/CareConnex — they are dated records, leave them.
 
 ## Commands
 
@@ -43,8 +52,9 @@ npm --prefix functions ci && npm --prefix functions run build
   - Frontend calls via `aiProxy` Firebase Function (server-side key, auth-gated, rate-limited)
   - Claude Haiku (`claude-haiku-4-5-20251001`): parseJobRequest, generateShiftNote, suggestRate, intent classification, health signals
   - Claude Sonnet (`claude-sonnet-4-6`): conversationalBooking, searchCaregivers, weekly digest, dispute analysis
-- **ML**: TensorFlow.js for caregiver matching scoring
-- **Video**: Twilio Video for live caregiver interviews
+- **ML**: TensorFlow.js (`services/mlModel.ts`) — currently exercised only by tests; the in-app scoring service was removed in the 2026-07-02 cleanup
+- **SMS/voice**: Twilio server-side in `functions/` (the frontend `twilio-video` interview room was removed 2026-07-02)
+- **Interviews**: Google Meet links generated via the Meet REST API (`functions/src/agents/interviewLinks.ts`) and delivered over SMS by Evia to both family and caregiver — no in-app video room
 - **Background checks**: Checkr via Cloud Functions webhooks
 - **Error tracking**: Sentry (dsn via `VITE_SENTRY_DSN`)
 - **Validation**: Hand-rolled runtime validators in `utils/validation.ts` (`ValidationError` + format/normalization helpers; not Zod). Zod is used only server-side in `functions/`.
@@ -61,7 +71,7 @@ Components are domain-driven:
 - `components/landing/` — marketing/landing page
 - `components/shared/` — cross-domain shared components
 
-Top-level component files (e.g., `components/BookingModal.tsx`, `components/CaregiverDashboard.tsx`) are older; the canonical versions live in the domain subdirectories.
+Legacy top-level duplicates (BookingModal, Chat, ClientDashboard, etc.) were removed in the 2026-07-02 dead-code cleanup (see `docs/dead-code-removal-2026-07-02.md`). The remaining top-level components (`components/CaregiverDashboard.tsx`, `components/CaregiverProfileModal.tsx`, ...) are the live, routed versions.
 
 ### Global State
 `context/CareConnexContext.tsx` holds global state: current user (client or caregiver), appointments, caregivers list, toasts/notifications, and active view. Access via `useCareConnex()` hook.
@@ -70,9 +80,8 @@ Top-level component files (e.g., `components/BookingModal.tsx`, `components/Care
 All Firebase and external API calls go through `services/`. Key files:
 - `services/api.ts` — primary service (~128KB, large); wraps Firestore reads/writes for almost every entity
 - `services/aiMatchingService.ts` — Google GenAI-powered matching
-- `services/mlMatchScoring.ts` — TensorFlow.js scoring model
-- `services/matchService.ts` — orchestrates AI + ML matching
-- `services/chatService.ts`, `notificationService.ts`, `emailService.ts` — messaging/notifications
+- `services/matchService.ts` — orchestrates AI matching
+- `services/chatService.ts`, `notificationService.ts` — messaging/notifications
 
 ### Firebase Cloud Functions
 Backend lives in `functions/src/`. Functions handle:
@@ -89,12 +98,16 @@ React Router v6 in `App.tsx`. Landing page and critical auth routes are eagerly 
 ### User Roles
 Two distinct user roles share the same Firebase Auth:
 - **Clients** (families): $29.95/month Stripe subscription (`VITE_STRIPE_PRICE_ID`)
-- **Caregivers**: $24.95/year membership (`VITE_STRIPE_CAREGIVER_ANNUAL`), onboarded conversationally via Cara over SMS
+- **Caregivers**: $66.49/year membership (covers the required Checkr background check; `VITE_STRIPE_CAREGIVER_ANNUAL` → price_1TqGrE…), onboarded conversationally via Evia over SMS
 
 ### Caregiver Onboarding
-Cara's SMS conversation in `functions/src/agents/onboardingConversation.ts` (the `caregiver_*` steps) is the **sole** caregiver onboarding path. Every signup CTA routes to `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`), which verifies the phone then hands off to Cara via SMS. Cara collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `status: 'active'`, `onboardingStatus: 'profile_complete'` (gates visibility in `FindCaregivers`), and `verificationStatus: 'submitted'` (puts it in the admin verification queue). The old web signup form was retired — `/caregiver/apply` now redirects into the Cara flow. `components/caregiver/CaregiverOnboardingWizard.tsx` is kept ONLY as a recovery tool for legacy/web accounts left at `onboardingStatus: 'incomplete'` (it is not a signup path).
+Evia's SMS conversation is the **sole** caregiver onboarding path. Every signup CTA routes to `/start?role=caregiver` (`components/auth/onboarding/OnboardingFlow.tsx`), which verifies the phone then hands off to Evia via SMS. Evia collects profile → credentials → photo/document upload → membership (Stripe) → background check (Checkr) → Stripe Connect payout setup, and finalizes the `caregivers` doc with `status: 'active'`, `onboardingStatus: 'profile_complete'` (gates visibility in `FindCaregivers`), and `verificationStatus: 'submitted'` (puts it in the admin verification queue). The old web signup form was retired — `/caregiver/apply` now redirects into the Evia flow. `components/caregiver/CaregiverOnboardingWizard.tsx` is kept ONLY as a recovery tool for legacy/web accounts left at `onboardingStatus: 'incomplete'` (it is not a signup path).
 
-**Known follow-up:** Cara writes phone-keyed, random-ID `caregivers` docs with no Firebase Auth account, whereas legacy web caregivers used uid-keyed docs + auth. Unifying this identity model (and migrating existing records) is a tracked follow-up — see `context/progress-tracker.md`.
+**Collection is loop-only (Deploy B, 2026-07-08).** Conversational field collection (both roles) runs INSIDE the qaAgent loop (`onboardingMode`, `functions/src/agents/qaAgent.ts`), routed by `shouldRouteOnboardingToLoop` (`onboardingContract.ts`) — any text turn at a collection step goes to the loop, unconditionally (the `ONBOARDING_AGENT_LOOP*` flags were removed). The scripted `client_ask_*` / `caregiver_ask_*` collection handlers in `onboardingConversation.ts` were **deleted** — that file now owns only the KEPT deterministic path: `verify_phone`, `ask_role`, `client_confirm_name` / `caregiver_confirm_name` (which hand a substantive non-name answer to the loop via `dispatchOnboardingToLoop`), the post-collection client intake steps (`client_ask_start/preferences/budget/confirm_intake`, still table-driven via `conversationStep.ts` + `onboardingSteps.client.ts`), `handleInboundMedia`, and all gate/awaiting steps (photo/documents/MVR/membership/Checkr/Stripe Connect + `advanceOnboardingStep`). The loop's field contract + persistence net live in `onboardingContract.ts` (single source of truth), `caregiverFieldAbsorber.ts`, and `absorbClientFields`. Rollback: `git checkout pre-deletion` (the Deploy A tag) + redeploy.
+
+**Background check (webapp parity, 2026-07-08):** the SMS flow mirrors the webapp's Checkr flow. After membership payment Evia texts a token-authenticated `/bgcheck` consent page (FCRA disclosure + authorization, legal name/ZIP/state — `BgcheckConsentPage.tsx`, same content as the webapp's `BackgroundCheckModal`); its callable `v1-confirmBgcheckOnboarding` → `confirmBgcheckConsent` is the ONLY place the SMS flow creates the Checkr candidate + invitation (consent recorded on the caregiver doc in the webapp's shape). Checkr then EMAILS the caregiver the secure completion link (SSN/DOB entered on Checkr's site). Session step between link and consent: `caregiver_awaiting_bgcheck_consent`. Never re-add a pre-consent Checkr call to `handleCaregiverSendBgcheck` or `sendOnboardingLink`.
+
+**Identity model (unified):** Caregivers get a Firebase Auth account during onboarding — at `/start` OTP verification (web entry path) or, for the cold-SMS path, when the caregiver doc is first created (photo/bg-check step via `createFirebaseAuthAccount`). The identity model is unified: `caregivers/{uid}` = `users/{uid}` = Auth uid. Legacy phone-keyed random-ID docs were migrated by the `rekeyLegacyCaregiverDocs` migration (already run in prod). Evia's Firestore writes land where the web reads.
 
 ## Environment Variables
 
@@ -122,21 +135,22 @@ Firebase config is typically embedded via `lib/firebase.ts` (check for hardcoded
 - Stripe Connect is used for caregiver payouts; instant payouts are a separate flow via `components/caregiver/InstantPayoutModal.tsx`
 - `services/api.ts` is the authoritative place to add new Firestore operations — avoid direct `db` calls in components
 
-## Cara — AI-Agentic Rules (MANDATORY)
+## Evia — AI-Agentic Rules (MANDATORY)
 
-Cara is a fully AI-agentic assistant. Every piece of code that touches Cara MUST follow these rules.
+Evia is a fully AI-agentic assistant. Every piece of code that touches Evia MUST follow these rules.
 
-### Hybrid LLM architecture
-Cara uses two providers, chosen by latency profile, NOT by capability:
-- **OpenAI gpt-4o-mini** (~500ms) for ALL short single-shot calls: intent classification, YES/NO decisions, structured extraction, parseWithClaude calls, the trivial-greeting bypass. Routes through `functions/src/utils/openaiClient.ts` (`getOpenAIClient`, `quickComplete`).
-- **Claude Sonnet 4.6** stays for the QA agent's multi-turn tool-use loop in `functions/src/agents/qaAgent.ts` only. Routes through `getSharedClient()` + `callClaudeWithRetry()`. Don't replace this — the 83-tool MCP loop works best on Sonnet.
+### Hybrid LLM architecture (model ladder — source of truth: `functions/src/config/caraModels.ts`)
+Evia's models are resolved per **tier** by `resolveCaraModelConfig(tier)` with env overrides:
+- **Agent tier** (the QA agent's multi-turn tool-use loop in `functions/src/agents/qaAgent.ts`, via the `runAgentModelTurn` seam in `agentModelTurn.ts`): provider set by `CARA_AGENT_PROVIDER`, model by `CARA_AGENT_MODEL`. **Prod decision (founder, 2026-07-01): OpenAI `gpt-5.4` primary with automatic Anthropic Sonnet fallback** (`CARA_AGENT_ANTHROPIC_FALLBACK=true`). The code default when env vars are absent is `gpt-4o` — always set `CARA_AGENT_MODEL` in the deployed env. Any future provider/model change goes through the spend-gated eval (`npm run eval:onboarding`) per the launch plan's model-gate protocol, and updates the PHI provider addendum in `AGENT_NATIVE_EXCLUSIONS.md`.
+- **Quick/router/vision tiers** (single-shot calls: intent classification, YES/NO, structured extraction, `parseWithClaude`, trivial-greeting bypass): `CARA_QUICK_MODEL` / `CARA_ROUTER_MODEL` / `CARA_VISION_MODEL` (prod: gpt-5.4-mini / gpt-5.4-nano / gpt-5.4-mini). Route through `functions/src/utils/openaiClient.ts` (`getOpenAIClient`, `quickComplete`).
+- **Escalation tier** (`CARA_ESCALATION_MODEL`): defined but not yet wired to a caller.
 
-Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be set in the function env.
+Both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` must be set in the function env (the fallback path needs Anthropic live even when OpenAI is primary).
 
 ### Always use an LLM for user input understanding
 - **NEVER** use regex, hardcoded keyword arrays, `.includes()`, or string equality to parse the MEANING or INTENT of free-form user SMS text
 - **ALWAYS** call `parseWithClaude(systemPrompt, userText)` to extract structured values from any natural language input. (Despite the name, this helper now uses gpt-4o-mini under the hood — public API and behavior unchanged.)
-- **ALWAYS** add an `isQuestionOrOther(text)` check at the top of every conversational handler so Cara can answer mid-flow questions before re-asking the current question
+- **ALWAYS** add an `isQuestionOrOther(text)` check at the top of every conversational handler so Evia can answer mid-flow questions before re-asking the current question
 
 ### The `parseWithClaude` pattern (use this in every handler)
 ```typescript
@@ -156,7 +170,7 @@ For new ad-hoc single-shot calls (not via parseWithClaude), use `quickComplete(s
 - Safety/crisis keyword fast-path in `crisisDetector.ts` (speed is life-critical; the LLM can't be the only gate)
 - `isTrivialQuickReply(text)` heuristic in qaAgent.ts (length + entity-marker check used to choose between runQuickReply and runQaAgent — not intent parsing)
 
-### New Cara handlers checklist
+### New Evia handlers checklist
 Every new conversational step handler must have:
 1. `isQuestionOrOther` check → answer question → re-ask current question
 2. `parseWithClaude` for all user input → validate the returned value → store
@@ -164,6 +178,6 @@ Every new conversational step handler must have:
 4. `sendMessage` with the next question
 
 ### Model selection cheat-sheet
-- Single-shot classify / YES-NO / JSON extraction → `quickComplete` or `parseWithClaude` (gpt-4o-mini)
-- Multi-turn reasoning with MCP tools → `runQaAgent` (Claude Sonnet 4.6)
-- Trivial greeting / acknowledgment fast path → `runQuickReply` (gpt-4o-mini, no tools)
+- Single-shot classify / YES-NO / JSON extraction → `quickComplete` or `parseWithClaude` (quick tier, `CARA_QUICK_MODEL`)
+- Multi-turn reasoning with MCP tools → `runQaAgent` (agent tier via `runAgentModelTurn` — OpenAI primary, Sonnet fallback; see Hybrid LLM architecture)
+- Trivial greeting / acknowledgment fast path → `runQuickReply` (quick tier, no tools)

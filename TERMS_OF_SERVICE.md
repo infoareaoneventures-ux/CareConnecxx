@@ -1,13 +1,13 @@
 # TERMS OF SERVICE
 
-**CareConnex**  
+**Evia**  
 **Effective Date:** February 7, 2026
 
 ---
 
 ## 1. AGREEMENT TO TERMS
 
-By accessing or using the CareConnex platform, website, and services (collectively, the "Services"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use our Services.
+By accessing or using the Evia platform, website, and services (collectively, the "Services"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use our Services.
 
 **IMPORTANT:** These Terms include a mandatory arbitration agreement and class action waiver in Section 18. Please read carefully.
 
@@ -15,7 +15,7 @@ By accessing or using the CareConnex platform, website, and services (collective
 
 ## 2. DEFINITIONS
 
-- **"CareConnex," "we," "us," or "our"** refers to CareConnex Inc. and its affiliates
+- **"Evia," "we," "us," or "our"** refers to Evia Inc. and its affiliates
 - **"Client"** or **"you"** refers to individuals or families seeking care services
 - **"Caregiver"** refers to independent contractors providing care services
 - **"Services"** refers to our care matching platform and related services
@@ -44,7 +44,7 @@ To use our Services, you must:
 ## 4. SERVICES DESCRIPTION
 
 ### 4.1 What We Do
-CareConnex operates a technology platform that:
+Evia operates a technology platform that:
 - Matches clients with qualified caregivers
 - Facilitates scheduling and communication
 - Processes payments for care services
@@ -52,7 +52,7 @@ CareConnex operates a technology platform that:
 - Maintains records of care provided
 
 ### 4.2 What We Do NOT Do
-**IMPORTANT:** CareConnex does NOT:
+**IMPORTANT:** Evia does NOT:
 - Employ caregivers (they are independent contractors)
 - Provide medical care or clinical services
 - Guarantee the quality of care provided
@@ -60,7 +60,7 @@ CareConnex operates a technology platform that:
 - Act as a healthcare provider or insurance company
 
 ### 4.3 Caregiver Status
-Caregivers using our Platform are independent contractors, not employees of CareConnex. We facilitate connections but do not control how caregivers perform their work.
+Caregivers using our Platform are independent contractors, not employees of Evia. We facilitate connections but do not control how caregivers perform their work.
 
 ---
 
@@ -134,7 +134,7 @@ Caregivers must:
 - All payments processed through Stripe
 - Client credit card charged after service completion
 - Caregivers receive payment after service is confirmed
-- Platform fee retained by CareConnex
+- Platform fee retained by Evia
 
 ### 7.3 Cancellation Policy
 - **More than 24 hours:** Full refund
@@ -143,14 +143,14 @@ Caregivers must:
 - **No-show:** Full charge
 
 ### 7.4 Disputes
-Payment disputes must be submitted within 48 hours of service completion. CareConnex will mediate disputes but is not liable for refunds.
+Payment disputes must be submitted within 48 hours of service completion. Evia will mediate disputes but is not liable for refunds.
 
 ---
 
 ## 8. HIPAA COMPLIANCE AND PRIVACY
 
 ### 8.1 Protected Health Information
-CareConnex complies with HIPAA and maintains appropriate safeguards for PHI. By using our Services, you acknowledge:
+Evia complies with HIPAA and maintains appropriate safeguards for PHI. By using our Services, you acknowledge:
 - We may collect, use, and disclose PHI as permitted by HIPAA
 - We will not use PHI for marketing without your authorization
 - We have implemented appropriate security measures
@@ -160,7 +160,7 @@ CareConnex complies with HIPAA and maintains appropriate safeguards for PHI. By 
 We maintain Business Associate Agreements with all vendors who handle PHI. These agreements require vendors to protect your information in accordance with HIPAA.
 
 ### 8.3 Client Authorization
-By using our Services, you authorize CareConnex to:
+By using our Services, you authorize Evia to:
 - Share necessary information with matched caregivers
 - Coordinate care with healthcare providers (with your consent)
 - Process information for payment and operations
@@ -200,18 +200,18 @@ Caregivers are required to maintain:
 - Auto insurance (if driving is required)
 - Professional liability insurance (where applicable)
 
-### 10.2 CareConnex Insurance
-CareConnex maintains:
+### 10.2 Evia Insurance
+Evia maintains:
 - Technology errors and omissions insurance
 - Cyber liability insurance
 - General business liability insurance
 
 ### 10.3 Limitation of Liability
 **TO THE MAXIMUM EXTENT PERMITTED BY LAW:**
-- CareConnex is not liable for caregiver actions
-- CareConnex is not liable for injuries during care
-- CareConnex is not liable for property damage
-- CareConnex's total liability is limited to fees paid in the last 12 months
+- Evia is not liable for caregiver actions
+- Evia is not liable for injuries during care
+- Evia is not liable for property damage
+- Evia's total liability is limited to fees paid in the last 12 months
 
 ### 10.4 Assumption of Risk
 You acknowledge that:
@@ -254,7 +254,7 @@ Violations may result in:
 ## 12. INTELLECTUAL PROPERTY
 
 ### 12.1 Our Content
-All Platform content is owned by CareConnex or licensed to us. You may not:
+All Platform content is owned by Evia or licensed to us. You may not:
 - Copy, modify, or distribute our content
 - Create derivative works
 - Use our trademarks without permission
@@ -309,7 +309,7 @@ Information on the Platform is not medical advice. Always consult qualified heal
 
 ## 15. INDEMNIFICATION
 
-You agree to indemnify and hold harmless CareConnex, its officers, directors, employees, and agents from any claims, damages, or expenses arising from:
+You agree to indemnify and hold harmless Evia, its officers, directors, employees, and agents from any claims, damages, or expenses arising from:
 - Your use of the Platform
 - Your violation of these Terms
 - Your violation of any rights of another
@@ -326,7 +326,7 @@ These Terms are governed by the laws of the State of Illinois, without regard to
 ## 17. DISPUTE RESOLUTION
 
 ### 17.1 Informal Resolution
-Before filing a claim, you agree to try to resolve disputes informally by contacting us at disputes@careconnex.com. We'll attempt to resolve the issue within 30 days.
+Before filing a claim, you agree to try to resolve disputes informally by contacting us at disputes@eviacares.com. We'll attempt to resolve the issue within 30 days.
 
 ### 17.2 Mandatory Arbitration
 **PLEASE READ CAREFULLY:** Any dispute arising from these Terms or our Services will be resolved through binding arbitration, not in court, except:
@@ -348,7 +348,7 @@ Before filing a claim, you agree to try to resolve disputes informally by contac
 ## 18. MISCELLANEOUS
 
 ### 18.1 Entire Agreement
-These Terms constitute the entire agreement between you and CareConnex regarding our Services.
+These Terms constitute the entire agreement between you and Evia regarding our Services.
 
 ### 18.2 Severability
 If any provision is found invalid, the remaining provisions remain in effect.
@@ -360,9 +360,9 @@ Our failure to enforce any right does not waive that right.
 You may not assign these Terms without our consent. We may assign these Terms without restriction.
 
 ### 18.5 Notices
-All notices to CareConnex should be sent to:
-- Email: legal@careconnex.com
-- Mail: CareConnex Legal Department, [Address]
+All notices to Evia should be sent to:
+- Email: legal@eviacares.com
+- Mail: Evia Legal Department, [Address]
 
 ### 18.6 Changes to Terms
 We may modify these Terms at any time. We will:
@@ -376,10 +376,10 @@ Your continued use after changes indicates acceptance.
 
 ## 19. CONTACT INFORMATION
 
-**CareConnex**  
-Email: support@careconnex.com  
+**Evia**  
+Email: support@eviacares.com  
 Phone: 1-800-CARE-NOW  
-Website: www.careconnex.com
+Website: www.eviacares.com
 
 ---
 

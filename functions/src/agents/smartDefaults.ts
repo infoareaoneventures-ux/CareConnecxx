@@ -6,7 +6,7 @@
  *
  * The HARD LIMIT is load-bearing and safety-critical: it keeps the default-and-go
  * behavior away from money, bookings, and care decisions, where the
- * confirm-before-acting rule still governs. CareConnex serves families managing a
+ * confirm-before-acting rule still governs. Evia serves families managing a
  * vulnerable senior's care — "don't ask, just default" is right for a reminder
  * time and dangerous for a booking or a medication change. Lives in its own module
  * so it can be regression-tested without importing the full agent runtime.

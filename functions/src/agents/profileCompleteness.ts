@@ -106,7 +106,7 @@ export async function classifyOfferReply(text: string): Promise<"accept" | "decl
 
   try {
     const raw = await quickComplete(
-      "Cara just asked the user 'Want to set up your account now? Reply YES to go.' " +
+      "Evia just asked the user 'Want to set up your account now? Reply YES to go.' " +
       "Classify their reply. Reply with exactly one word:\n" +
       "ACCEPT — they want to do it (yes, sure, ok, let's go, fine, whatever)\n" +
       "DECLINE — they refuse or defer (no, not now, later, busy, skip)\n" +

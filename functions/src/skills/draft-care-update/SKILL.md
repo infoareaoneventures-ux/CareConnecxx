@@ -13,7 +13,7 @@ When the family asks how their senior is doing, compose **one warm-but-clinical 
 2. `get_upcoming_appointments` and the recent completed visits in the care team data — to confirm continuity (or surface gaps).
 3. `get_health_signals` — only if the journal hints at a pattern worth flagging (3+ entries with low appetite, repeated mood dips, missed meds).
 
-Do not call `task / journal_summarizer` here — you have the data, and the family wants Cara's voice, not a separate sub-agent's.
+Do not call `task / journal_summarizer` here — you have the data, and the family wants Evia's voice, not a separate sub-agent's.
 
 ## Drafting rules
 

@@ -159,7 +159,7 @@ beforeEach(() => {
   sendMessage.mockResolvedValue({ message_id: "m1" });
 });
 
-describe("caregiver referral through Cara", () => {
+describe("caregiver referral through Evia", () => {
   it("creates a non-bookable caregiver referral and texts the referred caregiver", async () => {
     seed();
 

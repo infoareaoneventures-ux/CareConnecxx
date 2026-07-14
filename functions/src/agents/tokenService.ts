@@ -6,6 +6,7 @@ export type TokenTask =
   | "photo_upload"
   | "doc_upload"
   | "background_check"
+  | "bgcheck_consent"
   | "stripe_connect"
   | "quick_confirm"
   | "interview_confirm"

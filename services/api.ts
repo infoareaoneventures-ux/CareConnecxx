@@ -1,7 +1,7 @@
 import { stripeService as externalStripeService } from './stripeService';
-import { checkRateLimit, checkSignupRateLimit, RATE_LIMITS } from './rateLimit';
+import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
-import firebase, { auth, db, functions, isConfigured, googleProvider } from '../lib/firebase';
+import firebase, { auth, db, functions, isConfigured } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 import {
@@ -10,7 +10,7 @@ import {
     mapSummaryDoc,
 } from './shiftSwap';
 
-// A family-facing "Cara Activity" entry (projection of an allow-listed audit
+// A family-facing "Evia Activity" entry (projection of an allow-listed audit
 // event; see functions/src/agents/activityFeedMap.ts). PII-free by construction.
 export interface AgentActivityItem {
     id: string;
@@ -150,195 +150,64 @@ function dedupePromise<T>(key: string, factory: () => Promise<T>): Promise<T> {
     pendingPromises.set(key, promise);
     return promise;
 }
-import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, JobPost } from '../types';
+import { Caregiver, Appointment, Review, Thread, DirectMessage, Senior, CarePlan, SupportTicket, AppNotification, BackgroundCheckData, AdminUser, MatchFeedback, EmergencyAlert, FamilyMember, Invoice, JobPost } from '../types';
 import { errorHandler } from './errorHandler';
-import { validators, validateSignup, validateLogin, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
+import { validators, isFirebaseError, getSafeErrorMessage, normalizePhoneNumber, sanitizeString } from '../utils/validation';
 import { sanitizeMessage, sanitizeName, sanitizeBio, sanitizePlainText } from '../utils/sanitize';
 import { notifyFamilyOfArrival } from './notificationService';
 import { storageService } from './storageService';
 
+// Email/password and Google auth were retired with the phone-only login
+// cutover (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
+// Login is phone OTP at /login; signup is the phone-first /start flow.
+// Coerce legacy server-written job_posts docs (Evia pre-2026-07-10) into the
+// web JobPost render contract: those docs carried `location` as an OBJECT
+// (crashes JSX), `summary` instead of `title`, `hourlyRate` instead of `rate`,
+// and no `date` mirror. New writes go through functions'
+// agents/jobPostContract.ts (buildWebJobPostDoc), so this is purely a defense
+// for docs already in Firestore. Exported for the Job Board's
+// direct-collection reads.
+export const normalizeJobPost = (raw: any): JobPost => {
+    const j: any = { ...raw };
+    if (j.location && typeof j.location === 'object') {
+        if (j.lat == null && j.location.lat != null) j.lat = j.location.lat;
+        if (j.lng == null && j.location.lng != null) j.lng = j.location.lng;
+        j.location = [j.location.city ?? j.city, j.zipCode].filter(Boolean).join(', ');
+    }
+    if (!j.title) j.title = j.summary || 'Care needed';
+    if (j.rate == null) {
+        if (typeof j.hourlyRate === 'number') j.rate = j.hourlyRate;
+        else { j.rate = 0; j.rateFlexible = j.rateFlexible ?? true; }
+    }
+    if (!j.date && j.startDate) j.date = j.startDate;
+    if (!j.careTypes && Array.isArray(j.requirements)) j.careTypes = j.requirements;
+    if (Array.isArray(j.schedule?.days) && !j.daysOfWeek && j.schedule.days.length) j.daysOfWeek = j.schedule.days;
+    return j as JobPost;
+};
+
+// Coerce the canonical care_plans/{clientUid} doc into the web CarePlan shape.
+// Evia's update_care_plan tool may append plain strings to the array fields;
+// the web UI needs { id, name, … } items. Extra Evia-only fields (careNeeds,
+// dietaryNotes, doctorContacts, specialInstructions, notes) are passed through
+// via the spread so a web save round-trips them unchanged.
+const normalizeCarePlan = (data: any): CarePlan => {
+    const arr = (v: any): any[] => (Array.isArray(v) ? v : []);
+    const withId = (item: any, i: number, prefix: string) =>
+        item && typeof item === 'object'
+            ? { ...item, id: item.id || `${prefix}_${i}` }
+            : null;
+    return {
+        ...data,
+        medications: arr(data?.medications).map((m, i) =>
+            withId(m, i, 'med') ?? { id: `med_${i}`, name: String(m), dosage: '', frequency: '' }),
+        emergencyContacts: arr(data?.emergencyContacts).map((c, i) =>
+            withId(c, i, 'contact') ?? { id: `contact_${i}`, name: String(c), relation: '', phone: '', isPrimary: false }),
+        dailyRoutine: arr(data?.dailyRoutine).map((t, i) =>
+            withId(t, i, 'task') ?? { id: `task_${i}`, time: '', description: String(t), category: 'activity' }),
+    } as CarePlan;
+};
+
 export const dbService = {
-    login: async (email: string, pass: string, userType: 'client' | 'caregiver') => {
-        // Validate inputs before Firebase call
-        const validation = validateLogin({ email, password: pass });
-        if (!validation.isValid) {
-            throw new Error(validation.errors[0].message);
-        }
-
-        if (isConfigured && auth) {
-            try {
-                const userCredential = await auth.signInWithEmailAndPassword(email, pass);
-                return userCredential.user;
-            } catch (error: unknown) {
-                // Log with hashed email for HIPAA compliance
-                await errorHandler.logError(error, {
-                    action: 'login',
-                    component: 'authService',
-                    additionalData: { 
-                        userType, 
-                        emailHash: await validators.hashForLogging(email)
-                    }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-        } else {
-            throw new Error("Authentication service not configured. Please check your Firebase settings.");
-        }
-    },
-
-    signup: async (email: string, pass: string, name: string, userType: 'client' | 'caregiver', additionalData: {
-        zipCode?: string;
-        hourlyRate?: number;
-        personalityTags?: string[];
-        certifications?: string[];
-        experience?: number;
-        hasTransportation?: boolean;
-        location?: string;
-        latitude?: number;
-        longitude?: number;
-        gender?: 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say';
-        verified?: boolean;
-        onboardingStatus?: string;
-        [key: string]: unknown;
-    }) => {
-        // SECURITY FIX: IP-based rate limiting to prevent email rotation attacks
-        // An attacker can bypass email-based limits by using random emails
-        const ipBasedLimit = await checkSignupRateLimit();
-        if (!ipBasedLimit.allowed) {
-            throw new Error(`Too many signup attempts. Please try again in ${Math.ceil((ipBasedLimit.retryAfterMs || 60000) / 60000)} minutes.`);
-        }
-        
-        // Also check email-based limit as secondary protection
-        const emailBasedLimit = await checkRateLimit(email.toLowerCase().trim(), RATE_LIMITS.signup);
-        if (!emailBasedLimit.allowed) {
-            throw new Error(`Too many signup attempts for this email. Please try again later.`);
-        }
-
-        // Validate all inputs before any Firebase calls
-        const validation = validateSignup({ email, password: pass, name, userType, ...additionalData });
-        if (!validation.isValid) {
-            throw new Error(validation.errors.map(e => `${e.field}: ${e.message}`).join(', '));
-        }
-
-        // Validate hourly rate bounds for caregivers
-        if (userType === 'caregiver' && additionalData.hourlyRate !== undefined) {
-            const rate = additionalData.hourlyRate;
-            if (rate < 15 || rate > 100) {
-                throw new Error('Hourly rate must be between $15 and $100');
-            }
-        }
-
-        // Sanitize inputs
-        const sanitizedEmail = sanitizeString(email);
-        const sanitizedName = sanitizeString(name);
-
-        if (isConfigured && auth && db) {
-            let user;
-            try {
-                const userCredential = await auth.createUserWithEmailAndPassword(sanitizedEmail, pass);
-                user = userCredential.user;
-            } catch (error: unknown) {
-                // SECURITY FIX: Removed auto-recovery login attempt
-                // This was a vulnerability allowing account enumeration attacks
-                await errorHandler.logError(error, {
-                    action: 'signup',
-                    component: 'authService',
-                    additionalData: {
-                        userType,
-                        emailHash: await validators.hashForLogging(sanitizedEmail)
-                    }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-
-            if (user) {
-                await user.updateProfile({ displayName: sanitizedName });
-
-                // Critical Fix: Firestore cannot accept 'undefined'. Use 'null' instead.
-                const verifiedStatus = userType === 'caregiver' ? false : null;
-
-                // ATTEMPT FIRESTORE WRITE
-                try {
-                    // Sanitize all additional data
-                    // CRITICAL FIX: Filter out undefined and empty string values - Firestore rejects undefined
-                    const sanitizedAdditionalData = Object.fromEntries(
-                        Object.entries(additionalData)
-                            .filter(([_, value]) => value !== undefined && value !== '')
-                            .map(([key, value]) => {
-                                // Normalize phone numbers to E.164 format
-                                if (key === 'phone' && typeof value === 'string') {
-                                    const normalized = normalizePhoneNumber(value);
-                                    return [key, normalized || value];
-                                }
-                                return [key, typeof value === 'string' ? sanitizeString(value) : value];
-                            })
-                    );
-
-                    await db.collection('users').doc(user.uid).set({
-                        uid: user.uid,
-                        name: sanitizedName,
-                        email: sanitizedEmail,
-                        userType,
-                        createdAt: new Date().toISOString(),
-                        isBanned: false,
-                        verified: verifiedStatus,
-                        ...sanitizedAdditionalData
-                    }, { merge: true });
-
-                    if (userType === 'client') {
-                        await db.collection('senior_profiles').doc(user.uid).set({
-                            name: sanitizedName,
-                            personality: 'Introvert',
-                            needs: [],
-                            zipCode: additionalData.zipCode ?? null,
-                            familyMembers: []
-                        }, { merge: true });
-                    } else if (userType === 'caregiver') {
-                        await db.collection('caregivers').doc(user.uid).set({
-                            uid: user.uid,
-                            name: sanitizedName,
-                            hourlyRate: additionalData.hourlyRate || 25,
-                            verified: false,
-                            instantPayAvailable: false,
-                            personalityTags: additionalData.personalityTags || [],
-                            matchScore: 80,
-                            distance: 0,
-                            availability: [],
-                            backgroundCheckStatus: 'none',
-                            ...sanitizedAdditionalData
-                        }, { merge: true });
-                    }
-                } catch (dbError: unknown) {
-                    await errorHandler.logError(dbError, {
-                        userId: user.uid,
-                        action: 'create_user_profile',
-                        component: 'authService',
-                        additionalData: { userType }
-                    });
-                    const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown error';
-                    console.warn("Firestore Write Failed:", errorMessage);
-                    throw new Error("Failed to create user profile. Please check your permissions and try again.");
-                }
-            }
-            // Send email verification for caregivers
-            if (userType === 'caregiver' && user) {
-                try {
-                    await user.sendEmailVerification();
-                    console.log('Email verification sent to caregiver');
-                } catch (verifyError) {
-                    console.error('Failed to send email verification:', verifyError);
-                    // Don't fail signup if verification email fails
-                }
-            }
-            
-            // Clear rate limit on successful signup
-            clearLocalRateLimit(`signup_${email.toLowerCase().trim()}`);
-            return user;
-        } else {
-            throw new Error("Auth service not configured");
-        }
-    },
-
     logout: async () => {
         if (isConfigured && auth) {
             await auth.signOut();
@@ -363,91 +232,6 @@ export const dbService = {
             return true;
         }
         throw new Error("Not logged in");
-    },
-
-    sendPasswordResetEmail: async (email: string) => {
-        const cacheKey = `pwd_reset_${email.toLowerCase().trim()}`;
-        return dedupePromise(cacheKey, async () => {
-            if (!isConfigured || !functions) {
-                throw new Error("Authentication service not configured");
-            }
-            try {
-                const fn = functions.httpsCallable('v1-sendPasswordResetEmail');
-                await fn({ email });
-                return true;
-            } catch (error: unknown) {
-                await errorHandler.logError(error, {
-                    action: 'password_reset',
-                    component: 'authService',
-                    additionalData: { emailHash: await validators.hashForLogging(email) }
-                });
-                throw new Error(getSafeErrorMessage(error));
-            }
-        });
-    },
-
-    signInWithGoogle: async (userType: 'client' | 'caregiver') => {
-        if (!isConfigured || !auth || !db) {
-            throw new Error("Authentication service not configured.");
-        }
-        let result: firebase.auth.UserCredential;
-        try {
-            result = await auth.signInWithPopup(googleProvider);
-        } catch (error: unknown) {
-            throw new Error(getSafeErrorMessage(error));
-        }
-        const user = result.user;
-        if (!user) throw new Error("Google sign-in did not return a user.");
-
-        const userDocRef = db.collection('users').doc(user.uid);
-        const userDoc = await userDocRef.get();
-
-        if (!userDoc.exists) {
-            const displayName = user.displayName || user.email?.split('@')[0] || 'User';
-            await userDocRef.set({
-                uid: user.uid,
-                name: displayName,
-                email: user.email,
-                userType,
-                createdAt: new Date().toISOString(),
-                isBanned: false,
-                verified: userType === 'caregiver' ? false : null,
-            }, { merge: true });
-
-            if (userType === 'client') {
-                await db.collection('senior_profiles').doc(user.uid).set({
-                    name: displayName,
-                    personality: 'Introvert',
-                    needs: [],
-                    familyMembers: [],
-                }, { merge: true });
-            } else {
-                await db.collection('caregivers').doc(user.uid).set({
-                    uid: user.uid,
-                    name: displayName,
-                    hourlyRate: 25,
-                    verified: false,
-                    instantPayAvailable: false,
-                    personalityTags: [],
-                    matchScore: 80,
-                    distance: 0,
-                    availability: [],
-                    backgroundCheckStatus: 'none',
-                    onboardingStatus: 'incomplete',
-                    onboardingStep: 1,
-                }, { merge: true });
-            }
-        }
-
-        const actualUserType = (userDoc.data()?.userType as 'client' | 'caregiver' | undefined) ?? userType;
-        return { user, isNewUser: !userDoc.exists, actualUserType };
-    },
-
-    confirmGoogleUserName: async (uid: string, firstName: string, lastName: string) => {
-        if (!isConfigured || !db) throw new Error("Service not configured.");
-        const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-        await db.collection('users').doc(uid).update({ name: fullName, firstName: firstName.trim(), lastName: lastName.trim() });
-        await db.collection('senior_profiles').doc(uid).update({ name: fullName }).catch(() => {});
     },
 
     onAuthStateChanged: (callback: (user: firebase.User | null) => void) => {
@@ -578,7 +362,7 @@ export const dbService = {
     getCaregivers: async (limitSize: number = 10, lastDoc: firebase.firestore.QueryDocumentSnapshot | null = null): Promise<{ caregivers: Caregiver[], lastDoc: firebase.firestore.QueryDocumentSnapshot | null }> => {
         if (isConfigured && db) {
             try {
-                let query = db.collection('caregivers')
+                let query = db.collection('publicCaregiverProfiles')
                     .where('onboardingStatus', '==', 'profile_complete')
                     .limit(limitSize);
 
@@ -663,7 +447,7 @@ export const dbService = {
             try {
                 const geoRes = await fetch(
                     `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
-                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+                    { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
                 );
                 const geoData = await geoRes.json();
                 if (geoData?.length) {
@@ -698,7 +482,7 @@ export const dbService = {
                     .where('clientId', '==', clientId)
                     .get();
                 const jobs: JobPost[] = [];
-                snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                 jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
                 return jobs;
             } catch (e: any) {
@@ -719,7 +503,7 @@ export const dbService = {
             .onSnapshot(
                 snap => {
                     const jobs: JobPost[] = [];
-                    snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                    snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                     jobs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
                     onUpdate(jobs);
                 },
@@ -730,7 +514,7 @@ export const dbService = {
             );
     },
 
-    // Family-facing "Cara Activity" feed (U9). Live, owner-scoped, newest first.
+    // Family-facing "Evia Activity" feed (U9). Live, owner-scoped, newest first.
     // onError lets the UI distinguish a genuine failure from an empty feed.
     subscribeAgentActivity: (
         ownerUid: string,
@@ -804,7 +588,7 @@ export const dbService = {
                 const snap = await q.get();
 
                 const jobs: JobPost[] = [];
-                snap.forEach(doc => jobs.push({ id: doc.id, ...doc.data() } as JobPost));
+                snap.forEach(doc => jobs.push(normalizeJobPost({ id: doc.id, ...doc.data() })));
                 return jobs;
             } catch (e: any) {
                 if (e.code === 'permission-denied') return [];
@@ -834,8 +618,8 @@ export const dbService = {
                 const jobs: JobPost[] = [];
                 snap.forEach(doc => {
                     const data = doc.data();
-                    if (data && data.title) {
-                        jobs.push({ id: doc.id, ...data } as JobPost);
+                    if (data && (data.title || data.summary)) {
+                        jobs.push(normalizeJobPost({ id: doc.id, ...data }));
                     }
                 });
                 return jobs;
@@ -913,8 +697,9 @@ export const dbService = {
                         clientName: jobData.clientName,
                         clientId: jobData.clientId,
                         date: jobData.date,
-                        isoDate: new Date().toISOString().split('T')[0],
+                        isoDate: jobData.date,
                         time: jobData.startTime,
+                        duration: DEFAULT_HOURS_PER_VISIT,
                         status: 'confirmed',
                         paymentStatus: 'pending',
                         cost: jobData.rate * DEFAULT_HOURS_PER_VISIT,
@@ -1054,6 +839,10 @@ export const dbService = {
 
                 const newAppt = {
                     ...appointmentData,
+                    date: appointmentData.date || appointmentData.isoDate,
+                    isoDate: appointmentData.isoDate || appointmentData.date,
+                    time: appointmentData.time || appointmentData.startTime,
+                    duration: appointmentData.duration || 1,
                     id: docId,
                     createdAt: new Date().toISOString(),
                     status
@@ -1082,6 +871,7 @@ export const dbService = {
                     userId: appointment.caregiverId,
                     type: 'new_booking',
                     title: 'New Booking Request',
+                    body: `${appointment.clientName} booked you for ${appointment.date} at ${appointment.time}.`,
                     message: `${appointment.clientName} booked you for ${appointment.date} at ${appointment.time}.`,
                     data: { appointmentId: appointment.id },
                     read: false,
@@ -1131,7 +921,10 @@ export const dbService = {
                 .onSnapshot((snapshot) => {
                     const appts: Appointment[] = [];
                     snapshot.forEach((doc) => {
-                        appts.push(doc.data() as Appointment);
+                        // Include doc.id — the live listener feeds cancel/start/end
+                        // actions and React keys that reference appointment.id.
+                        // getAppointments() already spreads id; this path omitted it.
+                        appts.push({ id: doc.id, ...doc.data() } as Appointment);
                     });
                     console.log(`📊 Received ${appts.length} appointments for ${userType} ${userId}`);
                     onUpdate(appts);
@@ -1194,6 +987,7 @@ export const dbService = {
                         userId: notifyUserId,
                         type: 'appointment_cancelled',
                         title: 'Appointment Cancelled',
+                        body: `${notifyName || 'The other party'} cancelled the appointment on ${data?.date} at ${data?.time}. Reason: ${reasonLabel}.`,
                         message: `${notifyName || 'The other party'} cancelled the appointment on ${data?.date} at ${data?.time}. Reason: ${reasonLabel}.`,
                         data: { appointmentId, cancelledBy, reason },
                         read: false,
@@ -1298,26 +1092,20 @@ export const dbService = {
         const now = new Date().toISOString();
         appointments.forEach(appt => {
             const ref = db!.collection('appointments').doc();
-            batch.set(ref, { ...appt, id: ref.id, createdAt: now });
+            batch.set(ref, {
+                ...appt,
+                date: appt.date || appt.isoDate,
+                isoDate: appt.isoDate || appt.date,
+                time: appt.time || appt.startTime,
+                duration: appt.duration || 1,
+                id: ref.id,
+                createdAt: now,
+            });
         });
         await batch.commit();
 
-        // Notify caregiver once for the whole series
-        const first = appointments[0];
-        const n = appointments.length;
-        const firstDate = first.date ? new Date(first.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-        try {
-            await db.collection('users').doc(first.caregiverId).collection('notifications').add({
-                type: 'booking',
-                title: 'New Booking Request',
-                message: `${first.clientName} sent a recurring booking request — ${n} date${n !== 1 ? 's' : ''} starting ${firstDate}.`,
-                read: false,
-                isRead: false,
-                timestamp: now,
-                createdAt: now,
-                data: { recurringGroupId: (first as any).recurringGroupId, clientId: first.clientId },
-            });
-        } catch { /* non-fatal */ }
+        // The appointment onCreate trigger owns one leased summary per group
+        // and party. Sending here as well races the batch triggers.
     },
 
     // Accept an entire recurring booking group (caregiver confirms all dates at once)
@@ -1788,11 +1576,66 @@ export const dbService = {
         });
     },
 
+    // ── Evia web chat (threads/cara_{uid} — the mirrored SMS/iMessage thread) ──
+    // Messages are server-written only (firestore.rules); the web sends via the
+    // v1-chatWithCara callable and renders whatever lands in the thread.
+
+    caraThreadId: (): string | null =>
+        auth?.currentUser ? `cara_${auth.currentUser.uid}` : null,
+
+    subscribeToCaraThread: (onUpdate: (thread: { id: string; [key: string]: any } | null) => void) => {
+        if (isConfigured && db && auth?.currentUser) {
+            return db.collection('threads').doc(`cara_${auth.currentUser.uid}`).onSnapshot(
+                (snap) => onUpdate(snap.exists ? { id: snap.id, ...snap.data() } : null),
+                (error) => {
+                    if (error.code !== 'permission-denied') console.error('Evia thread subscription error:', error);
+                    onUpdate(null);
+                }
+            );
+        }
+        return () => { };
+    },
+
+    clearCaraThreadUnread: async () => {
+        // The only client-side write firestore.rules allows on an Evia thread.
+        if (isConfigured && db && auth?.currentUser) {
+            await db.collection('threads').doc(`cara_${auth.currentUser.uid}`)
+                .update({ unreadCount: 0 })
+                .catch(() => { /* thread may not exist yet */ });
+        }
+    },
+
+    sendCaraMessage: async (message: string, clientMessageId: string): Promise<{
+        available: boolean;
+        status?: 'ok' | 'rateLimited' | 'notSetUp' | 'finishSetup' | 'caraBusy';
+        reply?: string;
+        rateLimited?: boolean;
+        showMatches?: boolean;
+        optedOut?: boolean;
+        clientMessageId?: string;
+    }> => {
+        if (!functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('v1-chatWithCara');
+        const res = await fn({ message: sanitizeMessage(message), clientMessageId });
+        return res.data;
+    },
+
+    // Canonical care-plan path (consolidation, 2026-07-12): the live plan is the
+    // TOP-LEVEL doc care_plans/{clientUid} — the SAME doc Evia's get_care_plan /
+    // update_care_plan SMS tools read and write, so medications/instructions sync
+    // both ways. The old web path senior_profiles/{uid}/care_plans/default is
+    // legacy: read once as a fallback until the backfill migration runs, never
+    // written again. Evia may append plain-string entries (e.g. "Metformin 500mg")
+    // to the arrays — normalizeCarePlan coerces them into the web item shapes and
+    // preserves Evia-only fields (careNeeds, dietaryNotes, doctorContacts, …) so a
+    // web save round-trips them untouched.
     getCarePlan: async (uid: string): Promise<CarePlan> => {
         if (isConfigured && db) {
             try {
-                const doc = await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get();
-                if (doc.exists) return doc.data() as CarePlan;
+                const doc = await db.collection('care_plans').doc(uid).get();
+                if (doc.exists) return normalizeCarePlan(doc.data());
+                const legacy = await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get();
+                if (legacy.exists) return normalizeCarePlan(legacy.data());
                 return { medications: [], emergencyContacts: [], dailyRoutine: [] };
             } catch (e) {
                 return { medications: [], emergencyContacts: [], dailyRoutine: [] };
@@ -1804,7 +1647,11 @@ export const dbService = {
     updateCarePlan: async (uid: string, plan: CarePlan) => {
         if (isConfigured && db) {
             try {
-                await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').set(plan, { merge: true });
+                await db.collection('care_plans').doc(uid).set({
+                    ...plan,
+                    lastUpdatedBy: 'web',
+                    updatedAt: new Date().toISOString(),
+                }, { merge: true });
             } catch (e: any) {
                 if (e.code === 'permission-denied') return;
             }
@@ -1813,12 +1660,18 @@ export const dbService = {
 
     subscribeToCarePlan: (uid: string, onUpdate: (plan: CarePlan) => void) => {
         if (isConfigured && db) {
-            const docRef = db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default');
+            const docRef = db.collection('care_plans').doc(uid);
             return docRef.onSnapshot((doc) => {
                 if (doc.exists) {
-                    onUpdate(doc.data() as CarePlan);
+                    onUpdate(normalizeCarePlan(doc.data()));
                 } else {
-                    onUpdate({ medications: [], emergencyContacts: [], dailyRoutine: [] });
+                    // Pre-migration fallback: surface any data stranded on the
+                    // legacy subdoc so nothing disappears before the backfill.
+                    db!.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').get()
+                        .then(legacy => onUpdate(legacy.exists
+                            ? normalizeCarePlan(legacy.data())
+                            : { medications: [], emergencyContacts: [], dailyRoutine: [] }))
+                        .catch(() => onUpdate({ medications: [], emergencyContacts: [], dailyRoutine: [] }));
                 }
             }, (error) => {
                 if (error.code === 'permission-denied') {
@@ -1829,12 +1682,12 @@ export const dbService = {
         return () => { };
     },
 
-    // Live caregiver-doc updates. Cara writes rate, payout status, verification,
+    // Live caregiver-doc updates. Evia writes rate, payout status, verification,
     // and background-check fields to the caregivers doc; without this the web UI
     // shows stale values until a manual refresh (the "silent action" gap).
     subscribeCaregiverProfile: (caregiverId: string, onUpdate: (profile: Record<string, any> | null) => void) => {
         if (isConfigured && db) {
-            return db.collection('caregivers').doc(caregiverId).onSnapshot(doc => {
+            return db.collection('publicCaregiverProfiles').doc(caregiverId).onSnapshot(doc => {
                 onUpdate(doc.exists ? ({ id: doc.id, ...doc.data() }) : null);
             }, (error) => { if (error.code === 'permission-denied') return; });
         }
@@ -1842,7 +1695,7 @@ export const dbService = {
     },
 
     // U2: Live listener for a caregiver's own profile doc (caregivers/{uid}).
-    // Cara's agent writes to this doc during onboarding, profile edits, and
+    // Evia's agent writes to this doc during onboarding, profile edits, and
     // verification flips; without a listener the caregiver dashboard shows a
     // stale profile until logout/login. Mirrors subscribeToCarePlan.
     // Emits the raw caregiver doc data; the caller merges it over the cached
@@ -1862,7 +1715,7 @@ export const dbService = {
 
     // Fires whenever a caregiver enters or leaves the pending-verification states,
     // so the admin verification dashboard can re-pull its queue live when a Checkr
-    // webhook or Cara/admin action changes a background-check / verification status.
+    // webhook or Evia/admin action changes a background-check / verification status.
     subscribeCaregiverVerificationChanges: (onChange: () => void) => {
         if (isConfigured && db) {
             return db.collection('caregivers')
@@ -1873,7 +1726,7 @@ export const dbService = {
     },
 
     // U3: Live listener for a client's (primary) senior profile doc.
-    // Cara writes care needs/preferences during intake; this keeps the
+    // Evia writes care needs/preferences during intake; this keeps the
     // client's profile/intake view fresh without a reload. Mirrors getSeniorProfile
     // (doc keyed by the client uid). The senior_profiles read rule was amended
     // (KTD-10) so additional household seniors (userId-stamped) are also readable.
@@ -1913,9 +1766,9 @@ export const dbService = {
 
         if (isConfigured && db) {
             try {
-                await db.collection('senior_profiles').doc(uid).collection('care_plans').doc('default').update({
+                await db.collection('care_plans').doc(uid).set({
                     dailyRoutine: updatedPlan.dailyRoutine
-                });
+                }, { merge: true });
             } catch (e: any) {
                 // Ignore permission error
             }
@@ -2003,6 +1856,25 @@ export const dbService = {
         return true;
     },
 
+    // Live in-app surface for emergency_alerts. Both the EmergencySOS UI
+    // (triggerEmergencyAlert above) and the agent's trigger_emergency_alert
+    // MCP tool write this collection; without a listener the alert only
+    // reaches users via push/SMS (server fan-out in
+    // functions/src/familyEmergency.ts). Equality-only query - no composite
+    // index needed; rules scope reads to the initiator.
+    subscribeToEmergencyAlerts: (userId: string, onUpdate: (alerts: EmergencyAlert[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+        return db.collection('emergency_alerts')
+            .where('initiatorId', '==', userId)
+            .where('status', '==', 'active')
+            .onSnapshot(snap => {
+                const alerts = snap.docs
+                    .map(d => ({ ...(d.data() as EmergencyAlert), id: d.id }))
+                    .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+                onUpdate(alerts);
+            }, (error) => { if (error.code === 'permission-denied') onUpdate([]); });
+    },
+
 
 
 
@@ -2033,6 +1905,63 @@ export const dbService = {
             }
         }
         return [];
+    },
+
+    // Live family roster. There are TWO sources of truth: the web invite flow
+    // (inviteFamilyMember above) writes senior_profiles.familyMembers, while the
+    // agent's add_family_member / remove_family_member MCP tools and the /join
+    // page also maintain the family_group_members index. Listening to both and
+    // merging (deduped by phone, then email) means agent-made changes show up
+    // in FamilyManager without a refresh. Profile entries are listed first so
+    // the richer web-invite record (email/role) wins on a phone collision.
+    subscribeToFamilyMembers: (seniorId: string, onUpdate: (members: FamilyMember[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+
+        let profileMembers: FamilyMember[] = [];
+        let groupMembers: FamilyMember[] = [];
+        const dedupeKey = (m: FamilyMember): string => {
+            const phoneDigits = (m.phone || '').replace(/\D/g, '');
+            if (phoneDigits) return `p:${phoneDigits}`;
+            if (m.email) return `e:${m.email.toLowerCase()}`;
+            return `i:${m.id}`;
+        };
+        const emit = () => {
+            const seen = new Set<string>();
+            const merged: FamilyMember[] = [];
+            for (const m of [...profileMembers, ...groupMembers]) {
+                const key = dedupeKey(m);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                merged.push(m);
+            }
+            onUpdate(merged);
+        };
+
+        const unsubProfile = db.collection('senior_profiles').doc(seniorId)
+            .onSnapshot(doc => {
+                profileMembers = (doc.exists ? (doc.data()?.familyMembers as FamilyMember[]) : []) || [];
+                emit();
+            }, (error) => { if (error.code === 'permission-denied') { profileMembers = []; emit(); } });
+
+        const unsubGroup = db.collection('family_group_members')
+            .where('userId', '==', seniorId)
+            .onSnapshot(snap => {
+                groupMembers = snap.docs.map(d => {
+                    const data = d.data();
+                    return {
+                        id: d.id,
+                        name: (data.memberName as string) || 'Family member',
+                        email: '',
+                        ...(data.memberPhone ? { phone: data.memberPhone as string } : {}),
+                        role: 'viewer',
+                        // joinedAt is stamped when the member first texts in
+                        status: data.joinedAt ? 'active' : 'pending',
+                    } as FamilyMember;
+                });
+                emit();
+            }, (error) => { if (error.code === 'permission-denied') { groupMembers = []; emit(); } });
+
+        return () => { unsubProfile(); unsubGroup(); };
     },
 
     // --- NOTIFICATION API ENDPOINTS ---
@@ -2157,6 +2086,7 @@ export const dbService = {
                             userId: jobData.clientId,
                             type: 'job_application',
                             title: 'New Job Application',
+                            body: `${applicationData.caregiverName} applied to your post: "${jobData.title}".`,
                             message: `${applicationData.caregiverName} applied to your post: "${jobData.title}".`,
                             data: { jobId, caregiverId },
                             read: false,
@@ -2339,7 +2269,7 @@ export const dbService = {
 
     /**
      * Subscribe to care journal entries for real-time updates.
-     * Entries are written server-side (Cara's journal tools + caregiver flows)
+     * Entries are written server-side (Evia's journal tools + caregiver flows)
      * into `care_journal`; rules allow the owning client, the caregiver, and
      * admins to read. Single-field query + client-side sort — no composite
      * index needed.
@@ -2381,7 +2311,7 @@ export const dbService = {
         if (familyMembers.length === 0) return;
 
         // Get caregiver info
-        const caregiverDoc = await db?.collection('caregivers').doc(caregiverId).get();
+        const caregiverDoc = await db?.collection('publicCaregiverProfiles').doc(caregiverId).get();
         const caregiverName = caregiverDoc?.exists 
             ? (caregiverDoc.data() as { name?: string })?.name || 'Caregiver'
             : 'Caregiver';
@@ -3140,15 +3070,15 @@ export const dbService = {
                 return;
             }
 
-            // Find referrer
-            const referrerSnapshot = await db.collection('users')
-                .where('referralCode', '==', referralCode)
-                .limit(1)
-                .get();
-
-            if (referrerSnapshot.empty) return;
-
-            const referrerId = referrerSnapshot.docs[0].id;
+            // Find referrer via a server-side callable. Clients can no longer
+            // query the users collection (the list rule is admin-only, to stop
+            // full-directory enumeration), so the Admin SDK does the lookup.
+            // No match → return, same as the old empty-snapshot behavior.
+            if (!functions) return;
+            const resolveFn = functions.httpsCallable('v1-resolveReferrerByCode');
+            const resolveRes = await resolveFn({ code: referralCode });
+            const referrerId = (resolveRes.data as { referrerId?: string })?.referrerId;
+            if (!referrerId) return;
 
             // Update referral record
             const referralSnapshot = await db.collection('referrals')
@@ -3167,11 +3097,12 @@ export const dbService = {
                 });
             }
 
-            // Add referral credit to new user
+            // Referral benefits (referredBy + $25 referralCredit) are granted
+            // server-side by v1-resolveReferrerByCode above — referralCredit
+            // is client-write-blocked in firestore.rules, so writing it here
+            // would fail the whole update.
             await db.collection('users').doc(newUserId).update({
                 referralCode: generateReferralCode(),
-                referredBy: referrerId,
-                referralCredit: 25 // $25 credit
             });
         } catch (error) {
             console.error('Failed to process referral:', error);
@@ -3363,28 +3294,6 @@ export const dbService = {
         }
     },
 
-    givePeerRecognition: async (data: {
-        caregiverId: string;
-        category: string;
-        message: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const user = auth?.currentUser;
-        if (!user) throw new Error("Not authenticated");
-        
-        const recognition = {
-            fromCaregiverId: user.uid,
-            fromName: user.displayName || 'Anonymous',
-            toCaregiverId: data.caregiverId,
-            category: data.category,
-            message: data.message,
-            createdAt: new Date().toISOString()
-        };
-        
-        await db.collection('peer_recognitions').add(recognition);
-    },
-
     /**
      * Check if an email is already registered in the system
      * Returns true if email exists, false otherwise
@@ -3404,6 +3313,20 @@ export const dbService = {
             // Return false to allow signup to proceed and fail naturally if email exists
             return false;
         }
+    },
+
+    // Live admin invoice list (InvoicingTab). Invoices are created/updated
+    // server-side only (createInvoice / processClientApproval, Admin SDK), so
+    // the admin table needs a listener to reflect those writes without a refresh.
+    subscribeToInvoices: (onUpdate: (invoices: Invoice[]) => void): (() => void) => {
+        if (!isConfigured || !db) { onUpdate([]); return () => {}; }
+        return db.collection('invoices')
+            .orderBy('createdAt', 'desc')
+            .onSnapshot(snapshot => {
+                onUpdate(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Invoice[]);
+            }, error => {
+                console.error('Invoices subscription error:', error);
+            });
     },
 
     // --- INTAKE LEADS MANAGEMENT ---
@@ -3854,6 +3777,18 @@ export const dbService = {
         } catch { /* best effort */ }
     },
 
+    // Own-doc payout fields (stripeAccountId, payoutsEnabled, chargesEnabled,
+    // stripeOnboardingComplete, detailsSubmitted) — moved off the
+    // world-readable caregivers/{id} parent to the owner-only private/payout
+    // subdoc. Readable only by the owner or an admin.
+    getOwnCaregiverPayoutFields: async (uid: string): Promise<Record<string, any>> => {
+        if (!isConfigured || !db || !uid) return {};
+        try {
+            const snap = await db.collection('caregivers').doc(uid).collection('private').doc('payout').get();
+            return snap.exists ? (snap.data() as Record<string, any>) : {};
+        } catch { return {}; }
+    },
+
 };
 
 export const stripeService = externalStripeService;
@@ -3940,13 +3875,15 @@ export const shiftHoursService = {
         return res.data as { success: boolean; error?: string };
     },
 
-    updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'credit') => {
+    updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'venmo' | 'zelle' | 'credit') => {
         if (!isConfigured || !functions) throw new Error('Firebase not configured');
         const fn = functions.httpsCallable('v1-updateBookingPaymentMethod');
         const res = await fn({ appointmentId, paymentMethod });
         return res.data as { success: boolean };
     },
 
+    // Caregiver confirms receipt of an offline payment (cash, Venmo, or Zelle).
+    // Name kept for existing callers; covers all offline methods.
     confirmCashReceived: async (appointmentId: string) => {
         if (!isConfigured || !db) throw new Error('Firebase not configured');
         const uid = auth?.currentUser?.uid;
@@ -3957,17 +3894,18 @@ export const shiftHoursService = {
         if (!snap.exists) throw new Error('Shift hours record not found');
 
         const shift = snap.data()!;
+        const method = (shift.paymentMethod || '').toLowerCase();
         if (shift.caregiverId !== uid)
-            throw new Error('Only the caregiver can confirm cash receipt');
-        if ((shift.paymentMethod || '').toLowerCase() !== 'cash')
-            throw new Error('Shift is not a cash payment');
+            throw new Error('Only the caregiver can confirm payment receipt');
+        if (!['cash', 'venmo', 'zelle'].includes(method))
+            throw new Error('Shift is not an offline (cash/Venmo/Zelle) payment');
         if (shift.status !== 'approved' && shift.status !== 'auto_approved')
             throw new Error(`Shift must be approved first (current: ${shift.status})`);
 
         const now = new Date().toISOString();
         await ref.update({
             status: 'paid',
-            paidMethod: 'cash',
+            paidMethod: method,
             paidAt: now,
             cashConfirmedAt: now,
             updatedAt: now,
@@ -4092,6 +4030,19 @@ export const adminService = {
         }
     },
 
+    // Caregiver identity PII (legal name / DOB / SSN-4 / ZIP) now lives in the
+    // owner+admin-only caregivers/{uid}/private/background doc, not the
+    // world-readable parent. Admins read it here to render the verification
+    // detail view. Returns {} when absent (pre-backfill docs still carry the
+    // fields on the parent, so callers merge parent-then-private).
+    getCaregiverBackgroundPII: async (uid: string): Promise<Record<string, any>> => {
+        if (!isConfigured || !db || !uid) return {};
+        try {
+            const snap = await db.collection('caregivers').doc(uid).collection('private').doc('background').get();
+            return snap.exists ? (snap.data() as Record<string, any>) : {};
+        } catch { return {}; }
+    },
+
     getClientAppointments: async (clientId: string): Promise<import('../types').Appointment[]> => {
         if (!isConfigured || !db) return [];
         try {
@@ -4182,7 +4133,7 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         try {
             const geoRes = await fetch(
                 `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addrQuery)}&format=json&limit=1&countrycodes=us`,
-                { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' } }
+                { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' } }
             );
             const geoData = await geoRes.json();
             if (geoData?.length) {

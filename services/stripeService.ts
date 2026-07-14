@@ -20,7 +20,7 @@ export const getStripe = () => {
 // Client monthly membership — $29.95/mo (live price ID)
 export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Caregiver annual membership (background check) — $24.95/yr (live price ID)
+// Caregiver annual membership (background check) — $66.49/yr (live price ID)
 export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg';
 
 export interface SubscriptionStatus {
@@ -184,78 +184,6 @@ export const listenToSubscriptionStatus = (userId: string, callback: (status: Su
     });
 };
 
-// Cancel subscription at period end
-export const cancelSubscription = async (): Promise<void> => {
-  try {
-    if (!auth || !db) throw new Error('Firebase not initialized');
-    const fdb = db;
-    const user = auth.currentUser;
-    if (!user) {
-      throw new Error('User must be logged in');
-    }
-
-    // Get active subscription
-    const subscriptions = await fdb
-      .collection('customers')
-      .doc(user.uid)
-      .collection('subscriptions')
-      .where('status', 'in', ['active', 'trialing'])
-      .limit(1)
-      .get();
-
-    if (subscriptions.empty) {
-      throw new Error('No active subscription found');
-    }
-
-    const subscriptionId = subscriptions.docs[0].id;
-
-    // Call cancel function
-    await fdb.collection('stripeSubscriptions').doc(subscriptionId).update({
-      cancelAtPeriodEnd: true,
-      cancelledAt: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Error canceling subscription:', error);
-    throw error;
-  }
-};
-
-// Reactivate canceled subscription
-export const reactivateSubscription = async (): Promise<void> => {
-  try {
-    if (!auth || !db) throw new Error('Firebase not initialized');
-    const fdb = db;
-    const user = auth.currentUser;
-    if (!user) {
-      throw new Error('User must be logged in');
-    }
-
-    // Get subscription with cancel_at_period_end
-    const subscriptions = await fdb
-      .collection('customers')
-      .doc(user.uid)
-      .collection('subscriptions')
-      .where('cancel_at_period_end', '==', true)
-      .limit(1)
-      .get();
-
-    if (subscriptions.empty) {
-      throw new Error('No canceled subscription found');
-    }
-
-    const subscriptionId = subscriptions.docs[0].id;
-
-    // Reactivate
-    await fdb.collection('stripeSubscriptions').doc(subscriptionId).update({
-      cancelAtPeriodEnd: false,
-      reactivatedAt: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Error reactivating subscription:', error);
-    throw error;
-  }
-};
-
 // Format price for display
 export const formatPrice = (amount: number, currency: string = 'usd'): string => {
   return new Intl.NumberFormat('en-US', {
@@ -274,23 +202,15 @@ export const hasActiveMembership = (status: SubscriptionStatus): boolean => {
 // regenerate a fresh account link so returning / incomplete caregivers can
 // resume onboarding.
 export const initiateOnboarding = async (): Promise<{ url: string }> => {
-  if (!auth || !db) throw new Error('Firebase not initialized');
-  const fdb = db;
+  if (!auth) throw new Error('Firebase not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
 
-  const existing = await fdb.collection('caregivers').doc(user.uid).get();
-  const existingAccountId = existing.data()?.stripeAccountId as string | undefined;
-
+  // Always go through v1-createStripeConnectAccount — it reuses an existing
+  // account server-side and mints a fresh link, so the client never needs to
+  // read stripeAccountId (which moved off the world-readable caregiver doc to
+  // caregivers/{id}/private/payout).
   const fns = getFunctions();
-  if (existingAccountId) {
-    const fn = httpsCallable(fns, 'v1-getStripeOnboardingLink');
-    const res = await fn({ accountId: existingAccountId });
-    const { url } = (res.data as { url?: string }) ?? {};
-    if (!url) throw new Error('No onboarding URL returned');
-    return { url };
-  }
-
   const create = httpsCallable(fns, 'v1-createStripeConnectAccount');
   const res = await create({ email: user.email });
   const { onboardingUrl } = (res.data as { onboardingUrl?: string }) ?? {};
@@ -307,13 +227,15 @@ export interface ConnectAccountStatus {
 
 // Force a refresh of Stripe Connect account status on Firestore. Used on
 // return from the Stripe-hosted onboarding flow as a fallback to the webhook.
-export const checkOnboardingStatus = async (accountId: string): Promise<ConnectAccountStatus> => {
+// accountId is optional — omitted, the server resolves the caller's own
+// account from caregivers/{uid}/private/payout.
+export const checkOnboardingStatus = async (accountId?: string): Promise<ConnectAccountStatus> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
   const fn = httpsCallable(fns, 'v1-checkStripeAccountStatus');
-  const res = await fn({ accountId });
+  const res = await fn(accountId ? { accountId } : {});
   return res.data as ConnectAccountStatus;
 };
 
@@ -336,14 +258,22 @@ export const requestInstantPayout = async (): Promise<PayoutResult> => {
   return res.data as PayoutResult;
 };
 
-export const requestStandardPayout = async (): Promise<PayoutResult> => {
+export interface PayoutBalance {
+  connected: boolean;
+  instantAvailable: number;  // dollars, instantly payable right now
+  pending: number;           // dollars, still settling — auto-pays out daily
+}
+
+// Standard payouts are automatic (Stripe daily schedule) — there is no
+// requestStandardPayout anymore. Instant payout is the only on-demand path.
+export const getPayoutBalance = async (): Promise<PayoutBalance> => {
   if (!auth) throw new Error('Auth not initialized');
   const user = auth.currentUser;
   if (!user) throw new Error('User must be logged in');
   const fns = getFunctions();
-  const fn = httpsCallable(fns, 'v1-requestStandardPayout');
+  const fn = httpsCallable(fns, 'v1-getPayoutBalance');
   const res = await fn({});
-  return res.data as PayoutResult;
+  return res.data as PayoutBalance;
 };
 
 /**
@@ -396,7 +326,7 @@ export const stripeService = {
   initiateOnboarding,
   checkOnboardingStatus,
   requestInstantPayout,
-  requestStandardPayout,
+  getPayoutBalance,
   formatPrice,
   hasActiveMembership,
   MEMBERSHIP_PRICE_ID,

@@ -7,10 +7,9 @@ import { ViewType } from '../types';
 
 interface PaymentSuccessProps {
   onNavigate: (view: ViewType) => void;
-  onPaymentComplete: (appointmentId: string) => void;
 }
 
-export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate, onPaymentComplete }) => {
+export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate }) => {
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
 
@@ -24,10 +23,9 @@ export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate, onPa
 
     if (payingId) {
        setAppointmentId(payingId);
-       onPaymentComplete(payingId);
        localStorage.removeItem('payingAppointmentId');
     }
-  }, [onPaymentComplete]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -42,7 +40,7 @@ export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate, onPa
           <>
             <h1 className="text-2xl font-bold text-slate-900 mb-2">All done!</h1>
             <p className="text-slate-500 mb-8">
-              Cara is ready for you. Head back to continue setting up your care.
+              Evia is ready for you. Head back to continue setting up your care.
             </p>
           </>
         ) : (

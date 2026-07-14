@@ -28,17 +28,21 @@ vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({ messages: { 
 const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m" }));
 vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...a) }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
-vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test" }));
+vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test", appLink: (path: string) => `https://app.test${path}` }));
 vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
+const notifyNewCaregiverOfJobs = vi.fn(async () => {});
+vi.mock("../triggers/caregiverJobMatch", () => ({ notifyNewCaregiverOfJobs: (...a: any[]) => notifyNewCaregiverOfJobs(...a) }));
 
 import { classifyPermissionReply, handleClientPermissionsReply, handleCaregiverPermissionsReply } from "./permissionsConversation";
 
-const session = (step: string) => ({ onboardingStep: step, onboardingData: { seniorName: "Mom" } }) as never;
+const session = (step: string, extra: Record<string, unknown> = {}) =>
+  ({ onboardingStep: step, onboardingData: { seniorName: "Mom" }, ...extra }) as never;
 
 beforeEach(() => {
   h.sets.length = 0;
   quickComplete.mockReset();
   sendMessage.mockClear();
+  notifyNewCaregiverOfJobs.mockClear();
 });
 
 describe("classifyPermissionReply", () => {
@@ -67,9 +71,9 @@ describe("handleClientPermissionsReply — mid-flow question guard", () => {
     await handleClientPermissionsReply("+1555", "chat1", "what does that mean?", session("client_permissions_contact"), "u1");
     // No write to agent_permissions — the bug this fixes.
     expect(h.sets.find((s) => s.coll === "agent_permissions")).toBeUndefined();
-    // The question was answered + re-asked.
+    // The question was answered + re-asked (natural-voice re-ask, no stiff "Reply YES or NO").
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String((sendMessage.mock.calls[0] as any[])[1])).toContain("Reply YES or NO");
+    expect(String((sendMessage.mock.calls[0] as any[])[1])).toContain("reach out to caregivers");
   });
 
   it("records the permission as granted on YES", async () => {
@@ -89,8 +93,8 @@ describe("handleClientPermissionsReply — capability menu on completion (U3)", 
   it("sends the client capability menu after the final permissions step completes", async () => {
     await handleClientPermissionsReply("+1555", "chat1", "YES", session("client_permissions_autobook"), "u1");
     const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(texts.some((t) => t.includes("Here's what I can help you with"))).toBe(true);
-    expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(true);
+    expect(texts.some((t) => t.includes("your care coordinator"))).toBe(true);
+    expect(texts.some((t) => /next visit|care note|backup care/i.test(t))).toBe(true);
   });
 });
 
@@ -98,8 +102,70 @@ describe("handleCaregiverPermissionsReply — capability menu on completion (U3)
   it("sends the CAREGIVER capability menu after the final caregiver permissions step completes", async () => {
     await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_arrival"), "cg1");
     const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
-    expect(texts.some((t) => t.includes("Find work"))).toBe(true);
+    expect(texts.some((t) => /clock out|earnings|payout|caregiver/i.test(t))).toBe(true);
     // client-only capabilities must NOT appear in the caregiver menu
     expect(texts.some((t) => t.includes("Find a caregiver"))).toBe(false);
+  });
+
+  it("fires the job fan-out only when the permissions flow completes (YES/NO collision fix)", async () => {
+    await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_arrival"), "cg1");
+    // The fan-out is a fire-and-forget dynamic import — wait for it to land.
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+  });
+});
+
+describe("permissions question-detour bailout (max ONE re-ask)", () => {
+  it("caregiver: first question detour answers + re-asks, records nothing", async () => {
+    quickComplete.mockResolvedValue("QUESTION");
+    await handleCaregiverPermissionsReply("+1555", "chat1", "what's missing in my profile?",
+      session("caregiver_permissions_decline"), "cg1");
+    expect(h.sets.find((s) => s.coll === "agent_permissions")).toBeUndefined();
+    expect(String((sendMessage.mock.calls[0] as any[])[1])).toContain("pass on job requests");
+    expect(notifyNewCaregiverOfJobs).not.toHaveBeenCalled();
+  });
+
+  it("caregiver: second question detour defaults permissions OFF, completes, and does NOT re-ask", async () => {
+    quickComplete.mockResolvedValue("QUESTION");
+    await handleCaregiverPermissionsReply("+1555", "chat1", "why is my profile not finished?",
+      session("caregiver_permissions_decline", { permissionsDetourCount: 1 }), "cg1");
+    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
+    expect(permWrite?.data).toMatchObject({
+      canDeclineJobsAutomatically:   false,
+      canSendArrivalNotifications:   false,
+      canShareJournalWithFamily:     true,
+      canAcceptJobsWithConfirmation: true,
+    });
+    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    // No re-ask of the pending permission question — the flow bailed out.
+    expect(texts.some((t) => t.includes("pass on job requests"))).toBe(false);
+    // The session is unblocked — job fan-out fires like any other completion.
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+  });
+
+  it("caregiver: bailout mid-flow (arrival step) keeps the already-answered decline permission untouched", async () => {
+    quickComplete.mockResolvedValue("QUESTION");
+    await handleCaregiverPermissionsReply("+1555", "chat1", "hmm what does that mean?",
+      session("caregiver_permissions_arrival", { permissionsDetourCount: 1 }), "cg1");
+    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
+    expect(permWrite?.data).toMatchObject({ canSendArrivalNotifications: false });
+    expect(permWrite?.data).not.toHaveProperty("canDeclineJobsAutomatically");
+  });
+
+  it("client: second question detour defaults remaining permissions OFF (digest/alerts stay on) and completes", async () => {
+    quickComplete.mockResolvedValue("QUESTION");
+    await handleClientPermissionsReply("+1555", "chat1", "what does that mean exactly?",
+      session("client_permissions_contact", { permissionsDetourCount: 1 }), "u1");
+    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
+    expect(permWrite?.data).toMatchObject({
+      canContactCaregivers:    false,
+      canScheduleInterviews:   false,
+      canBookWithConfirmation: false,
+      canBookAutomatically:    false,
+      canSendWeeklyDigest:     true,
+      canSendHealthAlerts:     true,
+    });
+    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    // No re-ask of the pending permission question — the flow bailed out.
+    expect(texts.some((t) => t.includes("reach out to caregivers"))).toBe(false);
   });
 });

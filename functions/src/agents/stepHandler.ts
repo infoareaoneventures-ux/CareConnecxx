@@ -1,6 +1,6 @@
-// Canonical step-handler framework for Cara's conversational flows.
+// Canonical step-handler framework for Evia's conversational flows.
 //
-// The mandatory Cara checklist (CLAUDE.md) — isQuestionOrOther guard → parse →
+// The mandatory Evia checklist (CLAUDE.md) — isQuestionOrOther guard → parse →
 // acknowledge → ask — was reimplemented ~10 times across handlers
 // (onboardingConversation, availabilityHandler, jobPostingFlow,
 // caregiverProfileHandler, modifyScheduleFlow, ...), each a hand-rolled copy.
@@ -10,7 +10,7 @@
 // characterization tests, since they touch paid/regulated flows).
 
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
+import { answerHumanMidFlow } from "./humanReply";
 
 // True when the user's reply is a general question or off-topic comment rather
 // than a direct answer to the current step's question — so the handler can
@@ -18,7 +18,7 @@ import { quickComplete } from "../utils/openaiClient";
 export async function isQuestionOrOther(text: string, currentQuestion?: string): Promise<boolean> {
   const context = currentQuestion
     ? `The user is in a guided flow. Current step's question: "${currentQuestion}". `
-    : "The user is in a guided conversational flow with Cara, a care assistant. ";
+    : "The user is in a guided conversational flow with Evia, a care coordinator. ";
   const result = await parseWithClaude(
     context +
       "Reply YES if their message is a general question or off-topic comment unrelated to that question. " +
@@ -29,16 +29,42 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
   return result.trim().toUpperCase().startsWith("Y");
 }
 
+// Classify a reply sent while Evia is WAITING on the user to finish an
+// out-of-band action (tap a link, finish a Checkr form, complete a payment).
+// These steps have no question to answer, so the two-way question/answer split
+// above is the wrong shape: a pure "thanks / sounds good" is neither, and
+// treating it as "other" made Evia re-explain the step or re-blast the link at
+// someone who was just being polite (broken-record behavior).
+//   ack      → acknowledgment/thanks/agreement only; reply with ONE brief warm
+//              line and do NOT resend the link or re-explain the step
+//   question → a question or a reported problem; answer it first
+//   other    → anything actionable (wants the link again, status, new info);
+//              the step's normal resend/status behavior applies
+export type AwaitingReplyKind = "ack" | "question" | "other";
+
+export async function classifyAwaitingReply(text: string, waitingOn: string): Promise<AwaitingReplyKind> {
+  const raw = await parseWithClaude(
+    "Evia, a care coordinator, just told the user what happens next and is now waiting on them to: " +
+      `${waitingOn}. The user texted back. Classify the reply: ` +
+      'ONLY an acknowledgment, thanks, or agreement with nothing asked or added ("thanks", "sounds good", "ok great", "got it", "perfect", "will do", "👍") → ack. ' +
+      "A question, confusion, or a reported problem (link not working, never got the email, how long does it take) → question. " +
+      "Anything actionable — asks for the link again, gives new information, reports the action done → other. " +
+      "Reply with exactly one word: ack, question, or other.",
+    text,
+    5,
+  ).catch(() => "other"); // fail toward the step's normal behavior
+  const v = raw.trim().toLowerCase();
+  return v === "ack" || v === "question" ? v : "other";
+}
+
 // Answer a mid-flow question briefly, then append the re-ask so the user can
 // still answer the step they were on.
 export async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, a warm AI care assistant. The user asked a question mid-conversation. " +
-      "Answer it briefly and honestly (1-2 sentences). Do NOT ask them to continue — that prompt is appended separately.",
+  return answerHumanMidFlow({
     text,
-    { maxTokens: 150 },
-  ).catch(() => "Good question — let me come back to that.");
-  return `${answer.trim()}\n\n${reAsk}`;
+    reAsk,
+    situation: "the user asked a question mid-conversation in a guided Evia flow",
+  });
 }
 
 export type StepResult<V> =

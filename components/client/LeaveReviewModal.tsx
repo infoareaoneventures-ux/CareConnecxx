@@ -79,7 +79,7 @@ export const LeaveReviewModal: React.FC<LeaveReviewModalProps> = ({
 
       // Update caregiver aggregated rating (best-effort — rules may restrict client writes)
       try {
-        const cgSnap = await db!.collection('caregivers').doc(caregiverId).get();
+        const cgSnap = await db!.collection('publicCaregiverProfiles').doc(caregiverId).get();
         if (cgSnap.exists) {
           const d = cgSnap.data() as any;
           const count = (d.reviewCount || 0) + 1;

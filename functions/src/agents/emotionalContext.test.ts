@@ -134,7 +134,7 @@ describe("buildEmotionalContextDirective", () => {
   it("anxious directive leads with reassurance, not caveats", () => {
     const d = buildEmotionalContextDirective("anxious");
     expect(d).toMatch(/reassur|worried|worry/i);
-    expect(d).toMatch(/caveat|hedge|disclaim/i); // tells Cara to AVOID them — text mentions the word
+    expect(d).toMatch(/caveat|hedge|disclaim/i); // tells Evia to AVOID them — text mentions the word
   });
 
   it("grieving directive forbids upbeat phrasing and emoji", () => {
@@ -215,7 +215,7 @@ describe("buildEmotionalContextDirective with topic", () => {
     expect(d).toMatch(/journal|get_care_journal/i);
   });
 
-  it("frustrated + logistics tells Cara to fix logistics directly", () => {
+  it("frustrated + logistics tells Evia to fix logistics directly", () => {
     const d = buildEmotionalContextDirective("frustrated", "logistics");
     expect(d).toMatch(/Topic is logistics/i);
     expect(d).toMatch(/fix the logistics directly|cancel, reschedule/i);

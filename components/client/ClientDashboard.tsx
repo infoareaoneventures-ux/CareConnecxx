@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, Banknote, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
-import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
+import { ViewType, Caregiver, ClientIntakeData, Senior, paymentMethodLabel } from '../../types';
 import { dbService, authService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
@@ -18,7 +18,6 @@ import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 import { SupportChatModal } from '../shared/SupportChatModal';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import firebase, { db } from '../../lib/firebase';
-import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 import { LiveCareFeed } from './LiveCareFeed';
 import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
@@ -46,7 +45,7 @@ async function geocodeLocation(query: string): Promise<{ lat: number; lng: numbe
     const timer = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=us`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'CareConnex/1.0' }, signal: controller.signal }
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' }, signal: controller.signal }
     ).finally(() => clearTimeout(timer));
     const arr = await res.json();
     if (Array.isArray(arr) && arr[0]?.lat && arr[0]?.lon) {
@@ -146,7 +145,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [reviewingShift, setReviewingShift] = useState<any | null>(null);
 
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
@@ -180,7 +178,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     const unsubs: (() => void)[] = [];
 
     // Job posts — all statuses for Care Requests card; open-only meta for interview
-    // modal. Live (U6) so posts Cara creates/edits surface without a refresh.
+    // modal. Live (U6) so posts Evia creates/edits surface without a refresh.
     const jobPostsUnsub = db.collection('job_posts')
       .where('clientId', '==', currentUser.uid)
       .onSnapshot(snap => {
@@ -206,7 +204,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           docs.slice(0, 2).map(async (d: any) => {
             if (!d.caregiverId) return;
             try {
-              const cgDoc = await db!.collection('caregivers').doc(d.caregiverId).get();
+              const cgDoc = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
               const cg = cgDoc.data() || {};
               profiles[d.caregiverId] = {
                 rating: cg.rating ?? cg.averageRating ?? undefined,
@@ -245,7 +243,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         if (missing.length > 0) {
           const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
           Promise.all(uniqueIds.map(async (id: string) => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) {
               const d = cSnap.data() as any;
               return [id, d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || ''] as [string, string];
@@ -308,21 +306,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return () => { try { (unsub as any)?.(); } catch {} };
   }, [currentUser?.uid]);
 
-  // Show wizard for new signups (sessionStorage flag) or users who never completed it
-  useEffect(() => {
-    const fromSignup = sessionStorage.getItem('careconnex_show_wizard') === 'true';
-    if (fromSignup) {
-      sessionStorage.removeItem('careconnex_show_wizard');
-      setShowWizard(true);
-      return;
-    }
-    if (!currentUser?.uid) return;
-    dbService.getUser(currentUser.uid)
-      .then(userData => {
-        if (!(userData as any)?.jobPostingCompleted) setShowWizard(true);
-      })
-      .catch(() => {});
-  }, [currentUser?.uid]);
+  // The welcome/job-posting wizard no longer auto-fires (founder decision
+  // 2026-07-02: it trapped users who hadn't finished intake). Posting a care
+  // request stays available via the Find Care tab and dashboard CTAs.
 
   // Load client progress, intake data, and matched caregivers
   useEffect(() => {
@@ -350,7 +336,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const userDoc = await db.collection('users').doc(currentUser.uid).get();
             const savedIds: string[] = (userDoc.data() as any)?.savedCaregiverIds || [];
             if (savedIds.length > 0) {
-              const snap = await db.collection('caregivers')
+              const snap = await db.collection('publicCaregiverProfiles')
                 .where(firebase.firestore.FieldPath.documentId(), 'in', savedIds.slice(0, 10))
                 .get();
               setSavedCaregivers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Caregiver)));
@@ -379,7 +365,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   useEffect(() => {
     if (!db || !currentUser?.uid) return;
     let isMounted = true;
-    db.collection('caregivers')
+    db.collection('publicCaregiverProfiles')
       .orderBy('rating', 'desc')
       .limit(8)
       .get()
@@ -499,7 +485,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     return (
       <>
         <ClientNavigation />
-        <div className="min-h-screen flex items-center justify-center bg-[var(--color-neutral-50)]">
+        <div className="min-h-screen flex items-center justify-center bg-paper-50">
           <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin" />
         </div>
       </>
@@ -507,7 +493,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-paper-50">
       <ClientNavigation />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-16">
@@ -520,8 +506,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
           return (
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-slate-900">Good {timeOfDay}, {firstName}!</h1>
-              <p className="text-sm text-slate-500 mt-0.5">{today}</p>
+              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Good {timeOfDay}, {firstName}!</h1>
+              <p className="text-sm text-ink-600 mt-0.5">{today}</p>
             </div>
           );
         })()}
@@ -594,7 +580,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           return <LiveCareFeed clientId={currentUser.uid} />;
         })()}
 
-        {/* Care journal — caregiver visit notes (web + Cara tools); hides itself when empty */}
+        {/* Care journal — caregiver visit notes (web + Evia tools); hides itself when empty */}
         {currentUser?.uid && <CareJournalFeed clientId={currentUser.uid} />}
 
         {reviewingShift && (
@@ -696,7 +682,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {/* Interviews tab */}
                 {careRequestTab === 'interviews' && (() => {
                   const iPending = allInterviews.filter(iv => ['requested', 'pending'].includes(iv.status));
-                  const iAccepted = allInterviews.filter(iv => iv.status === 'accepted');
+                  const iAccepted = allInterviews.filter(iv => ['accepted', 'scheduled', 'confirmed'].includes(iv.status));
                   const bookingMap: Record<string, any> = {};
                   allBookingRequests.forEach((b: any) => {
                     const key = `${b.caregiverId}_${b.jobId || b.interviewId || ''}`;
@@ -771,6 +757,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                     {isVideo ? <Video className="w-3 h-3 flex-shrink-0" /> : <Phone className="w-3 h-3 flex-shrink-0" />}
                                     <span>{isVideo ? 'Video' : 'Phone'}</span>
                                   </div>
+                                )}
+                                {iv.callUrl?.startsWith('https://meet.google.com/') && ['accepted', 'scheduled', 'confirmed'].includes(iv.status) && (
+                                  <a href={iv.callUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:underline">
+                                    <Video className="w-3 h-3 flex-shrink-0" />
+                                    Join video call
+                                  </a>
                                 )}
                               </div>
                             </div>
@@ -990,7 +982,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               </div>
             </div>
 
-            {/* Cara Activity — transparency feed of what Cara did (U9) */}
+            {/* Evia Activity — transparency feed of what Evia did (U9) */}
             {currentUser?.uid && <CaraActivityFeed ownerUid={currentUser.uid} />}
 
             {/* Pending care changes — live shift swaps (U7); hidden when none */}
@@ -1080,7 +1072,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 )}
                               </div>
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
                               )}
                             </div>
                           );
@@ -1185,7 +1177,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   </div>
                                 )}
                                 {shift.rate != null && (
-                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(shift.paymentMethod)}</p>
                                 )}
                               </div>
                             </div>
@@ -1262,7 +1254,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               {durationStr && <span className="text-slate-300">·</span>}
                               <span className="font-semibold text-slate-700">${pay.toFixed(2)}</span>
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${isCash ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                                {isCash ? 'Cash' : 'Card'}
+                                {isCash ? paymentMethodLabel(shift.paymentMethod) : 'Card'}
                               </span>
                               <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusCfg.bg} ${statusCfg.color}`}>
                                 {statusCfg.label}
@@ -1349,7 +1341,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {cashTotal > 0 && (
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                                <Banknote className="w-3.5 h-3.5" /> Cash
+                                <Banknote className="w-3.5 h-3.5" /> Paid directly
                               </div>
                               <span className="text-sm font-semibold text-slate-900">${cashTotal.toFixed(2)}</span>
                             </div>
@@ -1381,7 +1373,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           <>
 
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-slate-900">Nearby Caregivers</h1>
+              <h1 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Nearby Caregivers</h1>
             </div>
 
             <div className="grid lg:grid-cols-3 gap-6 items-start">
@@ -1577,7 +1569,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                   {careRequestTab === 'interviews' && (() => {
                     const iPending = allInterviews.filter(iv => ['requested', 'pending'].includes(iv.status));
-                    const iAccepted = allInterviews.filter(iv => iv.status === 'accepted');
+                    const iAccepted = allInterviews.filter(iv => ['accepted', 'scheduled', 'confirmed'].includes(iv.status));
                     const bookingMap: Record<string, any> = {};
                     allBookingRequests.forEach((b: any) => {
                       const key = `${b.caregiverId}_${b.jobId || b.interviewId || ''}`;
@@ -1706,7 +1698,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 </div>
                               )}
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : 'Cash'}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
                               )}
                             </div>
                           </div>
@@ -1935,14 +1927,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             </div>
           </div>
         </div>
-      )}
-
-      {/* Job Posting Wizard — fires once after signup */}
-      {showWizard && currentUser?.uid && (
-        <ClientJobPostingWizard
-          uid={currentUser.uid}
-          onComplete={() => setShowWizard(false)}
-        />
       )}
 
       {/* Family emergency button — visible only when a shift is active today */}

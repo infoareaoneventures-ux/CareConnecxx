@@ -1,7 +1,7 @@
 import { quickComplete } from "./openaiClient";
 
 // Supported user-facing languages. English is the default; Spanish is the
-// first add given CareConnex demographics. Adding more is a matter of
+// first add given Evia demographics. Adding more is a matter of
 // translating the messages map in messages() below + extending detection.
 export type Language = "en" | "es";
 
@@ -64,15 +64,18 @@ export function isSupportedLanguage(code: string): code is Language {
 // extend the same key set. Functions take parameters where needed.
 
 export const t = {
+  // LAUNCH: conversational automation disclosure REMOVED by explicit founder
+  // decision 2026-07-02 (risk accepted — see AGENT_NATIVE_EXCLUSIONS.md R15
+  // addendum). Counsel to revisit.
   otp_greeting: (code: string, lang: Language): string =>
     lang === "es"
-      ? `Hola — soy Cara, tu asistente de cuidado.\n\nPrimero un control de seguridad: por favor responde con el código ${code} para confirmar que eres tú en este número.`
-      : `Hi — I'm Cara, your care assistant.\n\nQuick security check first: please reply with the code ${code} so I know it's really you on this number.`,
+      ? `Hola — soy Evia, tu coordinadora de cuidado.\n\nPrimero un control de seguridad: por favor responde con el código ${code} para confirmar que eres tú en este número.`
+      : `Hi — I'm Evia, your care coordinator.\n\nQuick security check first: please reply with the code ${code} so I know it's really you on this number.`,
 
   otp_verified_role_question: (lang: Language): string =>
     lang === "es"
-      ? `Verificado — gracias.\n\n¿Estás buscando cuidado para alguien, o eres cuidador/a?\n\n1️⃣ Necesito cuidado para alguien\n2️⃣ Soy cuidador/a`
-      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a caregiver?\n\n1️⃣ I need care for someone\n2️⃣ I'm a caregiver`,
+      ? `Verificado — gracias.\n\n¿Estás buscando cuidado para alguien, o eres cuidador/a?`
+      : `Verified — thanks.\n\nAre you looking for care for someone, or are you a caregiver yourself?`,
 
   otp_resend_too_soon: (lang: Language): string =>
     lang === "es"
@@ -146,13 +149,13 @@ export const t = {
 
   opt_out_confirmation: (lang: Language): string =>
     lang === "es"
-      ? "Te has dado de baja de los mensajes de Cara. Responde START en cualquier momento para reactivarlos."
-      : "You've been unsubscribed from Cara messages. Reply START anytime to reactivate.",
+      ? "Te has dado de baja de los mensajes de Evia. Responde START en cualquier momento para reactivarlos."
+      : "You've been unsubscribed from Evia messages. Reply START anytime to reactivate.",
 
   opt_in_welcome_back: (lang: Language): string =>
     lang === "es"
-      ? "Bienvenido de nuevo — he reactivado los mensajes de Cara para este número. Responde STOP en cualquier momento para volver a darte de baja."
-      : "Welcome back — I've reactivated Cara messages for this number. Reply STOP anytime to opt out again.",
+      ? "Bienvenido de nuevo — he reactivado los mensajes de Evia para este número. Responde STOP en cualquier momento para volver a darte de baja."
+      : "Welcome back — I've reactivated Evia messages for this number. Reply STOP anytime to opt out again.",
 };
 
 // Map of localized "flow labels" used by session_timeout_flow.

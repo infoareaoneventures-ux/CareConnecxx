@@ -174,7 +174,7 @@ export const addFamilyGroupMember = functions.https.onCall(async (data, _context
     let welcomeSent = true;
     await sendToPhone(
       memberPhone,
-      `Hi - you've joined ${seniorName}'s CareConnex care group. I'm Cara, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
+      `Hi - you've joined ${seniorName}'s Evia care group. I'm Evia, and I'll send care updates here. You can text me questions anytime. Reply STOP to opt out.`,
     ).catch((err) => {
       welcomeSent = false;
       logAudit({
@@ -305,7 +305,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
     parts: [{
       type:  "text",
       value:
-        `Hi everyone - I'm Cara, the care coordinator for ${seniorName}'s care.\n\n` +
+        `Hi everyone - I'm Evia, the care coordinator for ${seniorName}'s care.\n\n` +
         `I'll send care updates here so everyone stays in the loop. ` +
         `Anyone can text me questions anytime.`,
     }],
@@ -320,7 +320,7 @@ export async function buildOrUpdateFamilyGroup(seniorId: string): Promise<void> 
   }
 
   // Name the group
-  await updateChatName(chatId, `${seniorName.split(" ")[0]}'s Care · Cara`);
+  await updateChatName(chatId, `${seniorName.split(" ")[0]}'s Care · Evia`);
 
   // Persist group record
   const groupRef = await db.collection("family_groups").add({

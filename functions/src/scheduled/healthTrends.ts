@@ -171,16 +171,19 @@ async function runMonthlyHealthTrends(): Promise<number> {
       const summaryUrl = `${appUrl}/health-summary/${shareToken}`;
       const monthName  = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
+      // /health-summary/{token} is an app route with no OG rewrite, so the
+      // transport downgrades a link part to inline text (card would be blank).
+      // Send the explanation FIRST so the URL bubble never arrives contextless.
       const linkMessage = { parts: [{ type: "link" as const, value: summaryUrl }] };
 
       if (session.chatId) {
-        await sendMessage(session.chatId, linkMessage);
         await sendMessage(
           session.chatId,
           `Here's ${data.seniorName}'s ${monthName} health summary — 90 days of care data.\n` +
           `You can share this directly with their doctor or print it from that page.\n\n` +
           (analysis.highlights ? `This month: ${analysis.highlights}` : "")
         );
+        await sendMessage(session.chatId, linkMessage);
       } else {
         await sendToPhone(phone, `${data.seniorName}'s ${monthName} health summary is ready: ${summaryUrl}`);
       }

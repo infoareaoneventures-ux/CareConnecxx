@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanQuestionOnly } from "./humanReply";
 
 const db = admin.firestore();
 
@@ -22,18 +23,24 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
 }
 
 async function answerQuestionMidFlow(text: string): Promise<string> {
-  return (await quickComplete(
-    "You are Cara, an AI care assistant. A client is in the middle of requesting a refund. " +
-      "Answer their question briefly (1–2 sentences). Be helpful and warm.",
+  return answerHumanQuestionOnly({
+    audience: "family",
+    situation: "client is in the middle of requesting a refund",
     text,
-    { maxTokens: 120 },
-  )).trim();
+    maxTokens: 120,
+  });
 }
 
 // State flow: identify_visit → select_visit → confirm → submitted
 
 export async function handleRefundRequest(
   clientId: string,
+  // agent_sessions is keyed by PHONE, not by clientId/userId. Refund flow state
+  // (refundStep, refundCandidates, …) MUST be written to doc(phone) so the router
+  // — which loads the session by phone — sees it on the next turn. clientId
+  // (= userId for registered clients) is used only for the appointments query and
+  // the refundRequests record, never for the session doc. See bug-audit §1.1.
+  phone: string,
   text: string,
   session: Record<string, unknown>,
   sendMessage: (msg: string) => Promise<unknown>
@@ -52,12 +59,12 @@ export async function handleRefundRequest(
     if (apptSnap.empty) {
       const msgR1 = await generateCaraMessage({
         audience: "family",
-        context: "A family member asked Cara for a refund, but Cara doesn't see any recent completed visits to refund. Let them know gently, and mention that if they think it's a mistake, Cara can create a support ticket for them.",
+        context: "A family member asked Evia for a refund, but Evia doesn't see any recent completed visits to refund. Let them know gently, and mention that if they think it's a mistake, Evia can create a support ticket for them.",
         fallback: "I don't see any recent visits to refund. If you think this is a mistake, I can create a support ticket for you.",
         maxTokens: 80,
       });
       await sendMessage(msgR1);
-      await db.collection("agent_sessions").doc(clientId).update({ refundStep: admin.firestore.FieldValue.delete() });
+      await db.collection("agent_sessions").doc(phone).update({ refundStep: admin.firestore.FieldValue.delete() });
       return;
     }
 
@@ -72,7 +79,7 @@ export async function handleRefundRequest(
       };
     });
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:       "select_visit",
       refundCandidates: JSON.stringify(visits),
     });
@@ -82,7 +89,7 @@ export async function handleRefundRequest(
       .join("\n");
     const msgR2opener = await generateCaraMessage({
       audience: "family",
-      context: "A family member wants a refund and Cara found recent visits. Ask them which visit they'd like a refund for.",
+      context: "A family member wants a refund and Evia found recent visits. Ask them which visit they'd like a refund for.",
       fallback: "Which visit would you like a refund for?",
       maxTokens: 80,
     });
@@ -122,7 +129,7 @@ export async function handleRefundRequest(
     }
 
     const visitDesc = `${visit.date} with ${visit.caregiverName}${visit.cost ? ` ($${visit.cost})` : ""}`;
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:             "confirm",
       refundAppointmentId:    visit.id,
       refundVisitDescription: visitDesc,
@@ -154,14 +161,14 @@ export async function handleRefundRequest(
     const reason  = text.trim().slice(0, 300);
     const desc    = (session.refundVisitDescription as string) ?? "that visit";
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:   "submitted",
       refundReason: reason,
     });
 
     const msgR4opener = await generateCaraMessage({
       audience: "family",
-      context: `Cara is about to ask a family member to confirm their refund request for the visit "${desc}" with reason: "${reason}". Write a warm one-line intro asking them to confirm the details below.`,
+      context: `Evia is about to ask a family member to confirm their refund request for the visit "${desc}" with reason: "${reason}". Write a warm one-line intro asking them to confirm the details below.`,
       fallback: `To confirm — you'd like a refund for ${desc} because: "${reason}".`,
       maxTokens: 80,
     });
@@ -196,12 +203,12 @@ export async function handleRefundRequest(
     if (norm.toUpperCase() !== "YES") {
       const msgR5 = await generateCaraMessage({
         audience: "family",
-        context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Cara is there if they need anything else.",
+        context: "A family member decided to cancel their refund request. Acknowledge the cancellation warmly and let them know Evia is there if they need anything else.",
         fallback: "No problem - refund request cancelled.",
         maxTokens: 80,
       });
       await sendMessage(msgR5);
-      await db.collection("agent_sessions").doc(clientId).update({
+      await db.collection("agent_sessions").doc(phone).update({
         refundStep:             admin.firestore.FieldValue.delete(),
         refundAppointmentId:    admin.firestore.FieldValue.delete(),
         refundCandidates:       admin.firestore.FieldValue.delete(),
@@ -214,16 +221,21 @@ export async function handleRefundRequest(
     const appointmentId = session.refundAppointmentId as string;
     const refundReason  = (session.refundReason as string) ?? "";
 
-    await db.collection("refundRequests").add({
-      clientId,
-      appointmentId,
-      reason:      refundReason,
-      status:      "pending_review",
-      requestedAt: new Date().toISOString(),
-      source:      "cara_self_service",
-    });
+    const refundRef = db.collection("refundRequests").doc(`${appointmentId}:${clientId}`);
+    try {
+      await refundRef.create({
+        clientId,
+        appointmentId,
+        reason:      refundReason,
+        status:      "requested",
+        requestedAt: new Date().toISOString(),
+        source:      "cara_self_service",
+      });
+    } catch (error: any) {
+      if (error?.code !== 6 && !/already exists/i.test(String(error?.message ?? ""))) throw error;
+    }
 
-    await db.collection("agent_sessions").doc(clientId).update({
+    await db.collection("agent_sessions").doc(phone).update({
       refundStep:             admin.firestore.FieldValue.delete(),
       refundAppointmentId:    admin.firestore.FieldValue.delete(),
       refundCandidates:       admin.firestore.FieldValue.delete(),
@@ -233,7 +245,7 @@ export async function handleRefundRequest(
 
     const msgR6opener = await generateCaraMessage({
       audience: "family",
-      context: "A family member just submitted a refund request through Cara. Acknowledge the submission warmly and let them know what happens next.",
+      context: "A family member just submitted a refund request through Evia. Acknowledge the submission warmly and let them know what happens next.",
       fallback: "Your refund request has been submitted.",
       maxTokens: 80,
     });

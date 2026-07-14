@@ -1,7 +1,7 @@
 import { quickComplete } from "./openaiClient";
 
 // Persona shift detector — catches the shared-phone case where two family
-// members text Cara from the same line. Phone is the session key, so without
+// members text Evia from the same line. Phone is the session key, so without
 // this check Aunt's message about her dad would get routed to Mom's care plan
 // and any booking/matching would fire under Mom's userId.
 //
@@ -12,7 +12,7 @@ import { quickComplete } from "./openaiClient";
 
 export interface PersonaShift {
   kind:        "different_senior" | "different_role";
-  evidence:    string;   // user-facing quote so Cara's question feels grounded
+  evidence:    string;   // user-facing quote so Evia's question feels grounded
   sessionSenior?: string;
 }
 
@@ -20,7 +20,7 @@ export async function detectPersonaShift(params: {
   text:           string;
   sessionSenior?: string;       // senior name on file for this session
   sessionRole?:   "client" | "caregiver" | null;
-  knownNames?:    string[];     // first names Cara already expects on this account
+  knownNames?:    string[];     // first names Evia already expects on this account
                                 // (client, all care recipients, family, caregivers)
 }): Promise<PersonaShift | null> {
   const { text, sessionSenior, sessionRole, knownNames = [] } = params;
@@ -42,8 +42,8 @@ export async function detectPersonaShift(params: {
   try {
     raw = await quickComplete(
       "You are checking if an inbound SMS implies a DIFFERENT care recipient is now being discussed " +
-      "from a shared phone. Cara stores care plans keyed by phone number; if Mom shares a phone with " +
-      "Aunt and Aunt texts about her own father, Cara would otherwise treat it as Mom's request.\n\n" +
+      "from a shared phone. Evia stores care plans keyed by phone number; if Mom shares a phone with " +
+      "Aunt and Aunt texts about her own father, Evia would otherwise treat it as Mom's request.\n\n" +
       `Session context:\n${sessionContext}\n\n` +
       "Reply with JSON only:\n" +
       `{"kind": "different_senior" | "different_role" | "none", "evidence": "<short quote from message>"}\n\n` +

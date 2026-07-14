@@ -8,6 +8,30 @@
     ],
     "rewrites": [
       {
+        "source": "/p/**",
+        "function": "v1-caregiverProfileMeta"
+      },
+      {
+        "source": "/upload/**",
+        "function": "v1-uploadPageMeta"
+      },
+      {
+        "source": "/bgcheck",
+        "function": "v1-uploadPageMeta"
+      },
+      {
+        "source": "/stripe-refresh",
+        "function": "v1-stripeConnectRefresh"
+      },
+      {
+        "source": "/verify/**",
+        "function": "v1-linkRedirect"
+      },
+      {
+        "source": "/pay/**",
+        "function": "v1-linkRedirect"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
@@ -57,6 +81,7 @@
         "firebase-debug.*.log"
       ],
       "predeploy": [
+        "node scripts/guard-no-agent-native-runtime.mjs",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ]
     }

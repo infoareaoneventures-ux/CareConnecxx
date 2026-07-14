@@ -8,6 +8,7 @@ import { useOnboardingSession } from '../../../hooks/useOnboardingSession';
 import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
+import { supportPhone } from '../../../utils/launchConfig';
 
 export type OnboardingRole = 'client' | 'caregiver';
 type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
@@ -18,8 +19,6 @@ interface Props {
 }
 
 const RECAPTCHA_CONTAINER = 'careconnex-recaptcha-container';
-const SUPPORT_PHONE_DISPLAY = '(800) 555-0199';
-const SUPPORT_PHONE_HREF = 'tel:+18005550199';
 const CONSENT_VERSION = 'v1.0';
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -233,14 +232,16 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
 // ============================================================================
 
 const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center px-6 py-10">
+  <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col items-center justify-center px-6 py-10">
     <div className="w-full max-w-sm space-y-8">
       <div className="text-center space-y-2">
-        <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto">
-          <span className="text-white font-bold text-lg">C</span>
+        <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
+          <span className="text-ink-900 font-semibold text-lg">C</span>
         </div>
-        <div className="text-2xl font-bold tracking-tight">Cara</div>
-        <p className="text-white/40 text-sm">Your AI care assistant</p>
+        <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
+        <p className="text-ink-600 text-sm">Your care coordinator</p>
+        {/* LAUNCH: wording pending counsel review (R15) */}
+        <p className="text-ink-400 text-xs">Evia is an automated coordinator backed by our care team.</p>
       </div>
       {children}
     </div>
@@ -248,39 +249,42 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
 );
 
 const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children: React.ReactNode }> = ({ step, children }) => (
-  <div className="min-h-screen bg-[#fbfaf5] text-slate-900 flex flex-col">
+  <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
     <header className="px-6 pt-8 pb-2 flex items-center justify-between max-w-2xl w-full mx-auto">
       <Link to="/" className="flex items-center gap-2 group">
-        <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center shadow-sm shadow-emerald-200">
-          <span className="text-white font-bold text-base">C</span>
+        <div className="w-9 h-9 rounded-xl bg-paper-100 border hairline flex items-center justify-center">
+          <span className="text-ink-900 font-semibold text-base">C</span>
         </div>
-        <span className="font-semibold text-slate-900 group-hover:text-emerald-700 transition">CareConnex</span>
+        <span className="font-semibold text-ink-900 group-hover:text-ink-600 transition">Evia</span>
       </Link>
-      <a
-        href={SUPPORT_PHONE_HREF}
-        className="text-sm font-medium text-slate-600 hover:text-emerald-700 transition"
-      >
-        Need help? Call {SUPPORT_PHONE_DISPLAY}
-      </a>
+      {supportPhone && (
+        <a href={supportPhone.telHref} className="text-sm font-medium text-ink-600 hover:text-ink-900 transition">
+          Need help? Call {supportPhone.display}
+        </a>
+      )}
     </header>
     <main className="flex-1 flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-md space-y-7">
         {step !== 'connected' && (
           <div className="text-center">
-            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">Meet Cara</h1>
-            <p className="text-slate-600 mt-2 text-lg leading-relaxed">
+            <h1 className="text-3xl md:text-4xl font-display font-semibold tracking-[-0.02em] text-ink-900">Meet Evia</h1>
+            <p className="text-ink-600 mt-2 text-lg leading-relaxed">
               Your care coordinator. She&rsquo;ll help you find the right caregiver for your family.
             </p>
+            {/* LAUNCH: wording pending counsel review (R15) */}
+            <p className="text-ink-400 mt-1 text-sm">Evia is an automated coordinator backed by our care team.</p>
           </div>
         )}
         {children}
       </div>
     </main>
-    <footer className="text-center px-6 pb-6 text-xs text-slate-400">
-      <a href={SUPPORT_PHONE_HREF} className="underline-offset-2 hover:underline">
-        Prefer to talk to a person? Call us at {SUPPORT_PHONE_DISPLAY}.
-      </a>
-    </footer>
+    {supportPhone && (
+      <footer className="text-center px-6 pb-6 text-xs text-ink-400">
+        <a href={supportPhone.telHref} className="underline-offset-2 hover:underline">
+          Prefer to talk to a person? Call us at {supportPhone.display}.
+        </a>
+      </footer>
+    )}
   </div>
 );
 
@@ -292,20 +296,20 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
   if (tone === 'dark') {
     return (
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-center">What brings you here?</h2>
+        <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">What brings you here?</h2>
         <button
           onClick={() => onPick('client')}
-          className="w-full py-4 px-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/[0.15] transition text-left"
+          className="w-full py-4 px-5 rounded-2xl border hairline bg-white hover:shadow-md active:shadow-sm transition text-left"
         >
-          <div className="font-semibold text-sm">I need care for someone</div>
-          <div className="text-white/40 text-xs mt-0.5">Find caregivers for a loved one</div>
+          <div className="font-semibold text-sm text-ink-900">I need care for someone</div>
+          <div className="text-ink-600 text-xs mt-0.5">Find caregivers for a loved one</div>
         </button>
         <button
           onClick={() => onPick('caregiver')}
-          className="w-full py-4 px-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/[0.15] transition text-left"
+          className="w-full py-4 px-5 rounded-2xl border hairline bg-white hover:shadow-md active:shadow-sm transition text-left"
         >
-          <div className="font-semibold text-sm">I'm a caregiver</div>
-          <div className="text-white/40 text-xs mt-0.5">Find families in your area</div>
+          <div className="font-semibold text-sm text-ink-900">I'm a caregiver</div>
+          <div className="text-ink-600 text-xs mt-0.5">Find families in your area</div>
         </button>
       </div>
     );
@@ -314,17 +318,17 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
     <div className="space-y-4">
       <button
         onClick={() => onPick('client')}
-        className="w-full px-6 py-5 rounded-2xl border border-slate-200 bg-white hover:border-emerald-400 hover:shadow-md transition text-left"
+        className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
       >
-        <div className="font-semibold text-lg text-slate-900">Find a caregiver</div>
-        <div className="text-slate-500 mt-1">For a parent, spouse, or loved one</div>
+        <div className="font-semibold text-lg text-ink-900">Find a caregiver</div>
+        <div className="text-ink-600 mt-1">For a parent, spouse, or loved one</div>
       </button>
       <button
         onClick={() => onPick('caregiver')}
-        className="w-full px-6 py-5 rounded-2xl border border-slate-200 bg-white hover:border-emerald-400 hover:shadow-md transition text-left"
+        className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
       >
-        <div className="font-semibold text-lg text-slate-900">I&rsquo;m a caregiver</div>
-        <div className="text-slate-500 mt-1">Apply to work with families</div>
+        <div className="font-semibold text-lg text-ink-900">I&rsquo;m a caregiver</div>
+        <div className="text-ink-600 mt-1">Apply to work with families</div>
       </button>
     </div>
   );
@@ -342,52 +346,52 @@ const ConsentScreen: React.FC<{
     return (
       <div className="space-y-5">
         <div className="space-y-1 text-center">
-          <h2 className="text-xl font-semibold">Welcome to Cara</h2>
-          <p className="text-white/40 text-sm">
-            Cara communicates with you over iMessage, RCS, or SMS.
+          <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Welcome to Evia</h2>
+          <p className="text-ink-600 text-sm">
+            Evia communicates with you over iMessage, RCS, or SMS.
           </p>
         </div>
-        <div className="h-52 overflow-y-auto rounded-2xl border border-white/10 bg-white/5 px-4 py-4 space-y-4 text-sm leading-relaxed">
+        <div className="h-52 overflow-y-auto rounded-2xl border hairline bg-white px-4 py-4 space-y-4 text-sm leading-relaxed">
           <div>
-            <span className="font-semibold text-white">What will you receive?</span>{' '}
-            <span className="text-white/60">Match notifications, family contact requests, and updates about your work.</span>
+            <span className="font-semibold text-ink-900">What will you receive?</span>{' '}
+            <span className="text-ink-600">Match notifications, family contact requests, and updates about your work.</span>
           </div>
           <div>
-            <span className="font-semibold text-white">How often?</span>{' '}
-            <span className="text-white/60">Only when something relevant happens.</span>
+            <span className="font-semibold text-ink-900">How often?</span>{' '}
+            <span className="text-ink-600">Only when something relevant happens.</span>
           </div>
           <div>
-            <span className="font-semibold text-white/50">Costs?</span>{' '}
-            <span className="text-white/40">Standard message and data rates apply.</span>
+            <span className="font-semibold text-ink-600">Costs?</span>{' '}
+            <span className="text-ink-400">Standard message and data rates apply.</span>
           </div>
           <div>
-            <span className="font-semibold text-white">Want to stop?</span>{' '}
-            <span className="text-white/60">Reply STOP anytime.</span>
+            <span className="font-semibold text-ink-900">Want to stop?</span>{' '}
+            <span className="text-ink-600">Reply STOP anytime.</span>
           </div>
-          <div className="pt-1 border-t border-white/10 text-white/30 text-xs">
-            <Link to="/terms" className="underline underline-offset-2 hover:text-white/50">Terms</Link>
+          <div className="pt-1 border-t hairline text-ink-400 text-xs">
+            <Link to="/terms" className="underline underline-offset-2 hover:text-ink-600">Terms</Link>
             {' · '}
-            <Link to="/privacy" className="underline underline-offset-2 hover:text-white/50">Privacy</Link>
+            <Link to="/privacy" className="underline underline-offset-2 hover:text-ink-600">Privacy</Link>
           </div>
         </div>
-        <label className="flex items-center gap-3 cursor-pointer select-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 hover:bg-white/[0.08] transition">
+        <label className="flex items-center gap-3 cursor-pointer select-none rounded-2xl border hairline bg-white px-4 py-3.5 hover:shadow-sm transition">
           <input
             type="checkbox"
             checked={agreed}
             onChange={(e) => setAgreed(e.target.checked)}
-            className="w-4 h-4 rounded accent-blue-500 flex-shrink-0"
+            className="w-4 h-4 rounded accent-ink-900 flex-shrink-0"
           />
-          <span className="text-sm text-white/80">I agree to the terms above</span>
+          <span className="text-sm text-ink-600">I agree to the terms above</span>
         </label>
         <button
           onClick={onContinue}
           disabled={!agreed}
-          className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+          className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
         >
           Continue
         </button>
         {onBack && (
-          <button type="button" onClick={onBack} className="w-full text-sm text-white/30 hover:text-white/50 transition">
+          <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">
             ← Back
           </button>
         )}
@@ -397,53 +401,53 @@ const ConsentScreen: React.FC<{
 
   return (
     <div className="space-y-5">
-      <div className="rounded-3xl bg-white border border-slate-200 p-6 space-y-4 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">Here&rsquo;s what happens next</h2>
-        <ol className="space-y-3 text-slate-700 text-base leading-relaxed">
+      <div className="rounded-3xl bg-white border hairline p-6 space-y-4 shadow-sm">
+        <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Here&rsquo;s what happens next</h2>
+        <ol className="space-y-3 text-ink-600 text-base leading-relaxed">
           <li className="flex gap-3">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-sm">1</span>
+            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-paper-100 border hairline text-ink-900 font-semibold flex items-center justify-center text-sm">1</span>
             <span>We&rsquo;ll text a one-time code to verify your phone.</span>
           </li>
           <li className="flex gap-3">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-sm">2</span>
-            <span>You&rsquo;ll send Cara a quick &ldquo;Hey&rdquo; from your Messages app.</span>
+            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-paper-100 border hairline text-ink-900 font-semibold flex items-center justify-center text-sm">2</span>
+            <span>You&rsquo;ll send Evia a quick &ldquo;Hey&rdquo; from your Messages app.</span>
           </li>
           <li className="flex gap-3">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-sm">3</span>
-            <span>Cara replies, asks a few questions, and finds caregivers near you.</span>
+            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-paper-100 border hairline text-ink-900 font-semibold flex items-center justify-center text-sm">3</span>
+            <span>Evia replies, asks a few questions, and finds caregivers near you.</span>
           </li>
         </ol>
       </div>
-      <div className="rounded-2xl bg-emerald-50/70 border border-emerald-100 px-5 py-4 text-sm text-slate-700 leading-relaxed">
-        <p className="font-semibold text-slate-900 mb-1">Quick note on texts</p>
+      <div className="rounded-2xl bg-paper-100 border hairline px-5 py-4 text-sm text-ink-600 leading-relaxed">
+        <p className="font-semibold text-ink-900 mb-1">Quick note on texts</p>
         <p>
           {role === 'caregiver'
-            ? 'Cara will text you about jobs near you and family requests. Standard message and data rates may apply. Reply STOP anytime.'
-            : 'Cara will text you about caregiver matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
+            ? 'Evia will text you about jobs near you and family requests. Standard message and data rates may apply. Reply STOP anytime.'
+            : 'Evia will text you about caregiver matches and visit updates — never sales pitches. Standard rates may apply. Reply STOP anytime.'}
           {' '}
           <Link to="/terms" className="underline underline-offset-2">Terms</Link>
           {' · '}
           <Link to="/privacy" className="underline underline-offset-2">Privacy</Link>
         </p>
       </div>
-      <label className="flex items-center gap-3 cursor-pointer select-none rounded-2xl border border-slate-200 bg-white px-5 py-4 hover:border-emerald-400 transition">
+      <label className="flex items-center gap-3 cursor-pointer select-none rounded-2xl border hairline bg-white px-5 py-4 hover:shadow-sm transition">
         <input
           type="checkbox"
           checked={agreed}
           onChange={(e) => setAgreed(e.target.checked)}
-          className="w-5 h-5 rounded accent-emerald-600 flex-shrink-0"
+          className="w-5 h-5 rounded accent-ink-900 flex-shrink-0"
         />
-        <span className="text-base text-slate-800">I agree to the terms above</span>
+        <span className="text-base text-ink-900">I agree to the terms above</span>
       </label>
       <button
         onClick={onContinue}
         disabled={!agreed}
-        className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition font-semibold text-base text-white shadow-md shadow-emerald-200"
+        className="w-full py-4 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
       >
         Continue
       </button>
       {onBack && (
-        <button type="button" onClick={onBack} className="w-full text-sm text-slate-500 hover:text-slate-700 transition">
+        <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">
           ← Back
         </button>
       )}
@@ -466,8 +470,8 @@ const NameEntry: React.FC<{
     return (
       <form onSubmit={onSubmitForm} className="space-y-5">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold text-center">What&rsquo;s your name?</h2>
-          <p className="text-white/40 text-sm text-center">So Cara knows who she&rsquo;s talking to.</p>
+          <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">What&rsquo;s your name?</h2>
+          <p className="text-ink-600 text-sm text-center">So Evia knows who she&rsquo;s talking to.</p>
         </div>
         <input
           type="text"
@@ -477,27 +481,27 @@ const NameEntry: React.FC<{
           placeholder="Your first name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-white/20 focus:outline-none focus:border-blue-500 text-sm"
+          className="w-full bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
         />
         <button
           type="submit"
           disabled={!isValid}
-          className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+          className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
         >
           Continue
         </button>
-        <button type="button" onClick={onBack} className="w-full text-sm text-white/30 hover:text-white/50 transition">← Back</button>
+        <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">← Back</button>
       </form>
     );
   }
   return (
     <form onSubmit={onSubmitForm} className="space-y-5">
       <div className="space-y-1.5">
-        <h2 className="text-2xl font-semibold text-slate-900">What&rsquo;s your name?</h2>
-        <p className="text-slate-600 text-base">
+        <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">What&rsquo;s your name?</h2>
+        <p className="text-ink-600 text-base">
           {role === 'caregiver'
-            ? "So Cara can greet you properly when you text her."
-            : "So Cara knows who she’s helping when you text her."}
+            ? "So Evia can greet you properly when you text her."
+            : "So Evia knows who she’s helping when you text her."}
         </p>
       </div>
       <input
@@ -508,16 +512,16 @@ const NameEntry: React.FC<{
         placeholder="Your first name"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 text-lg"
+        className="w-full bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg"
       />
       <button
         type="submit"
         disabled={!isValid}
-        className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition font-semibold text-base text-white shadow-md shadow-emerald-200"
+        className="w-full py-4 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
       >
         Continue
       </button>
-      <button type="button" onClick={onBack} className="w-full text-sm text-slate-500 hover:text-slate-700 transition">← Back</button>
+      <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">← Back</button>
     </form>
   );
 };
@@ -540,14 +544,14 @@ const PhoneEntry: React.FC<{
     return (
       <form onSubmit={onSubmitForm} className="space-y-5">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold text-center">What's your mobile number?</h2>
-          <p className="text-white/40 text-sm text-center">We'll text you a 6-digit code.</p>
+          <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">What's your mobile number?</h2>
+          <p className="text-ink-600 text-sm text-center">We'll text you a 6-digit code.</p>
         </div>
         <div className="flex gap-2">
           <select
             value={countryCode}
             onChange={(e) => setCountryCode(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-xl px-3 py-3.5 text-sm text-white focus:outline-none focus:border-blue-500 flex-shrink-0"
+            className="bg-white border hairline rounded-xl px-3 py-3.5 text-base text-ink-900 focus:outline-none focus:border-ink-400 flex-shrink-0"
           >
             <option value="+1">🇺🇸 +1</option>
           </select>
@@ -558,26 +562,26 @@ const PhoneEntry: React.FC<{
             placeholder="(555) 555-5555"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-white placeholder-white/20 focus:outline-none focus:border-blue-500 text-sm"
+            className="flex-1 bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
           />
         </div>
         <button
           type="submit"
           disabled={!isValid || loading}
-          className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+          className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
         >
           {loading ? 'Sending code…' : 'Send code'}
         </button>
-        {error && <p className="text-red-400 text-xs text-center">{error}</p>}
-        <button type="button" onClick={onBack} className="w-full text-sm text-white/30 hover:text-white/50 transition">← Back</button>
+        {error && <p className="text-red-600 text-xs text-center">{error}</p>}
+        <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">← Back</button>
       </form>
     );
   }
   return (
     <form onSubmit={onSubmitForm} className="space-y-5">
       <div className="space-y-1.5">
-        <h2 className="text-2xl font-semibold text-slate-900">What&rsquo;s your mobile number?</h2>
-        <p className="text-slate-600 text-base">
+        <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">What&rsquo;s your mobile number?</h2>
+        <p className="text-ink-600 text-base">
           {role === 'caregiver'
             ? "We'll text a 6-digit code to confirm it's you."
             : "We'll text a 6-digit code to make sure it really is you."}
@@ -587,7 +591,7 @@ const PhoneEntry: React.FC<{
         <select
           value={countryCode}
           onChange={(e) => setCountryCode(e.target.value)}
-          className="bg-white border border-slate-300 rounded-2xl px-4 py-4 text-base text-slate-900 focus:outline-none focus:border-emerald-500"
+          className="bg-white border hairline rounded-2xl px-4 py-4 text-base text-ink-900 focus:outline-none focus:border-ink-400"
         >
           <option value="+1">🇺🇸 +1</option>
         </select>
@@ -598,18 +602,18 @@ const PhoneEntry: React.FC<{
           placeholder="(555) 555-5555"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          className="flex-1 bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 text-lg tracking-wide"
+          className="flex-1 bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg tracking-wide"
         />
       </div>
       <button
         type="submit"
         disabled={!isValid || loading}
-        className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition font-semibold text-base text-white shadow-md shadow-emerald-200"
+        className="w-full py-4 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
       >
         {loading ? 'Sending code…' : 'Send code'}
       </button>
       {error && <p className="text-red-600 text-sm text-center">{error}</p>}
-      <button type="button" onClick={onBack} className="w-full text-sm text-slate-500 hover:text-slate-700 transition">← Back</button>
+      <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">← Back</button>
     </form>
   );
 };
@@ -632,8 +636,8 @@ const CodeEntry: React.FC<{
     return (
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold text-center">Enter the code</h2>
-          <p className="text-white/40 text-sm text-center">We texted {displayPhone}</p>
+          <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">Enter the code</h2>
+          <p className="text-ink-600 text-sm text-center">We texted {displayPhone}</p>
         </div>
         <input
           type="text"
@@ -643,25 +647,25 @@ const CodeEntry: React.FC<{
           placeholder="123456"
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-white placeholder-white/20 focus:outline-none focus:border-blue-500 text-2xl tracking-[0.5em] text-center font-mono"
+          className="w-full bg-white border hairline rounded-xl px-4 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-2xl tracking-[0.5em] text-center font-mono"
         />
         <button
           type="submit"
           disabled={code.length !== 6 || loading}
-          className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition font-semibold text-sm"
+          className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
         >
           {loading ? 'Verifying…' : 'Verify'}
         </button>
-        {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+        {error && <p className="text-red-600 text-xs text-center">{error}</p>}
         <div className="flex items-center justify-between text-xs">
-          <button type="button" onClick={onChangeNumber} className="text-white/30 hover:text-white/50 transition">
+          <button type="button" onClick={onChangeNumber} className="py-3 text-ink-600 hover:text-ink-900 font-medium transition">
             ← Change number
           </button>
           <button
             type="button"
             onClick={onResend}
             disabled={resendIn > 0}
-            className="text-white/30 hover:text-white/50 disabled:hover:text-white/30 transition"
+            className="py-3 text-ink-600 hover:text-ink-900 disabled:hover:text-ink-600 font-medium transition"
           >
             {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
           </button>
@@ -672,9 +676,9 @@ const CodeEntry: React.FC<{
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div className="space-y-1.5">
-        <h2 className="text-2xl font-semibold text-slate-900">Enter the code</h2>
-        <p className="text-slate-600 text-base">
-          We texted a 6-digit code to <span className="font-medium text-slate-900">{displayPhone}</span>. Type it below.
+        <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Enter the code</h2>
+        <p className="text-ink-600 text-base">
+          We texted a 6-digit code to <span className="font-medium text-ink-900">{displayPhone}</span>. Type it below.
         </p>
       </div>
       <input
@@ -685,25 +689,25 @@ const CodeEntry: React.FC<{
         placeholder="123456"
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-        className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-5 text-slate-900 placeholder-slate-300 focus:outline-none focus:border-emerald-500 text-3xl tracking-[0.5em] text-center font-mono"
+        className="w-full bg-white border hairline rounded-2xl px-5 py-5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-3xl tracking-[0.5em] text-center font-mono"
       />
       <button
         type="submit"
         disabled={code.length !== 6 || loading}
-        className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition font-semibold text-base text-white shadow-md shadow-emerald-200"
+        className="w-full py-4 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
       >
         {loading ? 'Verifying…' : 'Verify'}
       </button>
       {error && <p className="text-red-600 text-sm text-center">{error}</p>}
       <div className="flex items-center justify-between text-sm">
-        <button type="button" onClick={onChangeNumber} className="text-slate-500 hover:text-slate-700 transition">
+        <button type="button" onClick={onChangeNumber} className="py-3 text-ink-600 hover:text-ink-900 font-medium transition">
           ← Change number
         </button>
         <button
           type="button"
           onClick={onResend}
           disabled={resendIn > 0}
-          className="text-slate-500 hover:text-emerald-700 disabled:hover:text-slate-500 transition"
+          className="py-3 text-ink-600 hover:text-ink-900 disabled:hover:text-ink-600 font-medium transition"
         >
           {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
         </button>
@@ -726,13 +730,13 @@ const HandoffScreen: React.FC<{
         tone={tone}
         caption={
           isCaregiver ? (
-            <>Tap below to open Messages. We&rsquo;ve filled in a quick &ldquo;Hey Cara&rdquo; — just hit send.</>
+            <>Tap below to open Messages. We&rsquo;ve filled in a quick &ldquo;Hey Evia&rdquo; — just hit send.</>
           ) : (
-            <>One last step: open Messages and send the pre-filled note to Cara. She&rsquo;ll take it from there.</>
+            <>One last step: open Messages and send the pre-filled note to Evia. She&rsquo;ll take it from there.</>
           )
         }
-        ctaLabel={isCaregiver ? 'Open Messages' : 'Send to Cara'}
-        helper={<>Cara will reply on this number. You can keep texting her here whenever you need.</>}
+        ctaLabel={isCaregiver ? 'Open Messages' : 'Send to Evia'}
+        helper={<>Evia will reply on this number. You can keep texting her here whenever you need.</>}
       />
     );
   }
@@ -742,18 +746,18 @@ const HandoffScreen: React.FC<{
       tone={tone}
       caption={
         isCaregiver ? (
-          <>Scan with your phone&rsquo;s camera. We&rsquo;ll open Messages with a quick &ldquo;Hey Cara&rdquo; ready to send.</>
+          <>Scan with your phone&rsquo;s camera. We&rsquo;ll open Messages with a quick &ldquo;Hey Evia&rdquo; ready to send.</>
         ) : (
           <>
-            <p className="text-xl font-semibold text-slate-900 mb-1">Scan to start your conversation</p>
-            <p>Point your phone&rsquo;s camera at the code. Your Messages app will open with a note to Cara — just press send.</p>
+            <p className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-1">Scan to start your conversation</p>
+            <p>Point your phone&rsquo;s camera at the code. Your Messages app will open with a note to Evia — just press send.</p>
           </>
         )
       }
       helper={
         isCaregiver
-          ? <>No camera? Text the number above with the words <span className="font-semibold">Hey Cara</span>.</>
-          : <>Don&rsquo;t have a camera handy? Text the number above with the words <span className="font-semibold">Hey Cara</span>.</>
+          ? <>No camera? Text the number above with the words <span className="font-semibold">Hey Evia</span>.</>
+          : <>Don&rsquo;t have a camera handy? Text the number above with the words <span className="font-semibold">Hey Evia</span>.</>
       }
     />
   );
@@ -763,14 +767,14 @@ const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }
   if (tone === 'dark') {
     return (
       <div className="text-center space-y-4">
-        <div className="text-5xl">✓</div>
-        <h2 className="text-xl font-semibold">You&rsquo;re connected</h2>
-        <p className="text-white/50 text-sm leading-relaxed">
+        <div className="text-5xl text-emerald-600">✓</div>
+        <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">You&rsquo;re connected</h2>
+        <p className="text-ink-600 text-sm leading-relaxed">
           {role === 'caregiver'
-            ? "Cara is texting you now. Keep the conversation going in Messages — she'll walk you through your profile in a few minutes."
-            : "Cara is texting you. Open Messages to continue."}
+            ? "Evia is texting you now. Keep the conversation going in Messages — she'll walk you through your profile in a few minutes."
+            : "Evia is texting you. Open Messages to continue."}
         </p>
-        <p className="text-white/25 text-xs">You can close this tab.</p>
+        <p className="text-ink-400 text-xs">You can close this tab.</p>
       </div>
     );
   }
@@ -781,11 +785,11 @@ const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
       </div>
-      <h2 className="text-2xl font-semibold text-slate-900">Cara is texting you now</h2>
-      <p className="text-slate-600 text-lg leading-relaxed">
+      <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia is texting you now</h2>
+      <p className="text-ink-600 text-lg leading-relaxed">
         Open Messages to continue. She&rsquo;ll ask a few quick questions and then show you caregivers in your area.
       </p>
-      <p className="text-slate-400 text-sm">You can close this tab — everything happens by text from here.</p>
+      <p className="text-ink-400 text-sm">You can close this tab — everything happens by text from here.</p>
     </div>
   );
 };

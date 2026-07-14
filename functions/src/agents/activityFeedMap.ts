@@ -1,4 +1,4 @@
-// Policy for projecting audit events into the family-facing "Cara Activity"
+// Policy for projecting audit events into the family-facing "Evia Activity"
 // feed (Track C / U8). This module is PURE (no firebase-admin) so it can be
 // unit-tested, and it is the single source of truth for three security
 // guarantees the doc-review surfaced:
@@ -35,31 +35,31 @@ interface ActivityPolicy {
 // Exhaustive policy map. `Record<AuditEventType, …>` forces every event type to
 // appear — adding a new AuditEventType without a decision here breaks the build.
 //
-// INCLUDED = family-side actions Cara took on the family's behalf, with no
+// INCLUDED = family-side actions Evia took on the family's behalf, with no
 // sensitive content. EXCLUDED = sensitive (crisis/safety/health), caregiver-only,
 // internal/system, failure-bookkeeping, and user-relayed actions (a user's own
-// review/like/comment is not something "Cara did").
+// review/like/comment is not something "Evia did").
 export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   // ── included: family-facing agent actions ───────────────────────────────
-  message_sent:               { included: true,  description: "Cara sent a message to your care team." },
-  booking_created:            { included: true,  description: "Cara booked a visit." },
-  booking_cancelled:          { included: true,  description: "Cara cancelled a visit." },
-  caregiver_matched:          { included: true,  description: "Cara matched you with a caregiver." },
-  interview_scheduled:        { included: true,  description: "Cara scheduled an interview." },
+  message_sent:               { included: true,  description: "Evia sent a message to your care team." },
+  booking_created:            { included: true,  description: "Evia booked a visit." },
+  booking_cancelled:          { included: true,  description: "Evia cancelled a visit." },
+  caregiver_matched:          { included: true,  description: "Evia matched you with a caregiver." },
+  interview_scheduled:        { included: true,  description: "Evia scheduled an interview." },
   // interview_responded is logged keyed to the CAREGIVER (mcp/server.ts), not the
   // family — it can never resolve to the family owner, so it is excluded (like the
   // already-excluded caregiver-side interview_feedback_submitted). The projector's
   // family-only gate would skip it anyway; excluding here is clearer.
   interview_responded:        { included: false },
-  appointment_rescheduled:    { included: true,  description: "Cara rescheduled a visit." },
-  recurring_schedule_updated: { included: true,  description: "Cara updated your recurring schedule." },
-  care_update_shared:         { included: true,  description: "Cara shared a care update with your family." },
-  care_plan_restored:         { included: true,  description: "Cara restored a previous care plan version." },
-  subscription_cancelled:     { included: true,  description: "Cara cancelled your subscription." },
-  subscription_reactivated:   { included: true,  description: "Cara reactivated your subscription." },
-  family_member_added:        { included: true,  description: "Cara added a family member to your group." },
-  family_member_invited:      { included: true,  description: "Cara invited a family member to your group." },
-  family_member_removed:      { included: true,  description: "Cara removed a family member from your group." },
+  appointment_rescheduled:    { included: true,  description: "Evia rescheduled a visit." },
+  recurring_schedule_updated: { included: true,  description: "Evia updated your recurring schedule." },
+  care_update_shared:         { included: true,  description: "Evia shared a care update with your family." },
+  care_plan_restored:         { included: true,  description: "Evia restored a previous care plan version." },
+  subscription_cancelled:     { included: true,  description: "Evia cancelled your subscription." },
+  subscription_reactivated:   { included: true,  description: "Evia reactivated your subscription." },
+  family_member_added:        { included: true,  description: "Evia added a family member to your group." },
+  family_member_invited:      { included: true,  description: "Evia invited a family member to your group." },
+  family_member_removed:      { included: true,  description: "Evia removed a family member from your group." },
 
   // ── excluded: sensitive / clinical ───────────────────────────────────────
   health_data_accessed:       { included: false },
@@ -95,7 +95,7 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   family_group_participant_added: { included: false },
   family_group_participant_add_failed: { included: false },
 
-  // ── excluded: user-relayed (the user's own action, not Cara's) ───────────
+  // ── excluded: user-relayed (the user's own action, not Evia's) ───────────
   review_submitted:           { included: false },
   care_journal_created:       { included: false },
   favorite_saved:             { included: false },

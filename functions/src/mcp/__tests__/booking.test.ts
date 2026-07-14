@@ -133,6 +133,17 @@ vi.mock("../../agents/pendingActions", async (orig) => {
 });
 
 import { handleToolCall } from "../server";
+import { setCaraActionExecutionStoreForTest } from "../../agents/actionNative/actionExecutionLedger";
+
+// Pass-through duplicate-protection store: request_booking is failClosed, so
+// an unavailable ledger (this file's firestore mock) would refuse to run at
+// all. These suites test domain behavior, so the store never caches.
+setCaraActionExecutionStoreForTest({
+  async claim() {
+    return { cached: false };
+  },
+  async settle() { /* no-op */ },
+});
 
 describe("booking tools", () => {
   beforeEach(() => {
@@ -185,7 +196,7 @@ describe("booking tools", () => {
       expect(r.notification.reason).toBe("no_caregiver_phone");
     });
 
-    it("returns notification.sent=false when Linq fails (so Cara tells the family)", async () => {
+    it("returns notification.sent=false when Linq fails (so Evia tells the family)", async () => {
       hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01" });
       hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
       trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed", error: "timeout" });
@@ -259,12 +270,19 @@ describe("booking tools", () => {
       // the wiring: the ledger is consulted with a tool-scoped key, and its
       // cached result is returned verbatim.
       ledger.claimToolExecution.mockResolvedValue({ cached: true, result: { success: true, cached: true } } as any);
-      const result = await handleToolCall("perform_web_action", {
-        _confirmedActionId: "pa_1", phone: "+15125550123", userId: "u1", loginAction: "pharmacy_refill",
-      });
-      expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
-      expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("perform_web_action");
-      expect(result).toEqual({ success: true, cached: true });
+      const previousFlag = process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
+      process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS = "true";
+      try {
+        const result = await handleToolCall("perform_web_action", {
+          _confirmedActionId: "pa_1", phone: "+15125550123", userId: "u1", loginAction: "pharmacy_refill",
+        });
+        expect(ledger.claimToolExecution).toHaveBeenCalledTimes(1);
+        expect(ledger.claimToolExecution.mock.calls[0][0]).toContain("perform_web_action");
+        expect(result).toEqual({ success: true, cached: true });
+      } finally {
+        if (previousFlag === undefined) delete process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
+        else process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS = previousFlag;
+      }
     });
 
     it("a non-idempotent confirmed tool (cancel_appointment) does NOT consult the ledger", async () => {
@@ -276,7 +294,7 @@ describe("booking tools", () => {
   });
 
   // ── U9b: read-only booking primitives extracted from request_booking ─────────
-  // These must NEVER write — the whole point is that Cara can look up a rate and
+  // These must NEVER write — the whole point is that Evia can look up a rate and
   // quote a cost without committing. Each test asserts no booking task is created.
   describe("get_caregiver_booking_rate (U9b)", () => {
     it("returns the caregiver's name + hourly rate, writing nothing", async () => {
@@ -393,6 +411,11 @@ describe("booking tools", () => {
       expect(r.success).toBe(false);
       expect(r.blocked).toBe(true);
       expect(r.reason).toBe("booking_blocked_pending_background_check");
+      // ONE VOICE (double-send fix 2026-07-06): the executor already texted the
+      // family the explanation — the result must say so, so the agent doesn't
+      // re-explain in a second bubble.
+      expect(r.sent).toBe(true);
+      expect(r.instruction).toMatch(/ALREADY been texted/i);
     });
 
     it("requires session-injected clientId and phone", async () => {

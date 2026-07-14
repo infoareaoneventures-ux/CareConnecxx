@@ -4,9 +4,19 @@ import { sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { scoreReplacements } from "../agents/replacementScorer";
 import { scheduleTrigger } from "./triggerEngine";
+import { parseScheduledTimeMs } from "../utils/scheduledTime";
+import {
+  claimExternalSideEffectOperation,
+  completeExternalSideEffectOperation,
+  externalOperationDocId,
+  failExternalSideEffectOperation,
+} from "../operations/externalSideEffect";
 
 function hoursUntil(date: string, time: string): number {
-  const apptMs = new Date(`${date}T${time.slice(0, 5)}:00`).getTime();
+  // Stored date/time are Pacific wall-clock — a naive `new Date()` parse reads
+  // them as UTC on Cloud Functions, undercounting hours-until by ~7-8h (which
+  // misrouted 24-31h-out cancellations into the same-day emergency blast).
+  const apptMs = parseScheduledTimeMs(`${date}T${time.slice(0, 5)}:00`);
   return (apptMs - Date.now()) / (1000 * 60 * 60);
 }
 
@@ -65,7 +75,7 @@ async function getCaregiverPhone(caregiverId: string): Promise<string | null> {
 
 export const onAppointmentUpdated = functions.firestore
   .document("appointments/{appointmentId}")
-  .onUpdate(async (change) => {
+  .onUpdate(async (change, context) => {
     try {
       const before = change.before.data();
       const after  = change.after.data();
@@ -79,11 +89,29 @@ export const onAppointmentUpdated = functions.firestore
       if (!phone) return;
 
       // ── Caregiver cancellation → emergency replacement flow ───────────────
-      if (
-        after.status === "cancelled" &&
-        after.cancelledBy === "caregiver"
-      ) {
-        await handleCaregiverCancellation(change.after.id, after, phone);
+      const caregiverCancellation =
+        (after.status === "cancelled" && after.cancelledBy === "caregiver") ||
+        ["caregiver_cancelled", "called_out", "caregiver_called_out"].includes(after.status);
+      if (caregiverCancellation) {
+        const transitionVersion = String(
+          after.cancellationTransitionVersion ??
+          (change.after as any).updateTime?.toMillis?.() ??
+          context.eventId,
+        );
+        const operationKey = `appointment-cancellation:${change.after.id}:v${transitionVersion}`;
+        const claim = await claimExternalSideEffectOperation({
+          operationKey,
+          operationType: "caregiver_cancellation",
+          targetId: change.after.id,
+        });
+        if (!claim) return;
+        try {
+          await handleCaregiverCancellation(change.after.id, after, phone, operationKey);
+          await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
+        } catch (error) {
+          await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
+          throw error;
+        }
         return;
       }
 
@@ -122,7 +150,9 @@ export const onAppointmentUpdated = functions.firestore
 
         if (phone && after.date && after.time) {
           try {
-            const visitMs  = new Date(`${after.date}T${after.time.slice(0, 5)}:00`).getTime();
+            // Pacific wall-clock parse (naive Date read PT as UTC → the
+            // "1h-before" reminder and "2h-before" check-in fired ~8h early).
+            const visitMs  = parseScheduledTimeMs(`${after.date}T${after.time.slice(0, 5)}:00`);
             const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
             const clientId    = sessionSnap.data()?.userId ?? after.clientId ?? "";
             const cgName      = after.caregiverName ?? "Your caregiver";
@@ -180,6 +210,7 @@ export const onAppointmentUpdated = functions.firestore
       }
     } catch (err) {
       console.error("onAppointmentUpdated error:", err);
+      throw err;
     }
   });
 
@@ -188,7 +219,8 @@ export const onAppointmentUpdated = functions.firestore
 async function handleCaregiverCancellation(
   appointmentId: string,
   appt: any,
-  phone: string
+  phone: string,
+  operationKey: string,
 ): Promise<void> {
   await getSession(phone);
 
@@ -196,7 +228,8 @@ async function handleCaregiverCancellation(
 
   // Future cancellation (> 24h out) — give family the choice
   if (hours > 24) {
-    const taskRef = await db.collection("agent_tasks").add({
+    const taskRef = db.collection("agent_tasks").doc(externalOperationDocId(`${operationKey}:task`));
+    await taskRef.set({
       type:          "replacement_or_skip",
       appointmentId,
       clientId:      appt.clientId,
@@ -204,7 +237,7 @@ async function handleCaregiverCancellation(
       status:        "awaiting_replace_or_skip",
       expiresAt:     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       createdAt:     new Date().toISOString(),
-    });
+    }, { merge: true });
 
     const daysOut = Math.round(hours / 24);
     const futureMsg =
@@ -248,7 +281,8 @@ async function handleCaregiverCancellation(
   const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
-  const taskRef = await db.collection("agent_tasks").add({
+  const taskRef = db.collection("agent_tasks").doc(externalOperationDocId(`${operationKey}:task`));
+  await taskRef.set({
     type:          "replacement",
     appointmentId,
     clientId:      appt.clientId,
@@ -258,7 +292,7 @@ async function handleCaregiverCancellation(
     status:        "awaiting_approval",
     expiresAt,
     createdAt:     new Date().toISOString(),
-  });
+  }, { merge: true });
 
   // Schedule auto-book fallback at the 30-min expiry mark
   await scheduleTrigger({
@@ -267,6 +301,9 @@ async function handleCaregiverCancellation(
     type:        "custom",
     scheduledAt: expiresAt,
     message:     `replacement_task:${taskRef.id}`,
+  }, {
+    bypassCalibration: true,
+    idempotencyKey: `${operationKey}:replacement-expiry`,
   }).catch(err => console.error("[handleCaregiverCancellation] scheduleTrigger failed:", err));
 
   const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];

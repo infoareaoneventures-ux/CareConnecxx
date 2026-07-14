@@ -1,6 +1,6 @@
 // Runtime-enforced confirmation gate for irreversible tool calls.
 //
-// Today Cara is *told* in the system prompt to confirm before
+// Today Evia is *told* in the system prompt to confirm before
 // cancel_appointment, delete_reminder, etc. — but if she forgets or is
 // prompt-injected, the action fires immediately. One bad incident in
 // eldercare is irrecoverable, so we enforce confirmation in the runtime.
@@ -69,6 +69,10 @@ const ALWAYS_CONFIRM = new Set<string>([
   // family-visible and not casually reversible, so require explicit confirmation.
   "delete_review",
   "delete_care_journal_entry",
+  // CRUD-completeness tools (2026-07-03): archiving a senior ends active care
+  // visibility, and deleting a memory file destroys content + its search index.
+  "archive_senior_profile",
+  "delete_memory_file",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
@@ -124,7 +128,7 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
     case "cancel_subscription":
-      return `Cancel CareConnex subscription`;
+      return `Cancel Evia subscription`;
     case "restore_care_plan_version":
       return `Restore care plan to version ${String(toolInput.versionId ?? "?")}`;
     case "block_user":

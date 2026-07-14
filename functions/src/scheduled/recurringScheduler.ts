@@ -1,6 +1,8 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { isUSFederalHoliday } from "../utils/holidays";
+import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -127,6 +129,7 @@ async function extendSchedule(
   if (newDates.length === 0) return;
 
   const batch = db.batch();
+  const recurringNotificationTaskId = `${scheduleId}:${newDates[0].date}:${newDates[newDates.length - 1].date}`;
   for (const { date } of newDates) {
     const ref = db.collection("appointments").doc();
     batch.set(ref, {
@@ -138,8 +141,12 @@ async function extendSchedule(
       endTime:             schedule.endTime,
       durationHours:       schedule.durationHours,
       hourlyRate:          schedule.hourlyRate,
+      seniorName:          schedule.seniorName || null,
+      ...canonicalApptFields({ startTime: schedule.startTime, durationHours: schedule.durationHours, hourlyRate: schedule.hourlyRate }),
       status:              "confirmed",
+      billingAuthority:    BILLING_AUTHORITY_VERSION,
       recurringScheduleId: scheduleId,
+      recurringNotificationTaskId,
       humanApproved:       true,
       createdAt:           new Date().toISOString(),
     });

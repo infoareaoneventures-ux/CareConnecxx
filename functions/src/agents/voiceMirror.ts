@@ -3,7 +3,7 @@
  *
  * Computes a lightweight per-family communication profile from recent inbound
  * messages and renders it as a one-line directive injected into the system
- * prompt. The goal is to make Cara's surface style track the family's: short
+ * prompt. The goal is to make Evia's surface style track the family's: short
  * texters get short replies; emoji users get emoji back; Spanish writers get
  * Spanish responses; formal writers get a more grounded register.
  *
@@ -17,7 +17,7 @@
  */
 
 // Need at least this many user messages before we trust the profile. Below
-// this we fall back to no directive (Cara's defaults are already sensible).
+// this we fall back to no directive (Evia's defaults are already sensible).
 const MIN_SAMPLE = 3;
 
 // Cap the sample window so style picked up months ago doesn't dominate the
@@ -79,7 +79,7 @@ function isProbablySpanish(text: string): boolean {
 
 /**
  * Compute a voice profile from a list of recent conversation messages. Only
- * user-role messages contribute — Cara's own messages are her style, not the
+ * user-role messages contribute — Evia's own messages are her style, not the
  * family's. Returns null when the sample is too small to be meaningful.
  */
 export function computeVoiceProfile(

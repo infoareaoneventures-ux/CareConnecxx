@@ -1,4 +1,4 @@
-# 🔒 CareConnex HIPAA Compliance & Security Checklist
+# 🔒 Evia HIPAA Compliance & Security Checklist
 
 ## CRITICAL: DO NOT LAUNCH WITHOUT THESE ITEMS
 

@@ -10,7 +10,7 @@ if (!admin.apps.length) {
 // absent on certain message.sent / reaction events). Writing those undefined
 // values into Firestore throws SYNCHRONOUSLY from validateUserInput, bypassing
 // .catch handlers and bubbling up to the webhook's top-level error handler —
-// which then ack'd Linq but skipped the qaAgent reply, surfacing as Cara's
+// which then ack'd Linq but skipped the qaAgent reply, surfacing as Evia's
 // "Give me a few minutes" deflection. Enabling ignoreUndefinedProperties on
 // the default Firestore instance silently drops undefined fields instead.
 admin.firestore().settings({ ignoreUndefinedProperties: true });
@@ -24,6 +24,23 @@ export * from './stripe';
 
 // CHECKR - Background check initiation + webhook
 export * from './checkr';
+
+// Shared caregiver profile links (/p/{id}) — per-caregiver OG tags for rich previews
+export { caregiverProfileMeta } from './caregiverProfileMeta';
+
+// Onboarding upload pages (/upload/photo|document) — static OG tags so texted
+// upload links render as branded rich cards instead of raw token URLs
+export { uploadPageMeta } from './uploadPageMeta';
+
+// Branded redirect pages (/verify/{id}, /pay/{id}) — Evia OG card + instant
+// forward to the underlying Stripe Identity / Checkout URL
+export { linkRedirect } from './linkRedirect';
+
+// Public data source for the shareable /p/{id} caregiver profile page
+// (client-side Firestore reads are rules-gated; this serves the safe subset)
+export { publicCaregiverProfile } from './publicCaregiverProfile';
+export * from './caregiverPublicProjection';
+export * from './createVideoInterviewRequest';
 
 // Export Notification Functions
 export * from './notifications';
@@ -42,14 +59,12 @@ export { sendTestSMS } from './sms';
 
 // Linq management utilities are imported by other modules — not exposed as Cloud Functions
 
-// INSTANT PAYOUT
+// INSTANT PAYOUT (standard payouts are automatic — Stripe daily schedule, no callable)
 export * from './instantPayout';
-
-// STANDARD PAYOUT (free 2-3 day)
-export * from './standardPayout';
 
 // STRIPE CONNECT (onboarding + account status)
 export * from './stripeConnect';
+export * from './referralLookup';
 
 // STRIPE CONNECT WEBHOOK (account.updated → sync caregiver status)
 export * from './stripeConnectWebhook';
@@ -72,6 +87,11 @@ export * from './triggers/jobApplicationTriggers';
 // Notification triggers (server-side, replaces client-side notification writes)
 export * from './triggers/notificationTriggers';
 
+// Interview call-link enforcement: any video_interviews doc reaching an agreed
+// status gets a Meet link generated, delivered, and reminded (covers the web
+// scheduling path, which writes Firestore directly)
+export * from './triggers/interviewLinkTrigger';
+
 // Export per-shift hours submission / review / payment
 export * from './shiftHours';
 
@@ -86,7 +106,6 @@ export * from './triggers/userCreated';
 export * from './triggers/appointmentUpdated';
 export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
-export { onShiftStatusChanged } from './triggers/shiftStatusTrigger';
 export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
 export { projectActivityFeed } from './triggers/projectActivityFeed';
 export { projectSwapRequestSummary, projectSwapOfferSummary } from './triggers/projectSwapSummary';
@@ -117,8 +136,9 @@ export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/tran
 // Shift generation: instant on acceptance + daily rolling window
 export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
 
-// Cara iMessage pivot — onboarding callables
-export { markTaskComplete } from './agents/onboardingAgent';
+// Evia iMessage pivot — onboarding callables (+ the /stripe-refresh redirect
+// that re-mints expired single-use Connect account links)
+export { markTaskComplete, uploadOnboardingFile, confirmBgcheckOnboarding, stripeConnectRefresh } from './agents/onboardingAgent';
 
 // Admin invoicing (createInvoice/sendInvoiceEmail were called by the admin
 // InvoicingTab but never deployed — this wires the backend up)
@@ -131,7 +151,7 @@ export {
   onInvoiceDeleted,
 } from './invoicing';
 
-// Cara scheduled jobs
+// Evia scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
 export { sendNextDayFamilyFeedback } from './scheduled/nextDayFamilyFeedback';
@@ -144,12 +164,20 @@ export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
 export { extendRecurringSchedules } from './scheduled/recurringScheduler';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
+export { sendInShiftUpdates } from './scheduled/inShiftUpdate';
 export { sendPreShiftFamilyCheckin } from './scheduled/preShiftFamilyCheckin';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
+export { sendLocationRequestNudges } from './scheduled/locationRequestNudge';
 export { sendClientThirtyMinReminders } from './scheduled/clientThirtyMinReminder';
 export { sendThirtyMinShiftReminders } from './scheduled/thirtyMinShiftReminder';
 export { processDndQueue } from './scheduled/dndQueueProcessor';
+export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
+// Agentic-reliability wave (2026-07): alert aging digest, hourly failure-spike
+// pager, and learned quiet-hours inference.
+export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
+export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
+export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
@@ -157,6 +185,7 @@ export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { sendPaywallWinback } from './scheduled/paywallWinback';
 export { checkBackgroundCheckExpiry } from './scheduled/backgroundCheckExpiry';
 export { wellbeingCheckinJob } from './scheduled/wellbeingCheckin';
+export { dispatchBillingApprovalNotices } from './billing/approvalNoticeDispatcher';
 
 // Proactive trigger engine (runs every 5 min)
 export { runTriggerEngine } from './triggers/triggerEngine';
@@ -181,7 +210,7 @@ export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution';
 
 // Refund auto-processing (executes Stripe refund when status → "approved")
-export { onRefundRequestWrite } from './triggers/refundProcessor';
+export { onRefundRequestWrite, reviewRefundRequest } from './triggers/refundProcessor';
 
 // CARE PLAN HISTORY trigger (saves version on every care plan write)
 export * from './triggers/carePlanHistory';
@@ -223,11 +252,43 @@ export { send1099Notifications } from './scheduled/taxReminder';
 
 // MULTI-SENIOR MIGRATION — run once via HTTP with x-admin-secret header
 export * from './migrations/migrateSeniorsToHousehold';
+export * from './migrations/backfillCaregiverSessionUserIds';
+export * from './migrations/linkPhoneProviders';
+// Field-parity backfill for pre-2026-07-05 Evia signups (experience/skills/
+// hasTransportation/weeklyAvailability on caregivers; recipientName/careTypes/
+// schedule on clientIntakes; users.uid) — dry-run first: ?dryRun=1
+export * from './migrations/backfillEviaProfileFields';
+// Care-services + availability parity (2026-07-09): canonicalize skills/services
+// to the webapp checkbox enum, re-derive weeklyAvailability at aligned block
+// boundaries, mirror jobType → jobTypes. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverServiceAvailability';
+// Identity unification: re-key legacy random-ID caregivers docs to the Auth
+// uid + re-point caregiverId child refs — dry-run first: ?dryRun=1
+export * from './migrations/rekeyLegacyCaregiverDocs';
+
+// Care-plan consolidation onto canonical care_plans/{clientId} + versions
+// subcollection (bug-audit §6.1) — DRY-RUN first: ?apply=true to write.
+export * from './migrations/migrateCarePlansToCanonical';
+
+// Web care-plan data (senior_profiles/{uid}/care_plans/default) → canonical
+// care_plans/{clientId} (web cutover 2026-07-12). Additive union-merge only,
+// legacy doc untouched. DRY-RUN first: ?apply=true to write.
+export * from './migrations/consolidateWebCarePlans';
+
+// Caregiver PII → caregivers/{id}/private/background: move legal name / DOB /
+// SSN-4 / ZIP off the world-readable parent doc. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverPrivateBackground';
+
+// Caregiver payout fields → caregivers/{id}/private/payout + stripe_accounts
+// reverse map. Phase 1 (copy) safe immediately; ?deleteParent=1 only after the
+// reader-cutover deploy is verified. Dry-run first: ?dryRun=1
+export * from './migrations/backfillCaregiverPayoutPrivate';
+export * from './migrations/backfillAppointmentScheduleFields';
 
 // fixAcceptedCounterPay migration already executed — not exported
 
 // ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
-// The original callable proactively sent Cara's greeting SMS from the old web
+// The original callable proactively sent Evia's greeting SMS from the old web
 // "Continue with Phone" screen (PhoneSignupPage). It was removed from source
 // when onboarding moved to the inbound-first model (see createWebOnboardingSession
 // below), but the deployed v1-initiateCara function kept getting called by stale
@@ -254,7 +315,7 @@ export const initiateCara = functions.https.onCall(async (data) => {
 // ── createWebOnboardingSession — authenticated callable, NEVER sends outbound SMS ──
 // Called from /start after the user verifies their phone with Firebase Phone Auth.
 // Records role + consent on a TTL'd bridge doc that the LINQ inbound webhook reads
-// when the user texts "Hey Cara" — letting us skip the SMS-side OTP step (their phone
+// when the user texts "Hey Evia" — letting us skip the SMS-side OTP step (their phone
 // possession is already proven by Firebase) and route them straight into the role-aware
 // onboarding flow.
 //
@@ -319,7 +380,63 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     createdAt:   admin.firestore.Timestamp.fromDate(now),
     ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
   }, { merge: true });
-
+  try {
+    const userRef = db.collection("users").doc(context.auth.uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? userSnap.data() ?? {} : {};
+    const userPatch: Record<string, unknown> = {
+      uid:       context.auth.uid,
+      phone,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (!userSnap.exists) {
+      userPatch.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    if (!userData.userType) {
+      userPatch.userType = role;
+    }
+    if (name) {
+      if (role === "caregiver") userPatch.name = name;
+      else userPatch.firstName = name;
+    }
+    await userRef.set(userPatch, { merge: true });
+    // Auth displayName backfill: Firebase Phone Auth creates the user with NO
+    // displayName, and several webapp surfaces render Auth displayName directly
+    // (Settings "Name" row, dashboard greeting) — without this, SMS/web-bridge
+    // signups show "—" forever even though the users doc has the name.
+    if (name) {
+      const authUser = await admin.auth().getUser(context.auth.uid).catch(() => null);
+      if (authUser && !authUser.displayName) {
+        await admin.auth().updateUser(context.auth.uid, { displayName: name }).catch((err) =>
+          console.error("createWebOnboardingSession: displayName backfill failed", {
+            uid: context.auth?.uid, err: err instanceof Error ? err.message : String(err),
+          }));
+      }
+    }
+  } catch (err) {
+    console.error("createWebOnboardingSession: failed to seed users doc", {
+      phone,
+      role,
+      uid: context.auth.uid,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    await db.collection("admin_alerts").add({
+      type:      "auth_account_create_failed",
+      role,
+      phone,
+      uid:       context.auth.uid,
+      error:     err instanceof Error ? err.message : String(err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch((alertErr) => {
+      console.error("createWebOnboardingSession: failed to write auth_account_create_failed admin alert", {
+        phone,
+        uid: context.auth?.uid,
+        err: alertErr instanceof Error ? alertErr.message : String(alertErr),
+      });
+    });
+  }
   if (referralId && role === "caregiver") {
     const referralRef = db.collection("referrals").doc(referralId);
     const authUid = context.auth.uid;
@@ -373,96 +490,61 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   return {
     success:     true,
     linqPhone:   linqPhoneNumber,
-    smsBody:     "Hey Cara",
+    smsBody:     "Hey Evia",
     expiresInMs: 30 * 60 * 1000,
   };
 });
 
 // ── chatWithCara — web callable: routes authenticated web users through qaAgent ─
 // Bridges Firebase Auth UID → phone → agent_sessions so web users get the same
-// Cara experience (memory, tool use, booking) as Linq iMessage users.
-export const chatWithCara = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
-  }
+// Evia experience (memory, tool use, booking) as Linq iMessage users.
+//
+// Unified-thread contract (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md):
+// rate check → resolve session → onboarding guard → opt-out check → per-phone
+// lock → await user-message mirror → agent. With a live Linq chat the agent
+// runs WITHOUT skipSend so sendSplit delivers the reply over SMS/iMessage and
+// auto-mirrors it into the web thread (one thread everywhere); otherwise
+// skipSend returns the reply and we mirror it manually. Rejections before the
+// mirror never leave an unanswered user bubble in the web thread.
+export const chatWithCara = functions
+  .runWith({ timeoutSeconds: 180 })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
+    }
 
-  const uid     = context.auth.uid;
-  const message = (data.message as string | undefined)?.trim();
-  if (!message) throw new functions.https.HttpsError("invalid-argument", "message is required");
+    const message         = (data.message as string | undefined)?.trim();
+    const clientMessageId = (data.clientMessageId as string | undefined)?.trim() || undefined;
+    if (!message) throw new functions.https.HttpsError("invalid-argument", "message is required");
 
-  const db = admin.firestore();
-
-  // Per-user sliding window: max 10 calls per 60 seconds
-  const rateRef  = db.collection("rate_limits").doc(`web_${uid}`);
-  const rateSnap = await rateRef.get();
-  const now      = Date.now();
-  const rateData = rateSnap.data() ?? { count: 0, windowStart: now };
-  if (rateData.windowStart < now - 60_000) {
-    await rateRef.set({ count: 1, windowStart: now });
-  } else if ((rateData.count as number) >= 10) {
-    return {
-      available:   true,
-      rateLimited: true,
-      reply:       "I'm getting a lot of messages right now — give me a moment before trying again.",
-      showMatches: false,
-    };
-  } else {
-    await rateRef.update({ count: admin.firestore.FieldValue.increment(1) });
-  }
-
-  // Resolve phone from the user's Firestore doc (populated during onboarding)
-  const userSnap = await db.collection("users").doc(uid).get();
-  const phone    = userSnap.data()?.phone as string | undefined;
-  if (!phone) {
-    return { available: false, reply: "Please complete your account setup to chat with Cara." };
-  }
-
-  // Load the agent session keyed by phone
-  const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
-  if (!sessionSnap.exists) {
-    return { available: false, reply: "Your Cara account isn't set up yet. Finish onboarding first." };
-  }
-
-  const session    = sessionSnap.data()!;
-  const userId     = session.userId     as string;
-  const seniorId   = session.seniorId   as string;
-  const zepThreadId = session.zepThreadId as string | undefined;
-
-  // Collect MCP tool names called during this invocation so we can signal the UI
-  const toolsCalled: string[] = [];
-
-  const { runQaAgent } = await import("./agents/qaAgent");
-  let reply: string;
-  try {
-    reply = await runQaAgent({
-      text:          message,
-      phone,
-      chatId:        "",       // no Linq chat for web — skipSend prevents any send attempt
-      userId,
-      seniorId,
-      zepThreadId,
-      session,
-      skipSend:      true,
-      _toolCallsOut: toolsCalled,
-      sourceChannel: "[USER]",
-    });
-  } catch (err) {
-    console.error("chatWithCara: qaAgent threw", err);
-    throw new functions.https.HttpsError("internal", "Cara is unavailable right now.");
-  }
-
-  // Signal the frontend to surface caregiver cards when the matching flow was triggered
-  const MATCH_TOOLS = new Set(["find_replacement_caregivers", "request_booking"]);
-  const showMatches = toolsCalled.some(t => MATCH_TOOLS.has(t));
-
-  return { available: true, reply, showMatches, toolsCalled };
-});
+    const { handleWebChatTurn, AgentUnavailableError } = await import("./linq/webChat");
+    try {
+      return await handleWebChatTurn({
+        uid:        context.auth.uid,
+        tokenPhone: context.auth.token.phone_number as string | undefined,
+        message,
+        clientMessageId,
+      });
+    } catch (err) {
+      if (err instanceof AgentUnavailableError) {
+        throw new functions.https.HttpsError(
+          "internal",
+          "Evia is unavailable right now.",
+          { status: "error", ...(clientMessageId ? { clientMessageId } : {}) },
+        );
+      }
+      throw err;
+    }
+  });
 
 // ── One-time Zep setup: create context template + backfill existing users ─────
-// Call once with header x-setup-key: cara-zep-setup-2026, then leave in place
-// (subsequent calls are safe — already-initialized users are skipped)
+// Gated on MIGRATION_ADMIN_SECRET like every other migration endpoint (the key
+// used to be a constant baked into source — anyone reading the repo could
+// trigger an unbounded PII push into Zep). Fails closed when the env var is
+// unset. (Subsequent calls are safe — already-initialized users are skipped.)
 export const zepSetup = functions.https.onRequest(async (req, res) => {
-  if (req.headers["x-setup-key"] !== "cara-zep-setup-2026") {
+  const setupKey = req.headers["x-setup-key"];
+  if (!process.env.MIGRATION_ADMIN_SECRET || setupKey !== process.env.MIGRATION_ADMIN_SECRET) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

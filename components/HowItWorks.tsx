@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { ViewType } from '../types';
 import { 
   ArrowLeft, Search, MessageSquare, Heart, ShieldCheck, DollarSign, 
-  Calendar, Activity, X, Users, ChevronRight, MessageCircle, Phone,
+  Calendar, X, Users, ChevronRight, MessageCircle, Phone,
   CheckCircle, MapPin, Clock, Star, ChevronDown, Zap, Lock
 } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 import { LegalDocs } from './LegalDocs';
@@ -14,7 +15,6 @@ interface HowItWorksProps {
 }
 
 export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
-   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
    const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
    const [activeFaq, setActiveFaq] = useState<number | null>(null);
    const [activeTab, setActiveTab] = useState<'families' | 'caregivers'>('families');
@@ -92,11 +92,11 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $49.99/month for unlimited access to the platform, plus the caregiver's hourly rate ($22-35/hour). There are no hidden fees, no placement fees, and no long-term contracts. Caregivers join for free and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for unlimited access to the platform, plus the caregiver's hourly rate ($22-35/hour). There are no hidden fees, no placement fees, and no long-term contracts. Caregivers join for free and keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",
-         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With CareConnex, you pay caregivers directly at market rates ($22-35/hour) plus a flat monthly fee. You get more control, better transparency, and caregivers earn more."
+         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers directly at market rates ($22-35/hour) plus a flat monthly fee. You get more control, better transparency, and caregivers earn more."
       },
       {
          q: "Are the caregivers really verified?",
@@ -125,30 +125,30 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    return (
       <div id="how-it-works" className="min-h-screen bg-white">
          <SEO
-            title="How CareConnex Works - Simple 4-Step Process"
+            title="How Evia Works - Simple 4-Step Process"
             description="Find verified caregivers in Santa Clara County in 4 simple steps. AI-powered matching and background checks included."
             keywords="how it works, find caregivers, hire caregivers, senior care process, caregiver matching, Santa Clara County"
-            canonicalUrl="https://careconnex-d4c8b.web.app/how-it-works"
+            canonicalUrl="https://www.eviacares.com/how-it-works"
          />
 
          {/* Navigation Header */}
-         <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+         <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b hairline">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                <div className="flex justify-between items-center h-20">
                   <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-                     <div className="bg-primary-600 p-2 rounded-xl shadow-lg shadow-primary-200/50">
-                        <Activity className="text-white w-6 h-6" />
+                     <div className="p-1">
+                        <BloomMark className="text-ink-900 w-5 h-5" />
                      </div>
-                     <span className="text-2xl font-bold text-slate-900 tracking-tight">CareConnex</span>
+                     <span className="font-display text-[22px] font-semibold text-ink-900 tracking-tight">Evia</span>
                   </div>
 
                   <nav className="hidden md:flex items-center space-x-8">
-                     <button onClick={() => onNavigate('client-signup')} className="text-slate-600 hover:text-primary-600 font-medium transition-colors">Find Care</button>
-                     <button onClick={() => onNavigate('caregiver-signup')} className="text-slate-600 hover:text-accent-500 font-medium transition-colors">Find Jobs</button>
+                     <button onClick={() => onNavigate('client-signup')} className="text-ink-600 hover:text-primary-600 font-medium transition-colors">Find Care</button>
+                     <button onClick={() => onNavigate('caregiver-signup')} className="text-ink-600 hover:text-accent-500 font-medium transition-colors">Find Jobs</button>
                   </nav>
 
                   <div className="flex items-center space-x-4">
-                     <button onClick={() => setIsLoginModalOpen(true)} className="hidden md:block text-slate-600 hover:text-primary-600 font-medium">Log In</button>
+                     <button onClick={() => onNavigate('login')} className="hidden md:block text-ink-600 hover:text-primary-600 font-medium">Log In</button>
                      <Button onClick={() => onNavigate('client-signup')}>Get Started</Button>
                   </div>
                </div>
@@ -157,30 +157,30 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
 
          <main>
             {/* Hero Section */}
-            <section className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-primary-900 text-white py-20 lg:py-28">
+            <section className="relative overflow-hidden bg-paper-50 py-20 lg:py-28">
                <div className="absolute inset-0 overflow-hidden">
                   <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary-500/10 to-transparent"></div>
                   <div className="absolute bottom-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
                </div>
                
                <div className="relative max-w-4xl mx-auto px-4 text-center">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 mb-8">
-                     <MapPin className="w-4 h-4 text-primary-400" />
+                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-paper-100 border hairline mb-8">
+                     <MapPin className="w-4 h-4 text-ink-600" />
                      <span className="text-sm font-medium">Now Serving Santa Clara County</span>
                   </div>
                   
-                  <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight">
-                     Finding care just got <span className="text-primary-400">simple.</span>
+                  <h1 className="font-display text-4xl md:text-6xl font-semibold tracking-[-0.02em] mb-6 leading-tight">
+                     Finding care just got <span className="text-ink-400">simple.</span>
                   </h1>
-                  <p className="text-xl text-slate-300 max-w-2xl mx-auto mb-10 leading-relaxed">
+                  <p className="text-xl text-ink-600 max-w-2xl mx-auto mb-10 leading-relaxed">
                      No agencies. No markups. No endless phone calls. Just verified, local caregivers ready to help your family.
                   </p>
 
                   {/* Feature Pills */}
                   <div className="flex flex-wrap justify-center gap-3 mb-10">
                      {features.map((feature, i) => (
-                        <div key={i} className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/10">
-                           <span className="text-primary-400">{feature.icon}</span>
+                        <div key={i} className="flex items-center gap-2 px-4 py-2 rounded-full bg-white border hairline">
+                           <span className="text-ink-600">{feature.icon}</span>
                            <span className="text-sm font-medium">{feature.text}</span>
                         </div>
                      ))}
@@ -195,15 +195,15 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* Tab Switcher */}
-            <section className="py-12 bg-slate-50 border-b border-slate-200">
+            <section className="py-12 bg-paper-50 border-b hairline">
                <div className="max-w-3xl mx-auto px-4">
-                  <div className="flex p-1 bg-white rounded-2xl shadow-sm border border-slate-200">
+                  <div className="flex p-1 bg-white rounded-2xl shadow-sm border hairline">
                      <button
                         onClick={() => setActiveTab('families')}
                         className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all ${
                            activeTab === 'families' 
-                              ? 'bg-primary-600 text-white shadow-lg' 
-                              : 'text-slate-600 hover:text-slate-900'
+                              ? 'bg-ink-900 text-white shadow-lg' 
+                              : 'text-ink-600 hover:text-ink-900'
                         }`}
                      >
                         For Families
@@ -212,8 +212,8 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         onClick={() => setActiveTab('caregivers')}
                         className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all ${
                            activeTab === 'caregivers' 
-                              ? 'bg-accent-500 text-white shadow-lg' 
-                              : 'text-slate-600 hover:text-slate-900'
+                              ? 'bg-ink-900 text-white shadow-lg' 
+                              : 'text-ink-600 hover:text-ink-900'
                         }`}
                      >
                         For Caregivers
@@ -226,10 +226,10 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             <section className="py-20 lg:py-28">
                <div className="max-w-5xl mx-auto px-4">
                   <div className="text-center mb-16">
-                     <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">
+                     <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">
                         {activeTab === 'families' ? 'Find care in 4 simple steps' : 'Start earning in 4 simple steps'}
                      </h2>
-                     <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+                     <p className="text-lg text-ink-600 max-w-2xl mx-auto">
                         {activeTab === 'families' 
                            ? 'From search to care, we handle the hard parts so you can focus on your loved one.'
                            : 'Join thousands of caregivers earning more with flexible schedules and instant payments.'
@@ -243,8 +243,8 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            key={i} 
                            className={`relative flex flex-col md:flex-row gap-6 md:gap-10 p-8 rounded-3xl border transition-all hover:shadow-lg ${
                               activeTab === 'families' 
-                                 ? 'bg-white border-slate-200 hover:border-primary-200' 
-                                 : 'bg-white border-slate-200 hover:border-accent-200'
+                                 ? 'bg-white hairline hover:border-primary-200' 
+                                 : 'bg-white hairline hover:border-accent-200'
                            }`}
                         >
                            {/* Step Number */}
@@ -259,7 +259,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            {/* Content */}
                            <div className="flex-grow">
                               <div className="flex flex-wrap items-center gap-3 mb-3">
-                                 <h3 className="text-xl font-bold text-slate-900">{step.title}</h3>
+                                 <h3 className="text-xl font-bold text-ink-900">{step.title}</h3>
                                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
                                     activeTab === 'families' 
                                        ? 'bg-primary-50 text-primary-700' 
@@ -268,12 +268,12 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                                     {step.highlight}
                                  </span>
                               </div>
-                              <p className="text-slate-600 leading-relaxed">{step.desc}</p>
+                              <p className="text-ink-600 leading-relaxed">{step.desc}</p>
                            </div>
 
                            {/* Icon */}
                            <div className={`flex-shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center ${
-                              activeTab === 'families' ? 'bg-primary-600 text-white' : 'bg-accent-500 text-white'
+                              activeTab === 'families' ? 'bg-ink-900 text-white' : 'bg-ink-900 text-white'
                            }`}>
                               {step.icon}
                            </div>
@@ -290,9 +290,9 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      >
                         {activeTab === 'families' ? 'Get Started - Find Care' : 'Join as a Caregiver'}
                      </Button>
-                     <p className="mt-4 text-sm text-slate-500">
+                     <p className="mt-4 text-sm text-ink-600">
                         {activeTab === 'families' 
-                           ? 'Free to browse. $49.99/month when you hire.' 
+                           ? 'Free to browse. $29.95/month when you hire.' 
                            : 'Free to join. Keep 100% of your rate.'
                         }
                      </p>
@@ -303,18 +303,18 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             {/* Pricing Transparency */}
             <section className="py-20 bg-white">
                <div className="max-w-4xl mx-auto px-4 text-center">
-                  <h2 className="text-3xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h2>
-                  <p className="text-slate-600 mb-12">No hidden fees. No surprises. Just straightforward care.</p>
+                  <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">Simple, transparent pricing</h2>
+                  <p className="text-ink-600 mb-12">No hidden fees. No surprises. Just straightforward care.</p>
 
                   <div className="grid md:grid-cols-2 gap-8">
                      {/* Family Pricing */}
-                     <div className="bg-slate-50 rounded-3xl p-8 border border-slate-200">
+                     <div className="bg-paper-50 rounded-3xl p-8 border hairline">
                         <div className="text-primary-600 font-semibold mb-2">For Families</div>
                         <div className="flex items-baseline justify-center gap-2 mb-4">
-                           <span className="text-5xl font-bold text-slate-900">$49.99</span>
-                           <span className="text-slate-500">/month</span>
+                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$29.95</span>
+                           <span className="text-ink-600">/month</span>
                         </div>
-                        <p className="text-slate-600 mb-6">Plus caregiver hourly rate ($22-35/hour)</p>
+                        <p className="text-ink-600 mb-6">Plus caregiver hourly rate ($22-35/hour)</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
                               'Unlimited caregiver matches',
@@ -323,7 +323,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               '24/7 customer support',
                               'Cancel anytime'
                            ].map((item, i) => (
-                              <li key={i} className="flex items-center gap-3 text-slate-600">
+                              <li key={i} className="flex items-center gap-3 text-ink-600">
                                  <CheckCircle className="w-5 h-5 text-primary-500 flex-shrink-0" />
                                  {item}
                               </li>
@@ -338,9 +338,9 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <div className="bg-accent-50 rounded-3xl p-8 border border-accent-100">
                         <div className="text-accent-600 font-semibold mb-2">For Caregivers</div>
                         <div className="flex items-baseline justify-center gap-2 mb-4">
-                           <span className="text-5xl font-bold text-slate-900">Free</span>
+                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">Free</span>
                         </div>
-                        <p className="text-slate-600 mb-6">Keep 100% of your hourly rate</p>
+                        <p className="text-ink-600 mb-6">Keep 100% of your hourly rate</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
                               'Free profile & job access',
@@ -349,7 +349,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               'Direct client relationships',
                               'Build your reputation'
                            ].map((item, i) => (
-                              <li key={i} className="flex items-center gap-3 text-slate-600">
+                              <li key={i} className="flex items-center gap-3 text-ink-600">
                                  <CheckCircle className="w-5 h-5 text-accent-500 flex-shrink-0" />
                                  {item}
                               </li>
@@ -364,29 +364,29 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* FAQ Section */}
-            <section className="py-20 bg-slate-50">
+            <section className="py-20 bg-paper-50">
                <div className="max-w-3xl mx-auto px-4">
                   <div className="text-center mb-12">
-                     <h2 className="text-3xl font-bold text-slate-900 mb-4">Frequently asked questions</h2>
-                     <p className="text-slate-600">Everything you need to know about CareConnex.</p>
+                     <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">Frequently asked questions</h2>
+                     <p className="text-ink-600">Everything you need to know about Evia.</p>
                   </div>
 
                   <div className="space-y-4">
                      {faqs.map((faq, i) => (
                         <div 
                            key={i} 
-                           className="bg-white rounded-2xl border border-slate-200 overflow-hidden"
+                           className="bg-white rounded-2xl border hairline overflow-hidden"
                         >
                            <button
                               onClick={() => setActiveFaq(activeFaq === i ? null : i)}
-                              className="w-full flex items-center justify-between p-6 text-left hover:bg-slate-50 transition-colors"
+                              className="w-full flex items-center justify-between p-6 text-left hover:bg-paper-100 transition-colors"
                            >
-                              <span className="font-semibold text-slate-900 pr-4">{faq.q}</span>
-                              <ChevronDown className={`w-5 h-5 text-slate-400 flex-shrink-0 transition-transform ${activeFaq === i ? 'rotate-180' : ''}`} />
+                              <span className="font-semibold text-ink-900 pr-4">{faq.q}</span>
+                              <ChevronDown className={`w-5 h-5 text-ink-400 flex-shrink-0 transition-transform ${activeFaq === i ? 'rotate-180' : ''}`} />
                            </button>
                            {activeFaq === i && (
                               <div className="px-6 pb-6">
-                                 <p className="text-slate-600 leading-relaxed">{faq.a}</p>
+                                 <p className="text-ink-600 leading-relaxed">{faq.a}</p>
                               </div>
                            )}
                         </div>
@@ -394,7 +394,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                   </div>
 
                   <div className="mt-10 text-center">
-                     <p className="text-slate-600 mb-4">Still have questions?</p>
+                     <p className="text-ink-600 mb-4">Still have questions?</p>
                      <Button onClick={() => onNavigate('client-signup')} variant="outline">
                         Get Started
                      </Button>
@@ -403,9 +403,9 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* Partner Logos */}
-            <section className="py-16 bg-white border-y border-slate-100">
+            <section className="py-16 bg-white border-y hairline">
                <div className="max-w-5xl mx-auto px-4">
-                  <p className="text-center text-sm font-semibold text-slate-400 uppercase tracking-wider mb-8">
+                  <p className="text-center text-sm font-semibold text-ink-400 uppercase tracking-wider mb-8">
                      Trusted Partners & Integrations
                   </p>
                   <div className="flex flex-wrap justify-center items-center gap-8 md:gap-16">
@@ -414,7 +414,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         href="https://stripe.com" 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
+                        className="flex items-center gap-2 text-ink-600 hover:text-ink-900 transition-colors"
                      >
                         <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
                            <span className="text-white font-bold text-sm">S</span>
@@ -427,7 +427,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         href="https://checkr.com" 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
+                        className="flex items-center gap-2 text-ink-600 hover:text-ink-900 transition-colors"
                      >
                         <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center">
                            <CheckCircle className="w-5 h-5 text-white" />
@@ -436,78 +436,78 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      </a>
                      
                      {/* WhatsApp */}
-                     <div className="flex items-center gap-2 text-slate-600">
+                     <div className="flex items-center gap-2 text-ink-600">
                         <MessageCircle className="w-8 h-8 text-green-500" />
                         <span className="text-xl font-bold">WhatsApp</span>
                      </div>
                   </div>
-                  <p className="text-center text-sm text-slate-500 mt-6">
+                  <p className="text-center text-sm text-ink-600 mt-6">
                      Payments by Stripe • Background checks by Checkr
                   </p>
                </div>
             </section>
 
             {/* Agency Comparison Table */}
-            <section className="py-20 bg-slate-50">
+            <section className="py-20 bg-paper-50">
                <div className="max-w-4xl mx-auto px-4">
                   <div className="text-center mb-12">
-                     <h2 className="text-3xl font-bold text-slate-900 mb-4">Why families choose CareConnex</h2>
-                     <p className="text-slate-600">See how we compare to traditional care agencies</p>
+                     <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">Why families choose Evia</h2>
+                     <p className="text-ink-600">See how we compare to traditional care agencies</p>
                   </div>
 
-                  <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
+                  <div className="bg-white rounded-3xl shadow-xl overflow-hidden border hairline">
                      <div className="overflow-x-auto">
                         <table className="w-full">
                            <thead>
                               <tr className="bg-slate-900 text-white">
                                  <th className="py-4 px-6 text-left font-semibold">Feature</th>
-                                 <th className="py-4 px-6 text-center font-semibold bg-primary-600">CareConnex</th>
-                                 <th className="py-4 px-6 text-center font-semibold text-slate-400">Traditional Agency</th>
+                                 <th className="py-4 px-6 text-center font-semibold bg-primary-600">Evia</th>
+                                 <th className="py-4 px-6 text-center font-semibold text-ink-400">Traditional Agency</th>
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-100">
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Hourly Rate</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Hourly Rate</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <span className="font-bold text-primary-700">$22-35/hour</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">$35-50/hour</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">$35-50/hour</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Agency Markup</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Agency Markup</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <span className="font-bold text-primary-700">None</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">40-50%</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">40-50%</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Contract</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Contract</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <span className="font-bold text-primary-700">Cancel anytime</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">6-12 months</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">6-12 months</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Background Checks</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Background Checks</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <CheckCircle className="w-5 h-5 text-primary-600 mx-auto" />
                                     <span className="text-sm text-primary-700">Included</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">Varies</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">Varies</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Caregiver Choice</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Caregiver Choice</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <span className="font-bold text-primary-700">You choose</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">They assign</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">They assign</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-slate-900">Platform Fee</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Platform Fee</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">$49.99/month</span>
+                                    <span className="font-bold text-primary-700">$29.95/month</span>
                                  </td>
-                                 <td className="py-4 px-6 text-center text-slate-500">Hidden in markup</td>
+                                 <td className="py-4 px-6 text-center text-ink-600">Hidden in markup</td>
                               </tr>
                            </tbody>
                         </table>
@@ -515,7 +515,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                   </div>
 
                   <div className="mt-8 text-center">
-                     <p className="text-slate-600 mb-4">Average family savings: <span className="font-bold text-primary-600">$400-800/month</span></p>
+                     <p className="text-ink-600 mb-4">Average family savings: <span className="font-bold text-primary-600">$400-800/month</span></p>
                      <Button size="lg" onClick={() => onNavigate('client-signup')}>
                         Start Saving Today
                      </Button>
@@ -531,17 +531,17 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <MapPin className="w-4 h-4" />
                         Now Serving Santa Clara County
                      </div>
-                     <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">
+                     <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">
                         Care available across Santa Clara County
                      </h2>
-                     <p className="text-slate-600 max-w-2xl mx-auto">
+                     <p className="text-ink-600 max-w-2xl mx-auto">
                         From San Jose to Palo Alto, we're bringing quality in-home care to families throughout the Bay Area.
                      </p>
                   </div>
 
                   <div className="grid md:grid-cols-2 gap-8 items-center">
                      {/* Map Visual */}
-                     <div className="bg-gradient-to-br from-primary-50 to-blue-50 rounded-3xl p-8 border border-primary-100">
+                     <div className="bg-white rounded-3xl p-8 border hairline">
                         <div className="aspect-square bg-white rounded-2xl shadow-lg p-6 flex items-center justify-center relative overflow-hidden">
                            {/* Stylized Map of Santa Clara County */}
                            <svg viewBox="0 0 400 400" className="w-full h-full">
@@ -588,11 +588,11 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg p-2 text-xs">
                               <div className="flex items-center gap-2">
                                  <div className="w-3 h-3 rounded-full bg-primary-500"></div>
-                                 <span className="text-slate-600">Main Hub</span>
+                                 <span className="text-ink-600">Main Hub</span>
                               </div>
                               <div className="flex items-center gap-2 mt-1">
                                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                 <span className="text-slate-600">Service Area</span>
+                                 <span className="text-ink-600">Service Area</span>
                               </div>
                            </div>
                         </div>
@@ -601,7 +601,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      {/* Cities List */}
                      <div className="space-y-6">
                         <div>
-                           <h3 className="text-xl font-bold text-slate-900 mb-4">Cities We Serve</h3>
+                           <h3 className="text-xl font-bold text-ink-900 mb-4">Cities We Serve</h3>
                            <div className="grid grid-cols-2 gap-3">
                               {[
                                  'San Jose',
@@ -617,7 +617,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                                  'Los Altos',
                                  'Morgan Hill'
                               ].map((city) => (
-                                 <div key={city} className="flex items-center gap-2 text-slate-600">
+                                 <div key={city} className="flex items-center gap-2 text-ink-600">
                                     <MapPin className="w-4 h-4 text-primary-500 flex-shrink-0" />
                                     <span>{city}</span>
                                  </div>
@@ -628,7 +628,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <div className="bg-primary-50 rounded-2xl p-6 border border-primary-100">
                            <h4 className="font-semibold text-primary-900 mb-2">Don't see your city?</h4>
                            <p className="text-primary-700 text-sm mb-4">
-                              We're expanding throughout the Bay Area. Email <a href="mailto:hello@careconnex.com" className="font-semibold underline">hello@careconnex.com</a> to check availability in your neighborhood.
+                              We're expanding throughout the Bay Area. Email <a href="mailto:hello@eviacares.com" className="font-semibold underline">hello@eviacares.com</a> to check availability in your neighborhood.
                            </p>
                         </div>
                      </div>
@@ -637,13 +637,13 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* Trust & Safety */}
-            <section className="py-20 bg-slate-900 text-white">
+            <section className="py-20 bg-paper-100 border-t hairline">
                <div className="max-w-4xl mx-auto px-4 text-center">
-                  <div className="inline-flex p-4 bg-primary-500/20 rounded-full mb-6">
-                     <ShieldCheck className="w-8 h-8 text-primary-400" />
+                  <div className="inline-flex p-4 bg-paper-200 rounded-full mb-6">
+                     <ShieldCheck className="w-8 h-8 text-ink-900" />
                   </div>
-                  <h2 className="text-3xl font-bold mb-6">Safety is our obsession.</h2>
-                  <p className="text-slate-300 max-w-2xl mx-auto mb-12">
+                  <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] mb-6">Safety is our obsession.</h2>
+                  <p className="text-ink-600 max-w-2xl mx-auto mb-12">
                      We know you're trusting us with your loved ones. Here's how we earn that trust every day.
                   </p>
 
@@ -659,7 +659,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            <CheckCircle className="w-6 h-6 text-primary-400 flex-shrink-0 mt-0.5" />
                            <div>
                               <h3 className="font-semibold mb-1">{item.title}</h3>
-                              <p className="text-slate-400 text-sm">{item.desc}</p>
+                              <p className="text-ink-400 text-sm">{item.desc}</p>
                            </div>
                         </div>
                      ))}
@@ -668,16 +668,16 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* Final CTA */}
-            <section className="py-20 bg-gradient-to-br from-primary-600 to-cyan-600 text-white">
+            <section className="py-20 bg-paper-100 border-t hairline">
                <div className="max-w-3xl mx-auto px-4 text-center">
-                  <h2 className="text-3xl md:text-4xl font-bold mb-6">Ready to find the perfect care?</h2>
-                  <p className="text-xl text-primary-100 mb-10">
-                     Join hundreds of families in Santa Clara County who trust CareConnex for their loved ones.
+                  <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-[-0.02em] mb-6">Ready to find the perfect care?</h2>
+                  <p className="text-xl text-ink-600 mb-10">
+                     Join hundreds of families in Santa Clara County who trust Evia for their loved ones.
                   </p>
                   <div className="flex flex-col sm:flex-row justify-center gap-4">
                      <Button
                         size="lg"
-                        className="bg-white text-primary-700 hover:bg-primary-50 shadow-xl"
+                        className=""
                         onClick={() => onNavigate('client-signup')}
                      >
                         Get Started Today
@@ -687,64 +687,23 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             </section>
 
             {/* Footer */}
-            <footer className="bg-slate-50 py-12 border-t border-slate-200">
+            <footer className="bg-paper-50 py-12 border-t hairline">
                <div className="max-w-4xl mx-auto px-4 text-center">
                   <div className="flex justify-center gap-6 mb-6">
-                     <button onClick={() => onNavigate('client-signup')} className="text-primary-600 font-semibold hover:underline">Sign up as Family</button>
-                     <button onClick={() => onNavigate('caregiver-signup')} className="text-accent-500 font-semibold hover:underline">Sign up as Caregiver</button>
+                     <button onClick={() => onNavigate('client-signup')} className="text-ink-600 font-medium hover:text-ink-900">Sign up as Family</button>
+                     <button onClick={() => onNavigate('caregiver-signup')} className="text-ink-600 font-medium hover:text-ink-900">Sign up as Caregiver</button>
                   </div>
-                  <div className="flex gap-6 justify-center text-sm text-slate-400">
-                     <button onClick={() => setLegalModal('privacy')} className="hover:text-slate-600">Privacy Policy</button>
-                     <button onClick={() => setLegalModal('terms')} className="hover:text-slate-600">Terms of Service</button>
+                  <div className="flex gap-6 justify-center text-sm text-ink-400">
+                     <button onClick={() => setLegalModal('privacy')} className="hover:text-ink-600">Privacy Policy</button>
+                     <button onClick={() => setLegalModal('terms')} className="hover:text-ink-600">Terms of Service</button>
                   </div>
-                  <p className="mt-8 text-sm text-slate-400">
-                     © 2026 CareConnex. Serving Santa Clara County.
+                  <p className="mt-8 text-sm text-ink-400">
+                     © 2026 Evia. Serving Santa Clara County.
                   </p>
                </div>
             </footer>
 
             {legalModal && <LegalDocs type={legalModal} onClose={() => setLegalModal(null)} />}
-
-            {isLoginModalOpen && (
-               <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                  <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsLoginModalOpen(false)} />
-                  <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 animate-slide-in">
-                     <button onClick={() => setIsLoginModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={24} /></button>
-                     <h2 className="text-2xl font-bold text-center text-slate-900 mb-2">Welcome Back</h2>
-                     <p className="text-slate-500 text-center mb-8">Please choose your account type</p>
-
-                     <div className="space-y-4">
-                        <button
-                           onClick={() => onNavigate('client-login')}
-                           className="w-full p-4 rounded-xl border-2 border-slate-100 hover:border-primary-500 hover:bg-primary-50 transition-all flex items-center group"
-                        >
-                           <div className="bg-primary-100 p-3 rounded-full text-primary-600 group-hover:bg-primary-600 group-hover:text-white transition-colors">
-                              <Users className="w-6 h-6" />
-                           </div>
-                           <div className="ml-4 text-left">
-                              <h3 className="font-bold text-slate-900 group-hover:text-primary-700">Family / Client</h3>
-                              <p className="text-xs text-slate-500">Find and manage care</p>
-                           </div>
-                           <ChevronRight className="ml-auto text-slate-300 group-hover:text-primary-500" />
-                        </button>
-
-                        <button
-                           onClick={() => onNavigate('caregiver-login')}
-                           className="w-full p-4 rounded-xl border-2 border-slate-100 hover:border-accent-500 hover:bg-accent-50 transition-all flex items-center group"
-                        >
-                           <div className="bg-accent-100 p-3 rounded-full text-accent-600 group-hover:bg-accent-500 group-hover:text-white transition-colors">
-                              <Heart className="w-6 h-6" />
-                           </div>
-                           <div className="ml-4 text-left">
-                              <h3 className="font-bold text-slate-900 group-hover:text-accent-700">Caregiver</h3>
-                              <p className="text-xs text-slate-500">Manage jobs and payouts</p>
-                           </div>
-                           <ChevronRight className="ml-auto text-slate-300 group-hover:text-accent-500" />
-                        </button>
-                     </div>
-                  </div>
-               </div>
-            )}
          </main>
       </div>
    );

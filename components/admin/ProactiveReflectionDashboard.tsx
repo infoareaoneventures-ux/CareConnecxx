@@ -310,7 +310,7 @@ export const ProactiveReflectionDashboard: React.FC<Props> = ({ onShowToast }) =
                 <Clock className="w-3 h-3" /> {formatRelative(selected.createdAt)}
               </span>
             </div>
-            <h3 className="text-xl font-semibold text-slate-900 mb-4">Cara's proposed message</h3>
+            <h3 className="text-xl font-semibold text-slate-900 mb-4">Evia's proposed message</h3>
 
             {/* Draft text — editable in edit mode */}
             <div className="mb-6">
@@ -344,7 +344,7 @@ export const ProactiveReflectionDashboard: React.FC<Props> = ({ onShowToast }) =
               </p>
             </div>
 
-            {/* Why Cara surfaced this */}
+            {/* Why Evia surfaced this */}
             <div className="mb-6">
               <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Why surfaced</div>
               <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-slate-700 flex items-start gap-2">

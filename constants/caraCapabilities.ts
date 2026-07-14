@@ -1,4 +1,4 @@
-// Frontend mirror of Cara's user-facing capabilities.
+// Frontend mirror of Evia's user-facing capabilities.
 //
 // The canonical list lives in `functions/src/agents/caraCapabilities.ts` (used by
 // the SMS welcome menu and `/help`). The frontend and Cloud Functions runtimes
@@ -7,7 +7,7 @@
 // id/label/example/featured AND the Spanish labelEs/exampleEs fields match the
 // backend entry-for-entry.
 //
-// Consumed by the in-app Cara surface (components/AiSearchAgent.tsx) for
+// Consumed by the in-app Evia surface (components/AiSearchAgent.tsx) for
 // suggestion chips and the in-app `/help` capability menu.
 
 export type CapabilityRole = "client" | "caregiver";
@@ -68,15 +68,22 @@ export function capabilityExample(e: FrontendCapabilityEntry, locale?: string | 
 
 /**
  * Build the in-app `/help` capability menu (mirrors the backend buildCapabilityMenu).
- * Rendered as a Cara message bubble when the user invokes `/help` in the app.
+ * Rendered as an Evia message bubble when the user invokes `/help` in the app.
  */
 export function buildCapabilityMenu(role: CapabilityRole | string | undefined | null, locale?: string | null): string {
   const es = isSpanish(locale);
-  const entries = CARA_CAPABILITIES[normalizeRole(role)];
-  const header = es ? "Esto es lo que puedo hacer por ti:" : "Here's what I can help you with:";
-  const lines = entries.map((e) => `• ${es ? e.labelEs : e.label} — "${es ? e.exampleEs : e.example}"`);
-  const footer = es
-    ? 'Solo dime qué necesitas, o escribe "/help" para ver esto otra vez.'
-    : 'Just tell me what you need, or type "/help" to see this again.';
-  return `${header}\n\n${lines.join("\n")}\n\n${footer}`;
+  const entries = CARA_CAPABILITIES[normalizeRole(role)].filter((e) => e.featured).slice(0, 4);
+  const examples = entries.map((e) => `"${es ? e.exampleEs : e.example}"`);
+  const joinWord = es ? "o" : "or";
+  const joined = examples.length <= 1
+    ? examples.join("")
+    : `${examples.slice(0, -1).join(", ")}, ${joinWord} ${examples[examples.length - 1]}`;
+  const lead = es
+    ? "Puedo coordinar cuidado contigo por aquí."
+    : "I can coordinate care with you right here.";
+  const exampleLead = es ? "Por ejemplo:" : "For example:";
+  const ask = es
+    ? "Dime qué necesitas en una frase."
+    : "Tell me what you need in one sentence.";
+  return `${lead} ${exampleLead} ${joined}. ${ask}`;
 }

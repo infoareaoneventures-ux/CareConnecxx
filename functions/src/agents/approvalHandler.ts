@@ -1,6 +1,6 @@
 // Handles inbound family/caregiver replies when a pending irreversible
 // action is awaiting confirmation. Runs BEFORE the main intent classifier
-// in the webhook dispatch order, because once Cara has proposed
+// in the webhook dispatch order, because once Evia has proposed
 // "cancel Tuesday's visit — yes or no?", the natural-language flexibility
 // of the reply ("yeah", "go ahead", "actually no", "wait what time was
 // it") needs a focused classifier instead of the 50-intent generalist.
@@ -186,7 +186,7 @@ async function executeConfirmedAction(params: {
       toolName:         pending.toolName,
       targetCollection: "pending_actions",
       targetDocId:      pending.id,
-      message:          `Cara could not complete an approved action: ${pending.preview}`,
+      message:          `Evia could not complete an approved action: ${pending.preview}`,
       reason:           executionPreview,
       context: {
         preview:          pending.preview,
@@ -244,7 +244,7 @@ export async function handlePendingApproval(params: {
     // Don't resolve the pending action — let the QA agent answer the question
     // and re-prompt for confirmation. The webhook caller treats this as a
     // normal QA turn but should inject context about the pending action
-    // so Cara knows what's still awaiting confirmation.
+    // so Evia knows what's still awaiting confirmation.
     return { outcome: "fallthrough", reason: "question" };
   }
 
@@ -305,7 +305,7 @@ export async function handlePendingApprovals(params: {
   }
 
   // getAllPending returns newest-first; show and execute in proposal order
-  // so "1." matches what Cara asked about first.
+  // so "1." matches what Evia asked about first.
   const ordered = [...pendings].reverse();
   const combinedPreview = ordered.map((p, i) => `${i + 1}. ${p.preview}`).join("  ");
   const decision = await classifyApproval(text, combinedPreview);

@@ -195,14 +195,14 @@ describe("splitTextAndUrls — plain-string URL extraction", () => {
     expect(parts(bodies[2])[0]).toEqual({ type: "link", value: "https://cara.app/docs" });
   });
 
-  it("prepends https:// to a bare hostname URL", async () => {
+  it("prepends https:// to a bare hostname URL (external host → card)", async () => {
     const { sendMessage } = await import("./client");
-    await sendMessage("chat-1", "Browse caregivers at careconnex.com/find");
+    await sendMessage("chat-1", "Book your visit at cara.app/book");
 
     const bodies = messageBodies();
     expect(bodies.length).toBe(2);
-    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Browse caregivers at" }]);
-    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://careconnex.com/find" });
+    expect(parts(bodies[0])).toEqual([{ type: "text", value: "Book your visit at" }]);
+    expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://cara.app/book" });
   });
 
   it("moves trailing sentence punctuation off the URL and back into the text", async () => {
@@ -232,6 +232,79 @@ describe("splitTextAndUrls — plain-string URL extraction", () => {
     const bodies = messageBodies();
     expect(bodies.length).toBe(1);
     expect(parts(bodies[0])[0]).toEqual({ type: "link", value: "https://cara.app/plan" });
+  });
+
+  // ── Card-safety (link-audit 2026-07-08) ────────────────────────────────────
+  // A link-part preview card requires the URL to serve OG metadata. App-hosted
+  // SPA routes (other than /p/**, which has the v1-caregiverProfileMeta OG
+  // rewrite) and raw storage files have none — Linq renders a BLANK card (the
+  // live "message arrives but no link" bug). Those URLs must deliver as
+  // tappable inline text instead; external provider URLs keep their cards.
+  describe("card-safety — no-OG URLs never become blank preview cards", () => {
+    it("keeps an app-hosted route INLINE in the text bubble (no card)", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", "Update billing at https://www.eviacares.com/client/membership today.");
+
+      const bodies = messageBodies();
+      expect(bodies.length).toBe(1);
+      expect(parts(bodies[0])[0].type).toBe("text");
+      expect(parts(bodies[0])[0].value).toContain("https://www.eviacares.com/client/membership");
+    });
+
+    it("still promotes an app-hosted /p/ profile URL to a link card (OG rewrite exists)", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", "Meet Maria: https://www.eviacares.com/p/cg123");
+
+      const bodies = messageBodies();
+      expect(bodies.length).toBe(2);
+      expect(parts(bodies[1])[0]).toEqual({ type: "link", value: "https://www.eviacares.com/p/cg123" });
+    });
+
+    it("downgrades an explicit link part for a no-OG app-hosted route to a text part", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/done?task=x&t=abc.def-ghi" }] });
+
+      expect(messageBodies()[0].message.parts[0]).toEqual(
+        { type: "text", value: "https://www.eviacares.com/done?task=x&t=abc.def-ghi" });
+    });
+
+    it("keeps app-hosted /upload/ and /bgcheck link parts as cards (v1-uploadPageMeta OG rewrite exists)", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" }] });
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://www.eviacares.com/bgcheck?t=abc.def-ghi" }] });
+
+      expect(messageBodies()[0].message.parts[0]).toEqual(
+        { type: "link", value: "https://www.eviacares.com/upload/photo?t=abc.def-ghi" });
+      expect(messageBodies()[1].message.parts[0]).toEqual(
+        { type: "link", value: "https://www.eviacares.com/bgcheck?t=abc.def-ghi" });
+    });
+
+    it("downgrades a raw storage-file link part (no HTML to crawl) to a text part", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://firebasestorage.googleapis.com/v0/b/x/o/invite.ics?alt=media&token=t1" }] });
+
+      expect(messageBodies()[0].message.parts[0].type).toBe("text");
+      expect(messageBodies()[0].message.parts[0].value).toContain("invite.ics");
+    });
+
+    it("keeps an external Stripe checkout link part as a card", async () => {
+      const { sendMessage } = await import("./client");
+      await sendMessage("chat-1", { parts: [{ type: "link", value: "https://checkout.stripe.com/c/pay/cs_live_1" }] });
+
+      expect(messageBodies()[0].message.parts[0]).toEqual(
+        { type: "link", value: "https://checkout.stripe.com/c/pay/cs_live_1" });
+    });
+
+    it("never lets the voice linter mangle a token inside an inline URL", async () => {
+      const { sendMessage } = await import("./client");
+      // "-bot-" sits on word boundaries ("-" is non-word), which the linter's
+      // \b(?:virtual assistant|chatbot|bot)\b ban would rewrite to "Evia" —
+      // bricking the token. The URL mask must carry it through verbatim.
+      const url = "https://www.eviacares.com/upload/photo?t=eyJhb.x-bot-9.zZz";
+      await sendMessage("chat-1", { parts: [{ type: "text", value: `Tap to upload:\n${url}` }] });
+
+      expect(messageBodies()[0].message.parts[0].value).toContain(url);
+    });
   });
 
   it("sends a no-URL string as a single text bubble, never a link part", async () => {

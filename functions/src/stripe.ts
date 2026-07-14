@@ -5,6 +5,7 @@ import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from 
 import { fetchWithTimeout } from './utils/httpTimeout';
 import { appLink } from './config/appUrl';
 import { assertMvrPaymentConfig, assertMvrCheckConfig } from './mvrConfig';
+import { writeCaregiverBackgroundPII } from './caregiverPrivate';
 
 // Initialize Stripe with secret key
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -29,7 +30,10 @@ const ALLOWED_PRICE_IDS = [
   process.env.STRIPE_PRICE_MONTHLY        || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
   process.env.STRIPE_PRICE_QUARTERLY      || '',
   process.env.STRIPE_PRICE_ANNUAL         || '',
-  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
+  // $66.49/yr caregiver background check (Essential Criminal via Checkr); the
+  // legacy $24.95 membership price stays allowed for in-flight checkouts.
+  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TqGrEL7Ss5iuUb7gW7DsMtA',
+  'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
   process.env.STRIPE_CAREGIVER_MONTHLY    || '',
   MEMBERSHIP_PRICE_ID,
 ].filter(Boolean);
@@ -298,7 +302,7 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
  * For caregiver payments: auto-initiate Checkr background check + set verificationStatus submitted
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
-  // Cara iMessage onboarding — advance step when client finishes payment setup
+  // Evia iMessage onboarding — advance step when client finishes payment setup
   if (session.metadata?.task === 'client_payment_setup' && session.metadata?.phone) {
     try {
       const phone = session.metadata.phone;
@@ -314,6 +318,19 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
           ...(customerId ? { stripeCustomerId: customerId } : {}),
         }).catch(() => {});
       }
+      if (!subscriptionId) {
+        console.error(`client_payment_setup completed without subscription id for phone=${phone}; membership remains inactive`);
+        await admin.firestore().collection('admin_alerts').add({
+          type: 'client_membership_missing_subscription',
+          phone,
+          stripeCheckoutSessionId: session.id,
+          stripeCustomerId: customerId || null,
+          severity: 'high',
+          resolved: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return;
+      }
       // Pass the subscription id through so the user doc records a REAL subscription.
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
       await advanceOnboardingStep(phone, 'payment', subscriptionId);
@@ -323,19 +340,39 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Cara iMessage onboarding — caregiver membership payment complete
+  // Evia iMessage onboarding — caregiver membership payment complete
   if (session.metadata?.task === 'caregiver_membership' && session.metadata?.phone) {
     try {
       const phone = session.metadata.phone;
       const subscriptionId = typeof session.subscription === 'string'
         ? session.subscription
         : (session.subscription as any)?.id ?? '';
+      const customerId = typeof session.customer === 'string'
+        ? session.customer
+        : (session.customer as any)?.id ?? '';
       const update: Record<string, unknown> = {};
       // If MVR was included in the checkout, flag the session so Checkr uses the MVR package
       if (session.metadata?.includeMVR === 'true') update.mvrPaid = true;
       if (subscriptionId) update.caregiverSubscriptionId = subscriptionId;
+      // Stamped so advanceOnboardingStep can mirror it to customers/{uid} —
+      // the caregiver billing portal (createCaregiverBillingPortalSession)
+      // resolves the Stripe customer from that doc.
+      if (customerId) update.stripeCustomerId = customerId;
       if (Object.keys(update).length) {
         await admin.firestore().collection('agent_sessions').doc(phone).update(update).catch(() => {});
+      }
+      if (!subscriptionId) {
+        console.error(`caregiver_membership completed without subscription id for phone=${phone}; membership remains inactive`);
+        await admin.firestore().collection('admin_alerts').add({
+          type: 'caregiver_membership_missing_subscription',
+          phone,
+          stripeCheckoutSessionId: session.id,
+          stripeCustomerId: customerId || null,
+          severity: 'high',
+          resolved: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
+        return;
       }
       const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
       await advanceOnboardingStep(phone, 'membership', '');
@@ -345,7 +382,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Cara SMS — standalone "add MVR later" one-time payment complete. Resolve the
+  // Evia SMS — standalone "add MVR later" one-time payment complete. Resolve the
   // caregiver behind this phone and kick off an MVR-only check (idempotent).
   if (session.metadata?.task === 'mvr_payment' && session.metadata?.phone) {
     const phone = session.metadata.phone;
@@ -406,8 +443,26 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const userId = session.metadata?.firebaseUID;
   if (!userId) return;
 
+  const subscriptionId = typeof session.subscription === 'string'
+    ? session.subscription
+    : (session.subscription as any)?.id ?? '';
+  if (!subscriptionId) {
+    console.error(`Membership checkout ${session.id} completed without subscription id for user=${userId}; membership remains inactive`);
+    await admin.firestore().collection('admin_alerts').add({
+      type: 'membership_missing_subscription',
+      userId,
+      stripeCheckoutSessionId: session.id,
+      severity: 'high',
+      resolved: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
+    return;
+  }
+
   await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: 'active',
+    subscriptionActive: true,
+    subscriptionId,
     stripeCustomerId: session.customer,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -472,7 +527,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG_BASE = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
     let CHECKR_PKG = CHECKR_PKG_BASE;
     if (includeMVRFlag) {
       try {
@@ -528,27 +583,54 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     });
 
     const invOk = invRes.ok;
+    let invitationUrl: string | undefined;
     if (!invOk) {
       const errText = await invRes.text().catch(() => '');
       console.error(`Checkr invitation failed for ${userId}: ${invRes.status} ${errText}`);
+    } else {
+      const inv = await invRes.json().catch(() => null);
+      if (typeof inv?.invitation_url === 'string') invitationUrl = inv.invitation_url;
     }
 
+    // Identity PII → owner/admin-only private subcollection, not the parent.
+    await writeCaregiverBackgroundPII(userId, { legalFirstName: firstName, legalLastName: lastName, zip: zipCode });
     await admin.firestore().collection('caregivers').doc(userId).set({
       membershipPaid: true,
       ...(includeMVRFlag && { mvrPaid: true }),
       verificationStatus: 'submitted',
       backgroundCheckData: {
         checkrCandidateId: candidateId,
-        legalFirstName: firstName,
-        legalLastName: lastName,
-        zip: zipCode,
         submittedAt: new Date().toISOString(),
         status: 'pending',
         invitationStatus: invOk ? 'sent' : 'error',
+        ...(invitationUrl && { invitationUrl }),
         initiatedVia: 'stripe_webhook',
         ...(includeMVRFlag && { mvrIncluded: true }),
       },
     }, { merge: true });
+
+    // Text the caregiver their background-check link. Checkr also emails it, but
+    // an SMS-first caregiver may never see that email — the link must reach them
+    // where the rest of onboarding happens.
+    const caregiverPhone = (caregiverData.phone || '').trim();
+    if (invitationUrl && caregiverPhone) {
+      try {
+        await admin.firestore().collection('agent_sessions').doc(caregiverPhone).update({
+          bgcheckInviteUrl: invitationUrl,
+        }).catch(() => {});
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(caregiverPhone, {
+          content:
+            'Payment received! Next step: your background check — it usually takes about 5 minutes. ' +
+            `Tap to get started: ${invitationUrl}`,
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (err) {
+        console.error(`Failed to text bg-check link to caregiver ${userId}:`, err);
+      }
+    }
 
     await admin.firestore().collection('users').doc(userId).set({
       verificationStatus: 'submitted',
@@ -562,6 +644,63 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 }
 
 /**
+ * Resolve the Firebase uid behind a subscription. Web-created subscriptions
+ * carry firebaseUID metadata; Evia SMS checkouts only carry `phone`
+ * (subscription_data.metadata, onboardingConversation.ts) — resolve those via
+ * the agent session / Auth / the recorded subscription id so renewal,
+ * payment-failure, and cancellation webhooks aren't blind to SMS members.
+ */
+async function resolveSubscriptionUserId(subscription: Stripe.Subscription): Promise<string | null> {
+  const direct = subscription.metadata?.firebaseUID;
+  if (direct) return direct;
+
+  const phone = subscription.metadata?.phone;
+  if (phone) {
+    try {
+      const sess = await admin.firestore().collection('agent_sessions').doc(phone).get();
+      const viaSession = (sess.data()?.userId ?? sess.data()?.caregiverId) as string | undefined;
+      if (viaSession) return viaSession;
+    } catch { /* fall through */ }
+    try {
+      return (await admin.auth().getUserByPhoneNumber(phone)).uid;
+    } catch { /* fall through */ }
+  }
+
+  // Last resort: the onboarding mirrors recorded the subscription id on the docs.
+  try {
+    const cg = await admin.firestore().collection('caregivers')
+      .where('membershipSubscriptionId', '==', subscription.id).limit(1).get();
+    if (!cg.empty) return cg.docs[0].id;
+    const us = await admin.firestore().collection('users')
+      .where('subscriptionId', '==', subscription.id).limit(1).get();
+    if (!us.empty) return us.docs[0].id;
+  } catch { /* fall through */ }
+
+  return null;
+}
+
+/**
+ * Mirror a membership status change onto caregivers/{uid} — the caregiver
+ * webapp (CaregiverProgressCard, useCaregiverGate) reads membershipStatus /
+ * membershipPaid from the CAREGIVERS doc, not users. No-op for clients.
+ */
+async function mirrorMembershipToCaregiverDoc(userId: string, membershipStatus: string): Promise<boolean> {
+  try {
+    const ref = admin.firestore().collection('caregivers').doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    await ref.set({
+      membershipStatus,
+      ...(membershipStatus === 'active' || membershipStatus === 'trialing' ? { membershipPaid: true } : {}),
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error(`mirrorMembershipToCaregiverDoc failed for ${userId}:`, err);
+    return false;
+  }
+}
+
+/**
  * Handle invoice.payment_succeeded
  */
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
@@ -569,7 +708,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
 
   if (!userId) return;
 
@@ -591,6 +730,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     membershipStatus: 'active',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
+  await mirrorMembershipToCaregiverDoc(userId, 'active');
 
   // Notify caregiver of successful payment
   const amountPaid = (invoice.amount_paid / 100).toFixed(2);
@@ -600,8 +740,8 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     type: 'membership_payment_succeeded',
     title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
     body: isRenewal
-      ? `Your CareConnex membership has been renewed. $${amountPaid} was charged.`
-      : `Your CareConnex membership is now active. $${amountPaid} was charged.`,
+      ? `Your Evia membership has been renewed. $${amountPaid} was charged.`
+      : `Your Evia membership is now active. $${amountPaid} was charged.`,
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -609,6 +749,17 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   // Only re-initiate Checkr on annual renewal, not on first subscription payment
   if (invoice.billing_reason !== 'subscription_cycle') {
     console.log(`Invoice succeeded for ${userId} — billing_reason: ${invoice.billing_reason}, skipping Checkr re-initiation`);
+    return;
+  }
+
+  // …and only for an ANNUAL plan. `subscription_cycle` fires on EVERY renewal
+  // regardless of interval, so a monthly caregiver plan (legacy $24.95 /
+  // STRIPE_CAREGIVER_MONTHLY, still allowed) would buy a Checkr check every
+  // month AND strip `verified` 12x/yr. The background check is annual; gate on
+  // the price interval, not the price ID (robust to price-ID drift).
+  const renewalInterval = subscription.items?.data?.[0]?.price?.recurring?.interval;
+  if (renewalInterval !== 'year') {
+    console.log(`Renewal for ${userId} is interval='${renewalInterval}', not annual — skipping Checkr re-initiation`);
     return;
   }
 
@@ -624,18 +775,46 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return;
   }
 
+  const renewalPhone = ((caregiverData.phone as string | undefined) || '').trim();
+  async function notifyRenewalLinkFailure(reason: string) {
+    await admin.firestore().collection('admin_alerts').add({
+      type:        'onboarding_link_generation_failed',
+      severity:    'high',
+      step:        'stripe_subscription_renewal_bgcheck',
+      caregiverId: userId,
+      phone:       renewalPhone,
+      error:       reason,
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+    }).catch((alertErr: unknown) => console.error(`Failed to write Checkr renewal alert for ${userId}:`, alertErr));
+    if (renewalPhone) {
+      try {
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(renewalPhone, {
+          content: 'Your annual background check needs a quick renewal. I hit a snag pulling up the link, and I will text it as soon as it is ready.',
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (sendErr) {
+        console.error(`Failed to text Checkr renewal failure to caregiver ${userId}:`, sendErr);
+      }
+    }
+  }
+
   // Renewal: reset verification and re-run Checkr for the existing candidate
   console.log(`Annual renewal for caregiver ${userId} — re-initiating Checkr`);
 
   const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || '').trim();
   if (!apiKey) {
-    console.error('CHECKR_KEY not configured — skipping Checkr renewal');
+    console.error('CHECKR_KEY not configured - skipping Checkr renewal');
+    await notifyRenewalLinkFailure('CHECKR_KEY not configured');
     return;
   }
 
   try {
     const CHECKR_BASE = process.env.CHECKR_API_URL || 'https://api.checkr.com/v1';
-    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'driver_pro';
+    const CHECKR_PKG = process.env.CHECKR_PACKAGE || 'checkrdirect_essential_criminal';
     const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
     const dateKey = new Date().toISOString().slice(0, 10);
 
@@ -653,8 +832,13 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
       // existing state intact and surface the failure for retry.
       const errText = await invRes.text().catch(() => '');
       console.error(`Checkr renewal invitation failed for ${userId}: ${invRes.status} ${errText} — leaving verification state unchanged`);
+      await notifyRenewalLinkFailure(`${invRes.status} ${errText}`.trim());
       return;
     }
+
+    const inv = await invRes.json().catch(() => null);
+    const renewalUrl: string | undefined =
+      typeof inv?.invitation_url === 'string' ? inv.invitation_url : undefined;
 
     await admin.firestore().collection('caregivers').doc(userId).set({
       verified: false,
@@ -666,14 +850,38 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
         submittedAt: new Date().toISOString(),
         status: 'pending',
         invitationStatus: 'sent',
+        ...(renewalUrl ? { invitationUrl: renewalUrl } : { invitationUrl: null }),
         initiatedVia: 'annual_renewal',
         checkrClearedAt: null,
       },
     }, { merge: true });
 
+    // Text the renewal link — same rationale as the first-payment path: the
+    // Checkr email alone is easy to miss, and the caregiver stays unbookable
+    // until the renewed check clears.
+    if (renewalUrl && renewalPhone) {
+      try {
+        await admin.firestore().collection('agent_sessions').doc(renewalPhone).update({
+          bgcheckInviteUrl: renewalUrl,
+        }).catch(() => {});
+        const { sendViaInteractionAgent } = await import('./agents/caraAgent');
+        await sendViaInteractionAgent(renewalPhone, {
+          content:
+            'Your annual membership renewed — time for your yearly background check refresh. ' +
+            `It usually takes about 5 minutes: ${renewalUrl}`,
+          urgency:     'immediate',
+          sourceAgent: 'checkr_status',
+          canDrop:     false,
+        });
+      } catch (err) {
+        console.error(`Failed to text renewal bg-check link to caregiver ${userId}:`, err);
+      }
+    }
+
     console.log(`Checkr renewal initiated for caregiver: ${userId}`);
   } catch (err: any) {
     console.error(`Checkr renewal error for ${userId}:`, err?.message);
+    await notifyRenewalLinkFailure(err?.message ?? String(err));
   }
 }
 
@@ -685,8 +893,8 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   if (!subscriptionId) return;
 
   const subscription = await stripe.subscriptions.retrieve(subscriptionId as string);
-  const userId = subscription.metadata?.firebaseUID;
-  
+  const userId = await resolveSubscriptionUserId(subscription);
+
   if (!userId) return;
 
   // Record failed payment
@@ -709,38 +917,42 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     ? new Date(invoice.next_payment_attempt * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })
     : null;
 
-  // Update user status
-  await admin.firestore().collection('users').doc(userId).update({
+  // Update user status. set/merge, not update — an SMS-onboarded member's
+  // users doc may not exist yet, and update() would 500 the whole webhook.
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus:    'payment_failed',
     subscriptionStatus:  'past_due',
     paymentFailureCount: attemptCount,
     lastPaymentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  // Caregiver webapp reads the caregivers doc — surfaces the "Payment failed"
+  // card with the update-payment CTA. Returns false for clients (no doc).
+  const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'payment_failed');
 
   // Escalating dunning communication — tone sharpens with each failed attempt,
   // and the final attempt warns that access is about to end.
-  const billingUrl = "cara.app/billing";
+  const billingUrl = appLink(isCaregiverMember ? "/caregiver/membership" : "/client/membership");
   let dunningMsg: string;
   if (isFinalAttempt) {
     dunningMsg =
-      "We weren't able to process your CareConnex membership payment after several tries, " +
+      "We weren't able to process your Evia membership payment after several tries, " +
       `so your membership is now at risk of being canceled. To keep your access, please update your ` +
       `payment method at ${billingUrl} today. Reply HELP if you need a hand.`;
   } else if (attemptCount <= 1) {
     dunningMsg =
-      "Heads up — we couldn't process your CareConnex membership payment. " +
+      "Heads up — we couldn't process your Evia membership payment. " +
       `No action needed if your card just needs a moment, but you can update billing anytime at ${billingUrl}.` +
       (nextRetryDate ? ` We'll retry on ${nextRetryDate}.` : "");
   } else {
     dunningMsg =
-      "We still haven't been able to process your CareConnex membership payment. " +
+      "We still haven't been able to process your Evia membership payment. " +
       `Please update your payment method at ${billingUrl} to avoid an interruption.` +
       (nextRetryDate ? ` Next retry: ${nextRetryDate}.` : "") +
       " Reply HELP if you need assistance.";
   }
 
-  // Proactively text the client via Cara
+  // Proactively text the client via Evia
   try {
     const sessionSnap = await admin.firestore()
       .collection("agent_sessions")
@@ -788,7 +1000,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
  * Handle customer.subscription.created
  */
 async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
   // Save subscription to Firestore
@@ -809,13 +1021,21 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-  // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  // Update user document. set/merge — the SMS path's users doc may not exist
+  // yet when this event races checkout.session.completed.
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: subscription.status,
     subscriptionId: subscription.id,
-    subscriptionActive: true,
+    // Derive from status, NOT hardcoded true: a subscription created
+    // 'incomplete'/'past_due' (3DS-pending or API-created before first
+    // payment) is NOT paid. A hardcoded true here marks such users paid and
+    // trips downstream gates that publish their job / blast caregivers before
+    // payment (the exact case aiMatchTriggers gates on subscriptionActive).
+    // Self-heals on the next subscription.updated, but must not open the gate
+    // in the interim. Matches handleSubscriptionUpdated below.
+    subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
 
   console.log(`Subscription created for user: ${userId}`);
 }
@@ -824,30 +1044,33 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
  * Handle customer.subscription.updated
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
-  // Update subscription in Firestore
+  // Update subscription in Firestore. set/merge — SMS-created subscriptions
+  // have no customers/{uid}/subscriptions doc (that's written by the web
+  // flow's created-handler), and update() on a missing doc throws.
   await admin.firestore()
     .collection('customers')
     .doc(userId)
     .collection('subscriptions')
     .doc(subscription.id)
-    .update({
+    .set({
       status: subscription.status,
       current_period_start: new Date(subscription.current_period_start * 1000),
       current_period_end: new Date(subscription.current_period_end * 1000),
       cancel_at_period_end: subscription.cancel_at_period_end,
       canceled_at: subscription.canceled_at ? new Date(subscription.canceled_at * 1000) : null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, { merge: true });
 
   // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: subscription.status,
     subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  await mirrorMembershipToCaregiverDoc(userId, subscription.status);
 
   console.log(`Subscription updated for user: ${userId}`);
 }
@@ -856,34 +1079,37 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * Handle customer.subscription.deleted
  */
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.firebaseUID;
+  const userId = await resolveSubscriptionUserId(subscription);
   if (!userId) return;
 
-  // Update subscription in Firestore
+  // Update subscription in Firestore. set/merge — see handleSubscriptionUpdated.
   await admin.firestore()
     .collection('customers')
     .doc(userId)
     .collection('subscriptions')
     .doc(subscription.id)
-    .update({
+    .set({
       status: 'canceled',
       canceled_at: new Date(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }, { merge: true });
 
   // Update user document
-  await admin.firestore().collection('users').doc(userId).update({
+  await admin.firestore().collection('users').doc(userId).set({
     membershipStatus: 'canceled',
     subscriptionActive: false,
     subscriptionId: null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  }, { merge: true });
+  // Caregiver webapp reads the caregivers doc — surfaces the "Membership
+  // canceled" card with the reactivate CTA.
+  await mirrorMembershipToCaregiverDoc(userId, 'canceled');
 
   await admin.firestore().collection('users').doc(userId).collection('notifications').add({
     userId,
     type: 'membership_cancelled',
     title: 'Membership Cancelled',
-    body: 'Your CareConnex membership has been cancelled.',
+    body: 'Your Evia membership has been cancelled.',
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -1034,6 +1260,14 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
       } catch (err) {
         console.error('advanceOnboardingStep(identity) error:', err);
       }
+      // Clear the identity-gate-skipped flag (set when session creation once
+      // failed and the flow fell back to payment) — the user is verified now.
+      await admin.firestore().collection('agent_sessions').doc(phone).set({
+        onboardingData: {
+          needsIdentityVerification: false,
+          identityVerifiedAt: new Date().toISOString(),
+        },
+      }, { merge: true }).catch((err: unknown) => console.error('clear needsIdentityVerification error:', err));
     } else if (status === 'requires_input' || status === 'canceled') {
       // Let the client retry — send a FRESH link (the original may have scrolled
       // off or been consumed), not just "tap the link above".
@@ -1083,6 +1317,13 @@ async function handleShiftPaymentIntentSucceeded(intent: Stripe.PaymentIntent) {
   const ref = admin.firestore().collection('shiftHours').doc(appointmentId);
   const snap = await ref.get();
   if (!snap.exists) return;
+  const shift = snap.data()!;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  const intentGeneration = Math.max(1, Number(intent.metadata?.paymentGeneration ?? 1));
+  if (intentGeneration !== generation || (shift.stripeChargeId && shift.stripeChargeId !== intent.id)) {
+    console.warn(`Ignoring stale shift payment success for ${appointmentId}`, { intentId: intent.id, intentGeneration, generation });
+    return;
+  }
 
   await ref.update({
     chargeConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1096,7 +1337,7 @@ async function handleShiftPaymentIntentSucceeded(intent: Stripe.PaymentIntent) {
   // a module-load cycle between stripe.ts and shiftHours.ts.
   try {
     const { completeShiftPaymentAfterCharge } = await import('./shiftHours');
-    await completeShiftPaymentAfterCharge(appointmentId);
+    await completeShiftPaymentAfterCharge(appointmentId, intent.id, intentGeneration);
   } catch (err) {
     console.error(`completeShiftPaymentAfterCharge failed for ${appointmentId}:`, err);
   }
@@ -1111,8 +1352,16 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
   const snap = await ref.get();
   if (!snap.exists) return;
   const shift = snap.data()!;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  const intentGeneration = Math.max(1, Number(intent.metadata?.paymentGeneration ?? 1));
+  if (intentGeneration !== generation || (shift.stripeChargeId && shift.stripeChargeId !== intent.id)) {
+    console.warn(`Ignoring stale shift payment failure for ${appointmentId}`, { intentId: intent.id, intentGeneration, generation });
+    return;
+  }
 
   const reason = intent.last_payment_error?.message || 'payment_intent.payment_failed';
+  let transferReversed = false;
+  let transferReversalFailed = false;
 
   // If a payout already went out (charge had settled, transfer was created) and
   // the charge LATER failed, the caregiver was paid from money we never
@@ -1126,8 +1375,21 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
         reversedStripeTransferId: shift.stripeTransferId,
         stripeTransferReversedAt: new Date().toISOString(),
         stripeTransferId: admin.firestore.FieldValue.delete(),
+        stripeChargeId: admin.firestore.FieldValue.delete(),
+        paymentGeneration: generation + 1,
+        paymentAttemptCount: 0,
+        nextPaymentAttemptAt: new Date().toISOString(),
+        paymentHistory: admin.firestore.FieldValue.arrayUnion({
+          generation,
+          paymentIntentId: intent.id,
+          transferId: shift.stripeTransferId,
+          outcome: 'reversed_after_charge_failure',
+          at: new Date().toISOString(),
+        }),
       });
+      transferReversed = true;
     } catch (err) {
+      transferReversalFailed = true;
       console.error(`reverseShiftTransfer failed for ${appointmentId}:`, err);
       await admin.firestore().collection('admin_alerts').add({
         type: 'transfer_reversal_failed',
@@ -1142,12 +1404,36 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
     }
   }
 
+  const retryAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   await ref.update({
-    status: 'payment_failed',
+    status: transferReversalFailed ? 'requires_admin_review' : 'payment_failed',
     stripeFailureReason: reason,
     stripeChargeStatus: 'failed',
+    nextPaymentAttemptAt: transferReversalFailed ? null : retryAt,
+    autoApproveAt: transferReversalFailed ? null : shift.autoApproveAt ?? null,
     updatedAt: new Date().toISOString(),
   });
+
+  const { shiftPaymentOperationKey, updateShiftPaymentOperation } = await import('./billing/paymentOperation');
+  const operationKey = shiftPaymentOperationKey(appointmentId, generation);
+  if (transferReversalFailed) {
+    await updateShiftPaymentOperation(operationKey, 'requires_admin_review', {
+      providerOperationId: intent.id,
+      nextAttemptAt: null,
+      lastErrorCode: 'transfer_reversal_failed',
+    });
+  } else if (transferReversed) {
+    await updateShiftPaymentOperation(operationKey, 'completed', {
+      providerOperationId: intent.id,
+      outcome: 'reversed_after_charge_failure',
+    });
+  } else {
+    await updateShiftPaymentOperation(operationKey, 'retry', {
+      providerOperationId: intent.id,
+      nextAttemptAt: retryAt,
+      lastErrorCode: 'payment_intent_failed',
+    });
+  }
 }
 
 /**

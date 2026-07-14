@@ -46,7 +46,14 @@ export const useNotifications = (userId: string | null) => {
       (snapshot) => {
         const notifs: AppNotification[] = [];
         snapshot.forEach((doc) => {
-          notifs.push({ id: doc.id, ...doc.data() } as AppNotification);
+          const data = doc.data() as any;
+          notifs.push({
+            id: doc.id,
+            ...data,
+            // Legacy server writers used message/read — normalize to the canonical shape.
+            body: data.body ?? data.message ?? '',
+            isRead: data.isRead ?? data.read ?? false,
+          } as AppNotification);
         });
         const toMs = (v: any) => v?.toDate ? v.toDate().getTime() : new Date(v).getTime();
         notifs.sort((a, b) => toMs((b as any).createdAt) - toMs((a as any).createdAt));

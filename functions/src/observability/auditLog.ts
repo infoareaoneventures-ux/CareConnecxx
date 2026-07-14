@@ -92,7 +92,13 @@ export type AuditEventType =
   | "shift_task_updated"
   | "media_update_submitted"
   | "shift_hour_correction_responded"
-  | "standard_payout_requested";
+  | "standard_payout_requested"
+  // CRUD-completeness tools (mcp/server.ts, 2026-07-03)
+  | "senior_profile_archived"
+  | "family_member_updated"
+  | "interview_cancelled"
+  | "memory_file_deleted"
+  | "cash_payment_confirmed";
 
 export interface AuditEvent {
   eventType: AuditEventType;

@@ -47,7 +47,7 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
 
     useEffect(() => {
         if (!db) { setLoading(false); return; }
-        db.collection('caregivers')
+        db.collection('publicCaregiverProfiles')
             .where('verified', '==', true)
             .orderBy('rating', 'desc')
             .limit(3)
@@ -101,13 +101,10 @@ export const FeaturedCaregiversSection: React.FC<FeaturedCaregiversSectionProps>
 
                 {/* Header */}
                 <div className="text-center max-w-2xl mx-auto mb-16">
-                    <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-primary-50 text-primary-700 text-sm font-bold mb-4 border border-primary-100 shadow-sm">
-                        Our Caregivers
-                    </div>
-                    <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4 tracking-tight">
+                    <h2 className="font-display text-4xl md:text-[42px] font-semibold text-ink-900 mb-4 tracking-[-0.02em]">
                         Meet our caregivers
                     </h2>
-                    <p className="text-xl text-slate-500">
+                    <p className="text-lg text-ink-600">
                         Real people, thoroughly vetted, ready to help your loved one.
                     </p>
                 </div>

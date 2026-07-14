@@ -30,7 +30,7 @@ import {
   findUntaggedTools,
   CORE_TOOL_NAMES,
 } from "./toolCapabilities";
-import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS } from "../mcp/server";
+import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS, handleToolCall } from "../mcp/server";
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
 import { CONTRACT_COLLECTIONS } from "../data/contract";
 import { isHighRisk } from "./pendingActions";
@@ -39,15 +39,29 @@ import { isHighRisk } from "./pendingActions";
 const names = (tools: { name: string }[]) => new Set(tools.map(t => t.name));
 
 describe("selectToolsForIntent", () => {
-  it("returns the full list when intent is null/undefined", () => {
-    expect(selectToolsForIntent(MCP_TOOLS, null).length).toBe(MCP_TOOLS.length);
-    expect(selectToolsForIntent(MCP_TOOLS, undefined).length).toBe(MCP_TOOLS.length);
+  it("removes medical tools from broad and unclassified launch turns", () => {
+    for (const intent of [null, undefined] as const) {
+      const filtered = names(selectToolsForIntent(MCP_TOOLS, intent));
+      expect(filtered.has("perform_web_action")).toBe(false);
+      expect(filtered.has("search_healthcare_provider")).toBe(false);
+      expect(filtered.has("search_web")).toBe(true);
+    }
   });
 
-  it("returns the full list for broad intents (QUESTION, TASK_REPLY, UPDATE_ONBOARDING)", () => {
+  it("keeps broad intent tools except disabled medical actions", () => {
     for (const intent of ["QUESTION", "TASK_REPLY", "UPDATE_ONBOARDING"] as const) {
-      expect(selectToolsForIntent(MCP_TOOLS, intent).length).toBe(MCP_TOOLS.length);
+      const filtered = names(selectToolsForIntent(MCP_TOOLS, intent));
+      expect(filtered.has("perform_web_action")).toBe(false);
+      expect(filtered.has("search_healthcare_provider")).toBe(false);
+      expect(filtered.has("request_booking")).toBe(true);
     }
+  });
+
+  it("rejects direct medical tool dispatch while the launch flag is off", async () => {
+    delete process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
+    await expect(handleToolCall("perform_web_action", {
+      loginAction: "pharmacy_refill",
+    })).resolves.toMatchObject({ _toolError: true, code: "MEDICAL_ACTIONS_DISABLED" });
   });
 
   it("filters down to booking-relevant tools for FIND_CAREGIVER", () => {
@@ -196,6 +210,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
     "get_senior_profile",
     "list_household_seniors",
     "get_pending_tasks",
+    "get_work_in_progress",
     "suggest_upcoming_care",
     "get_care_team",
     "create_support_ticket",
@@ -258,7 +273,7 @@ describe("LAUNCH_ACTION_PARITY", () => {
   it("shipped caregiver tools are reachable by the caregiver prompt filter", () => {
     // A shipped caregiver action must be exposed to the caregiver prompt — i.e.
     // tagged in TOOL_CAPABILITIES or in the core allowlist. A silently
-    // unreachable tool would make Cara claim parity it can't deliver.
+    // unreachable tool would make Evia claim parity it can't deliver.
     const unreachable = LAUNCH_ACTION_PARITY.filter(
       r =>
         r.actor === "caregiver" &&

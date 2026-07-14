@@ -58,7 +58,7 @@ export default function ClientProfileDashboard() {
               </svg>
             </div>
             <div>
-              <h2 className="text-2xl font-bold mb-2">Welcome to CareConnex!</h2>
+              <h2 className="text-2xl font-bold mb-2">Welcome to Evia!</h2>
               <p className="text-blue-100 text-lg">
                 Thank you for filling out your care inquiry. Your profile is now set up.
               </p>

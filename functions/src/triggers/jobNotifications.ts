@@ -1,10 +1,11 @@
 import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { haversineMiles } from "../ai/scoring";
+import { buildWebJobPostDoc } from "../agents/jobPostContract";
 import { sendMessage, startTyping, getOrCreateSession } from "../linq/client";
 import { sendViaInteractionAgent, AgentOutput } from "../agents/caraAgent";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
+import { answerHumanMidFlow } from "../agents/humanReply";
 
 const MATCH_PUSH_THRESHOLD = 80; // push only when skill overlap is ≥ 80%
 // U11 — only INVITE caregivers whose profile actually fits the job, not every
@@ -61,26 +62,40 @@ export async function createJobPost(
   clientId: string
 ): Promise<void> {
   try {
-    const lat = intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
-    const lng = intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
-    const city = intakeData.city ?? intakeData.location?.city ?? null;
+    const lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
+    const lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
+    const city = intakeData.city ?? intakeData.location?.city ?? undefined;
     const careTypes: string[] = intakeData.careTypes ?? [];
 
-    await db.collection("job_posts").doc(intakeId).set({
-      intakeId,
+    // Web JobPost contract via the shared builder — the caregiver Job Board
+    // renders title/location-string/rate/date; the old hand-rolled shape here
+    // (summary + location OBJECT + Timestamp createdAt) rendered blank and
+    // could crash the board's JSX. Merge-write: Evia's post-payment
+    // buildAndSaveJobPost targets the same job_posts/{uid} doc.
+    const recipientFirst = (intakeData.recipientFirstName ?? intakeData.recipientName ?? "") as string;
+    const daysPerWeek    = Number(intakeData.daysPerWeek ?? 0);
+    const timeOfDay      = typeof intakeData.timeOfDay === "string" && intakeData.timeOfDay
+      ? [intakeData.timeOfDay as string]
+      : (Array.isArray(intakeData.timeOfDay) ? intakeData.timeOfDay as string[] : []);
+    await db.collection("job_posts").doc(intakeId).set(buildWebJobPostDoc({
       clientId,
-      status:         "open",
+      source:      "intake_trigger",
+      title:       `Care for ${recipientFirst.split(" ")[0] || "a Loved One"}`,
+      clientName:  ((intakeData.contactName ?? intakeData.firstName ?? "") as string) || undefined,
       careTypes,
-      schedule:       intakeData.schedule ?? null,
-      startDate:      intakeData.startDate ?? null,
-      location:       { lat, lng, city },
-      summary:        careTypes.length > 0
-        ? `New care job — ${careTypes.join(", ")}`
-        : "New care job",
-      applicantCount: 0,
-      notifiedCount:  0,
-      createdAt:      FieldValue.serverTimestamp(),
-    });
+      startDate:   (intakeData.startDate ?? undefined) as string | undefined,
+      frequency:   daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : daysPerWeek > 0 ? "occasional" : undefined,
+      daysPerWeek,
+      timeOfDay,
+      hourlyRate:  Number(intakeData.budgetMax ?? 0) || Number(intakeData.budgetMin ?? 0) || "flexible",
+      city,
+      zipCode:     (intakeData.zipCode ?? undefined) as string | undefined,
+      lat,
+      lng,
+      recipientsCount: Number(intakeData.recipientsCount ?? 0) || undefined,
+      phone:       (intakeData.phone ?? undefined) as string | undefined,
+      intakeId,
+    }), { merge: true });
 
     if (!lat || !lng) {
       console.warn(`[createJobPost] Intake ${intakeId} has no coordinates — caregivers will not be notified`);
@@ -97,8 +112,10 @@ export async function notifyAreaCaregivers(
   intakeData: any,
   clientId: string
 ): Promise<void> {
-  const clientLat = intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat;
-  const clientLng = intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng;
+  // Coord chain accepts BOTH shapes: web-contract top-level lat/lng (all
+  // writers since 2026-07-10) and the legacy location-object docs.
+  const clientLat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat;
+  const clientLng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng;
   const city      = intakeData.city ?? intakeData.location?.city ?? "";
   const careTypes: string[] = intakeData.careTypes ?? [];
 
@@ -163,7 +180,7 @@ export async function notifyAreaCaregivers(
         `Hi ${firstName}! A new care job opened near you.\n\n` +
         `📍 ${city || "your area"} · ${careText}` +
         (scheduleText ? `\n${scheduleText}` : "") +
-        `\n\nInterested? Reply YES or NO.`;
+        `\n\nInterested? Just tell me yes or no — or ask me anything about it.`;
 
       await startTyping(session.chatId).catch(() => {});
       await sendMessage(session.chatId, message);
@@ -235,21 +252,20 @@ export async function handleJobResponse(
   // isQuestionOrOther — if caregiver asks a question instead of YES/NO, answer
   // it and re-pose the question without consuming the pending state.
   const qRaw = await parseWithClaude(
-    "A caregiver was just texted about a new job opportunity and asked to reply YES or NO. " +
+    "A caregiver was just texted about a new job opportunity and asked whether they're interested (yes or no). " +
       "Reply YES if their message is a general question or off-topic comment rather than a yes/no answer. " +
       "Reply NO if it is a direct yes/no decision. Only reply YES or NO.",
     text,
     5,
   );
   if (qRaw.toUpperCase().startsWith("Y")) {
-    const answer = await quickComplete(
-      "You are Cara, an AI care assistant. A caregiver was offered a job and asked a question instead of replying YES/NO. " +
-        "Answer their question briefly (1-2 sentences). Do NOT ask them to commit — that prompt comes next.",
+    await sendMessage(chatId, await answerHumanMidFlow({
+      audience: "caregiver",
+      situation: "caregiver was offered a job and asked a question instead of replying yes or no",
       text,
-      { maxTokens: 180 },
-    ).catch(() => "Let me get back to you on that. In the meantime —");
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "So — interested in this job? Reply YES or NO.");
+      reAsk: "So — interested in this job? A simple yes or no works.",
+      maxTokens: 180,
+    }));
     return;
   }
 
@@ -304,7 +320,7 @@ export async function handleJobResponse(
 
   await sendMessage(
     chatId,
-    `Great! Just to confirm — are you available for ${scheduleText}?\n\nReply YES to apply or NO to pass.`
+    `Great! Just to confirm — are you available for ${scheduleText}? Say yes and I'll send in your application, or no to pass.`
   );
 }
 
@@ -459,12 +475,14 @@ export async function handleAvailabilityConfirmation(
     const caregiverName = session.name ?? session.firstName ?? "Caregiver";
 
     // Write application
+    const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");
     await db.collection("job_applications").add({
       jobId,
       caregiverId,
       clientId,
       phone,
       caregiverName,
+      ...jobApplicationSnapshot(job),
       status:    "pending",
       appliedAt: new Date().toISOString(),
       source:    "sms_notification",

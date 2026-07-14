@@ -6,7 +6,7 @@ const db = admin.firestore();
 // ── confirmAgentTask — token-scoped quick-confirm callable ──────────────────
 //
 // The QuickConfirmPage (components/pages/QuickConfirmPage.tsx) is a public,
-// unauthenticated magic-link page: the family taps a link Cara texted them to
+// unauthenticated magic-link page: the family taps a link Evia texted them to
 // confirm a replacement/booking. The ONLY auth factor is the opaque
 // `confirmToken` carried in the URL.
 //

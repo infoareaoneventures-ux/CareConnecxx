@@ -1,4 +1,4 @@
-const DEFAULT_APP_URL = "https://careconnex-d4c8b.web.app";
+const DEFAULT_APP_URL = "https://www.eviacares.com";
 
 export function getAppUrl(): string {
   const raw = (process.env.APP_URL ?? "").trim();

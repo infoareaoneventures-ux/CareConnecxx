@@ -20,8 +20,8 @@ export const Badge: React.FC<BadgeProps> = ({ children, variant = 'neutral', cla
     success: "bg-[var(--color-success-100)] text-[var(--color-success-800)] border border-[var(--color-success-100)]",
     warning: "bg-[var(--color-warning-100)] text-[var(--color-warning-700)] border border-[var(--color-warning-100)]",
     info: "bg-[var(--color-primary-100)] text-[var(--color-primary-800)] border border-[var(--color-primary-200)]",
-    neutral: "bg-[var(--color-neutral-100)] text-[var(--color-neutral-800)] border border-[var(--color-neutral-200)]",
-    secondary: "bg-slate-100 text-slate-700 border border-slate-200",
+    neutral: "bg-[var(--color-paper-100)] text-[var(--color-ink-600)] border hairline",
+    secondary: "bg-[var(--color-paper-100)] text-[var(--color-ink-600)] border hairline",
     danger: "bg-red-100 text-red-700 border border-red-200"
   };
 

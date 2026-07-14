@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr, businessNowMinutes } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -32,21 +33,25 @@ function parseStartTimeToMinutes(timeStr: string): number | null {
 export const sendPreShiftFamilyCheckin = functions.pubsub
   .schedule("*/15 * * * *")
   .onRun(async () => {
-    const now         = new Date();
-    const nowMinutes  = now.getHours() * 60 + now.getMinutes();
+    // Business-timezone (Pacific) minutes-since-midnight — getHours() would be
+    // UTC on Cloud Functions and fire this ~7-8h off the shift's local time.
+    const nowMinutes  = businessNowMinutes();
     const windowStart = nowMinutes + 15;
     const windowEnd   = nowMinutes + 30;
-    const today       = now.toISOString().slice(0, 10);
+    const today       = businessTodayStr();   // Pacific date, not UTC
 
+    // NOTE: no `.where("preShiftCheckinSent","!=",true)` — Firestore `!=` excludes
+    // docs missing the field (appointments are created without it), so it would
+    // skip every never-checked-in shift. Filter already-sent in code.
     const snap = await db.collection("appointments")
       .where("date",                "==", today)
       .where("status",              "in", ["confirmed", "pending_caregiver_confirmation"])
-      .where("preShiftCheckinSent", "!=", true)
       .get();
 
     for (const doc of snap.docs) {
       const appt     = doc.data();
       const apptId   = doc.id;
+      if (appt.preShiftCheckinSent === true) continue;
       const clientId = (appt.clientId ?? "") as string;
       const startTime = (appt.startTime ?? "") as string;
       if (!clientId || !startTime) continue;

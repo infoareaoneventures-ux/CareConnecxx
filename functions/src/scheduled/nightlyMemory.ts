@@ -26,7 +26,7 @@ async function compressConversationForPhone(phone: string): Promise<void> {
 
   const existingSummary = summaryDocs[0]?.data()?.content as string | undefined;
   const newMessages     = toCompress
-    .map(d => `${d.data().role === "user" ? "User" : "Cara"}: ${d.data().content as string}`)
+    .map(d => `${d.data().role === "user" ? "User" : "Evia"}: ${d.data().content as string}`)
     .join("\n");
 
   const promptParts = existingSummary
@@ -36,7 +36,7 @@ async function compressConversationForPhone(phone: string): Promise<void> {
   const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 400,
-    system:     "You are summarizing a caregiving conversation for an AI assistant named Cara. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Begin your response with \"<summary>\".",
+    system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Begin your response with \"<summary>\".",
     messages:   [{ role: "user", content: promptParts[0] }],
   });
 

@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessNowMinutes } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -59,7 +60,21 @@ async function loadCarePlan(
 ): Promise<{ dailyRoutine: RoutineTask[]; medications: Medication[] }> {
   const empty = { dailyRoutine: [], medications: [] };
 
-  // 1. Canonical path: senior_profiles/{seniorId}/care_plans/default
+  // 1. CANONICAL path (web cutover 2026-07-12): care_plans/{clientId} — the doc
+  // both the web Care Plan tab and Evia's care-plan tools write. Must be checked
+  // FIRST or a stale legacy subdoc shadows fresh data.
+  if (clientId) {
+    const snap = await db.collection("care_plans").doc(clientId).get();
+    if (snap.exists) {
+      const d = snap.data()!;
+      return {
+        dailyRoutine: (d.dailyRoutine ?? []) as RoutineTask[],
+        medications:  (d.medications  ?? []) as Medication[],
+      };
+    }
+  }
+
+  // 2. Legacy web subdoc: senior_profiles/{seniorId}/care_plans/default
   if (seniorId) {
     const snap = await db.collection("senior_profiles").doc(seniorId)
       .collection("care_plans").doc("default").get();
@@ -72,22 +87,10 @@ async function loadCarePlan(
     }
   }
 
-  // 2. Legacy 1:1 model: senior_profiles/{clientId}/care_plans/default
+  // 3. Legacy 1:1 model: senior_profiles/{clientId}/care_plans/default
   if (clientId && clientId !== seniorId) {
     const snap = await db.collection("senior_profiles").doc(clientId)
       .collection("care_plans").doc("default").get();
-    if (snap.exists) {
-      const d = snap.data()!;
-      return {
-        dailyRoutine: (d.dailyRoutine ?? []) as RoutineTask[],
-        medications:  (d.medications  ?? []) as Medication[],
-      };
-    }
-  }
-
-  // 3. Flat legacy collection (same as morningBriefing.ts)
-  if (clientId) {
-    const snap = await db.collection("care_plans").doc(clientId).get();
     if (snap.exists) {
       const d = snap.data()!;
       return {
@@ -112,8 +115,9 @@ async function getCompletedTaskIds(appointmentId: string): Promise<Set<string>> 
 export const sendShiftTaskNudges = functions.pubsub
   .schedule("*/15 * * * *")
   .onRun(async () => {
-    const now        = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    // Business-timezone (Pacific) minutes-since-midnight — getHours() would be
+    // UTC on Cloud Functions and mis-fire task nudges by ~7-8h.
+    const nowMinutes = businessNowMinutes();
     const windowEnd  = nowMinutes + 30;
 
     const snap = await db.collection("appointments")
@@ -135,11 +139,12 @@ export const sendShiftTaskNudges = functions.pubsub
         const cgPhone = cgSnap.data()?.phone as string | undefined;
         if (!cgPhone) continue;
 
-        // Skip if caregiver session has a blocking state flag active
+        // Skip if caregiver session has a blocking state flag active (incl. an
+        // open in-shift check-in prompt — a task nudge would shadow its reply)
         const sessionSnap = await db.collection("agent_sessions").doc(cgPhone).get();
         if (sessionSnap.exists) {
           const s = sessionSnap.data() as any;
-          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription) continue;
+          if (s.awaitingCareNotes || s.awaitingLateMinutes || s.awaitingIssueDescription || s.awaitingInShiftUpdate) continue;
         }
 
         const clientId = (appt.clientId ?? "") as string;

@@ -1,5 +1,6 @@
 import { Caregiver, WeeklySchedule, TimeSlot } from '../types';
 import { db } from '../lib/firebase';
+import { localDateStr } from '../utils/shiftUtils';
 
 /**
  * Enhanced Availability Matching Service
@@ -14,7 +15,7 @@ const BUFFER_MINUTES = 30;
 
 /**
  * Onboarding Step 5 saves weeklyAvailability as block IDs: { monday: ['morning', 'afternoon'] }
- * Cara's availabilityHandler saves it as TimeSlots:        { monday: [{ start: '06:00', end: '12:00' }] }
+ * Evia's availabilityHandler saves it as TimeSlots:        { monday: [{ start: '06:00', end: '12:00' }] }
  * This map normalizes both formats so the service works regardless of which was used.
  */
 const BLOCK_TO_TIMESLOT: Record<string, TimeSlot> = {
@@ -39,7 +40,7 @@ const BLOCK_ORDER = ['morning', 'afternoon', 'evening', 'overnight'] as const;
 /**
  * Convert block IDs → TimeSlots for Firestore storage.
  * Use this before saving from onboarding or profile edit so
- * the format matches what Cara's availabilityHandler writes.
+ * the format matches what Evia's availabilityHandler writes.
  * e.g. { monday: ['morning','afternoon'] } → { monday: [{start:'06:00',end:'12:00'},{start:'12:00',end:'18:00'}] }
  */
 export function blocksToWeeklySlots(
@@ -165,8 +166,10 @@ export const availabilityService = {
         }
 
         try {
-            // Format date to YYYY-MM-DD for comparison
-            const dateStr = requestedDate.toISOString().split('T')[0];
+            // Local calendar date (NOT UTC) — appointments store local dates, so
+            // toISOString() would query the wrong day for evening-local bookings
+            // and miss same-day conflicts (double-book). See utils/shiftUtils.
+            const dateStr = localDateStr(requestedDate);
             
             // Calculate time window with buffer
             const requestedStartMinutes = timeToMinutes(startTime);
@@ -312,7 +315,8 @@ export const availabilityService = {
         );
 
         // Then check conflicts for candidates only (slower, async)
-        const dateStr = requestedDate.toISOString().split('T')[0];
+        // Local calendar date (NOT UTC) — see the note above / utils/shiftUtils.
+        const dateStr = localDateStr(requestedDate);
         
         try {
             // Single query for all candidates

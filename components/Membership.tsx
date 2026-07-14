@@ -39,26 +39,29 @@ export default function Membership() {
   const [showPlanModal, setShowPlanModal] = useState(false);
 
   useEffect(() => {
+    const user = auth?.currentUser;
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+
+    // Initial fetch (async — no cleanup to return from here).
     loadSubscriptionStatus();
+
+    // Real-time listener. Its unsubscribe MUST be returned synchronously from the
+    // effect — previously it was returned from the async loadSubscriptionStatus,
+    // so React received a Promise (not a function) and never cleaned up: the
+    // Firestore listener leaked on unmount and a second one stacked on every re-run.
+    const unsubscribe = listenToSubscriptionStatus(user.uid, (updatedStatus) => {
+      setSubscription(updatedStatus);
+    });
+    return () => unsubscribe();
   }, []);
 
   const loadSubscriptionStatus = async () => {
     try {
-      const user = auth?.currentUser;
-      if (!user) {
-        navigate('/login');
-        return;
-      }
-
       const status = await getSubscriptionStatus();
       setSubscription(status);
-
-      // Also set up real-time listener for updates
-      const unsubscribe = listenToSubscriptionStatus(user.uid, (updatedStatus) => {
-        setSubscription(updatedStatus);
-      });
-
-      return () => unsubscribe();
     } catch (err) {
       console.error('Error loading subscription:', err);
       setError('Failed to load subscription status');
@@ -143,7 +146,7 @@ export default function Membership() {
             <Crown className="w-8 h-8 text-accent-500" />
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Membership</h1>
-              <p className="text-slate-500">Manage your CareConnex subscription</p>
+              <p className="text-slate-500">Manage your Evia subscription</p>
             </div>
           </div>
         </div>

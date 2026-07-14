@@ -1,6 +1,6 @@
-// Cara ↔ Web Firestore data contract.
+// Evia ↔ Web Firestore data contract.
 //
-// The launch invariant: **Cara must write where the web reads.** This module is
+// The launch invariant: **Evia must write where the web reads.** This module is
 // the single canonical registry of the collections both sides share, their doc
 // ID schemes, and which side writes/reads them. tests/contractCollections.test.ts
 // statically verifies the codebase stays aligned with this registry — if you
@@ -24,7 +24,7 @@ export interface ContractCollection {
   /** Firestore collection path (template segments in {braces}) */
   path: string;
   docId: DocIdScheme;
-  /** Who writes it in the Cara/functions backend */
+  /** Who writes it in the Evia/functions backend */
   caraWrites: boolean;
   /** Who reads it on the web (services/api.ts, components, hooks) */
   webReads: boolean;
@@ -37,7 +37,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Cara writes membership/identity status for clients and the caregiver parity doc at finalization.",
+    notes: "Evia writes membership/identity status for clients and the caregiver parity doc at finalization.",
   },
   caregivers: {
     path: "caregivers",
@@ -46,33 +46,40 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "uid-keyed since the identity unification; legacy random-ID docs are migrated at finalization. Checkr webhook looks up by backgroundCheckData.checkrCandidateId (query, ID-agnostic).",
   },
+  publicCaregiverProfiles: {
+    path: "publicCaregiverProfiles",
+    docId: "uid",
+    caraWrites: true,
+    webReads: true,
+    notes: "Server-maintained public projection used by caregiver discovery and profile surfaces; source caregiver documents remain private.",
+  },
   clientIntakes: {
     path: "clientIntakes",
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Cara onboarding writes clientIntakes/{uid}; matching triggers listen onCreate/onUpdate.",
+    notes: "Evia onboarding writes clientIntakes/{uid}; matching triggers listen onCreate/onUpdate.",
   },
   senior_profiles: {
     path: "senior_profiles",
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Web signup creates it; Cara onboarding mirrors senior name/age/needs/diagnoses.",
+    notes: "Web signup creates it; Evia onboarding mirrors senior name/age/needs/diagnoses.",
   },
   care_plans: {
-    path: "senior_profiles/{clientUid}/care_plans/default",
-    docId: "subcollection",
+    path: "care_plans",
+    docId: "clientUid",
     caraWrites: true,
     webReads: true,
-    notes: "Versioned care plan subcollection used by care-plan tools.",
+    notes: "Canonical live care plan (2026-07-06 decision; web cut over 2026-07-12). Evia's get/update_care_plan tools and the web Care Plan tab share this doc; versions subcollection is server-only history. Legacy senior_profiles/{uid}/care_plans/default is read-fallback only.",
   },
   carePlans: {
     path: "carePlans",
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "CarePlan.tsx reads/writes carePlans/{uid}; Cara writes the initial doc at client payment.",
+    notes: "CarePlan.tsx reads/writes carePlans/{uid}; Evia writes the initial doc at client payment.",
   },
   job_postings: {
     path: "job_postings",
@@ -86,7 +93,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "The job board. Written via buildAndSaveJobPost (shared by Cara + web flows).",
+    notes: "The job board. Written via buildAndSaveJobPost (shared by Evia + web flows).",
   },
   appointments: {
     path: "appointments",
@@ -100,7 +107,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: false,
     webReads: true,
-    notes: "Web-originated booking requests; Cara's equivalent is agent_tasks(type=booking_confirmation) + shift_offers.",
+    notes: "Web-originated booking requests; Evia's equivalent is agent_tasks(type=booking_confirmation) + shift_offers.",
   },
   shift_offers: {
     path: "shift_offers",
@@ -128,21 +135,21 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "appointmentId",
     caraWrites: true,
     webReads: true,
-    notes: "Clock-in/out + payroll. Cara writes via clock_in_shift / submit_shift_hours tools.",
+    notes: "Clock-in/out + payroll. Evia writes via clock_in_shift / submit_shift_hours tools.",
   },
   threads: {
     path: "threads/{threadId}/messages",
     docId: "subcollection",
     caraWrites: true,
     webReads: true,
-    notes: "Web chat. Cara conversations are mirrored in (linq/threadMirror.ts, thread ID cara_{uid}).",
+    notes: "Web chat. Evia conversations are mirrored in (linq/threadMirror.ts, thread ID cara_{uid}).",
   },
   support_tickets: {
     path: "support_tickets",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Cara's create_support_ticket tool writes here; admin TicketManager reads.",
+    notes: "Evia's create_support_ticket tool writes here; admin TicketManager reads.",
   },
   admin_alerts: {
     path: "admin_alerts",
@@ -163,7 +170,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Cara-drafted proactive messages awaiting admin review.",
+    notes: "Evia-drafted proactive messages awaiting admin review.",
   },
   cara_turn_metrics: {
     path: "cara_turn_metrics",
@@ -177,7 +184,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Client/caregiver referral lifecycle. Cara writes SMS referrals; web ReferralProgram reads user referral status.",
+    notes: "Client/caregiver referral lifecycle. Evia writes SMS referrals; web ReferralProgram reads user referral status.",
   },
   agent_audit_log: {
     path: "agent_audit_log",
@@ -191,14 +198,14 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Durable status ledger for consequential Cara actions; admin audit surfaces read it.",
+    notes: "Durable status ledger for consequential Evia actions; admin audit surfaces read it.",
   },
   pending_actions: {
     path: "pending_actions",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Runtime confirmation queue for high-risk Cara actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
+    notes: "Runtime confirmation queue for high-risk Evia actions; AdminCaraControlRoom reads stuck and awaiting approvals.",
   },
   agent_tasks: {
     path: "agent_tasks",
@@ -234,7 +241,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "1:1 client↔caregiver messaging (services/chatService.ts). Cara touches via the pushNotifications onCreate trigger. Participant-scoped reads; admin can read all.",
+    notes: "1:1 client↔caregiver messaging (services/chatService.ts). Evia touches via the pushNotifications onCreate trigger. Participant-scoped reads; admin can read all.",
   },
   customers: {
     path: "customers",
@@ -262,14 +269,14 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Caregiver interview scheduling + fit feedback. Web (api.ts, caregiver dashboards) and Cara (interviewAgent.ts) both write.",
+    notes: "Caregiver interview scheduling + fit feedback. Web (api.ts, caregiver dashboards) and Evia (interviewAgent.ts) both write.",
   },
   interviews: {
     path: "interviews",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Scheduled interview record with meeting link/ICS (functions/src/agents/interviewAgent.ts). Client reads pending interviews (InterviewConfirmation.tsx); writes server-side only.",
+    notes: "Scheduled interview record with Google Meet link + ICS (callUrl/icsUrl/clientId/caregiverId; written by functions/src/agents/interviewAgent.ts, links via agents/interviewLinks.ts, enforced by triggers/interviewLinkTrigger.ts). Client reads pending interviews; writes server-side only.",
   },
   job_applications: {
     path: "job_applications",
@@ -297,60 +304,164 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: false,
     webReads: true,
-    notes: "Caregiver payout ledger. Per-caregiver subcollection (caregivers/{uid}/payouts, PayoutHistory.tsx) AND a top-level admin mirror read by FinanceDashboard. Written via instantPayout/standardPayout (Admin SDK). Payment entity: client-destructive delete blocked.",
+    notes: "Caregiver payout ledger. Per-caregiver subcollection (caregivers/{uid}/payouts, PayoutHistory.tsx) AND a top-level admin mirror read by FinanceDashboard. Written via payoutCommon.executeInstantPayout (all instant-payout paths) and stripeConnectWebhook (automatic daily payouts, payout.paid/failed) — Admin SDK only. Payment entity: client-destructive delete blocked.",
   },
   reports: {
     path: "reports",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "User abuse/safety reports. Web users create their own (InboxView.tsx); Cara/mcp may file reports; admins review. Author-scoped create, admin read.",
+    notes: "User abuse/safety reports. Web users create their own (InboxView.tsx); Evia/mcp may file reports; admins review. Author-scoped create, admin read.",
   },
   reviews: {
     path: "reviews",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Cara via mcp/server.ts submit_review). Public read; author-scoped write.",
+    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Evia via mcp/server.ts submit_review). Public read; author-scoped write.",
   },
   seniors: {
     path: "seniors",
     docId: "auto",
     caraWrites: false,
     webReads: false,
-    notes: "Cara/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
+    notes: "Evia/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
   },
   shifts: {
     path: "shifts",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "GPS clock-in/out shift instances generated from recurring bookings (shiftGenerator.ts) and touched by Cara (mcp/server.ts). Caregiver/client/admin participant-scoped.",
+    notes: "GPS clock-in/out shift instances generated from recurring bookings (shiftGenerator.ts) and touched by Evia (mcp/server.ts). Caregiver/client/admin participant-scoped.",
   },
   video_interviews: {
     path: "video_interviews",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Twilio video interview scheduling (services/videoService.ts; Cara via mcp/server.ts). Client/caregiver participant-scoped.",
+    notes: "Google Meet interview scheduling (web modal; Evia via mcp/server.ts schedule_interview). Link fields callUrl/icsUrl/linkDelivery/linkWork/remindersScheduledAt/requestNotifiedAt set via agents/interviewLinks.ts, enforced by triggers/interviewLinkTrigger.ts. Client/caregiver participant-scoped.",
   },
   web_onboarding_sessions: {
     path: "web_onboarding_sessions",
     docId: "phone",
     caraWrites: true,
     webReads: true,
-    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes to the *_confirm_name step so Cara greets by name. Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
+    notes: "Bridge between web phone verification and SMS inbound (functions/src/linq/webhooks.ts). Carries role + (optional) name typed on /start; the inbound webhook seeds name into agent_sessions.onboardingData (firstName for client, name for caregiver) and routes to the *_confirm_name step so Evia greets by name. Web reads its own doc (hooks/useOnboardingSession.ts); writes server-side only (createWebOnboardingSession callable).",
   },
   notifications: {
     path: "notifications",
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Cara/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
+    notes: "Top-level user notifications (bookings, replies, alerts). Web reads own (userId field); Evia/admin write (admin/adminSupportActions.ts, services/api.ts). Distinct from the users/{uid}/notifications subcollection.",
+  },
+
+  // ── Agent-memory + signal collections (agent-native audit 2026-07) ─────────
+  // Server/agent-only access class: Evia writes them, the web never reads them
+  // (webReads: false, so no firestore.rules block is required — default-deny is
+  // correct). Registered so the contract test governs their lifecycle instead of
+  // leaving them on the runtime-only allowlist.
+  learned_facts: {
+    path: "learned_facts",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Per-user learned-fact store (memory/learnedFacts.ts). Parent doc keyed by userId; facts live in the facts subcollection. Server/agent-only.",
+  },
+  facts: {
+    path: "learned_facts/{userId}/facts",
+    docId: "subcollection",
+    caraWrites: true,
+    webReads: false,
+    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only.",
+  },
+  memory_embeddings: {
+    path: "memory_embeddings",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Semantic-search index for memory files (memory/memoryFiles.ts). Parent doc keyed by userId; vectors live in the blocks subcollection. Server/agent-only.",
+  },
+  blocks: {
+    path: "memory_embeddings/{userId}/blocks",
+    docId: "subcollection",
+    caraWrites: true,
+    webReads: false,
+    notes: "Embedded memory-file blocks under memory_embeddings/{userId}. Reindexed on every memory-file write and purged on delete_memory_file. Server/agent-only.",
+  },
+  agent_conversations: {
+    path: "agent_conversations",
+    docId: "phone",
+    caraWrites: true,
+    webReads: false,
+    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only.",
+  },
+  user_preferences: {
+    path: "user_preferences",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Notification/DND/timezone preferences (memory/preferences.ts; mcp update_preferences). Server/agent-only; web preference surfaces read the users doc, not this.",
+  },
+  health_signals: {
+    path: "health_signals",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Health concern flags from journal analysis and family reports (mcp log_health_flag / get_health_signals). PHI-bearing; server/agent-only.",
+  },
+  proactive_triggers: {
+    path: "proactive_triggers",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Scheduled proactive check-ins/follow-ups (triggers/triggerEngine.ts). Server/agent-only agent scheduling state.",
+  },
+  pending_commitments: {
+    path: "pending_commitments",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Follow-up promises Evia made to a user ('I'll get back to you'), keyed {phone}_{kind}. Swept by triggerEngine via agents/commitmentTracker.ts — fulfilled or escalated to admin_alerts; never dropped. Server/agent-only.",
+  },
+  turn_watch: {
+    path: "turn_watch",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Dropped-turn watchdog markers keyed by chatId: stamped on every inbound (linq/webhooks.ts), deleted on any outbound send (linq/client.ts); survivors past dueAt become pending_commitments. Server/agent-only.",
+  },
+  system_status: {
+    path: "system_status",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Single 'current' doc: system-wide degraded-mode flag (observability/systemStatus.ts). Set on critical provider failures / budget exhaustion, cleared by the next successful turn. Server/agent-only.",
+  },
+  ops_counters: {
+    path: "ops_counters",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Daily ops counters (e.g. llm_fallback_{date}) for fallback-rate and spend observability. Server/agent-only.",
+  },
+  user_triggers: {
+    path: "user_triggers",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "User-requested reminders (triggers/userTriggerManager.ts; mcp create/update/delete_reminder). Server/agent-only.",
+  },
+  shift_swap_requests: {
+    path: "shift_swap_requests",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Caregiver shift-swap state machine (mcp request/accept/cancel/list_shift_swaps). Server/agent-only; the web reads the resulting appointments doc, not the swap record.",
   },
 };
 
-/** Collection names (top-level segment only) that Cara writes. */
+/** Collection names (top-level segment only) that Evia writes. */
 export function caraWrittenCollections(): string[] {
   return Object.values(CONTRACT_COLLECTIONS)
     .filter((c) => c.caraWrites)

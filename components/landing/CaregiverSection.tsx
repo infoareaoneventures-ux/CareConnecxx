@@ -7,7 +7,7 @@ interface CaregiverSectionProps {
 
 export const CaregiverSection: React.FC<CaregiverSectionProps> = ({ onNavigate }) => {
     return (
-        <section className="bg-[#f0ece6] py-16 md:py-24">
+        <section className="bg-paper-100 border-t hairline py-16 md:py-24">
             <div className="max-w-6xl mx-auto px-6 lg:px-8">
                 <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
                     
@@ -35,23 +35,23 @@ export const CaregiverSection: React.FC<CaregiverSectionProps> = ({ onNavigate }
 
                     {/* Right Column: Text & Buttons */}
                     <div className="w-full lg:w-1/2 lg:pl-8 pt-8 lg:pt-0">
-                        <h2 className="text-4xl md:text-5xl font-extrabold text-slate-900 leading-[1.1] mb-10 tracking-tight max-w-xl">
-                            Find the care you need from someone you trust
+                        <h2 className="font-display text-4xl md:text-[46px] font-semibold text-ink-900 leading-[1.08] mb-10 tracking-[-0.02em] max-w-xl">
+                            Get started with just a text
                         </h2>
-                        
-                        <div className="flex flex-col sm:flex-row gap-4">
-                            <button 
+
+                        <div className="flex flex-col sm:flex-row items-center gap-5">
+                            <button
                                 onClick={() => onNavigate('client-signup')}
-                                className="btn-depth-primary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
+                                className="btn-depth-primary px-8 py-4 rounded-full font-semibold text-center text-[15px]"
                             >
-                                Get Started
+                                Get started
                             </button>
-                            
-                            <button 
+
+                            <button
                                 onClick={() => window.location.href = '/login'}
-                                className="btn-depth-secondary px-8 py-4 rounded-2xl font-semibold text-center text-[15px]"
+                                className="text-ink-600 hover:text-ink-900 font-medium text-[15px] transition-colors"
                             >
-                                Log In
+                                Log in →
                             </button>
                         </div>
                     </div>

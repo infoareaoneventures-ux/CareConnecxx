@@ -10,20 +10,20 @@ interface NotFoundProps {
 
 export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-paper-50 flex items-center justify-center px-4">
       <SEO
         title="Page Not Found"
-        description="Sorry, the page you're looking for doesn't exist. Return to CareConnex home or search for caregivers."
+        description="Sorry, the page you're looking for doesn't exist. Return to Evia home or search for caregivers."
         noindex={true}
       />
       
       <div className="max-w-md w-full text-center">
         <div className="mb-8">
-          <div className="text-9xl font-bold text-slate-200 mb-4">404</div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-4">
+          <div className="text-9xl font-display font-semibold text-paper-200 mb-4">404</div>
+          <h1 className="text-3xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-4">
             Page Not Found
           </h1>
-          <p className="text-slate-600 text-lg mb-8">
+          <p className="text-ink-600 text-lg mb-8">
             Sorry, we couldn't find the page you're looking for. It might have been moved or deleted.
           </p>
         </div>
@@ -52,19 +52,19 @@ export const NotFound: React.FC<NotFoundProps> = ({ onNavigate }) => {
 
           <button
             onClick={() => window.history.back()}
-            className="inline-flex items-center text-slate-600 hover:text-primary-600 transition-colors mt-4"
+            className="inline-flex items-center min-h-[44px] text-ink-600 hover:text-ink-900 font-medium transition-colors mt-4"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Go Back
           </button>
         </div>
 
-        <div className="mt-12 pt-8 border-t border-slate-200">
-          <p className="text-sm text-slate-500">
+        <div className="mt-12 pt-8 border-t hairline">
+          <p className="text-sm text-ink-600">
             Need help?{' '}
             <button
               onClick={() => onNavigate('landing')}
-              className="text-primary-600 hover:text-primary-700 font-medium"
+              className="text-ink-600 hover:text-ink-900 font-medium underline"
             >
               Go to Dashboard
             </button>

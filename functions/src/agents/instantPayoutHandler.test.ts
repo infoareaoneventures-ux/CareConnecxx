@@ -7,9 +7,7 @@ const hoisted = vi.hoisted(() => {
   const sessionDocGetMock = vi.fn().mockResolvedValue({
     exists: true,
     data: () => ({
-      pendingInstantPayoutStripeAccount: "acct_123",
       pendingInstantPayoutAmount: "5000",
-      pendingInstantPayoutCurrency: "usd",
     }),
   });
 
@@ -27,23 +25,27 @@ const hoisted = vi.hoisted(() => {
   // paths rely on, so the mock mirrors it instead of a constant.
   const generateCaraMessage = vi.fn(async (opts: any) => opts?.fallback ?? "ack");
 
-  // Stripe balance + payouts mocks
+  // Stripe balance mock (preview only — the payout itself goes through the
+  // shared executeInstantPayout, mocked separately below).
   const balanceRetrieve = vi.fn();
-  const payoutsCreate   = vi.fn();
-
-  // The handler calls `new Stripe(...)` — vi.fn() arrow functions are NOT
-  // constructable, so we expose a real class. The class returns a shared
-  // instance referencing the spy mocks above.
   class StripeMock {
     balance = { retrieve: balanceRetrieve };
-    payouts = { create:   payoutsCreate   };
   }
   const stripeFactory: any = StripeMock;
+
+  // Shared payout module mock
+  const executeInstantPayout = vi.fn();
+  class InstantPayoutError extends Error {
+    constructor(public code: string, message: string) {
+      super(message);
+      this.name = "InstantPayoutError";
+    }
+  }
 
   return {
     updateMock, addMock, docGetMock, sessionDocGetMock, collectionMock,
     sendMessage, parseWithClaude, quickComplete, generateCaraMessage,
-    balanceRetrieve, payoutsCreate, stripeFactory,
+    balanceRetrieve, stripeFactory, executeInstantPayout, InstantPayoutError,
   };
 });
 
@@ -71,12 +73,17 @@ vi.mock("../utils/caraMessage", () => ({
   generateCaraMessage: (...args: unknown[]) => hoisted.generateCaraMessage(...args),
 }));
 
-// The handler does `const Stripe = require("stripe")` so we mock the module.
 vi.mock("stripe", () => ({
   default: hoisted.stripeFactory,
 }));
 
-const { updateMock, sendMessage, parseWithClaude, docGetMock, balanceRetrieve, payoutsCreate, addMock } = hoisted;
+// Single shared payout implementation — the handler must delegate to it.
+vi.mock("../payoutCommon", () => ({
+  executeInstantPayout: (...args: unknown[]) => hoisted.executeInstantPayout(...args),
+  InstantPayoutError: hoisted.InstantPayoutError,
+}));
+
+const { updateMock, sendMessage, parseWithClaude, docGetMock, balanceRetrieve, executeInstantPayout } = hoisted;
 
 import { startInstantPayout, handleInstantPayoutConfirm } from "./instantPayoutHandler";
 
@@ -88,11 +95,11 @@ describe("instantPayoutHandler", () => {
   beforeEach(() => {
     updateMock.mockClear();
     sendMessage.mockClear();
-    addMock.mockClear();
+    hoisted.addMock.mockClear();
     parseWithClaude.mockReset();
     hoisted.quickComplete.mockReset();
     balanceRetrieve.mockReset();
-    payoutsCreate.mockReset();
+    executeInstantPayout.mockReset();
     docGetMock.mockReset();
   });
 
@@ -109,26 +116,27 @@ describe("instantPayoutHandler", () => {
       expect(sendMessage.mock.calls[0][1]).toMatch(/payout account isn't set up/);
     });
 
-    it("zero balance → tells caregiver and skips confirmation", async () => {
+    it("zero balance → explains automatic daily payouts and skips confirmation", async () => {
       docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ stripeAccountId: "acct_123" }) });
       balanceRetrieve.mockResolvedValueOnce({ instant_available: [{ amount: 0, currency: "usd" }] });
       await startInstantPayout(CG_ID, PHONE, CHAT);
-      expect(sendMessage.mock.calls[0][1]).toMatch(/don't have any funds available/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/pay out automatically/);
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ pendingInstantPayoutConfirm: expect.anything() }));
     });
 
-    it("positive balance → shows confirmation and persists state", async () => {
+    it("positive balance → shows free-payout confirmation and persists state", async () => {
       docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ stripeAccountId: "acct_123" }) });
       balanceRetrieve.mockResolvedValueOnce({ instant_available: [{ amount: 5000, currency: "usd" }] });
       await startInstantPayout(CG_ID, PHONE, CHAT);
 
-      // Confirmation message
-      expect(sendMessage.mock.calls[0][1]).toMatch(/\$50\.00.*YES.*NO/i);
+      // Confirmation message — free, no fee language
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\$50\.00.*YES.*NO/is);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/free/i);
+      expect(sendMessage.mock.calls[0][1]).not.toMatch(/fee/i);
       // State persisted with confirm flag + amount
-      expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ pendingInstantPayoutConfirm: expect.any(String) }));
       expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-        pendingInstantPayoutAmount:        "5000",
-        pendingInstantPayoutStripeAccount: "acct_123",
+        pendingInstantPayoutConfirm: expect.any(String),
+        pendingInstantPayoutAmount:  "5000",
       }));
     });
 
@@ -143,33 +151,28 @@ describe("instantPayoutHandler", () => {
   describe("handleInstantPayoutConfirm", () => {
     it("question route → answers and does NOT create payout", async () => {
       parseWithClaude.mockResolvedValueOnce("YES"); // isQuestionOrOther
-      hoisted.quickComplete.mockResolvedValueOnce("The fee is 1.5%.");
+      hoisted.quickComplete.mockResolvedValueOnce("Instant payouts are free.");
 
-      await handleInstantPayoutConfirm(CG_ID, PHONE, "what's the fee?", CHAT);
+      await handleInstantPayoutConfirm(CG_ID, PHONE, "is there a fee?", CHAT);
 
-      expect(payoutsCreate).not.toHaveBeenCalled();
-      expect(sendMessage.mock.calls[0][1]).toMatch(/fee is 1\.5%/);
+      expect(executeInstantPayout).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls[0][1]).toMatch(/free/i);
     });
 
-    it("YES path → creates Stripe instant payout and records it", async () => {
+    it("YES path → delegates to shared executeInstantPayout", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")   // isQuestionOrOther
         .mockResolvedValueOnce("YES"); // decision
-      payoutsCreate.mockResolvedValueOnce({ id: "po_123" });
+      executeInstantPayout.mockResolvedValueOnce({
+        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 5000, status: "pending", arrivalDate: null,
+      });
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "yes send it", CHAT);
 
-      expect(payoutsCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 5000, currency: "usd", method: "instant" }),
-        expect.objectContaining({ stripeAccount: "acct_123" }),
+      expect(executeInstantPayout).toHaveBeenCalledWith(
+        expect.objectContaining({ caregiverId: CG_ID, source: "cara_sms" }),
       );
-      // Record written
-      expect(addMock).toHaveBeenCalledWith(expect.objectContaining({
-        caregiverId: CG_ID,
-        amountCents: 5000,
-        stripePayoutId: "po_123",
-      }));
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/\$50\.00 is on the way/);
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/\$50\.00 is on the way.*no fee/i);
     });
 
     it("NO path → no payout, friendly ack", async () => {
@@ -179,35 +182,56 @@ describe("instantPayoutHandler", () => {
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "wait, never mind", CHAT);
 
-      expect(payoutsCreate).not.toHaveBeenCalled();
-      expect(addMock).not.toHaveBeenCalled();
+      expect(executeInstantPayout).not.toHaveBeenCalled();
     });
 
     it("Stripe payout failure → tells caregiver funds are safe", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")   // isQuestionOrOther
         .mockResolvedValueOnce("YES"); // decision
-      payoutsCreate.mockRejectedValueOnce(new Error("Bank not enabled"));
+      executeInstantPayout.mockRejectedValueOnce(new hoisted.InstantPayoutError("STRIPE_ERROR", "Bank not enabled"));
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "yes", CHAT);
 
-      expect(payoutsCreate).toHaveBeenCalled();
+      expect(executeInstantPayout).toHaveBeenCalled();
       expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/funds are safe/i);
-      expect(addMock).not.toHaveBeenCalled();
     });
 
-    it("YES path always clears pendingInstantPayoutConfirm state", async () => {
+    it("balance already swept between preview and YES → automatic-payout reassurance", async () => {
       parseWithClaude
         .mockResolvedValueOnce("NO")
         .mockResolvedValueOnce("YES");
-      payoutsCreate.mockResolvedValueOnce({ id: "po_123" });
+      executeInstantPayout.mockRejectedValueOnce(new hoisted.InstantPayoutError("NO_BALANCE", "nothing available"));
+
+      await handleInstantPayoutConfirm(CG_ID, PHONE, "yes", CHAT);
+
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/paid out automatically/i);
+    });
+
+    it("replayed YES → duplicate guard message, no double payout", async () => {
+      parseWithClaude
+        .mockResolvedValueOnce("NO")
+        .mockResolvedValueOnce("YES");
+      executeInstantPayout.mockRejectedValueOnce(new hoisted.InstantPayoutError("DUPLICATE", "already processing"));
+
+      await handleInstantPayoutConfirm(CG_ID, PHONE, "yes", CHAT);
+
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/already sent/i);
+    });
+
+    it("YES path always clears pending state", async () => {
+      parseWithClaude
+        .mockResolvedValueOnce("NO")
+        .mockResolvedValueOnce("YES");
+      executeInstantPayout.mockResolvedValueOnce({
+        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 5000, status: "pending", arrivalDate: null,
+      });
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "yes", CHAT);
 
       expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
-        pendingInstantPayoutConfirm:       "__DELETE__",
-        pendingInstantPayoutAmount:        "__DELETE__",
-        pendingInstantPayoutStripeAccount: "__DELETE__",
+        pendingInstantPayoutConfirm: "__DELETE__",
+        pendingInstantPayoutAmount:  "__DELETE__",
       }));
     });
   });

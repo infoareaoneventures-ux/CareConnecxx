@@ -12,7 +12,7 @@ const dummyCaregivers = [
   {
     name: "Maria Gonzalez",
     phone: "+14155551001",
-    email: "maria.g@careconnex.com",
+    email: "maria.g@eviacares.com",
     hourlyRate: 28,
     skills: ["dementia", "bathing", "meal prep", "medication reminders"],
     zipCode: "95050",
@@ -29,7 +29,7 @@ const dummyCaregivers = [
   {
     name: "David Kim",
     phone: "+14155551002",
-    email: "david.kim@careconnex.com",
+    email: "david.kim@eviacares.com",
     hourlyRate: 32,
     skills: ["mobility assistance", "physical therapy", "meal prep", "companionship"],
     zipCode: "95050",
@@ -46,7 +46,7 @@ const dummyCaregivers = [
   {
     name: "Jennifer Walsh",
     phone: "+14155551003",
-    email: "jennifer.w@careconnex.com",
+    email: "jennifer.w@eviacares.com",
     hourlyRate: 26,
     skills: ["companionship", "meal prep", "light housekeeping", "transportation"],
     zipCode: "95051",
@@ -63,7 +63,7 @@ const dummyCaregivers = [
   {
     name: "Robert Chen",
     phone: "+14155551004",
-    email: "robert.chen@careconnex.com",
+    email: "robert.chen@eviacares.com",
     hourlyRate: 30,
     skills: ["dementia", "Alzheimer's", "medication management", "cooking"],
     zipCode: "95050",
@@ -80,7 +80,7 @@ const dummyCaregivers = [
   {
     name: "Amanda Foster",
     phone: "+14155551005",
-    email: "amanda.f@careconnex.com",
+    email: "amanda.f@eviacares.com",
     hourlyRate: 27,
     skills: ["personal care", "bathing", "grooming", "mobility assistance"],
     zipCode: "95054",
@@ -106,7 +106,7 @@ async function populateCaregivers() {
   }
   
   console.log(`\n✅ Successfully added ${dummyCaregivers.length} caregivers!`);
-  console.log('\nTest Cara now by messaging: "Find a caregiver"');
+  console.log('\nTest Evia now by messaging: "Find a caregiver"');
 }
 
 populateCaregivers().catch(console.error);

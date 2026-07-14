@@ -1,9 +1,10 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -18,13 +19,12 @@ async function isSwapQuestion(text: string, reAsk: string): Promise<boolean> {
 }
 
 async function answerSwapMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, an AI care assistant helping a caregiver find coverage for one of their shifts. " +
-      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
+  return answerHumanMidFlow({
+    audience: "caregiver",
+    situation: "caregiver is finding coverage for one of their shifts",
     text,
-    { maxTokens: 150 },
-  ).catch(() => "Let me get back to you on that. In the meantime —");
-  return `${answer}\n\n${reAsk}`;
+    reAsk,
+  });
 }
 
 export async function handleCaregiverSwapRequest(
@@ -49,7 +49,8 @@ export async function handleCaregiverSwapRequest(
 
   if (step === "identify_shift") {
     // Find upcoming confirmed appointments for this caregiver
-    const today = new Date().toISOString().split("T")[0];
+    // Business-timezone today — UTC hid tonight's shift after 5pm PT
+    const today = businessTodayStr();
     const snap = await db.collection("appointments")
       .where("caregiverId", "==", caregiverId)
       .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])

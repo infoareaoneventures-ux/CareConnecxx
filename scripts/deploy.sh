@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Deployment Script for CareConnex
+# Deployment Script for Evia
 
 echo "🚀 Starting Deployment Process..."
 

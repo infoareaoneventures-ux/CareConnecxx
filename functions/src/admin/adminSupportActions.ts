@@ -17,7 +17,7 @@ function nowIso() {
  * (`isAdmin: true`) — the exact shape the web ticket views read (services/api.ts
  * addTicketResponse + the user's ticket thread). The ticket is moved to
  * in-progress (or resolved when requested). We additionally notify the user over
- * Linq where an SMS session exists, and write a notifications doc, so Cara is the
+ * Linq where an SMS session exists, and write a notifications doc, so Evia is the
  * delivery surface. Audit-logged.
  */
 export const admin_respond_support_ticket = functions.https.onCall(

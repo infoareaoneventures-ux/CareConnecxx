@@ -34,5 +34,5 @@ export const QRCanvas: React.FC<Props> = ({ data, size = 260, light = '#ffffff',
     );
   }
 
-  return <canvas ref={canvasRef} className={className} width={size} height={size} aria-label="QR code to text Cara" />;
+  return <canvas ref={canvasRef} className={className} width={size} height={size} aria-label="QR code to text Evia" />;
 };

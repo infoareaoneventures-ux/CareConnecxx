@@ -1,7 +1,7 @@
-# CareConnex Firebase Deployment Script
+﻿# Evia Firebase Deployment Script
 # Run this AFTER installing Firebase CLI and logging in
 
-Write-Host "🚀 CareConnex Deployment Script" -ForegroundColor Cyan
+Write-Host "🚀 Evia Deployment Script" -ForegroundColor Cyan
 Write-Host "================================" -ForegroundColor Cyan
 Write-Host ""
 

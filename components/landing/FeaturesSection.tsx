@@ -8,49 +8,48 @@ interface FeaturesSectionProps {
 
 export const FeaturesSection: React.FC<FeaturesSectionProps> = ({ onNavigate }) => {
     return (
-        <section className="bg-[#f0ece6] flex flex-col md:flex-row min-h-[600px] w-full overflow-hidden">
-            {/* Left Image Half */}
-            <div className="md:w-1/2 relative h-[400px] md:h-auto overflow-hidden">
-                <img 
-                    src="/caregiver-door-greeting.png" 
-                    alt="Caregiver arriving to greet senior at the door"
-                    className="absolute inset-0 w-full h-full object-cover"
-                />
-            </div>
+        <section className="bg-paper-50 border-t hairline">
+            <div className="max-w-6xl mx-auto px-6 py-20 lg:py-28 flex flex-col md:flex-row items-center gap-12 lg:gap-20">
+                {/* Left Image Half */}
+                <div className="md:w-1/2 w-full">
+                    <div className="rounded-3xl overflow-hidden" style={{ boxShadow: '0 24px 60px rgba(26,31,43,0.10)' }}>
+                        <img
+                            src="/caregiver-door-greeting.png"
+                            alt="Caregiver arriving to greet senior at the door"
+                            className="w-full h-[380px] md:h-[460px] object-cover"
+                        />
+                    </div>
+                </div>
 
-            {/* Right Content Half */}
-            <div className="md:w-1/2 px-8 py-16 lg:px-20 lg:py-24 flex items-center">
-                <div className="max-w-lg w-full">
-                    <h2 className="text-3xl lg:text-4xl font-extrabold text-black mb-1 tracking-[-0.04em]">
-                        How it works:
-                    </h2>
-                    <h2 className="text-3xl lg:text-4xl font-extrabold text-black mb-10 tracking-[-0.04em]">
+                {/* Right Content Half */}
+                <div className="md:w-1/2 w-full">
+                    <p className="section-number mb-4">(2)</p>
+                    <h2 className="font-display text-4xl lg:text-[42px] font-semibold text-ink-900 mb-4 tracking-[-0.02em] leading-[1.1]">
                         Caregivers come to you
                     </h2>
+                    <p className="text-ink-600 text-[17px] mb-10 leading-relaxed max-w-md">
+                        Tell Evia what you need once. She does the sourcing,
+                        vetting, and scheduling — and keeps you posted by text.
+                    </p>
 
-                    <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-200 mb-8">
-                        {/* Step 1 */}
-                        <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
-                            <MessageSquare className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Text Cara what you need (schedule, health conditions)</p>
-                        </div>
-                        {/* Step 2 */}
-                        <div className="flex items-center gap-5 p-5 md:p-6 border-b border-slate-100">
-                            <Star className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara sources, filters, and interviews top local caregivers for you</p>
-                        </div>
-                        {/* Step 3 */}
-                        <div className="flex items-center gap-5 p-5 md:p-6">
-                            <Edit className="w-[22px] h-[22px] text-slate-800 flex-shrink-0" strokeWidth={2.5} />
-                            <p className="text-slate-700 font-medium text-[15px] md:text-[17px]">Cara schedules the visits and sends you updates via text</p>
-                        </div>
+                    <div className="space-y-0 border-t hairline mb-10">
+                        {[
+                            { icon: MessageSquare, text: 'Text Evia what you need — schedule, health conditions, preferences' },
+                            { icon: Star, text: 'Evia sources, filters, and interviews top local caregivers for you' },
+                            { icon: Edit, text: 'Evia schedules the visits and sends you updates via text' },
+                        ].map(({ icon: Icon, text }, i) => (
+                            <div key={i} className="flex items-center gap-5 py-5 border-b hairline">
+                                <Icon className="w-5 h-5 text-ink-900 flex-shrink-0" strokeWidth={2} />
+                                <p className="text-ink-600 text-[16px]">{text}</p>
+                            </div>
+                        ))}
                     </div>
 
-                    <button 
+                    <button
                         onClick={() => onNavigate('client-signup')}
-                        className="btn-depth-primary px-8 py-3.5 rounded-2xl font-semibold text-sm flex items-center justify-center"
+                        className="btn-depth-primary px-8 py-3.5 rounded-full font-semibold text-sm"
                     >
-                        Get Started
+                        Get started
                     </button>
                 </div>
             </div>

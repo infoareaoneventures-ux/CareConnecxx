@@ -6,7 +6,7 @@ import { appLink } from "./config/appUrl";
 // Initialize email service
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@careconnex.com";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@eviacares.com";
 
 // SMS/iMessage is handled through Linq. Twilio is intentionally not part of launch messaging.
 
@@ -163,10 +163,14 @@ async function notifyCoordinators(intakeData: any, matchAssignmentId: string, pr
             id: notificationRef.id,
             type: 'new_intake',
             title: priority === 'urgent' ? '🚨 Urgent: New Intake' : 'New Client Intake',
+            // `body`/`isRead` are the canonical fields the notification UI reads
+            // (types.ts Notification, NotificationDropdown); `message`/`read` kept for legacy readers.
+            body: `${intakeData.contactName || 'A new client'} completed intake for ${intakeData.recipientName || 'care services'}. Priority: ${priority}`,
             message: `${intakeData.contactName || 'A new client'} completed intake for ${intakeData.recipientName || 'care services'}. Priority: ${priority}`,
             matchAssignmentId: matchAssignmentId,
             intakeId: intakeData.userId,
             priority: priority,
+            isRead: false,
             read: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
@@ -206,9 +210,11 @@ export const onHireRequestApproved = functions.firestore
                 id: caregiverNotificationRef.id,
                 type: 'hire_offer',
                 title: '🎉 You\'ve Been Selected!',
+                body: `A client wants to hire you as their caregiver. Review the details and accept or decline.`,
                 message: `A client wants to hire you as their caregiver. Review the details and accept or decline.`,
                 hireRequestId: context.params.requestId,
                 clientId: newData.clientId,
+                isRead: false,
                 read: false,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
@@ -259,9 +265,11 @@ export const onCaregiverAcceptsHire = functions.firestore
                 id: clientNotificationRef.id,
                 type: 'caregiver_accepted',
                 title: '✅ Caregiver Accepted!',
+                body: `Great news! Your selected caregiver has accepted. Your coordinator will finalize the schedule.`,
                 message: `Great news! Your selected caregiver has accepted. Your coordinator will finalize the schedule.`,
                 hireRequestId: context.params.requestId,
                 caregiverId: newData.caregiverId,
+                isRead: false,
                 read: false,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
@@ -401,16 +409,16 @@ async function sendIntakeNotificationEmail(intakeData: any, matchAssignmentId: s
             <p><strong>Location:</strong> ${intakeData.city}, ${intakeData.state} ${intakeData.zipCode}</p>
             ${intakeData.additionalComments ? `<p><strong>Notes:</strong> ${intakeData.additionalComments}</p>` : ''}
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/admin" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Review in Dashboard</a></p>
+            <p><a href="${appLink("/admin")}" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Review in Dashboard</a></p>
             <p>Match Assignment ID: ${matchAssignmentId}</p>
         `;
         
         await resend.emails.send({
-            from: `CareConnex <${FROM_EMAIL}>`,
+            from: `Evia <${FROM_EMAIL}>`,
             to: coordinatorEmails,
             subject: subject,
             html: html,
-            text: `New client intake from ${intakeData.contactName}. Priority: ${priority}. Review at https://careconnex-d4c8b.web.app/admin`
+            text: `New client intake from ${intakeData.contactName}. Priority: ${priority}. Review at ${appLink("/admin")}`
         });
         
         console.log(`[sendIntakeNotificationEmail] Sent to ${coordinatorEmails.length} coordinators`);
@@ -442,7 +450,7 @@ async function sendHireOfferSMS(caregiverId: string, hireRequestData: any): Prom
         }
         
         const message =
-            `You have a new CareConnex hire offer. Review the visit details and accept or decline here: ` +
+            `You have a new Evia hire offer. Review the visit details and accept or decline here: ` +
             `${appLink("/caregiver")}`;
         await sendToPhone(phone, message, { preferredService: "SMS" });
         console.log(`[sendHireOfferSMS] Sent Linq hire offer to caregiver ${caregiverId}`);
@@ -482,7 +490,7 @@ async function sendHireOfferEmail(caregiverId: string, hireRequestData: any): Pr
         const html = `
             <h2>🎉 You've Been Selected!</h2>
             <p>Hi ${name},</p>
-            <p>Great news! A client on CareConnex wants to hire you as their caregiver.</p>
+            <p>Great news! A client on Evia wants to hire you as their caregiver.</p>
             <h3>Job Details:</h3>
             <ul>
                 <li><strong>Schedule:</strong> ${hireRequestData.proposedSchedule.days.join(', ')}</li>
@@ -492,17 +500,17 @@ async function sendHireOfferEmail(caregiverId: string, hireRequestData: any): Pr
             </ul>
             ${hireRequestData.clientNotes ? `<p><strong>Client Notes:</strong> ${hireRequestData.clientNotes}</p>` : ''}
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/caregiver" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin-right: 10px;">Accept Offer</a></p>
+            <p><a href="${appLink("/caregiver")}" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin-right: 10px;">Accept Offer</a></p>
             <p>Please respond within 24 hours to secure this opportunity.</p>
             <p>Questions? Reply to this email or call us at (555) 123-4567.</p>
         `;
         
         await resend.emails.send({
-            from: `CareConnex <${FROM_EMAIL}>`,
+            from: `Evia <${FROM_EMAIL}>`,
             to: email,
-            subject: '🎉 You\'ve Been Hired on CareConnex!',
+            subject: '🎉 You\'ve Been Hired on Evia!',
             html: html,
-            text: `Hi ${name}, You've been selected by a client on CareConnex! Log in to view details and accept: https://careconnex-d4c8b.web.app/caregiver`
+            text: `Hi ${name}, You've been selected by a client on Evia! Log in to view details and accept: ${appLink("/caregiver")}`
         });
         
         console.log(`[sendHireOfferEmail] Sent to caregiver ${caregiverId}`);
@@ -552,16 +560,16 @@ async function sendCaregiverAcceptedEmail(clientId: string, caregiverName: strin
             </ul>
             <p>Your care coordinator will reach out within 24 hours to finalize the first visit details.</p>
             <hr>
-            <p><a href="https://careconnex-d4c8b.web.app/client" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View in Dashboard</a></p>
+            <p><a href="${appLink("/client")}" style="background-color: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View in Dashboard</a></p>
             <p>Questions? Contact your care coordinator or reply to this email.</p>
         `;
         
         await resend.emails.send({
-            from: `CareConnex <${FROM_EMAIL}>`,
+            from: `Evia <${FROM_EMAIL}>`,
             to: email,
             subject: '✅ Your Caregiver Has Accepted!',
             html: html,
-            text: `Hi ${name}, ${caregiverName} has accepted your hire request! View details: https://careconnex-d4c8b.web.app/client`
+            text: `Hi ${name}, ${caregiverName} has accepted your hire request! View details: ${appLink("/client")}`
         });
         
         console.log(`[sendCaregiverAcceptedEmail] Sent to client ${clientId}`);

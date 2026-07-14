@@ -93,7 +93,7 @@ export async function handleTimesheetApproval(
 
     const opener = await generateCaraMessage({
       audience:  "family",
-      context:   `${first.caregiverName} submitted hours for review for the visit on ${first.date}. Cara is presenting them to the family for approval. Write a brief 1-sentence intro.`,
+      context:   `${first.caregiverName} submitted hours for review for the visit on ${first.date}. Evia is presenting them to the family for approval. Write a brief 1-sentence intro.`,
       fallback:   `${first.caregiverName} submitted their hours for ${first.date} — here are the details:`,
       maxTokens: 60,
     });
@@ -155,7 +155,7 @@ export async function handleTimesheetApproval(
       await sendMessage(approveMsg);
     } else {
       await db.collection("shiftHours").doc(tsId).update({
-        status:     "disputed",
+        status:     "disputed_admin_review",
         disputedAt: new Date().toISOString(),
         disputedBy: clientId,
       });

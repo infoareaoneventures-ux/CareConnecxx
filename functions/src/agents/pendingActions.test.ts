@@ -155,7 +155,7 @@ describe("isHighRisk", () => {
 describe("buildActionPreview", () => {
   it("produces human-readable previews for known tools", () => {
     expect(buildActionPreview("cancel_appointment",   { appointmentId: "appt_123" })).toBe("Cancel appointment appt_123");
-    expect(buildActionPreview("cancel_subscription",   {})).toBe("Cancel CareConnex subscription");
+    expect(buildActionPreview("cancel_subscription",   {})).toBe("Cancel Evia subscription");
     expect(buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
     expect(buildActionPreview("manage_recurring_schedule", { action: "cancel", scheduleId: "sched_1" })).toContain("cancel recurring schedule sched_1");
   });

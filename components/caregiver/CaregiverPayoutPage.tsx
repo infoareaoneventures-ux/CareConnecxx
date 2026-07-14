@@ -11,8 +11,8 @@ import type { Caregiver } from '../../types';
 const FAQS: Array<{ q: string; a: string }> = [
   { q: 'Why should I accept credit card payments?', a: 'Families overwhelmingly prefer paying by card. Accepting card payments significantly increases the jobs you see and land.' },
   { q: 'How long will payout setup take? What will I need?', a: 'Most caregivers finish in under 5 minutes. Have a photo ID and your bank routing info ready.' },
-  { q: 'Are there any fees to accept credit card payments?', a: 'CareConnex covers Stripe processing fees for membership customers. See your plan for details.' },
-  { q: 'How can I pay with my CareConnex balance?', a: 'Funds arrive in your connected bank on a rolling schedule after each credit-card booking is completed.' },
+  { q: 'Are there any fees to accept credit card payments?', a: 'Evia covers Stripe processing fees for membership customers. See your plan for details.' },
+  { q: 'How can I pay with my Evia balance?', a: 'Funds arrive in your connected bank on a rolling schedule after each credit-card booking is completed.' },
   { q: 'Can I transfer funds to my own bank account?', a: 'Yes — link any US bank account during onboarding. Instant payout options may apply on eligible accounts.' },
 ];
 
@@ -22,18 +22,27 @@ export const CaregiverPayoutPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
+  // Profile = users+caregivers merge PLUS the owner-only private/payout
+  // subdoc (stripeAccountId + Connect flags moved off the world-readable
+  // parent doc).
   const loadProfile = async () => {
     if (!currentUser?.uid) return;
-    const p = await dbService.getUser(currentUser.uid);
-    if (p) setProfile(p as any);
+    const [p, payout] = await Promise.all([
+      dbService.getUser(currentUser.uid),
+      dbService.getOwnCaregiverPayoutFields(currentUser.uid),
+    ]);
+    if (p) setProfile({ ...(p as any), ...payout });
   };
 
   useEffect(() => {
     let active = true;
     (async () => {
       if (!currentUser?.uid) return;
-      const p = await dbService.getUser(currentUser.uid);
-      if (active && p) setProfile(p as any);
+      const [p, payout] = await Promise.all([
+        dbService.getUser(currentUser.uid),
+        dbService.getOwnCaregiverPayoutFields(currentUser.uid),
+      ]);
+      if (active && p) setProfile({ ...(p as any), ...payout });
     })();
     return () => { active = false; };
   }, [currentUser?.uid]);
@@ -95,8 +104,9 @@ export const CaregiverPayoutPage: React.FC = () => {
                     <p className="text-sm font-semibold text-green-700">Bank account connected</p>
                   </div>
                   <p className="text-sm text-slate-600 mb-4">
-                    You're all set to receive payouts. Standard payouts arrive in 2-3 business days (free).
-                    Instant payouts arrive in 30 minutes (1.5% fee, min $0.50).
+                    You're all set to receive payouts. Earnings pay out automatically every day and
+                    arrive in your bank ~2 business days after each visit is paid (free).
+                    Need money sooner? Instant payouts arrive in about 30 minutes — also free.
                   </p>
                   <a
                     href="https://dashboard.stripe.com/express"

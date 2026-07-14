@@ -3,6 +3,7 @@
    ========================================== */
 @import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap');
 
 /* ==========================================
    CRITICAL CSS - Above the Fold
@@ -36,6 +37,16 @@ html {
 
 @theme {
   --font-family-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+  /* Landing — warm paper surfaces (Poke-style calm cream) */
+  --color-paper-50: #FCFAF6;
+  --color-paper-100: #F6F1E9;
+  --color-paper-200: #EDE7DC;
+
+  /* Landing — soft ink (never pure black) */
+  --color-ink-900: #1A1F2B;
+  --color-ink-600: #4A5163;
+  --color-ink-400: #8B92A3;
 
   /* Primary - Blue (UrbanSitter inspired) */
   --color-primary-50: #eff6ff;
@@ -348,6 +359,25 @@ body {
   mix-blend-mode: difference;
   pointer-events: none;
   z-index: 50; /* Ensure it stays on top of most backgrounds */
+}
+
+/* Landing display serif — expressive warm headlines (Fraunces) */
+.font-display {
+  font-family: 'Fraunces', Georgia, serif;
+  font-optical-sizing: auto;
+  font-variation-settings: 'SOFT' 0, 'WONK' 0;
+}
+
+/* Landing hairline divider */
+.hairline {
+  border-color: rgba(26, 31, 43, 0.08);
+}
+
+/* Landing section number chip — "(1)" editorial marker */
+.section-number {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 0.95rem;
+  color: var(--color-ink-400);
 }
 
 /* Deep gradient buttons */

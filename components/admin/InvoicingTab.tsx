@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { db, functions } from '../../lib/firebase';
+import { dbService } from '../../services/api';
 import { Invoice } from '../../types';
 import { Plus, Eye, Edit, Trash2, Send, Download, CheckCircle, XCircle } from 'lucide-react';
 
@@ -37,6 +38,14 @@ export const InvoicingTab = () => {
         { date: '', hours: 0, rate: 0, tasks: '', notes: '' }
     ]);
 
+    // Live invoice list (same pattern as TicketManager) - invoices are written
+    // server-side (createInvoice / processClientApproval / agent flows), so a
+    // listener keeps the admin table current without a refresh.
+    useEffect(() => {
+        const unsubscribe = dbService.subscribeToInvoices(setInvoices);
+        return () => unsubscribe();
+    }, []);
+
     useEffect(() => {
         fetchData();
     }, []);
@@ -44,10 +53,6 @@ export const InvoicingTab = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const invoicesSnapshot = await db!.collection('invoices').orderBy('createdAt', 'desc').get();
-            const invList = invoicesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Invoice[];
-            setInvoices(invList);
-
             // Fetch all users and filter client-side to debug
             const clientsSnapshot = await db!.collection('users').get();
             const allUsers = clientsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -96,7 +101,7 @@ export const InvoicingTab = () => {
 
             await createInvoiceFn(payload);
             setView('list');
-            fetchData();
+            // Invoice list refreshes via the onSnapshot listener
         } catch (error) {
             console.error('Error creating invoice', error);
             addToast('Failed to create invoice. Please try again.', 'error');
@@ -112,7 +117,7 @@ export const InvoicingTab = () => {
         if (!confirm('Are you sure you want to delete this invoice?')) return;
         try {
             await db!.collection('invoices').doc(id).delete();
-            fetchData();
+            // Invoice list refreshes via the onSnapshot listener
             addToast('Invoice deleted', 'success');
         } catch (error) {
             console.error(error);

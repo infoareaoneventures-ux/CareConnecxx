@@ -5,10 +5,12 @@ import {
   XCircle, CalendarDays, Loader2, Repeat, CreditCard, Banknote,
   CheckCircle, ChevronDown, ChevronUp, AlertCircle, Phone, User,
 } from 'lucide-react';
-import { auth, db } from '../../lib/firebase';
+import { db } from '../../lib/firebase';
 import { ClientNavigation } from './ClientNavigation';
 import { useAccessGates } from '../../hooks/useAccessGates';
+import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { paymentMethodLabel } from '../../types';
 
 interface Shift {
   id: string;
@@ -238,7 +240,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${booking.rate}/hr</span>
-              <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+              <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(booking.paymentMethod)}</span>
             </span>
           </div>
         )}
@@ -494,7 +496,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${base.rate}/hr</span>
-              <span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : 'Cash'}</span>
+              <span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(base.paymentMethod)}</span>
             </span>
           </div>
         )}
@@ -977,7 +979,7 @@ export const ClientVisitsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const { gate, Modals: GateModals } = useAccessGates();
 
-  const user = auth?.currentUser;
+  const user = useAuthUser();
 
   useEffect(() => {
     if (!user || !db) { setLoading(false); return; }
@@ -993,7 +995,7 @@ export const ClientVisitsPage: React.FC = () => {
         if (missing.length > 0 && db) {
           const uniqueIds = [...new Set(missing.map((b: any) => b.caregiverId as string))];
           Promise.all(uniqueIds.map(async id => {
-            const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+            const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
             if (cSnap?.exists) {
               const d = cSnap.data() as any;
               const photo = d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || '';
@@ -1022,7 +1024,7 @@ export const ClientVisitsPage: React.FC = () => {
           if (missing.length > 0 && db) {
             const uniqueIds = [...new Set(missing.map(s => s.caregiverId))];
             Promise.all(uniqueIds.map(async id => {
-              const cSnap = await db!.collection('caregivers').doc(id).get().catch(() => null);
+              const cSnap = await db!.collection('publicCaregiverProfiles').doc(id).get().catch(() => null);
               if (cSnap?.exists) {
                 const d = cSnap.data() as any;
                 const photo = d?.photo || d?.profilePhoto || d?.photoURL || d?.imageUrl || '';
@@ -1160,7 +1162,7 @@ export const ClientVisitsPage: React.FC = () => {
               <div className="mt-5 inline-flex items-start gap-2 text-left text-sm text-slate-500 bg-primary-50 border border-primary-100 rounded-xl px-4 py-3 max-w-md">
                 <MessageSquare className="w-4 h-4 mt-0.5 text-primary-500 shrink-0" />
                 <span>
-                  Try texting Cara <span className="font-medium text-slate-700">“book a visit for next Monday morning”</span> or{' '}
+                  Try texting Evia <span className="font-medium text-slate-700">“book a visit for next Monday morning”</span> or{' '}
                   <span className="font-medium text-slate-700">“find me a backup caregiver”</span> — she'll set it up for you.
                 </span>
               </div>

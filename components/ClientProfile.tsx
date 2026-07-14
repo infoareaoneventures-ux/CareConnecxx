@@ -54,7 +54,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
           });
         }
       } else {
-        onNavigate('client-login');
+        onNavigate('login');
         return;
       }
       setLoading(false);
@@ -63,7 +63,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
     fetchProfile();
   }, [currentUser]);
 
-  // U3: Live senior-profile listener. Cara's intake writes (care needs,
+  // U3: Live senior-profile listener. Evia's intake writes (care needs,
   // location, etc.) reflect here without a reload. Applies snapshots only when
   // the form is not dirty, so unsaved edits are never overwritten (KTD-4).
   useEffect(() => {

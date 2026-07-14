@@ -1,25 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { CARA_CAPABILITIES, buildCapabilityMenu } from "./caraCapabilities";
 
+// The menu contract is care-recipe prose (R2/R12 of the human-agent plan):
+// featured example prompts in one natural sentence — never a chatbot label
+// list. Labels exist for the frontend chips only.
 describe("buildCapabilityMenu", () => {
-  it("lists every client capability label for a client (en)", () => {
+  it("shows every FEATURED client example as prose for a client (en)", () => {
     const menu = buildCapabilityMenu("client", "en");
-    for (const entry of CARA_CAPABILITIES.client) {
-      expect(menu).toContain(entry.label);
+    for (const entry of CARA_CAPABILITIES.client.filter((e) => e.featured)) {
       expect(menu).toContain(entry.example);
     }
-    // none of the caregiver-only labels leak in
-    expect(menu).not.toContain("Find work");
-    expect(menu).not.toContain("Submit your hours");
+    // none of the caregiver-only examples leak in
+    expect(menu).not.toContain("Show me jobs near me");
+    expect(menu).not.toContain("Submit my hours");
+    // and no chatbot-menu framing
+    expect(menu.toLowerCase()).not.toContain("here's what i can help you with");
   });
 
-  it("lists caregiver capabilities for a caregiver and excludes client-only ones", () => {
+  it("shows featured caregiver examples for a caregiver and excludes client-only ones", () => {
     const menu = buildCapabilityMenu("caregiver", "en");
-    for (const entry of CARA_CAPABILITIES.caregiver) {
-      expect(menu).toContain(entry.label);
+    for (const entry of CARA_CAPABILITIES.caregiver.filter((e) => e.featured)) {
+      expect(menu).toContain(entry.example);
     }
-    expect(menu).not.toContain("Find a caregiver");
-    expect(menu).not.toContain("View billing");
+    expect(menu).not.toContain("Find me a caregiver");
+    expect(menu).not.toContain("Explain my latest invoice");
   });
 
   it("falls back to client capabilities for an unknown/undefined role", () => {
@@ -32,8 +36,10 @@ describe("buildCapabilityMenu", () => {
 
   it("uses Spanish strings for lang 'es' and English otherwise", () => {
     const es = buildCapabilityMenu("client", "es");
-    expect(es).toContain("Encontrar un cuidador");
-    expect(es).toContain("Esto es lo que puedo hacer por ti");
+    expect(es).toContain("Puedo coordinar cuidado contigo por aquí");
+    for (const entry of CARA_CAPABILITIES.client.filter((e) => e.featured)) {
+      expect(es).toContain(entry.exampleEs);
+    }
     // any non-es lang falls back to English
     const fr = buildCapabilityMenu("client", "fr");
     expect(fr).toEqual(buildCapabilityMenu("client", "en"));

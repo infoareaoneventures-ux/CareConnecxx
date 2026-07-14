@@ -9,6 +9,7 @@ import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
+import { answerHumanQuestionOnly } from "../agents/humanReply";
 
 const db = admin.firestore();
 
@@ -52,15 +53,14 @@ async function handlePreShiftUpdate(
     // re-ask, so the re-ask could arrive before the answer.
     let answer = "";
     try {
-      answer = await quickComplete(
-        "You are Cara, an AI care assistant. A family member was asked if they want to add tasks for today's " +
-        `visit with ${info.caregiverName ?? "the caregiver"} for ${info.seniorName}. Instead they asked a question — ` +
-        "answer it briefly (1–2 sentences). Do NOT ask them to add tasks — that prompt comes next.",
+      answer = await answerHumanQuestionOnly({
+        audience: "family",
+        situation: `family was asked if they want to add tasks for today's visit with ${info.caregiverName ?? "the caregiver"} for ${info.seniorName}`,
         text,
-        { maxTokens: 180 },
-      );
+        maxTokens: 180,
+      });
     } catch {
-      answer = "Let me get back to you on that. In the meantime —";
+      answer = "I do not want to guess on that.";
     }
     await sendMessage(chatId, answer);
     await sendMessage(chatId,
@@ -349,6 +349,7 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
       const refundClientId = ((session as any).userId ?? phone) as string;
       await handleRefundRequest(
         refundClientId,
+        phone,
         text,
         session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)

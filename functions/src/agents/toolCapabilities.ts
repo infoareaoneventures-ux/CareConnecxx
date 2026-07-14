@@ -1,5 +1,6 @@
 import type { Intent } from "./intentClassifier";
 import type { McpTool } from "../mcp/server";
+import { MEDICAL_TOOL_NAMES, medicalActionsAvailable } from "./medicalBoundary";
 
 // Six capability buckets used to filter the 80+ MCP tools before each Sonnet
 // turn. The goal is to reduce the tool surface Claude has to attend to per
@@ -15,7 +16,7 @@ export type Capability =
 
 // Tools tagged with the capability buckets they belong to. Tools NOT listed
 // here are "core" — always bound regardless of intent. Core tools are the
-// universal reads Cara needs on virtually every turn (senior profile, search
+// universal reads Evia needs on virtually every turn (senior profile, search
 // memory, suggest care, pending tasks, support tickets, agent resume).
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
@@ -77,8 +78,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_refund_requests:      ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
+  retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
+  update_booking_payment_method: ["billing", "booking"], // parity 2026-07-06: agent mirror of v1-updateBookingPaymentMethod
   request_instant_payout:   ["billing"],
-  request_standard_payout:  ["billing"],
   respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
   get_caregiver_earnings:   ["billing"],
@@ -126,6 +128,11 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_shift_task:         ["care_plan"],
   submit_media_update:       ["care_plan", "messaging"],
   get_background_check_status: ["care_plan", "booking"],
+  // Checkr Candidate MCP bridge (2026-07-09) — caregiver-only, so the tags
+  // never drive client intent-filtering; tagged to satisfy coverage.
+  request_checkr_verification: ["care_plan"],
+  verify_checkr_otp:           ["care_plan"],
+  get_checkr_report:           ["care_plan"],
 
   // ── messaging (family group, contact prefs, safety) ─────────────────────
   send_caregiver_message:           ["messaging"],
@@ -137,16 +144,27 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   remove_family_member:             ["messaging"],
   update_preferences:               ["messaging"],
   update_communication_preferences: ["messaging"],
+  set_visit_update_frequency:       ["messaging"],
   request_email_change:             ["messaging"],
   block_user:                       ["messaging"],
   unblock_user:                     ["messaging"],
   report_user:                      ["messaging"],
   get_support_tickets:              ["messaging"],
 
+  // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
+  archive_senior_profile: ["care_plan"],
+  update_family_member:   ["messaging"],
+  list_interviews:        ["booking"],
+  cancel_interview:       ["booking"],
+  list_blocked_users:     ["messaging"],
+  list_shift_swaps:       ["booking", "scheduling", "messaging"],
+  confirm_cash_received:  ["billing"],
+
   // ── memory_search (memory files, web actions, credentials) ──────────────
   read_memory_file:   ["memory_search"],
   update_memory_file: ["memory_search"],
   edit_memory_file:   ["memory_search"],
+  delete_memory_file: ["memory_search"],
   search_memory:      ["memory_search"],
   search_web:         ["memory_search"],
   perform_web_action: ["memory_search"],
@@ -169,6 +187,9 @@ export const CORE_TOOL_NAMES = new Set<string>([
   "get_senior_profile",
   "list_household_seniors",
   "get_pending_tasks",
+  // Unified WIP view — like get_pending_tasks, an orientation read the agent
+  // may need under any intent ("what are you working on for me?").
+  "get_work_in_progress",
   "suggest_upcoming_care",
   "get_care_team",
   "create_support_ticket",
@@ -190,10 +211,13 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // filtering never strips them mid-collection.
   "save_onboarding_field",
   "complete_collection",
+  // Native location request (2026-06-29): needed mid-onboarding (address pin)
+  // and on profile/service-area updates under many intents — never filter.
+  "request_location",
   // Cross-cutting onboarding helper: "send me my payment / identity / photo /
   // document / background-check / payout link" arrives under many filtered
   // intents (UPDATE_PAYMENT_METHOD, UPDATE_PHOTO, …). It must never be filtered
-  // out, or Cara falls back to deflecting instead of just sending the link.
+  // out, or Evia falls back to deflecting instead of just sending the link.
   "send_onboarding_link",
   // Parity: emergency alert is SAFETY-critical — it must be bound on every turn
   // and never filtered out by intent, so a family reporting an urgent situation
@@ -203,6 +227,10 @@ export const CORE_TOOL_NAMES = new Set<string>([
   // low-risk; keep them always-available rather than guessing an intent.
   "send_referral",
   "get_referral_status",
+  // Outbound iMessage tapback (Linq reactions, 2026-07): an expressive,
+  // intent-orthogonal nicety — Evia may want to heart a photo or thumbs-up a
+  // confirmation under ANY intent, so it must never be filtered out.
+  "react_to_message",
 ]);
 
 // Intent → required capabilities. An empty array means "no filter — bind
@@ -219,6 +247,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
 export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   // Broad / fall-through intents — no filter
   STOP:                 [],
+  HELP:                 [],
   TASK_REPLY:           [],
   QUESTION:             [],
   UPDATE_ONBOARDING:    [],
@@ -291,7 +320,7 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 // instruction (see qaAgent.ts), instead of the soft buildToolResultContent
 // path used for read-only lookups. Curated rather than prefix-derived so
 // adding a tool here is a deliberate decision; genuinely low-stakes writes
-// (journal likes/comments, memory notes Cara already echoes back) are
+// (journal likes/comments, memory notes Evia already echoes back) are
 // intentionally excluded.
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
@@ -305,7 +334,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
   // money
   "cancel_subscription", "reactivate_subscription", "create_refund_request",
-  "request_instant_payout",
+  "request_instant_payout", "retry_shift_payment", "update_booking_payment_method",
   // people & safety
   "add_family_member", "remove_family_member", "block_user", "unblock_user", "report_user",
   // care data
@@ -319,6 +348,11 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
   // message relays (family/caregiver believe a message was delivered)
   "send_caregiver_message", "send_client_message",
+  // CRUD/parity gap closures (agent-native audit 2026-07) — falsely reporting
+  // an archive, member edit, interview cancel, memory delete, or cash
+  // confirmation as done would be believed and acted on.
+  "archive_senior_profile", "update_family_member", "cancel_interview",
+  "delete_memory_file", "confirm_cash_received",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */
@@ -337,13 +371,16 @@ export function selectToolsForIntent(
   allTools: McpTool[],
   intent: Intent | null | undefined,
 ): McpTool[] {
-  if (!intent) return allTools;
+  const launchTools = medicalActionsAvailable()
+    ? allTools
+    : allTools.filter(tool => !MEDICAL_TOOL_NAMES.has(tool.name));
+  if (!intent) return launchTools;
 
   const required = INTENT_CAPABILITIES[intent];
-  if (!required || required.length === 0) return allTools;
+  if (!required || required.length === 0) return launchTools;
 
   const requiredSet = new Set<Capability>(required);
-  return allTools.filter(t => {
+  return launchTools.filter(t => {
     if (CORE_TOOL_NAMES.has(t.name)) return true;
     const caps = TOOL_CAPABILITIES[t.name];
     if (!caps || caps.length === 0) return true; // unmapped → safe default

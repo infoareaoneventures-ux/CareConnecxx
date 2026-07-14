@@ -81,6 +81,7 @@ const hoisted = vi.hoisted(() => {
   const collection = vi.fn((name: string) => makeCollRef(name));
   const runTransaction = async (fn: (t: any) => Promise<void>) => fn({
     get: (refOrQuery: any) => refOrQuery.get(),
+    create: (ref: any, data: any) => { ref.create(data); },
     set: (ref: any, data: any) => { ref.set(data); },
     update: (ref: any, data: any) => { ref.update(data); },
   });
@@ -294,8 +295,10 @@ describe("characterization — duplicate inbound does NOT double-write", () => {
     const CLIENT_ID = "client-dup-1";
     const CLIENT_PHONE = "+15557770000";
     hoisted.docState.set(`appointments/${APPT_ID}`, {
-      clientId: CLIENT_ID, seniorId: CLIENT_ID, status: "in-progress",
-      durationHours: 3, date: "2026-06-15", clientName: "Smith Family", paymentMethod: "credit",
+      clientId: CLIENT_ID, seniorId: CLIENT_ID, caregiverId: CAREGIVER_ID, status: "in-progress",
+      durationHours: 3, date: "2026-06-15", startTime: "09:00", endTime: "12:00",
+      clientName: "Smith Family", caregiverName: "Jane Referrer", hourlyRate: 25,
+      paymentMethod: "credit", billingAuthority: "server-v1",
     });
     hoisted.docState.set(`agent_sessions/${CLIENT_PHONE}`, {
       chatId: "client-chat", userType: "client", userId: CLIENT_ID, phone: CLIENT_PHONE,

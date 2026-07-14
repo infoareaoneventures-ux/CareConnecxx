@@ -27,6 +27,8 @@ interface AdminAlertRecord {
   chatId?: string;
   actionId?: string;
   toolName?: string;
+  recipeId?: string;
+  sourceAgent?: string;
   resolved?: boolean;
   createdAt?: string;
   [key: string]: unknown;
@@ -112,7 +114,13 @@ interface TurnMetricRecord {
   medicationInstructionDetected?: boolean;
   confidenceClaimDetected?: boolean;
   promiseWithoutToolCall?: boolean;
+  recipeWithoutBackingTool?: boolean;
+  contextIgnoredWhenPresent?: boolean;
+  paymentAuthorityLeakDetected?: boolean;
   multiQuestionDataCollection?: boolean;
+  frustrationDetected?: boolean;
+  rephraseLoopDetected?: boolean;
+  repeatedGreetingDetected?: boolean;
   [key: string]: unknown;
 }
 
@@ -134,6 +142,7 @@ type QueueFilter =
   | 'support'
   | 'drafts'
   | 'payments'
+  | 'recipes'
   | 'healthcare';
 
 interface QueueItem {
@@ -162,6 +171,7 @@ const FILTERS: Array<{ id: QueueFilter; label: string }> = [
   { id: 'support', label: 'Support' },
   { id: 'drafts', label: 'Drafts' },
   { id: 'payments', label: 'Payments' },
+  { id: 'recipes', label: 'Recipes' },
   { id: 'healthcare', label: 'Healthcare' },
 ];
 
@@ -220,7 +230,8 @@ function itemMatchesFilter(item: QueueItem, filter: QueueFilter): boolean {
 function makeAlertItem(alert: AdminAlertRecord): QueueItem {
   const type = alert.type ?? 'admin_alert';
   const detail = truncate(alert.message ?? alert.reason ?? alert.error ?? 'No details provided');
-  const category = type.includes('linq') ? 'linq'
+  const category = alert.recipeId || type.includes('family_group') || type.includes('recipe') ? 'recipes'
+    : type.includes('linq') ? 'linq'
     : type.includes('qa') || type.includes('agent') || type.includes('cara') ? 'qa'
       : type.includes('payment') || type.includes('invoice') || type.includes('billing') ? 'payments'
         : type.includes('healthcare') || type.includes('medical') || type.includes('crisis') ? 'healthcare'
@@ -236,7 +247,7 @@ function makeAlertItem(alert: AdminAlertRecord): QueueItem {
     createdAt: alert.createdAt,
     phone: alert.phone,
     userId: alert.userId,
-    toolName: alert.toolName,
+    toolName: alert.toolName ?? alert.sourceAgent,
     targetTab: 'alerts',
     raw: alert,
   };
@@ -245,8 +256,11 @@ function makeAlertItem(alert: AdminAlertRecord): QueueItem {
 function makeLedgerItem(entry: LedgerRecord): QueueItem {
   const action = entry.actionType ?? 'agent_action';
   const title = `${action.replace(/_/g, ' ')}${entry.toolName ? ` via ${entry.toolName}` : ''}`;
-  const category = `${action} ${entry.toolName ?? ''}`.includes('healthcare') ? 'healthcare'
-    : `${action} ${entry.toolName ?? ''}`.includes('payment') ? 'payments'
+  const haystack = `${action} ${entry.toolName ?? ''} ${String(entry.metadata?.recipeId ?? '')} ${String(entry.metadata?.sourceAgent ?? '')}`;
+  const category = haystack.includes('family_group') || haystack.includes('recipe') || !!entry.metadata?.recipeId ? 'recipes'
+    : haystack.includes('linq') ? 'linq'
+      : haystack.includes('healthcare') ? 'healthcare'
+    : haystack.includes('payment') ? 'payments'
       : 'failed_actions';
   return {
     id: `ledger:${entry.id}`,
@@ -273,7 +287,7 @@ function makePendingItem(action: PendingActionRecord): QueueItem {
     id: `pending:${action.id}`,
     kind: 'pending_approval',
     category: action.toolName === 'perform_web_action' ? 'healthcare' : 'pending_approvals',
-    title: action.preview ?? action.toolName ?? 'Pending Cara approval',
+    title: action.preview ?? action.toolName ?? 'Pending Evia approval',
     detail: action.executionPreview
       ? truncate(action.executionPreview)
       : isExpired
@@ -312,7 +326,7 @@ function makeDraftItem(draft: DraftRecord): QueueItem {
     id: `draft:${draft.id}`,
     kind: 'draft',
     category: 'drafts',
-    title: failed ? 'Cara draft send failed' : 'Cara draft needs review',
+    title: failed ? 'Evia draft send failed' : 'Evia draft needs review',
     detail: truncate(draft.sendError ?? draft.reason ?? draft.draftText),
     severity: failed ? 'high' : normalizeSeverity(draft.severity),
     status: draft.status ?? 'pending_review',
@@ -327,15 +341,21 @@ function makeDraftItem(draft: DraftRecord): QueueItem {
 const QUALITY_FLAG_LABELS: Record<string, string> = {
   agent_loop_exhausted: 'Agent loop exhausted',
   confidence_claim_detected: 'Confidence claim',
+  context_ignored_when_present: 'Live context ignored',
   conversation_repair_applied: 'Conversation repair applied',
   conversation_repair_triggered: 'Conversation repair triggered',
   fallback_path_used: 'Fallback path',
+  frustration_detected: 'User frustration',
   generic_help_ask_detected: 'Generic helper prompt',
   grounding_triggered: 'Safety grounding',
   medication_instruction_detected: 'Medication instruction risk',
   multi_question_data_collection: 'Multi-question intake',
+  payment_authority_leak_detected: 'Payment authority leak',
   post_process_modified: 'Post-process rewrite',
   promise_without_tool_call: 'Promise without tool call',
+  recipe_without_backing_tool: 'Recipe without backing tool',
+  repeated_greeting_detected: 'Repeated greeting loop',
+  rephrase_loop_detected: 'Rephrase loop',
   reply_empty: 'Empty reply',
   support_deflection_detected: 'Support deflection',
   tool_error: 'Tool error',
@@ -353,16 +373,22 @@ function readableQualityFlags(metric: TurnMetricRecord): string[] {
   if (metric.supportDeflectionDetected) flags.add('support_deflection_detected');
   if (metric.genericHelpAskDetected) flags.add('generic_help_ask_detected');
   if (metric.medicationInstructionDetected) flags.add('medication_instruction_detected');
+  if (metric.recipeWithoutBackingTool) flags.add('recipe_without_backing_tool');
+  if (metric.contextIgnoredWhenPresent) flags.add('context_ignored_when_present');
+  if (metric.paymentAuthorityLeakDetected) flags.add('payment_authority_leak_detected');
+  if (metric.frustrationDetected) flags.add('frustration_detected');
+  if (metric.rephraseLoopDetected) flags.add('rephrase_loop_detected');
+  if (metric.repeatedGreetingDetected) flags.add('repeated_greeting_detected');
   return Array.from(flags).map((flag) => QUALITY_FLAG_LABELS[flag] ?? flag.replace(/_/g, ' '));
 }
 
 function makeQualityMetricItem(metric: TurnMetricRecord): QueueItem {
   const labels = readableQualityFlags(metric);
-  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected;
+  const severe = metric.errored || metric.replyEmpty || metric.medicationInstructionDetected || metric.supportDeflectionDetected || metric.paymentAuthorityLeakDetected || metric.frustrationDetected || metric.rephraseLoopDetected;
   const title = metric.conversationRepairApplied
     ? 'Conversation repair applied'
     : metric.errored
-      ? 'Cara turn error'
+      ? 'Evia turn error'
       : 'Conversation quality flag';
   const detailParts = [
     labels.length ? labels.join(', ') : 'Quality signal captured',
@@ -391,7 +417,7 @@ const EmptyState: React.FC = () => (
   <div className="h-full flex items-center justify-center text-center text-slate-500">
     <div>
       <Check className="w-10 h-10 mx-auto mb-3 text-emerald-500" />
-      <p className="font-semibold text-slate-800">No Cara ops items match this filter.</p>
+      <p className="font-semibold text-slate-800">No Evia ops items match this filter.</p>
       <p className="text-sm mt-1">Failed actions, pending confirmations, alerts, quality flags, and support escalations appear here.</p>
     </div>
   </div>
@@ -416,12 +442,12 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
 
   useEffect(() => {
     const unsubscribers = [
-      dbService.subscribeAdminAlerts((rows) => setAlerts(rows as AdminAlertRecord[]), () => onShowToast('Failed to load Cara alerts', 'error')),
-      dbService.subscribeAgentActionLedger((rows) => setLedger(rows as LedgerRecord[]), () => onShowToast('Failed to load Cara action ledger', 'error')),
-      dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Cara actions', 'error')),
+      dbService.subscribeAdminAlerts((rows) => setAlerts(rows as AdminAlertRecord[]), () => onShowToast('Failed to load Evia alerts', 'error')),
+      dbService.subscribeAgentActionLedger((rows) => setLedger(rows as LedgerRecord[]), () => onShowToast('Failed to load Evia action ledger', 'error')),
+      dbService.subscribePendingActions((rows) => setPendingActions(rows as PendingActionRecord[]), () => onShowToast('Failed to load pending Evia actions', 'error')),
       dbService.subscribeToTickets((rows) => setTickets(rows)),
       dbService.subscribeProactiveDrafts([], (rows) => setDrafts(rows as DraftRecord[])),
-      dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Cara quality metrics', 'error')),
+      dbService.subscribeCaraTurnMetrics((rows) => setQualityMetrics(rows as TurnMetricRecord[]), () => onShowToast('Failed to load Evia quality metrics', 'error')),
     ];
     return () => unsubscribers.forEach((unsub) => unsub());
   }, [onShowToast]);
@@ -503,10 +529,10 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     setResolvingAlertId(rawId);
     try {
       await dbService.resolveAdminAlert(rawId);
-      onShowToast('Cara alert marked resolved', 'success');
+      onShowToast('Evia alert marked resolved', 'success');
     } catch (err) {
-      console.error('resolve Cara alert failed:', err);
-      onShowToast('Failed to resolve Cara alert', 'error');
+      console.error('resolve Evia alert failed:', err);
+      onShowToast('Failed to resolve Evia alert', 'error');
     } finally {
       setResolvingAlertId(null);
     }
@@ -551,7 +577,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
         onShowToast(`Retry failed: ${res?.error ?? 'see admin alerts'}`, 'error');
       }
     } catch (err) {
-      console.error('execute Cara action retry failed:', err);
+      console.error('execute Evia action retry failed:', err);
       onShowToast(`Retry failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -590,9 +616,9 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
     setBusyAction(`cancel:${id}`);
     try {
       await dbService.adminCancelPendingAction(id, operatorNote.trim());
-      onShowToast('Pending Cara approval cancelled (tool not executed)', 'success');
+      onShowToast('Pending Evia approval cancelled (tool not executed)', 'success');
     } catch (err) {
-      console.error('cancel pending Cara action failed:', err);
+      console.error('cancel pending Evia action failed:', err);
       onShowToast(`Failed to cancel: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -619,7 +645,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
         onShowToast(`Replay failed: ${res?.error ?? 'see admin alerts'}`, 'error');
       }
     } catch (err) {
-      console.error('replay pending Cara action failed:', err);
+      console.error('replay pending Evia action failed:', err);
       onShowToast(`Replay failed: ${(err as Error)?.message ?? 'backend error'}`, 'error');
     } finally {
       setBusyAction(null);
@@ -633,7 +659,7 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary-600" />
-              <h2 className="text-lg font-bold text-slate-900">Cara Control Room</h2>
+              <h2 className="text-lg font-bold text-slate-900">Evia Control Room</h2>
             </div>
             <p className="text-sm text-slate-500 mt-1">
               Live queue for failed actions, pending confirmations, Linq delivery issues, support escalations, and draft review.
@@ -746,6 +772,8 @@ export const AdminCaraControlRoom: React.FC<Props> = ({ onShowToast, onNavigate 
                   <DetailRow label="Phone" value={selected.phone} mono />
                   <DetailRow label="User ID" value={selected.userId} mono />
                   <DetailRow label="Tool" value={selected.toolName} />
+                  <DetailRow label="Recipe" value={String(selected.raw.recipeId ?? (selected.raw.metadata as Record<string, unknown> | undefined)?.recipeId ?? '') || undefined} />
+                  <DetailRow label="Source agent" value={String(selected.raw.sourceAgent ?? (selected.raw.metadata as Record<string, unknown> | undefined)?.sourceAgent ?? '') || undefined} />
                   <DetailRow label="Created" value={formatDate(selected.createdAt)} />
                   <DetailRow label="Assigned" value={String(selected.raw.assignedTo ?? '') || undefined} mono />
                   <DetailRow label="Recovery" value={String(selected.raw.recoveryAction ?? '') || undefined} />
@@ -953,13 +981,15 @@ function operatorGuidance(item: QueueItem): string {
   if (item.kind === 'failed_action') {
     if (item.category === 'healthcare') return 'Healthcare action failed after approval. Check the browser/session trail and contact the account holder before retrying.';
     if (item.category === 'payments') return 'Payment-related action failed. Check shift hours, invoice, Stripe state, and avoid duplicate charges before retrying.';
+    if (item.category === 'recipes') return 'Recipe or family-group handoff failed. Check the ledger metadata, Linq delivery state, and family group membership before retrying.';
     return 'Review the tool failure, related alert, and user thread. Retry only when idempotency is clear.';
   }
   if (item.kind === 'support_ticket') return 'Support ticket needs human follow-up. Use the Support tab to respond and update status.';
-  if (item.kind === 'draft') return 'Cara draft requires review or retry. Use Cara Drafts to edit, approve, reject, or send.';
+  if (item.kind === 'draft') return 'Evia draft requires review or retry. Use Evia Drafts to edit, approve, reject, or send.';
   if (item.kind === 'quality_issue') return 'Conversation quality signal. Review recent messages and tool activity, then decide whether a prompt, routing, or operator follow-up fix is needed.';
   if (item.category === 'linq') return 'Delivery issue. Confirm Linq health, retry state, and whether SMS fallback already happened.';
-  if (item.category === 'qa') return 'Cara runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
+  if (item.category === 'qa') return 'Evia runtime issue. Review the alert detail, recent messages, and action ledger before marking resolved.';
+  if (item.category === 'recipes') return 'Recipe handoff issue. Confirm the user-visible state, related ledger row, and whether retry would duplicate a message or group add.';
   return 'Review the raw context, resolve the source issue, then mark the alert resolved.';
 }
 

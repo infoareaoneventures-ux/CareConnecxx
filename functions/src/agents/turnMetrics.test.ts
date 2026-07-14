@@ -165,11 +165,17 @@ describe("emitTurnMetrics", () => {
     });
   });
 
-  it("mirrors quality issue turns for Admin Cara Control Room visibility", () => {
+  it("mirrors quality issue turns for Admin Evia Control Room visibility", () => {
     const m = createTurnMetrics({ phone: "+15550002222", userId: "client-1", userType: "client", pathway: "qa" });
     m.supportDeflectionDetected = true;
     m.genericHelpAskDetected = true;
     m.conversationRepairApplied = true;
+    m.recipeWithoutBackingTool = true;
+    m.contextIgnoredWhenPresent = true;
+    m.paymentAuthorityLeakDetected = true;
+    m.frustrationDetected = true;
+    m.rephraseLoopDetected = true;
+    m.repeatedGreetingDetected = true;
     m.toolErrors = 1;
     emitTurnMetrics(m, { reply: "I can help with that." });
 
@@ -184,12 +190,24 @@ describe("emitTurnMetrics", () => {
       supportDeflectionDetected: true,
       genericHelpAskDetected: true,
       conversationRepairApplied: true,
+      recipeWithoutBackingTool: true,
+      contextIgnoredWhenPresent: true,
+      paymentAuthorityLeakDetected: true,
+      frustrationDetected: true,
+      rephraseLoopDetected: true,
+      repeatedGreetingDetected: true,
       toolErrors: 1,
       quickReplyUsed: false,
     });
     expect(mirrored.qualityFlags).toEqual([
+      "context_ignored_when_present",
       "conversation_repair_applied",
+      "frustration_detected",
       "generic_help_ask_detected",
+      "payment_authority_leak_detected",
+      "recipe_without_backing_tool",
+      "repeated_greeting_detected",
+      "rephrase_loop_detected",
       "support_deflection_detected",
       "tool_error",
     ]);
@@ -203,5 +221,56 @@ describe("emitTurnMetrics", () => {
     const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
     expect(payload.quickReplyUsed).toBe(true);
     expect(payload.qualityFlags).toBeUndefined();
+  });
+
+  // U3 (memory expansion + truncation telemetry): historyRolledUp, zepContextEmpty,
+  // and learnedFactsCount make memory degradation measurable instead of silent.
+  describe("truncation telemetry fields", () => {
+    it("accepts and serializes historyRolledUp, zepContextEmpty, and learnedFactsCount", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.historyRolledUp = true;
+      m.zepContextEmpty = true;
+      m.learnedFactsCount = 7;
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.historyRolledUp).toBe(true);
+      expect(payload.zepContextEmpty).toBe(true);
+      expect(payload.learnedFactsCount).toBe(7);
+    });
+
+    it("defaults the three fields to undefined when never set", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.historyRolledUp).toBeUndefined();
+      expect(payload.zepContextEmpty).toBeUndefined();
+      expect(payload.learnedFactsCount).toBeUndefined();
+    });
+
+    it("mirrors the three fields to Firestore on quality/experiment turns, coerced to safe defaults", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.historyRolledUp = true;
+      m.zepContextEmpty = false;
+      m.learnedFactsCount = 3;
+      m.frustrationDetected = true; // forces the Firestore mirror to fire
+      emitTurnMetrics(m, { reply: "ok" });
+
+      expect(firestoreMock.add).toHaveBeenCalledTimes(1);
+      const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.historyRolledUp).toBe(true);
+      expect(mirrored.zepContextEmpty).toBe(false);
+      expect(mirrored.learnedFactsCount).toBe(3);
+    });
+
+    it("mirrors safe defaults (false/0) when the fields were never set on a mirrored turn", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.frustrationDetected = true; // forces the Firestore mirror to fire
+      emitTurnMetrics(m, { reply: "ok" });
+
+      const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.historyRolledUp).toBe(false);
+      expect(mirrored.zepContextEmpty).toBe(false);
+      expect(mirrored.learnedFactsCount).toBe(0);
+    });
   });
 });

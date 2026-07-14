@@ -20,7 +20,7 @@ const TS   = Date.now();
 const CLIENT = {
   firstName:  'Dorothy',
   lastName:   'Test',
-  email:      `dorothy.${TS}@test-careconnex.com`,
+  email:      `dorothy.${TS}@test-eviacares.com`,
   password:   'Test1234!',
   phone:      '5551234567',
   street:     '123 Oak St',
@@ -32,7 +32,7 @@ const CLIENT = {
 const CAREGIVER = {
   firstName:  'Maria',
   lastName:   'Test',
-  email:      `maria.${TS}@test-careconnex.com`,
+  email:      `maria.${TS}@test-eviacares.com`,
   password:   'Test1234!',
   phone:      '5559876543',
   city:       'Atlanta',
@@ -77,7 +77,7 @@ test.describe('1. Public Pages', () => {
 
   test('1.1 Landing page loads with key sections', async ({ page }) => {
     await page.goto(BASE);
-    await expect(page).toHaveTitle(/CareConnex|Senior Care|Home Care/i, { timeout: 15000 });
+    await expect(page).toHaveTitle(/Evia|Senior Care|Home Care/i, { timeout: 15000 });
     // Hero section
     await expect(page.locator('text=/find|care|caregiver/i').first()).toBeVisible();
     console.log('✅ Landing page loads');

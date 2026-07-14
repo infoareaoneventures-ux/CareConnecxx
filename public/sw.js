@@ -1,8 +1,21 @@
 // Service Worker for PWA offline support
-const CACHE_NAME = 'careconnex-v3';
+//
+// Caching strategy (2026-07-08 rewrite — DO NOT revert to cache-first for HTML):
+// the old version served '/' and '/index.html' cache-first under a never-bumped
+// cache name, so after every hosting deploy users kept getting a stale app shell
+// pointing at purged hashed chunks. The SPA rewrite then served index.html for
+// the missing chunk → Safari's "Importing a module script failed." on lazy
+// routes like /bgcheck.
+//   - Navigations / HTML: network-first (cache only as offline fallback)
+//   - /assets/ (content-hashed, immutable): cache-first
+//   - Everything else same-origin: network-first with cache fallback
+// The name bump to evia-v4 makes the activate handler purge the poisoned
+// careconnex-v3 cache on every existing installation.
+// evia-v5 (2026-07-13): icon-192/512 replaced with the new Bloom brand mark —
+// bump forces precached old icons out of existing installs.
+const CACHE_NAME = 'evia-v5';
 const urlsToCache = [
-    '/',
-    '/index.html',
+    '/offline.html',
     '/manifest.json',
     '/icon-192.png',
     '/icon-512.png'
@@ -37,7 +50,12 @@ self.addEventListener('activate', (event) => {
     self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+const cacheResponse = (request, response) => {
+    if (!response || response.status !== 200 || response.type !== 'basic') return;
+    const copy = response.clone();
+    caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+};
+
 self.addEventListener('fetch', (event) => {
     // Skip non-GET requests
     if (event.request.method !== 'GET') return;
@@ -51,37 +69,52 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    event.respondWith(
-        caches.match(event.request)
-            .then((response) => {
-                // Cache hit - return response
-                if (response) {
+    const url = new URL(event.request.url);
+    if (url.origin !== self.location.origin) return;
+
+    const isNavigation =
+        event.request.mode === 'navigate' ||
+        (event.request.headers.get('accept') || '').includes('text/html');
+
+    // HTML / navigations: network-first so a new deploy is picked up immediately.
+    if (isNavigation) {
+        event.respondWith(
+            fetch(event.request)
+                .then((response) => {
+                    cacheResponse(event.request, response);
                     return response;
-                }
+                })
+                .catch(() =>
+                    caches.match(event.request).then(
+                        (cached) => cached || caches.match('/offline.html')
+                    )
+                )
+        );
+        return;
+    }
 
-                // Clone the request
-                const fetchRequest = event.request.clone();
-
-                return fetch(fetchRequest).then((response) => {
-                    // Check if valid response
-                    if (!response || response.status !== 200 || response.type !== 'basic') {
-                        return response;
-                    }
-
-                    // Clone the response
-                    const responseToCache = response.clone();
-
-                    caches.open(CACHE_NAME)
-                        .then((cache) => {
-                            cache.put(event.request, responseToCache);
-                        });
-
+    // Content-hashed build assets: immutable, cache-first is safe.
+    if (url.pathname.startsWith('/assets/')) {
+        event.respondWith(
+            caches.match(event.request).then((cached) => {
+                if (cached) return cached;
+                return fetch(event.request).then((response) => {
+                    cacheResponse(event.request, response);
                     return response;
-                }).catch(() => {
-                    // Return offline page if available
-                    return caches.match('/offline.html');
                 });
             })
+        );
+        return;
+    }
+
+    // Everything else (icons, manifest, images): network-first, cache fallback.
+    event.respondWith(
+        fetch(event.request)
+            .then((response) => {
+                cacheResponse(event.request, response);
+                return response;
+            })
+            .catch(() => caches.match(event.request))
     );
 });
 
@@ -124,7 +157,7 @@ self.addEventListener('push', (event) => {
     };
 
     event.waitUntil(
-        self.registration.showNotification('CareConnex', options)
+        self.registration.showNotification('Evia', options)
     );
 });
 

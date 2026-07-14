@@ -89,7 +89,7 @@ describe("supervise", () => {
 
   it("strips the new bureaucratic banned phrases from rewrites", async () => {
     // Regression: the screenshot reply included "Go ahead and share those and
-    // I'll get everything on file for you." — customer-service tone that Cara
+    // I'll get everything on file for you." — customer-service tone that Evia
     // is forbidden from. Linter now bans those phrases.
     mockHaikuReply({
       violation: true,

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // U2 — caregiver action-parity tools:
 //   withdraw_job_application, respond_to_booking_request, start_shift,
 //   complete_shift, update_shift_task, submit_media_update,
-//   respond_to_shift_hour_correction, request_standard_payout.
+//   respond_to_shift_hour_correction, request_instant_payout (delegation).
 //
 // Same firebase-admin mock shape as booking.test.ts: docState backs .doc().get(),
 // collState backs .where().get() (filters are ignored — seed the queried path).
@@ -42,6 +42,11 @@ const hoisted = vi.hoisted(() => {
     set: vi.fn(async (data: any, opts?: any) => {
       sets.push({ path, data, opts });
       docState.set(path, opts?.merge ? applyFieldValue(docState.get(path), data) : data);
+    }),
+    create: vi.fn(async (data: any) => {
+      if (docState.has(path)) throw Object.assign(new Error("already exists"), { code: 6 });
+      sets.push({ path, data });
+      docState.set(path, data);
     }),
     update: vi.fn(async (data: any) => {
       updates.push({ path, data });
@@ -139,6 +144,21 @@ vi.mock("../../stripe", () => ({
   }),
 }));
 
+// Shared payout implementation — request_instant_payout must delegate here.
+const payoutCommonMock = vi.hoisted(() => {
+  class InstantPayoutError extends Error {
+    constructor(public code: string, message: string) {
+      super(message);
+      this.name = "InstantPayoutError";
+    }
+  }
+  return { executeInstantPayout: vi.fn(), InstantPayoutError };
+});
+vi.mock("../../payoutCommon", () => ({
+  executeInstantPayout: (...args: unknown[]) => payoutCommonMock.executeInstantPayout(...args),
+  InstantPayoutError: payoutCommonMock.InstantPayoutError,
+}));
+
 // These tests target the tools' own payment-safety logic (ownership, no
 // double-charge, pending_review). The runtime confirmation gate cara-100 added
 // to handleToolCall (ALWAYS_CONFIRM / CONDITIONAL_CONFIRM) has its own suite, so
@@ -150,6 +170,18 @@ vi.mock("../../agents/pendingActions", async (importActual) => ({
 }));
 
 import { handleToolCall } from "../server";
+import { setCaraActionExecutionStoreForTest } from "../../agents/actionNative/actionExecutionLedger";
+
+// Pass-through duplicate-protection store: submit/review_shift_hours are
+// failClosed, so an unavailable ledger (this file's firestore mock) would
+// refuse to run. These suites test the DOMAIN idempotency guards (status
+// preconditions), so the store never caches — every call reaches the handler.
+setCaraActionExecutionStoreForTest({
+  async claim() {
+    return { cached: false };
+  },
+  async settle() { /* no-op */ },
+});
 
 describe("U2 caregiver action tools", () => {
   beforeEach(() => {
@@ -158,6 +190,7 @@ describe("U2 caregiver action tools", () => {
     sendToPhone.mockClear(); sendToPhone.mockResolvedValue(undefined);
     payoutCreate.mockClear(); payoutCreate.mockResolvedValue({ id: "po_1", amount: 5000, status: "pending" });
     balanceRetrieve.mockClear(); balanceRetrieve.mockResolvedValue({ available: [{ amount: 10000, currency: "usd" }] });
+    payoutCommonMock.executeInstantPayout.mockReset();
   });
 
   // ── withdraw_job_application ───────────────────────────────────────────────
@@ -228,11 +261,13 @@ describe("U2 caregiver action tools", () => {
 
   // ── start_shift / complete_shift ───────────────────────────────────────────
   describe("start_shift", () => {
-    it("marks an appointment in_progress and records startedAt", async () => {
+    it("marks an appointment in-progress (canonical hyphen — what the crons/triggers read) and records startedAt", async () => {
       hoisted.docState.set("appointments/a1", { caregiverId: "cg1", clientId: "c1", status: "confirmed" });
       const r = await handleToolCall("start_shift", { caregiverId: "cg1", appointmentId: "a1" }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("appointments/a1").status).toBe("in_progress");
+      // Hyphen, NOT underscore: the in-shift-update/task-nudge crons, the
+      // arrival trigger, and handleArrived's twin path all match "in-progress".
+      expect(hoisted.docState.get("appointments/a1").status).toBe("in-progress");
       expect(hoisted.docState.get("appointments/a1").startedAt).toBeTruthy();
     });
 
@@ -344,12 +379,12 @@ describe("U2 caregiver action tools", () => {
       expect(sh.amountCents).toBe(10000);
     });
 
-    it("pushback disputes the hours and raises an admin alert", async () => {
-      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_requested", correctedHours: 4 });
+    it("pushback sends the hours to admin review and raises an alert", async () => {
+      hoisted.docState.set("shiftHours/a1", { caregiverId: "cg1", clientId: "c1", status: "correction_proposed", correctedHours: 4 });
       const r = await handleToolCall("respond_to_shift_hour_correction", { caregiverId: "cg1", appointmentId: "a1", decision: "pushback", message: "I was there 5h" }) as any;
       expect(r.success).toBe(true);
-      expect(r.status).toBe("disputed");
-      expect(hoisted.docState.get("shiftHours/a1").status).toBe("disputed");
+      expect(r.status).toBe("disputed_admin_review");
+      expect(hoisted.docState.get("shiftHours/a1").status).toBe("disputed_admin_review");
       expect(hoisted.adds.some((a) => a.path === "admin_alerts" && a.data.type === "shift_hour_dispute")).toBe(true);
     });
 
@@ -360,58 +395,56 @@ describe("U2 caregiver action tools", () => {
     });
   });
 
-  // ── request_standard_payout (no Stripe/eligibility bypass) ─────────────────
-  describe("request_standard_payout", () => {
-    it("creates a STANDARD (not instant) Stripe payout when eligible", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.method).toBe("standard");
-      expect(payoutCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ method: "standard", currency: "usd" }),
-        expect.objectContaining({ stripeAccount: "acct_1" }),
+  // ── payouts ─────────────────────────────────────────────────────────────────
+  // Eligibility/idempotency logic lives in payoutCommon.executeInstantPayout
+  // (unit-tested in payoutCommon.test.ts). Here we verify the MCP dispatcher's
+  // wiring: delegation, error surfacing, and that the removed standard-payout
+  // tool stays removed.
+  describe("payouts", () => {
+    it("request_instant_payout delegates to the shared executeInstantPayout and reports free payout", async () => {
+      payoutCommonMock.executeInstantPayout.mockResolvedValueOnce({
+        payoutDocId: "p1", stripePayoutId: "po_1", amountCents: 5000, status: "pending", arrivalDate: null,
+      });
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
+      expect(payoutCommonMock.executeInstantPayout).toHaveBeenCalledWith(
+        expect.objectContaining({ caregiverId: "cg1", source: "mcp" }),
       );
+      expect(r.success).toBe(true);
+      expect(r.fee).toBe(0);
+      expect(r.amountCents).toBe(5000);
     });
 
-    it("rejects when payouts are not enabled — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: false });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
+    it("request_instant_payout surfaces payout preconditions as tool errors (no silent success)", async () => {
+      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(
+        new payoutCommonMock.InstantPayoutError("NO_BALANCE", "No funds are instantly available right now."),
+      );
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
+      expect(r.success).not.toBe(true);
     });
 
-    it("rejects when there is no Stripe account — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { payoutsEnabled: true });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
-    });
-
-    it("rejects when the available balance is zero — does NOT call Stripe", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      balanceRetrieve.mockResolvedValueOnce({ available: [{ amount: 0, currency: "usd" }] });
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(payoutCreate).not.toHaveBeenCalled();
-    });
-
-    // U11 scenario 6 — a payout that fails at Stripe must be ledgered and raise
-    // an admin_alert so it surfaces in the Cara Control Room (never a silent
-    // false success). The Stripe call throwing routes through the MCP
+    // U11 scenario 6 — a payout that fails unexpectedly must be ledgered and
+    // raise an admin_alert so it surfaces in the Evia Control Room (never a
+    // silent false success). An unexpected throw routes through the MCP
     // dispatcher's catch, which writes admin_alerts via createCaraOpsAlert.
-    it("ledgers + admin-alerts a Stripe payout failure (Control Room visibility)", async () => {
-      hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: true });
-      payoutCreate.mockRejectedValueOnce(new Error("insufficient funds in Stripe balance"));
-      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
-      // Must NOT report success.
+    it("ledgers + admin-alerts an unexpected payout failure (Control Room visibility)", async () => {
+      payoutCommonMock.executeInstantPayout.mockRejectedValueOnce(new Error("stripe exploded"));
+      const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(r.success).not.toBe(true);
       expect(r._toolError).toBe(true);
-      // An admin_alert was raised for the failed money-moving tool.
       const alert = hoisted.adds.find(
-        (a) => a.path === "admin_alerts" && a.data.toolName === "request_standard_payout",
+        (a) => a.path === "admin_alerts" && a.data.toolName === "request_instant_payout",
       );
       expect(alert).toBeTruthy();
       expect(alert!.data.resolved).toBe(false);
+    });
+
+    // Removed 2026-07-06: standard payouts are automatic (Stripe daily
+    // schedule); Stripe rejects manual standard payouts on automatic schedules.
+    it("request_standard_payout no longer exists as a tool", async () => {
+      const r = await handleToolCall("request_standard_payout", { caregiverId: "cg1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(payoutCreate).not.toHaveBeenCalled();
     });
   });
 
@@ -523,16 +556,17 @@ describe("U11 payment auditing & safety", () => {
 
   // Scenario 5 — a refund request creates admin-visible state and never auto-refunds.
   describe("create_refund_request", () => {
-    it("writes a pending_review refundRequests record and does NOT auto-refund", async () => {
+    it("writes an authorized requested refund record and does NOT auto-refund", async () => {
+      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "completed" });
       const r = await handleToolCall("create_refund_request", {
         clientId: "c1", appointmentId: "a1", reason: "Visit was cut short",
       }) as any;
       expect(r.success).toBe(true);
       expect(r.requestId).toBeTruthy();
-      const req = hoisted.adds.find((a) => a.path === "refundRequests");
+      const req = hoisted.docState.get("refundRequests/a1:c1");
       expect(req).toBeTruthy();
-      expect(req!.data.status).toBe("pending_review");
-      expect(req!.data.clientId).toBe("c1");
+      expect(req.status).toBe("requested");
+      expect(req.clientId).toBe("c1");
       // No Stripe refund was issued — admin review is required first.
       expect(payoutCreate).not.toHaveBeenCalled();
     });

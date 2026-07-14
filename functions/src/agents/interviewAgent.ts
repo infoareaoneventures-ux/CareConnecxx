@@ -1,12 +1,13 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
+import { parseScheduledTimeMs, businessTodayStr, slotHourKey, apptSlotHourKey } from "../utils/scheduledTime";
 import { sendMessage, getOrCreateSession, AgentSession } from "../linq/client";
 import { writeFeedbackSignal } from "../ai/feedback";
 import { generateCaraMessage } from "../utils/caraMessage";
 
 import { getPermissions } from "./permissionsConversation";
 import { notifyAdminInterviewScheduled } from "../notifications";
-import { generateCallLink, generateICSFile, uploadICSToStorage } from "./interviewLinks";
+import { createInterviewCallAssets } from "./interviewLinks";
 import { scheduleTrigger } from "../triggers/triggerEngine";
 
 const db = admin.firestore();
@@ -61,27 +62,31 @@ async function findMutualTime(proposedTimes: string[], clientPhone: string): Pro
   const clientId: string | undefined = sessSnap.data()?.userId;
   if (!clientId) return proposedTimes[0];
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Pacific business date — the UTC date is already tomorrow during PT evening
+  // hours, which would drop today's remaining appointments from the busy set.
+  const today = businessTodayStr();
   const apptSnap = await db.collection("appointments")
     .where("clientId", "==", clientId)
     .where("status", "in", ["confirmed", "pending"])
     .where("date", ">=", today)
     .get();
 
-  // Build set of busy hours as "YYYY-MM-DDTHH" strings
+  // Build set of busy hours as "YYYY-MM-DDTHH" strings. Both sides MUST go
+  // through the shared Pacific slot-key helpers: stored `time` is PT wall-clock
+  // ("2:00 PM"), while proposals arrive as ISO strings — keying one side via
+  // toISOString()/getHours() (UTC on Cloud Functions) shifted the buckets 7-8h
+  // apart, so no conflict was ever detected and families got double-booked.
   const busy = new Set<string>();
   for (const d of apptSnap.docs) {
     const a = d.data();
-    if (a.date && a.time) {
-      const hour = a.time.slice(0, 2);
-      busy.add(`${a.date}T${hour}`);
-    }
+    const key = apptSlotHourKey(a.date, a.time);
+    if (key) busy.add(key);
   }
 
   for (const iso of proposedTimes) {
-    const dt   = new Date(iso);
-    const key  = `${dt.toISOString().slice(0, 10)}T${String(dt.getHours()).padStart(2, "0")}`;
-    if (!busy.has(key)) return iso;
+    const ms = parseScheduledTimeMs(iso);
+    if (!Number.isFinite(ms)) continue;
+    if (!busy.has(slotHourKey(ms))) return iso;
   }
 
   // All proposed times conflict with the family's calendar — signal "no mutual
@@ -123,7 +128,7 @@ export async function handleInterviewSelection(
   if (perms && !perms.canContactCaregivers) {
     const permissionMsg = await generateCaraMessage({
       audience: "family",
-      context:  "The family wants to reach out to caregivers for an interview, but Cara doesn't yet have their permission to contact caregivers on their behalf. Ask them to reply ALLOW to grant permission, or visit the app to update their settings.",
+      context:  "The family wants to reach out to caregivers for an interview, but Evia doesn't yet have their permission to contact caregivers on their behalf. Ask them to reply ALLOW to grant permission, or visit the app to update their settings.",
       fallback: "I need your permission to reach out to caregivers on your behalf.\n\nReply ALLOW to give me permission, or visit the app to update your settings.",
       maxTokens: 80,
     });
@@ -164,15 +169,15 @@ export async function handleInterviewSelection(
     const caregiverSession = await getOrCreateSession(caregiverPhone, { caregiverId: match.id });
     const caregiverReachOutMsg = await generateCaraMessage({
       audience: "caregiver",
-      context:  `Introduce yourself as Cara, the care coordinator, and let ${match.name} know that a family is interested in meeting them for a care position. The senior is ${seniorName}, who is a ${relationship}${age ? ` and is ${age} years old` : ""}. Ask if they're available for a 20-minute video call this week. Tell them to reply with 2–3 times that work, or PASS to decline.`,
-      fallback: `Hi ${match.name} — I'm Cara, your care coordinator.\n\nA family is interested in meeting you for a care position for their ${relationship}, ${age ? `${age}-year-old ` : ""}${seniorName}.\n\nAre you available for a 20-minute video call this week?\n\nReply with 2–3 times that work for you, or PASS to decline.`,
+      context:  `Introduce yourself as Evia, the care coordinator, and let ${match.name} know that a family is interested in meeting them for a care position. The senior is ${seniorName}, who is a ${relationship}${age ? ` and is ${age} years old` : ""}. Ask if they're available for a 20-minute video call this week. Tell them to reply with 2–3 times that work, or PASS to decline.`,
+      fallback: `Hi ${match.name} — I'm Evia, your care coordinator.\n\nA family is interested in meeting you for a care position for their ${relationship}, ${age ? `${age}-year-old ` : ""}${seniorName}.\n\nAre you available for a 20-minute video call this week?\n\nReply with 2–3 times that work for you, or PASS to decline.`,
     });
     await sendMessage(caregiverSession.chatId, caregiverReachOutMsg);
   }
 
   const reachedOutMsg = await generateCaraMessage({
     audience: "family",
-    context:  `Cara just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
+    context:  `Evia just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
     fallback: `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\nI'll text you as soon as I hear back with their availability.`,
     maxTokens: 80,
   });
@@ -305,12 +310,12 @@ export async function handleCaregiverAvailabilityReply(
     const familySession = familySnap.data()!;
     const caregiverAvailableMsg = await generateCaraMessage({
       audience: "family",
-      context:  `${caregiverName} is available for an interview. The proposed time is ${formatted}. Ask the family to confirm by replying YES to schedule.`,
-      fallback: `${caregiverName} is available for an interview.\n\n${formatted}\n\nConfirm this time? Reply YES to schedule.`,
+      context:  `${caregiverName} is available for an interview. The proposed time is ${formatted}. Ask the family if that time works — a yes from them schedules it. End with the question itself, never a stiff "Reply YES" instruction.`,
+      fallback: `${caregiverName} is available for an interview.`,
       maxTokens: 80,
     });
     await sendMessage(familySession.chatId,
-      `${caregiverAvailableMsg}\n\n${formatted}\n\nReply YES to schedule.`
+      `${caregiverAvailableMsg}\n\n${formatted}\n\nDoes that time work? Say yes and I'll get it scheduled.`
     );
     // Store pending confirmation
     await db.collection("agent_sessions").doc(reqData.clientPhone).update({
@@ -321,7 +326,7 @@ export async function handleCaregiverAvailabilityReply(
 
   const timesSentMsg = await generateCaraMessage({
     audience: "caregiver",
-    context:  "The caregiver just sent their available times for an interview. Cara has forwarded those times to the family. Let the caregiver know and tell them you'll reach out once the family confirms.",
+    context:  "The caregiver just sent their available times for an interview. Evia has forwarded those times to the family. Let the caregiver know and tell them you'll reach out once the family confirms.",
     fallback: "I've sent those times to the family. I'll let you know once they confirm.",
     maxTokens: 80,
   });
@@ -350,51 +355,62 @@ export async function handleInterviewConfirm(
     return;
   }
 
-  // Create confirmed interview in Firestore
-  const interviewRef = await db.collection("interviews").add({
-    clientPhone:   phone,
-    caregiverName: pending.caregiverName,
-    scheduledTime: pending.mutualTime,
-    status:        "scheduled",
-    followUpSent:  false,
-    createdAt:     new Date().toISOString(),
-  });
-
-  // Get family session to determine iMessage vs other
+  // Resolve identity up front so the interview record is queryable by
+  // list_interviews (clientId/caregiverId) regardless of scheduling path
+  const requestSnap  = await db.collection("interview_requests").doc(pending.docId).get();
+  const caregiverId  = requestSnap.data()?.caregiverId as string | undefined;
   const familySession = await db.collection("agent_sessions").doc(phone).get();
-  const isIMessage = (familySession.data()?.service ?? "") === "iMessage";
+  const clientId      = familySession.data()?.userId as string | undefined;
 
-  // Generate call link (FaceTime for iMessage, Google Meet otherwise)
+  // Create the confirmed interview in video_interviews — the CANONICAL
+  // interview collection (2026-07-11 consolidation): it's what the caregiver
+  // in-app calendar, the MCP tools, and the link/reminder trigger all read.
+  // The legacy `interviews` collection is retired for new writes (readers keep
+  // a temporary fallback for pre-cutover docs). Pre-mint the id so the Meet
+  // link + .ics exist BEFORE the doc does — the doc then lands in ONE set()
+  // carrying callUrl + linkDelivery + remindersScheduledAt suppression
+  // markers, so onVideoInterviewLinkEnsure's precheck no-ops (delivery happens
+  // inline below; reminders are scheduled below). On link failure the markers
+  // still suppress delivery/reminders while the trigger self-heals only the
+  // missing callUrl — the exact semantics the b183e1a mirror had.
+  const interviewRef = db.collection("video_interviews").doc();
+
+  // Generate Google Meet link + .ics via the shared builder (ops alert on failure)
   let callUrl = "";
+  let icsUrl  = "";
   try {
-    callUrl = await generateCallLink({
-      isIMessage,
+    const assets = await createInterviewCallAssets({
+      title:           `Care Interview — ${pending.caregiverName}`,
       startTime:       pending.mutualTime,
       durationMinutes: 30,
-      title:           `Care Interview — ${pending.caregiverName}`,
+      interviewId:     interviewRef.id,
+      icsStoragePrefix: "video_interviews",
     });
-    await interviewRef.update({ callUrl });
-  } catch (err) {
-    console.error("Call link generation error:", err);
+    callUrl = assets.callUrl;
+    icsUrl  = assets.icsUrl;
+  } catch {
+    // Alert already raised inside createInterviewCallAssets; never log the URL
+    console.error(`Call link generation error for interview ${interviewRef.id}`);
   }
 
-  // Generate and upload .ics calendar invite
-  let icsUrl = "";
-  if (callUrl) {
-    try {
-      const icsContent = generateICSFile({
-        title:           `Care Interview — ${pending.caregiverName}`,
-        startTime:       pending.mutualTime,
-        durationMinutes: 30,
-        description:     `${isIMessage ? "FaceTime" : "Google Meet"} interview with ${pending.caregiverName}`,
-        callUrl,
-        uid:             `cara-${interviewRef.id}@cara.com`,
-      });
-      icsUrl = await uploadICSToStorage(icsContent, `interviews/${interviewRef.id}.ics`);
-    } catch (err) {
-      console.error("ICS upload error:", err);
-    }
-  }
+  const interviewCreatedAt = new Date().toISOString();
+  await interviewRef.set({
+    clientPhone:   phone,
+    caregiverName: pending.caregiverName,
+    ...(caregiverId ? { caregiverId } : {}),
+    ...(clientId ? { clientId } : {}),
+    scheduledTime: pending.mutualTime,
+    status:        "scheduled",
+    ...(callUrl ? { callUrl } : {}),
+    ...(icsUrl ? { icsUrl } : {}),
+    source:             "evia_sms",
+    interviewRequestId: pending.docId,
+    createdAt:          interviewCreatedAt,
+    // Trigger-suppression markers (onVideoInterviewLinkEnsure precheck):
+    // delivery happens inline below, reminders are scheduled below.
+    linkDelivery:        { client: { status: "sent", at: interviewCreatedAt }, caregiver: { status: "sent", at: interviewCreatedAt } },
+    remindersScheduledAt: interviewCreatedAt,
+  });
 
   // Update request doc
   await db.collection("interview_requests").doc(pending.docId).update({
@@ -424,22 +440,19 @@ export async function handleInterviewConfirm(
   }
   const interviewConfirmFamilyMsg = await generateCaraMessage({
     audience: "family",
-    context:  `The interview with ${pending.caregiverName} is now officially scheduled for ${pending.formatted}. Tell the family to tap the ${isIMessage ? "FaceTime" : "Google Meet"} link above to join, and let them know a calendar invite was included with a 30-minute reminder.`,
-    fallback: `Interview set for ${pending.formatted}.\n\nTap the ${isIMessage ? "FaceTime" : "Meet"} link above to join. Calendar invite included, with a 30-minute reminder.`,
+    context:  `The interview with ${pending.caregiverName} is now officially scheduled for ${pending.formatted}. Tell the family to tap the Google Meet link above to join, and let them know a calendar invite was included with a 30-minute reminder.`,
+    fallback: `Interview set for ${pending.formatted}.\n\nTap the Meet link above to join. Calendar invite included, with a 30-minute reminder.`,
     maxTokens: 80,
   });
   await sendMessage(chatId, interviewConfirmFamilyMsg);
 
   // Text the caregiver
-  const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-  const caregiverId = reqSnap.data()?.caregiverId as string | undefined;
   let cgPhone: string | undefined;
   if (caregiverId) {
     const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
     cgPhone = cgSnap.data()?.phone as string | undefined;
     if (cgPhone) {
-      const cgSession  = await getOrCreateSession(cgPhone);
-      const cgIsIMessa = (cgSession as any).service === "iMessage";
+      const cgSession = await getOrCreateSession(cgPhone);
       if (callUrl) {
         await sendMessage(cgSession.chatId, { parts: [{ type: "link", value: callUrl }] } as any);
       }
@@ -448,19 +461,26 @@ export async function handleInterviewConfirm(
       }
       const interviewConfirmCaregiverMsg = await generateCaraMessage({
         audience: "caregiver",
-        context:  `The interview has been confirmed for ${pending.formatted}. Tell them the ${cgIsIMessa ? "FaceTime" : "Google Meet"} link is above, a calendar invite was included with a 30-minute reminder, and to reply RESCHEDULE if they need to change the time.`,
-        fallback: `Interview confirmed. ${pending.formatted}.\n\n${cgIsIMessa ? "FaceTime" : "Meet"} link above. Calendar invite included, with a 30-minute reminder.\n\nReply RESCHEDULE if you need to change the time.`,
+        context:  `The interview has been confirmed for ${pending.formatted}. Tell them the Google Meet link is above, a calendar invite was included with a 30-minute reminder, and to reply RESCHEDULE if they need to change the time.`,
+        fallback: `Interview confirmed. ${pending.formatted}.\n\nMeet link above. Calendar invite included, with a 30-minute reminder.\n\nReply RESCHEDULE if you need to change the time.`,
         maxTokens: 80,
       });
       await sendMessage(cgSession.chatId, interviewConfirmCaregiverMsg);
     }
   }
 
-  // Schedule 1h-before reminders and a post-interview follow-up trigger
-  const interviewMs    = new Date(pending.mutualTime).getTime();
+  // Schedule 1h-before reminders and a post-interview follow-up trigger.
+  // mutualTime is a naive Pacific wall-clock ISO (parseAvailability) — a bare
+  // `new Date()` reads it as UTC, firing the reminders and the +75min
+  // follow-up ~7-8h EARLY (before the interview even started).
+  const interviewMs    = parseScheduledTimeMs(pending.mutualTime);
   const nowMs          = Date.now();
   const oneHourBefore  = interviewMs - 60 * 60 * 1000;
   const ninetyMinAway  = interviewMs - 90 * 60 * 1000;
+
+  // cancelTriggersByRef key on cancel — video_interview_{id} namespace, which
+  // is what cancel_interview derives for video_interviews docs (mcp/server.ts).
+  const triggerRefId = `video_interview_${interviewRef.id}`;
 
   if (nowMs < ninetyMinAway) {
     // 1h-before reminder to the family
@@ -474,7 +494,8 @@ export async function handleInterviewConfirm(
       message:
         `Your interview with ${pending.caregiverName} is in an hour — ` +
         (callUrl ? callUrl : "make sure you have the link ready."),
-    }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
+      refId:       triggerRefId,
+    }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (family reminder) error:", err));
 
     // 1h-before reminder to the caregiver
     if (cgPhone) {
@@ -489,7 +510,8 @@ export async function handleInterviewConfirm(
           `Interview in an hour with a family. ` +
           (callUrl ? callUrl : "Check your calendar.") +
           ` Reply if you need to reschedule.`,
-      }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
+        refId:       triggerRefId,
+      }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (caregiver reminder) error:", err));
     }
   }
 
@@ -501,7 +523,13 @@ export async function handleInterviewConfirm(
     type:        "custom",
     scheduledAt: followUpAt,
     message:     `interview_followup:${interviewRef.id}`,
-  }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+    refId:       triggerRefId,
+  }, { bypassCalibration: true }).catch((err) => console.error("scheduleTrigger (followup) error:", err));
+
+  // (2026-07-11 consolidation: the b183e1a-era video_interviews MIRROR block
+  // that used to live here is gone — the interview above IS the
+  // video_interviews doc now, unconditionally, so the in-app calendar and the
+  // Join-Meet button work with or without a known caregiverId.)
 }
 
 // ── Write interview outcome feedback signal ───────────────────────────────────
@@ -530,7 +558,14 @@ export async function writeInterviewOutcomeSignal(
 // ── Post-interview follow-up ──────────────────────────────────────────────────
 
 export async function sendPostInterviewFollowUp(interviewId: string): Promise<void> {
-  const snap = await db.collection("interviews").doc(interviewId).get();
+  // Canonical collection first (2026-07-11 consolidation); legacy `interviews`
+  // fallback kept for follow-up triggers scheduled before the cutover (they
+  // carry the old collection's doc id). Safe to remove once pre-cutover
+  // interviews' +75min follow-ups have all fired.
+  let snap = await db.collection("video_interviews").doc(interviewId).get();
+  if (!snap.exists) {
+    snap = await db.collection("interviews").doc(interviewId).get();
+  }
   if (!snap.exists) return;
   const data = snap.data()!;
 

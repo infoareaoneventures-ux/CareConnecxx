@@ -1,6 +1,8 @@
 import * as admin from "firebase-admin";
 import axios from "axios";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
+import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
+import { buildWebJobPostDoc } from "./jobPostContract";
 
 const db = admin.firestore();
 
@@ -50,7 +52,23 @@ export async function buildAndSaveJobPost(params: {
   const petsInHome     = (jobData.petsInHome        ?? false) as boolean;
   const smokingHousehold = (jobData.smokingHousehold ?? false) as boolean;
 
-  const title = `${careLevel === "light" ? "Light " : careLevel === "intensive" ? "Full " : ""}Care for ${firstName || "Loved One"}`;
+  // Multi-recipient household ("both mom and dad"): the web CarePlan/Posts
+  // tabs are built from job_postings' primary careRecipient* fields plus
+  // additionalRecipients[] — write them in the exact shape the web writes.
+  const extraRecipients = normalizeAdditionalRecipients(onboardingData.additionalRecipients);
+  const additionalRecipients = extraRecipients.map((r) => ({
+    firstName:    r.name.split(" ")[0] || r.name,
+    lastName:     "",
+    name:         r.name,
+    relationship: r.relationship ?? "",
+    ...(r.age !== undefined ? { age: String(r.age) } : {}),
+  }));
+  const recipientsCount = 1 + additionalRecipients.length;
+  const recipientNames  = [firstName, ...additionalRecipients.map((r) => r.firstName)].filter(Boolean);
+
+  const title = `${careLevel === "light" ? "Light " : careLevel === "intensive" ? "Full " : ""}Care for ${
+    recipientNames.length > 1 ? recipientNames.join(" & ") : firstName || "Loved One"
+  }`;
 
   const coords = await geocodeZip(zipCode);
 
@@ -59,13 +77,16 @@ export async function buildAndSaveJobPost(params: {
     clientId:               uid,
     careRecipientFirstName: firstName,
     careRecipientName:      seniorName,
+    ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
     relationship,
+    ...(additionalRecipients.length ? { additionalRecipients } : {}),
+    recipientsCount,
     title,
     description,
     city,
     zipCode,
     location:   { city, zipCode, ...(coords ?? {}) },
-    schedule:   { startDate, frequency, days, timeOfDay },
+    schedule:   { startDate, frequency, days, timeOfDay, daysPerWeek: days.length || Number(jobData.jobDaysPerWeek ?? 0) },
     careNeeds,
     careLevel,
     hourlyRate,
@@ -81,21 +102,27 @@ export async function buildAndSaveJobPost(params: {
   await db.collection("job_postings").doc(uid).set(jobPostingDoc, { merge: true });
 
   // ── carePlans/{uid} — full care plan with recipient details ───────────────
-  const recipientKey = `recipient_${firstName.toLowerCase().replace(/[^a-z0-9]/g, "_") || "primary"}`;
+  // One plan entry per recipient, keyed with the web CarePlan.tsx getKey format
+  // (recipientPlanKey) so the web tabs find Evia's data. Needs/conditions are
+  // shared at signup (same as the web PostJob flow); per-person edits happen in
+  // the CarePlan tabs afterward.
+  const recipients = allCareRecipients(onboardingData);
+  const recipientPlans: Record<string, unknown> = {};
+  for (const r of recipients.length ? recipients : [{ name: seniorName, relationship, age: seniorAge }]) {
+    recipientPlans[recipientPlanKey((r.name || "").split(" ")[0] || r.name || "primary")] = {
+      name:         r.name || seniorName,
+      age:          r.age ?? (recipientPlanKey(r.name || "") === recipientPlanKey(seniorName) ? seniorAge : undefined),
+      relationship: r.relationship ?? "",
+      careNeeds,
+      careLevel,
+      conditions,
+      updatedAt:    new Date().toISOString(),
+    };
+  }
   await db.collection("carePlans").doc(uid).set({
     clientId: uid,
     phone,
-    recipientPlans: {
-      [recipientKey]: {
-        name:        seniorName,
-        age:         seniorAge,
-        relationship,
-        careNeeds,
-        careLevel,
-        conditions,
-        updatedAt:   new Date().toISOString(),
-      },
-    },
+    recipientPlans,
     locationPool: [
       {
         city,
@@ -109,27 +136,38 @@ export async function buildAndSaveJobPost(params: {
     updatedAt: new Date().toISOString(),
   }, { merge: true });
 
-  // ── job_posts/{autoId} — public listing that triggers caregiver notifications
-  const jobPostRef = db.collection("job_posts").doc();
-  const jobPostDoc = {
-    intakeId:       jobPostRef.id,
-    clientId:       uid,
-    status:         "open",
-    careTypes:      careNeeds,
-    schedule:       { frequency, days, timeOfDay },
+  // ── job_posts/{uid} — public listing in the WEB JobPost contract ───────────
+  // Keyed by the client uid, NOT an autoId: the clientIntakes onCreate trigger
+  // (aiMatchTriggers → jobNotifications.createJobPost) also writes
+  // job_posts/{uid}, so both paths converge on ONE doc instead of the board
+  // showing the same family twice (and caregivers being texted twice).
+  const jobPostRef = db.collection("job_posts").doc(uid);
+  const jobPostDoc = buildWebJobPostDoc({
+    clientId:        uid,
+    source:          "cara",
+    title,
+    description,
+    clientName:      ((onboardingData.firstName ?? "") as string) || undefined,
+    careTypes:       careNeeds,
+    careLevel,
     startDate,
-    location:       { lat: coords?.lat ?? null, lng: coords?.lng ?? null, city },
-    summary:        careNeeds.length > 0 ? `New care job — ${careNeeds.slice(0, 2).join(", ")}` : "New care job",
-    daysPerWeek:    days.length,
-    timeOfDay:      timeOfDay.join(", "),
-    hourlyRate,
+    frequency,
+    days,
+    daysPerWeek:     Number(jobData.jobDaysPerWeek ?? 0),
+    timeOfDay,
+    hourlyRate:      hourlyRate as number | string | undefined,
     paymentMethod,
-    applicantCount: 0,
-    notifiedCount:  0,
-    source:         "cara",
-    createdAt:      admin.firestore.FieldValue.serverTimestamp(),
-  };
-  await jobPostRef.set(jobPostDoc);
+    city,
+    zipCode,
+    lat:             coords?.lat ?? null,
+    lng:             coords?.lng ?? null,
+    recipientsCount,
+    petsInHome,
+    smokingHousehold,
+    phone,
+    intakeId:        uid,
+  });
+  await jobPostRef.set(jobPostDoc, { merge: true });
 
   // ── onboardingProgress flags on users/{uid} ───────────────────────────────
   await db.collection("users").doc(uid).set({

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 // messy human inputs and grades the result against the four pre-flip gates:
 //   1. completion              — all required fields collected
 //   2. fields-before-handoff   — complete_collection only fired when full
-//   3. no re-greet             — Cara never re-greets / re-introduces after turn 1
+//   3. no re-greet             — Evia never re-greets / re-introduces after turn 1
 //   4. no double-send          — one user-facing reply per turn
 // (see docs/runbooks/onboarding-agent-loop-rollout.md and onboardingEvalGraders.ts)
 //
@@ -48,8 +48,10 @@ const store = vi.hoisted(() => {
     sessions,
     convos,
     reset() { sessions.clear(); convos.clear(); },
-    ensure(phone: string) {
-      if (!sessions.has(phone)) sessions.set(phone, { onboardingData: {}, onboardingStep: "client_ask_name" });
+    // initialStep defaults to the client flow's first collection step; caregiver
+    // cases pass their own so the loop starts on a caregiver collection turn.
+    ensure(phone: string, initialStep = "client_ask_name") {
+      if (!sessions.has(phone)) sessions.set(phone, { onboardingData: {}, onboardingStep: initialStep });
       if (!convos.has(phone)) convos.set(phone, []);
     },
   };
@@ -221,7 +223,12 @@ vi.mock("../mcp/server", () => {
     return { ok: true };
   });
 
-  return { MCP_TOOLS, CAREGIVER_TOOLS: [], handleToolCall, handleToolCallForCaregiver: vi.fn() };
+  // Caregiver turns dispatch through handleToolCallForCaregiver (qaAgent.ts:1983) —
+  // delegate to the same in-memory engine so caregiver eval cases exercise real
+  // save/complete semantics instead of crashing on an undefined (non-promise) return.
+  const handleToolCallForCaregiver = vi.fn(async (name: string, input: Record<string, unknown>, _shadowMode?: boolean) =>
+    handleToolCall(name, input));
+  return { MCP_TOOLS, CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall, handleToolCallForCaregiver };
 });
 
 // claudeClient: return a REAL Anthropic client so the loop makes genuine live API
@@ -255,8 +262,43 @@ vi.mock("../utils/claudeClient", async () => {
   };
 });
 
-// ── everything else heavy: inert (claudeRetry stays LIVE → real model calls) ──
-vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn(), getOpenAIClient: () => ({}) }));
+// openaiClient: return a REAL OpenAI client so the eval exercises PROD's actual
+// agent model (CARA_AGENT_PROVIDER=openai, gpt-5.4) — not the Anthropic fallback.
+// Same two vitest-only quirks as the claudeClient mock above (SSR strips the SDK
+// constructor → load via createRequire; jsdom looks like a browser →
+// dangerouslyAllowBrowser). wrapOpenAI (LangSmith) is skipped, as in prod-off.
+// quickComplete mirrors the real single-shot helper (router-tier model, same
+// token-limit param) so quick-tier calls inside the loop also hit the real model.
+vi.mock("../utils/openaiClient", async () => {
+  const { createRequire } = await import("node:module");
+  const req = createRequire(import.meta.url);
+  const mod: any = req("openai");
+  const OpenAI = typeof mod === "function" ? mod : (mod.OpenAI ?? mod.default);
+  const { resolveCaraModelConfig } = await import("../config/caraModels");
+  let openaiClient: any = null;
+  let geminiClient: any = null;
+  const openAiTokenLimitParam = (model: string, maxTokens: number) =>
+    /^gpt-5(?:[.-]|$)/i.test(model) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const getOpenAIClient = () => {
+    if (!openaiClient) openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "", timeout: 30_000, maxRetries: 0, dangerouslyAllowBrowser: true });
+    return openaiClient;
+  };
+  const getGeminiOpenAIClient = () => {
+    if (!geminiClient) geminiClient = new OpenAI({ apiKey: process.env.GEMINI_API_KEY ?? "", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", timeout: 15_000, maxRetries: 0, dangerouslyAllowBrowser: true });
+    return geminiClient;
+  };
+  const quickComplete = async (systemPrompt: string, userText: string, opts?: { maxTokens?: number; model?: string; signal?: AbortSignal }) => {
+    const maxTokens = opts?.maxTokens ?? 200;
+    const model = opts?.model ?? resolveCaraModelConfig("router").model;
+    const res = await getOpenAIClient().chat.completions.create({
+      model,
+      ...openAiTokenLimitParam(model, maxTokens),
+      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userText }],
+    }, { signal: opts?.signal });
+    return (res.choices[0]?.message?.content ?? "").trim();
+  };
+  return { getOpenAIClient, getGeminiOpenAIClient, quickComplete, openAiTokenLimitParam };
+});
 vi.mock("../safety/supervisor", () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter", () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../memory/zepClient", () => ({ getZepContext: vi.fn(() => Promise.resolve("")), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
@@ -273,6 +315,10 @@ interface EvalCase {
   id: string;
   label: string;
   turns: string[];
+  // Which onboarding loop the case exercises. Defaults to "client".
+  role?: "client" | "caregiver";
+  // Session cursor at turn 1 (defaults to the client flow's first step).
+  initialStep?: string;
 }
 
 const EVAL_CASES: EvalCase[] = [
@@ -306,6 +352,44 @@ const EVAL_CASES: EvalCase[] = [
     label: "opens with a bare greeting",
     turns: ["hello?", "oh hi, I'm Ana", "it's for my grandmother Rosa, she's 90", "companionship and light housekeeping", "Miami", "2 days a week mornings"],
   },
+  // ── caregiver loop (ONBOARDING_AGENT_LOOP=client,caregiver rollout gate) ────
+  {
+    id: "cg_story",
+    label: "caregiver front-loads their whole story",
+    role: "caregiver",
+    initialStep: "caregiver_ask_name",
+    turns: [
+      "Hi I'm Maria, I'm in San Jose. I've been a caregiver about 6 years, mostly dementia clients, I'm a CNA and CPR certified",
+      "weekdays 8am to 4pm",
+      "part-time is ideal",
+      "$25 an hour",
+      "maria.g@example.com",
+      "I treat every client like my own family and I never rush the hard moments",
+    ],
+  },
+  {
+    id: "cg_terse",
+    label: "caregiver gives terse one-word-ish answers",
+    role: "caregiver",
+    initialStep: "caregiver_ask_name",
+    turns: ["James", "Sunnyvale", "4 years", "mobility and post-surgery", "weekends", "occasional", "22", "james.t@example.com", "I show up on time and keep families in the loop"],
+  },
+  {
+    id: "cg_money_question",
+    label: "caregiver asks about pay and the background check mid-collection",
+    role: "caregiver",
+    initialStep: "caregiver_ask_name",
+    turns: [
+      "I'm Priya, San Jose",
+      "wait, how do I actually get paid? is there a fee?",
+      "ok. 8 years experience, dementia and hospice, HHA certified",
+      "monday wednesday friday, mornings",
+      "part time",
+      "$28/hr",
+      "priya.k@example.com",
+      "Calm, patient, and thorough — I've sat with families through the hardest seasons",
+    ],
+  },
 ];
 
 // ── grader-only unit tests (ALWAYS run — no API spend) ────────────────────────
@@ -314,7 +398,7 @@ describe("onboarding eval graders (pure, no spend)", () => {
     expect(isReGreet("Hi again! What's next?")).toBe(true);
     expect(isReGreet("Hey Sarah, how are you?")).toBe(true);
     expect(isReGreet("Good morning!")).toBe(true);
-    expect(isReGreet("I'm Cara, your AI care assistant.")).toBe(true);
+    expect(isReGreet("I'm Evia, your AI care assistant.")).toBe(true);
     expect(isReGreet("Got it — and how old is she?")).toBe(false);
     expect(isReGreet("So she's alone mornings. What city are you in?")).toBe(false);
     // "Nice to meet you, <name>" after they introduce themselves is good manners,
@@ -420,6 +504,43 @@ describe("eval harness tool engine (no spend)", () => {
     expect(done.complete).toBe(true);
     expect(store.sessions.get(phone)!.onboardingStep).toBe(firstGateStep("client"));
   });
+
+  it("caregiver role: save/complete semantics mirror the caregiver contract and hand off to the photo gate", async () => {
+    const { handleToolCall } = await import("../mcp/server");
+    const phone = "+15550000002";
+    store.ensure(phone, "caregiver_ask_name");
+    const base = { phone, role: "caregiver" as const };
+
+    const r1: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "name", fieldValue: "Maria" }, false);
+    expect(r1.ok).toBe(true);
+    expect(r1.missing).toContain("hourlyRate");
+    expect(r1.collectionComplete).toBe(false);
+
+    // Premature complete → gated with a real missing list.
+    const early: any = await handleToolCall("complete_collection", base, false);
+    expect(early.complete).toBe(false);
+    expect(early.missing.length).toBeGreaterThan(0);
+
+    // Optional scripted-flow fields (story extraction / profile step) are allowed…
+    const cert: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "certifications", fieldValue: ["CNA", "CPR"] }, false);
+    expect(cert.ok).toBe(true);
+    // …while invented keys and cross-role keys are rejected.
+    const bad: any = await handleToolCall("save_onboarding_field", { ...base, fieldName: "seniorName", fieldValue: "Jane" }, false);
+    expect(bad._toolError).toBe(true);
+
+    for (const [fieldName, fieldValue] of [
+      ["city", "San Jose"], ["yearsExperience", 6], ["specialties", ["dementia"]],
+      ["availability", { days: ["Monday"], hours: "9am-5pm" }], ["jobType", "part_time"],
+      ["hourlyRate", 25], ["email", "maria@example.com"], ["bio", "I treat every client like family."],
+    ] as Array<[string, unknown]>) {
+      await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue }, false);
+    }
+
+    const done: any = await handleToolCall("complete_collection", base, false);
+    expect(done.complete).toBe(true);
+    expect(done.nextStep).toBe("caregiver_send_photo");
+    expect(store.sessions.get(phone)!.onboardingStep).toBe(firstGateStep("caregiver"));
+  });
 });
 
 // ── live eval (SKIPPED unless CARA_ONBOARDING_EVAL_LIVE=true + ANTHROPIC_API_KEY) ─
@@ -437,8 +558,9 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
       // Imported lazily so the heavy graph only loads on the live path.
       const { runQaAgent } = await import("./qaAgent");
 
+      const role = ec.role ?? "client";
       const phone = `+1555000${ec.id.length}${ec.turns.length}00`;
-      store.ensure(phone);
+      store.ensure(phone, ec.initialStep ?? "client_ask_name");
       let completeFired = false;
 
       // Tap the mocked handleToolCall to observe the successful complete signal.
@@ -460,9 +582,9 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
             chatId: `chat-${ec.id}`,
             userId: "",
             seniorId: "",
-            userType: "client",
+            userType: role,
             onboardingMode: true,
-            onboardingRole: "client",
+            onboardingRole: role,
             intent: null,
             skipSend: true,
             session: { onboardingStep: sess.onboardingStep, onboardingData: { ...sess.onboardingData } } as any,
@@ -482,13 +604,13 @@ describe.skipIf(!LIVE)("onboarding loop — REAL model eval (incurs API spend)",
       // Did complete_collection ever succeed (complete:true)? Inspect the in-memory
       // step: firstGateStep is only set on a successful complete_collection.
       const finalSess = store.sessions.get(phone)!;
-      completeFired = finalSess.onboardingStep === firstGateStep("client");
+      completeFired = finalSess.onboardingStep === firstGateStep(role);
 
       const grade = gradeOnboardingTranscript({
         replies,
         perTurnSendCounts,
         finalData: finalSess.onboardingData,
-        role: "client",
+        role,
         completeFiredWith: completeFired ? [] : undefined,
       });
       caseGrades.push({ id: ec.id, grade });

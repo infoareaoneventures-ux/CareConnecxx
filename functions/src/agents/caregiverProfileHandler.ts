@@ -1,11 +1,12 @@
 import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
-import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateToken } from "./tokenService";
 import { getAppUrl } from "../config/appUrl";
 import { pauseCaregiver, reactivateCaregiver } from "./pauseAccount";
+import { answerHumanMidFlow } from "./humanReply";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -43,18 +44,17 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 }
 
 async function answerMidFlow(text: string, reAsk: string): Promise<string> {
-  const answer = await quickComplete(
-    "You are Cara, an AI care assistant helping a caregiver update their profile. " +
-      "Answer their question briefly (1-2 sentences). Do NOT ask them to continue — that prompt comes next.",
+  return answerHumanMidFlow({
+    audience: "caregiver",
+    situation: "caregiver is updating their profile",
     text,
-    { maxTokens: 150 },
-  ).catch(() => "Let me get back to you on that. In the meantime —");
-  return `${answer}\n\n${reAsk}`;
+    reAsk,
+  });
 }
 
 const KNOWN_SPECIALTIES = [
   "dementia", "alzheimer's", "mobility", "post-surgery", "companionship",
-  "medication management", "hospice", "diabetes care", "wound care",
+  "medication reminders", "hospice support", "diabetes support",
   "transportation", "meal prep", "personal care", "bathing", "transfers",
   "respite care", "parkinson's", "stroke recovery", "cognitive support",
 ];
@@ -151,13 +151,13 @@ async function handleRateUpdate(
       profileUpdateValue: String(rate),
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await sendMessage(chatId, `Set your hourly rate to $${rate}/hr? Reply YES to save, or NO to cancel.`);
+    await sendMessage(chatId, `Set your hourly rate to $${rate}/hr? Just say yes to save it, or no to cancel.`);
     return;
   }
 
   // confirm
   const proposedRate = parseFloat((session.profileUpdateValue as string) ?? "0");
-  const reAskConfirm = `Set your hourly rate to $${proposedRate}/hr? Reply YES to save, or NO to cancel.`;
+  const reAskConfirm = `Set your hourly rate to $${proposedRate}/hr? Just say yes to save it, or no to cancel.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -251,7 +251,7 @@ async function handleSkillsUpdate(
     });
     await sendMessage(chatId,
       `Updated skills will be: ${proposed.length ? proposed.join(", ") : "(none)"}\n\n` +
-      `Save? Reply YES or NO.`,
+      `Want me to save that?`,
     );
     return;
   }
@@ -261,7 +261,7 @@ async function handleSkillsUpdate(
     try { return JSON.parse((session.profileUpdateValue as string) ?? "[]") as string[]; }
     catch { return []; }
   })();
-  const reAskConfirm = `Save these skills: ${proposed.join(", ") || "(none)"}? Reply YES or NO.`;
+  const reAskConfirm = `So — want me to save these skills: ${proposed.join(", ") || "(none)"}?`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -314,13 +314,13 @@ async function handleBioUpdate(
       profileUpdateValue: bio,
       stateExpiresAt:     new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
-    await sendMessage(chatId, `Here's your new bio:\n\n"${bio}"\n\nSave? Reply YES or NO.`);
+    await sendMessage(chatId, `Here's your new bio:\n\n"${bio}"\n\nWant me to save that?`);
     return;
   }
 
   // confirm
   const proposedBio = (session.profileUpdateValue as string) ?? "";
-  const reAskConfirm = `Save this bio?\n\n"${proposedBio}"\n\nReply YES or NO.`;
+  const reAskConfirm = `So — want me to save this bio?\n\n"${proposedBio}"`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;
@@ -374,7 +374,9 @@ async function handlePauseAccount(
       await sendMessage(chatId, await answerMidFlow(text, reAsk));
       return;
     }
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // Business-timezone today — a UTC anchor after 5pm PT parses "until
+    // Friday" style pause dates a day late.
+    const todayIso = businessTodayStr();
     const raw = await parseWithClaude(
       `Parse the caregiver's pause-until date. Today is ${todayIso}. Reply JSON: ` +
         '{"until":"YYYY-MM-DD"} for a specific end date, or {"until":"indefinite"} for an open-ended pause. ' +
@@ -414,7 +416,7 @@ async function handlePauseAccount(
   // confirm
   const until = (session.profileUpdateValue as string) ?? "indefinite";
   const untilLabel = until === "indefinite" ? "indefinitely" : `until ${until}`;
-  const reAskConfirm = `Pause your account ${untilLabel}? Reply YES or NO.`;
+  const reAskConfirm = `Pause your account ${untilLabel}? Reply YES to pause, or NO to cancel.`;
   if (await isQuestionOrOther(text, reAskConfirm)) {
     await sendMessage(chatId, await answerMidFlow(text, reAskConfirm));
     return;

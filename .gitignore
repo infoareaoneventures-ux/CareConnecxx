@@ -14,6 +14,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist*
 dist-ssr
 *.local
 vite.config.ts.timestamp-*
@@ -56,3 +57,7 @@ third_party/
 # (committed copies caused rebase conflicts in functions/lib/shiftHours.js[.map])
 functions/lib/
 functions/.eval-results.json
+functions/live-env.json
+functions/.env.backup-*
+functions/.env.linqWebhook
+.gstack/

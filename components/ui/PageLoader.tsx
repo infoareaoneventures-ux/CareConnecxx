@@ -26,7 +26,7 @@ export const PageLoader: React.FC<PageLoaderProps> = ({
 
   return (
     <div 
-      className={`${containerClasses} flex flex-col items-center justify-center bg-slate-50`}
+      className={`${containerClasses} flex flex-col items-center justify-center bg-paper-50`}
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -34,7 +34,7 @@ export const PageLoader: React.FC<PageLoaderProps> = ({
       <div className="relative">
         {/* Animated spinner */}
         <Loader2 
-          className="w-12 h-12 text-primary-600 animate-spin" 
+          className="w-12 h-12 text-ink-600 animate-spin" 
           aria-hidden="true"
         />
         
@@ -42,14 +42,14 @@ export const PageLoader: React.FC<PageLoaderProps> = ({
         <span className="sr-only">{message}</span>
       </div>
       
-      <p className="mt-4 text-slate-500 font-medium text-sm">
+      <p className="mt-4 text-ink-600 font-medium text-sm">
         {message}
       </p>
 
       {/* Loading progress indicator */}
       <div className="mt-4 w-48 h-1 bg-slate-200 rounded-full overflow-hidden">
         <div 
-          className="h-full bg-primary-600 rounded-full animate-pulse"
+          className="h-full bg-ink-600 rounded-full animate-pulse"
           style={{ 
             width: '60%',
             animation: 'loading-bar 1.5s ease-in-out infinite'

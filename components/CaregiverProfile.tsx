@@ -99,7 +99,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
             setEditRadius(String(p.serviceRadius || '10'));
             setEditLocation(p.location || (p.city && p.state ? `${p.city}, ${p.state}` : ''));
             setEditJobTypes(p.jobTypes || []);
-            // Normalize to block IDs regardless of whether Firestore has TimeSlots (Cara) or block IDs (onboarding/profile)
+            // Normalize to block IDs regardless of whether Firestore has TimeSlots (Evia) or block IDs (onboarding/profile)
             setEditAvailability(weeklySlotsToBl(p.weeklyAvailability || {}) as Record<string, string[]>);
           }
         }
@@ -222,7 +222,7 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
           <div className="px-6 pb-5">
             <div className="flex items-end justify-between -mt-10 mb-4">
               <AvatarUpload
-                currentUrl={profile.photo || profile.imageUrl}
+                currentUrl={profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL}
                 onImageSelected={handleImageUpdate}
                 userId={currentUser?.uid}
                 storageFolder="caregivers"

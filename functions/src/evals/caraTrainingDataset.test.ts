@@ -6,7 +6,7 @@ import {
   toCaraEvalCases,
 } from "./caraTrainingDataset";
 
-describe("Cara training dataset", () => {
+describe("Evia training dataset", () => {
   it("keeps stable unique ids and launch-critical coverage", () => {
     const ids = new Set(STARTER_CARA_TRAINING_EXAMPLES.map((example) => example.id));
     expect(ids.size).toBe(STARTER_CARA_TRAINING_EXAMPLES.length);
@@ -15,6 +15,10 @@ describe("Cara training dataset", () => {
     const intents = new Set(STARTER_CARA_TRAINING_EXAMPLES.map((example) => example.labels.intent));
     for (const intent of [
       "family_member_add",
+      "recipe_discovery_context",
+      "visit_confirmation",
+      "share_latest_update",
+      "caregiver_shift_closeout",
       "safety_emergency",
       "medical_boundary",
       "shift_hours_approve",
@@ -22,8 +26,30 @@ describe("Cara training dataset", () => {
       "caregiver_approval_status",
       "caregiver_referral",
       "caregiver_safety_report",
+      "memory_forget_or_correction",
     ]) {
       expect(intents.has(intent), `missing intent coverage: ${intent}`).toBe(true);
+    }
+  });
+
+  it("covers the initial care recipe tool surface", () => {
+    const allTools = new Set(
+      STARTER_CARA_TRAINING_EXAMPLES.flatMap((example) => example.labels.expectedTools),
+    );
+    for (const tool of [
+      "get_upcoming_appointments",
+      "send_caregiver_message",
+      "find_replacement_caregivers",
+      "get_care_journal_client",
+      "add_family_member",
+      "review_shift_hours",
+      "complete_shift",
+      "submit_shift_hours",
+      "get_payout_history",
+      "create_caregiver_referral",
+      "update_memory_file",
+    ]) {
+      expect(allTools.has(tool), `missing recipe tool coverage: ${tool}`).toBe(true);
     }
   });
 

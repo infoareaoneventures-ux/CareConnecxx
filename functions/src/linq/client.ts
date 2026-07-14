@@ -5,6 +5,7 @@ import { supervise, SuperviseContext } from "../safety/supervisor";
 import { lintPreservingLayout } from "../safety/linter";
 import { redactPii } from "../safety/redactPii";
 import { logMessageSent } from "../observability/auditLog";
+import { getAppUrl } from "../config/appUrl";
 
 const db = admin.firestore();
 
@@ -91,6 +92,9 @@ export interface AgentSession {
   onboardingData?:  Record<string, unknown>;
   // Preferred language for outbound messages ("en" | "es"); set during onboarding.
   preferredLanguage?: string;
+  // Linq id of the user's most recent inbound message — the default target for
+  // react_to_message (outbound tapbacks). Refreshed on every message.received.
+  lastInboundMessageId?: string;
 }
 
 export interface LinqPhoneNumber {
@@ -170,6 +174,45 @@ export async function checkCapability(
   }
 }
 
+// ── Native location request ──────────────────────────────────────────────────
+// Linq's native "Share Your Location" prompt. Works on 1:1 iMessage ONLY;
+// SMS / RCS / group chats return a non-2xx (409). The shared pin comes back
+// asynchronously as an inbound location part (see utils/locationShare.ts), so
+// this call only *sends* the prompt — it never returns the location itself.
+// Docs: /api/resources/chats/subresources/location/
+
+export interface LocationRequestResult {
+  /** true when Linq accepted the request and fired the native prompt. */
+  requested: boolean;
+  /** HTTP status when the request was rejected (e.g. 409 on SMS/RCS/group). */
+  status?: number;
+}
+
+/**
+ * Fire Linq's native location-share prompt on a chat. Never throws — any
+ * non-2xx (notably 409 for SMS/RCS/group, or a stale-iMessage chat) resolves to
+ * `{ requested: false }` so callers branch to a typed-address fallback. Not
+ * retried: 4xx is not transient and the request is best-effort (the location
+ * itself arrives later via the inbound webhook).
+ */
+export async function requestLocation(chatId: string): Promise<LocationRequestResult> {
+  if (!chatId) return { requested: false };
+  try {
+    const res = await axios.post(
+      `${cfg().baseUrl}/chats/${chatId}/location/request`,
+      {},
+      { headers: headers(), timeout: 10000 }
+    );
+    const traceId = res.headers["x-trace-id"] as string | undefined;
+    if (traceId) console.info("Linq requestLocation trace_id:", traceId, "chatId:", chatId);
+    return { requested: true };
+  } catch (err) {
+    const status = (err as AxiosError)?.response?.status;
+    console.info("Linq requestLocation unavailable", { chatId, status: status ?? null });
+    return { requested: false, status };
+  }
+}
+
 // ── Core send ─────────────────────────────────────────────────────────────────
 
 // Canonicalize message parts to the shapes Linq's API actually accepts.
@@ -180,6 +223,65 @@ export async function checkCapability(
 // http(s) URL out of `url`/`value` and discarding the label — so every send site
 // is safe even if a caller copies the old pattern.
 const HTTP_URL_RE = /^https?:\/\//i;
+
+// ── Card-safe URL policy (link-audit 2026-07-08) ─────────────────────────────
+// A `link` part renders as a rich preview CARD, which requires the URL to serve
+// fetchable OG metadata. URLs that don't — app-hosted SPA routes other than the
+// /p/** profile rewrite, and raw storage files (.ics invites, .md keepsakes) —
+// arrive as a BLANK or generic-marketing card: the live "message arrives but no
+// link" bug. Enforced HERE, at the one chokepoint every send crosses, so no
+// individual send site can reintroduce it:
+//   - external provider URLs (Stripe, Checkr, Meet, …) → card (they own OG);
+//   - app-hosted /p/** → card (v1-caregiverProfileMeta OG rewrite);
+//   - app-hosted /upload/** + /bgcheck → card (v1-uploadPageMeta OG rewrite, 2026-07-12);
+//   - every other app-hosted route + raw-file storage hosts → NO card; the URL
+//     is delivered inline as tappable plain text instead (works on SMS too).
+const NO_OG_HOSTS = new Set([
+  "firebasestorage.googleapis.com", // raw files (ics/md/media) — no HTML at all
+  "storage.googleapis.com",
+]);
+const LEGACY_APP_HOSTS = new Set([
+  "careconnex-d4c8b.web.app", "careconnex-d4c8b.firebaseapp.com",
+]);
+
+function isCardSafeUrl(url: string): boolean {
+  try {
+    const u = new URL(HTTP_URL_RE.test(url) ? url : `https://${url}`);
+    const host = u.hostname.toLowerCase();
+    if (NO_OG_HOSTS.has(host)) return false;
+    let appHost = "";
+    try { appHost = new URL(getAppUrl()).hostname.toLowerCase(); } catch { /* fall through */ }
+    const bare = (h: string) => h.replace(/^www\./, "");
+    const isAppHost = LEGACY_APP_HOSTS.has(host) || (!!appHost && bare(host) === bare(appHost));
+    if (!isAppHost) return true; // external provider — real OG (Stripe/Meet/Checkr)
+    if (u.pathname === "/p" || u.pathname.startsWith("/p/")) return true;
+    // /upload/photo|document + /bgcheck — static OG via the v1-uploadPageMeta
+    // rewrite. (/upload-direct/** and /bgcheck-direct are the SPA-served
+    // fallback aliases and have NO OG.)
+    if (u.pathname.startsWith("/upload/") || u.pathname === "/bgcheck") return true;
+    // /verify/{id} + /pay/{id} — branded Stripe redirects with static OG via
+    // the v1-linkRedirect rewrite (2026-07-12).
+    return u.pathname.startsWith("/verify/") || u.pathname.startsWith("/pay/");
+  } catch {
+    return false; // unparseable — never risk a blank card
+  }
+}
+
+// Lint/redact a text part WITHOUT touching any URL inside it. The voice linter
+// replaces banned substrings (e.g. \bbot\b → "Evia") and base64url tokens use
+// "-"/"." as word boundaries, so an unlucky token containing "-bot-" would be
+// corrupted — and a corrupted token bricks the upload/checkout page it gates.
+// Mask URLs before linting, restore them verbatim after.
+function lintTextPreservingUrls(value: string): string {
+  const urls: string[] = [];
+  const masked = value.replace(FULL_URL_RE, (m) => {
+    urls.push(m);
+    return `⟦${urls.length - 1}⟧`;
+  });
+  const cleaned = redactPii(lintPreservingLayout(masked)).text;
+  const restored = cleaned.replace(/⟦(\d+)⟧/g, (_, i) => urls[Number(i)] ?? "");
+  return restored;
+}
 
 function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
   if (!Array.isArray(parts)) return parts;
@@ -196,8 +298,9 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
       // Voice cleanup AND PII redaction at the one chokepoint every send
       // crosses (U10), so scripted sends and sendToPhone-initiated chats are
       // scrubbed of SSNs / card numbers / cross-user emails too — not just the
-      // runQuickReply path the old outboundGuard covered. Fail open.
-      const cleaned = redactPii(lintPreservingLayout(p.value)).text;
+      // runQuickReply path the old outboundGuard covered. Fail open. URLs are
+      // masked during the pass so tokens can't be mangled by phrase bans.
+      const cleaned = lintTextPreservingUrls(p.value);
       return { ...p, value: cleaned || p.value };
     }
     if (p.type !== "link") return p;
@@ -205,6 +308,12 @@ function normalizeParts(parts: LinqMessagePart[]): LinqMessagePart[] {
       p.url && HTTP_URL_RE.test(p.url)     ? p.url   :
       p.value && HTTP_URL_RE.test(p.value) ? p.value :
       p.url ?? p.value;
+    // Card-safety: a no-OG URL sent as a card arrives blank — downgrade it to
+    // a plain text part so the user gets a tappable URL instead of an empty
+    // bubble. Card-safe URLs keep the rich preview.
+    if (typeof url === "string" && !isCardSafeUrl(url)) {
+      return { type: "text", value: url };
+    }
     return { type: "link", value: url };
   });
 }
@@ -273,6 +382,11 @@ function splitTextAndUrls(text: string): UrlSplit {
       if (trim) url = url.slice(0, url.length - trim[0].length);
       if (!url) return "";
       const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      // Card-safety (link-audit 2026-07-08): only card-safe URLs are promoted
+      // to dedicated link-part preview cards. App-hosted routes without OG and
+      // raw storage files stay INLINE in the text bubble — a tappable plain URL
+      // beats the blank card Linq renders when there's nothing to crawl.
+      if (!isCardSafeUrl(normalized)) return raw;
       urls.push(normalized);
       // Preserve trailing sentence punctuation that was attached to the URL.
       return trim ? trim[0] : "";
@@ -340,6 +454,9 @@ async function sendOneMessage(
   }
   const traceId = res.headers["x-trace-id"] as string | undefined;
   if (traceId) console.info("Linq sendMessage trace_id:", traceId, "chatId:", chatId);
+  // A reply reached this chat — clear the dropped-turn watchdog marker set by
+  // the inbound webhook (turn_watch; swept by commitmentTracker.ts).
+  db.collection("turn_watch").doc(chatId).delete().catch(() => {/* non-critical */});
   return { message_id: res.data.id ?? res.data.message_id ?? "" };
 }
 
@@ -351,9 +468,110 @@ export interface SendOptions {
    * Docs: /guides/messaging/protocol-selection/
    */
   preferredService?: LinqService;
+  /**
+   * What to do when the guarded send paths (safeSend/sendToPhone) are blocked
+   * by the circuit breaker or per-pair rate limit. "queue" (default) parks the
+   * message in linq_outbound_queue for the every-minute drain sweep; "drop"
+   * keeps the old discard behavior — use it for messages that are worthless
+   * even a minute late (typing fillers, ephemeral acks).
+   */
+  durability?: "queue" | "drop";
+  /** Queue expiry for blocked sends. Default 15 min; must-deliver callers
+   *  (e.g. toolNotify.trySend) pass a longer window. */
+  queueTtlMs?: number;
+  /** Caller tag stored on queued docs for observability. */
+  source?: string;
+  /** Internal — set by the drain sweep so a still-blocked send reports back
+   *  instead of re-enqueueing itself. */
+  _noQueue?: boolean;
+}
+
+/**
+ * Outcome of a guarded send:
+ * - "sent"            — delivered to Linq.
+ * - "queued"          — blocked (circuit open / rate-limited) and parked in
+ *                       linq_outbound_queue; the drain sweep will deliver it.
+ * - "dropped"         — blocked and discarded (durability:"drop", queue-write
+ *                       failure, or a still-blocked drain retry).
+ * - "skipped_opt_out" — recipient opted out; deliberately not sent.
+ */
+export type GuardedSendOutcome = "sent" | "queued" | "dropped" | "skipped_opt_out";
+
+// Park a blocked send in the durable queue (unless the caller opted out of
+// queueing). Returns the outcome to surface to the caller.
+async function queueOrDrop(
+  target: { kind: "chat"; chatId: string } | { kind: "phone"; phone: string },
+  message: string | LinqMessage,
+  reason: "circuit_open" | "rate_limited",
+  opts: SendOptions,
+  superviseContext?: SuperviseContext,
+): Promise<GuardedSendOutcome> {
+  const where = target.kind === "chat" ? { chatId: target.chatId } : { phone: target.phone };
+  if (opts._noQueue || opts.durability === "drop") {
+    console.warn(`guarded send blocked (${reason}), dropping message`, where);
+    return "dropped";
+  }
+  try {
+    const { enqueueOutbound } = await import("./outboundQueue");
+    const queued = await enqueueOutbound({
+      target,
+      ...(typeof message === "string" ? { text: message } : { message }),
+      superviseContext,
+      preferredService: opts.preferredService,
+      reason,
+      source: opts.source ?? (target.kind === "chat" ? "safeSend" : "sendToPhone"),
+      ttlMs: opts.queueTtlMs,
+    });
+    if (queued) {
+      console.warn(`guarded send blocked (${reason}), queued for retry`, where);
+      return "queued";
+    }
+  } catch (err) {
+    console.error("guarded send: enqueue threw — message dropped", {
+      ...where, reason, err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return "dropped";
 }
 
 export async function sendMessage(
+  chatId: string,
+  textOrMessage: string | LinqMessage,
+  opts: SendOptions = {}
+): Promise<{ message_id: string }> {
+  try {
+    return await sendMessageDeliver(chatId, textOrMessage, opts);
+  } catch (err) {
+    // Hard transport failure after withRetry's in-call retries. Previously the
+    // message was LOST here for every caller that didn't catch and recover
+    // (proactive sends, scheduled jobs, direct sendToPhone-less paths) — an
+    // admin alert fired but the user never got the message. Dead-letter it
+    // into the durable queue instead; the every-minute drain redelivers with
+    // backoff and pages ops if it exhausts. Known tradeoff: a partial multi-
+    // bubble send (text ok, link failed) redelivers the whole message — a
+    // rare duplicate beats a silent loss. Drain-originated sends (_noQueue)
+    // still throw so the queue's own attempt accounting stays correct.
+    if (opts._noQueue) throw err;
+    try {
+      const { enqueueOutbound } = await import("./outboundQueue");
+      const queued = await enqueueOutbound({
+        target: { kind: "chat", chatId },
+        ...(typeof textOrMessage === "string" ? { text: textOrMessage } : { message: textOrMessage }),
+        ...(opts.preferredService ? { preferredService: opts.preferredService } : {}),
+        reason: "send_failed",
+        source: opts.source ?? "sendMessage:transport_failure",
+        ttlMs:  opts.queueTtlMs ?? 60 * 60 * 1000,
+      });
+      if (queued) {
+        console.warn("sendMessage: transport failure — dead-lettered for redelivery", { chatId });
+        return { message_id: "" };
+      }
+    } catch { /* enqueue itself failed — fall through to rethrow */ }
+    throw err;
+  }
+}
+
+async function sendMessageDeliver(
   chatId: string,
   textOrMessage: string | LinqMessage,
   opts: SendOptions = {}
@@ -363,7 +581,7 @@ export async function sendMessage(
   // structured callers that already set their own preferred_service, theirs wins.
   const svc = preferredService ? { preferred_service: preferredService } : {};
 
-  // Mirror Cara's outbound message into the web chat inbox (threads/{id}/messages).
+  // Mirror Evia's outbound message into the web chat inbox (threads/{id}/messages).
   // Fire-and-forget — mirroring must never delay or block SMS delivery.
   try {
     const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
@@ -565,7 +783,7 @@ export async function stopTyping(chatId: string): Promise<void> {
     .catch(() => {/* non-critical */});
 }
 
-// Signal that Cara is working on something, before a slow operation (Stripe
+// Signal that Evia is working on something, before a slow operation (Stripe
 // checkout/identity/Connect creation, Checkr invitation). iMessage gets the
 // native typing bubble; SMS/RCS have no typing indicator, so they get a short
 // interim line instead of dead silence during the multi-second wait.
@@ -757,7 +975,7 @@ export async function getOrCreateSession(
     // First message is a silent thread-opener; real content comes from the caller.
     // Per best-practices: no links or media in first message.
     const { chat_id } = await createChat(phone, {
-      parts: [{ type: "text", value: "Hi! I'm Cara — your care assistant. I'm here whenever you need me." }],
+      parts: [{ type: "text", value: "Hi, I'm Evia. I'm here whenever you need me." }],
     });
 
     const session: AgentSession = {
@@ -832,14 +1050,12 @@ export async function safeSend(
   message: string | LinqMessage,
   context: SuperviseContext,
   opts: SendOptions = {}
-): Promise<void> {
+): Promise<GuardedSendOutcome> {
   if (await isCircuitOpen()) {
-    console.warn("safeSend: circuit breaker open (line FLAGGED/CRITICAL), dropping message", { chatId });
-    return;
+    return queueOrDrop({ kind: "chat", chatId }, message, "circuit_open", opts, context);
   }
   if (!(await checkPairRateLimit(chatId))) {
-    console.warn("safeSend: per-pair rate limit reached, dropping message", { chatId });
-    return;
+    return queueOrDrop({ kind: "chat", chatId }, message, "rate_limited", opts, context);
   }
 
   let finalText = "";
@@ -868,6 +1084,7 @@ export async function safeSend(
   if (context.phone) {
     logMessageSent(context.phone, context.phone, chatId, finalText || "[structured message]").catch(() => {});
   }
+  return "sent";
 }
 
 // ── High-level helper: send to a phone number ────────────────────────────────
@@ -876,10 +1093,9 @@ export async function sendToPhone(
   phone: string,
   textOrMessage: string | LinqMessage,
   opts: SendOptions = {}
-): Promise<void> {
+): Promise<GuardedSendOutcome> {
   if (await isCircuitOpen()) {
-    console.warn("sendToPhone: circuit breaker open, dropping message", { phone });
-    return;
+    return queueOrDrop({ kind: "phone", phone }, textOrMessage, "circuit_open", opts);
   }
 
   const ref  = db.collection("agent_sessions").doc(phone);
@@ -887,9 +1103,9 @@ export async function sendToPhone(
 
   if (snap.exists) {
     const session = snap.data() as AgentSession;
-    if (session.optedOut || session.optedIn === false) return;
+    if (session.optedOut || session.optedIn === false) return "skipped_opt_out";
     await sendMessage(session.chatId, textOrMessage, opts);
-    return;
+    return "sent";
   }
 
   // No session yet — create chat with this message as the opener
@@ -924,6 +1140,7 @@ export async function sendToPhone(
     if (newSession.service === "iMessage") {
       shareContactCard(chat_id).catch(() => {});
     }
+    return "sent";
   } catch (err) {
     const e = err as AxiosError;
     console.error("Linq sendToPhone error:", e.response?.data ?? e.message);

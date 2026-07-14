@@ -4,7 +4,7 @@ import {
   CheckCircle, Briefcase, MapPin, ArrowRight, Clock, Lock,
   Calendar, Sun, Moon, Car, Users as UsersIcon, CreditCard, Banknote, X, Loader2,
 } from 'lucide-react';
-import { Caregiver, JobPost, AddToastFunction } from '../../types';
+import { Caregiver, JobPost, AddToastFunction, isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 import { ProfileApprovalBanner } from './ProfileApprovalBanner';
 import { BackgroundCheckModal } from '../BackgroundCheckModal';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
@@ -51,7 +51,19 @@ export const CaregiverProgressCard: React.FC<{
   const needsTransportDocs = services.includes('Transportation');
   const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(profile) : false;
   const isApproved = membershipActive && bgApprovedFull && (!needsTransportDocs || transportDocsValid);
-  const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || isApproved;
+  // Field-driven Profile completeness: Evia mirrors each SMS-collected field to
+  // caregivers/{uid} as it's collected, but only stamps onboardingStatus
+  // 'profile_complete' at the very last (Stripe Connect) step — so gating this
+  // step on onboardingStatus alone showed everything a caregiver already did
+  // with Evia as incomplete. Credit the actual profile fields instead.
+  const hasPhoto = !!(p.photo || p.photoURL || p.profilePhoto || p.imageUrl);
+  const hasBio = (typeof p.bio === 'string' && p.bio.trim().length > 0) || p.bioSkipped === true;
+  const hasAvailability = !!(
+    (p.weeklyAvailability && Object.values(p.weeklyAvailability).some((slots: any) => Array.isArray(slots) && slots.length > 0))
+    || p.availability
+  );
+  const profileFieldsDone = hasPhoto && hasBio && services.length > 0 && hasAvailability;
+  const profileComplete = p.onboardingStatus === 'profile_complete' || p.onboardingStatus === 'submitted' || profileFieldsDone || isApproved;
   const hasPaid = membershipActive;
   const checkrInitiated = !!p.backgroundCheckData?.checkrCandidateId;
   const rejected = p.verificationStatus === 'rejected';
@@ -89,7 +101,20 @@ export const CaregiverProgressCard: React.FC<{
     cardVariant = 'warning';
   } else if (activeStep === 1) {
     cardTitle = 'Complete your profile';
-    cardDesc = 'Add your photo, availability, services, and bio.';
+    // Name only the pieces still missing so a caregiver who already gave Evia
+    // most of their profile isn't told to redo everything.
+    const missingItems = [
+      !hasPhoto && 'photo',
+      !hasAvailability && 'availability',
+      services.length === 0 && 'services',
+      !hasBio && 'bio',
+    ].filter(Boolean) as string[];
+    const missingPhrase = missingItems.length <= 1
+      ? missingItems[0]
+      : `${missingItems.slice(0, -1).join(', ')}${missingItems.length > 2 ? ',' : ''} and ${missingItems[missingItems.length - 1]}`;
+    cardDesc = missingItems.length
+      ? `Add your ${missingPhrase}.`
+      : 'Add your photo, availability, services, and bio.';
     cardCta = { label: 'Complete profile', onClick: () => onNavigate('caregiver-profile') };
   } else if (activeStep === 2) {
     if (p.membershipStatus === 'payment_failed') {
@@ -354,7 +379,7 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                     const labels = times.map((t: string) => t.charAt(0).toUpperCase() + t.slice(1));
                     return labels.join(', ') || null;
                   })();
-                  const isCash = !((job as any).paymentMethod) || (job as any).paymentMethod === 'cash';
+                  const isOffline = !((job as any).paymentMethod) || isOfflinePaymentMethod((job as any).paymentMethod);
                   return (
                     <div key={job.id} className="bg-white rounded-2xl p-5 hover:shadow-md shadow-sm transition-all">
                       {/* Header: title + rate */}
@@ -373,8 +398,8 @@ export const CaregiverOnboardingDashboard: React.FC<CaregiverOnboardingDashboard
                           )}
                           {(job as any).paymentMethod && (
                             <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-0.5">
-                              {isCash ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                              via {isCash ? 'cash' : 'card'}
+                              {isOffline ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
+                              via {isOffline ? paymentMethodLabel((job as any).paymentMethod || 'cash').toLowerCase() : 'card'}
                             </p>
                           )}
                         </div>

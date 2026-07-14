@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard, Calendar, DollarSign, Activity,
+  LayoutDashboard, Calendar, DollarSign,
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
   Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles, Flag,
 } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
 import { dbService } from '../services/api';
 import { TicketManager } from './admin/TicketManager';
@@ -127,7 +128,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     );
     return () => unsub();
   }, []);
-  // Cara Control surfaces more than open alerts (failed actions + pending
+  // Evia Control surfaces more than open alerts (failed actions + pending
   // approvals too), so its badge needs its own count — not the plain alert count
   // the Alerts tab uses. Mirrors AdminCaraControlRoom's queue composition.
   useEffect(() => {
@@ -216,8 +217,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
     {
       label: 'AI Review',
       items: [
-        { id: 'cara_control' as TabId, label: 'Cara Control', icon: Sparkles, badge: caraOpsCount },
-        { id: 'proactive_drafts' as TabId, label: 'Cara Drafts', icon: HeartHandshake },
+        { id: 'cara_control' as TabId, label: 'Evia Control', icon: Sparkles, badge: caraOpsCount },
+        { id: 'proactive_drafts' as TabId, label: 'Evia Drafts', icon: HeartHandshake },
       ],
     },
     {
@@ -244,10 +245,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         <div className="px-5 py-5 border-b border-slate-100">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center shrink-0">
-              <Activity className="w-4 h-4 text-white" />
+              <BloomMark className="w-4 h-4 text-white" />
             </div>
             <div>
-              <p className="font-bold text-slate-900 text-sm leading-tight">CareConnex</p>
+              <p className="font-bold text-slate-900 text-sm leading-tight">Evia</p>
               <p className="text-xs text-slate-400">Admin</p>
             </div>
           </div>

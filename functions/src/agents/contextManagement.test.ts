@@ -133,6 +133,79 @@ describe("maybeRollUpHistory", () => {
     expect(call[1]).toContain("Earlier: family onboarded."); // existing summary passed in
     expect(hoisted.snapshot().filter((d) => d.role === "summary")).toHaveLength(1);
   });
+
+  // U3 (memory expansion): pins the widened window/trigger explicitly, on top
+  // of the symbolic ROLLUP_TRIGGER/HISTORY_WINDOW assertions above, so a future
+  // accidental revert of either constant fails loudly with the literal values.
+  it("keeps 24 verbatim messages and fires the rollup once the count exceeds 30", async () => {
+    expect(HISTORY_WINDOW).toBe(24);
+    expect(ROLLUP_TRIGGER).toBe(30);
+
+    // ROLLUP_TRIGGER (30) is an exclusive floor — the gate is count > TRIGGER —
+    // so 31 messages is the smallest pool that actually fires the rollup.
+    hoisted.seed(makeMsgs(31));
+    await maybeRollUpHistory("+15550001111");
+
+    expect(quickCompleteMock).toHaveBeenCalledTimes(1);
+    const live = hoisted.snapshot().filter((d) => d.role !== "summary");
+    expect(live).toHaveLength(24);
+  });
+
+  it("does not fire the rollup at exactly 30 messages (trigger is exclusive)", async () => {
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER)); // 30 — at, not above, the trigger
+    await maybeRollUpHistory("+15550001111");
+    expect(quickCompleteMock).not.toHaveBeenCalled();
+  });
+
+  it("returns true when a rollup actually folds messages, false otherwise", async () => {
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER)); // at trigger — no-op
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
+
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6)); // above trigger — folds
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(true);
+  });
+
+  it("returns false (not throw) when the summarizer produces empty output", async () => {
+    quickCompleteMock.mockResolvedValueOnce("   "); // blank/whitespace-only summary
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6));
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
+    // Nothing was folded — original messages remain untouched.
+    expect(hoisted.snapshot().filter((d) => d.role !== "summary")).toHaveLength(ROLLUP_TRIGGER + 6);
+  });
+
+  it("still sanitizes/folds a conversation containing an empty-content message (2026-06-29 regression)", async () => {
+    // Regression guard: an empty-content message (e.g. a dropped/blank turn)
+    // must not break the transcript join or the fold — String(content ?? "")
+    // at the transcript-building step must handle it gracefully.
+    const msgs = makeMsgs(ROLLUP_TRIGGER + 6);
+    msgs[3] = { ...msgs[3], content: "" };
+    (msgs[7] as any).content = undefined;
+    hoisted.seed(msgs);
+
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(true);
+    expect(quickCompleteMock).toHaveBeenCalledTimes(1);
+    const live = hoisted.snapshot().filter((d) => d.role !== "summary");
+    expect(live).toHaveLength(HISTORY_WINDOW);
+  });
+
+  it("preserves summary content beyond 1200 chars, up to the new 3000-char clamp", async () => {
+    // maybeRollUpHistory itself doesn't clamp (that's qaAgent's
+    // sanitizePromptContext read-back clamp, raised 1200→3000) — this pins that
+    // a long summarizer response survives the rollup write path untruncated,
+    // so the larger downstream clamp actually has something to preserve.
+    const longSummary = "Family discussed Mom's care plan in detail. ".repeat(60); // ~2700 chars
+    expect(longSummary.length).toBeGreaterThan(1200);
+    expect(longSummary.length).toBeLessThanOrEqual(3000);
+    quickCompleteMock.mockResolvedValueOnce(longSummary);
+
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6));
+    await maybeRollUpHistory("+15550001111");
+
+    const summaries = hoisted.snapshot().filter((d) => d.role === "summary");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].content.length).toBeGreaterThan(1200);
+    expect(summaries[0].content).toBe(longSummary.trim());
+  });
 });
 
 describe("buildToolResultContent", () => {
@@ -320,28 +393,28 @@ describe("truncateOldToolCallArgs", () => {
   });
 
   it("truncates oversized args in older messages and preserves the last keepLast", () => {
-    // 10 messages — keepLast default 5 — so the first 5 are clip candidates.
+    // 16 messages — keepLast default 8 — so the first 8 are clip candidates.
     const messages: Anthropic.MessageParam[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       messages.push({ role: "assistant", content: [tu(`old-${i}`, "get_x", bigInput(`old${i}`))] });
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       messages.push({ role: "assistant", content: [tu(`new-${i}`, "get_y", bigInput(`new${i}`))] });
     }
 
     const count = truncateOldToolCallArgs(messages);
-    expect(count).toBe(5); // exactly the 5 older tool_use blocks
+    expect(count).toBe(8); // exactly the 8 older tool_use blocks
 
     // Older messages: input replaced with {_truncated:true, preview}
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const block = (messages[i].content as Anthropic.ToolUseBlockParam[])[0];
       expect((block.input as any)._truncated).toBe(true);
       expect((block.input as any).preview).toMatch(/\.\.\.$/);
-      expect((block.input as any).preview.length).toBeLessThanOrEqual(210);
+      expect((block.input as any).preview.length).toBeLessThanOrEqual(510);
     }
 
     // Newer messages: original input intact
-    for (let i = 5; i < 10; i++) {
+    for (let i = 8; i < 16; i++) {
       const block = (messages[i].content as Anthropic.ToolUseBlockParam[])[0];
       expect((block.input as any)._truncated).toBeUndefined();
       expect((block.input as any).note).toContain("x".repeat(300));
@@ -350,13 +423,14 @@ describe("truncateOldToolCallArgs", () => {
 
   it("does not touch tool_result blocks or assistant text", () => {
     // Mix of tool_use + tool_result + text in older messages. Only tool_use input gets clipped.
+    // keepLast default is 8, so 8 padding messages after this one keep it out of the protected window.
     const messages: Anthropic.MessageParam[] = [
       { role: "assistant", content: [
         { type: "text", text: "looking that up — " + "y".repeat(400) },
         tu("c1", "get_x", bigInput("c1")),
       ] },
       { role: "user", content: [tr("c1", "z".repeat(500))] },
-      ...Array.from({ length: 5 }, (_, i) => (
+      ...Array.from({ length: 8 }, (_, i) => (
         { role: "user", content: `pad ${i}` } as Anthropic.MessageParam
       )),
     ];
@@ -375,9 +449,10 @@ describe("truncateOldToolCallArgs", () => {
   });
 
   it("is idempotent — re-running does not double-clip already-truncated args", () => {
+    // keepLast default is 8, so 8 padding messages after this one keep it out of the protected window.
     const messages: Anthropic.MessageParam[] = [
       { role: "assistant", content: [tu("c1", "get_x", bigInput("a"))] },
-      ...Array.from({ length: 5 }, (_, i) => (
+      ...Array.from({ length: 8 }, (_, i) => (
         { role: "user", content: `pad ${i}` } as Anthropic.MessageParam
       )),
     ];

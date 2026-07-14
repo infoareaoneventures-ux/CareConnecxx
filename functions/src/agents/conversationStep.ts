@@ -1,7 +1,7 @@
 import { AgentSession } from "../linq/client";
 
 /**
- * conversationStep — the deep module behind Cara's onboarding checklist.
+ * conversationStep — the deep module behind Evia's onboarding checklist.
  *
  * Every linear onboarding question used to be a hand-written handler that
  * re-typed the same six steps (the CLAUDE.md "new handler checklist"):
@@ -37,8 +37,10 @@ export interface RunStepContext {
  * `onboardingConversation.ts`; tests supply fakes.
  */
 export interface StepDeps {
-  /** True when the user asked a mid-flow question instead of answering. */
-  isQuestionOrOther:    (text: string) => Promise<boolean>;
+  /** True when the user asked a mid-flow question instead of answering.
+   *  Receives the current step's question so a terse direct answer (a bare
+   *  name, a city, an age) is never misjudged as off-topic chatter. */
+  isQuestionOrOther:    (text: string, currentQuestion?: string) => Promise<boolean>;
   /** Answer a mid-flow question in context. */
   answerQuestionMidFlow:(text: string, session: AgentSession) => Promise<string>;
   /** Single-shot structured extraction (gpt-4o-mini under the hood). */
@@ -76,8 +78,11 @@ export interface ConversationStep {
    */
   parse: (raw: string, session: AgentSession) => Record<string, unknown> | null;
 
-  /** Next `onboardingStep`. `null` = terminal or handed to a bespoke handler. */
-  nextStep: string | null;
+  /** Next `onboardingStep`. `null` = terminal or handed to a bespoke handler.
+   *  A function receives the session (with this step's fields already merged)
+   *  so a step can branch — e.g. skip the "who are you caring for" question
+   *  when the sender is seeking care for themselves. */
+  nextStep: string | null | ((session: AgentSession) => string | null);
 
   /** Question to re-ask after answering a mid-flow question. */
   reask: (session: AgentSession) => string;
@@ -86,7 +91,7 @@ export interface ConversationStep {
   retry: (session: AgentSession) => string;
 
   /**
-   * The next thing Cara says after a successful answer. By convention this
+   * The next thing Evia says after a successful answer. By convention this
    * single message both acknowledges what the user just said and asks the next
    * question (mirroring the existing generateCaraMessage calls), so the checklist's
    * "acknowledge before advancing" step is satisfied here.
@@ -111,8 +116,20 @@ export async function runStep(
 ): Promise<void> {
   const { phone, chatId, text, session } = ctx;
 
+  // 0. Checkpoint RESUME: the webhook re-enters the current step with the literal
+  // "__RESUME__" sentinel intending to RE-ASK the current question (see
+  // webhooks.ts resume path). It is not a user answer — never classify, parse,
+  // or advance on it, or steps whose parse() defaults (e.g. client_ask_senior →
+  // "your loved one") would silently record garbage and skip the question.
+  if (text === "__RESUME__") {
+    await deps.sendMessage(chatId, step.reask(session));
+    return;
+  }
+
   // 1. Mid-flow question: answer it, re-ask, and do not touch stored data.
-  if (await deps.isQuestionOrOther(text)) {
+  // Pass the current question so the classifier sees "Imran" as a direct
+  // answer to "What's your name?" rather than an off-topic one-word message.
+  if (await deps.isQuestionOrOther(text, step.reask(session))) {
     const answer = await deps.answerQuestionMidFlow(text, session);
     await deps.sendMessage(chatId, answer);
     await deps.sendMessage(chatId, step.reask(session));
@@ -129,12 +146,14 @@ export async function runStep(
     return;
   }
 
-  // 4. Atomic merge + advance (one write, no half-advanced state).
-  await deps.mergeAndAdvance(phone, fields, step.nextStep);
-
-  // Reflect the write in memory so nextQuestion() sees the just-saved answer.
+  // Reflect the parse in memory FIRST so a functional nextStep (and later
+  // nextQuestion()) sees the just-saved answer.
   session.onboardingData = { ...(session.onboardingData ?? {}), ...fields };
-  if (step.nextStep) session.onboardingStep = step.nextStep;
+  const nextStep = typeof step.nextStep === "function" ? step.nextStep(session) : step.nextStep;
+
+  // 4. Atomic merge + advance (one write, no half-advanced state).
+  await deps.mergeAndAdvance(phone, fields, nextStep);
+  if (nextStep) session.onboardingStep = nextStep;
 
   // 5. Acknowledge + ask the next question.
   const next = await step.nextQuestion(session);

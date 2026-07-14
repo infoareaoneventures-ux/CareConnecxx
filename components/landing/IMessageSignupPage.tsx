@@ -12,11 +12,11 @@ export const IMessageSignupPage: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="min-h-screen bg-paper-50 text-ink-900 flex flex-col">
       {/* Nav */}
       <nav className="px-6 py-5 flex items-center justify-between max-w-6xl mx-auto w-full">
-        <span className="text-lg font-semibold tracking-tight text-white">Cara</span>
-        <a href="/login" className="text-sm text-white/50 hover:text-white/80 transition-colors">Log in</a>
+        <span className="text-lg font-display font-semibold tracking-[-0.02em] text-ink-900">Evia</span>
+        <a href="/login" className="text-sm text-ink-600 hover:text-ink-900 font-medium transition-colors">Log in</a>
       </nav>
 
       {/* Hero */}
@@ -25,19 +25,19 @@ export const IMessageSignupPage: React.FC = () => {
         {/* Left — copy + form */}
         <div className="flex-1 space-y-8 max-w-lg">
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-white/60 text-xs font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-paper-100 border hairline text-ink-600 text-xs font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
             iMessage · RCS · SMS
           </div>
 
           <div className="space-y-4">
-            <h1 className="text-5xl md:text-6xl font-bold leading-[1.05] tracking-tight">
-              Meet Cara, your family's{' '}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-300">
+            <h1 className="text-5xl md:text-6xl font-display font-semibold leading-[1.05] tracking-[-0.02em] text-ink-900">
+              Meet Evia, your family's{' '}
+              <span className="text-ink-400">
                 care contact.
               </span>
             </h1>
-            <p className="text-xl text-white/60 leading-relaxed">
+            <p className="text-xl text-ink-600 leading-relaxed">
               Care for your loved one, handled through texts. No app. No login. Just text.
             </p>
           </div>
@@ -50,9 +50,9 @@ export const IMessageSignupPage: React.FC = () => {
               'Texts you after each care session',
               'Handles cancellations and replacements',
             ].map((item) => (
-              <li key={item} className="flex items-center gap-3 text-white/70 text-sm">
-                <span className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-3 h-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <li key={item} className="flex items-center gap-3 text-ink-600 text-sm">
+                <span className="w-5 h-5 rounded-full bg-paper-100 border hairline flex items-center justify-center flex-shrink-0">
+                  <svg className="w-3 h-3 text-ink-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </span>
@@ -65,20 +65,20 @@ export const IMessageSignupPage: React.FC = () => {
           <div className="space-y-3">
             <button
               onClick={() => navigate('/start?role=client')}
-              className="w-full py-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold rounded-xl text-base transition-all duration-150 flex items-center justify-between px-5"
+              className="w-full py-4 btn-depth-primary font-semibold rounded-full text-[15px] flex items-center justify-between px-8"
             >
               <span>Find a caregiver</span>
-              <span className="text-blue-200">→</span>
+              <span className="text-white/60">→</span>
             </button>
             <button
               onClick={() => navigate('/start?role=caregiver')}
-              className="w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold rounded-xl text-base transition-all duration-150 flex items-center justify-between px-5"
+              className="w-full py-4 bg-white hover:shadow-sm border hairline text-ink-900 font-semibold rounded-full text-[15px] transition-all duration-150 flex items-center justify-between px-8"
             >
               <span>Become a caregiver</span>
-              <span className="text-white/40">→</span>
+              <span className="text-ink-400">→</span>
             </button>
-            <p className="text-white/25 text-xs leading-relaxed text-center">
-              By continuing, you agree to receive care updates from Cara via text.
+            <p className="text-ink-400 text-xs leading-relaxed text-center">
+              By continuing, you agree to receive care updates from Evia via text.
               Reply STOP anytime. Msg &amp; data rates may apply.
             </p>
           </div>
@@ -90,7 +90,7 @@ export const IMessageSignupPage: React.FC = () => {
             {/* Phone frame */}
             <div
               className="relative bg-[#1c1c1e] rounded-[3rem] shadow-2xl overflow-hidden"
-              style={{ width: 300, height: 600, border: '3px solid #2a2a2c', boxShadow: '0 0 0 1px #111, 0 40px 80px rgba(0,0,0,0.8)' }}
+              style={{ width: 300, height: 600, border: '3px solid #2a2a2c', boxShadow: '0 0 0 1px rgba(26,31,43,0.12), 0 40px 90px rgba(26,31,43,0.18)' }}
             >
               {/* Notch */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-7 bg-[#1c1c1e] rounded-b-2xl z-10 flex items-center justify-center">
@@ -111,8 +111,8 @@ export const IMessageSignupPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mb-1">
                   <span className="text-white font-bold text-sm">C</span>
                 </div>
-                <p className="text-white text-sm font-semibold">Cara 💙</p>
-                <p className="text-white/40 text-xs">CareConnecxx</p>
+                <p className="text-white text-sm font-semibold">Evia 💙</p>
+                <p className="text-white/40 text-xs">eviacares.com</p>
               </div>
 
               {/* Messages */}
@@ -153,16 +153,13 @@ export const IMessageSignupPage: React.FC = () => {
                 </div>
               </div>
             </div>
-
-            {/* Glow effect */}
-            <div className="absolute inset-0 rounded-[3rem] bg-blue-500/5 blur-2xl -z-10 scale-110"></div>
           </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="px-6 py-6 text-center text-white/20 text-xs max-w-6xl mx-auto w-full border-t border-white/5">
-        © 2026 CareConnecxx · Santa Clara County · Privacy · Terms
+      <footer className="px-6 py-6 text-center text-ink-400 text-xs max-w-6xl mx-auto w-full border-t hairline">
+        © 2026 Evia · Santa Clara County · Privacy · Terms
       </footer>
     </div>
   );

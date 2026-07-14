@@ -2,13 +2,17 @@ import { describe, it, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 
-// U14 — the "deletion test" for the matching stack, resolved by verification.
+// U14 — the "deletion test" for the matching stack.
 //
-// The 2026-06-21 architecture review SUSPECTED mlMatchScoring was dead code and
-// that dbService.getMatches referenced a non-existent ./server/matchingEngine.
-// Both were wrong: this guard pins the real wiring so the modules can't be
-// deleted on a stale "looks unused" hunch, and so they can't silently lose
-// their last consumer without a red test.
+// History: the 2026-06-21 architecture review suspected mlMatchScoring was dead
+// code; a consumer was found (components/ClientDashboard.tsx) and the wiring was
+// pinned here. The 2026-07-02 entry-point reachability audit showed that consumer
+// was itself unreachable (App routes to components/client/ClientDashboard, not the
+// top-level file), so mlMatchScoring and its dead consumer chain were removed —
+// see docs/dead-code-removal-2026-07-02.md. This guard now pins the live wiring
+// (matchService, aiMatchingService, matchingEngine via api.ts) and tombstones the
+// removed module: if mlMatchScoring is ever reintroduced it must arrive with a
+// real, reachable consumer.
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -34,9 +38,13 @@ describe("matching stack is wired (not dead code)", () => {
   const importsOf = (mod: string) =>
     all.filter((s) => !s.file.endsWith(`${mod}.ts`) && new RegExp(`from ['"][^'"]*${mod}['"]`).test(s.text));
 
-  it("mlMatchScoring has at least one real consumer", () => {
-    // ClientDashboard.calculateMLMatchScore + trainingSimulation re-exports.
-    expect(importsOf("mlMatchScoring").map((s) => s.file).length).toBeGreaterThan(0);
+  it("mlMatchScoring stays deleted unless it gains a real consumer (tombstone)", () => {
+    const exists = fs.existsSync(path.join(ROOT, "services/mlMatchScoring.ts"));
+    if (exists) {
+      expect(importsOf("mlMatchScoring").map((s) => s.file).length).toBeGreaterThan(0);
+    } else {
+      expect(importsOf("mlMatchScoring").length).toBe(0);
+    }
   });
 
   it("matchService and aiMatchingService each have real consumers", () => {
@@ -46,8 +54,10 @@ describe("matching stack is wired (not dead code)", () => {
 
   it("dbService.getMatches resolves to a real matchingEngine module", () => {
     expect(fs.existsSync(path.join(ROOT, "services/server/matchingEngine.ts"))).toBe(true);
-    // and getMatches is actually consumed (useSmartMatch).
-    const callers = all.filter((s) => /\.getMatches\(/.test(s.text) && !s.file.endsWith("api.ts"));
-    expect(callers.length).toBeGreaterThan(0);
+    // matchingEngine is consumed via the dynamic import in api.ts (getMatches).
+    // Its former external caller (useSmartMatch) was removed 2026-07-02 as
+    // unreachable; api.ts itself is the pinned consumer now.
+    const apiText = all.find((s) => s.file.endsWith("api.ts"))?.text ?? "";
+    expect(apiText).toMatch(/import\(['"]\.\/server\/matchingEngine['"]\)/);
   });
 });

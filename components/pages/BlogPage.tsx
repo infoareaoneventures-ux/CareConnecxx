@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Activity, ArrowLeft, Clock, Tag, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Clock, Tag, ArrowRight } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { SEO } from '../SEO';
 import { Footer } from '../landing/Footer';
@@ -52,9 +53,9 @@ export const BlogPage: React.FC<BlogPageProps> = ({ onNavigate }) => {
 
   if (slug && !article) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-paper-50 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-slate-600 mb-4">Article not found.</p>
+          <p className="text-ink-600 mb-4">Article not found.</p>
           <Button onClick={() => navigate('/blog')}>Back to Blog</Button>
         </div>
       </div>
@@ -62,7 +63,7 @@ export const BlogPage: React.FC<BlogPageProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className="min-h-screen bg-white font-sans">
+    <div className="min-h-screen bg-paper-50 font-sans">
       {article ? (
         <ArticleView article={article} allArticles={allArticles} onNavigate={onNavigate} />
       ) : (
@@ -83,13 +84,11 @@ const BlogIndex: React.FC<{ articles: BlogArticle[]; onNavigate: (view: ViewType
         keywords="senior care guide, dementia care Bay Area, in-home care San Jose, respite care Santa Clara County"
       />
 
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+      <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
           <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-            <div className="bg-primary-600 p-1.5 rounded-xl">
-              <Activity className="text-white w-5 h-5" />
-            </div>
-            <span className="text-xl font-bold text-slate-900">CareConnex</span>
+            <BloomMark className="text-ink-900 w-5 h-5" />
+            <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
           </div>
           <Button size="sm" onClick={() => onNavigate('client-signup')}>Find Care</Button>
         </div>
@@ -97,9 +96,9 @@ const BlogIndex: React.FC<{ articles: BlogArticle[]; onNavigate: (view: ViewType
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="mb-12">
-          <p className="text-sm font-semibold text-primary-600 uppercase tracking-widest mb-3">Resources</p>
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4">Senior Care Guides</h1>
-          <p className="text-xl text-slate-500 max-w-2xl">
+          <p className="text-sm font-semibold text-ink-400 uppercase tracking-widest mb-3">Resources</p>
+          <h1 className="font-display text-4xl md:text-5xl font-semibold text-ink-900 tracking-[-0.02em] mb-4">Senior Care Guides</h1>
+          <p className="text-xl text-ink-600 max-w-2xl">
             Practical guidance for Bay Area families navigating in-home senior care — from hiring your first caregiver to managing advanced dementia at home.
           </p>
         </div>
@@ -109,26 +108,26 @@ const BlogIndex: React.FC<{ articles: BlogArticle[]; onNavigate: (view: ViewType
             <Link
               key={article.slug}
               to={`/blog/${article.slug}`}
-              className="block border border-slate-200 rounded-2xl overflow-hidden hover:border-primary-200 hover:shadow-md transition-all group"
+              className="block bg-white border hairline rounded-2xl overflow-hidden hover:shadow-md transition-all group"
             >
               <div className="p-7">
                 <div className="flex items-center gap-3 mb-4">
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-semibold">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-paper-100 border hairline text-ink-600 text-xs font-semibold">
                     <Tag className="w-3 h-3" />
                     {article.category}
                   </span>
-                  <span className="flex items-center gap-1 text-xs text-slate-400">
+                  <span className="flex items-center gap-1 text-xs text-ink-400">
                     <Clock className="w-3 h-3" />
                     {article.readTime} min read
                   </span>
                 </div>
-                <h2 className="text-xl font-bold text-slate-900 mb-3 leading-snug group-hover:text-primary-700 transition-colors">
+                <h2 className="font-display text-xl font-semibold text-ink-900 mb-3 leading-snug transition-colors">
                   {article.title}
                 </h2>
-                <p className="text-slate-500 text-sm leading-relaxed line-clamp-3">
+                <p className="text-ink-600 text-sm leading-relaxed line-clamp-3">
                   {article.intro}
                 </p>
-                <div className="mt-5 flex items-center gap-1.5 text-primary-600 text-sm font-semibold">
+                <div className="mt-5 flex items-center gap-1.5 text-ink-600 group-hover:text-ink-900 text-sm font-medium transition-colors">
                   Read article <ArrowRight className="w-4 h-4" />
                 </div>
               </div>
@@ -155,33 +154,31 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
           '@type': 'Article',
           headline: article.title,
           description: article.metaDescription,
-          author: { '@type': 'Organization', name: 'CareConnex' },
+          author: { '@type': 'Organization', name: 'Evia' },
           publisher: {
             '@type': 'Organization',
-            name: 'CareConnex',
-            logo: { '@type': 'ImageObject', url: 'https://www.careconnex.com/icon-512.png' }
+            name: 'Evia',
+            logo: { '@type': 'ImageObject', url: 'https://www.eviacares.com/icon-512.png' }
           },
           datePublished: article.publishDate,
           dateModified: article.publishDate,
-          mainEntityOfPage: { '@type': 'WebPage', '@id': `https://www.careconnex.com/blog/${article.slug}` }
+          mainEntityOfPage: { '@type': 'WebPage', '@id': `https://www.eviacares.com/blog/${article.slug}` }
         }}
       />
 
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100">
+      <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
           <div className="flex items-center gap-3">
             <Link
               to="/blog"
-              className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 text-sm font-medium transition-colors"
+              className="flex items-center gap-1.5 text-ink-600 hover:text-ink-900 text-sm font-medium transition-colors"
             >
               <ArrowLeft className="w-4 h-4" /> Blog
             </Link>
-            <span className="text-slate-300">|</span>
+            <span className="text-ink-400">|</span>
             <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-              <div className="bg-primary-600 p-1.5 rounded-xl">
-                <Activity className="text-white w-4 h-4" />
-              </div>
-              <span className="text-lg font-bold text-slate-900">CareConnex</span>
+              <BloomMark className="text-ink-900 w-4 h-4" />
+              <span className="font-display text-lg font-semibold text-ink-900">Evia</span>
             </div>
           </div>
           <Button size="sm" onClick={() => onNavigate('client-signup')}>Find Care</Button>
@@ -192,19 +189,19 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
         {/* Article header */}
         <div className="mb-10">
           <div className="flex items-center gap-3 mb-5">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary-50 text-primary-700 text-xs font-semibold">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-paper-100 border hairline text-ink-600 text-xs font-semibold">
               <Tag className="w-3 h-3" />
               {article.category}
             </span>
-            <span className="flex items-center gap-1 text-xs text-slate-400">
+            <span className="flex items-center gap-1 text-xs text-ink-400">
               <Clock className="w-3 h-3" />
               {article.readTime} min read
             </span>
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-slate-900 leading-tight mb-5">
+          <h1 className="font-display text-3xl md:text-4xl font-semibold text-ink-900 tracking-[-0.02em] leading-tight mb-5">
             {article.title}
           </h1>
-          <p className="text-lg text-slate-600 leading-relaxed border-l-4 border-primary-200 pl-5">
+          <p className="text-lg text-ink-600 leading-relaxed border-l-2 hairline pl-5">
             {article.intro}
           </p>
         </div>
@@ -213,8 +210,8 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
         <div className="prose prose-slate max-w-none">
           {article.sections.map((section, i) => (
             <section key={i} className="mb-10">
-              <h2 className="text-xl font-bold text-slate-900 mb-4">{section.heading}</h2>
-              <div className="text-slate-600 leading-relaxed space-y-4">
+              <h2 className="font-display text-xl font-semibold text-ink-900 tracking-[-0.02em] mb-4">{section.heading}</h2>
+              <div className="text-ink-600 leading-relaxed space-y-4">
                 {section.body.split('\n\n').map((para, j) => {
                   if (para.startsWith('**') && para.includes(':**')) {
                     const parts = para.split('\n');
@@ -225,7 +222,7 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
                           if (boldMatch) {
                             return (
                               <p key={k}>
-                                <strong className="text-slate-800">{boldMatch[1]}:</strong>{boldMatch[2] ? ` ${boldMatch[2]}` : ''}
+                                <strong className="text-ink-900">{boldMatch[1]}:</strong>{boldMatch[2] ? ` ${boldMatch[2]}` : ''}
                               </p>
                             );
                           }
@@ -242,9 +239,9 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
         </div>
 
         {/* CTA box */}
-        <div className="mt-12 bg-primary-50 border border-primary-100 rounded-2xl p-8 text-center">
-          <h3 className="text-2xl font-bold text-slate-900 mb-3">{article.ctaHeading}</h3>
-          <p className="text-slate-600 mb-6 max-w-lg mx-auto">{article.ctaBody}</p>
+        <div className="mt-12 bg-white border hairline rounded-3xl p-8 text-center shadow-sm">
+          <h3 className="font-display text-2xl font-semibold text-ink-900 tracking-[-0.02em] mb-3">{article.ctaHeading}</h3>
+          <p className="text-ink-600 mb-6 max-w-lg mx-auto">{article.ctaBody}</p>
           <Button size="lg" onClick={() => onNavigate('client-signup')}>
             Get Started Free
           </Button>
@@ -252,7 +249,7 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
 
         {/* More articles */}
         <div className="mt-14">
-          <h3 className="text-lg font-bold text-slate-900 mb-5">More resources</h3>
+          <h3 className="font-display text-lg font-semibold text-ink-900 mb-5">More resources</h3>
           <div className="space-y-3">
             {allArticles
               .filter(a => a.slug !== article.slug)
@@ -261,15 +258,15 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
                 <Link
                   key={a.slug}
                   to={`/blog/${a.slug}`}
-                  className="w-full text-left flex items-start gap-4 p-4 rounded-xl border border-slate-200 hover:border-primary-200 hover:bg-primary-50/30 transition-all group"
+                  className="w-full text-left flex items-start gap-4 p-4 rounded-xl bg-white border hairline hover:shadow-sm transition-all group"
                 >
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-xs font-medium mt-0.5 flex-shrink-0">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-paper-100 border hairline text-ink-600 text-xs font-medium mt-0.5 flex-shrink-0">
                     {a.category}
                   </span>
-                  <span className="text-slate-700 group-hover:text-primary-700 font-medium text-sm leading-snug transition-colors">
+                  <span className="text-ink-600 group-hover:text-ink-900 font-medium text-sm leading-snug transition-colors">
                     {a.title}
                   </span>
-                  <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-primary-400 flex-shrink-0 mt-0.5 ml-auto" />
+                  <ArrowRight className="w-4 h-4 text-ink-400 group-hover:text-ink-900 flex-shrink-0 mt-0.5 ml-auto transition-colors" />
                 </Link>
               ))}
           </div>

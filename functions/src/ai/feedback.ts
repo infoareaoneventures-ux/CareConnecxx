@@ -12,22 +12,40 @@ export async function writeFeedbackSignal(params: {
   source:         "post_visit_feedback" | "hire" | "pass" | "health_signal";
   appointmentId?: string;
   rawText?:       string;
+  idempotencyKey?: string;
 }): Promise<void> {
   const db = admin.firestore();
   const ref = db.collection("users").doc(params.clientId)
                 .collection("match_history").doc(params.caregiverId);
 
-  const snap = await ref.get();
-  const current = snap.exists ? (snap.data()?.weight as number ?? 0) : 0;
-  const next    = Math.min(MAX_BOOST, Math.max(MAX_PENALTY, current + params.signal));
+  let current = 0;
+  let next = 0;
+  let applied = false;
+  await db.runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    const data = snap.data() ?? {};
+    const processedSignalIds = Array.isArray(data.processedSignalIds)
+      ? data.processedSignalIds.filter((value): value is string => typeof value === "string")
+      : [];
+    if (params.idempotencyKey && processedSignalIds.includes(params.idempotencyKey)) return;
 
-  await ref.set({
-    weight:            next,
-    lastUpdated:       new Date().toISOString(),
-    lastSource:        params.source,
-    lastAppointmentId: params.appointmentId ?? null,
-    signalCount:       admin.firestore.FieldValue.increment(1),
-  }, { merge: true });
+    current = typeof data.weight === "number" ? data.weight : 0;
+    next = Math.min(MAX_BOOST, Math.max(MAX_PENALTY, current + params.signal));
+    const update: Record<string, unknown> = {
+      weight:            next,
+      lastUpdated:       new Date().toISOString(),
+      lastSource:        params.source,
+      lastAppointmentId: params.appointmentId ?? null,
+      signalCount:       (typeof data.signalCount === "number" ? data.signalCount : 0) + 1,
+    };
+    if (params.idempotencyKey) {
+      update.processedSignalIds = [...processedSignalIds.slice(-99), params.idempotencyKey];
+    }
+    transaction.set(ref, update, { merge: true });
+    applied = true;
+  });
+
+  if (!applied) return;
 
   console.log(
     `[writeFeedbackSignal] ${params.clientId} ↔ ${params.caregiverId}: ` +

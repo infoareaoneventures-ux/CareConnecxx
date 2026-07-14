@@ -28,7 +28,7 @@ const BANNED_PHRASES: string[] = [
   "Let me know if you need anything else",
   "Let me know if there's anything else",
   "Is there anything else I can",
-  // Bureaucratic / customer-service tone — Cara is a friend, not a clerk
+  // Bureaucratic / customer-service tone — Evia is a friend, not a clerk
   "Go ahead and share",
   "on file for you",
   "everything on file",
@@ -44,6 +44,8 @@ const BANNED_PHRASES: string[] = [
   "our team will help",
   "our team will review",
   "please contact support",
+  "I'll get back to you",
+  "get back to you shortly",
 ];
 
 // Patterns that make text feel robotic or formal
@@ -55,7 +57,7 @@ const BANNED_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\bhow can I help(?: you)?(?: today)?\??/gi, replacement: "What should I check first?" },
   { pattern: /\bwhat can I help you with\??/gi, replacement: "What should I check first?" },
   { pattern: /\b(?:an?\s+)?AI care assistant\b/gi, replacement: "care coordinator" },
-  { pattern: /\b(?:virtual assistant|chatbot|bot)\b/gi, replacement: "Cara" },
+  { pattern: /\b(?:virtual assistant|chatbot|bot)\b/gi, replacement: "Evia" },
   { pattern: /\b(?:the support team|our team) will respond(?: within [^.?!]+)?[.?!]?/gi, replacement: "I opened this for review." },
   { pattern: /\bour team will follow up(?: within [^.?!]+)?[.?!]?/gi, replacement: "I flagged this for review." },
   { pattern: /\bour team will help resolve it[.?!]?/gi, replacement: "I flagged this for review." },
@@ -76,9 +78,14 @@ function applyBans(text: string): string {
   }
 
   for (const phrase of BANNED_PHRASES) {
-    // Case-insensitive, word-boundary-aware replacement
+    // Case-insensitive, word-boundary-aware replacement. Add \b ONLY where the
+    // phrase edge is a word character — so "leverage"/"utilize" won't be stripped
+    // out of unrelated words ("leveraging" → "ing"), while phrases that end in
+    // punctuation ("Of course!") still match (a trailing \b there would break it).
     const safePhrase = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(safePhrase, "gi"), "");
+    const leading  = /^\w/.test(phrase) ? "\\b" : "";
+    const trailing = /\w$/.test(phrase) ? "\\b" : "";
+    result = result.replace(new RegExp(`${leading}${safePhrase}${trailing}`, "gi"), "");
   }
 
   return result;

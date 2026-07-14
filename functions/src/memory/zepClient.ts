@@ -1,5 +1,5 @@
 /**
- * Cara – Zep Memory Integration
+ * Evia – Zep Memory Integration
  * Docs: https://help.getzep.com/quick-start-guide
  *
  * Zep userId = phone digits only (e.g. "14155551234").
@@ -108,7 +108,7 @@ export async function createCaraContextTemplate(): Promise<void> {
     templateId: CARA_TEMPLATE_ID,
     template:   CARA_TEMPLATE_BODY,
   });
-  console.log("Cara context template created in Zep.");
+  console.log("Evia context template created in Zep.");
 }
 
 // Called automatically on Cloud Function cold-start. Checks whether the template
@@ -198,7 +198,7 @@ export async function addUserMessageToZep(params: {
   ).catch(() => {}); // fire-and-forget: retry exhausted → logged, don't throw
 }
 
-// ── Add Cara's reply to Zep ────────────────────────────────────────────────────
+// ── Add Evia's reply to Zep ────────────────────────────────────────────────────
 // Fire-and-forget after Claude/QA agent sends a reply
 
 export async function addAssistantMessageToZep(params: {
@@ -207,7 +207,7 @@ export async function addAssistantMessageToZep(params: {
 }): Promise<void> {
   const message: Zep.Message = {
     createdAt: new Date().toISOString(),
-    name: "Cara",
+    name: "Evia",
     role: "assistant",
     content: params.content,
   };

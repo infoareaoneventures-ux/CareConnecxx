@@ -12,7 +12,7 @@ import {
 import { Button } from '../ui/Button';
 import { dbService, shiftHoursService } from '../../services/api';
 import { db } from '../../lib/firebase';
-import { AddToastFunction, Appointment } from '../../types';
+import { AddToastFunction, Appointment, isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 import { SubmitShiftHoursModal, CompletedShift } from '../payroll/SubmitShiftHoursModal';
 
 interface CaregiverPaymentsProps {
@@ -230,7 +230,7 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
                   <div key={shift.id} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-slate-900">{shift.clientName}</p>
-                      <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''} · {shift.paymentMethod === 'cash' ? 'Cash' : 'Credit'}</p>
+                      <p className="text-sm text-slate-500">{shift.date} · {shift.startTime}{shift.endTime ? ` – ${shift.endTime}` : ''} · {paymentMethodLabel(shift.paymentMethod)}</p>
                     </div>
                     <button
                       onClick={() => setSubmitModalShift(shift)}
@@ -395,17 +395,17 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
             <div className="space-y-4">
               <div className="flex items-center justify-between p-4 bg-[var(--color-neutral-50)] rounded-lg">
                 <div>
-                  <p className="font-medium text-[var(--color-neutral-900)]">Standard Payout</p>
-                  <p className="text-sm text-[var(--color-neutral-500)]">Every Friday</p>
+                  <p className="font-medium text-[var(--color-neutral-900)]">Automatic Payout</p>
+                  <p className="text-sm text-[var(--color-neutral-500)]">Daily — arrives ~2 business days after each visit is paid</p>
                 </div>
                 <span className="text-sm text-[var(--color-neutral-500)]">Free</span>
               </div>
               <div className="flex items-center justify-between p-4 bg-[var(--color-primary-50)] rounded-lg border border-[var(--color-primary-200)]">
                 <div>
                   <p className="font-medium text-[var(--color-neutral-900)]">Instant Payout</p>
-                  <p className="text-sm text-[var(--color-neutral-500)]">Available 24/7</p>
+                  <p className="text-sm text-[var(--color-neutral-500)]">Available 24/7 — arrives in ~30 minutes</p>
                 </div>
-                <span className="text-sm text-[var(--color-primary-600)] font-medium">1.5% fee</span>
+                <span className="text-sm text-[var(--color-primary-600)] font-medium">Free</span>
               </div>
             </div>
           </div>
@@ -481,8 +481,8 @@ const PendingShiftRow: React.FC<{ row: any; onRespond: (action: 'accept' | 'coun
 const HistoryShiftRow: React.FC<{ row: any }> = ({ row }) => {
   const hours = row.finalTotalHours ?? row.submittedTotalHours;
   const gross = row.grossPay ?? (hours * row.payRate);
-  const paidTag = row.paymentMethod === 'cash' && (row.status === 'approved' || row.status === 'auto_approved')
-    ? 'Approved (cash)'
+  const paidTag = isOfflinePaymentMethod(row.paymentMethod) && (row.status === 'approved' || row.status === 'auto_approved')
+    ? `Approved (${paymentMethodLabel(row.paymentMethod).toLowerCase()})`
     : statusLabel[row.status] || row.status;
   return (
     <div className="grid grid-cols-3 gap-4 px-6 py-4">

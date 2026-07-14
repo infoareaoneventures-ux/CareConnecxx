@@ -139,6 +139,22 @@ export const AccountSettings: React.FC = () => {
         if (!doc.exists) return;
         const d = doc.data() as any;
 
+        // Name fallback: Auth displayName is unset for phone-OTP signups — the
+        // SMS onboarding stores the name on the users doc instead (clients:
+        // firstName; saved edits: displayName). Without this the Name row
+        // rendered "—" for every SMS-onboarded client.
+        if (!currentUser.displayName) {
+          const docName: string = d.displayName || d.firstName || d.name || '';
+          if (docName) {
+            const parts = docName.split(' ');
+            setPersonalInfo(prev => ({
+              ...prev,
+              firstName: prev.firstName || parts[0] || '',
+              lastName:  prev.lastName  || parts.slice(1).join(' ') || '',
+            }));
+          }
+        }
+
         // Phone saved by signup
         if (d.phone) setPersonalInfo(prev => ({ ...prev, phone: d.phone }));
         if (d.photoURL || d.photo || d.profilePhoto) setPhotoURL(d.photoURL || d.photo || d.profilePhoto);

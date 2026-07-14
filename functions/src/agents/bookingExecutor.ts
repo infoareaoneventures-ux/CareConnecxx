@@ -7,6 +7,8 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
+import { canonicalApptFields } from "../utils/appointmentDoc";
+import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 async function hasConflict(
   caregiverId: string,
@@ -115,7 +117,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
         rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(task.caregiverId),
       }).catch(() => {});
 
-      // Set an active goal so Cara carries booking context through the re-match.
+      // Set an active goal so Evia carries booking context through the re-match.
       // If this fails, reset the task to awaiting_approval so the family can retry.
       const { setActiveGoal } = await import("./qaAgent");
       const goalSet = await setActiveGoal(
@@ -164,6 +166,14 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     return;
   }
 
+  // Fetched before the write so the appointment docs carry the display names
+  // the webapp and notification triggers read (clientName/seniorName).
+  const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
+    db.collection("caregivers").doc(task.caregiverId).get(),
+    db.collection("users").doc(task.clientId).get(),
+  ]);
+  const offerClientName = (clientSnapForOffer.data()?.name as string | undefined) || undefined;
+
   // Write each appointment — this is the ONLY place appointments are written by the agent.
   // Family approval does NOT confirm the visit: the caregiver must accept the shift offer
   // first (see shiftOffer.ts), so everything is written pending_caregiver_confirmation.
@@ -177,13 +187,24 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       clientId:           task.clientId,
       caregiverId:        task.caregiverId,
       caregiverName:      task.caregiverName,
+      ...(offerClientName ? { clientName: offerClientName } : {}),
       date:               appt.date,
       startTime:          appt.startTime,
       endTime:            appt.endTime,
       durationHours:      appt.durationHours,
+      ...(typeof task.hourlyRate === "number" ? { hourlyRate: task.hourlyRate } : {}),
+      ...canonicalApptFields({
+        startTime:     appt.startTime,
+        durationHours: appt.durationHours,
+        hourlyRate:    task.hourlyRate,
+        cost:          typeof task.hourlyRate === "number"
+          ? undefined
+          : task.totalCost / Math.max(task.appointments.length, 1),
+      }),
       status:             "pending_caregiver_confirmation",
       caregiverConfirmed: false,
       createdByAgent:     true,
+      billingAuthority:   BILLING_AUTHORITY_VERSION,
       agentTaskId:        taskId,
       humanApproved:      true,
       approvedAt:         now,
@@ -196,10 +217,6 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   // Send the caregiver a YES/NO shift offer. Confirmation, family notification,
   // and payment setup all happen in finalizeAcceptedBooking() once they accept.
-  const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
-    db.collection("caregivers").doc(task.caregiverId).get(),
-    db.collection("users").doc(task.clientId).get(),
-  ]);
   const offerCgPhone = caregiverSnapForOffer.data()?.phone as string | undefined;
 
   if (!offerCgPhone) {
@@ -322,6 +339,12 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
       `Any questions? Just text me.`
     );
 
+    // The hire/booking goal is complete — close it explicitly so a durable
+    // "find a caregiver" goal doesn't linger and resurface stale context.
+    await import("./qaAgent")
+      .then((m) => m.clearActiveGoal(clientPhone))
+      .catch(() => {});
+
     // Ask about recurring care — only for single-visit (one-time) bookings
     if (task.appointments.length === 1) {
       const firstAppt = task.appointments[0];
@@ -364,7 +387,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
       await new Promise(r => setTimeout(r, 3000));
       const emergencyAnchorMsg = await generateCaraMessage({
         audience: "family",
-        context:  "A family just had last-minute care coverage sorted out after an emergency replacement situation. Send a brief, heartfelt message acknowledging how stressful last-minute care can be and that this is exactly what Cara is here for.",
+        context:  "A family just had last-minute care coverage sorted out after an emergency replacement situation. Send a brief, heartfelt message acknowledging how stressful last-minute care can be and that this is exactly what Evia is here for.",
         fallback: "Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for.",
         maxTokens: 80,
       });

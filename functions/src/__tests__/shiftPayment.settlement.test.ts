@@ -36,7 +36,15 @@ const hoisted = vi.hoisted(() => {
     doc: (id: string) => makeDocRef(`${path}/${id}`),
     add: vi.fn(async (data: any) => { docState.set(`${path}/auto`, data); return { id: "auto" }; }),
   });
-  const firestoreFn: any = Object.assign(() => ({ collection: (p: string) => makeCollRef(p) }), {
+  const dbApi: any = {
+    collection: (p: string) => makeCollRef(p),
+    runTransaction: vi.fn(async (callback: (transaction: any) => Promise<any>) => callback({
+      get: (ref: any) => ref.get(),
+      set: (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      update: (ref: any, data: any) => ref.update(data),
+    })),
+  };
+  const firestoreFn: any = Object.assign(() => dbApi, {
     FieldValue: { serverTimestamp: () => ({ __ts: true }) },
   });
 
@@ -90,12 +98,17 @@ function seedPayableEnv() {
 
 const baseShift = { caregiverId: "cg1", clientId: "cl1", grossPay: 100, currency: "usd", paymentMethod: "credit" };
 
+async function processSeededShift(appointmentId: string, shift: Record<string, unknown>) {
+  hoisted.docState.set(`shiftHours/${appointmentId}`, { ...shift });
+  return processShiftPayment(appointmentId, shift);
+}
+
 describe("U1 — charge-before-transfer settlement", () => {
   beforeEach(() => { hoisted.reset(); seedPayableEnv(); });
 
   it("pays the caregiver when the charge settles synchronously", async () => {
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sync", status: "succeeded" } as any);
-    const r = await processShiftPayment("a1", { ...baseShift });
+    const r = await processSeededShift("a1", { ...baseShift });
     expect(r.ok).toBe(true);
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
     expect(hoisted.docState.get("shiftHours/a1")?.status).toBe("paid");
@@ -103,7 +116,7 @@ describe("U1 — charge-before-transfer settlement", () => {
 
   it("does NOT transfer when the charge is still processing — holds charge_pending", async () => {
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_proc", status: "processing" } as any);
-    const r = await processShiftPayment("a2", { ...baseShift });
+    const r = await processSeededShift("a2", { ...baseShift });
     expect(r.ok).toBe(true);
     expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
     expect(hoisted.docState.get("shiftHours/a2")?.status).toBe("charge_pending");
@@ -127,7 +140,7 @@ describe("U1 — charge-before-transfer settlement", () => {
     const issued = await reverseShiftTransfer("a5", { ...baseShift, stripeTransferId: "tr_paid" });
     expect(issued).toBe(true);
     expect(hoisted.stripeApi.transfers.createReversal).toHaveBeenCalledWith(
-      "tr_paid", expect.anything(), expect.objectContaining({ idempotencyKey: "shift-reversal-a5" }),
+      "tr_paid", expect.anything(), expect.objectContaining({ idempotencyKey: "shift-reversal-a5-generation-1" }),
     );
   });
 
@@ -138,7 +151,7 @@ describe("U1 — charge-before-transfer settlement", () => {
   });
 
   it("short-circuits an already-settled shift without touching Stripe", async () => {
-    const r = await processShiftPayment("a7", { ...baseShift, status: "paid", stripeChargeId: "pi_x", stripeTransferId: "tr_x" });
+    const r = await processSeededShift("a7", { ...baseShift, status: "paid", stripeChargeId: "pi_x", stripeTransferId: "tr_x" });
     expect(r.ok).toBe(true);
     expect(hoisted.stripeApi.paymentIntents.create).not.toHaveBeenCalled();
     expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
@@ -147,7 +160,7 @@ describe("U1 — charge-before-transfer settlement", () => {
   it("creates a fresh PaymentIntent when retrying a terminal failed charge", async () => {
     hoisted.stripeApi.paymentIntents.retrieve.mockResolvedValue({ id: "pi_failed", status: "requires_payment_method" } as any);
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_retry", status: "succeeded" } as any);
-    const r = await processShiftPayment("a8", {
+    const r = await processSeededShift("a8", {
       ...baseShift,
       status: "payment_failed",
       stripeChargeId: "pi_failed",
@@ -156,7 +169,7 @@ describe("U1 — charge-before-transfer settlement", () => {
     expect(r.ok).toBe(true);
     expect(hoisted.stripeApi.paymentIntents.create).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ idempotencyKey: "shift-charge-a8-attempt-2" }),
+      expect.objectContaining({ idempotencyKey: "shift-charge-a8-generation-1-attempt-2" }),
     );
     expect(hoisted.docState.get("shiftHours/a8")?.stripeChargeId).toBe("pi_retry");
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
@@ -167,7 +180,7 @@ describe("U1 — charge-before-transfer settlement", () => {
   // and must not pay out the caregiver.
   it("moves to payment_failed (not silent success) when the client has no default payment method", async () => {
     hoisted.stripeApi.customers.retrieve.mockResolvedValueOnce({ invoice_settings: {} } as any); // no default_payment_method, no default_source
-    const r = await processShiftPayment("a9", { ...baseShift });
+    const r = await processSeededShift("a9", { ...baseShift });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/default payment method/i);
     expect(hoisted.stripeApi.paymentIntents.create).not.toHaveBeenCalled();
@@ -186,7 +199,7 @@ describe("U1 — charge-before-transfer settlement", () => {
     hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_dup", status: "succeeded" } as any);
 
     // First approval → exactly one charge + one transfer, shift becomes paid.
-    const r1 = await processShiftPayment("a10", { ...baseShift });
+    const r1 = await processSeededShift("a10", { ...baseShift });
     expect(r1.ok).toBe(true);
     expect(hoisted.stripeApi.paymentIntents.create).toHaveBeenCalledTimes(1);
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);

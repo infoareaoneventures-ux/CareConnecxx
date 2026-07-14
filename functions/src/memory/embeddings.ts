@@ -1,5 +1,5 @@
 /**
- * Vector embedding layer for Cara's memory.
+ * Vector embedding layer for Evia's memory.
  *
  * Sprint 2 / roadmap §4.5 — substring search alone misses "T2DM" → "diabetes",
  * "fall" → "tripped Tuesday", "Dr. Patel" → "doctor". We add semantic recall

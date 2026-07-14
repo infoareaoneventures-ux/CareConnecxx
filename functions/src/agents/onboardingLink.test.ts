@@ -21,15 +21,16 @@ const hoisted = vi.hoisted(() => {
   // Stripe stub — identity session for the client_identity path. Uses a regular
   // (non-arrow) function so it is constructable via `new Stripe(...)`.
   const identityCreate = vi.fn(async () => ({ id: "vs_1", url: "https://verify.stripe/abc" }));
+  const checkoutCreate = vi.fn(async () => ({ url: "https://pay.stripe/xyz" }));
   const stripeInstance = {
     identity:     { verificationSessions: { create: identityCreate } },
-    checkout:     { sessions: { create: vi.fn(async () => ({ url: "https://pay.stripe/xyz" })) } },
+    checkout:     { sessions: { create: checkoutCreate } },
     accounts:     { create: vi.fn(async () => ({ id: "acct_1" })) },
     accountLinks: { create: vi.fn(async () => ({ url: "https://connect.stripe/onb" })) },
   };
   const StripeClass = vi.fn(function () { return stripeInstance; });
 
-  return { sendMessage, updateMock, sessionData, collectionMock, identityCreate, StripeClass };
+  return { sendMessage, updateMock, sessionData, collectionMock, identityCreate, checkoutCreate, StripeClass };
 });
 
 vi.mock("firebase-admin", () => ({
@@ -68,6 +69,7 @@ beforeEach(() => {
   hoisted.sessionData.chatId = "chat-1";
   hoisted.sessionData.onboardingData = { name: "Jane Doe", email: "jane@x.com" };
   delete (hoisted.sessionData as any).membershipCheckoutUrl;
+  process.env.STRIPE_MEMBERSHIP_PRICE_ID = "price_client_monthly";
 });
 
 function lastLinkPart() {
@@ -79,7 +81,9 @@ describe("sendOnboardingLink", () => {
   // 20s timeout: the first test pays the dynamic-import cost of the heavy
   // onboardingConversation module graph, which can exceed the 5s default when
   // the full suite runs in parallel under load.
-  it("sends a pure token link (caregiver_photo) as a canonical link part", async () => {
+  it("sends a token upload link (caregiver_photo) as a link part (OG card via v1-uploadPageMeta)", async () => {
+    // /upload/** is served through the v1-uploadPageMeta OG rewrite (2026-07-12),
+    // so the link part renders a branded preview card instead of the raw token URL.
     const { sendOnboardingLink } = await import("./onboardingConversation");
     const res = await sendOnboardingLink("+15551112222", "caregiver_photo");
 
@@ -93,6 +97,18 @@ describe("sendOnboardingLink", () => {
 
     expect(hoisted.identityCreate).toHaveBeenCalledOnce();
     expect(lastLinkPart()).toEqual({ type: "link", value: "https://verify.stripe/abc" });
+  });
+
+  it("creates a subscription checkout with the resolved client price when resending client_payment", async () => {
+    const { sendOnboardingLink } = await import("./onboardingConversation");
+    await sendOnboardingLink("+15551112222", "client_payment");
+
+    expect(hoisted.checkoutCreate).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "subscription",
+      line_items: [{ price: "price_client_monthly", quantity: 1 }],
+      metadata: { phone: "+15551112222", task: "client_payment_setup" },
+    }));
+    expect(lastLinkPart()).toEqual({ type: "link", value: expect.stringContaining("https://pay.stripe/xyz") });
   });
 
   it("reuses a stored membership checkout URL instead of regenerating (no duplicate Stripe resource)", async () => {

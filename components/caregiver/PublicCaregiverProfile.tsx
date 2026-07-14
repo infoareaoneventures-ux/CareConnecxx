@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Star, MapPin, ShieldCheck, Calendar, Loader2 } from 'lucide-react';
-import { dbService } from '../../services/api';
+import { functions } from '../../lib/firebase';
 import { LookingForSection } from './LookingForSection';
 import type { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -15,11 +15,16 @@ export const PublicCaregiverProfile: React.FC = () => {
   useEffect(() => {
     let active = true;
     (async () => {
-      if (!id) { setLoading(false); setNotFound(true); return; }
+      if (!id || !functions) { setLoading(false); setNotFound(true); return; }
       try {
-        const user = await dbService.getUser(id);
+        // Server callable, NOT direct Firestore: caregivers/{id} and users/{id}
+        // reads are rules-gated, so unauthenticated visitors from a texted
+        // /p/{id} link used to land on "Profile not found". The callable is
+        // public and returns only the safe profile subset.
+        const getProfile = functions.httpsCallable('v1-publicCaregiverProfile');
+        const res: any = await getProfile({ id });
         if (!active) return;
-        if (user) setProfile(user as any);
+        if (res?.data?.found && res.data.profile) setProfile(res.data.profile as Caregiver);
         else setNotFound(true);
       } catch {
         if (active) setNotFound(true);
@@ -43,7 +48,7 @@ export const PublicCaregiverProfile: React.FC = () => {
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile not found</p>
         <p className="text-sm text-slate-500 mb-6">This caregiver profile doesn't exist or is no longer available.</p>
-        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to CareConnex</Link>
+        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
   }
@@ -54,12 +59,12 @@ export const PublicCaregiverProfile: React.FC = () => {
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <p className="text-2xl font-bold text-slate-900 mb-2">Profile unavailable</p>
         <p className="text-sm text-slate-500 mb-6">This caregiver has hidden their profile.</p>
-        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to CareConnex</Link>
+        <Link to="/" className="text-sm font-semibold text-primary-600 hover:text-primary-700">← Back to Evia</Link>
       </div>
     );
   }
 
-  const photo = profile.photo || profile.imageUrl;
+  const photo = profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL;
   const city = [profile.city, profile.state].filter(Boolean).join(', ') || profile.location;
 
   return (
@@ -68,7 +73,7 @@ export const PublicCaregiverProfile: React.FC = () => {
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
-            <span className="font-bold text-slate-900 tracking-tight">CareConnex</span>
+            <span className="font-bold text-slate-900 tracking-tight">Evia</span>
           </Link>
           <Link to="/client/signup" className="text-sm font-semibold text-primary-600 hover:text-primary-700">
             Find a caregiver →
@@ -144,7 +149,7 @@ export const PublicCaregiverProfile: React.FC = () => {
         <div className="bg-primary-50 border border-primary-200 rounded-2xl p-5 mt-6 flex items-center justify-between gap-4">
           <div>
             <p className="font-bold text-slate-900">Want to book {profile.name.split(' ')[0]}?</p>
-            <p className="text-sm text-slate-600">Create a CareConnex account to send a booking request.</p>
+            <p className="text-sm text-slate-600">Create an Evia account to send a booking request.</p>
           </div>
           <Link to="/client/signup" className="px-5 py-2.5 rounded-full bg-primary-500 hover:bg-primary-600 text-white text-sm font-semibold whitespace-nowrap">
             Get started

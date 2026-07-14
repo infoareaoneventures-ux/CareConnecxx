@@ -4,10 +4,10 @@ import { quickComplete } from "../utils/openaiClient";
 
 // Proactive Reflection — v1 (admin-review-first)
 //
-// Every hour, Cara reads the last 24h of journal entries, completed visits,
+// Every hour, Evia reads the last 24h of journal entries, completed visits,
 // upcoming visits, and billing events for each opted-in family, runs a single
 // gpt-4o-mini pass over the aggregated context, and asks: "Is there anything
-// Cara should surface to the family right now that they haven't already
+// Evia should surface to the family right now that they haven't already
 // asked about?"
 //
 // The model can answer either with a structured draft or with NOOP. Drafts are
@@ -148,13 +148,13 @@ export function buildReflectionPrompt(snap: FamilySnapshot): string {
   ].join("\n");
 }
 
-const REFLECTION_SYSTEM = `You are Cara's quiet observer. Read the family's last 24h of care data and decide whether there is something worth Cara proactively reaching out about RIGHT NOW that the family hasn't already asked.
+const REFLECTION_SYSTEM = `You are Evia's quiet observer. Read the family's last 24h of care data and decide whether there is something worth Evia proactively reaching out about RIGHT NOW that the family hasn't already asked.
 
 Strong reasons to surface:
   • Pattern across multiple journal entries (3+ days of missed meds, appetite dropping, mood declining).
   • Caregiver no-show or repeated lateness.
   • An upcoming visit at risk (caregiver hasn't confirmed, gap on a day the family relies on).
-  • A billing anomaly the family will see on a credit card before Cara explains it.
+  • A billing anomaly the family will see on a credit card before Evia explains it.
   • A milestone or anniversary worth a warm note.
   • A safety concern visible in the journal that hasn't been flagged.
 
@@ -171,7 +171,7 @@ If nothing is worth surfacing:
 {"action":"noop"}
 
 If something is worth surfacing:
-{"action":"draft","draftText":"<the actual SMS Cara would send, in her voice — warm, short, names the specific thing>","reason":"<one sentence: what pattern you detected>","severity":"low|medium|high"}
+{"action":"draft","draftText":"<the actual SMS Evia would send, in her voice — warm, short, names the specific thing>","reason":"<one sentence: what pattern you detected>","severity":"low|medium|high"}
 
 Severity guide:
   • high   = safety / health concern that needs the family to act today

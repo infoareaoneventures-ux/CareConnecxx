@@ -1,6 +1,7 @@
 
 export type ViewType =
   | 'landing'
+  | 'login'
   | 'how-it-works'
   | 'trust'
   | 'subscription'
@@ -176,7 +177,7 @@ export interface Caregiver {
 
   // NEW: Skills & Services
   skills?: string[];  // e.g., ["Driving", "Meal Preparation", "Medical Assistance"]
-  certifications?: string[];  // e.g., ["CPR", "First Aid", "CNA"]
+  certifications?: string[];  // e.g., ["CNA", "HHA"]
 
   // NEW: Availability
   weeklyAvailability?: WeeklySchedule;
@@ -272,7 +273,12 @@ export interface Caregiver {
 // --- JOB BOARD TYPES ---
 export type JobTimeOfDay = 'morning' | 'afternoon' | 'evening' | 'overnight';
 export type JobCareLevel = 'light' | 'moderate' | 'intensive';
-export type JobPaymentMethod = 'cash' | 'credit';
+// 'credit' is charged through the platform (Stripe); cash/venmo/zelle are
+// offline — the client pays the caregiver directly and the caregiver confirms
+// receipt to close out the shift.
+export type JobPaymentMethod = 'cash' | 'venmo' | 'zelle' | 'credit';
+export const paymentMethodLabel = (m?: string | null): string => m === 'cash' ? 'Cash' : m === 'venmo' ? 'Venmo' : m === 'zelle' ? 'Zelle' : 'Credit Card';
+export const isOfflinePaymentMethod = (m?: string | null): boolean => m === 'cash' || m === 'venmo' || m === 'zelle';
 
 export interface JobPost {
   id: string;
@@ -729,7 +735,12 @@ export interface EmergencyAlert {
 }
 
 // --- VIDEO INTERVIEW TYPES ---
-export type VideoInterviewStatus = 'requested' | 'accepted' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'missed';
+// 'confirmed'/'declined' are written by the MCP respond_to_interview_request tool
+export type VideoInterviewStatus = 'requested' | 'accepted' | 'scheduled' | 'confirmed' | 'declined' | 'in-progress' | 'completed' | 'cancelled' | 'missed';
+
+// Statuses where the interview is mutually agreed and upcoming — the set web
+// surfaces filter on and where a Join link is rendered when callUrl exists
+export const AGREED_INTERVIEW_STATUSES: VideoInterviewStatus[] = ['accepted', 'scheduled', 'confirmed'];
 
 export interface VideoInterview {
   id: string;
@@ -740,8 +751,8 @@ export interface VideoInterview {
   scheduledTime: string; // ISO timestamp
   duration?: number; // in minutes
   status: VideoInterviewStatus;
-  roomSid?: string; // Twilio room SID
-  roomName?: string;
+  callUrl?: string;  // Google Meet link (server-generated; join from any phone browser)
+  icsUrl?: string;   // signed calendar-invite URL (expires after the interview)
   recordingUrl?: string;
   createdAt: string;
   startedAt?: string;

@@ -2,14 +2,16 @@ import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billing/config';
-import { autoApproveAtIso, TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
+import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from './billing/paymentMethods';
+import { TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
+import { timesheetAutoApprovalEnabled } from './config/featureFlags';
+import { createValidatedShiftHours, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
+import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
 
 const stripe = new Stripe(functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY, {
   timeout: 10_000, // cap SDK calls (default 80s) so a slow Stripe response can't run a payment handler to the function deadline
 });
 const db = admin.firestore();
-
-type PaymentMethod = 'cash' | 'credit';
 
 type ShiftHoursStatus =
   | 'pending_client_review'
@@ -25,7 +27,8 @@ type ShiftHoursStatus =
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const PLATFORM_FEE_RATE = SHIFT_PLATFORM_FEE_RATE;  // 1.5% — see billing/config.ts
 const PLATFORM_FEE_MIN = SHIFT_PLATFORM_FEE_MIN_DOLLARS;  // $0.50 min
-const MAX_PAYMENT_ATTEMPTS = 3;
+const MAX_PAYMENT_ATTEMPTS = 5;
+const PAYMENT_RETRY_DELAYS_MINUTES = [5, 30, 120, 360, 720];
 
 // ---------- helpers ----------
 
@@ -55,6 +58,32 @@ function fmtHours(hours: number): string {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function nextPaymentAttemptAt(attempt: number, fromMs = Date.now()): string {
+  const delayMinutes = PAYMENT_RETRY_DELAYS_MINUTES[
+    Math.min(Math.max(attempt - 1, 0), PAYMENT_RETRY_DELAYS_MINUTES.length - 1)
+  ];
+  return new Date(fromMs + delayMinutes * 60 * 1000).toISOString();
+}
+
+// Whitelist + clamp caregiver/client-supplied line items. Every path that lets
+// a user set line items and feeds them into a charged/paid amount MUST run this
+// (submit, propose_correction, counter_propose) — otherwise negative or absurd
+// `amount`s flow straight into grossPay and the Stripe transfer/charge.
+const VALID_LINE_ITEM_TYPES = ['overtime', 'mileage', 'supplies', 'bonus', 'custom'];
+export function sanitizeShiftLineItems(
+  raw: unknown,
+): Array<{ type: string; label: string; note: string; amount: number }> {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((li: any) => li && typeof li === 'object')
+    .map((li: any) => ({
+      type:   VALID_LINE_ITEM_TYPES.includes(li.type) ? li.type : 'custom',
+      label:  typeof li.label === 'string' ? li.label.slice(0, 100) : '',
+      note:   typeof li.note  === 'string' ? li.note.slice(0, 500)  : '',
+      amount: Math.max(0, Math.round((Number(li.amount) || 0) * 100) / 100),
+    }))
+    .filter((li) => li.amount > 0);
 }
 
 async function pushNotification(userId: string, type: string, title: string, message: string, data: any) {
@@ -107,132 +136,74 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime and endTime are required');
   }
 
-  // Validate and sanitise line items
-  const VALID_TYPES = ['overtime', 'mileage', 'supplies', 'bonus', 'custom'];
-  const lineItems: Array<{ type: string; label: string; note: string; amount: number }> =
-    (Array.isArray(rawLineItems) ? rawLineItems : [])
-      .filter((li: any) => li && typeof li === 'object')
-      .map((li: any) => ({
-        type:   VALID_TYPES.includes(li.type) ? li.type : 'custom',
-        label:  typeof li.label === 'string' ? li.label.slice(0, 100) : '',
-        note:   typeof li.note  === 'string' ? li.note.slice(0, 500)  : '',
-        amount: Math.max(0, Math.round((Number(li.amount) || 0) * 100) / 100),
-      }))
-      .filter((li) => li.amount > 0);
-
-  const lineItemsTotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
-
-  // Source of truth is now the shifts collection
-  const shiftDocRef = db.collection('shifts').doc(shiftId);
-  const shiftDocSnap = await shiftDocRef.get();
-  if (!shiftDocSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Shift not found');
-  }
-  const shiftDoc = shiftDocSnap.data()!;
-
-  if (shiftDoc.caregiverId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Not your shift');
-  }
-  if (shiftDoc.status !== 'completed') {
-    throw new functions.https.HttpsError('failed-precondition', 'Shift is not completed yet');
+  if (Array.isArray(rawLineItems) && rawLineItems.length > 0) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Additional line items require billing review and cannot be submitted here',
+    );
   }
 
-  const shiftHoursRef = db.collection('shiftHours').doc(shiftId);
-  const existing = await shiftHoursRef.get();
-  if (existing.exists) {
-    throw new functions.https.HttpsError('already-exists', 'Hours already submitted for this shift');
-  }
-
-  const [caregiverDoc, clientDoc] = await Promise.all([
-    db.collection('users').doc(context.auth.uid).get(),
-    shiftDoc.clientId ? db.collection('users').doc(shiftDoc.clientId).get() : Promise.resolve(null),
-  ]);
-  const caregiverData = caregiverDoc.data() || {};
-  const clientData = clientDoc?.data() || {};
-  const totalHours = computeTotalHours(startTime, endTime);
-  const payRate = shiftDoc.rate || caregiverData.hourlyRate || 25;
-  const paymentMethod: PaymentMethod = (shiftDoc.paymentMethod || '').toLowerCase() === 'cash' ? 'cash' : 'credit';
-  const submittedAt = nowIso();
-  const autoApproveAt = autoApproveAtIso();
-  const basePay  = Math.round(totalHours * payRate * 100) / 100;
-  const grossPay = Math.round((basePay + lineItemsTotal) * 100) / 100;
-
-  await shiftHoursRef.set({
-    id: shiftId,
-    appointmentId: shiftId,   // keep field for backward compat with existing queries
-    shiftId,
-    caregiverId: context.auth.uid,
-    caregiverName: caregiverData.name || caregiverData.displayName || shiftDoc.caregiverName || 'Caregiver',
-    caregiverPhotoURL: caregiverData.profilePhoto || caregiverData.photoURL || shiftDoc.caregiverPhotoURL || null,
-    clientId: shiftDoc.clientId,
-    clientName: shiftDoc.clientName || 'Client',
-    clientPhotoURL: clientData.profilePhoto || clientData.photoURL || shiftDoc.clientPhotoURL || null,
-    payRate,
-    currency: 'usd',
-    paymentMethod,
-    submittedStartTime: startTime,
-    submittedEndTime: endTime,
-    submittedTotalHours: totalHours,
-    lineItems,
-    lineItemsTotal,
-    basePay,
-    grossPay,
-    submittedAt,
-    autoApproveAt,
-    paymentAttemptCount: 0,
-    loggedManually: shiftDoc.loggedManually ?? false,
-    status: 'pending_client_review' as ShiftHoursStatus,
-    correctionHistory: [{
-      by: 'caregiver',
-      action: 'submitted',
-      at: submittedAt,
-      startTime: startTime,
-      endTime: endTime,
-      hours: totalHours,
-      lineItems,
-      lineItemsTotal,
-      basePay,
-      grossPay,
-    }],
-    createdAt: submittedAt,
-    updatedAt: submittedAt,
-  });
-
-  await pushNotification(
-    shiftDoc.clientId,
-    'shift_hours_submitted',
-    'Hours submitted for your review',
-    `${caregiverData.name || 'Your caregiver'} submitted ${fmtHours(totalHours)} for review. Auto-approves in ${TIMESHEET_AUTO_APPROVE_HOURS}h.`,
-    { appointmentId: shiftId, totalHours }
-  );
-
-  // iMessage: notify client so they can approve or dispute without opening the app
-  try {
-    const clientUserSnap = await db.collection("users").doc(shiftDoc.clientId).get();
-    const clientPhone = clientUserSnap.data()?.phone as string | undefined;
-    if (clientPhone) {
-      const amount = grossPay.toFixed(2);
-      const { sendToPhone } = await import("./linq/client");
-      await sendToPhone(
-        clientPhone,
-        `${caregiverData.name ?? "Your caregiver"} submitted ${fmtHours(totalHours)} for ` +
-        `${shiftDoc.date ?? "today"}'s visit ($${amount}).\n\n` +
-        `Reply APPROVE to confirm, or DISPUTE if something looks wrong.`
-      );
-      await db.collection("agent_sessions").doc(clientPhone).set({
-        pendingShiftApproval: {
-          appointmentId: shiftId,
-          amount,
-          caregiverName: caregiverData.name ?? "Caregiver",
-        },
-        pendingShiftApprovalSetAt: new Date().toISOString(),
-      }, { merge: true });
+  let appointmentId = shiftId;
+  let appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
+  if (!appointmentSnap.exists) {
+    const legacyShiftSnap = await db.collection('shifts').doc(shiftId).get();
+    if (!legacyShiftSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Appointment not found');
     }
-  } catch (err) {
-    console.error("shiftHours iMessage notification error:", err);
+    const legacyShift = legacyShiftSnap.data()!;
+    if (legacyShift.caregiverId !== context.auth.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'Not your shift');
+    }
+    appointmentId = typeof legacyShift.appointmentId === 'string' ? legacyShift.appointmentId : '';
+    if (!appointmentId) {
+      await legacyShiftSnap.ref.update({
+        billingStatus: 'requires_admin_review',
+        billingReviewReason: 'missing_appointment_link',
+        billingReviewRequestedAt: nowIso(),
+      });
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'This legacy visit needs billing review before hours can be submitted',
+      );
+    }
+    appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
+    if (!appointmentSnap.exists) {
+      throw new functions.https.HttpsError('failed-precondition', 'The linked appointment could not be verified');
+    }
   }
 
-  return { success: true, shiftId, totalHours };
+  try {
+    const result = await createValidatedShiftHours({
+      appointmentId,
+      actorUid: context.auth.uid,
+      submittedStartTime: startTime,
+      submittedEndTime: endTime,
+      source: 'web',
+    });
+    return {
+      success: true,
+      shiftId,
+      appointmentId,
+      totalHours: result.totalHours,
+      amountCents: result.grossPayCents,
+      status: result.status,
+      alreadyExisted: result.alreadyExisted,
+    };
+  } catch (error) {
+    if (error instanceof ValidatedShiftHoursError) {
+      const code = error.code === 'not_found'
+        ? 'not-found'
+        : error.code === 'forbidden'
+          ? 'permission-denied'
+          : error.code === 'conflict'
+            ? 'already-exists'
+          : error.code === 'outside_booked_window'
+            ? 'invalid-argument'
+            : 'failed-precondition';
+      throw new functions.https.HttpsError(code, error.message);
+    }
+    throw error;
+  }
 });
 
 /**
@@ -316,8 +287,12 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
     const proposedTotalHours = computeTotalHours(proposedStartTime, proposedEndTime);
     const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
 
-    const proposedLineItems: Array<{ type: string; label: string; note: string; amount: number }> =
-      Array.isArray(rawLineItems) ? rawLineItems : (shift.lineItems ?? []);
+    // Clamp/whitelist — a client-proposed correction feeds proposedGrossPay,
+    // which autoAcceptCorrection later charges/pays. Fall back to the already-
+    // sanitized stored line items when the caller sends none.
+    const proposedLineItems = rawLineItems !== undefined
+      ? sanitizeShiftLineItems(rawLineItems)
+      : (shift.lineItems ?? []);
     const proposedLineItemsTotal = proposedLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0);
     const proposedBasePay = Math.round(proposedTotalHours * shift.payRate * 100) / 100;
     const proposedGrossPay = Math.round((proposedBasePay + proposedLineItemsTotal) * 100) / 100;
@@ -503,7 +478,12 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('invalid-argument', 'counterStartTime and counterEndTime are required for counter_propose');
   }
   const counterTotalHours = computeTotalHours(counterStartTime, counterEndTime);
-  const safeCounterLineItems = Array.isArray(rawCounterLineItems) ? rawCounterLineItems : (shift.lineItems ?? []);
+  // Clamp/whitelist — a caregiver counter feeds counterGrossPay, which is
+  // charged if the client accepts. Fall back to stored (already-sanitized)
+  // items when none are sent.
+  const safeCounterLineItems = rawCounterLineItems !== undefined
+    ? sanitizeShiftLineItems(rawCounterLineItems)
+    : (shift.lineItems ?? []);
   const counterLineItemsTotal = safeCounterLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0);
   const counterBasePay = Math.round(counterTotalHours * (shift.payRate || 0) * 100) / 100;
   const counterGrossPay = Math.round((counterBasePay + counterLineItemsTotal) * 100) / 100;
@@ -653,7 +633,16 @@ export const retryShiftPayment = functions.https.onCall(async (data, context) =>
   }
 
   // Reset to 'approved' — re-triggers the onShiftHoursApproved Firestore trigger
-  await ref.update({ status: 'approved', retryCount: (shift.retryCount ?? 0) + 1 });
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  await updateShiftPaymentOperation(shiftPaymentOperationKey(appointmentId, generation), 'retry', {
+    nextAttemptAt: nowIso(),
+    lastErrorCode: null,
+  });
+  await ref.update({
+    status: 'approved',
+    nextPaymentAttemptAt: nowIso(),
+    retryCount: (shift.retryCount ?? 0) + 1,
+  });
   return { success: true };
 });
 
@@ -663,6 +652,11 @@ export const retryShiftPayment = functions.https.onCall(async (data, context) =>
  * Auto-approve shifts the client hasn't touched within 24h.
  */
 export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').onRun(async () => {
+  if (!timesheetAutoApprovalEnabled()) {
+    console.info('[autoApproveShiftHours] disabled by TIMESHEET_AUTO_APPROVAL_ENABLED');
+    return null;
+  }
+
   const now = nowIso();
   const snap = await db.collection('shiftHours')
     .where('status', '==', 'pending_client_review')
@@ -672,6 +666,9 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
 
   for (const doc of snap.docs) {
     const shift = doc.data();
+    if (shift.approvalNoticeState !== 'delivered' || shift.requiresExplicitApproval === true) {
+      continue;
+    }
     const autoBasePay        = Math.round(shift.submittedTotalHours * shift.payRate * 100) / 100;
     const autoLineItems      = Array.isArray(shift.lineItems) ? shift.lineItems : [];
     const autoLineItemsTotal = Math.round(autoLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0) * 100) / 100;
@@ -754,8 +751,11 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
  * Retry failed payments up to MAX_PAYMENT_ATTEMPTS.
  */
 export const retryFailedShiftPayments = functions.pubsub.schedule('every 6 hours').onRun(async () => {
+  const now = nowIso();
   const snap = await db.collection('shiftHours')
     .where('status', '==', 'payment_failed')
+    .where('nextPaymentAttemptAt', '<=', now)
+    .orderBy('nextPaymentAttemptAt', 'asc')
     .limit(50)
     .get();
 
@@ -769,6 +769,87 @@ export const retryFailedShiftPayments = functions.pubsub.schedule('every 6 hours
 
   return null;
 });
+
+/** Reconcile bounded pages of asynchronous charges when a webhook is missed. */
+export const reconcileChargePendingShiftPayments = functions.pubsub
+  .schedule('every 15 minutes')
+  .onRun(async () => {
+    const now = nowIso();
+    const snap = await db.collection('shiftHours')
+      .where('status', '==', 'charge_pending')
+      .where('nextPaymentReconcileAt', '<=', now)
+      .orderBy('nextPaymentReconcileAt', 'asc')
+      .limit(50)
+      .get();
+
+    for (const doc of snap.docs) {
+      const shift = doc.data();
+      const paymentIntentId = shift.stripeChargeId as string | undefined;
+      if (!paymentIntentId) {
+        const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+        const retryAt = nextPaymentAttemptAt(Number(shift.paymentAttemptCount ?? 1));
+        await doc.ref.update({
+          status: 'payment_failed',
+          stripeFailureReason: 'charge_pending_without_payment_intent',
+          nextPaymentAttemptAt: retryAt,
+          updatedAt: now,
+        });
+        await updateShiftPaymentOperation(shiftPaymentOperationKey(doc.id, generation), 'retry', {
+          nextAttemptAt: retryAt,
+          lastErrorCode: 'charge_pending_without_payment_intent',
+        });
+        continue;
+      }
+
+      try {
+        const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+        const intentGeneration = Math.max(1, Number(intent.metadata?.paymentGeneration ?? 1));
+        if (intentGeneration !== generation) {
+          await doc.ref.update({
+            status: 'requires_admin_review',
+            autoApproveAt: null,
+            stripeFailureReason: 'stale_payment_generation_on_reconcile',
+            nextPaymentReconcileAt: null,
+            updatedAt: now,
+          });
+          await updateShiftPaymentOperation(shiftPaymentOperationKey(doc.id, generation), 'requires_admin_review', {
+            nextAttemptAt: null,
+            lastErrorCode: 'stale_payment_generation_on_reconcile',
+          });
+        } else if (intent.status === 'succeeded') {
+          await completeShiftPaymentAfterCharge(doc.id, intent.id, intentGeneration);
+        } else if (isTerminalPaymentIntentStatus(intent.status)) {
+          const retryAt = nextPaymentAttemptAt(Number(shift.paymentAttemptCount ?? 1));
+          await doc.ref.update({
+            status: 'payment_failed',
+            stripeChargeStatus: intent.status,
+            nextPaymentAttemptAt: retryAt,
+            nextPaymentReconcileAt: null,
+            updatedAt: now,
+          });
+          await updateShiftPaymentOperation(shiftPaymentOperationKey(doc.id, generation), 'retry', {
+            nextAttemptAt: retryAt,
+            providerOperationId: intent.id,
+            lastErrorCode: `payment_intent_${intent.status}`,
+          });
+        } else {
+          await doc.ref.update({
+            stripeChargeStatus: intent.status,
+            nextPaymentReconcileAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            updatedAt: now,
+          });
+        }
+      } catch (error) {
+        await doc.ref.update({
+          nextPaymentReconcileAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          lastReconcileError: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+          updatedAt: now,
+        });
+      }
+    }
+    return null;
+  });
 
 // ---------- Firestore trigger ----------
 
@@ -793,14 +874,15 @@ export const onShiftHoursApproved = functions
       return null;
     }
 
-    if (after.paymentMethod === 'cash') {
-      // Cash shifts: client has approved — notify caregiver to confirm cash receipt.
-      // We do NOT mark paid here; caregiver must call confirmCashReceived to close it out.
+    if (isOfflinePaymentMethod(after.paymentMethod)) {
+      // Offline shifts (cash/Venmo/Zelle): client has approved — notify caregiver
+      // to confirm receipt. We do NOT mark paid here; caregiver must call
+      // confirmCashReceived to close it out.
       await pushNotification(
         after.caregiverId,
         'shift_hours_cash_pending_confirmation',
         'Client approved your hours',
-        `Confirm you received $${(after.grossPay || 0).toFixed(2)} cash from ${after.clientName || 'the client'}.`,
+        `Confirm you received $${(after.grossPay || 0).toFixed(2)} via ${paymentMethodLabel(after.paymentMethod)} from ${after.clientName || 'the client'}.`,
         { appointmentId: context.params.appointmentId }
       );
       return null;
@@ -814,7 +896,7 @@ export const onShiftHoursApproved = functions
 
 // Resolve gross pay in cents. shiftHours docs come from three rails that
 // historically disagreed on field names: in-app submitShiftHours writes
-// `grossPay` (dollars); the Cara MCP tool and care-notes completion write
+// `grossPay` (dollars); the Evia MCP tool and care-notes completion write
 // `amountCents`. Fall back through the known shapes so every approved shift
 // charges instead of dying on "grossPay not set".
 function computeGrossCents(shift: any): number {
@@ -853,6 +935,7 @@ export async function settleShiftTransfer(
 ): Promise<void> {
   const ref = db.collection('shiftHours').doc(appointmentId);
   const now = nowIso();
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
 
   let transferId: string | undefined = shift.stripeTransferId;
   if (!transferId) {
@@ -863,7 +946,13 @@ export async function settleShiftTransfer(
       transfer_group: appointmentId,
       metadata: { appointmentId, shiftHoursId: appointmentId },
     }, {
-      idempotencyKey: attempt > 1 ? `shift-transfer-${appointmentId}-attempt-${attempt}` : `shift-transfer-${appointmentId}`,
+      // STABLE per appointment — never attempt-suffixed. A shift is paid out
+      // exactly once, so Stripe must dedupe the transfer even across retries.
+      // The Firestore `stripeTransferId` guard above is written by the SAME
+      // update that can fail (leaving transferId unrecorded), so a per-attempt
+      // key would let a retry create a SECOND real transfer — double-paying the
+      // caregiver. This key is the only durable guarantee, so it must not vary.
+      idempotencyKey: `shift-transfer-${appointmentId}-generation-${generation}`,
     });
     transferId = transfer.id;
   }
@@ -884,6 +973,7 @@ export async function settleShiftTransfer(
     status: 'paid',
     stripeChargeId: shift.stripeChargeId,
     stripeTransferId: transferId,
+    stripeTransferGeneration: generation,
     stripeChargeStatus: 'succeeded',
     paymentAttemptCount: attempt,
     lastPaymentAttemptAt: now,
@@ -898,21 +988,33 @@ export async function settleShiftTransfer(
  * payment_intent.succeeded webhook. Idempotent: a shift already paid is a
  * no-op, and the transfer idempotency key guards a duplicate webhook delivery.
  */
-export async function completeShiftPaymentAfterCharge(appointmentId: string): Promise<void> {
+export async function completeShiftPaymentAfterCharge(
+  appointmentId: string,
+  expectedPaymentIntentId?: string,
+  expectedGeneration?: number,
+): Promise<void> {
   const ref = db.collection('shiftHours').doc(appointmentId);
   const snap = await ref.get();
   if (!snap.exists) return;
   const shift = snap.data()!;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
+  if (expectedGeneration != null && expectedGeneration !== generation) return;
+  if (expectedPaymentIntentId && shift.stripeChargeId !== expectedPaymentIntentId) return;
   if (shift.status === 'paid' && shift.stripeTransferId) return; // already settled
-  if (shift.paymentMethod === 'cash') return;                    // cash never transfers
+  if (isOfflinePaymentMethod(shift.paymentMethod)) return;       // offline (cash/Venmo/Zelle) never transfers
   if (!shift.stripeChargeId) return;                             // no charge initiated
 
   const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
-  const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
+  const { getCaregiverPayoutFields } = await import('./caregiverPrivate');
+  const payoutFields = await getCaregiverPayoutFields(shift.caregiverId, caregiverSnap.data() ?? null);
+  const caregiverStripeAccountId = payoutFields.stripeAccountId as string | undefined;
   if (!caregiverStripeAccountId) return;
 
   const grossCents = computeGrossCents(shift);
   await settleShiftTransfer(appointmentId, shift, grossCents, caregiverStripeAccountId, (shift.paymentAttemptCount || 0));
+  await updateShiftPaymentOperation(shiftPaymentOperationKey(appointmentId, generation), 'completed', {
+    providerOperationId: shift.stripeChargeId,
+  });
 }
 
 /**
@@ -924,17 +1026,20 @@ export async function completeShiftPaymentAfterCharge(appointmentId: string): Pr
  */
 export async function reverseShiftTransfer(appointmentId: string, shift: any): Promise<boolean> {
   if (!shift.stripeTransferId) return false;
+  const generation = Math.max(1, Number(shift.paymentGeneration ?? 1));
   await stripe.transfers.createReversal(shift.stripeTransferId, {
     metadata: { appointmentId, reason: 'charge_failed_after_payout' },
   }, {
-    idempotencyKey: `shift-reversal-${appointmentId}`,
+    idempotencyKey: `shift-reversal-${appointmentId}-generation-${generation}`,
   });
   return true;
 }
 
-export async function processShiftPayment(appointmentId: string, shift: any): Promise<{ ok: boolean; error?: string }> {
+export async function processShiftPayment(appointmentId: string, inputShift: any): Promise<{ ok: boolean; error?: string }> {
   const ref = db.collection('shiftHours').doc(appointmentId);
-  const attempt = (shift.paymentAttemptCount || 0) + 1;
+  const claim = await claimShiftPaymentOperation(appointmentId, MAX_PAYMENT_ATTEMPTS);
+  if (!claim) return { ok: true };
+  const { shift, attempt, generation, operationKey } = claim;
   const now = nowIso();
 
   // Hard idempotency: never run the payment flow twice on a shift that's
@@ -950,7 +1055,9 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
 
   try {
     const caregiverSnap = await db.collection('caregivers').doc(shift.caregiverId).get();
-    const caregiverStripeAccountId = caregiverSnap.data()?.stripeAccountId;
+    const { getCaregiverPayoutFields } = await import('./caregiverPrivate');
+    const payoutFields = await getCaregiverPayoutFields(shift.caregiverId, caregiverSnap.data() ?? null);
+    const caregiverStripeAccountId = payoutFields.stripeAccountId as string | undefined;
     if (!caregiverStripeAccountId) {
       throw new Error('Caregiver has no Stripe Connect account');
     }
@@ -990,13 +1097,13 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
     // some payment methods settle asynchronously ('processing'). We must NOT
     // pay the caregiver until the charge has truly settled — paying earlier
     // risks an un-recoverable payout if the charge later fails.
-    let replacedTerminalChargeId: string | undefined;
     let chargeStatus: string;
     if (paymentIntentId) {
       const existing = await stripe.paymentIntents.retrieve(paymentIntentId);
       chargeStatus = existing.status;
       if (isTerminalPaymentIntentStatus(chargeStatus)) {
-        replacedTerminalChargeId = paymentIntentId;
+        // Terminal (canceled / requires_payment_method): abandon this PI and
+        // create a fresh one under the next attempt's key.
         paymentIntentId = undefined;
       }
     }
@@ -1009,14 +1116,20 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
         payment_method: typeof defaultPm === 'string' ? defaultPm : defaultPm.id,
         confirm: true,
         off_session: true,
-        description: `CareConnex shift ${appointmentId}`,
-        metadata: { appointmentId, shiftHoursId: appointmentId },
+        description: `Evia shift ${appointmentId}`,
+        metadata: { appointmentId, shiftHoursId: appointmentId, paymentGeneration: String(generation) },
       }, {
-        // Idempotency-keyed by appointmentId so re-firing the Firestore
-        // trigger never creates a second charge for the same shift.
-        idempotencyKey: replacedTerminalChargeId || shift.status === 'payment_failed'
-          ? `shift-charge-${appointmentId}-attempt-${attempt}`
-          : `shift-charge-${appointmentId}`,
+        // Key on (appointment, attempt) ALWAYS. `attempt` is derived from the
+        // input snapshot's paymentAttemptCount, so:
+        //  - re-firing the trigger on the same doc computes the SAME attempt →
+        //    SAME key → Stripe dedupes → never a second charge for one shift;
+        //  - a genuine retry (after a failure bumped paymentAttemptCount, or
+        //    after replacing a terminal PI) computes a HIGHER attempt → new key
+        //    → a fresh charge, as intended.
+        // The previous base-vs-attempt branch could hand two concurrent
+        // processors (trigger + scheduled retry sweep) DIFFERENT keys for the
+        // same shift → two live PaymentIntents → the client charged twice.
+        idempotencyKey: `shift-charge-${appointmentId}-generation-${generation}-attempt-${attempt}`,
       });
       paymentIntentId = intent.id;
       chargeStatus = intent.status;
@@ -1049,8 +1162,14 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
         stripeChargeId: paymentIntentId,
         stripeChargeStatus: chargeStatus,
         paymentAttemptCount: attempt,
+        paymentGeneration: generation,
+        nextPaymentReconcileAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         lastPaymentAttemptAt: now,
         updatedAt: now,
+      });
+      await updateShiftPaymentOperation(operationKey, 'waiting_provider', {
+        providerOperationId: paymentIntentId,
+        nextAttemptAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       });
       return { ok: true };
     }
@@ -1063,19 +1182,32 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
       caregiverStripeAccountId,
       attempt,
     );
+    await updateShiftPaymentOperation(operationKey, 'completed', { providerOperationId: paymentIntentId });
 
     return { ok: true };
   } catch (err: any) {
     const errorMessage = err?.message || 'Stripe error';
+    const terminal = attempt >= MAX_PAYMENT_ATTEMPTS;
     const updates: any = {
-      status: 'payment_failed',
+      status: terminal ? 'requires_admin_review' : 'payment_failed',
       stripeFailureReason: errorMessage,
       paymentAttemptCount: attempt,
+      paymentGeneration: generation,
+      nextPaymentAttemptAt: terminal ? null : nextPaymentAttemptAt(attempt),
       lastPaymentAttemptAt: now,
       updatedAt: now,
     };
     if (paymentIntentId) updates.stripeChargeId = paymentIntentId;
     await ref.update(updates);
+    await updateShiftPaymentOperation(
+      operationKey,
+      terminal ? 'requires_admin_review' : 'retry',
+      {
+        providerOperationId: paymentIntentId ?? null,
+        nextAttemptAt: terminal ? null : updates.nextPaymentAttemptAt,
+        lastErrorCode: errorMessage.slice(0, 100),
+      },
+    );
 
     if (attempt >= MAX_PAYMENT_ATTEMPTS) {
       await notifyAdmins(
@@ -1084,6 +1216,10 @@ export async function processShiftPayment(appointmentId: string, shift: any): Pr
         `Appointment ${appointmentId}: ${errorMessage}`,
         { appointmentId, attempt }
       );
+      await Promise.all([
+        pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
+        pushNotification(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.', { appointmentId }),
+      ]);
     }
 
     return { ok: false, error: errorMessage };
@@ -1115,8 +1251,8 @@ export const confirmCashReceived = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only the caregiver can confirm cash receipt');
   }
 
-  if (shift.paymentMethod !== 'cash') {
-    throw new functions.https.HttpsError('failed-precondition', 'Shift is not a cash payment');
+  if (!isOfflinePaymentMethod(shift.paymentMethod)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Shift is not an offline (cash/Venmo/Zelle) payment');
   }
 
   if (shift.status !== 'approved' && shift.status !== 'auto_approved') {
@@ -1127,26 +1263,28 @@ export const confirmCashReceived = functions.https.onCall(async (data, context) 
   }
 
   const now = nowIso();
+  const method = normalizePaymentMethod(shift.paymentMethod);
+  const methodLabel = paymentMethodLabel(method);
   await ref.update({
     status: 'paid' as ShiftHoursStatus,
-    paidMethod: 'cash',
+    paidMethod: method,
     paidAt: now,
-    cashConfirmedAt: now,
+    cashConfirmedAt: now,   // field name kept for existing readers; set for all offline methods
     updatedAt: now,
   });
 
   await pushNotification(
     shift.caregiverId,
     'shift_hours_paid',
-    'Cash payment confirmed',
-    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received.`,
+    'Payment confirmed',
+    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received via ${methodLabel}.`,
     { appointmentId }
   );
   await pushNotification(
     shift.clientId,
     'shift_hours_paid',
     'Hours settled',
-    `${shift.caregiverName}'s ${shift.finalTotalHours}h cash shift is confirmed paid.`,
+    `${shift.caregiverName}'s ${shift.finalTotalHours}h ${methodLabel} shift is confirmed paid.`,
     { appointmentId }
   );
 

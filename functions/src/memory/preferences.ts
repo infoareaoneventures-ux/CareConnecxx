@@ -10,6 +10,15 @@ export interface CaraPreferences {
   preferredSummaryTime: string;   // "18:00"
   preferSMS: boolean;
   timezone: string;       // IANA tz, e.g. "America/Los_Angeles"
+  /** LEARNED quiet window (scheduled/inferActiveHours.ts) from when this user
+   *  actually sends messages. Honored by isInDND ONLY when the user has not
+   *  enabled explicit DND — user-set preferences always win. */
+  inferredQuietHours?: {
+    start: string;            // "23:00"
+    end: string;              // "08:00"
+    basedOnMessages: number;
+    computedAt: string;
+  };
 }
 
 const DEFAULTS: CaraPreferences = {
@@ -45,6 +54,19 @@ function validatedTz(tz: string): string {
   }
 }
 
+// Shared HH:MM window check in the user's timezone (handles overnight spans).
+function isInWindow(start: string, end: string, timezone: string, now?: Date): boolean {
+  const d  = now ?? new Date();
+  const tz = validatedTz(timezone || "America/Los_Angeles");
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz,
+  }).formatToParts(d);
+  const h    = parts.find(p => p.type === "hour")?.value   ?? "00";
+  const m    = parts.find(p => p.type === "minute")?.value ?? "00";
+  const hhmm = `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+  return start <= end ? (hhmm >= start && hhmm < end) : (hhmm >= start || hhmm < end);
+}
+
 export function isActiveHour(prefs: CaraPreferences, now?: Date): boolean {
   const d  = now ?? new Date();
   const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
@@ -68,6 +90,18 @@ export function isActiveHour(prefs: CaraPreferences, now?: Date): boolean {
 }
 
 export function isInDND(prefs: CaraPreferences, now?: Date): boolean {
+  // No explicit DND set, but we've LEARNED when this user is never active
+  // (inferActiveHours job): treat that window as quiet hours. Explicit
+  // settings always win — a user who enabled DND uses their own window, and
+  // a user who set activeHours has that enforced separately by isActiveHour.
+  if (!prefs.dndEnabled && prefs.inferredQuietHours?.start && prefs.inferredQuietHours?.end) {
+    return isInWindow(
+      prefs.inferredQuietHours.start,
+      prefs.inferredQuietHours.end,
+      prefs.timezone,
+      now
+    );
+  }
   if (!prefs.dndEnabled) return false;
   const d  = now ?? new Date();
   const tz = validatedTz(prefs.timezone || "America/Los_Angeles");

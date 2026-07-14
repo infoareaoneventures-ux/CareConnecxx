@@ -56,7 +56,7 @@ export const sendPushNotification = functions.firestore
       }
 
       // Prepare notification
-      const senderName = message.senderName || "CareConnex";
+      const senderName = message.senderName || "Evia";
       const notification = {
         title: `New message from ${senderName}`,
         body:

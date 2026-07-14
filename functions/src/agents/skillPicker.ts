@@ -1,4 +1,4 @@
-// Skill picker — decides at most ONE skill to inject into Cara's system
+// Skill picker — decides at most ONE skill to inject into Evia's system
 // prompt for the current turn. Runs in parallel with the rest of the
 // pre-Sonnet pipeline (intent classifier, emotional context, voice mirror)
 // so the latency hides behind I/O.
@@ -25,7 +25,7 @@ export interface PickSkillResult {
 }
 
 const SYSTEM_PROMPT = [
-  "You are a skill router for Cara, an SMS care-coordination agent.",
+  "You are a skill router for Evia, an SMS care-coordination agent.",
   "You receive a list of skill names + descriptions and a user message.",
   "Output the SINGLE skill name that best matches, or the literal string \"none\" if no skill clearly applies.",
   "Reply with only the skill name or \"none\" — no punctuation, no explanation, no quotes.",

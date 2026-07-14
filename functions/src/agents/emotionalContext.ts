@@ -1,9 +1,9 @@
 import { quickComplete } from "../utils/openaiClient";
 
-// Six tones the family or caregiver can be in when they reach Cara. These
-// modulate how Cara replies (warmth, pace, length, emoji policy, formality)
+// Six tones the family or caregiver can be in when they reach Evia. These
+// modulate how Evia replies (warmth, pace, length, emoji policy, formality)
 // for the rest of the conversation — they are NOT intent labels and never
-// change which tools Cara binds. State persists with a 12h TTL so a family
+// change which tools Evia binds. State persists with a 12h TTL so a family
 // in grief stays in grief for hours/days, not just one turn.
 export type EmotionalContext =
   | "calm"        // default / neutral baseline — no special directive emitted
@@ -87,7 +87,7 @@ export async function classifyEmotionalContext(text: string): Promise<EmotionalC
   const timer = setTimeout(() => controller.abort(), 4_000);
   try {
     const raw = await quickComplete(
-      "You read a single inbound message from a family member or caregiver to Cara, an AI care assistant. " +
+      "You read a single inbound message from a family member or caregiver to Evia, a care coordinator. " +
       "Classify the EMOTIONAL POSTURE of the sender, not the topic. " +
       "Reply with exactly one word: calm, anxious, grieving, frustrated, rushed, or celebratory.\n" +
       "calm = neutral, ordinary check-in or question, no strong feeling.\n" +

@@ -27,6 +27,13 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
       );
     }
+
+    function isBillingReviewer() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'billing_reviewer' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.billingReviewer == true
+      );
+    }
     
     // Only admins can delete documents
     function canDelete() {
@@ -77,14 +84,32 @@ service cloud.firestore {
     match /users/{userId} {
       // Users can read their own document; admins can read any user.
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated();
-      // Owners may update most fields, but identity-verification and
-      // subscription fields are webhook-only (Admin SDK bypasses rules) —
-      // a self-serve client cannot flip `identityCheckStatus` to 'verified'
-      // to bypass the Stripe Identity flow.
+      // Create: only your OWN doc, and never carrying privilege or
+      // webhook-owned fields. Without the uid binding anyone could pre-seed
+      // another user's doc; without the key block a user could create their
+      // own doc with isAdmin:true (isAdmin() derives from these fields).
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        !request.resource.data.keys().hasAny([
+          'isAdmin', 'userType', 'role', 'isBanned',
+          'verified', 'verificationStatus', 'totalEarnings',
+          'identityCheckStatus', 'stripeIdentityVerificationId', 'identityVerifiedAt',
+          'membershipStatus', 'subscriptionActive', 'subscriptionId',
+          'stripeCustomerId', 'referralCredit',
+        ])
+      );
+      // Owners may update most fields, but privilege fields (isAdmin/userType/
+      // role feed the isAdmin() and role=='admin' checks — a raw SDK write to
+      // them is instant self-escalation), moderation/earnings fields, and
+      // identity-verification + subscription fields are server-only (Admin SDK
+      // bypasses rules). `referralCredit` is granted only by
+      // v1-resolveReferrerByCode.
       allow update: if isAdmin() || (
         isOwner(userId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'isAdmin', 'userType', 'role', 'isBanned',
+          'verified', 'verificationStatus', 'totalEarnings',
           'identityCheckStatus',
           'stripeIdentityVerificationId',
           'identityVerifiedAt',
@@ -92,6 +117,7 @@ service cloud.firestore {
           'subscriptionActive',
           'subscriptionId',
           'stripeCustomerId',
+          'referralCredit',
         ])
       );
       allow delete: if isAdmin();
@@ -99,8 +125,10 @@ service cloud.firestore {
       // Subcollection: notifications
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);
-        allow write: if isOwner(userId) || isAdmin();
-        allow create: if isAuthenticated();
+        allow create: if isAdmin();
+        allow update: if isOwner(userId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'read']);
+        allow delete: if isOwner(userId) || isAdmin();
       }
 
       // Subcollection: match_history (AI feedback loop signals)
@@ -116,7 +144,7 @@ service cloud.firestore {
     // ==========================================
     match /caregivers/{caregiverId} {
       // Public read for any authenticated user
-      allow read: if isAuthenticated();
+      allow read: if isOwner(caregiverId) || isAdmin();
       
       // CRITICAL FIX: Allow authenticated users to create their own caregiver profile during signup
       // This must come before the update rule to ensure create is not blocked
@@ -173,6 +201,15 @@ service cloud.firestore {
         allow read: if isOwner(caregiverId) || isAdmin();
         allow write: if false;
       }
+
+      // Subcollection: private — identity PII (legal name, DOB, SSN-last-4, ZIP)
+      // moved off the world-readable parent caregiver doc. Readable ONLY by the
+      // owning caregiver or an admin; written ONLY by Cloud Functions (Admin SDK
+      // bypasses rules), so client writes are denied.
+      match /private/{docId} {
+        allow read: if isOwner(caregiverId) || isAdmin();
+        allow write: if false;
+      }
     }
 
     // ==========================================
@@ -184,7 +221,16 @@ service cloud.firestore {
       // userId == the owning client's uid (multi-senior households, U6/KTD-10).
       allow read: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
       allow write: if isOwner(profileId) || resource.data.userId == request.auth.uid || isAdmin();
-      allow create: if isAuthenticated();
+      // Create must name the caller as the owning client (uid-keyed legacy doc,
+      // or userId/clientId back-reference on random-id household docs) — no
+      // seeding profiles that claim to belong to someone else.
+      allow create: if isAdmin() || (
+        isAuthenticated() && (
+          isOwner(profileId) ||
+          request.resource.data.userId == request.auth.uid ||
+          request.resource.data.clientId == request.auth.uid
+        )
+      );
       
       // Subcollection: care_plans
       match /care_plans/{planId} {
@@ -215,8 +261,15 @@ service cloud.firestore {
         resource.data.caregiverId == request.auth.uid ||
         isAdmin()
       );
-      // Any authenticated user can create (booking flow)
-      allow create: if isAuthenticated();
+      // Create only as a named participant (booking flow) — an unbound create
+      // let any user inject fabricated appointments onto another caregiver's
+      // or client's dashboard.
+      allow create: if isAdmin() || (
+        isAuthenticated() && (
+          request.resource.data.clientId == request.auth.uid ||
+          request.resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Only involved parties or admin can update
       allow update: if isAuthenticated() && (
         resource.data.clientId == request.auth.uid ||
@@ -226,36 +279,53 @@ service cloud.firestore {
       // Only admin can delete
       allow delete: if isAdmin();
     }
+
+    match /publicCaregiverProfiles/{caregiverId} {
+      allow read: if true;
+      allow write: if false;
+    }
     
     // ==========================================
     // THREADS (CHAT) COLLECTION
     // ==========================================
     match /threads/{threadId} {
       // Only participants can read/write
-      allow read: if isAuthenticated() && 
+      allow read: if isAuthenticated() &&
         request.auth.uid in resource.data.participants;
-      
-      allow update: if isAuthenticated() && 
-        request.auth.uid in resource.data.participants;
-      
+
+      // Evia threads (isCaraThread == true) are written server-side only
+      // (Admin SDK via threadMirror / chatWithCara); the sole client-side
+      // update allowed is clearing the unread counter.
+      allow update: if isAuthenticated() &&
+        request.auth.uid in resource.data.participants &&
+        (
+          resource.data.get('isCaraThread', false) != true ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadCount'])
+        );
+
       allow delete: if isAdmin();
-      
-      // Create new thread
-      allow create: if isAuthenticated() && 
+
+      // Create new thread (clients can never create Evia threads)
+      allow create: if isAuthenticated() &&
         request.auth.uid in request.resource.data.participants &&
         request.resource.data.participants is list &&
-        request.resource.data.participants.size() >= 2;
-      
+        request.resource.data.participants.size() >= 2 &&
+        request.resource.data.get('isCaraThread', false) != true;
+
       // Subcollection: messages
       match /messages/{messageId} {
-        // Only thread participants can read/write messages
-        allow read: if isAuthenticated() && 
+        // Only thread participants can read messages
+        allow read: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        
-        allow write: if isAuthenticated() && 
+
+        // Evia-thread messages are server-only: clients cannot create, edit,
+        // or delete them (prevents forging senderId 'cara' into the record).
+        allow write: if isAuthenticated() &&
+          get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        
-        allow create: if isAuthenticated() && 
+
+        allow create: if isAuthenticated() &&
+          get(/databases/$(database)/documents/threads/$(threadId)).data.get('isCaraThread', false) != true &&
           request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants &&
           request.resource.data.senderId == request.auth.uid;
       }
@@ -493,17 +563,34 @@ service cloud.firestore {
         isAdmin()
       );
       
-      // Client can create
-      allow create: if isAuthenticated() && 
-        request.resource.data.clientId == request.auth.uid;
-      
-      // Both parties can update
-      allow update: if isAuthenticated() && (
-        resource.data.clientId == request.auth.uid ||
-        resource.data.caregiverId == request.auth.uid ||
-        isAdmin()
+      // Client can create — but never with server-owned link fields. callUrl,
+      // icsUrl, linkDelivery, linkWork, remindersScheduledAt, and
+      // requestNotifiedAt are written exclusively by Cloud Functions (the
+      // Admin SDK bypasses rules). A client-forged callUrl would render as a
+      // "Join video call" button on the other party's dashboard.
+      allow create: if false;
+
+      // Both parties can update — restricted to legitimately client-mutable
+      // fields. Identity (clientId/caregiverId) and server-owned link fields
+      // are immutable from the client SDK (deleting callUrl would make the
+      // link trigger regenerate + re-text both parties — an SMS pump).
+      // Only the caregiver may move status to accepted/declined/confirmed.
+      allow update: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'notes', 'updatedAt', 'acceptedAt', 'declinedBy', 'declinedAt',
+          'cancelledBy', 'cancelledAt', 'cancelReason', 'completedAt', 'startedAt', 'endedAt'
+        ]) &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          !(request.resource.data.status in ['accepted', 'declined', 'confirmed']) ||
+          resource.data.caregiverId == request.auth.uid
+        )
       );
-      
+
       allow delete: if isAdmin();
     }
     
@@ -532,13 +619,23 @@ service cloud.firestore {
     }
     
     // ==========================================
-    // ADMIN-ONLY CLEANUP OPERATIONS
+    // COLLECTION LIST/ENUMERATION
     // ==========================================
+    // caregivers: any authed user may enumerate — the collection is the public
+    // caregiver directory (browse/match), consistent with the per-doc
+    // `allow read: if isAuthenticated()` above.
     match /caregivers/{docId} {
-      allow list: if isAuthenticated();
+      allow list: if isAdmin();
     }
+    // users: ADMIN ONLY. This was `if isAuthenticated()`, which let any signed-in
+    // user enumerate the entire users collection (name/email/phone/role/
+    // stripeCustomerId/isAdmin) — a full-directory PII leak. Per-doc get stays
+    // owner||admin (above). Client paths that used to query users were
+    // re-routed: caregiver discovery now reads the caregivers collection, and
+    // referral-by-code resolves via the v1-resolveReferrerByCode callable.
+    // verifyConnection() already treats a denied list as "connected".
     match /users/{docId} {
-      allow list: if isAuthenticated();
+      allow list: if isAdmin();
     }
     
     // ==========================================
@@ -586,11 +683,10 @@ service cloud.firestore {
         isAdmin()
       );
 
-      allow create: if isAuthenticated()
-        && request.resource.data.caregiverId == request.auth.uid
-        && request.resource.data.appointmentId == appointmentId
-        && request.resource.data.status == 'pending_client_review'
-        && request.resource.data.paymentAttemptCount == 0;
+      // Financial records are created only by trusted Cloud Functions through
+      // the Admin SDK. Participant-created timesheets let callers choose the
+      // client and amount that the scheduled payment rail later processes.
+      allow create: if false;
 
       // Admin can update anything.
       // Caregiver may confirm cash receipt: approved/auto_approved → paid,
@@ -606,13 +702,33 @@ service cloud.firestore {
       );
       allow delete: if isAdmin();
     }
+
+    match /billingApprovalOutbox/{noticeId} {
+      allow read: if isAdmin() || isBillingReviewer();
+      allow create, update, delete: if false;
+    }
+
+    match /billingOperations/{operationId} {
+      allow read: if isAdmin() || isBillingReviewer();
+      allow create, update, delete: if false;
+    }
+
+    match /refundRequests/{requestId} {
+      allow read: if isAdmin() || isBillingReviewer() || (
+        isAuthenticated() && resource.data.clientId == request.auth.uid
+      );
+      allow create, update, delete: if false;
+    }
     
     // ==========================================
     // MATCH ASSIGNMENTS (Care Coordinator System)
     // ==========================================
     match /match_assignments/{assignmentId} {
-      // Coordinators and admins can create/read/update
-      allow read: if isAuthenticated();
+      // Docs carry clientId/seniorId/careNeeds (PHI) — read is the owning
+      // client or admin, never the whole authed userbase.
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.clientId == request.auth.uid
+      );
       allow create: if isAdmin();
       allow update: if isAdmin();
       allow delete: if isAdmin();
@@ -634,8 +750,15 @@ service cloud.firestore {
     // INTERVIEW REQUESTS
     // ==========================================
     match /interview_requests/{requestId} {
-      // Client, caregiver, coordinator, and admin can read
-      allow read: if isAuthenticated();
+      // Docs carry clientPhone/clientNotes — read is participants + admin
+      // only (every client-side reader already queries by its own
+      // clientId/caregiverId).
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Coordinators and admins can create/update
       allow create: if isAdmin();
       allow update: if isAdmin();
@@ -646,14 +769,42 @@ service cloud.firestore {
     // HIRE REQUESTS
     // ==========================================
     match /hire_requests/{requestId} {
-      // Client, caregiver, coordinator, and admin can read
-      allow read: if isAuthenticated();
+      // Participants + admin only — who is hiring whom is not public.
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.caregiverId == request.auth.uid
+        )
+      );
       // Coordinators and admins can create/update
       allow create: if isAdmin();
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
-    
+
+    // ==========================================
+    // MATCH OUTCOMES (AI matching learning loop)
+    // ==========================================
+    match /match_outcomes/{outcomeId} {
+      // Analytics rows written best-effort from the client matching flow
+      // (services/api.ts recordMatchOutcome); read by coordinator/admin
+      // dashboards. Backend readers use the admin SDK. World-open
+      // create/update let anyone pollute the AI matching learning loop —
+      // create is now bound to the caller's own clientId, mutation is
+      // admin-only.
+      allow read: if isAdmin() || (
+        isAuthenticated() && (
+          resource.data.clientId == request.auth.uid ||
+          resource.data.coordinatorId == request.auth.uid
+        )
+      );
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.resource.data.clientId == request.auth.uid
+      );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
     // ==========================================
     // SHIFTS (GPS Clock In/Out)
     // ==========================================
@@ -827,6 +978,20 @@ service cloud.firestore {
     }
 
     // ==========================================
+    // CANONICAL CARE PLAN (medications / routines / contacts)
+    // ==========================================
+    // care_plans/{clientId} is the single live care-plan doc shared by Evia's
+    // get_care_plan/update_care_plan SMS tools (server-side writes) and the web
+    // Care Plan tab (2026-07-12 cutover — replaces the legacy
+    // senior_profiles/{uid}/care_plans/default subdoc). The versions
+    // subcollection is server-only history (no client match → default deny).
+    match /care_plans/{clientId} {
+      allow read: if isOwner(clientId) || isAdmin();
+      allow create, update: if isOwner(clientId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
     // BOOKING REQUESTS
     // ==========================================
     match /booking_requests/{requestId} {
@@ -916,8 +1081,12 @@ service cloud.firestore {
     }
 
     // Family group member index — server-maintained membership lookup.
+    // Owner-scoped read: the primary client (stamped as userId by the
+    // add_family_member MCP tool and the /join callable) can read their own
+    // group members so the FamilyManager roster updates live. Writes stay
+    // server-only (Admin SDK).
     match /family_group_members/{memberId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow write: if false;
     }
 
@@ -942,7 +1111,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Proactive reflection drafts — Cara's pending/approved SMS suggestions for human review.
+    // Proactive reflection drafts — Evia's pending/approved SMS suggestions for human review.
     // Admin-only UI surface (ProactiveReflectionDashboard). Cloud Functions use the Admin
     // SDK and bypass rules entirely, so the sender + reflection cron are unaffected.
     match /proactive_drafts/{draftId} {
@@ -956,14 +1125,14 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
-    // Agent audit log — every consequential Cara action (observability/auditLog.ts).
+    // Agent audit log — every consequential Evia action (observability/auditLog.ts).
     // Written server-side only; AuditTrail/AuditDashboard admin surfaces read it.
     match /agent_audit_log/{entryId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Family-facing "Cara Activity" feed (U8) — a projection of allow-listed audit
+    // Family-facing "Evia Activity" feed (U8) — a projection of allow-listed audit
     // events, written ONLY by the projectActivityFeed trigger (Admin SDK) with a
     // resolved family-owner uid and PII-free description. Owner reads their own
     // feed; raw agent_audit_log above stays admin-only.
@@ -975,7 +1144,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Agent action ledger — execution status for high-impact Cara actions.
+    // Agent action ledger — execution status for high-impact Evia actions.
     // Written server-side only; admin reads failure/risk state.
     match /agent_action_ledger/{entryId} {
       allow read: if isAdmin();
@@ -1000,14 +1169,14 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
-    // Cara turn metrics — bounded no-message-text quality/experiment mirror.
-    // Written server-side only; Admin Cara Control Room reads flagged rows.
+    // Evia turn metrics — bounded no-message-text quality/experiment mirror.
+    // Written server-side only; Admin Evia Control Room reads flagged rows.
     match /cara_turn_metrics/{metricId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Pending Cara confirmations: admin read only, server write only.
+    // Pending Evia confirmations: admin read only, server write only.
     match /pending_actions/{actionId} {
       allow read: if isAdmin();
       allow update: if isAdmin() &&
@@ -1105,6 +1274,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Durable retry queue for outbound Linq messages blocked by the circuit
+    // breaker / per-pair rate limit (linq/outboundQueue.ts). Server-only —
+    // drained by the drainLinqOutboundQueue scheduled function. Docs carry
+    // raw message text + phone numbers; never client-readable.
+    match /linq_outbound_queue/{queueId} {
+      allow read, write: if false;
+    }
+
     // Caregiver-initiated shift swaps (caregiverSwapHandler). Server-only. The raw
     // doc carries candidatesContacted/candidateResponses/fromCaregiverName, so the
     // UI reads the sanitized shift_swap_summaries projection instead (U7).
@@ -1147,8 +1324,8 @@ service cloud.firestore {
 
     // ==========================================
     // INTERVIEWS — scheduled interview records (functions/agents/interviewAgent.ts)
-    // Written server-side (Admin SDK). The client reads their own pending
-    // interviews (components/InterviewConfirmation.tsx).
+    // Written server-side (Admin SDK), including the Google Meet link + ICS
+    // (agents/interviewLinks.ts). Participants read their own interviews.
     // ==========================================
     match /interviews/{interviewId} {
       allow read: if isAuthenticated() && (
@@ -1162,7 +1339,7 @@ service cloud.firestore {
     }
 
     // ==========================================
-    // REPORTS — user abuse/safety reports (components/InboxView.tsx, Cara/mcp)
+    // REPORTS — user abuse/safety reports (components/InboxView.tsx, Evia/mcp)
     // The reporting user creates their own row; only admins review them.
     // Audit-sensitive: not client-deletable.
     // ==========================================

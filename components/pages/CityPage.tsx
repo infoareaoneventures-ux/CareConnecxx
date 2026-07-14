@@ -1,6 +1,7 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Activity, ShieldCheck, Star, Clock, MapPin, ArrowRight, Check } from 'lucide-react';
+import { ShieldCheck, Star, Clock, MapPin, ArrowRight, Check } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { SEO } from '../SEO';
 import { Footer } from '../landing/Footer';
@@ -74,7 +75,7 @@ export const CityPage: React.FC<CityPageProps> = ({ onNavigate }) => {
       <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
           <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-            <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+            <BloomMark className="text-ink-900 w-5 h-5" />
             <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
           </div>
           <div className="flex items-center gap-3">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 
 export const TermsOfServicePage: React.FC = () => (
   <div className="min-h-screen bg-paper-50">
@@ -7,7 +7,7 @@ export const TermsOfServicePage: React.FC = () => (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
         <a href="/" className="flex items-center gap-2">
           <div className="bg-primary-600 p-2 rounded-xl">
-            <Activity className="text-white w-5 h-5" />
+            <BloomMark className="text-white w-5 h-5" />
           </div>
           <span className="text-xl font-bold text-ink-900">Evia</span>
         </a>

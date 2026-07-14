@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { ViewType } from '../types';
 import { 
   ArrowLeft, Search, MessageSquare, Heart, ShieldCheck, DollarSign, 
-  Calendar, Activity, X, Users, ChevronRight, MessageCircle, Phone,
+  Calendar, X, Users, ChevronRight, MessageCircle, Phone,
   CheckCircle, MapPin, Clock, Star, ChevronDown, Zap, Lock
 } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 import { LegalDocs } from './LegalDocs';
@@ -136,7 +137,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                <div className="flex justify-between items-center h-20">
                   <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
                      <div className="p-1">
-                        <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+                        <BloomMark className="text-ink-900 w-5 h-5" />
                      </div>
                      <span className="font-display text-[22px] font-semibold text-ink-900 tracking-tight">Evia</span>
                   </div>

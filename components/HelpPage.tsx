@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy, MessageCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy, MessageCircle } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { CARA_CAPABILITIES, CapabilityRole, capabilityLabel, capabilityExample } from '../constants/caraCapabilities';
 import { ViewType } from '../types';
 import { Footer } from './landing/Footer';
@@ -281,7 +282,7 @@ const NavBar: React.FC<{ onNavigate: (v: ViewType) => void; onLogin: () => void 
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex justify-between items-center h-20">
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-          <div className="bg-ink-900 p-2 rounded-xl"><Activity className="text-white w-6 h-6" /></div>
+          <div className="bg-ink-900 p-2 rounded-xl"><BloomMark className="text-white w-6 h-6" /></div>
           <span className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</span>
         </div>
         <div className="flex items-center gap-4">

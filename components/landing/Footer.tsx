@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, Twitter, Facebook, Instagram } from 'lucide-react';
+import { Twitter, Facebook, Instagram } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { LegalDocs } from '../LegalDocs';
 
@@ -17,7 +18,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
                         <div className="col-span-2 md:col-span-2">
                             <div className="flex items-center space-x-2 mb-4">
-                                <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+                                <BloomMark className="text-ink-900 w-5 h-5" />
                                 <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
                             </div>
                             <p className="text-ink-600 max-w-xs text-sm leading-relaxed">

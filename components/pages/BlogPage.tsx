@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Activity, ArrowLeft, Clock, Tag, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Clock, Tag, ArrowRight } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { ViewType } from '../../types';
 import { SEO } from '../SEO';
 import { Footer } from '../landing/Footer';
@@ -86,7 +87,7 @@ const BlogIndex: React.FC<{ articles: BlogArticle[]; onNavigate: (view: ViewType
       <header className="sticky top-0 z-50 bg-paper-50/95 backdrop-blur-sm border-b hairline">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
           <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-            <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+            <BloomMark className="text-ink-900 w-5 h-5" />
             <span className="font-display text-xl font-semibold text-ink-900">Evia</span>
           </div>
           <Button size="sm" onClick={() => onNavigate('client-signup')}>Find Care</Button>
@@ -176,7 +177,7 @@ const ArticleView: React.FC<{ article: BlogArticle; allArticles: BlogArticle[]; 
             </Link>
             <span className="text-ink-400">|</span>
             <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-              <Activity className="text-ink-900 w-4 h-4" strokeWidth={2.5} />
+              <BloomMark className="text-ink-900 w-4 h-4" />
               <span className="font-display text-lg font-semibold text-ink-900">Evia</span>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Activity, AlertCircle, CheckCircle, TrendingUp, Printer, Loader } from 'lucide-react';
+import { AlertCircle, CheckCircle, TrendingUp, Printer, Loader } from 'lucide-react';
+import { BloomMark } from '../ui/BloomMark';
 import { db } from '../../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -93,7 +94,7 @@ export default function HealthSummaryPage() {
         <div className="flex items-start justify-between mb-8 print:mb-6">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <Activity className="w-4 h-4 text-ink-900 shrink-0" strokeWidth={2.5} />
+              <BloomMark className="w-4 h-4 text-ink-900 shrink-0" />
               <span className="font-display font-semibold text-ink-900 text-sm">Evia</span>
             </div>
             <h1 className="font-display text-2xl font-semibold text-ink-900 tracking-[-0.02em]">

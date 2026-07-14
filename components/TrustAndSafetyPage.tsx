@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { ViewType } from '../types';
 import { 
-  Activity, ShieldCheck, HeartHandshake, CheckCircle, 
+  ShieldCheck, HeartHandshake, CheckCircle, 
   MessageSquare, Users, Lock, Clock, Award, Star
 } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { Button } from './ui/Button';
 import { SEO } from './SEO';
 import { Footer } from './landing/Footer';
@@ -102,7 +103,7 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
                <div className="flex justify-between items-center h-20">
                   <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
                      <div className="bg-ink-900 p-2 rounded-xl">
-                        <Activity className="text-white w-6 h-6" />
+                        <BloomMark className="text-white w-6 h-6" />
                      </div>
                      <span className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</span>
                   </div>

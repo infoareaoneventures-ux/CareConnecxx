@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
+import { BloomMark } from './ui/BloomMark';
 import { ViewType } from '../types';
 import { Button } from './ui/Button';
 import { SEO, generateOrganizationSchema, generateServiceSchema, generateFAQSchema } from './SEO';
@@ -60,7 +61,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onNavigate }) => {
                <div className="flex justify-between items-center h-16">
                   {/* Logo */}
                   <div className="flex items-center space-x-2 cursor-pointer" onClick={() => onNavigate('landing')}>
-                     <Activity className="text-ink-900 w-5 h-5" strokeWidth={2.5} />
+                     <BloomMark className="text-ink-900 w-5 h-5" />
                      <span className="font-display text-[22px] font-semibold text-ink-900 tracking-tight">Evia</span>
                   </div>
 

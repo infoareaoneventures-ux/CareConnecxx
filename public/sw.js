@@ -11,7 +11,9 @@
 //   - Everything else same-origin: network-first with cache fallback
 // The name bump to evia-v4 makes the activate handler purge the poisoned
 // careconnex-v3 cache on every existing installation.
-const CACHE_NAME = 'evia-v4';
+// evia-v5 (2026-07-13): icon-192/512 replaced with the new Bloom brand mark —
+// bump forces precached old icons out of existing installs.
+const CACHE_NAME = 'evia-v5';
 const urlsToCache = [
     '/offline.html',
     '/manifest.json',

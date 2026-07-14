@@ -2,7 +2,6 @@ import * as admin from "firebase-admin";
 import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { sendViaInteractionAgent } from "./caraAgent";
 import { answerHumanMidFlow } from "./humanReply";
 import { businessTodayStr } from "../utils/scheduledTime";
 
@@ -14,8 +13,8 @@ const db = admin.firestore();
  * Three-step state machine:
  *   identify_shift → list upcoming shifts numbered 1..N, store JSON in session
  *   confirm_shift  → caregiver picks number; system shows shift + asks YES/NO
- *   ask_reason     → caregiver gives reason; system finalizes (cancel appt,
- *                    alert family, invoke replacement agent)
+ *   ask_reason     → caregiver gives reason and cancels the appointment;
+ *                    the appointment trigger owns family alerts and replacement
  *
  * Mirrors the pattern in caregiverSwapHandler.ts.
  */
@@ -231,7 +230,6 @@ export async function handleCaregiverCancelShift(
 
     const shiftId   = session.cancelShiftId as string;
     const shiftDate = session.cancelShiftDate as string;
-    const clientId  = session.cancelShiftClientId as string;
 
     if (!shiftId) {
       await sendMessage(chatId, await generateCaraMessage({
@@ -257,7 +255,6 @@ export async function handleCaregiverCancelShift(
     const apptSnap = await db.collection("appointments").doc(shiftId).get();
     const apptData = apptSnap.data() ?? {};
     const seniorName = (apptData.seniorName ?? apptData.clientName ?? "the client") as string;
-    const startTime  = (apptData.startTime ?? apptData.time ?? "") as string;
 
     // Mark appointment cancelled
     await db.collection("appointments").doc(shiftId).update({
@@ -267,7 +264,7 @@ export async function handleCaregiverCancelShift(
       cancellationReason:  reason,
       cancelledByCaregiverId:   caregiverId,
       cancelledByCaregiverName: caregiverName,
-    }).catch(err => console.error("[cancelShift] appointment update failed:", err));
+    });
 
     // Clear flow state
     await db.collection("agent_sessions").doc(caregiverPhone).update({
@@ -294,66 +291,6 @@ export async function handleCaregiverCancelShift(
       maxTokens: 100,
     });
     await sendMessage(chatId, ackMsg);
-
-    // Alert family with urgency
-    if (clientId) {
-      const clientSessionSnap = await db.collection("agent_sessions")
-        .where("userId", "==", clientId)
-        .limit(1)
-        .get();
-      const clientPhone = clientSessionSnap.empty
-        ? null
-        : ((clientSessionSnap.docs[0].data() as any).phone ?? clientSessionSnap.docs[0].id);
-
-      if (clientPhone) {
-        const alertMsg = await generateCaraMessage({
-          audience: "family",
-          context:
-            `Unfortunately ${cgFirstName} just cancelled their visit with ${seniorName} on ${shiftDate}` +
-            `${startTime ? " at " + startTime : ""} (reason: ${reason}). ` +
-            `Write an urgent but calm alert to the family. Let them know you're already working on a replacement. ` +
-            `Tell them to reply HELP if they need immediate support. Be direct but not alarming.`,
-          fallback:
-            `Heads up — ${cgFirstName} won't be able to make ${seniorName}'s visit on ${shiftDate}` +
-            `${startTime ? " at " + startTime : ""}. I'm already working on finding coverage. ` +
-            `Reply HELP if you need anything in the meantime.`,
-          maxTokens: 150,
-        });
-        await sendViaInteractionAgent(clientPhone, {
-          content:     alertMsg,
-          urgency:     "immediate",
-          sourceAgent: "caregiver_cancel_shift",
-          canDrop:     false,
-        }).catch(err => console.error("[cancelShift] family alert failed:", err));
-      }
-    }
-
-    // Fire replacement agent (fire-and-forget). runEmergencyReplacement searches
-    // for available caregivers and texts the family with numbered options.
-    if (clientId) {
-      const clientSessionSnap2 = await db.collection("agent_sessions")
-        .where("userId", "==", clientId)
-        .limit(1)
-        .get();
-      const clientPhone2 = clientSessionSnap2.empty
-        ? ""
-        : ((clientSessionSnap2.docs[0].data() as any).phone ?? clientSessionSnap2.docs[0].id);
-      import("./replacementAgent").then(({ runEmergencyReplacement }) => {
-        runEmergencyReplacement({
-          appointmentId: shiftId,
-          clientId,
-          clientPhone:   clientPhone2,
-          appt: {
-            ...apptData,
-            caregiverName: caregiverName,
-            caregiverId,
-            date: shiftDate,
-            time: startTime,
-          },
-        }).catch(err => console.error("[cancelShift] replacement agent failed:", err));
-      }).catch(err => console.error("[cancelShift] replacementAgent import failed:", err));
-      void seniorName;
-    }
 
     return;
   }

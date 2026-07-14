@@ -5,8 +5,26 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
 import { parseScheduledTimeMs } from "../utils/scheduledTime";
 import { decideArrivalCapture } from "./noShowPolicy";
+import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
 
 const db = admin.firestore();
+
+const SYSTEM_DIRECTIVE_PREFIXES = [
+  "retry_extend_schedule:",
+  "health_escalation:",
+  "replacement_task:",
+  "qa_retry:",
+  "caregiver_checkin:",
+  "caregiver_checkin_escalation:",
+  "issue_escalation:",
+  "issue_escalation_final:",
+  "issue_followup:",
+  "interview_followup:",
+];
+
+function isSystemDirectiveMessage(message: string): boolean {
+  return SYSTEM_DIRECTIVE_PREFIXES.some((prefix) => message.startsWith(prefix));
+}
 
 export interface ProactiveTrigger {
   id?:               string;
@@ -20,6 +38,10 @@ export interface ProactiveTrigger {
   message:           string;
   firedAt?:          string | null;
   cancelledAt?:      string | null;
+  deliveryState?:    "firing" | "delivered" | "failed_ambiguous" | "suppressed";
+  deliveryClaimedAt?: string;
+  deliveryCompletedAt?: string;
+  deliveryError?:    string | null;
   createdAt:         string;
   // Links a trigger to the record it serves (e.g. "video_interview_<id>") so
   // cancelTriggersByRef can retire reminders when that record is cancelled.
@@ -333,7 +355,11 @@ export const runTriggerEngine = functions.pubsub
 
     const snap = await db
       .collection("proactive_triggers")
+      .where("firedAt", "==", null)
+      .where("cancelledAt", "==", null)
       .where("scheduledAt", "<=", now)
+      .orderBy("scheduledAt", "asc")
+      .limit(100)
       .get();
 
     for (const doc of snap.docs) {
@@ -375,6 +401,16 @@ export const runTriggerEngine = functions.pubsub
         await doc.ref.update({ cancelledAt: now });
         continue;
       }
+
+      const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"]
+        .includes(trigger.type ?? "");
+      const isDirective = isSystemDirectiveMessage(trigger.message);
+      if (!isDirective && degraded && (trigger.source === "claude" || !isHealthTrigger)) {
+        continue;
+      }
+
+      const claimed = await claimProactiveTrigger(db, doc.ref, now);
+      if (!claimed) continue;
 
       try {
         // Retry recurring schedule extension after 1h
@@ -442,10 +478,6 @@ export const runTriggerEngine = functions.pubsub
             console.error("interview_followup failed:", err)
           );
         } else if (trigger.source === "claude" && trigger.intent) {
-          // Held while degraded — regenerating + sending a chatty follow-up
-          // during a provider outage produces broken conversations. Trigger
-          // stays unfired and goes out after recovery.
-          if (degraded) continue;
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 
           // Load last 5 conversation turns for suppression check
@@ -462,7 +494,12 @@ export const runTriggerEngine = functions.pubsub
           // Context-aware suppression: skip if topic already addressed
           const fire = await shouldFireTrigger(trigger, recentMsgs);
           if (!fire) {
-            await doc.ref.update({ cancelledAt: now, suppressionReason: "context_resolved" });
+            await doc.ref.update({
+              cancelledAt: now,
+              suppressionReason: "context_resolved",
+              deliveryState: "suppressed",
+              deliveryCompletedAt: now,
+            });
             console.log(`[triggerEngine] Suppressed claude trigger ${doc.id} — context already resolved`);
             continue;
           }
@@ -472,7 +509,6 @@ export const runTriggerEngine = functions.pubsub
           const memCtx = await getMemoryContext(trigger.userId).catch(() => "");
           const content = await generateTriggerMessage(trigger, memCtx);
 
-          const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"].includes(trigger.type ?? "");
           await sendViaInteractionAgent(trigger.phone, {
             content,
             urgency:     isHealthTrigger ? "immediate" : "standard",
@@ -480,10 +516,6 @@ export const runTriggerEngine = functions.pubsub
             canDrop:     !isHealthTrigger,
           });
         } else {
-          const isHealthTrigger = ["health_alert", "health_check", "medication_reminder", "fall_risk", "wellness_check"].includes(trigger.type ?? "");
-          // Health triggers fire even while degraded; generic check-ins hold
-          // (stay unfired) until the system recovers.
-          if (degraded && !isHealthTrigger) continue;
           await sendViaInteractionAgent(trigger.phone, {
             content:     trigger.message,
             urgency:     isHealthTrigger ? "immediate" : "standard",
@@ -491,9 +523,12 @@ export const runTriggerEngine = functions.pubsub
             canDrop:     !isHealthTrigger,
           });
         }
-        await doc.ref.update({ firedAt: now });
+        await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString());
       } catch (err) {
         console.error("triggerEngine: failed to send for", doc.id, err);
+        await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString(), err).catch((settleError) => {
+          console.error("triggerEngine: failed to record ambiguous delivery failure for", doc.id, settleError);
+        });
       }
     }
 

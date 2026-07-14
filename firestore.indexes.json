@@ -961,6 +961,24 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
+          "fieldPath": "firedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cancelledAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "scheduledAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "proactive_triggers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
           "fieldPath": "type",
           "order": "ASCENDING"
         },

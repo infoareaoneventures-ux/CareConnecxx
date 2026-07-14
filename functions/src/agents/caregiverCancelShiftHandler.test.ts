@@ -208,16 +208,10 @@ describe("handleCaregiverCancelShift", () => {
     expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/reason/i);
   });
 
-  it("ask_reason — captures reason, marks appointment cancelled, alerts family, fires replacement agent", async () => {
+  it("ask_reason — cancels and acknowledges while the appointment trigger owns family fan-out", async () => {
     parseWithClaude
       .mockResolvedValueOnce("NO")   // isQuestionOrOther
       .mockResolvedValueOnce("family emergency"); // reason summary
-
-    // Mock the client-session lookup to find a phone for alert
-    hoisted.sessionsGetMock.mockResolvedValueOnce({
-      empty: false,
-      docs: [{ data: () => ({ phone: "+15555550200" }), id: "+15555550200" }],
-    });
 
     docGetMock.mockResolvedValueOnce({
       exists: true,
@@ -246,20 +240,9 @@ describe("handleCaregiverCancelShift", () => {
     }));
     // Caregiver acked
     expect(sendMessage).toHaveBeenCalled();
-    // Family alerted (urgency immediate, canDrop false)
-    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15555550200", expect.objectContaining({
-      urgency: "immediate",
-      canDrop: false,
-    }));
-    // Replacement agent fires from a fire-and-forget dynamic import — wait for
-    // the call to land instead of a fixed setTimeout (which raced under parallel
-    // runs and produced an intermittent failure here).
-    await vi.waitFor(() => {
-      expect(hoisted.runEmergencyReplacement).toHaveBeenCalledWith(expect.objectContaining({
-        appointmentId: "shift-1",
-        clientId:      "client-1",
-      }));
-    }, { timeout: 2000, interval: 25 });
+    // The Firestore appointment trigger is the sole family alert/replacement owner.
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(hoisted.runEmergencyReplacement).not.toHaveBeenCalled();
   });
 
   it("ask_reason — isQuestionOrOther answers and does NOT cancel", async () => {

@@ -999,7 +999,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_caregiver_profile",
     description:
-      "Update your own caregiver profile — hourly rate, bio, phone, city, or weekly availability. " +
+      "Update your own caregiver profile — hourly rate, bio, city, or weekly availability. " +
       "Only you can update your own profile. Changes take effect immediately.",
     input_schema: {
       type: "object",
@@ -1007,11 +1007,11 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId:        { type: "string",  description: "Your caregiver Firestore document ID" },
         hourlyRate:         { type: "number",  description: "Your new hourly rate in dollars" },
         bio:                { type: "string",  description: "Your updated bio (max 2500 characters)" },
-        phone:              { type: "string",  description: "Your new phone number" },
+        phone:              { type: "string",  description: "Your current session phone; used to verify account ownership and never changed by this tool" },
         city:               { type: "string",  description: "Your city" },
         weeklyAvailability: { type: "object",  description: "Object mapping day abbreviations to time windows" },
       },
-      required: ["caregiverId"],
+      required: ["caregiverId", "phone"],
     },
   },
   {
@@ -4429,17 +4429,29 @@ async function executeToolCall(
     // ── New write tools ────────────────────────────────────────────────────────
 
     if (name === "update_caregiver_profile") {
-      const { caregiverId, hourlyRate, bio, phone: cgPhone, city, weeklyAvailability } = input as Record<string, unknown>;
-      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const { caregiverId, hourlyRate, bio, phone: actingPhone, city, weeklyAvailability } = input as Record<string, unknown>;
+      if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
+      const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
+      const caregiverSnap = await caregiverRef.get();
+      if (!caregiverSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const ownerPhone = caregiverSnap.data()?.phone;
+      if (!ownerPhone || ownerPhone !== actingPhone) {
+        return toolError("PERMISSION_DENIED", "You can only update your own caregiver profile");
+      }
       if (bio && typeof bio === "string" && bio.length > 2500) return toolError("INVALID_INPUT", "bio must be 2500 characters or fewer");
+      if (hourlyRate != null) {
+        const rate = Number(hourlyRate);
+        if (!Number.isFinite(rate) || rate < 15 || rate > 150) {
+          return toolError("INVALID_INPUT", "hourlyRate must be between 15 and 150");
+        }
+      }
       const patch: Record<string, unknown> = { updatedAt: nowIso };
-      if (hourlyRate         != null) patch.hourlyRate         = hourlyRate;
+      if (hourlyRate         != null) patch.hourlyRate         = Number(hourlyRate);
       if (bio                != null) patch.bio                = bio;
-      if (cgPhone            != null) patch.phone              = cgPhone;
       if (city               != null) patch.city               = city;
       if (weeklyAvailability != null) patch.weeklyAvailability = weeklyAvailability;
       if (Object.keys(patch).length === 1) return toolError("INVALID_INPUT", "At least one field to update is required");
-      await db.collection("caregivers").doc(caregiverId as string).set(patch, { merge: true });
+      await caregiverRef.set(patch, { merge: true });
       logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
       return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
     }

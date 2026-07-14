@@ -56,7 +56,9 @@ export function verifyToken(token: string): TokenPayload | null {
     if (parts.length !== 3) return null;
     const [header, body, sig] = parts;
     const expected = b64url(crypto.createHmac("sha256", getSecret()).update(`${header}.${body}`).digest());
-    if (sig !== expected) return null;
+    const sigBuffer = Buffer.from(sig);
+    const expectedBuffer = Buffer.from(expected);
+    if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) return null;
     const payload = JSON.parse(b64urlDecode(body).toString()) as TokenPayload;
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;

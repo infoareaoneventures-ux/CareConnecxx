@@ -11,6 +11,7 @@ import {
 } from "./ai/claudeMatching";
 import { getOutcomePatternSummary } from "./ai/outcomeAnalytics";
 import { isCaregiverBookable } from "./utils/caregiverEligibility";
+import { canAccessMatchAssignment } from "./auth/matchAssignmentAccess";
 
 /**
  * Cloud Function: Run AI Matching Algorithm
@@ -41,6 +42,14 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
     }
     const assignment = assignmentDoc.data()!;
     const clientId = assignment.clientId;
+    let callerRecord: Record<string, unknown> | undefined;
+    if (clientId !== context.auth.uid) {
+      const callerDoc = await db.collection("users").doc(context.auth.uid).get();
+      callerRecord = callerDoc.exists ? callerDoc.data() : undefined;
+    }
+    if (!canAccessMatchAssignment(context.auth.uid, clientId, callerRecord)) {
+      throw new functions.https.HttpsError("permission-denied", "Not your match assignment");
+    }
 
     const intakeSnap = await db
       .collection("clientIntakes")
@@ -249,6 +258,7 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
       matchesFound: validMatches.length,
     };
   } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
     console.error("[runAiMatching] Error:", error);
     throw new functions.https.HttpsError("internal", "Failed to run matching algorithm");
   }

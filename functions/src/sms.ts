@@ -8,6 +8,7 @@ import * as admin from "firebase-admin";
 import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService } from "./linq/client";
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
 import { getAppUrl } from "./config/appUrl";
+import { requireAdmin } from "./admin/requireAdmin";
 
 const db = admin.firestore();
 
@@ -308,6 +309,7 @@ export const sendTestSMS = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Must be logged in");
   }
+  await requireAdmin(context);
 
   const clientId = getClientIdentifier(context);
   const rateLimitResult = await checkRateLimit(clientId, RATE_LIMITS.sms);

@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { sendToPhone } from "../linq/client";
 import { sendViaInteractionAgent } from "./caraAgent";
 import { scoreReplacements, ReplacementOption } from "./replacementScorer";
@@ -147,7 +148,7 @@ export async function runEmergencyReplacement(params: {
     return;
   }
 
-  const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const confirmToken = crypto.randomBytes(16).toString("base64url");
 
   const taskRef = await db.collection("agent_tasks").add({
     type:          "replacement_confirmation",

@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { scoreReplacements } from "../agents/replacementScorer";
@@ -278,7 +279,7 @@ async function handleCaregiverCancellation(
   }
 
   // Generate a confirmation token for the QuickConfirm page
-  const confirmToken = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const confirmToken = crypto.randomBytes(16).toString("base64url");
 
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
   const taskRef = db.collection("agent_tasks").doc(externalOperationDocId(`${operationKey}:task`));

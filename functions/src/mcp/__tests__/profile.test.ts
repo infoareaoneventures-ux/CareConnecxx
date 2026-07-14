@@ -98,6 +98,49 @@ import { handleToolCall } from "../server";
 describe("profile tools", () => {
   beforeEach(() => hoisted.reset());
 
+  describe("update_caregiver_profile", () => {
+    it("denies a different acting phone without writing", async () => {
+      hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
+      const r = await handleToolCall("update_caregiver_profile", {
+        caregiverId: "cg1",
+        phone: "+15555550999",
+        bio: "Injected bio",
+      }) as any;
+
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+      expect(hoisted.sets).toHaveLength(0);
+    });
+
+    it.each([-5, 0, 151, 9999])("rejects an out-of-range hourly rate: %s", async (hourlyRate) => {
+      hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
+      const r = await handleToolCall("update_caregiver_profile", {
+        caregiverId: "cg1",
+        phone: "+15555550100",
+        hourlyRate,
+      }) as any;
+
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+      expect(hoisted.sets).toHaveLength(0);
+    });
+
+    it("updates an owned profile without mutating its identity phone", async () => {
+      hoisted.docState.set("caregivers/cg1", { phone: "+15555550100" });
+      const r = await handleToolCall("update_caregiver_profile", {
+        caregiverId: "cg1",
+        phone: "+15555550100",
+        hourlyRate: 35,
+        bio: "Experienced companion caregiver",
+      }) as any;
+
+      expect(r.success).toBe(true);
+      expect(r.updated).toEqual(expect.arrayContaining(["hourlyRate", "bio"]));
+      const write = hoisted.sets.find((entry) => entry.path === "caregivers/cg1");
+      expect(write?.data.phone).toBeUndefined();
+    });
+  });
+
   describe("update_user_profile", () => {
     it("requires userId", async () => {
       const r = await handleToolCall("update_user_profile", { firstName: "Bob" }) as any;

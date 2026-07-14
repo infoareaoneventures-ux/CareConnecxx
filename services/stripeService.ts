@@ -20,8 +20,8 @@ export const getStripe = () => {
 // Client monthly membership — $29.95/mo (live price ID)
 export const MEMBERSHIP_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO';
 
-// Caregiver annual membership (background check) — $66.49/yr (live price ID)
-export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TO8L6L7Ss5iuUb7Vrbea2tg';
+// Caregiver annual membership (criminal-only background check) — $54.99/yr (live price ID)
+export const CAREGIVER_ANNUAL_PRICE_ID = import.meta.env.VITE_STRIPE_CAREGIVER_ANNUAL || 'price_1TtBYwL7Ss5iuUb7iZ1s0PQg';
 
 export interface SubscriptionStatus {
   status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'unpaid' | 'trialing' | null;

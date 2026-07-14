@@ -165,17 +165,20 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
             fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their $66.49/year membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
-            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour $66.49/year membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their $54.99/year membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
+            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour $54.99/year membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
             context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, HHA, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
             fallback = `${greeting} Almost done — just your certifications left (CNA, HHA, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
           } else if (step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival") {
-            // Their profile IS finished at this point (bg check cleared, payouts
-            // live, matchable) — never imply otherwise (founder report 2026-07-10:
-            // the generic branch below told a fully live caregiver their profile
-            // was "almost there").
-            context = `${firstName || "This caregiver"}'s profile is COMPLETE and LIVE — they're fully approved and matchable. NOTHING is missing from their profile; never say it's unfinished or that they can't pick up shifts yet. All that's left is one optional yes/no setup question Evia already asked (${step === "caregiver_permissions_arrival" ? "auto-notifying the family when they arrive at a visit" : "auto-declining job requests outside their availability"}). Warmly invite a quick yes or no — one word finishes setup, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
+            // Their PROFILE is finished at this point — never imply otherwise
+            // (founder report 2026-07-10: the generic branch below told a fully
+            // live caregiver their profile was "almost there"). But do NOT assert
+            // payouts are live or the background check cleared here: a caregiver
+            // reaches the permissions questions before Stripe Connect / Checkr
+            // actually finish (founder report 2026-07-14), so those claims can be
+            // false. Keep the nudge to the profile + the optional yes/no.
+            context = `${firstName || "This caregiver"}'s profile is COMPLETE — NOTHING is missing from their profile; never say it's unfinished or invent missing profile fields. Do NOT claim their payout setup or background check is finished (those may still be processing). All that's left on THIS step is one optional yes/no question Evia already asked (${step === "caregiver_permissions_arrival" ? "auto-notifying the family when they arrive at a visit" : "auto-declining job requests outside their availability"}). Warmly invite a quick yes or no — one word finishes this step, and they can change it anytime. Never write a stiff "Reply YES or NO" instruction.`;
             fallback = `${greeting} Good news — your profile is complete and live. A quick yes or no to my last question and you're all set (you can change it anytime).`;
           } else {
             context = `${firstName || "This caregiver"} stalled partway through profile setup. Send a short, warm nudge inviting them to reply whenever they're ready to continue.`;

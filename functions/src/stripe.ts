@@ -30,10 +30,11 @@ const ALLOWED_PRICE_IDS = [
   process.env.STRIPE_PRICE_MONTHLY        || 'price_1TO8D5L7Ss5iuUb73AQ3zHKO',
   process.env.STRIPE_PRICE_QUARTERLY      || '',
   process.env.STRIPE_PRICE_ANNUAL         || '',
-  // $66.49/yr caregiver background check (Essential Criminal via Checkr); the
-  // legacy $24.95 membership price stays allowed for in-flight checkouts.
-  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TqGrEL7Ss5iuUb7gW7DsMtA',
-  'price_1TO8L6L7Ss5iuUb7Vrbea2tg',
+  // $54.99/yr caregiver membership (criminal-only background check via Checkr;
+  // 2026-07-14 repricing — MVR is a separate $11.50 one-time add-on line item).
+  // The old $66.49 price (price_1TqGrE…) and its product were archived in Stripe;
+  // existing subscriptions keep billing on it, but new checkouts must not use it.
+  process.env.STRIPE_CAREGIVER_ANNUAL     || 'price_1TtBYwL7Ss5iuUb7iZ1s0PQg',
   process.env.STRIPE_CAREGIVER_MONTHLY    || '',
   MEMBERSHIP_PRICE_ID,
 ].filter(Boolean);

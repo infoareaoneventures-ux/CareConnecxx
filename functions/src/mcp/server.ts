@@ -1965,6 +1965,41 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId"],
     },
   },
+  {
+    name: "get_payout_status",
+    description:
+      "Look up the caregiver's OWN Stripe payout (Connect) setup status. Use when a caregiver asks \"is my payout " +
+      "set up\", \"can I get paid yet\", \"did my bank connect\", or asks you to set up / (re)send the payout link. " +
+      "Returns the LIVE status so you answer truthfully — NEVER say payouts are live, ready, or set up unless " +
+      "summary is \"active\". When summary is anything else, send the setup link with send_onboarding_link " +
+      "(linkType caregiver_payouts) instead of claiming it's done.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected)" },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
+    name: "get_signup_completeness",
+    description:
+      "FINAL SIGNUP CHECK — audit the user's account for anything their signup missed. Works for BOTH roles: " +
+      "caregivers (profile fields, photo, membership, background check, payout setup, visibility to families) and " +
+      "families (membership payment, care-recipient profile, care plan). Use right after signup wraps up, or when " +
+      "anyone asks \"did I miss anything\", \"is my profile complete\", \"am I all set\". Returns `missing` (real " +
+      "gaps, each with a `fix`) and `optionalGaps` (nice-to-haves — never call these missing). Ground your answer " +
+      "ONLY on this result: if `complete` is true say so plainly; if not, walk through the gaps and offer the fix — " +
+      "when a fix names send_onboarding_link, call that tool when they say yes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (auto-injected on caregiver turns)" },
+        clientId:    { type: "string", description: "The family/client's user ID (auto-injected on family turns)" },
+      },
+      required: [],
+    },
+  },
   // ── Checkr Candidate MCP bridge (docs.checkr.com/mcp) ──────────────────────
   // Pulls the caregiver's FULL redacted report straight from Checkr, gated by
   // Checkr's own candidate identity verification (email OTP). Flow:
@@ -2528,6 +2563,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "send_onboarding_link",
   "get_caregiver_reviews",
   "get_background_check_status",
+  "get_payout_status",
+  "get_signup_completeness",
   // U2 — caregiver action parity
   "withdraw_job_application",
   "respond_to_booking_request",
@@ -2586,6 +2623,7 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "submit_gps_checkin",
   "get_tax_summary",
   "get_background_check_status",
+  "get_payout_status",
   "withdraw_job_application",
   "respond_to_booking_request",
   "start_shift",
@@ -2914,6 +2952,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "read_memory_file", "search_memory", "search_web",
   "list_client_jobs", "list_job_applicants", "browse_job_board",
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
+  "get_payout_status", "get_signup_completeness",
   // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
   "list_interviews", "list_blocked_users", "list_shift_swaps",
   // get_checkr_report is a pure remote read (Checkr redacts PII; nothing is
@@ -6048,6 +6087,215 @@ async function executeToolCall(
         completedAt:      bg.completedAt ?? null,
         mvrIncluded:      !!bg.mvrIncluded,
       };
+    }
+
+    // ── get_payout_status ────────────────────────────────────────────────────
+    // Live Stripe Connect setup status so the agent answers payout questions
+    // truthfully (added 2026-07-14 after Evia falsely claimed payouts were live).
+    // Firestore-only, like get_background_check_status: reads the flags the
+    // stripeConnectWebhook stamps. Errs toward "not active" if a flag is missing,
+    // so it never reports payouts live when they aren't.
+    if (name === "get_payout_status") {
+      const { caregiverId } = input as Record<string, unknown>;
+      if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
+      const cgPaySnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      if (!cgPaySnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+      const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+      const pay = await getCaregiverPayoutFields(caregiverId as string, (cgPaySnap.data() ?? {}) as Record<string, unknown>);
+      const payoutsEnabled     = pay.payoutsEnabled === true;
+      const onboardingComplete = pay.stripeOnboardingComplete === true;
+      const detailsSubmitted   = pay.detailsSubmitted === true;
+      const hasStripeAccount   = !!pay.stripeAccountId;
+
+      let summary: string;
+      if (payoutsEnabled || onboardingComplete) summary = "active";        // paid out automatically; nothing to do
+      else if (!hasStripeAccount)               summary = "not_started";   // link never opened
+      else if (detailsSubmitted)                summary = "under_review";  // Stripe has details, still finishing
+      else                                      summary = "incomplete";    // started but Stripe's form unfinished
+
+      return {
+        success:                  true,
+        summary,
+        payoutsEnabled,
+        stripeOnboardingComplete: onboardingComplete,
+        detailsSubmitted,
+        hasStripeAccount,
+      };
+    }
+
+    // ── get_signup_completeness ──────────────────────────────────────────────
+    // Final post-signup audit for BOTH roles (added 2026-07-14, founder ask).
+    // Firestore-only: checks the canonical docs each role's finalization writes
+    // (caregivers/{id} + private/payout + users/{uid}; users/{uid} +
+    // senior_profiles/{uid} + carePlans/{uid}) so the agent reports real gaps
+    // instead of guessing. Distinguishes hard gaps (`missing`, each with a fix
+    // the agent can act on) from `optionalGaps` (never blockers).
+    if (name === "get_signup_completeness") {
+      const { caregiverId, clientId } = input as Record<string, unknown>;
+      const filled = (v: unknown): boolean => {
+        if (v === undefined || v === null) return false;
+        if (typeof v === "string") return v.trim().length > 0;
+        if (typeof v === "number") return v > 0;
+        if (Array.isArray(v)) return v.length > 0;
+        return true;
+      };
+
+      // ── Caregiver audit ────────────────────────────────────────────────────
+      if (caregiverId) {
+        const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+        if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+        const cg = (cgSnap.data() ?? {}) as Record<string, unknown>;
+        const userSnap = await db.collection("users").doc(caregiverId as string).get().catch(() => null);
+        const user = (userSnap?.data() ?? {}) as Record<string, unknown>;
+
+        const missing: Array<{ item: string; detail: string; fix: string }> = [];
+        const optionalGaps: string[] = [];
+
+        // Profile fields (canonical caregivers/{uid} names — buildCaregiverProfileMirror)
+        const profileChecks: Array<[string, boolean, string]> = [
+          ["name",         filled(cg.name), "ask for it and save with update_caregiver_profile"],
+          ["city",         filled(cg.city), "ask for it and save with update_caregiver_profile"],
+          ["hourly rate",  filled(cg.hourlyRate), "ask for it and save with update_caregiver_profile"],
+          ["experience",   filled(cg.yearsExperience) || filled(cg.experience), "ask for it and save with update_caregiver_profile"],
+          ["services",     filled(cg.skills) || filled(cg.services) || filled(cg.specialties), "ask what care services they offer and save with update_caregiver_profile"],
+          ["availability", filled(cg.availability) || filled(cg.weeklyAvailability), "ask for it and save with update_caregiver_availability"],
+          ["job type",     filled(cg.jobType) || filled(cg.jobTypes), "ask full-time/part-time/one-time and save with update_caregiver_profile"],
+          ["email",        filled(cg.email) || filled(user.email), "ask for it and save with update_caregiver_profile"],
+        ];
+        for (const [item, ok, fix] of profileChecks) {
+          if (!ok) missing.push({ item: `profile: ${item}`, detail: `The ${item} field on their profile is empty.`, fix });
+        }
+        if (!filled(cg.bio) && cg.bioSkipped !== true) {
+          optionalGaps.push("bio (they can add a short intro anytime — families like it, but it's optional)");
+        }
+        if (!filled(cg.photo) && !filled(cg.profilePhoto) && !filled(cg.photoURL)) {
+          missing.push({
+            item: "profile photo",
+            detail: "No profile photo — families see a blank avatar.",
+            fix: "send_onboarding_link (linkType caregiver_photo)",
+          });
+        }
+        if (!filled(cg.documents) && !filled(cg.certifications)) {
+          optionalGaps.push("certifications/documents (CNA, HHA, etc. — optional but boosts trust; send_onboarding_link linkType caregiver_documents)");
+        }
+
+        // Gates
+        const membershipActive = cg.membershipPaid === true || user.membershipStatus === "active" || user.subscriptionActive === true;
+        if (!membershipActive) {
+          missing.push({
+            item: "membership payment",
+            detail: "Their $54.99/yr membership hasn't been recorded as paid.",
+            fix: "send_onboarding_link (linkType caregiver_membership)",
+          });
+        }
+        const bg = (cg.backgroundCheckData ?? {}) as Record<string, unknown>;
+        const bgStarted = filled(bg.status) || filled(bg.submittedAt) || filled(bg.checkrCandidateId);
+        let backgroundCheck: string;
+        if (bg.status === "clear") backgroundCheck = "cleared";
+        else if (bgStarted)        backgroundCheck = "in_progress";
+        else {
+          backgroundCheck = "not_started";
+          missing.push({
+            item: "background check",
+            detail: "Their background check hasn't been started.",
+            fix: "send_onboarding_link (linkType caregiver_background_check)",
+          });
+        }
+        const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+        const pay = await getCaregiverPayoutFields(caregiverId as string, cg);
+        const payoutsLive = pay.payoutsEnabled === true || pay.stripeOnboardingComplete === true;
+        if (!payoutsLive) {
+          missing.push({
+            item: "payout setup",
+            detail: pay.stripeAccountId
+              ? "They started Stripe payout setup but haven't finished (bank/terms pending) — they can't get paid yet."
+              : "Stripe payout setup hasn't been started — they can't get paid yet.",
+            fix: "send_onboarding_link (linkType caregiver_payouts)",
+          });
+        }
+        const visibleToFamilies = cg.onboardingStatus === "profile_complete";
+        if (!visibleToFamilies) {
+          missing.push({
+            item: "profile visibility",
+            detail: "Their profile isn't marked complete yet, so families can't find them in search. This usually resolves when the steps above are finished.",
+            fix: "finish the remaining signup steps; if everything else is done, create_support_ticket so the team can activate them",
+          });
+        }
+
+        return {
+          success: true,
+          role: "caregiver",
+          complete: missing.length === 0,
+          missing,
+          optionalGaps,
+          status: {
+            membershipActive,
+            backgroundCheck,
+            payoutsLive,
+            visibleToFamilies,
+          },
+        };
+      }
+
+      // ── Client / family audit ──────────────────────────────────────────────
+      if (clientId) {
+        const uSnap = await db.collection("users").doc(clientId as string).get();
+        if (!uSnap.exists) return toolError("NOT_FOUND", "User not found");
+        const u = (uSnap.data() ?? {}) as Record<string, unknown>;
+        const seniorSnap = await db.collection("senior_profiles").doc(clientId as string).get().catch(() => null);
+        const senior = seniorSnap?.exists ? (seniorSnap.data() ?? {}) as Record<string, unknown> : null;
+        const planSnap = await db.collection("carePlans").doc(clientId as string).get().catch(() => null);
+
+        const missing: Array<{ item: string; detail: string; fix: string }> = [];
+        const optionalGaps: string[] = [];
+
+        const membershipActive = u.subscriptionActive === true || u.membershipStatus === "active";
+        if (!membershipActive) {
+          missing.push({
+            item: "membership payment",
+            detail: "Their $29.95/mo membership isn't active — Evia can't start the caregiver search without it.",
+            fix: "send_onboarding_link (linkType client_payment)",
+          });
+        }
+        if (!senior || !filled(senior.name)) {
+          missing.push({
+            item: "care recipient profile",
+            detail: "There's no profile for the person receiving care (name/needs).",
+            fix: "ask who the care is for and save with create_senior_profile / update_senior_profile",
+          });
+        } else {
+          if (!filled(senior.needs)) {
+            missing.push({
+              item: "care needs",
+              detail: `${senior.name}'s profile has no care needs listed — matching can't rank caregivers well.`,
+              fix: "ask what help they need and save with update_senior_profile",
+            });
+          }
+          if (!filled(senior.location) && !filled(senior.zipCode)) {
+            missing.push({
+              item: "care location",
+              detail: "No city/ZIP on the care recipient's profile — needed to match nearby caregivers.",
+              fix: "ask for the city or ZIP and save with update_senior_profile",
+            });
+          }
+          if (!filled(senior.age)) optionalGaps.push("care recipient's age");
+        }
+        if (!planSnap?.exists) {
+          optionalGaps.push("care plan (built automatically from intake — if absent, offer to capture their needs with update_care_plan)");
+        }
+        if (!filled(u.name)) optionalGaps.push("account holder's name");
+
+        return {
+          success: true,
+          role: "client",
+          complete: missing.length === 0,
+          missing,
+          optionalGaps,
+          status: { membershipActive, hasCareRecipientProfile: !!senior, hasCarePlan: !!planSnap?.exists },
+        };
+      }
+
+      return toolError("INVALID_INPUT", "caregiverId or clientId is required");
     }
 
     // ── Checkr Candidate MCP bridge ──────────────────────────────────────────

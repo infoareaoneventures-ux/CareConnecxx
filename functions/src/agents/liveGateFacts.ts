@@ -285,10 +285,45 @@ export async function buildLiveCaregiverPermissionsFact(phone: string, session: 
     const pending = s.onboardingStep === "caregiver_permissions_arrival"
       ? "whether Evia should automatically notify the family when they arrive at a visit"
       : "whether Evia may automatically decline job requests outside their stated availability";
-    return "LIVE STATUS RIGHT NOW: this caregiver's profile is COMPLETE and LIVE — their background check " +
-      "cleared, payouts are set up, and they are already matchable. NOTHING is missing from their profile; " +
-      "never claim it is unfinished or invent missing fields. The ONLY open item is an optional yes/no setup " +
-      `question: ${pending}. One-word YES or NO finishes setup, and they can change it anytime by texting.`;
+
+    // Payout (Stripe Connect) and the background check are NOT guaranteed done by
+    // the time these permissions questions run: the flow reaches them right after
+    // the payout/bg-check LINKS are sent, before Stripe/Checkr actually finish. So
+    // read the live flags and phrase honestly — never assert payouts are live or
+    // the check cleared when they aren't (founder report, 2026-07-14: Evia told a
+    // caregiver their payout was "already live and ready" while Stripe Connect was
+    // unfinished, and skipped sending the setup link they asked for).
+    let payoutLine = "";
+    let bgLine = "";
+    const caregiverId = s.caregiverId;
+    if (caregiverId) {
+      const snap = await db.collection("caregivers").doc(caregiverId).get();
+      const data = (snap.data() ?? {}) as Record<string, unknown>;
+      try {
+        const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
+        const cg = await getCaregiverPayoutFields(caregiverId, data);
+        if (cg.stripeOnboardingComplete === true || cg.payoutsEnabled === true) {
+          payoutLine = "Their payout setup is DONE — earnings pay out automatically and instant payouts are free.";
+        } else {
+          payoutLine = "Their payout setup is NOT finished yet — do NOT say payouts are live, set up, or ready. " +
+            "If they ask about getting paid or payout setup, send it with send_onboarding_link " +
+            "(linkType caregiver_payouts) and tell them tapping it finishes their Stripe setup.";
+        }
+      } catch { /* fail-soft: omit the payout line rather than guess */ }
+      const bg = (data.backgroundCheckData ?? {}) as Record<string, unknown>;
+      if (bg.status === "clear") {
+        bgLine = "Their background check has cleared.";
+      } else if (bg.status || bg.submittedAt || bg.checkrCandidateId) {
+        bgLine = "Their background check is still processing — do NOT say it has cleared.";
+      }
+    }
+
+    return "LIVE STATUS RIGHT NOW: this caregiver's PROFILE is complete — NOTHING is missing from their profile; " +
+      "never claim it is unfinished or invent missing profile fields (name, availability, bio, etc.). " +
+      (payoutLine ? payoutLine + " " : "") +
+      (bgLine ? bgLine + " " : "") +
+      "The ONLY thing THIS step needs is an optional yes/no setup question: " +
+      `${pending}. One-word YES or NO finishes this step, and they can change it anytime by texting.`;
   } catch (e) {
     console.warn("[buildLiveCaregiverPermissionsFact] failed (fail-soft to static facts):", e);
     return "";

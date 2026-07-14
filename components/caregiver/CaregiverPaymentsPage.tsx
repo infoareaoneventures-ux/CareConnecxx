@@ -2388,7 +2388,10 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
             {badge?.label ?? status}
           </div>
           <p className="text-white/70 text-sm mb-0.5">Evia Membership</p>
-          <p className="text-2xl font-bold">Annual plan · $66.49/yr</p>
+          {/* No hardcoded amount here — members on the legacy $66.49 price and the
+              current $54.99 price both land on this page; exact billing lives in
+              the Stripe portal via Manage. */}
+          <p className="text-2xl font-bold">Annual plan</p>
           {subscription?.cancelAtPeriodEnd ? (
             <p className="text-sm text-amber-200 mt-2">
               ⚠ Cancels on {renewalDate ?? '—'}

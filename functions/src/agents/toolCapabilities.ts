@@ -83,6 +83,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   request_instant_payout:   ["billing"],
   respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
+  get_payout_status:        ["billing"],
   get_caregiver_earnings:   ["billing"],
   submit_shift_hours:       ["billing"],
   review_shift_hours:       ["billing", "care_plan"],
@@ -128,6 +129,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_shift_task:         ["care_plan"],
   submit_media_update:       ["care_plan", "messaging"],
   get_background_check_status: ["care_plan", "booking"],
+  // Final signup audit (2026-07-14) — cross-cutting profile/gates read; tagged
+  // broadly so "did I miss anything?" reaches it under most filtered intents.
+  get_signup_completeness:     ["care_plan", "booking", "billing"],
   // Checkr Candidate MCP bridge (2026-07-09) — caregiver-only, so the tags
   // never drive client intent-filtering; tagged to satisfy coverage.
   request_checkr_verification: ["care_plan"],

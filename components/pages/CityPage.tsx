@@ -22,7 +22,7 @@ const careTypes = [
 ];
 
 const whyBetter = [
-  { label: 'Background check included in $66.49/yr membership', detail: 'vs. Care.com\'s $300 add-on' },
+  { label: 'Background check included in $54.99/yr membership', detail: 'vs. Care.com\'s $300 add-on' },
   { label: 'AI-powered matching — not random availability', detail: 'vs. keyword-only search' },
   { label: 'Video interview before your first booking', detail: 'built into every booking flow' },
   { label: 'Instant payouts for caregivers = better retention', detail: 'caregivers stay longer' },

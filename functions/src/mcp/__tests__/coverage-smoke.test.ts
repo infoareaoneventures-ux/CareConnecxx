@@ -278,6 +278,75 @@ describe("MCP tool smoke coverage", () => {
     expect(((await handleToolCall("get_background_check_status", {})) as any)._toolError).toBe(true);
   });
 
+  it("get_payout_status maps enabled payouts to active", async () => {
+    hoisted.docState.set("caregivers/cg1", { payoutsEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1" });
+    const r = await handleToolCall("get_payout_status", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.summary).toBe("active");
+  });
+
+  it("get_payout_status reports incomplete when the account exists but the form is unfinished", async () => {
+    hoisted.docState.set("caregivers/cg1", { stripeAccountId: "acct_1", payoutsEnabled: false, stripeOnboardingComplete: false, detailsSubmitted: false });
+    const r = await handleToolCall("get_payout_status", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.summary).toBe("incomplete");
+    expect(r.payoutsEnabled).toBe(false);
+  });
+
+  it("get_payout_status rejects missing input", async () => {
+    expect(((await handleToolCall("get_payout_status", {})) as any)._toolError).toBe(true);
+  });
+
+  it("get_signup_completeness reports a fully-set-up caregiver as complete", async () => {
+    hoisted.docState.set("caregivers/cg1", {
+      name: "Alice", city: "San Jose", hourlyRate: 28, yearsExperience: 5,
+      skills: ["Companionship"], availability: "weekday mornings", jobType: "part_time",
+      email: "a@x.com", bio: "hi", photo: "https://x/p.jpg",
+      membershipPaid: true,
+      backgroundCheckData: { status: "clear" },
+      payoutsEnabled: true, stripeOnboardingComplete: true, stripeAccountId: "acct_1",
+      onboardingStatus: "profile_complete", status: "active",
+    });
+    const r = await handleToolCall("get_signup_completeness", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.role).toBe("caregiver");
+    expect(r.complete).toBe(true);
+    expect(r.missing).toEqual([]);
+  });
+
+  it("get_signup_completeness surfaces caregiver gaps (photo, payouts, bg check)", async () => {
+    hoisted.docState.set("caregivers/cg1", {
+      name: "Alice", city: "San Jose", hourlyRate: 28, yearsExperience: 5,
+      skills: ["Companionship"], availability: "weekday mornings", jobType: "part_time",
+      email: "a@x.com", bio: "hi",
+      membershipPaid: true,
+      stripeAccountId: "acct_1", payoutsEnabled: false, stripeOnboardingComplete: false,
+      onboardingStatus: "profile_complete", status: "active",
+    });
+    const r = await handleToolCall("get_signup_completeness", { caregiverId: "cg1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.complete).toBe(false);
+    const items = r.missing.map((m: any) => m.item);
+    expect(items).toContain("profile photo");
+    expect(items).toContain("payout setup");
+    expect(items).toContain("background check");
+  });
+
+  it("get_signup_completeness surfaces client gaps (membership, care recipient)", async () => {
+    hoisted.docState.set("users/c1", { name: "Fam", subscriptionActive: false });
+    const r = await handleToolCall("get_signup_completeness", { clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.role).toBe("client");
+    expect(r.complete).toBe(false);
+    const items = r.missing.map((m: any) => m.item);
+    expect(items).toContain("membership payment");
+    expect(items).toContain("care recipient profile");
+  });
+
+  it("get_signup_completeness rejects missing input", async () => {
+    expect(((await handleToolCall("get_signup_completeness", {})) as any)._toolError).toBe(true);
+  });
+
   // ── Checkr Candidate MCP bridge ────────────────────────────────────────────
   it("request_checkr_verification happy path opens a session and persists it", async () => {
     const r = await handleToolCall("request_checkr_verification", { caregiverId: "cg1", email: "cg@example.com" }) as any;

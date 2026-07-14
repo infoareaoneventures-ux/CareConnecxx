@@ -54,12 +54,12 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
 
   const [loading, setLoading] = useState(false);
 
-  // $66.49/yr — the actual Stripe charge (product "Caregiver background check
-  // $66.49/yr", price_1TqGrE…, unit_amount 6649). The membership fee covers the
-  // required Checkr background check + verified badge. Was stale at 24.95, which
-  // did NOT match what Stripe charges.
-  const annualPrice = 66.49;
-  const mvrPrice = 9.50;
+  // $54.99/yr — the actual Stripe charge (price_1TtBYw…, unit_amount 5499,
+  // 2026-07-14 repricing). Covers the criminal-only Checkr background check +
+  // verified badge. MVR (Approved Driver) is a separate $11.50 one-time add-on
+  // (price_1TtBZ9…) charged in the same checkout when opted in.
+  const annualPrice = 54.99;
+  const mvrPrice = 11.50;
   const annualPerMonth = (annualPrice / 12).toFixed(2);
 
   const selectedPrice = annualPrice;

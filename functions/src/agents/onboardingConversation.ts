@@ -2319,10 +2319,10 @@ async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSessio
       language: textOrSession.preferredLanguage === "es" ? "es" : "en",
       context:
         "Mid-signup, ask the caregiver whether they ever drive clients to appointments or errands. " +
-        "If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — it puts a verified-driver badge on their profile that families who need a driver look for. " +
-        "Weave the choice in naturally, like a person would ('want me to add it? totally fine to leave it off') — do NOT write a stiff 'Reply YES or NO' instruction. Do NOT include any URL or price.",
+        "If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — a one-time $11.50 add-on (charged together with their membership, doesn't change the annual price) that puts a verified-driver badge on their profile that families who need a driver look for. " +
+        "Weave the choice in naturally, like a person would ('want me to add it? totally fine to leave it off') — do NOT write a stiff 'Reply YES or NO' instruction. Do NOT include any URL.",
       fallback:
-        "Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check to your membership — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?",
+        "Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check for a one-time $11.50 — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?",
       maxTokens: 120,
     }));
     return;
@@ -2479,7 +2479,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
       "The caregiver's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
-      "it's $66.49/year, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), " +
+      "it's $54.99/year, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), " +
       "and it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools. Once their background check comes back clear, they're approved to care for clients" +
       (mvrCharged ? ". Their order also includes the driving-record (MVR) check they asked for" : "") +
       (openJobCount > 0
@@ -2488,7 +2488,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
     fallback:
       `${openJobCount > 0 ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — ` : ""}you're almost ready to apply! ` +
-      `Activate your membership ($66.49/year) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
+      `Activate your membership ($54.99/year) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
       `Once your background check clears, you're approved to care for clients.` +
       `${mvrCharged ? " Your order includes the membership + MVR driver check." : ""} Tap to activate:`,
     maxTokens: 160,
@@ -4587,9 +4587,10 @@ async function handleJobConfirmPost(
 // an entry fall back to the generic prompt. Money/compliance facts only — keep
 // each entry short, the model weaves in what's relevant.
 const MEMBERSHIP_STEP_FACTS =
-  "The $66.49/year caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, " +
+  "The $54.99/year caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, " +
   "getting booked, and Evia's scheduling + payout tools. It renews yearly. Right after payment comes the background-check step; " +
-  "once it clears (usually 1–3 days) they're approved and families can book them. The optional Approved Driver (MVR) check is a separate add-on.";
+  "once it clears (usually 1–3 days) they're approved and families can book them. The optional Approved Driver (MVR) check is a one-time $11.50 add-on " +
+  "charged together with the membership in the same checkout — it does not change the $54.99 annual renewal.";
 const BGCHECK_CONSENT_STEP_FACTS =
   "Their background check is already paid for — included in the membership, no extra charge. The link Evia sent opens Evia's secure page to review " +
   "the FCRA disclosure and authorize the check (it asks for their LEGAL name because records are searched against it). After they authorize, Checkr — " +
@@ -4610,7 +4611,8 @@ const DOCUMENTS_STEP_FACTS =
   "The link Evia sent opens a phone-friendly upload page. After this comes the optional Approved Driver (MVR) question, then activating their membership.";
 const MVR_STEP_FACTS =
   "The Approved Driver check is an OPTIONAL one-time add-on: it adds a Motor Vehicle Record (driving) check so families who need a driver see a verified-driver " +
-  "badge on their profile. It's a separate one-time charge and does NOT change their annual membership — entirely their choice.";
+  "badge on their profile. It's a one-time $11.50 charge and does NOT change their $54.99 annual membership — entirely their choice, and they can add it " +
+  "anytime later by texting Evia or from the Payments page.";
 const CLIENT_PAYMENT_STEP_FACTS =
   "The family membership is $29.95/month — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. " +
   "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, Evia starts finding caregivers.";

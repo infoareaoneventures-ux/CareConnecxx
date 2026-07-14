@@ -22,7 +22,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "How much do caregivers pay?",
-            answer: "Caregivers pay $66.49/year, which covers their required background check and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
+            answer: "Caregivers pay $54.99/year, which covers their required background check and full platform access. This keeps our caregiver pool high-quality and committed, which means better matches for families seeking care."
         },
         {
             question: "What's included in the $29.95/month fee?",
@@ -112,7 +112,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 Care that's <span className="text-ink-400">affordable</span> for everyone.
                             </h1>
                             <p className="text-xl text-ink-600 mb-8 leading-relaxed font-light max-w-2xl mx-auto">
-                                One simple price for families. <span className="font-semibold text-ink-900">$66.49/year for caregivers.</span> No hidden fees, no surprises.
+                                One simple price for families. <span className="font-semibold text-ink-900">$54.99/year for caregivers.</span> No hidden fees, no surprises.
                             </p>
                         </div>
                     </div>

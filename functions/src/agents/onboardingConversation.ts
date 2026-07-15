@@ -334,6 +334,60 @@ async function ensureCaregiverCoords(
   return { ...d, lat: coords.lat, lng: coords.lng };
 }
 
+// ── Gate-step profile updates (2026-07-15) ────────────────────────────────────
+// A caregiver parked at an awaiting/gate step who volunteers new profile info
+// ("I can do transportation as well") used to get a context-free re-nudge and
+// the info was silently dropped (seen live 07-14, Hamse @ awaiting_photo —
+// the reply read like Evia forgot the whole conversation). Absorb-first: save
+// the update (session + live caregiver doc), acknowledge the SPECIFIC thing
+// they added, then remind them of the one thing still pending. Returns true
+// when it handled the turn; false → caller runs its normal step behavior.
+async function tryAbsorbGateProfileUpdate(
+  phone:          string,
+  chatId:         string,
+  text:           string,
+  session:        AgentSession,
+  stillWaitingOn: string,
+): Promise<boolean> {
+  if (session.userType !== "caregiver") return false;
+  if (!text || text.trim().length < 8) return false; // too short to carry a profile fact
+  const d = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const { absorbCaregiverProfileUpdate } = await import("./caregiverFieldAbsorber");
+  const updates = await absorbCaregiverProfileUpdate(text, d).catch(() => ({} as Record<string, unknown>));
+  const keys = Object.keys(updates);
+  if (!keys.length) return false;
+
+  await mergeOnboardingData(phone, updates);
+  // Post-collection the caregivers/{uid} doc usually exists — mirror the update
+  // so the live profile + matching see it immediately (merge, never blanks).
+  if (session.caregiverId) {
+    await db.collection("caregivers").doc(session.caregiverId as string)
+      .set(buildCaregiverProfileMirror({ ...d, ...updates }), { merge: true })
+      .catch((err) => console.error("[gateProfileUpdate] caregiver mirror failed:", err));
+  }
+
+  const human = keys
+    .filter((k) => k !== "skills" && k !== "services") // derived enums — not conversational
+    .map((k) => {
+      const v = updates[k];
+      const shown = Array.isArray(v) ? (v as unknown[]).join(", ")
+        : typeof v === "object" ? JSON.stringify(v) : String(v);
+      return `${k} → ${shown}`;
+    }).join("; ");
+
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "caregiver",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      `Mid-signup, the caregiver just texted: "${text}". You saved what they volunteered to their profile (${human}). ` +
+      `In 1-2 short sentences: acknowledge the SPECIFIC thing they added — families will see it on their profile — ` +
+      `then remind them of the one thing you're still waiting on: ${stillWaitingOn}.`,
+    fallback: `Got it — added to your profile! And whenever you're ready: ${stillWaitingOn}.`,
+    maxTokens: 90,
+  }));
+  return true;
+}
+
 // Create the uid-keyed caregivers/{uid} doc the moment collection completes
 // (called from the webhooks.ts gate handoff), instead of waiting for the
 // bg-check pre-create / final Stripe step. status "onboarding" is invisible to
@@ -1002,12 +1056,14 @@ export async function handleOnboardingStep(
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         return;
       }
+      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "your profile photo — the upload link I sent is ready whenever you are")) return;
       const livePhotoFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_photo(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: (livePhotoFact ? `${livePhotoFact} ` : "") +
-          "Ground your reply in the live status above if present — if the photo is already IN, confirm you've got it and do NOT ask them to upload it again; otherwise warmly nudge them to tap the upload link you already sent.",
+        context: `The caregiver just texted: "${text}". ` + (livePhotoFact ? `${livePhotoFact} ` : "") +
+          "Respond to what they actually said, grounded in the live status above if present — if the photo is already IN, confirm you've got it and do NOT ask them to upload it again; otherwise warmly nudge them to tap the upload link you already sent.",
         fallback: "Still waiting for your photo! Tap the upload link I sent 📷",
         maxTokens: 60,
       }));
@@ -1054,12 +1110,14 @@ export async function handleOnboardingStep(
         }));
         return;
       }
+      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "your certifications via the upload link — or just tell me to skip it")) return;
       const liveDocsFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_documents(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: (liveDocsFact ? `${liveDocsFact} ` : "") +
-          "Ground your reply in the live status above if present — if certifications are already on file, acknowledge that and let them add more or move on; otherwise warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
+        context: `The caregiver just texted: "${text}". ` + (liveDocsFact ? `${liveDocsFact} ` : "") +
+          "Respond to what they actually said, grounded in the live status above if present — if certifications are already on file, acknowledge that and let them add more or move on; otherwise warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
         fallback: "Tap the link I sent to upload your certifications — or if you don't have any, just tell me to skip it.",
         maxTokens: 70,
       }));
@@ -1093,10 +1151,12 @@ export async function handleOnboardingStep(
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         return;
       }
+      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "finishing the background-check form Checkr emailed you")) return;
       const liveBgFact = await buildLiveBgcheckFact(session);
       const msgBgcheck = await generateCaraMessage({
         audience: "caregiver",
-        context: (liveBgFact ? `${liveBgFact} ` : "") +
+        context: `The caregiver just texted: "${text}". ` + (liveBgFact ? `${liveBgFact} ` : "") +
           "A caregiver texted Evia while their background check is with Checkr. Ground your reply in the live status above if present; otherwise: if they haven't finished Checkr's form yet, the secure link is in their email from Checkr (Checkr re-sends it daily, and they can ask Evia to text the link too); once they've finished, results usually take 1–3 days and Evia will text them the moment they're in.",
         fallback: "Your background check is with Checkr now. If you haven't finished their form, the secure link is in your email (I can text it to you too — just ask). Once you're done, results usually take 1–3 days and I'll text you the moment they're in.",
         maxTokens: 100,
@@ -1117,11 +1177,13 @@ export async function handleOnboardingStep(
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         return;
       }
+      if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+        "setting up your payout account via the link I sent")) return;
       const livePayoutFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_stripe(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: (livePayoutFact ? `${livePayoutFact} ` : "") +
+        context: `The caregiver just texted: "${text}". ` + (livePayoutFact ? `${livePayoutFact} ` : "") +
           "Ground your reply in the live status above if present — if payouts are already LIVE, congratulate them and do NOT nudge them to finish setup; if Stripe is still reviewing, reassure them it's almost done; otherwise warmly nudge them to tap the link you already sent so they can get paid after each visit.",
         fallback: "Tap the link I sent to set up your payout account so you can get paid after each visit.",
         maxTokens: 70,
@@ -2543,6 +2605,9 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
     }
     if (kind === "question") {
       await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+      "finishing your membership payment via the link I sent")) {
+      return;
     }
   }
   // A webhook may have processed the payment between the inbound and this reply —
@@ -2651,6 +2716,9 @@ async function handleCaregiverResendMvr(phone: string, chatId: string, session: 
     }
     if (kind === "question") {
       await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+      "adding your Approved Driver check via the payment link I sent")) {
+      return;
     }
   }
   // Don't re-send the MVR payment link if the webhook already recorded payment
@@ -2898,6 +2966,9 @@ async function handleCaregiverResendBgcheckConsent(phone: string, chatId: string
     }
     if (kind === "question") {
       await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+    } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
+      "reviewing and authorizing your background check via the link I sent")) {
+      return;
     }
   }
   const token      = generateToken({ phone, task: "bgcheck_consent" });

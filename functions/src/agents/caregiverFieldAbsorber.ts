@@ -128,3 +128,98 @@ export async function absorbCaregiverFields(
 
   return out;
 }
+
+const unionCI = (existing: unknown, added: string[]): string[] | null => {
+  const base = cleanStringArray(existing);
+  const seen = new Set(base.map((s) => s.toLowerCase()));
+  const fresh = added.filter((s) => !seen.has(s.toLowerCase()));
+  return fresh.length ? [...base, ...fresh] : null;
+};
+
+/**
+ * UPDATE-mode absorber for a caregiver who volunteers new profile info AFTER
+ * collection — e.g. "I can do transportation as well" while parked at the
+ * photo/bg-check/payout gate. absorbCaregiverFields is collection-time and
+ * refuses to touch a filled field, which silently DROPS additions like that
+ * (seen live 07-14: the addition was lost and the reply read like Evia forgot
+ * the conversation). Policy here:
+ *  - array fields (specialties, certifications, languages) merge ADDITIVELY
+ *    (case-insensitive union) — returned only when something new was added
+ *  - availability merges: new days union onto existing, hours replaced only
+ *    when stated
+ *  - scalar fields still fill only when empty (a casual mention must never
+ *    overwrite a deliberate answer)
+ *  - specialties changes re-canonicalize into skills/services ADDITIVELY so
+ *    matching + the webapp profile see the new capability
+ * Returns {} when the message adds nothing — callers fall through to their
+ * normal step behavior.
+ */
+export async function absorbCaregiverProfileUpdate(
+  text: string,
+  existing: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const fresh = await absorbCaregiverFields(text, existing);   // empty-field fills, validated
+  const out: Record<string, unknown> = { ...fresh };
+
+  // Re-extract for the additive fields absorbCaregiverFields dropped because
+  // they were already filled. One more parse only when the first pass returned
+  // no array fields (the common "adds to an existing list" case).
+  const raw = await parseWithClaude(
+    "A caregiver already signed up with Evia texted a message. Extract ONLY details about the caregiver themselves " +
+      "that they are adding or stating in THIS message. Return JSON only; omit anything not present. Schema: " +
+      `{"specialties":["care service or specialty they say they offer, e.g. 'transportation' or 'dementia care'"],` +
+      `"certifications":["certification name like 'CNA'"],` +
+      `"languages":["language they speak"],` +
+      `"availabilityDays":["day of week they say they're available"],` +
+      `"availabilityHours":"hours they say they're available, e.g. 'mornings'"}. ` +
+      "Be conservative — only include what is unambiguously about the caregiver's own offering. Reply with raw JSON, no markdown.",
+    text,
+  ).catch(() => "{}");
+
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(raw); } catch { /* keep {} */ }
+
+  let addedSpecialties: string[] = Array.isArray(fresh.specialties) ? (fresh.specialties as string[]) : [];
+  for (const key of ["specialties", "certifications", "languages"] as const) {
+    if (out[key]) continue; // first pass already handled the empty-field case
+    const added = cleanStringArray(parsed[key]);
+    if (!added.length) continue;
+    const merged = unionCI(existing[key], added);
+    if (merged) {
+      out[key] = merged;
+      if (key === "specialties") addedSpecialties = added;
+    }
+  }
+
+  const addedDays  = cleanStringArray(parsed.availabilityDays);
+  const addedHours = typeof parsed.availabilityHours === "string" ? parsed.availabilityHours.trim() : "";
+  if (!out.availability && (addedDays.length || addedHours)) {
+    const cur = (existing.availability && typeof existing.availability === "object"
+      ? existing.availability : {}) as Record<string, unknown>;
+    const mergedDays = unionCI(cur.days, addedDays);
+    const curHours   = typeof cur.hours === "string" ? cur.hours : "";
+    if (mergedDays || (addedHours && addedHours !== curHours)) {
+      out.availability = {
+        days:  mergedDays ?? cleanStringArray(cur.days),
+        hours: addedHours || curHours,
+      };
+    }
+  }
+
+  // Specialties grew → extend the canonical skills/services enums additively
+  // with the canonical form of ONLY the new specialties (never shrink or
+  // re-derive the whole list: the webapp checkboxes may hold services the
+  // canonicalizer wouldn't re-derive from specialties alone).
+  if (addedSpecialties.length && !out.services) {
+    try {
+      const { canonicalizeCaregiverServices } = await import("./caregiverServices");
+      const canonical = await canonicalizeCaregiverServices(addedSpecialties);
+      const mergedServices = unionCI(existing.services, canonical);
+      const mergedSkills   = unionCI(existing.skills,   canonical);
+      if (mergedServices) out.services = mergedServices;
+      if (mergedSkills)   out.skills   = mergedSkills;
+    } catch { /* best-effort */ }
+  }
+
+  return out;
+}

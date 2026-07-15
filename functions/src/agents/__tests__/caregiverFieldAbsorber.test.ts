@@ -9,7 +9,7 @@ vi.mock("../../utils/parseWithClaude", () => ({
   parseWithClaude: (...a: unknown[]) => parseWithClaude(...a),
 }));
 
-import { absorbCaregiverFields } from "../caregiverFieldAbsorber";
+import { absorbCaregiverFields, absorbCaregiverProfileUpdate } from "../caregiverFieldAbsorber";
 
 beforeEach(() => {
   parseWithClaude.mockReset();
@@ -102,5 +102,55 @@ describe("absorbCaregiverFields", () => {
     expect(out.specialties).toEqual(["dementia"]);
     expect(out.skills).toBeUndefined();
     expect(out.services).toBeUndefined();
+  });
+});
+
+// Gate-step profile updates (2026-07-15): a caregiver who volunteers new info
+// AFTER collection ("I can do transportation as well" while parked at the
+// photo gate) must have it merged ADDITIVELY — the collection-mode absorber
+// refuses to touch filled fields, which silently dropped the addition (seen
+// live 07-14, Hamse).
+describe("absorbCaregiverProfileUpdate (gate-step additions)", () => {
+  const HAMSE = {
+    name: "Hamse",
+    specialties: ["Companionship", "dementia"],
+    skills:      ["Dementia / Memory Care", "Companionship"],
+    services:    ["Dementia / Memory Care", "Companionship"],
+  };
+
+  it("adds a volunteered service to already-filled specialties/skills/services", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce(JSON.stringify({ specialties: ["transportation"] }))  // collection pass (dropped: filled)
+      .mockResolvedValueOnce(JSON.stringify({ specialties: ["transportation"] })); // update pass (additive)
+    const out = await absorbCaregiverProfileUpdate("I can do transportation as well", HAMSE);
+    expect(out.specialties).toEqual(["Companionship", "dementia", "transportation"]);
+    // synonym map: "transportation" → canonical "Transportation", unioned in
+    expect(out.services).toEqual(["Dementia / Memory Care", "Companionship", "Transportation"]);
+    expect(out.skills).toEqual(["Dementia / Memory Care", "Companionship", "Transportation"]);
+  });
+
+  it("returns {} when the message adds nothing new (case-insensitive dupe)", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce("{}")
+      .mockResolvedValueOnce(JSON.stringify({ specialties: ["companionship"] }));
+    const out = await absorbCaregiverProfileUpdate("I also do companionship", HAMSE);
+    expect(out).toEqual({});
+  });
+
+  it("never overwrites a filled scalar from a casual mention", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce(JSON.stringify({ hourlyRate: 30 }))
+      .mockResolvedValueOnce("{}");
+    const out = await absorbCaregiverProfileUpdate("my neighbor charges $30 an hour", { hourlyRate: 27 });
+    expect(out).toEqual({});
+  });
+
+  it("merges volunteered availability days additively (hours kept)", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce("{}")
+      .mockResolvedValueOnce(JSON.stringify({ availabilityDays: ["Friday"] }));
+    const out = await absorbCaregiverProfileUpdate("I'm also free Fridays",
+      { availability: { days: ["Monday"], hours: "mornings" } });
+    expect(out.availability).toEqual({ days: ["Monday", "Friday"], hours: "mornings" });
   });
 });

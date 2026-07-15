@@ -62,10 +62,22 @@ export async function createJobPost(
   clientId: string
 ): Promise<void> {
   try {
-    const lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
-    const lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
+    let lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
+    let lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
     const city = intakeData.city ?? intakeData.location?.city ?? undefined;
     const careTypes: string[] = intakeData.careTypes ?? [];
+
+    // Geocode fallback (parity with buildAndSaveJobPost): an intake with only a
+    // city/zip used to produce a coordless job here — radius notifications dead.
+    if (lat == null || lng == null) {
+      const { geocodeCityOrZip } = await import("../utils/geocode");
+      const coords = await geocodeCityOrZip(
+        city as string | undefined,
+        (intakeData.zipCode ?? intakeData.location?.zipCode) as string | undefined,
+        (intakeData.state ?? intakeData.location?.state) as string | undefined,
+      ).catch(() => null);
+      if (coords) { lat = coords.lat; lng = coords.lng; }
+    }
 
     // Web JobPost contract via the shared builder — the caregiver Job Board
     // renders title/location-string/rate/date; the old hand-rolled shape here
@@ -160,15 +172,19 @@ export async function notifyAreaCaregivers(
     const pausedUntil = cg.pausedUntil as string | undefined;
     if (pausedUntil && pausedUntil > todayIso) continue;
 
-    if (hasCoords) {
-      const cgLat = cg.latitude ?? cg.location?.latitude ?? cg.location?.lat;
-      const cgLng = cg.longitude ?? cg.location?.longitude ?? cg.location?.lng;
-      const dist  = haversineMiles(clientLat, clientLng, cgLat, cgLng);
+    const cgLat  = cg.latitude ?? cg.location?.latitude ?? cg.location?.lat;
+    const cgLng  = cg.longitude ?? cg.location?.longitude ?? cg.location?.lng;
+    const cgCity = (cg.city ?? cg.location?.city ?? "").toString().split(",")[0].trim().toLowerCase();
+
+    if (hasCoords && cgLat != null && cgLng != null) {
+      const dist = haversineMiles(clientLat, clientLng, cgLat, cgLng);
       if (dist === undefined || dist > NOTIFY_RADIUS_MILES) continue;
     } else {
-      // City-string fallback (no job coords): match caregivers in the same city.
-      const cgCity = (cg.city ?? cg.location?.city ?? "").toString().trim().toLowerCase();
-      if (!cgCity || cgCity !== cityKey) continue;
+      // City-string fallback — used when the JOB has no coords, and ALSO when
+      // the CAREGIVER doc has no coords (a coordless caregiver living in the
+      // job's own city used to be silently skipped whenever the job had
+      // coordinates — the exact inverse of the coordless-job bug).
+      if (!cgCity || !cityKey || cgCity !== cityKey) continue;
     }
 
     // Profile-fit gate (U11): a caregiver covering none of the job's care types
@@ -183,13 +199,19 @@ export async function notifyAreaCaregivers(
     if (matchScore < INVITE_MATCH_THRESHOLD) continue;
 
     try {
-      // Idempotency guard — don't text the same caregiver twice for the same job
-      const existing = await db.collection("job_notifications")
-        .where("caregiverId", "==", doc.id)
-        .where("jobId", "==", jobId)
-        .limit(1)
-        .get();
-      if (!existing.empty) continue;
+      // Idempotency guard — don't text the same caregiver twice for the same job.
+      // Keyed by PHONE, not caregiverId: duplicate caregiver docs sharing one
+      // phone (seen live 07-14 — one person, two docs, two texts for the same
+      // job) collapse to a single notification. The caregiverId check stays as
+      // a secondary net for legacy notification docs written before phone was
+      // reliably present.
+      const [byPhone, byId] = await Promise.all([
+        db.collection("job_notifications")
+          .where("phone", "==", phone).where("jobId", "==", jobId).limit(1).get(),
+        db.collection("job_notifications")
+          .where("caregiverId", "==", doc.id).where("jobId", "==", jobId).limit(1).get(),
+      ]);
+      if (!byPhone.empty || !byId.empty) continue;
 
       const session = await getOrCreateSession(phone, { caregiverId: doc.id });
       if (session.optedOut) continue;
@@ -283,9 +305,30 @@ export async function handleJobResponse(
     5,
   );
   if (qRaw.toUpperCase().startsWith("Y")) {
+    // Ground the answer in THIS job's actual details — "tell me more" must
+    // describe the job/client, not whatever flow happened to be active
+    // (seen live 07-14: a "tell me more" reply got a speech about arrival
+    // auto-notify settings instead of the job).
+    const qJobSnap = await db.collection("job_posts").doc(jobId).get().catch(() => null);
+    const qJob     = qJobSnap?.exists ? qJobSnap.data()! : null;
+    const jobFacts = qJob
+      ? [
+          Array.isArray(qJob.careTypes) && qJob.careTypes.length ? `care needed: ${qJob.careTypes.join(", ")}` : null,
+          qJob.city ? `location: ${qJob.city}` : null,
+          `schedule: ${buildScheduleSummaryFromJobPost(qJob)}`,
+          typeof qJob.rate === "number" && qJob.rate > 0 ? `pay: $${qJob.rate}/hr` : null,
+          qJob.schedule?.startDate ? `starts: ${qJob.schedule.startDate}` : null,
+        ].filter(Boolean).join("; ")
+      : "";
     await sendMessage(chatId, await answerHumanMidFlow({
       audience: "caregiver",
-      situation: "caregiver was offered a job and asked a question instead of replying yes or no",
+      situation:
+        "caregiver was offered a job and asked a question instead of replying yes or no. " +
+        (jobFacts
+          ? `The job's details — use ONLY these facts, never invent others: ${jobFacts}. `
+          : "") +
+        "If their question asks for something not in these facts (e.g. specifics about the client), " +
+        "say more details are shared after they express interest.",
       text,
       reAsk: "So — interested in this job? A simple yes or no works.",
       maxTokens: 180,

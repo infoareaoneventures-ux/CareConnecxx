@@ -8,11 +8,10 @@
  *   node scripts/recover-anahi-job.mjs           # dry run (prints plan, no writes)
  *   node scripts/recover-anahi-job.mjs --confirm  # apply + notify
  */
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
@@ -27,9 +26,16 @@ try {
   }
 } catch { /* dry run doesn't need env */ }
 
+// Use the FUNCTIONS workspace's firebase-admin, not the root one: the notify
+// step imports functions/lib, whose module graph resolves firebase-admin from
+// functions/node_modules — a separate instance. Initializing the default app
+// on the root instance leaves the functions instance app-less ("app/no-app"
+// at supervisor.js module load). One instance for everything fixes it.
+const require = createRequire(import.meta.url);
+const admin = require(join(root, 'functions/node_modules/firebase-admin'));
 const sa = JSON.parse(readFileSync(join(root, 'functions/serviceAccountKey.json'), 'utf8'));
-initializeApp({ credential: cert(sa) });
-const db = getFirestore();
+admin.initializeApp({ credential: admin.credential.cert(sa) });
+const db = admin.firestore();
 
 const CONFIRM = process.argv.includes('--confirm');
 const uid = 'mmKc9RLJCuYspsztJUAsBrFmWFq1';

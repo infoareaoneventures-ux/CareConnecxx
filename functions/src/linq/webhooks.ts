@@ -1997,19 +1997,12 @@ const handleInboundInner = traceable(
 
   const step = session.onboardingStep ?? "";
   if (step && step !== "complete") {
-    // Soft-resume ack — when a user comes back mid-onboarding after a notable
-    // gap (>=10 min, but inside the 30-min state-expiry window), prepend a
-    // one-liner so they know we picked up where they left off instead of
-    // continuing mid-question as if nothing happened. Skipped for verify_phone
-    // because the OTP context speaks for itself.
-    const previousInboundAt = (session as any).lastInboundAt as string | undefined;
-    if (previousInboundAt && step !== "verify_phone") {
-      const gapMs = Date.now() - new Date(previousInboundAt).getTime();
-      if (gapMs >= 10 * 60 * 1000 && gapMs <= 30 * 60 * 1000) {
-        const lang = languageFromSession(session as unknown as Record<string, unknown>);
-        await sendMessage(chatId, tr.welcome_back(lang));
-      }
-    }
+    // Soft-resume ack REMOVED (founder, 2026-07-14): the old 10–30-min-gap
+    // "Welcome back — picking up where we left off." line fired absurdly —
+    // mid-onboarding gaps are almost always the user doing a task Evia HERSELF
+    // sent them to (Stripe checkout, bg-check page, photo upload), so from
+    // their side they never left. Genuine long-absence welcomes still exist:
+    // the returning-user greeting and the explicit RESUME checkpoint nudge.
 
     // Log every onboarding message to Zep — this is where names, conditions,
     // and care needs are shared, so Zep starts building the knowledge graph now
@@ -2024,6 +2017,31 @@ const handleInboundInner = traceable(
     }
 
     // Permissions steps
+    const atPermissionsStep =
+      step === "client_permissions_contact" || step === "client_permissions_booking" ||
+      step === "client_permissions_autobook" ||
+      step === "caregiver_permissions_decline" || step === "caregiver_permissions_arrival";
+
+    // Job-alert replies take precedence over a parked permissions question.
+    // notifyAreaCaregivers targets ACTIVE caregivers, and an active caregiver
+    // can still be parked at these optional yes/no steps — where the router
+    // used to consume their reply as the (days-old) permissions answer instead
+    // of the job alert Evia JUST sent (seen live 07-14: job text delivered to a
+    // caregiver at caregiver_permissions_arrival, whose "yes" would have
+    // toggled arrival notifications). The job question is always the most
+    // recent ask when these flags are set, so it owns the reply; the
+    // permissions step stays parked and re-nudges / auto-defaults later.
+    if (atPermissionsStep && (session as any).awaitingJobResponse === true) {
+      const { handleJobResponse } = await import("../triggers/jobNotifications");
+      await handleJobResponse(phone, text, chatId, session as any);
+      return;
+    }
+    if (atPermissionsStep && (session as any).awaitingAvailabilityConfirmation === true) {
+      const { handleAvailabilityConfirmation } = await import("../triggers/jobNotifications");
+      await handleAvailabilityConfirmation(phone, text, chatId, session as any);
+      return;
+    }
+
     if (step === "client_permissions_contact" || step === "client_permissions_booking" || step === "client_permissions_autobook") {
       const userId = session.userId ?? phone;
       await handleClientPermissionsReply(phone, chatId, text, session, userId);

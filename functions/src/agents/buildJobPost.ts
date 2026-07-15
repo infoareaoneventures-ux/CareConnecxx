@@ -1,49 +1,10 @@
 import * as admin from "firebase-admin";
-import axios from "axios";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
 import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
 import { buildWebJobPostDoc } from "./jobPostContract";
+import { geocodeZip, geocodeCity } from "../utils/geocode";
 
 const db = admin.firestore();
-
-// ── Geocoding (zippopotam.us — free, no API key) ──────────────────────────────
-
-async function geocodeZip(zipCode: string): Promise<{ lat: number; lng: number } | null> {
-  if (!zipCode || zipCode.length < 5) return null;
-  try {
-    const resp = await axios.get(`https://api.zippopotam.us/us/${zipCode}`, { timeout: 5000 });
-    const place = resp.data?.places?.[0];
-    if (place?.latitude && place?.longitude) {
-      return { lat: parseFloat(place.latitude), lng: parseFloat(place.longitude) };
-    }
-  } catch {
-    // Non-critical — job post will still be created, just without radius notifications
-  }
-  return null;
-}
-
-// City-name fallback (OpenStreetMap Nominatim — free, no key). The conversational
-// intake captures a CITY ("Santa Clara") but usually no ZIP, so geocodeZip alone
-// left jobs with no coordinates and notifyAreaCaregivers silently notified nobody.
-// State defaults to California (service area is Santa Clara County) when the
-// intake didn't capture one, so a bare city name isn't ambiguous across states.
-async function geocodeCity(city: string, state?: string): Promise<{ lat: number; lng: number } | null> {
-  if (!city || !city.trim()) return null;
-  try {
-    const resp = await axios.get("https://nominatim.openstreetmap.org/search", {
-      params: { format: "json", country: "USA", state: state || "California", city: city.trim(), limit: 1 },
-      headers: { "User-Agent": "EviaCares/1.0 (support@eviacares.com)" },
-      timeout: 5000,
-    });
-    const place = resp.data?.[0];
-    if (place?.lat && place?.lon) {
-      return { lat: parseFloat(place.lat), lng: parseFloat(place.lon) };
-    }
-  } catch {
-    // Non-critical — fall through to no-coords (city-string match still applies).
-  }
-  return null;
-}
 
 // "near {city}" when we have a city, else "in your area". Owns the no-city
 // fallback so callers pass the raw city (null/undefined when unknown) — no

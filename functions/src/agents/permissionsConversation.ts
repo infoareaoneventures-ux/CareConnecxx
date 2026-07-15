@@ -184,7 +184,10 @@ function remainingPermissionDefaults(
   if (userType === "caregiver") {
     return {
       ...(step === "caregiver_permissions_decline" ? { canDeclineJobsAutomatically: false } : {}),
-      canSendArrivalNotifications:   false,
+      // Arrival notifications are standard behavior (founder, 2026-07-15) —
+      // the family is always notified on ARRIVED; this flag is never read by
+      // any sender, so it defaults granted for consistency with reality.
+      canSendArrivalNotifications:   true,
       canShareJournalWithFamily:     true,
       canAcceptJobsWithConfirmation: true,
     };
@@ -385,8 +388,8 @@ export async function sendCaregiverPermissionsFlow(
   });
   const msgPerm5 = await generateCaraMessage({
     audience: "caregiver",
-    context: `Evia is starting the permissions setup for caregiver ${caregiverName}. Ask a couple of quick questions so Evia can work best for them. First question: can Evia automatically decline job requests that are outside their stated availability? Mention it saves them time on requests they can't take. End with that yes/no question itself — never a stiff "Reply YES or NO" instruction or a menu.`,
-    fallback: `A couple of quick questions so I can work best for you, ${caregiverName}:\n\nIs it OK if I automatically pass on job requests that fall outside your stated availability? It saves you time on requests you can't take.`,
+    context: `Evia is starting the permissions setup for caregiver ${caregiverName}. There is exactly ONE quick question: can Evia automatically decline job requests that are outside their stated availability? Mention it saves them time on requests they can't take. End with that yes/no question itself — never a stiff "Reply YES or NO" instruction or a menu.`,
+    fallback: `One quick question so I can work best for you, ${caregiverName}:\n\nIs it OK if I automatically pass on job requests that fall outside your stated availability? It saves you time on requests you can't take.`,
   });
   await sendMessage(chatId, msgPerm5);
 }
@@ -399,7 +402,6 @@ export async function handleCaregiverPermissionsReply(
   caregiverId: string
 ): Promise<void> {
   const step = (session as any).onboardingStep ?? "";
-  const d    = session.onboardingData ?? {};
 
   // Answer a mid-flow question instead of silently recording it as a denial.
   const verdict = await classifyPermissionReply(text);
@@ -416,7 +418,7 @@ export async function handleCaregiverPermissionsReply(
           `Instead of yes/no they asked: "${text}". Answer their question briefly, warmly, and honestly. Then let them know ` +
           `they're ALL SET — their profile is complete and live, Evia has left these optional auto-settings off for now, ` +
           `and they can turn them on anytime just by texting. Do NOT re-ask the yes/no question.`,
-        fallback: "Good question! For now I've left these optional auto-settings off and you're all set — your profile is complete and live. Text me anytime to turn on auto-declining jobs or arrival notifications.",
+        fallback: "Good question! For now I've left auto-declining jobs off and you're all set — your profile is complete and live. Text me anytime to turn it on.",
       });
       await sendMessage(chatId, answer);
       await finalizePermissionsWithDefaults(phone, chatId, "caregiver", caregiverId, step);
@@ -429,28 +431,50 @@ export async function handleCaregiverPermissionsReply(
 
   if (step === "caregiver_permissions_decline") {
     await setPermissions(phone, caregiverId, "caregiver", {
-      canDeclineJobsAutomatically: isYes,
+      canDeclineJobsAutomatically:   isYes,
+      // Arrival notifications are standard behavior, not an opt-in (founder,
+      // 2026-07-15): the family is always told when a caregiver texts ARRIVED
+      // (handleArrived notifies unconditionally — no sender ever read this
+      // flag). The old opt-in question was pure copy, and while a caregiver
+      // sat parked on it, it hijacked their job-alert replies (seen live
+      // 07-14: "Interested tell me more" answered with an auto-notify speech).
+      canSendArrivalNotifications:   true,
+      canShareJournalWithFamily:     true,
+      canAcceptJobsWithConfirmation: true,
     });
-    await db.collection("agent_sessions").doc(phone).update({ onboardingStep: "caregiver_permissions_arrival" });
-    const msgPerm6 = await generateCaraMessage({
-      audience: "caregiver",
-      context: "Evia just received a caregiver's answer about auto-declining jobs. Acknowledge it, then ask: when they arrive at a client's home, would they like Evia to automatically notify the family? Families love knowing their caregiver has arrived. End with that yes/no question itself — never a stiff \"Reply YES or NO\" instruction or a menu.",
-      fallback: "Got it.\n\nWhen you arrive at a client's home, want me to automatically let the family know you're there? They love knowing their caregiver has arrived.",
-    });
-    await sendMessage(chatId, msgPerm6);
+    await completeCaregiverPermissions(phone, chatId, session, caregiverId);
     return;
   }
 
+  // Legacy: sessions already parked at the removed arrival question — honor
+  // their answer and complete normally. New sessions never enter this step.
   if (step === "caregiver_permissions_arrival") {
     await setPermissions(phone, caregiverId, "caregiver", {
       canSendArrivalNotifications:   isYes,
       canShareJournalWithFamily:     true,
       canAcceptJobsWithConfirmation: true,
     });
-    await db.collection("agent_sessions").doc(phone).update({
-      onboardingStep: "complete",
-      optedIn:        true,
-    });
+    await completeCaregiverPermissions(phone, chatId, session, caregiverId);
+    return;
+  }
+}
+
+// Shared permissions-flow completion: celebrates, sends the capability menu,
+// alerts admin, and fans out job invites. Reached from the decline step (the
+// only question since the arrival opt-in was removed) and from legacy sessions
+// still parked at the old arrival step.
+async function completeCaregiverPermissions(
+  phone:       string,
+  chatId:      string,
+  session:     AgentSession,
+  caregiverId: string,
+): Promise<void> {
+  const d = session.onboardingData ?? {};
+  await db.collection("agent_sessions").doc(phone).update({
+    onboardingStep: "complete",
+    optedIn:        true,
+  });
+  {
     const appUrl  = getAppUrl();
     const name    = d.name    ? `, ${d.name as string}` : "";
     const city    = d.city    ? ` in ${d.city as string}` : "";

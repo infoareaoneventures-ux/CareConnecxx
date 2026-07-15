@@ -22,6 +22,7 @@ import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from 
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
+import { geocodeCityOrZip } from "../utils/geocode";
 import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
@@ -233,12 +234,16 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("name",    d.name);
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
-  // Raw coords (present only when the caregiver shared a location pin) — let
-  // aiMatching use true haversine distance instead of the city/zip proxy.
+  // Coords — from a shared location pin OR geocoded from city/zip (see
+  // ensureCaregiverCoords). Written in BOTH shapes: latitude/longitude is what
+  // notifyAreaCaregivers and caregiverJobMatch actually read (cg.latitude ??
+  // cg.location?.lat); lat/lng + location is the pin-mirror legacy shape.
   if (typeof d.lat === "number" && typeof d.lng === "number") {
-    out.lat = d.lat;
-    out.lng = d.lng;
-    out.location = { lat: d.lat, lng: d.lng };
+    out.lat       = d.lat;
+    out.lng       = d.lng;
+    out.latitude  = d.lat;
+    out.longitude = d.lng;
+    out.location  = { lat: d.lat, lng: d.lng };
   }
   // Profile photo + uploaded credentials (web upload OR texted to Evia).
   // `photo` is the webapp's canonical Caregiver field (types.ts) — the
@@ -304,6 +309,31 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   return out;
 }
 
+// Geocode a caregiver's typed city/zip into onboardingData lat/lng (no-op when
+// coords already exist, e.g. from a shared location pin, or when geocoding
+// fails). Persisting into onboardingData — not straight onto the caregiver
+// doc — lets buildCaregiverProfileMirror carry the coords through EVERY doc
+// write (incremental merge, gate pre-create, finalization) so they can never
+// be dropped by a later mirror. Without this, SMS-onboarded caregivers had no
+// coordinates at all and radius matching silently skipped them (found live
+// 2026-07-14: the one caregiver actually IN the job's city was never texted).
+async function ensureCaregiverCoords(
+  phone: string, d: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (typeof d.lat === "number" && typeof d.lng === "number") return d;
+  const coords = await geocodeCityOrZip(
+    d.city as string | undefined,
+    d.zipCode as string | undefined,
+    d.state as string | undefined,
+  ).catch(() => null);
+  if (!coords) return d;
+  await db.collection("agent_sessions").doc(phone).update({
+    "onboardingData.lat": coords.lat,
+    "onboardingData.lng": coords.lng,
+  }).catch((err) => console.error("ensureCaregiverCoords: session persist failed (non-fatal):", err));
+  return { ...d, lat: coords.lat, lng: coords.lng };
+}
+
 // Create the uid-keyed caregivers/{uid} doc the moment collection completes
 // (called from the webhooks.ts gate handoff), instead of waiting for the
 // bg-check pre-create / final Stripe step. status "onboarding" is invisible to
@@ -320,7 +350,9 @@ export async function ensureCaregiverDocForOnboarding(phone: string): Promise<st
   const sess = (snap.data() ?? {}) as Record<string, unknown>;
   if (sess.caregiverId) return sess.caregiverId as string;
 
-  const d = (sess.onboardingData ?? {}) as Record<string, unknown>;
+  const d = await ensureCaregiverCoords(
+    phone, (sess.onboardingData ?? {}) as Record<string, unknown>,
+  );
   const authUid = await createFirebaseAuthAccount(phone, (d.name ?? "") as string).catch(() => null);
   // No random-ID fallback here: without a uid the bg-check pre-create and the
   // finalization migration still cover doc creation later, on their own terms.
@@ -2194,7 +2226,7 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. The ONLY care-recipient name you may use is "${d.seniorName ?? ""}" — never invent or substitute any other name.`,
+    context: `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
     fallback: `I'll start searching${d.seniorName ? ` for ${d.seniorName}` : ""} while you set that up.`,
     maxTokens: 60,
   }));
@@ -3926,7 +3958,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       // creation) — only the gating fields are finalization-specific. The
       // mirror omits absent fields instead of writing nulls, so this merge can
       // never blank a field another path already set.
-      const d = session.onboardingData ?? {};
+      // Coords safety net: geocode city/zip if the gate-handoff pre-create
+      // didn't (legacy sessions, bg-check pre-create path) — the caregiver is
+      // about to go active, and radius matching needs lat/lng.
+      const d = await ensureCaregiverCoords(
+        phone, (session.onboardingData ?? {}) as Record<string, unknown>,
+      );
       const profileData = {
         phone,
         ...buildCaregiverProfileMirror(d),

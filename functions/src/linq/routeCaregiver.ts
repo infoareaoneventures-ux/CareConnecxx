@@ -65,7 +65,12 @@ async function extractReferralName(text: string): Promise<string> {
 async function isCaregiverReferralIntent(text: string, norm: string): Promise<boolean> {
   if (norm === "REFER" || norm === "REFERRAL") return true;
   const raw = await quickComplete(
-    "Does this caregiver's message express intent to refer, invite, or recommend ANOTHER person to become an Evia caregiver? Reply only YES or NO.",
+    "Does this caregiver's message EXPLICITLY express intent to refer, invite, or recommend ANOTHER person " +
+      "to become an Evia caregiver (e.g. \"I want to refer my friend\", \"can I invite someone\")? " +
+      "A bare acknowledgment like \"yes\", \"no\", \"ok\", \"sure\", or \"sounds good\" is NOT referral intent — " +
+      "it is an answer to some earlier question, so reply NO. " +
+      "Reply YES only when the message itself names or clearly describes bringing in another person. " +
+      "Reply only YES or NO.",
     text,
     { maxTokens: 5 },
   ).catch(() => "");
@@ -1559,6 +1564,28 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       // UNSURE — fall through to normal routing so Claude can answer the message
     }
 
+    // ── Job alert: YES/NO/natural-language response ────────────────────────
+    // Checked BEFORE the referral flow: a job alert is always the most recent
+    // ask when these flags are set (same rationale as the permissions-step
+    // bypass in webhooks.ts). Seen live 07-14: a bare "Yes" answering the
+    // availability-confirmation question was misclassified by the referral
+    // intent LLM ("yes" to "do you want to refer someone?") — Evia replied
+    // "Who should I invite?" and the job application was never submitted.
+    if ((session as any).awaitingJobResponse === true) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try { await handleJobResponse(phone, text, chatId, session as any); }
+      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
+    // ── Job alert: availability confirmation (any text) ─────────────────────
+    if ((session as any).awaitingAvailabilityConfirmation === true) {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try { await handleAvailabilityConfirmation(phone, text, chatId, session as any); }
+      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+      return "handled";
+    }
+
     const pendingReferral = (session as any).pendingCaregiverReferral as PendingCaregiverReferral | undefined;
     if (pendingReferral) {
       const referralExpiry = (session as any).stateExpiresAt as string | undefined;
@@ -2029,22 +2056,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         chatId,
         text
       );
-      return "handled";
-    }
-
-    // ── Job alert: YES/NO/natural-language response ────────────────────────
-    if ((session as any).awaitingJobResponse === true) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try { await handleJobResponse(phone, text, chatId, session as any); }
-      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
-      return "handled";
-    }
-
-    // ── Job alert: availability confirmation (any text) ─────────────────────
-    if ((session as any).awaitingAvailabilityConfirmation === true) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try { await handleAvailabilityConfirmation(phone, text, chatId, session as any); }
-      finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
       return "handled";
     }
 

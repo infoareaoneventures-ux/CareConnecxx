@@ -112,6 +112,23 @@ describe("handleCaregiverPermissionsReply — capability menu on completion (U3)
     // The fan-out is a fire-and-forget dynamic import — wait for it to land.
     await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
   });
+
+  it("decline answer COMPLETES the flow — arrival question removed, arrival notifications always granted (2026-07-15)", async () => {
+    await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_decline"), "cg1");
+    const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
+    expect(permWrite?.data).toMatchObject({
+      canDeclineJobsAutomatically:   true,
+      canSendArrivalNotifications:   true,
+      canShareJournalWithFamily:     true,
+      canAcceptJobsWithConfirmation: true,
+    });
+    const texts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    // The old arrival opt-in question must never be asked again.
+    expect(texts.some((t) => /automatically let the family know/i.test(t))).toBe(false);
+    // Completion celebration + fan-out fire straight from the decline step.
+    expect(texts.some((t) => /You're all set/i.test(t))).toBe(true);
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+  });
 });
 
 describe("permissions question-detour bailout (max ONE re-ask)", () => {
@@ -131,7 +148,9 @@ describe("permissions question-detour bailout (max ONE re-ask)", () => {
     const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
     expect(permWrite?.data).toMatchObject({
       canDeclineJobsAutomatically:   false,
-      canSendArrivalNotifications:   false,
+      // Arrival notifications are standard behavior (2026-07-15) — always
+      // granted, never asked; family is notified on ARRIVED unconditionally.
+      canSendArrivalNotifications:   true,
       canShareJournalWithFamily:     true,
       canAcceptJobsWithConfirmation: true,
     });
@@ -142,12 +161,13 @@ describe("permissions question-detour bailout (max ONE re-ask)", () => {
     await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
   });
 
-  it("caregiver: bailout mid-flow (arrival step) keeps the already-answered decline permission untouched", async () => {
+  it("caregiver: bailout mid-flow (legacy arrival step) keeps the already-answered decline permission untouched", async () => {
     quickComplete.mockResolvedValue("QUESTION");
     await handleCaregiverPermissionsReply("+1555", "chat1", "hmm what does that mean?",
       session("caregiver_permissions_arrival", { permissionsDetourCount: 1 }), "cg1");
     const permWrite = h.sets.find((s) => s.coll === "agent_permissions");
-    expect(permWrite?.data).toMatchObject({ canSendArrivalNotifications: false });
+    // Arrival notifications default GRANTED (standard behavior, 2026-07-15).
+    expect(permWrite?.data).toMatchObject({ canSendArrivalNotifications: true });
     expect(permWrite?.data).not.toHaveProperty("canDeclineJobsAutomatically");
   });
 

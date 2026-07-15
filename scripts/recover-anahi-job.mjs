@@ -50,9 +50,12 @@ async function run() {
   const d = snap.data();
   console.log('BEFORE:', JSON.stringify({ lat: d.lat, lng: d.lng, rate: d.rate, rateFlexible: d.rateFlexible, hourlyRate: d.hourlyRate, notifiedCount: d.notifiedCount, city: d.city, status: d.status }, null, 1));
 
+  // job_posts.location is a STRING in the web contract (jobPostContract.ts) —
+  // writing an object here crashed the caregiver Job Board via the application
+  // snapshot (React #31, 2026-07-15). Coords live in top-level lat/lng only.
   const patch = {
     lat: SC.lat, lng: SC.lng,
-    location: { city: 'Santa Clara', lat: SC.lat, lng: SC.lng },
+    location: 'Santa Clara',
     rate: RATE, rateFlexible: false, hourlyRate: RATE,
   };
   console.log('PATCH:', JSON.stringify(patch));

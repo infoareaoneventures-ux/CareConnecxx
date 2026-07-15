@@ -72,10 +72,12 @@ for (const doc of snap.docs) {
   // that differs from the stored value (e.g. stored "Adrian", zip → "Santa Clara").
   const cityFix = geo.city && geo.city.toLowerCase() !== city.toLowerCase() ? geo.city : null;
 
+  // NEVER write `location` as an object — the webapp renders caregiver
+  // `location` as a display string and an object crashes the page (React #31).
+  // Top-level latitude/longitude + lat/lng are what all server readers use.
   const patch = {
     latitude: geo.lat, longitude: geo.lng,
     lat: geo.lat, lng: geo.lng,
-    location: { ...(d.location ?? {}), lat: geo.lat, lng: geo.lng, ...(cityFix ? { city: cityFix } : {}) },
     ...(cityFix ? { city: cityFix } : {}),
   };
   console.log(`${CONFIRM ? 'PATCH' : 'WOULD PATCH'} ${doc.id.slice(0,8)}… (${d.name ?? '?'}): ${JSON.stringify(patch)}`);

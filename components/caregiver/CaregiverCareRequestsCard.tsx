@@ -4,6 +4,7 @@ import {
   Briefcase, FileText, Users, Calendar, MapPin, Video, Phone, CalendarDays,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
+import { locationLabel } from '../../utils/locationLabel';
 
 interface Props { caregiverId: string; }
 
@@ -82,7 +83,7 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
               {trulyPending.slice(0, 2).map((a: any) => {
                 const appliedDate = a.appliedAt ? new Date(a.appliedAt?.toDate?.() ?? a.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
                 const rate = a.jobRate ?? a.rate;
-                const location = a.jobLocation ?? a.location;
+                const location = locationLabel(a.jobLocation ?? a.location);
                 const days: string[] = Array.isArray(a.jobDaysOfWeek) ? a.jobDaysOfWeek : [];
                 return (
                   <div key={a.id} className="border border-slate-200 rounded-xl p-3">

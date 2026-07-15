@@ -1,18 +1,38 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, CheckCheck } from 'lucide-react';
 import { useNotifications } from '../../hooks/useNotifications';
 import { authService } from '../../services/api';
 import { AppNotification } from '../../types';
 
 interface NotificationDropdownProps {
-  // Can add props later for positioning override
+  /** Which nav mounted this dropdown — decides where a notification click navigates. */
+  role?: 'client' | 'caregiver';
 }
+
+// Notification click → destination. Every notification lands somewhere useful:
+// clicking used to only mark-as-read (found live 2026-07-15 — "New Applicant"
+// went nowhere), so the applicant/interview/booking surfaces were undiscoverable.
+const routeForNotification = (n: AppNotification, role: 'client' | 'caregiver'): string => {
+  const t = (n as any).type || '';
+  if (role === 'client') {
+    if (t === 'job_application') return '/client/posts';
+    if (t.startsWith('interview') || t === 'hire_decision') return '/client/posts?tab=interviews';
+    if (t.includes('payment') || t.includes('membership')) return '/client/payments';
+    return '/client/dashboard';
+  }
+  if (t.startsWith('interview') || t === 'hire_decision') return '/caregiver/jobs?tab=interviews';
+  if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/caregiver/bookings';
+  if (t.includes('payment') || t.includes('payout') || t.includes('membership')) return '/caregiver/payments';
+  return '/caregiver/dashboard';
+};
 
 /**
  * Accessible notification dropdown with keyboard navigation
  */
-export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
+export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ role = 'client' }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +83,12 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
     e.stopPropagation();
     deleteNotification(id);
   }, [deleteNotification]);
+
+  const handleNotificationClick = useCallback((notif: AppNotification) => {
+    if (!notif.isRead) markAsRead(notif.id);
+    setIsOpen(false);
+    navigate(routeForNotification(notif, role));
+  }, [markAsRead, navigate, role]);
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -162,9 +188,9 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = () => {
                     key={notif.id} 
                     role="menuitem"
                     tabIndex={0}
-                    className={`p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors group ${getBgColor(notif.type, notif.isRead)}`}
-                    onClick={() => !notif.isRead && markAsRead(notif.id)}
-                    onKeyDown={(e) => e.key === 'Enter' && !notif.isRead && markAsRead(notif.id)}
+                    className={`p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors group cursor-pointer ${getBgColor(notif.type, notif.isRead)}`}
+                    onClick={() => handleNotificationClick(notif)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleNotificationClick(notif)}
                     aria-label={`${notif.title}. ${notif.body}. ${notif.isRead ? 'Read' : 'Unread'}`}
                   >
                     <div className="flex gap-3">

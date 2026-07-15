@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, Banknote, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior, paymentMethodLabel } from '../../types';
-import { dbService, authService } from '../../services/api';
+import { dbService, authService, normalizeJobPost } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
 import { CaraActivityFeed } from './CaraActivityFeed';
@@ -182,7 +182,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     const jobPostsUnsub = db.collection('job_posts')
       .where('clientId', '==', currentUser.uid)
       .onSnapshot(snap => {
-        const posts = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        // normalizeJobPost: server-written docs can carry location as an OBJECT — crashes JSX if rendered raw
+        const posts = snap.docs.map(d => normalizeJobPost({ id: d.id, ...(d.data() as any) }));
         setClientAllPosts(posts);
         setClientOpenPosts(posts.filter(p => p.status === 'open').map(p => ({ id: p.id, title: p.title || 'Untitled post' })));
       }, () => {});

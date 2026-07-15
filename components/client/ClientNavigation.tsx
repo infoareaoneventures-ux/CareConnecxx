@@ -137,7 +137,7 @@ export const ClientNavigation: React.FC = () => {
             <button onClick={() => navigate('/client/inbox')} className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${isActive('/client/inbox') ? 'text-ink-900 bg-paper-100' : 'text-ink-600 hover:text-ink-900 hover:bg-paper-100'}`}>
               <MessageSquare className="w-5 h-5" />
             </button>
-            <NotificationDropdown />
+            <NotificationDropdown role="client" />
 
             {/* Help */}
             <div className="relative" ref={helpRef}>

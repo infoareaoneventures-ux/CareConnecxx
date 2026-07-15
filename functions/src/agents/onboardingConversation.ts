@@ -235,15 +235,17 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
   // Coords — from a shared location pin OR geocoded from city/zip (see
-  // ensureCaregiverCoords). Written in BOTH shapes: latitude/longitude is what
-  // notifyAreaCaregivers and caregiverJobMatch actually read (cg.latitude ??
-  // cg.location?.lat); lat/lng + location is the pin-mirror legacy shape.
+  // ensureCaregiverCoords). latitude/longitude is what notifyAreaCaregivers
+  // and caregiverJobMatch actually read (cg.latitude ?? cg.location?.lat).
+  // NEVER write `location` as a {lat,lng} OBJECT here: the webapp renders
+  // caregiver `location` as a display string, and an object crashes the page
+  // (React #31, seen live 2026-07-15). Server readers only use location?.lat
+  // as a legacy fallback — the top-level fields written here always win.
   if (typeof d.lat === "number" && typeof d.lng === "number") {
     out.lat       = d.lat;
     out.lng       = d.lng;
     out.latitude  = d.lat;
     out.longitude = d.lng;
-    out.location  = { lat: d.lat, lng: d.lng };
   }
   // Profile photo + uploaded credentials (web upload OR texted to Evia).
   // `photo` is the webapp's canonical Caregiver field (types.ts) — the

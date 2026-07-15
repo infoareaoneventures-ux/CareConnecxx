@@ -14,8 +14,16 @@ import {
   getDocs,
   writeBatch
 } from 'firebase/firestore';
+import { locationLabel } from '../utils/locationLabel';
 
 export type JobApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'completed';
+
+// SMS-originated applications (and any doc snapshotted from a job whose
+// location was an object) can carry jobLocation as an OBJECT — rendering it
+// raw crashes React. Coerce at the read boundary so every consumer gets the
+// string the JobApplication type promises.
+const normalizeApplication = (raw: any): JobApplication =>
+  ({ ...raw, jobLocation: locationLabel(raw.jobLocation) || null }) as JobApplication;
 
 export interface JobApplication {
   id: string;
@@ -66,7 +74,7 @@ export const useMyApplications = (caregiverId: string | null) => {
       (snapshot) => {
         const apps: JobApplication[] = [];
         snapshot.forEach((doc) => {
-          apps.push({ id: doc.id, ...doc.data() } as JobApplication);
+          apps.push(normalizeApplication({ id: doc.id, ...doc.data() }));
         });
         setApplications(apps);
         setLoading(false);
@@ -120,7 +128,7 @@ export const useJobApplications = (clientId: string | null) => {
       (snapshot) => {
         const apps: JobApplication[] = [];
         snapshot.forEach((doc) => {
-          apps.push({ id: doc.id, ...doc.data() } as JobApplication);
+          apps.push(normalizeApplication({ id: doc.id, ...doc.data() }));
         });
         setApplications(apps);
         setLoading(false);
@@ -243,7 +251,7 @@ export const jobApplicationService = {
       // Snapshot job details so card has context without extra lookups
       jobRate: jobData.rate ?? null,
       jobRateFlexible: !!jobData.rateFlexible,
-      jobLocation: jobData.location || jobData.city || null,
+      jobLocation: locationLabel(jobData.location) || jobData.city || null,
       jobCareTypes: jobData.careTypes || [],
       jobFrequency: jobData.jobFrequency || null,
       jobDaysOfWeek: jobData.daysOfWeek || [],
@@ -261,7 +269,7 @@ export const jobApplicationService = {
     ));
     if (docSnap.empty) return null;
     const doc = docSnap.docs[0];
-    return { id: doc.id, ...doc.data() } as JobApplication;
+    return normalizeApplication({ id: doc.id, ...doc.data() });
   },
 
   async updateApplicationStatus(

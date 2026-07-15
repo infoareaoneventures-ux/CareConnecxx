@@ -126,8 +126,13 @@ service cloud.firestore {
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);
         allow create: if isAdmin();
+        // Owner may mark read (isRead/read + readAt stamp) or soft-delete
+        // (isDeleted + deletedAt) — the exact fields useNotifications writes.
+        // hasOnly(['isRead','read']) alone silently denied markAsRead and the
+        // trash icon (both include their timestamp field; found live 2026-07-15).
         allow update: if isOwner(userId) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'read']);
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['isRead', 'read', 'readAt', 'isDeleted', 'deletedAt']);
         allow delete: if isOwner(userId) || isAdmin();
       }
 

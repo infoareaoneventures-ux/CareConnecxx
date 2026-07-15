@@ -539,7 +539,15 @@ export async function handleAvailabilityConfirmation(
       return;
     }
 
-    const caregiverName = session.name ?? session.firstName ?? "Caregiver";
+    // Prefer the caregiver doc's real name — session.name is often unset for
+    // established caregivers, which made the family's applicant alert read
+    // "Caregiver applied to your post" (seen live 2026-07-15).
+    let caregiverName = (session.name ?? session.firstName) as string | undefined;
+    if (!caregiverName) {
+      const cgDoc = await db.collection("caregivers").doc(caregiverId).get();
+      caregiverName = (cgDoc.data()?.name as string | undefined) || undefined;
+    }
+    caregiverName = caregiverName || "Caregiver";
 
     // Write application
     const { jobApplicationSnapshot } = await import("../utils/jobApplicationDoc");

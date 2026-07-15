@@ -226,7 +226,7 @@ const DesktopNav: React.FC<{
             </span>
           )}
         </button>
-        <NotificationDropdown />
+        <NotificationDropdown role="caregiver" />
         <div className="relative" ref={helpRef}>
           <button onClick={() => setHelpOpen(o => !o)} aria-label="Help"
             className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${helpOpen ? 'text-primary-600 bg-primary-50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>

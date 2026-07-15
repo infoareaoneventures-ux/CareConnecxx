@@ -151,7 +151,8 @@ export const CaregiverProfileModal: React.FC<CaregiverProfileModalProps> = ({
   const rating = typeof caregiver.rating === 'number' ? caregiver.rating : 0;
   const reviewCount = caregiver.reviewCount || 0;
   const distance = typeof caregiver.distance === 'number' ? caregiver.distance : null;
-  const location = caregiver.city || caregiver.location || 'Santa Clara County';
+  // caregiver.location can be a coords OBJECT ({lat,lng} backfill shape) — never render it raw
+  const location = caregiver.city || (typeof caregiver.location === 'string' ? caregiver.location : '') || 'Santa Clara County';
   const neighborhood = (caregiver as any).neighborhood as string | undefined;
   const bio = caregiver.bio || '';
   const skills = Array.isArray(caregiver.skills) ? caregiver.skills : [];

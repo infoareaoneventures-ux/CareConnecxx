@@ -80,7 +80,8 @@ export const BrowseCaregivers: React.FC = () => {
           const fullName = d.name || `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'Caregiver';
           const city = d.city || d.location?.city || '';
           const state = d.state || d.location?.state || '';
-          const location = city ? `${city}${state ? `, ${state}` : ''}` : (d.location || '');
+          // d.location can be a coords OBJECT ({lat,lng} backfill shape) — never render it raw
+          const location = city ? `${city}${state ? `, ${state}` : ''}` : (typeof d.location === 'string' ? d.location : '');
           return {
             id: doc.id,
             name: fullName,

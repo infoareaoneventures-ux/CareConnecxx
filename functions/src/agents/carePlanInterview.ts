@@ -1,0 +1,423 @@
+// Post-payment care-plan interview (2026-07-15).
+//
+// After a family finishes onboarding (payment → job live → permissions →
+// onboardingStep "complete"), Evia interviews them to build the FULL care plan —
+// task detail per recipient, medications, and an emergency contact — so
+// caregivers know exactly what care is needed. Founder decisions (07-15):
+//   • Kickoff at onboarding-complete (the payment→permissions window is owned
+//     by deterministic state machines — never inject the interview there).
+//   • Free agent loop drives it (not sequenced steps): a per-turn directive
+//     grounded in LIVE completeness, hard-completion pressure, everything
+//     interrupts, the interview re-asserts each turn until done.
+//   • "Complete" is COMPUTED FROM DATA (never model-asserted): task detail for
+//     every recipient + medications (an explicit "none" counts) + one emergency
+//     contact (an explicit decline counts).
+//   • On completion: targeted job_posts field update (privacy-filtered task
+//     detail only — NEVER a buildWebJobPostDoc rebuild, which would zero
+//     applicantCount/notifiedCount and bump createdAt) + a follow-up text to
+//     ENGAGED caregivers only (replied interested or applied).
+//   • Privacy line: task detail flows to caregivers; medication names,
+//     diagnoses, routine specifics, contacts, and recipient names never do.
+//     buildCaregiverSafeCareSummary is the single choke point — it only ACCEPTS
+//     task-level fields, so medical data physically can't flow through it.
+//
+// Kill switch: CARE_PLAN_INTERVIEW_ENABLED (config/featureFlags.ts). Flipping
+// it off mid-interview silences the directive and the kickoff — no migration.
+
+import * as admin from "firebase-admin";
+import { carePlanInterviewEnabled } from "../config/featureFlags";
+import { allCareRecipients, recipientPlanKey } from "./careRecipients";
+
+const db = admin.firestore();
+
+// ── Completeness (the data-driven definition of "done") ───────────────────────
+
+export interface CarePlanCompleteness {
+  complete: boolean;
+  /** Human labels of what's still needed, in ask order. */
+  missing: string[];
+  /** Human labels of what's already on file (so the directive never re-asks). */
+  filled: string[];
+  /** Per-recipient task detail from carePlans.recipientPlans (caregiver-safe). */
+  taskDetailByRecipient: Record<string, Record<string, string[]>>;
+  /** Union of care-type categories across recipients (caregiver-safe). */
+  careTypes: string[];
+}
+
+function filledArray(v: unknown): boolean {
+  return Array.isArray(v) && v.length > 0;
+}
+
+// Reads BOTH stores (the split the webapp uses): task detail lives in
+// carePlans/{uid}.recipientPlans (camelCase — CarePlan.tsx tabs), medical
+// fields live in canonical care_plans/{uid} (underscore — update_care_plan).
+export async function getCarePlanCompleteness(
+  clientId: string,
+  onboardingData?: Record<string, unknown>,
+): Promise<CarePlanCompleteness> {
+  const [webSnap, canonSnap] = await Promise.all([
+    db.collection("carePlans").doc(clientId).get(),
+    db.collection("care_plans").doc(clientId).get(),
+  ]);
+  const web   = (webSnap.data()  ?? {}) as Record<string, unknown>;
+  const canon = (canonSnap.data() ?? {}) as Record<string, unknown>;
+
+  const missing: string[] = [];
+  const filled:  string[] = [];
+
+  // 1) Care-task detail per recipient. Recipients come from the plan doc itself
+  //    (recipientPlans keys), falling back to onboardingData for a brand-new
+  //    signup whose plan doc hasn't been written yet.
+  const recipientPlans = (web.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
+  const planKeys = Object.keys(recipientPlans);
+  const expectedKeys = planKeys.length
+    ? planKeys
+    : allCareRecipients(onboardingData ?? {}).map((r) => recipientPlanKey((r.name || "").split(" ")[0] || r.name));
+
+  const taskDetailByRecipient: Record<string, Record<string, string[]>> = {};
+  const careTypesSet = new Set<string>();
+  let recipientsMissingDetail = 0;
+  for (const key of expectedKeys) {
+    const plan   = recipientPlans[key] ?? {};
+    const detail = (plan.careNeedDetails ?? {}) as Record<string, unknown>;
+    const clean: Record<string, string[]> = {};
+    for (const [category, tasks] of Object.entries(detail)) {
+      if (filledArray(tasks)) clean[category] = (tasks as unknown[]).map(String);
+    }
+    for (const t of (Array.isArray(plan.careNeeds) ? plan.careNeeds as unknown[] : [])) {
+      careTypesSet.add(String(t));
+    }
+    for (const category of Object.keys(clean)) careTypesSet.add(category);
+    if (Object.keys(clean).length > 0) {
+      taskDetailByRecipient[key] = clean;
+      const name = String(plan.name ?? key);
+      filled.push(`day-to-day care tasks for ${name}`);
+    } else {
+      recipientsMissingDetail++;
+      const name = String(plan.name ?? "").trim();
+      missing.push(name ? `day-to-day care tasks for ${name}` : "day-to-day care tasks");
+    }
+  }
+  if (expectedKeys.length === 0) {
+    // No recipients resolvable at all — treat task detail as missing so the
+    // interview asks rather than silently completing on an empty plan.
+    recipientsMissingDetail++;
+    missing.push("day-to-day care tasks");
+  }
+
+  // 2) Medications — filled, or explicitly confirmed "none".
+  const medsFilled = filledArray(canon.medications) || canon.medicationsConfirmedNone === true;
+  if (medsFilled) filled.push(canon.medicationsConfirmedNone === true && !filledArray(canon.medications)
+    ? "medications (family confirmed: none)"
+    : "medications");
+  else missing.push("medications (or confirm there are none)");
+
+  // 3) Emergency contact — one on file, or explicitly declined.
+  const contactFilled = filledArray(canon.emergencyContacts) || canon.emergencyContactDeclined === true;
+  if (contactFilled) filled.push("emergency contact");
+  else missing.push("an emergency contact (name + phone)");
+
+  // Optional (collected if offered, never blocking): dailyRoutine, dietary.
+  if (filledArray(canon.dailyRoutine))                                    filled.push("daily routine");
+  if (canon.dietaryNotes || filledArray(canon.dietaryRestrictions))       filled.push("dietary notes");
+
+  return {
+    complete: recipientsMissingDetail === 0 && medsFilled && contactFilled,
+    missing,
+    filled,
+    taskDetailByRecipient,
+    careTypes: [...careTypesSet],
+  };
+}
+
+// ── Session-state gate ─────────────────────────────────────────────────────────
+
+// True when this session is mid-interview: kill switch on, flag set, not yet
+// completed. Callers pass the in-hand session; writes always re-read fresh.
+export function carePlanInterviewPending(session: Record<string, unknown> | undefined): boolean {
+  if (!carePlanInterviewEnabled()) return false;
+  if (!session) return false;
+  return session.carePlanInterviewActive === true && !session.carePlanInterviewCompletedAt;
+}
+
+// ── Per-turn directive (the steering mechanism, PROFILE-REVIEW-MODE pattern) ──
+
+// Grounded in LIVE completeness each turn so the model never re-asks a filled
+// field (the gate-step-amnesia bug class) and never invents missing ones.
+export async function buildCarePlanInterviewDirective(
+  clientId: string,
+  session: Record<string, unknown> | undefined,
+): Promise<string> {
+  try {
+    const c = await getCarePlanCompleteness(
+      clientId,
+      (session?.onboardingData ?? undefined) as Record<string, unknown> | undefined,
+    );
+    if (c.complete) return ""; // data says done — post-turn completion handles the rest
+    return (
+      "\n\nCARE PLAN INTERVIEW (active until the plan is complete): This family finished signup and their " +
+      "care request is already out to caregivers. Your standing goal is to finish their care plan — it tells " +
+      "caregivers exactly what care is needed.\n" +
+      `LIVE CARE-PLAN STATUS RIGHT NOW — already on file (NEVER re-ask these): ${c.filled.length ? c.filled.join("; ") : "nothing yet"}. ` +
+      `Still needed, in this order: ${c.missing.join("; ")}.\n` +
+      "Rules:\n" +
+      "- Ask for exactly ONE missing item per message, in the order listed. Short, warm, conversational — no numbered lists.\n" +
+      "- If the family raises ANYTHING else (a caregiver match, payment, a question), handle that FIRST and fully, " +
+      "then steer back to the next missing item in the same reply. VARY the steer-back phrasing every time — never " +
+      "repeat the same transition sentence twice.\n" +
+      "- Save answers the moment you have them: care tasks via save_care_task_detail (map what they describe onto " +
+      "categories like Personal Care, Mobility Assistance, Meal Preparation, Medication Reminders, Transportation, " +
+      "Companionship, Light Housekeeping, Dementia / Memory Care, with the specific tasks under each); medications, " +
+      "emergency contact, daily routine, and dietary notes via update_care_plan.\n" +
+      "- The family is GIVING you this data — do not read it back for confirmation before saving; save it and move on. " +
+      "Only confirm if their answer was genuinely ambiguous.\n" +
+      "- \"No medications\" is a real answer: save it with update_care_plan field medicationsConfirmedNone, value true, " +
+      "action set. If they refuse an emergency contact after one gentle explanation of why it matters, save " +
+      "emergencyContactDeclined true the same way — never badger.\n" +
+      "- If they share daily routine or dietary details along the way, save those too (optional — never ask twice).\n" +
+      "- NEVER promise the plan is 'done' while items are still listed as needed above."
+    );
+  } catch (e) {
+    console.warn("[carePlanInterview] directive build failed (skipping this turn):", e);
+    return "";
+  }
+}
+
+// ── Kickoff ────────────────────────────────────────────────────────────────────
+
+// Sets the session flag and sends the first interview question. Used by the
+// onboarding-complete handoff (permissionsConversation) and the backfill
+// migration. Fail-soft: a send failure leaves the flag set, so the next inbound
+// turn's directive still drives the interview.
+export async function startCarePlanInterview(
+  phone: string,
+  chatId: string,
+  session: Record<string, unknown>,
+  opts?: { source?: "onboarding" | "backfill" },
+): Promise<boolean> {
+  if (!carePlanInterviewEnabled()) return false;
+  if (session.carePlanInterviewActive === true || session.carePlanInterviewCompletedAt) return false;
+
+  const clientId = (session.userId ?? "") as string;
+  if (!clientId) return false;
+
+  // Skip entirely if the plan is somehow already complete (e.g. webapp-built).
+  const c = await getCarePlanCompleteness(clientId, session.onboardingData as Record<string, unknown> | undefined);
+  if (c.complete) return false;
+
+  await db.collection("agent_sessions").doc(phone).set({
+    carePlanInterviewActive:    true,
+    carePlanInterviewStartedAt: new Date().toISOString(),
+    carePlanInterviewSource:    opts?.source ?? "onboarding",
+  }, { merge: true });
+
+  const d = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const seniorName = (d.seniorName as string) || "your loved one";
+  const knownNeeds = Array.isArray(d.careNeeds) && (d.careNeeds as unknown[]).length
+    ? (d.careNeeds as unknown[]).map(String).join(", ")
+    : "";
+
+  try {
+    const { generateCaraMessage } = await import("../utils/caraMessage");
+    const { sendMessage } = await import("../linq/client");
+    const first = await generateCaraMessage({
+      audience: "family",
+      context:
+        (opts?.source === "backfill"
+          ? `Evia is proactively checking in with a family who signed up a little while ago — their care request is live with caregivers, but their care plan was never finished. Open with a warm one-line check-in (no re-introduction — they know Evia). `
+          : `Evia is starting a short care-plan interview with a family whose care request is already live with caregivers. `) +
+        `The care recipient is ${seniorName}.${knownNeeds ? ` At signup the family said they need help with: ${knownNeeds}.` : ""} ` +
+        `Explain in ONE warm sentence that while caregivers respond, a quick care plan helps them know exactly what ` +
+        `${seniorName} needs day to day — then ask the FIRST question: what specific day-to-day tasks does ${seniorName} ` +
+        `need help with (things like bathing, dressing, meals, getting around, rides)? One question only, no lists.`,
+      fallback:
+        `While caregivers respond, let's build ${seniorName}'s care plan — it shows caregivers exactly what's needed. ` +
+        `First: what day-to-day tasks does ${seniorName} need help with? Things like bathing, dressing, meals, getting around, or rides.`,
+      maxTokens: 160,
+    });
+    await sendMessage(chatId, first);
+  } catch (e) {
+    console.error("[carePlanInterview] kickoff send failed (flag stays set; directive resumes next turn):", e);
+  }
+  return true;
+}
+
+// ── Privacy choke point ────────────────────────────────────────────────────────
+
+// The ONLY producer of caregiver-facing care-plan content. It accepts task-level
+// fields BY PARAMETER — medications, diagnoses, contacts, routine specifics, and
+// recipient names are not inputs, so they cannot leak through it. Both the
+// job-post enrichment and the engaged-caregiver follow-up go through here.
+export function buildCaregiverSafeCareSummary(
+  taskDetailByRecipient: Record<string, Record<string, string[]>>,
+  careTypes: string[],
+): { summary: string; careTypes: string[] } {
+  // Merge task detail across recipients into category → task set (no names).
+  const byCategory = new Map<string, Set<string>>();
+  for (const detail of Object.values(taskDetailByRecipient)) {
+    for (const [category, tasks] of Object.entries(detail)) {
+      const set = byCategory.get(category) ?? new Set<string>();
+      for (const t of tasks) {
+        const clean = String(t).trim();
+        if (clean) set.add(clean);
+      }
+      byCategory.set(category, set);
+    }
+  }
+  const parts: string[] = [];
+  for (const [category, tasks] of byCategory) {
+    parts.push(tasks.size ? `${category} (${[...tasks].slice(0, 6).join(", ").toLowerCase()})` : category);
+  }
+  const allTypes = [...new Set([...careTypes, ...byCategory.keys()])];
+  return {
+    summary: parts.join(" · "),
+    careTypes: allTypes,
+  };
+}
+
+// ── Completion (data-driven, idempotent) ──────────────────────────────────────
+
+// Called after each qaAgent turn while the interview is pending. Re-reads the
+// session FRESH (the in-hand copy predates this turn's tool writes to it) and
+// the plan docs; when the data says complete, claims completion atomically,
+// enriches the live job post, and notifies engaged caregivers. Returns true
+// only for the turn that actually claimed completion.
+export async function maybeCompleteCarePlanInterview(
+  phone: string,
+  session: Record<string, unknown> | undefined,
+): Promise<boolean> {
+  try {
+    if (!carePlanInterviewPending(session)) return false;
+    const clientId = (session?.userId ?? "") as string;
+    if (!clientId) return false;
+
+    const c = await getCarePlanCompleteness(clientId, session?.onboardingData as Record<string, unknown> | undefined);
+    if (!c.complete) return false;
+
+    // Atomic claim — a racing turn (or webhook retry) must not double-fire the
+    // caregiver follow-up. Only the transaction that flips the flag proceeds.
+    const sessionRef = db.collection("agent_sessions").doc(phone);
+    const claimed = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(sessionRef);
+      const s = (snap.data() ?? {}) as Record<string, unknown>;
+      if (s.carePlanInterviewActive !== true || s.carePlanInterviewCompletedAt) return false;
+      tx.update(sessionRef, {
+        carePlanInterviewActive:      admin.firestore.FieldValue.delete(),
+        carePlanInterviewCompletedAt: new Date().toISOString(),
+      });
+      return true;
+    });
+    if (!claimed) return false;
+
+    const safe = buildCaregiverSafeCareSummary(c.taskDetailByRecipient, c.careTypes);
+
+    // Both post-completion effects are independent and non-blocking for the
+    // family's reply latency; each logs loudly on failure.
+    await Promise.all([
+      enrichJobPostFromCarePlan(clientId, safe).catch((e) =>
+        console.error("[carePlanInterview] job-post enrichment failed:", e)),
+      notifyEngagedCaregiversOfCarePlan(clientId, safe).catch((e) =>
+        console.error("[carePlanInterview] engaged-caregiver follow-up failed:", e)),
+    ]);
+    return true;
+  } catch (e) {
+    console.error("[carePlanInterview] completion check failed:", e);
+    return false;
+  }
+}
+
+// Targeted field update on the LIVE job post — never a buildWebJobPostDoc
+// rebuild (that would reset applicantCount/notifiedCount to 0 and stamp a fresh
+// createdAt, wiping engagement and re-sorting the board). Only caregiver-safe
+// fields move: careTypes, requirements (the match-keyword mirror), and a task
+// summary appended to the description.
+export async function enrichJobPostFromCarePlan(
+  clientId: string,
+  safe: { summary: string; careTypes: string[] },
+): Promise<void> {
+  const ref = db.collection("job_posts").doc(clientId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const job = snap.data() ?? {};
+  if (job.status !== "open") return;
+
+  const TASK_MARKER = "Day-to-day tasks:";
+  const baseDescription = String(job.description ?? "").split(TASK_MARKER)[0].trimEnd();
+  const update: Record<string, unknown> = {
+    updatedAt: new Date().toISOString(),
+    carePlanEnrichedAt: new Date().toISOString(),
+  };
+  if (safe.careTypes.length) {
+    update.careTypes    = safe.careTypes;
+    update.requirements = safe.careTypes; // legacy mirror (jobMatchService keywords)
+  }
+  if (safe.summary) {
+    update.description = `${baseDescription}\n\n${TASK_MARKER} ${safe.summary}`.trim();
+  }
+  await ref.update(update);
+  console.log(`[carePlanInterview] job post enriched for client=${clientId}`);
+}
+
+// Follow-up text to ENGAGED caregivers only: those who replied interested or
+// applied to this job (job_notifications status interested/applied, plus
+// job_applications as a net for legacy notification docs). Deduped by phone;
+// per-doc carePlanUpdateSentAt guards webhook-retry double-sends.
+export async function notifyEngagedCaregiversOfCarePlan(
+  clientId: string,
+  safe: { summary: string; careTypes: string[] },
+): Promise<number> {
+  if (!safe.summary) return 0;
+  const jobId = clientId; // job_posts/{uid} — both SMS + intake writers converge on it
+
+  const [interestedSnap, appliedSnap, applicationsSnap] = await Promise.all([
+    db.collection("job_notifications").where("jobId", "==", jobId).where("status", "==", "interested").get(),
+    db.collection("job_notifications").where("jobId", "==", jobId).where("status", "==", "applied").get(),
+    db.collection("job_applications").where("jobId", "==", jobId).get(),
+  ]);
+
+  // phone → the notification doc ref used for the sent-guard (applications
+  // without a notification doc still get the text, guarded by the dedupe set).
+  const byPhone = new Map<string, FirebaseFirestore.DocumentReference | null>();
+  for (const doc of [...interestedSnap.docs, ...appliedSnap.docs]) {
+    const p = String(doc.data().phone ?? "");
+    if (p && !byPhone.has(p)) byPhone.set(p, doc.ref);
+    if (p && doc.data().carePlanUpdateSentAt) byPhone.set(p, null); // already sent — poison the entry
+  }
+  for (const doc of applicationsSnap.docs) {
+    const p = String(doc.data().phone ?? "");
+    if (p && !byPhone.has(p)) byPhone.set(p, doc.ref.parent.firestore.collection("job_notifications").doc(doc.id));
+  }
+
+  const { generateCaraMessage } = await import("../utils/caraMessage");
+  const { sendMessage, getOrCreateSession } = await import("../linq/client");
+
+  let sent = 0;
+  for (const [phone, guardRef] of byPhone) {
+    if (guardRef === null) continue; // already sent for this phone
+    if (sent >= 25) { console.warn(`[carePlanInterview] follow-up capped at 25 for job=${jobId}`); break; }
+    try {
+      const cgSession = await getOrCreateSession(phone);
+      if (cgSession.optedOut) continue;
+      const msg = await generateCaraMessage({
+        audience: "caregiver",
+        context:
+          "A family this caregiver expressed interest in (or applied to) just finished their care plan. " +
+          `Share the day-to-day care detail in ONE short friendly text using ONLY these facts — never invent ` +
+          `medical details, names, or anything else: ${safe.summary}. ` +
+          "Close by inviting them to reply with any questions.",
+        fallback: `The family you were interested in finished their care plan — day-to-day it covers: ${safe.summary}. Reply if you have any questions!`,
+        maxTokens: 140,
+      });
+      await sendMessage(cgSession.chatId, msg);
+      sent++;
+      // Guard write is best-effort; the docId-based ref for application-only
+      // caregivers may create a marker doc, which future runs read the same way.
+      await guardRef.set({ jobId, phone, carePlanUpdateSentAt: new Date().toISOString() }, { merge: true })
+        .catch(() => {});
+    } catch (e) {
+      console.error(`[carePlanInterview] follow-up send failed for ${phone}:`, e);
+    }
+  }
+  console.log(`[carePlanInterview] care-plan follow-up sent to ${sent} engaged caregivers for job=${jobId}`);
+  return sent;
+}

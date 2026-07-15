@@ -34,6 +34,7 @@ import { raiseProviderFailureAlert } from "../observability/providerFailureAlert
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
+import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
 import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
 import {
   HUMAN_HANDOFF_COPY,
@@ -1743,6 +1744,25 @@ export async function runQaAgent(params: {
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
   }
 
+  // CARE PLAN INTERVIEW (2026-07-15) — post-onboarding clients with an
+  // incomplete care plan get a standing per-turn goal: finish the plan (task
+  // detail + medications + emergency contact) so caregivers know exactly what
+  // care is needed. Founder decisions: everything interrupts, the interview
+  // re-asserts each turn, completion is computed from data (never model-
+  // asserted — maybeCompleteCarePlanInterview post-turn). Directive is grounded
+  // in LIVE completeness so filled fields are never re-asked. Gated on the
+  // CARE_PLAN_INTERVIEW_ENABLED kill switch inside carePlanInterviewPending;
+  // fail-soft "" on any read error (normal turn, re-asserts next turn).
+  const interviewActive =
+    !onboardingMode && userType !== "caregiver" && !shadowMode &&
+    carePlanInterviewPending(session as Record<string, unknown> | undefined);
+  if (interviewActive && userId) {
+    systemPrompt += await buildCarePlanInterviewDirective(
+      userId,
+      session as Record<string, unknown> | undefined,
+    );
+  }
+
   // ONBOARDING MODE (U3) — the agent loop is driving conversational field
   // collection (client-first). Inject the goal/checklist/voice directive so Evia
   // leads collection naturally instead of the scripted runner that re-greeted
@@ -1909,9 +1929,21 @@ export async function runQaAgent(params: {
     const baseTools = onboardingMode
       ? MCP_TOOLS.filter(t => isOnboardingTool(t.name))
       : userType === "caregiver" ? CAREGIVER_TOOLS : CLIENT_TOOLS;
-    const activeTools = (onboardingMode || userType === "caregiver")
+    let activeTools = (onboardingMode || userType === "caregiver")
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
+    // Care-plan interview: the save tools must survive the per-intent filter —
+    // a family answering "she takes lisinopril" mid-match-question would
+    // otherwise land on a turn whose intent filtered update_care_plan out,
+    // and the answer would be acknowledged but never saved.
+    if (interviewActive && activeTools.length !== baseTools.length) {
+      const CARE_PLAN_INTERVIEW_TOOLS = new Set(["get_care_plan", "update_care_plan", "save_care_task_detail"]);
+      const present = new Set(activeTools.map(t => t.name));
+      activeTools = [
+        ...activeTools,
+        ...baseTools.filter(t => CARE_PLAN_INTERVIEW_TOOLS.has(t.name) && !present.has(t.name)),
+      ];
+    }
     if (activeTools.length !== baseTools.length) {
       console.info("qaAgent: tool surface filtered", {
         userId, intent, before: baseTools.length, after: activeTools.length,
@@ -2814,6 +2846,17 @@ export async function runQaAgent(params: {
       const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
       await fulfillNarratedLinkPromise({ phone, chatId, reply, userType }).catch((err) =>
         console.error("qaAgent: link-promise net failed", err));
+    }
+
+    // Care-plan interview completion — data-driven, checked AFTER this turn's
+    // tool writes landed and the family's reply already went out (no latency
+    // cost to them). The claim is transactional inside, so webhook retries and
+    // racing turns can't double-fire the job-post enrichment or the engaged-
+    // caregiver follow-up. Awaited (not fire-and-forget): the follow-up sends
+    // must finish before this function invocation ends.
+    if (interviewActive && !skipSend && !shadowMode) {
+      await maybeCompleteCarePlanInterview(phone, session as Record<string, unknown> | undefined)
+        .catch((err) => console.error("qaAgent: care-plan completion check failed", err));
     }
 
     // A real answer went out — clear any open "I'll get back to you"

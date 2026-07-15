@@ -97,6 +97,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_care_journal_entry: ["care_plan"],
   get_care_plan:             ["care_plan"],
   update_care_plan:          ["care_plan"],
+  save_care_task_detail:     ["care_plan"],
   get_care_plan_history:     ["care_plan"],
   restore_care_plan_version: ["care_plan"],
   get_health_signals:        ["care_plan"],

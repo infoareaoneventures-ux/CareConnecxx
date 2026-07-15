@@ -24,6 +24,7 @@
 | client | Reschedule an existing appointment | components/client/ClientVisitsPage.tsx | appointments | `reschedule_appointment` | client | shipped |  |
 | client | Cancel an appointment | components/client/ClientVisitsPage.tsx | appointments | `cancel_appointment` | client | shipped |  |
 | client | Update the senior's care plan | components/CarePlan.tsx | carePlans | `update_care_plan` | client | shipped |  |
+| client | Record per-recipient day-to-day care tasks by category (care-plan interview / Step3CareNeeds parity) | components/client/postJob/Step3CareNeeds.tsx | carePlans | `save_care_task_detail` | client | shipped | Added 2026-07-15 with the post-payment care-plan interview; writes recipientPlans.{key}.careNeedDetails in the exact shape CarePlan.tsx renders. |
 | client | Add a member to the family group | components/client/MyCareTeam.tsx | family_groups | `add_family_member` | client | shipped |  |
 | client | Remove a member from the family group | components/client/MyCareTeam.tsx | family_groups | `remove_family_member` | client | shipped |  |
 | client | Read the care journal / visit updates | components/client/CareJournalFeed.tsx | care_journal | `get_care_journal_client` | any | shipped |  |

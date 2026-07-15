@@ -275,6 +275,11 @@ export * from './migrations/migrateCarePlansToCanonical';
 // legacy doc untouched. DRY-RUN first: ?apply=true to write.
 export * from './migrations/consolidateWebCarePlans';
 
+// Care-plan interview backfill for existing paid clients (2026-07-15).
+// DRY-RUN first; apply REQUIRES ?apply=true&phones=<named list> (founder names
+// every recipient — standing named-consent rule for proactive prod sends).
+export * from './migrations/carePlanInterviewBackfill';
+
 // Caregiver PII → caregivers/{id}/private/background: move legal name / DOB /
 // SSN-4 / ZIP off the world-readable parent doc. Dry-run first: ?dryRun=1
 export * from './migrations/backfillCaregiverPrivateBackground';

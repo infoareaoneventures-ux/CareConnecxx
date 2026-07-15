@@ -385,6 +385,22 @@ export async function handleJobResponse(
     pendingJobId:                     jobId,
   } as any);
 
+  // Record the interest on the notification doc — "engaged" caregivers
+  // (interested or applied) are the ones who get the care-plan follow-up when
+  // the family finishes their plan (carePlanInterview, 2026-07-15).
+  await db.collection("job_notifications")
+    .where("phone", "==", phone)
+    .where("jobId", "==", jobId)
+    .limit(1)
+    .get()
+    .then(snap => {
+      if (!snap.empty && !snap.docs[0].data().status) {
+        return snap.docs[0].ref.update({ status: "interested", interestedAt: new Date().toISOString() });
+      }
+      return undefined;
+    })
+    .catch(() => {});
+
   await sendMessage(
     chatId,
     `Great! Just to confirm — are you available for ${scheduleText}? Say yes and I'll send in your application, or no to pass.`
@@ -568,6 +584,21 @@ export async function handleAvailabilityConfirmation(
       { appliedCandidates: FieldValue.arrayUnion(caregiverId), updatedAt: new Date().toISOString() },
       { merge: true }
     );
+
+    // Stamp the notification doc "applied". notifyFamilyIfAllDeclined has
+    // always READ status === "applied" but nothing ever wrote it — an applied
+    // caregiver looked like a non-responder to the all-declined sweep. Also
+    // marks this caregiver "engaged" for the care-plan follow-up (2026-07-15).
+    await db.collection("job_notifications")
+      .where("phone", "==", phone)
+      .where("jobId", "==", jobId)
+      .limit(1)
+      .get()
+      .then(snap => {
+        if (!snap.empty) return snap.docs[0].ref.update({ status: "applied", appliedAt: new Date().toISOString() });
+        return undefined;
+      })
+      .catch(() => {});
 
     // Notify family
     await notifyFamilyOfApplicant(clientId, caregiverName, caregiverId);

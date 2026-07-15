@@ -224,6 +224,23 @@ async function kickOffClientMatching(phone: string, chatId: string): Promise<voi
   }
 }
 
+// Care-plan interview kickoff (2026-07-15). Fires at the moment a CLIENT's
+// onboardingStep flips to "complete" — the earliest point where the free agent
+// loop owns the conversation (the payment→permissions window is deterministic
+// state machines; injecting the interview there would recreate the parked-step
+// collision class). Reads the session FRESH: the in-hand copy predates this
+// flow's own onboardingStep writes. Fail-soft and awaited by callers.
+async function kickOffCarePlanInterview(phone: string, chatId: string, userId: string): Promise<void> {
+  try {
+    const { startCarePlanInterview } = await import("./carePlanInterview");
+    const snap = await db.collection("agent_sessions").doc(phone).get();
+    const s = (snap.data() ?? {}) as Record<string, unknown>;
+    await startCarePlanInterview(phone, chatId, { ...s, userId: s.userId ?? userId }, { source: "onboarding" });
+  } catch (err) {
+    console.error("kickOffCarePlanInterview error:", err);
+  }
+}
+
 // Complete the permissions flow with safe defaults for everything unanswered
 // and unblock the session. Used by (a) the question-detour bailout in the two
 // reply handlers and (b) the 7-day stale sweep in staleSessionNudge — a session
@@ -257,6 +274,7 @@ export async function finalizePermissionsWithDefaults(
       .catch((err) => console.error("notifyNewCaregiverOfJobs error:", err));
   } else {
     await kickOffClientMatching(phone, chatId);
+    await kickOffCarePlanInterview(phone, chatId, userId);
   }
 }
 
@@ -371,6 +389,11 @@ export async function handleClientPermissionsReply(
 
     // Kick off matching
     await kickOffClientMatching(phone, chatId);
+
+    // Then the care-plan interview — the family is at peak engagement (phone
+    // in hand, matches on the way), and the interview fills the natural dead
+    // air while caregivers respond.
+    await kickOffCarePlanInterview(phone, chatId, userId);
     return;
   }
 }

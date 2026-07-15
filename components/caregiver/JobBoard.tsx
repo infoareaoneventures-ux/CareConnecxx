@@ -21,6 +21,13 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// A flexible job stores rate 0 + rateFlexible:true. Rendering "$0/hr" made every
+// flexible post look like unpaid work — show "Flexible" instead.
+function rateLabel(job: { rate?: number | null; rateFlexible?: boolean } | null | undefined): string {
+    if (!job || job.rateFlexible || !job.rate || job.rate <= 0) return 'Flexible';
+    return `$${job.rate}/hr`;
+}
+
 
 interface JobBoardProps {
     onShowToast: AddToastFunction;
@@ -746,7 +753,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 </div>
                                                 <div className="text-right flex-shrink-0">
                                                     <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">
-                                                        ${job.rate}/hr
+                                                        {rateLabel(job)}
                                                     </span>
                                                     {job.paymentMethod && (
                                                         <p className="text-[10px] text-slate-400 mt-1 flex items-center justify-end gap-1">
@@ -894,9 +901,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 </div>
                                             </div>
                                             <div className="flex flex-col items-end gap-1.5 ml-3 flex-shrink-0">
-                                                {app.jobRate != null && (
-                                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">${app.jobRate}/hr</span>
-                                                )}
+                                                <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">{rateLabel({ rate: app.jobRate, rateFlexible: app.jobRateFlexible })}</span>
                                                 <StatusBadge status={app.status as ApplicationStatus} />
                                                 {linkedInterview && (() => {
                                                     const iv = linkedInterview;
@@ -1036,8 +1041,8 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                 </div>
                                             </div>
                                             <div className="flex flex-col items-end gap-1.5 ml-3 flex-shrink-0">
-                                                {app?.jobRate != null && (
-                                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">${app.jobRate}/hr</span>
+                                                {app && (
+                                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full">{rateLabel({ rate: app.jobRate, rateFlexible: app.jobRateFlexible })}</span>
                                                 )}
                                                 <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${ivStatusColor}`}>
                                                     {iv.status.charAt(0).toUpperCase() + iv.status.slice(1)}
@@ -1171,7 +1176,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 <div className="min-w-0">
                                     <p className="font-semibold text-slate-900 truncate">{job.title}</p>
                                     <p className="text-sm text-slate-500">{job.location || job.city}</p>
-                                    {job.rate ? <p className="text-sm font-medium text-emerald-600 mt-0.5">${job.rate}/hr</p> : null}
+                                    <p className="text-sm font-medium text-emerald-600 mt-0.5">{rateLabel(job)}</p>
                                 </div>
                                 <button
                                     onClick={() => {
@@ -1201,9 +1206,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                         <div className="pr-8 mb-1">
                             <div className="flex items-start justify-between gap-3">
                                 <h2 className="text-xl font-bold text-[var(--color-neutral-900)] leading-tight">{viewingJob.title}</h2>
-                                {viewingJob.rate != null && (
-                                    <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full shrink-0">${viewingJob.rate}/hr</span>
-                                )}
+                                <span className="bg-[var(--color-success-100)] text-[var(--color-success-700)] text-sm font-bold px-3 py-1 rounded-full shrink-0">{rateLabel(viewingJob)}</span>
                             </div>
                             <p className="text-[var(--color-neutral-500)] text-sm mt-1">Posted by {viewingJob.clientName}</p>
                             {viewingJob.location && (
@@ -1357,7 +1360,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                 </div>
 
                                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-800">
-                                    <strong>Client's budget:</strong> ${applyingJob.rate}/hr
+                                    <strong>Client's budget:</strong> {rateLabel(applyingJob)}
                                 </div>
                             </form>
                         </div>

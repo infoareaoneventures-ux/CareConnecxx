@@ -10,6 +10,7 @@ export function jobApplicationSnapshot(job: FirebaseFirestore.DocumentData): Rec
     jobTitle:      job.title ?? "Care needed",
     clientName:    job.clientName ?? "An Evia family",
     jobRate:       job.rate ?? null,
+    jobRateFlexible: !!job.rateFlexible,
     jobLocation:   job.location || job.city || null,
     jobCareTypes:  Array.isArray(job.careTypes) ? job.careTypes : [],
     jobFrequency:  job.jobFrequency ?? null,

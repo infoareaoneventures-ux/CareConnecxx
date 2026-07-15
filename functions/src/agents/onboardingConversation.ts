@@ -21,7 +21,7 @@ import { notifyAdminNewClientSignup, notifyAdminNewCaregiverSignup } from "../no
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { initializeMemoryFiles, writeMemoryFile } from "../memory/memoryFiles";
 import { pushOnboardingDataToZep, addBusinessDataToZep, getZepUserId } from "../memory/zepClient";
-import { buildAndSaveJobPost } from "./buildJobPost";
+import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
@@ -939,6 +939,7 @@ export async function handleOnboardingStep(
       }));
       return;
     }
+    case "job_ask_pay_rate":     return handleJobAskPayRate(phone, chatId, text, session);
     case "job_confirm_prefill":  return handleJobConfirmPrefill(phone, chatId, text, session);
     case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
     case "job_ask_frequency":    return handleJobAskFrequency(phone, chatId, text, session);
@@ -2193,8 +2194,8 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: "You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers while they set that up. One short line.",
-    fallback: "I'll start searching while you set that up.",
+    context: `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. The ONLY care-recipient name you may use is "${d.seniorName ?? ""}" — never invent or substitute any other name.`,
+    fallback: `I'll start searching${d.seniorName ? ` for ${d.seniorName}` : ""} while you set that up.`,
     maxTokens: 60,
   }));
 }
@@ -3861,6 +3862,18 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           }, { merge: true });
         }
 
+        // Explicitly close the loop on the identity check FIRST. The family was
+        // told (on the verification page) that Evia would let them know when it
+        // cleared; folding that straight into a payment ask read as "no
+        // confirmation ever came." One short, unambiguous line, then payment.
+        // Deterministic (never generateCaraMessage) — this is a precise status
+        // confirmation that must never fail-open to a hallucinated status line.
+        await sendMessage(chatId,
+          session.preferredLanguage === "es"
+            ? "¡Tu verificación de identidad se aprobó — estás verificado! ✅"
+            : "Your identity check just cleared — you're verified! ✅"
+        );
+
         // New order: plan/price was accepted before identity, so once identity
         // clears we go straight to collecting payment (card on file).
         await updateSession(phone, { onboardingStep: "client_send_payment" });
@@ -4163,16 +4176,94 @@ async function presentPrefilledJobPost(phone: string, chatId: string, session: A
   const d       = session.onboardingData ?? {};
   const jobData = deriveJobDataFromIntake(d);
   await mergeOnboardingData(phone, jobData);
+  // Ask the pay rate up front (competitive range) BEFORE showing the summary.
+  // Previously the prefill posted at whatever was derived — always "flexible"
+  // since the intake never asks a budget — so jobs shipped at $0/flexible and
+  // caregivers saw "$0/hr". The chosen rate then flows into the summary below.
+  const seniorName = (d.seniorName as string) ?? "your loved one";
+  await updateSession(phone, { onboardingStep: "job_ask_pay_rate" });
+  await sendMessage(chatId,
+    `Membership active — thank you! 🎉 Before I post ${seniorName}'s care request, what would you like to pay per hour?\n\n` +
+    `Here's what families around you typically offer:\n` +
+    `💵 $22/hr — budget-friendly\n` +
+    `⭐ $26/hr — competitive (what most families choose)\n` +
+    `🌟 $30/hr — premium, attracts top caregivers\n\n` +
+    `Reply with an amount (like 26), or say "flexible" if you're open.`
+  );
+}
+
+async function handleJobAskPayRate(
+  phone: string, chatId: string, text: string, session: AgentSession
+): Promise<void> {
+  const askAgain = `What would you like to pay per hour — $22, $26, $30, a specific amount, or "flexible"?`;
+  if (await isQuestionOrOther(text, askAgain)) {
+    const answer = await answerQuestionMidFlow(text, session, phone);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, askAgain);
+    return;
+  }
+  const raw = await parseWithClaude(
+    'A family is choosing what to pay a caregiver per hour. ' +
+    '"1"/"budget"/"budget-friendly"/"cheapest"/"22"/"$22" → 22. ' +
+    '"2"/"competitive"/"most families"/"middle"/"26"/"$26" → 26. ' +
+    '"3"/"premium"/"top"/"best"/"30"/"$30" → 30. ' +
+    'If they EXPLICITLY say flexible/open/negotiable/not sure/whatever/you decide → return "flexible". ' +
+    'If they give any other number, return just that number. ' +
+    'If the reply is none of these — you genuinely cannot tell what rate they mean — return "unclear". ' +
+    'Return ONLY a number, the word flexible, or the word unclear.',
+    text
+  );
+
+  // null = unparseable / out-of-range / unclear. Explicit "flexible" is NOT a
+  // failure — it flows straight to the summary. We only re-ask on genuinely
+  // unusable input, and we NEVER coerce to flexible silently (founder decision).
+  let hourlyRate: number | "flexible" | null = null;
+  if (raw === "flexible") {
+    hourlyRate = "flexible";
+  } else if (raw !== "unclear") {
+    const n = parseFloat(raw);
+    if (!isNaN(n) && n >= 5 && n <= 200) hourlyRate = n;
+  }
+
+  if (hourlyRate === null) {
+    const reaskUsed = (session.onboardingData as Record<string, unknown> | undefined)?.rateReaskUsed === true;
+    if (!reaskUsed) {
+      // First unusable reply — re-ask exactly once.
+      await mergeOnboardingData(phone, { rateReaskUsed: true });
+      await sendMessage(chatId,
+        `No rush — just need a number: $22, $26, $30, another amount, or say "flexible".`
+      );
+      return;
+    }
+    // Second unusable reply — fall back to flexible, but say so out loud.
+    await mergeOnboardingData(phone, { jobHourlyRate: "flexible", rateReaskUsed: false });
+    await sendMessage(chatId,
+      `I'll keep the rate flexible for now — you can change it anytime.`
+    );
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    await presentPrefilledJobPostSummary(phone, chatId, refreshed.data() as AgentSession);
+    return;
+  }
+
+  // Valid number or explicit flexible → store, clear the re-ask flag, continue.
+  await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate, rateReaskUsed: false });
+  const refreshed = await db.collection("agent_sessions").doc(phone).get();
+  await presentPrefilledJobPostSummary(phone, chatId, refreshed.data() as AgentSession);
+}
+
+async function presentPrefilledJobPostSummary(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const d = session.onboardingData ?? {};
   await updateSession(phone, { onboardingStep: "job_confirm_prefill" });
 
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const freqMap: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
-  const rateLabel  = jobData.jobHourlyRate === "flexible" ? "flexible rate" : `$${jobData.jobHourlyRate}/hr`;
-  const needs      = (jobData.jobCareNeeds as string[]).join(", ") || "general care";
+  const rateLabel  = d.jobHourlyRate === "flexible" ? "flexible rate" : `$${d.jobHourlyRate}/hr`;
+  const needs      = ((d.jobCareNeeds as string[]) ?? []).join(", ") || "general care";
+  const timeOfDay  = Array.isArray(d.jobTimeOfDay) ? (d.jobTimeOfDay as string[]).join(", ") : "";
 
   await sendMessage(chatId,
-    `Membership active — thank you! I'll post ${seniorName}'s care request using what you already told me:\n\n` +
-    `📅 Start ${jobData.jobStartDate} · ${freqMap[jobData.jobFrequency as string]} · ${(jobData.jobTimeOfDay as string[]).join(", ")}\n` +
+    `Perfect — here's ${seniorName}'s care request:\n\n` +
+    `📅 Start ${d.jobStartDate} · ${freqMap[d.jobFrequency as string] ?? "Flexible"}${timeOfDay ? ` · ${timeOfDay}` : ""}\n` +
     `💛 ${needs}\n` +
     `💰 ${rateLabel}\n\n` +
     `Want me to post it as-is? Reply YES, or tell me what to change.`
@@ -4205,12 +4296,10 @@ async function handleJobConfirmPrefill(
   try {
     const refreshed  = await db.collection("agent_sessions").doc(phone).get();
     const onboarding = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
-    const jobId = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
-    const city  = (onboarding.city as string) ?? "your area";
+    const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+    const city  = (onboarding.city as string) ?? null;
     await updateSession(phone, { onboardingStep: "client_ask_permissions" });
-    await sendMessage(chatId,
-      `Your care request is live! 🎉 I've notified caregivers within 25 miles of ${city} and I'll message you the moment someone applies.`
-    );
+    await sendMessage(chatId, jobLiveMessage(city, notifiedCount));
     const { sendClientPermissionsFlow } = await import("./permissionsConversation");
     const freshSnap = await db.collection("agent_sessions").doc(phone).get();
     await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
@@ -4544,14 +4633,12 @@ async function handleJobConfirmPost(
       const jobData   = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
       const onboarding = jobData; // same object holds both
 
-      const jobId = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+      const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
 
-      const city = (onboarding.city as string) ?? "your area";
+      const city = (onboarding.city as string) ?? null;
       await updateSession(phone, { onboardingStep: "client_ask_permissions" });
       await sendMessage(chatId,
-        `Your care request is live! 🎉\n\n` +
-        `I've notified caregivers within 25 miles of ${city}. ` +
-        `I'll message you as soon as someone applies!\n\n` +
+        `${jobLiveMessage(city, notifiedCount)}\n\n` +
         `You can also browse caregivers and manage everything at ${APP_URL}/client/dashboard`
       );
 

@@ -21,10 +21,13 @@ export default function IdentityCallback() {
     const uid = auth?.currentUser?.uid;
     const fdb = db;
     if (!uid || !fdb) {
-      // SMS-originated users may not be logged in via web — just wait for webhook
+      // SMS-originated users may not be logged in via web — just wait for webhook.
+      // Stripe Identity DOCUMENT checks routinely take a few minutes to process,
+      // so give it 4 min before showing the "still reviewing" fallback (was 30s,
+      // which fired mid-check and pushed people off the page before it cleared).
       const timeout = window.setTimeout(() => {
         setStatus(prev => (prev === 'waiting' ? 'timeout' : prev));
-      }, 30000);
+      }, 240000);
       return () => window.clearTimeout(timeout);
     }
 
@@ -37,7 +40,7 @@ export default function IdentityCallback() {
 
     const timeout = window.setTimeout(() => {
       setStatus(prev => (prev === 'waiting' ? 'timeout' : prev));
-    }, 30000);
+    }, 240000);
 
     return () => { unsub(); window.clearTimeout(timeout); };
   }, [navigate]);
@@ -64,7 +67,7 @@ export default function IdentityCallback() {
               <Loader2 className="w-10 h-10 text-primary-600 animate-spin mx-auto mb-4" />
               <h1 className="text-lg font-bold text-slate-900 mb-2">Verifying your identity…</h1>
               <p className="text-sm text-slate-600 leading-relaxed">
-                Stripe is checking your information. This usually takes just a few seconds — hang tight.
+                Stripe is checking your information. This can take a couple of minutes — hang tight, and I'll text you the moment it clears.
               </p>
             </>
           )}
@@ -141,14 +144,32 @@ export default function IdentityCallback() {
               <Loader2 className="w-10 h-10 text-primary-600 animate-spin mx-auto mb-4" />
               <h1 className="text-lg font-bold text-slate-900 mb-2">Still reviewing</h1>
               <p className="text-sm text-slate-600 mb-5">
-                Stripe is taking a little longer than usual. You can head back — we'll unlock the feature as soon as the review finishes.
+                Stripe is taking a little longer than usual — no need to wait here. You can head back to your messages, and I'll text you the moment it clears and pick right back up.
               </p>
-              <button
-                onClick={() => navigate(next, { replace: true })}
-                className="px-5 py-2.5 bg-primary-600 text-white font-semibold rounded-full hover:bg-primary-700"
-              >
-                Continue
-              </button>
+              {showBackBtn ? (
+                <>
+                  <a
+                    href={`sms:${caraPhone}`}
+                    className="flex items-center justify-center gap-2 w-full py-3 px-5 rounded-full bg-primary-600 hover:bg-primary-700 text-white font-semibold text-sm transition-colors mb-3"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Go back to messages
+                  </a>
+                  <button
+                    onClick={() => navigate(next, { replace: true })}
+                    className="text-xs text-slate-500 hover:text-slate-700 underline"
+                  >
+                    Continue in the app
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => navigate(next, { replace: true })}
+                  className="px-5 py-2.5 bg-primary-600 text-white font-semibold rounded-full hover:bg-primary-700"
+                >
+                  Continue
+                </button>
+              )}
             </>
           )}
         </div>

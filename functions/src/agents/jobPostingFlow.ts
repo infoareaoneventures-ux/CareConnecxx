@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
-import { buildAndSaveJobPost } from "./buildJobPost";
+import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./buildJobPost";
 import { isConvergenceFlipped } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
 
@@ -525,7 +525,7 @@ async function handleJpConfirmPost(
   try {
     const onboardingData = ((session as any).onboardingData as Record<string, unknown>) ?? {};
     const jobData        = await getJobData(phone);
-    const jobId = await buildAndSaveJobPost({ uid, phone, onboardingData, jobData });
+    const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData, jobData });
 
     await db.collection("agent_sessions").doc(phone).update({
       jobPostingStep: admin.firestore.FieldValue.delete(),
@@ -533,12 +533,14 @@ async function handleJpConfirmPost(
       stateExpiresAt: admin.firestore.FieldValue.delete(),
     });
 
+    const city = ((jobData as any)?.city ?? (onboardingData as any)?.city ?? null) as string | null;
+    const outcome = notifiedOutcomePhrase(city, notifiedCount);
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
       language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-      context: `The family's care request just went live and caregivers in their area are being notified. Share the good news warmly, tell them you'll let them know when applications come in, and mention they can view their post anytime by texting you "show my jobs". You MUST include the exact phrase "show my jobs" and end with the line "Job ID: ${jobId}".`,
-      fallback: `Your care request is live! Caregivers in your area are being notified.\n\nI'll let you know when applications come in. You can also view your post at any time by texting me "show my jobs".\n\nJob ID: ${jobId}`,
-      maxTokens: 120,
+      context: `The family's care request just went live. Reflect this EXACT outcome truthfully — do not overstate it: ${outcome}. Tell them you'll let them know when applications come in, and mention they can view their post anytime by texting you "show my jobs". You MUST include the exact phrase "show my jobs" and end with the line "Job ID: ${jobId}".`,
+      fallback: `${jobLiveMessage(city, notifiedCount)}\n\nYou can view your post any time by texting me "show my jobs".\n\nJob ID: ${jobId}`,
+      maxTokens: 130,
     }));
   } catch (err) {
     console.error("[jobPostingFlow] buildAndSaveJobPost error:", err);

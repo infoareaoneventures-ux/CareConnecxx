@@ -111,23 +111,40 @@ export async function notifyAreaCaregivers(
   jobId: string,
   intakeData: any,
   clientId: string
-): Promise<void> {
+): Promise<number> {
   // Coord chain accepts BOTH shapes: web-contract top-level lat/lng (all
   // writers since 2026-07-10) and the legacy location-object docs.
   const clientLat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat;
   const clientLng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng;
-  const city      = intakeData.city ?? intakeData.location?.city ?? "";
+  // job_posts.location IS a string in the web contract — jobPostContract.ts joins
+  // [city, state, zipCode] into `locationStr` ("City, State, Zip"). When we fall
+  // through to that joined string, take only the leading city segment; the full
+  // joined string would never equal a caregiver's plain city and would fail the
+  // equality match below. Plain city values (no comma) pass through unchanged.
+  const cityRaw   = (intakeData.city ?? intakeData.location?.city ?? intakeData.location ?? "");
+  const city      = (typeof cityRaw === "string" ? cityRaw : "").split(",")[0];
   const careTypes: string[] = intakeData.careTypes ?? [];
 
-  if (!clientLat || !clientLng) {
-    console.warn(`[notifyAreaCaregivers] No coordinates for job ${jobId} — skipping notifications`);
-    return;
+  const hasCoords = !!clientLat && !!clientLng;
+  const cityKey   = city.trim().toLowerCase();
+
+  // Without coordinates we can't do a proximity radius — but a hard return used
+  // to notify NOBODY while the family was told caregivers were alerted. Fall
+  // back to matching caregivers whose own city equals the job's city so the
+  // notification still goes out. If we have neither coords nor a city, there's
+  // genuinely nothing to match on.
+  if (!hasCoords && !cityKey) {
+    console.warn(`[notifyAreaCaregivers] No coordinates or city for job ${jobId} — skipping notifications`);
+    return 0;
+  }
+  if (!hasCoords) {
+    console.warn(`[notifyAreaCaregivers] No coordinates for job ${jobId} — falling back to city match on "${city}"`);
   }
 
   const snap = await db.collection("caregivers").where("status", "==", "active").get();
   if (snap.empty) {
     console.log("[notifyAreaCaregivers] No active caregivers found");
-    return;
+    return 0;
   }
 
   let notifiedCount = 0;
@@ -143,10 +160,16 @@ export async function notifyAreaCaregivers(
     const pausedUntil = cg.pausedUntil as string | undefined;
     if (pausedUntil && pausedUntil > todayIso) continue;
 
-    const cgLat = cg.latitude ?? cg.location?.latitude ?? cg.location?.lat;
-    const cgLng = cg.longitude ?? cg.location?.longitude ?? cg.location?.lng;
-    const dist  = haversineMiles(clientLat, clientLng, cgLat, cgLng);
-    if (dist === undefined || dist > NOTIFY_RADIUS_MILES) continue;
+    if (hasCoords) {
+      const cgLat = cg.latitude ?? cg.location?.latitude ?? cg.location?.lat;
+      const cgLng = cg.longitude ?? cg.location?.longitude ?? cg.location?.lng;
+      const dist  = haversineMiles(clientLat, clientLng, cgLat, cgLng);
+      if (dist === undefined || dist > NOTIFY_RADIUS_MILES) continue;
+    } else {
+      // City-string fallback (no job coords): match caregivers in the same city.
+      const cgCity = (cg.city ?? cg.location?.city ?? "").toString().trim().toLowerCase();
+      if (!cgCity || cgCity !== cityKey) continue;
+    }
 
     // Profile-fit gate (U11): a caregiver covering none of the job's care types
     // is skipped rather than blasted "a job opened near you". The same score
@@ -220,6 +243,7 @@ export async function notifyAreaCaregivers(
   }
 
   console.log(`[notifyAreaCaregivers] Notified ${notifiedCount} caregivers for job ${jobId}`);
+  return notifiedCount;
 }
 
 function buildScheduleText(intake: any): string {

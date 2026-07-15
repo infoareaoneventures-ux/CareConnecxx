@@ -123,6 +123,7 @@ function humanLabelForStep(step: string): string {
     client_send_payment:                "starting your membership",
     client_awaiting_identity:           "verifying your identity",
     client_awaiting_payment:            "starting your membership",
+    job_ask_pay_rate:                   "choosing what you'll pay per hour",
     job_confirm_prefill:                "posting your care request",
     // Caregiver steps
     caregiver_ask_name:                 "sharing your name",

@@ -35,6 +35,7 @@ export interface JobApplication {
   caregiverRating?: number;
   caregiverSkills?: string[];
   jobRate?: number | null;
+  jobRateFlexible?: boolean;
   jobLocation?: string | null;
   jobCareTypes?: string[];
   jobFrequency?: string | null;
@@ -241,6 +242,7 @@ export const jobApplicationService = {
       appliedAt: serverTimestamp(),
       // Snapshot job details so card has context without extra lookups
       jobRate: jobData.rate ?? null,
+      jobRateFlexible: !!jobData.rateFlexible,
       jobLocation: jobData.location || jobData.city || null,
       jobCareTypes: jobData.careTypes || [],
       jobFrequency: jobData.jobFrequency || null,

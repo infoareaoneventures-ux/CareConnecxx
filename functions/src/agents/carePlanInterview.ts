@@ -417,9 +417,22 @@ export async function notifyEngagedCaregiversOfCarePlan(
     if (!byPhone.has(p)) byPhone.set(p, doc.ref);
   }
   for (const doc of applicationsSnap.docs) {
-    const p = String(doc.data().phone ?? "");
+    const d = doc.data();
+    let p = String(d.phone ?? "");
+    if (!p && d.caregiverId) {
+      // Webapp-originated application docs may lack a phone — resolve it from
+      // the caregiver doc so web applicants get the follow-up too. Fail-soft:
+      // an unresolvable phone just skips this applicant (they still see the
+      // enriched job post in-app).
+      try {
+        const cgSnap = await db.collection("caregivers").doc(String(d.caregiverId)).get();
+        p = String(cgSnap.data()?.phone ?? "");
+      } catch (e) {
+        console.warn(`[carePlanInterview] phone lookup failed for caregiver ${String(d.caregiverId)}:`, e);
+      }
+    }
     if (!p) continue;
-    if (doc.data().carePlanUpdateSentAt) { markSent(p); continue; } // already sent via application-doc guard
+    if (d.carePlanUpdateSentAt) { markSent(p); continue; }           // already sent via application-doc guard
     if (byPhone.has(p)) continue;                                    // notification doc (or poison) already chosen
     byPhone.set(p, doc.ref);                                         // guard on the application doc itself
   }

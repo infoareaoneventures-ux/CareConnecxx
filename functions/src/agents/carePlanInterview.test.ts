@@ -294,6 +294,23 @@ describe("notifyEngagedCaregiversOfCarePlan — engaged targeting + guard hygien
     expect(notifKeys).toEqual([]);
   });
 
+  it("resolves a web applicant's phone from the caregiver doc and guards on the application doc", async () => {
+    h.docs.set("job_applications/app1", { jobId: CLIENT, caregiverId: "cg9" }); // no phone — web-originated
+    h.docs.set("caregivers/cg9", { phone: "+1999" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(1);
+    expect(h.getOrCreateSession).toHaveBeenCalledWith("+1999");
+    expect(h.docs.get("job_applications/app1")).toMatchObject({ carePlanUpdateSentAt: expect.any(String) });
+    expect([...h.docs.keys()].filter((k) => k.startsWith("job_notifications/"))).toEqual([]);
+  });
+
+  it("skips a web applicant whose phone cannot be resolved (no caregiver doc)", async () => {
+    h.docs.set("job_applications/app1", { jobId: CLIENT, caregiverId: "ghost" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(0);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("does not re-send when the notification doc already carries the guard (poison)", async () => {
     h.docs.set("job_notifications/n1", { jobId: CLIENT, phone: "+1408", status: "interested", sentAt: "x", carePlanUpdateSentAt: "y" });
     const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);

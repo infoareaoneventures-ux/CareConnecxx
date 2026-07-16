@@ -3605,8 +3605,14 @@ export const dbService = {
             coordinatorId,
             coordinatorReviewedAt: new Date().toISOString()
         });
-        
-        // TODO: Notify caregiver
+
+        // Caregiver notification is owned by the server-side Firestore trigger
+        // `onHireRequestApproved` (functions/src/matching.ts), which fires on this
+        // exact `coordinator_approved` status transition and delivers the in-app
+        // notification doc + hire-offer email + Linq SMS/iMessage via the Admin SDK.
+        // Do not add a client-side notify here (would double-notify).
+        // Note: this callable currently has zero frontend callers; kept intentionally
+        // (do not delete) — the coordinator approval path may be wired to UI later.
     },
 
 

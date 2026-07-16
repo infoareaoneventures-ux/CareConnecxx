@@ -138,7 +138,7 @@ export const createStripeConnectAccount = functions
                 transfers: { requested: true },
             },
             business_type: "individual",
-            metadata: { caregiverId: uid, platform: "careconnex" },
+            metadata: { caregiverId: uid, platform: "evia" },
         });
 
         const connectFields = {

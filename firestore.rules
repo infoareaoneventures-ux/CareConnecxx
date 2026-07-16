@@ -947,10 +947,11 @@ service cloud.firestore {
     // MEMBERSHIPS
     // ==========================================
     match /memberships/{userId} {
-      // User can read/update their own membership
-      allow read, update: if isOwner(userId);
-      allow create: if isOwner(userId);
-      allow delete: if isAdmin();
+      // Owner/admin may read; all client-SDK writes denied. Server mirrors write
+      // via the Admin SDK (rules-exempt). Grep confirmed zero client-SDK readers
+      // or writers of this collection, so writes are locked to close dead surface.
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if false;
     }
     
     // ==========================================

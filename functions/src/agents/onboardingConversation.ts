@@ -689,6 +689,100 @@ export async function absorbClientFields(text: string, existing: Record<string, 
   return out;
 }
 
+// Update-mode client absorber (2026-07-15): additive merge for list-shaped
+// care fields, so "mom also needs help with bathing" volunteered at a gate
+// EXTENDS careNeeds instead of being dropped (absorbClientFields has
+// collection semantics — it refuses to touch a filled field). Scalars still
+// fill only when empty via the first pass.
+export async function absorbClientProfileUpdate(
+  text: string,
+  existing: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const fresh = await absorbClientFields(text, existing);
+  const out: Record<string, unknown> = { ...fresh };
+
+  const raw = await parseWithClaude(
+    "A family member already signing up with Evia texted a message. Extract ONLY care details they are " +
+      "adding about their loved one in THIS message. Return JSON only; omit anything not present. Schema: " +
+      `{"careNeeds":["short need phrase like 'bathing' or 'meal prep'"],` +
+      `"conditions":["short condition phrase like 'dementia'"]}. ` +
+      "Be conservative — only include what is unambiguously stated. Reply with raw JSON, no markdown.",
+    text,
+  ).catch(() => "{}");
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(raw); } catch { /* keep {} */ }
+
+  const cleanArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+  for (const key of ["careNeeds", "conditions"] as const) {
+    if (out[key]) continue; // first pass already handled the empty-field case
+    const added = cleanArr(parsed[key]);
+    if (!added.length) continue;
+    const base = cleanArr(existing[key]);
+    const seen = new Set(base.map((s) => s.toLowerCase()));
+    const freshItems = added.filter((s) => !seen.has(s.toLowerCase()));
+    if (freshItems.length) out[key] = [...base, ...freshItems];
+  }
+  return out;
+}
+
+// Client twin of tryAbsorbGateProfileUpdate (caregiver side, 2026-07-15): a
+// family member parked at the identity/payment gate who volunteers a care
+// detail gets it SAVED — session onboardingData + the latest clientIntakes
+// doc — and specifically acknowledged, instead of a context-free nudge that
+// silently drops it. Returns true when it handled the turn.
+async function tryAbsorbClientGateUpdate(
+  phone:          string,
+  chatId:         string,
+  text:           string,
+  session:        AgentSession,
+  stillWaitingOn: string,
+): Promise<boolean> {
+  if (session.userType === "caregiver") return false;
+  if (!text || text.trim().length < 8) return false;
+  const d = (session.onboardingData ?? {}) as Record<string, unknown>;
+  const updates = await absorbClientProfileUpdate(text, d).catch(() => ({} as Record<string, unknown>));
+  // Never write a texter's name into senior-name fields from a gate detour —
+  // profile.name on client docs is the SENIOR's name (2026-07-10 learning).
+  delete (updates as Record<string, unknown>).firstName;
+  const keys = Object.keys(updates);
+  if (!keys.length) return false;
+
+  await mergeOnboardingData(phone, updates);
+  // Mirror onto the latest intake so matching sees the update. Intake docs
+  // carry careTypes (mirrored from careNeeds at creation) — write the merged
+  // superset; never blanks a field (merge + omit-absent).
+  try {
+    const intakeSnap = await db.collection("clientIntakes")
+      .where("phone", "==", phone).orderBy("createdAt", "desc").limit(1).get();
+    if (!intakeSnap.empty) {
+      const intakeUpdate: Record<string, unknown> = {
+        ...(updates.careNeeds  ? { careTypes: updates.careNeeds }   : {}),
+        ...(updates.conditions ? { conditions: updates.conditions } : {}),
+      };
+      if (Object.keys(intakeUpdate).length) await intakeSnap.docs[0].ref.set(intakeUpdate, { merge: true });
+    }
+  } catch (err) {
+    console.error("[clientGateUpdate] intake mirror failed (session still updated):", err);
+  }
+
+  const human = keys.map((k) => {
+    const v = updates[k];
+    return `${k} → ${Array.isArray(v) ? (v as unknown[]).join(", ") : String(v)}`;
+  }).join("; ");
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "family",
+    language: session.preferredLanguage === "es" ? "es" : "en",
+    context:
+      `Mid-signup, the family member just texted: "${text}". You saved the care detail(s) they volunteered (${human}) — ` +
+      `these will shape the caregiver match. In 1-2 short sentences: acknowledge the SPECIFIC detail, ` +
+      `then remind them of the one thing you're still waiting on: ${stillWaitingOn}.`,
+    fallback: `Got it — I've added that to the care plan. And whenever you're ready: ${stillWaitingOn}.`,
+    maxTokens: 90,
+  }));
+  return true;
+}
+
 // True when the message is ONLY a greeting/pleasantry — no answer, name, question,
 // or substantive content. LLM-judged (no keyword matching), per Evia's rules.
 async function isGreetingOnly(text: string): Promise<boolean> {
@@ -993,11 +1087,13 @@ export async function handleOnboardingStep(
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         return;
       }
+      if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
+        "the quick identity check — I'll send your caregiver options as soon as it clears")) return;
       const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
       const msgIdentity = await generateCaraMessage({
         audience: "family",
-        context: (liveIdentityFact ? `${liveIdentityFact} ` : "") +
-          "A family member texted Evia while their identity verification is in progress. Ground your reply in the live status above if present (if it VERIFIED, confirm it's done — do not say it's still verifying); otherwise reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
+        context: `The family member just texted: "${text}". ` + (liveIdentityFact ? `${liveIdentityFact} ` : "") +
+          "Respond to what they actually said, grounded in the live status above if present (if it VERIFIED, confirm it's done — do not say it's still verifying); otherwise reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
         fallback: "Still verifying — I'll send your caregiver options as soon as it clears.",
         maxTokens: 80,
       });
@@ -1016,12 +1112,14 @@ export async function handleOnboardingStep(
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
         return;
       }
+      if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
+        "finishing your membership setup via the link I sent — it takes about 30 seconds")) return;
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
       await sendMessage(chatId, await generateCaraMessage({
         audience: "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: (liveClientPayFact ? `${liveClientPayFact} ` : "") +
-          "Ground your reply in the live status above if present — if the payment already WENT THROUGH, confirm it's active and do NOT nudge them to tap the link again; otherwise warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
+        context: `The family member just texted: "${text}". ` + (liveClientPayFact ? `${liveClientPayFact} ` : "") +
+          "Respond to what they actually said, grounded in the live status above if present — if the payment already WENT THROUGH, confirm it's active and do NOT nudge them to tap the link again; otherwise warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
         fallback: "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳",
         maxTokens: 70,
       }));

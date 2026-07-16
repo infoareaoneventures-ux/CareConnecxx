@@ -632,3 +632,50 @@ describe("client care records + payment mirror", () => {
     expect(hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.clientId).toBe(CLIENT_UID);
   });
 });
+
+// ── 6. CLIENT gate absorb (2026-07-15): a family member who volunteers a care
+//    detail while parked at the identity/payment gate gets it SAVED and
+//    specifically acknowledged — parity with the caregiver gate fix. ─────────
+describe("client gate absorb — volunteered details at awaiting steps", () => {
+  beforeEach(() => {
+    hoisted.docState.clear();
+    sentMessages.length = 0;
+    questionMode = false;
+    awaitingKind = "other";
+    stepAnswer   = "";
+  });
+
+  it("saves a volunteered care need at client_awaiting_payment and reminds about the gate", async () => {
+    const session = seed("client_awaiting_payment",
+      { seniorName: "Rosy", careNeeds: ["companionship"] }, { userType: "client" });
+    stepAnswer = '{"careNeeds":["bathing"]}'; // update-mode extraction result
+
+    await handleOnboardingStep(PHONE, CHAT, "mom also needs help with bathing", session);
+
+    expect(stored().onboardingData.careNeeds).toEqual(["companionship", "bathing"]);
+    const last = String(JSON.stringify(sentMessages.at(-1)?.text));
+    expect(last).toMatch(/care plan|added/i);       // specific ack
+    expect(last).toMatch(/membership|ready|link/i); // gate reminder still present
+  });
+
+  it("falls through to the normal payment nudge when nothing new is volunteered", async () => {
+    const session = seed("client_awaiting_payment",
+      { seniorName: "Rosy", careNeeds: ["companionship"] }, { userType: "client" });
+    stepAnswer = "{}";
+
+    await handleOnboardingStep(PHONE, CHAT, "hello there just checking in", session);
+
+    expect(stored().onboardingData.careNeeds).toEqual(["companionship"]);
+    expect(JSON.stringify(sentMessages.at(-1)?.text)).toMatch(/payment|link/i);
+  });
+
+  it("does not double-add a case-insensitive duplicate detail", async () => {
+    const session = seed("client_awaiting_identity",
+      { seniorName: "Rosy", careNeeds: ["Bathing"] }, { userType: "client" });
+    stepAnswer = '{"careNeeds":["bathing"]}';
+
+    await handleOnboardingStep(PHONE, CHAT, "she needs help with bathing please", session);
+
+    expect(stored().onboardingData.careNeeds).toEqual(["Bathing"]);
+  });
+});

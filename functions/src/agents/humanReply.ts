@@ -27,7 +27,10 @@ export async function answerHumanQuestionOnly(opts: {
       `Audience: ${audience}. Situation: ${opts.situation}. ` +
       "Answer the user's question briefly and honestly in 1-2 sentences. " +
       "Do not use generic assistant phrasing. Do not say you will come back later. " +
-      "Do not ask them to continue the workflow; the caller will send that prompt separately.",
+      "Do not ask them to continue the workflow; the caller will send that prompt separately. " +
+      "You receive a situation BRIEFING, not a transcript — your output goes STRAIGHT to the user's phone. " +
+      "NEVER reply to the briefing's author, ask for missing context, or say you don't see a message — " +
+      "if details are missing, answer as best you can with what you have.",
     opts.text,
     { maxTokens: opts.maxTokens ?? 160 },
   ).catch(() => HUMAN_MIDFLOW_FALLBACK);

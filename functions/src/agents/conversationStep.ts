@@ -41,8 +41,11 @@ export interface StepDeps {
    *  Receives the current step's question so a terse direct answer (a bare
    *  name, a city, an age) is never misjudged as off-topic chatter. */
   isQuestionOrOther:    (text: string, currentQuestion?: string) => Promise<boolean>;
-  /** Answer a mid-flow question in context. */
-  answerQuestionMidFlow:(text: string, session: AgentSession) => Promise<string>;
+  /** Answer a mid-flow question in context. `phone` grounds the answer in the
+   *  user's LIVE state via the gate-fact builders — it was silently dropped
+   *  (undefined at runtime) until 2026-07-15, leaving status answers
+   *  ungrounded on the table-driven client steps. */
+  answerQuestionMidFlow:(text: string, session: AgentSession, phone: string) => Promise<string>;
   /** Single-shot structured extraction (gpt-4o-mini under the hood). */
   parseWithClaude:      (prompt: string, text: string) => Promise<string>;
   /**
@@ -130,7 +133,7 @@ export async function runStep(
   // Pass the current question so the classifier sees "Imran" as a direct
   // answer to "What's your name?" rather than an off-topic one-word message.
   if (await deps.isQuestionOrOther(text, step.reask(session))) {
-    const answer = await deps.answerQuestionMidFlow(text, session);
+    const answer = await deps.answerQuestionMidFlow(text, session, phone);
     await deps.sendMessage(chatId, answer);
     await deps.sendMessage(chatId, step.reask(session));
     return;

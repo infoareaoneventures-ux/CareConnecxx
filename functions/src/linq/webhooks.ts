@@ -1836,8 +1836,13 @@ const handleInboundInner = traceable(
     return;
   }
 
-  // ── Zep lazy-init — backfill for users onboarded before Zep was added ──────
-  if (!(session as any).zepThreadId && session.onboardingStep === "complete") {
+  // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────
+  // Was gated to onboardingStep === "complete" (backfill for pre-Zep users),
+  // which left MID-onboarding sessions that skipped first-contact init with no
+  // thread at all — their entire signup never reached long-term memory (seen
+  // live 07-14: caregiver session with zero zepThreadId). Idempotent; runs
+  // once per gap, never blocks the reply.
+  if (!(session as any).zepThreadId) {
     initializeZepOnFirstContact(phone).catch((err) =>
       console.error("Zep lazy-init error:", err)
     );
@@ -2015,6 +2020,8 @@ const handleInboundInner = traceable(
         sentAt:   new Date(),
       }).catch(console.error);
     }
+    // (No else: a missing thread is self-healed by the widened Zep lazy-init
+    // earlier in handleInbound — one call site, no double-create race.)
 
     // Permissions steps
     const atPermissionsStep =

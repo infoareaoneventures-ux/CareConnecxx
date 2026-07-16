@@ -618,6 +618,10 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       try {
         await admin.firestore().collection('agent_sessions').doc(caregiverPhone).update({
           bgcheckInviteUrl: invitationUrl,
+          // Stamp the mint time so Evia's reuse guard can tell a live invite from
+          // a stale one (Checkr's 7-day expiry) — an unstamped cache would fall to
+          // the submittedAt fallback and, once that ages out, force-re-mint.
+          bgcheckInviteSentAt: new Date().toISOString(),
         }).catch(() => {});
         const { sendViaInteractionAgent } = await import('./agents/caraAgent');
         await sendViaInteractionAgent(caregiverPhone, {
@@ -864,6 +868,9 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
       try {
         await admin.firestore().collection('agent_sessions').doc(renewalPhone).update({
           bgcheckInviteUrl: renewalUrl,
+          // Stamp the mint time (see the first-payment path) so Evia's reuse guard
+          // treats this renewal invite as live until it actually nears expiry.
+          bgcheckInviteSentAt: new Date().toISOString(),
         }).catch(() => {});
         const { sendViaInteractionAgent } = await import('./agents/caraAgent');
         await sendViaInteractionAgent(renewalPhone, {

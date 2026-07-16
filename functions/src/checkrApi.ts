@@ -57,6 +57,54 @@ export async function checkrPost(
   return res.json();
 }
 
+async function checkrRequest(method: "GET" | "DELETE", path: string): Promise<any> {
+  const apiKey = (process.env.CHECKR_KEY || process.env.CHECKR_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new CheckrApiError("Checkr API Key not configured.");
+  }
+  const baseUrl = process.env.CHECKR_API_URL || "https://api.checkr.com/v1";
+  const res = await fetchWithTimeout(`${baseUrl}${path}`, {
+    method,
+    headers: { "Authorization": basicAuth(apiKey), "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    console.error(`Checkr ${method} ${path} failed: ${res.status} ${errBody}`);
+    throw new CheckrApiError("Checkr request failed.", res.status);
+  }
+  return res.json().catch(() => ({}));
+}
+
+/**
+ * Cancel any still-live (pending / open) Checkr invitations for a candidate so a
+ * re-mint never leaves two live invitations racing to the same webhook. Best
+ * effort: returns the count cancelled and NEVER throws — a failed cancel must not
+ * block minting the fresh (post-consent) invitation. Checkr exposes no
+ * "cancel by candidate", so list the candidate's invitations then DELETE each
+ * open one (DELETE /invitations/{id} → status "canceled", which fires the
+ * invitation.cancelled webhook that clears our cached URL).
+ */
+export async function cancelCheckrInvitationsForCandidate(candidateId: string): Promise<number> {
+  if (!candidateId) return 0;
+  try {
+    const list = await checkrRequest("GET", `/invitations?candidate_id=${encodeURIComponent(candidateId)}`);
+    const invitations: Array<{ id?: string; status?: string }> = Array.isArray(list?.data) ? list.data : [];
+    let cancelled = 0;
+    for (const inv of invitations) {
+      if (!inv?.id) continue;
+      // Only cancel invitations that are still actionable — completed / expired /
+      // already-canceled ones are inert and DELETE would 4xx.
+      if (inv.status === "completed" || inv.status === "expired" || inv.status === "canceled") continue;
+      await checkrRequest("DELETE", `/invitations/${encodeURIComponent(inv.id)}`);
+      cancelled++;
+    }
+    return cancelled;
+  } catch (err) {
+    console.error("cancelCheckrInvitationsForCandidate error (non-fatal):", err);
+    return 0;
+  }
+}
+
 export interface CheckrInvitationArgs {
   firstName: string;
   lastName:  string;

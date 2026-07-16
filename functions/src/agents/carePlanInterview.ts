@@ -165,14 +165,16 @@ export async function buildCarePlanInterviewDirective(
       "categories like Personal Care, Mobility Assistance, Meal Preparation, Medication Reminders, Transportation, " +
       "Companionship, Light Housekeeping, Dementia / Memory Care, with the specific tasks under each); emergency " +
       "contact, daily routine, and dietary notes via update_care_plan.\n" +
-      "- MEDICATIONS: never ask about specific medications — no drug names, dosages, or schedules. Medication help is " +
-      "captured ONLY as generic \"medication reminders\" tasks. If the family volunteers drug names unprompted, save " +
-      "them quietly with update_care_plan (field medications) and keep every task entry generic — do not ask follow-ups " +
-      "about them.\n" +
+      "- MEDICATION REMINDERS: after the care tasks are saved, ask ONCE whether they'd like the caregiver to give " +
+      "medication reminders (and roughly when — morning, evening, with meals). Yes → save a generic \"Medication " +
+      "Reminders\" task via save_care_task_detail (e.g. \"Morning reminder\"); no → move on. NEVER ask about specific " +
+      "medications — no drug names, dosages, or what they're for. If the family volunteers drug names unprompted, " +
+      "save them quietly with update_care_plan (field medications), keep every task entry generic, and ask no " +
+      "follow-ups about them.\n" +
       "- PRIVACY: care tasks are shared with caregivers before hiring, so a task entry must name the ACTIVITY only " +
       "(e.g. \"morning medication reminder\", \"help with bathing\") — NEVER a drug name, dosage, diagnosis, or the " +
       "recipient's name.\n" +
-      "- After the care tasks are saved, ask ONCE (one question) about their typical daily routine — wake, meals, " +
+      "- Then ask ONCE (one question) about their typical daily routine — wake, meals, " +
       "rest, activities. Any answer is fine and a \"skip\"/\"not sure\" is fine too; save what they give via " +
       "update_care_plan field dailyRoutine and NEVER ask about routine a second time. Dietary notes: save only if " +
       "they volunteer them — never ask.\n" +

@@ -169,6 +169,10 @@ export async function buildCarePlanInterviewDirective(
       "categories like Personal Care, Mobility Assistance, Meal Preparation, Medication Reminders, Transportation, " +
       "Companionship, Light Housekeeping, Dementia / Memory Care, with the specific tasks under each); medications, " +
       "emergency contact, daily routine, and dietary notes via update_care_plan.\n" +
+      "- PRIVACY: care tasks are shared with caregivers before hiring, so a task entry must name the ACTIVITY only " +
+      "(e.g. \"morning medication reminder\", \"help with bathing\") — NEVER a drug name, dosage, diagnosis, or the " +
+      "recipient's name. If the family gives medication names/doses, save those with update_care_plan (field " +
+      "medications), and keep the task entry generic (\"medication reminders\").\n" +
       "- The family is GIVING you this data — do not read it back for confirmation before saving; save it and move on. " +
       "Only confirm if their answer was genuinely ambiguous.\n" +
       "- \"No medications\" is a real answer: save it with update_care_plan field medicationsConfirmedNone, value true, " +
@@ -205,11 +209,26 @@ export async function startCarePlanInterview(
   const c = await getCarePlanCompleteness(clientId, session.onboardingData as Record<string, unknown> | undefined);
   if (c.complete) return false;
 
-  await db.collection("agent_sessions").doc(phone).set({
-    carePlanInterviewActive:    true,
-    carePlanInterviewStartedAt: new Date().toISOString(),
-    carePlanInterviewSource:    opts?.source ?? "onboarding",
-  }, { merge: true });
+  // Claim the interview transactionally so two racing kickoffs (e.g. a payment
+  // webhook retry re-running the permissions completion, or the backfill racing
+  // an inbound turn) send the first question exactly once. Only the caller that
+  // flips the flag from unset proceeds to send.
+  const sessionRef = db.collection("agent_sessions").doc(phone);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(sessionRef);
+    const s = (snap.data() ?? {}) as Record<string, unknown>;
+    if (s.carePlanInterviewActive === true || s.carePlanInterviewCompletedAt) return false;
+    tx.set(sessionRef, {
+      carePlanInterviewActive:    true,
+      carePlanInterviewStartedAt: new Date().toISOString(),
+      carePlanInterviewSource:    opts?.source ?? "onboarding",
+    }, { merge: true });
+    return true;
+  }).catch((e) => {
+    console.error("[carePlanInterview] kickoff claim transaction failed:", e);
+    return false;
+  });
+  if (!claimed) return false;
 
   const d = (session.onboardingData ?? {}) as Record<string, unknown>;
   const seniorName = (d.seniorName as string) || "your loved one";
@@ -341,8 +360,13 @@ export async function enrichJobPostFromCarePlan(
   const job = snap.data() ?? {};
   if (job.status !== "open") return;
 
-  const TASK_MARKER = "Day-to-day tasks:";
-  const baseDescription = String(job.description ?? "").split(TASK_MARKER)[0].trimEnd();
+  // Anchor on the EXACT block we append ("\n\nDay-to-day tasks: …"), not the
+  // bare phrase — otherwise family description text that happens to contain
+  // "Day-to-day tasks:" mid-sentence would be truncated. Splitting on the
+  // anchored form only ever strips a block WE wrote, keeping re-enrichment
+  // idempotent (replace, never stack) without eating the family's own words.
+  const TASK_BLOCK_ANCHOR = "\n\nDay-to-day tasks:";
+  const baseDescription = String(job.description ?? "").split(TASK_BLOCK_ANCHOR)[0].trimEnd();
   const update: Record<string, unknown> = {
     updatedAt: new Date().toISOString(),
     carePlanEnrichedAt: new Date().toISOString(),
@@ -352,7 +376,7 @@ export async function enrichJobPostFromCarePlan(
     update.requirements = safe.careTypes; // legacy mirror (jobMatchService keywords)
   }
   if (safe.summary) {
-    update.description = `${baseDescription}\n\n${TASK_MARKER} ${safe.summary}`.trim();
+    update.description = `${baseDescription}${TASK_BLOCK_ANCHOR} ${safe.summary}`.trim();
   }
   await ref.update(update);
   console.log(`[carePlanInterview] job post enriched for client=${clientId}`);
@@ -360,8 +384,12 @@ export async function enrichJobPostFromCarePlan(
 
 // Follow-up text to ENGAGED caregivers only: those who replied interested or
 // applied to this job (job_notifications status interested/applied, plus
-// job_applications as a net for legacy notification docs). Deduped by phone;
-// per-doc carePlanUpdateSentAt guards webhook-retry double-sends.
+// job_applications as a net for applicants with no notification doc, e.g. web
+// applicants). Deduped by phone; the sent-guard (carePlanUpdateSentAt) is
+// written on an EXISTING doc — the caregiver's notification doc, or their
+// application doc — NEVER a new job_notifications marker: a status-less marker
+// there would make notifyFamilyIfAllDeclined's "every notified caregiver has
+// responded" check false forever, silently killing the all-declined rematch.
 export async function notifyEngagedCaregiversOfCarePlan(
   clientId: string,
   safe: { summary: string; careTypes: string[] },
@@ -375,17 +403,25 @@ export async function notifyEngagedCaregiversOfCarePlan(
     db.collection("job_applications").where("jobId", "==", jobId).get(),
   ]);
 
-  // phone → the notification doc ref used for the sent-guard (applications
-  // without a notification doc still get the text, guarded by the dedupe set).
+  // phone → the EXISTING doc to stamp the sent-guard on. null = already sent for
+  // this phone (poison). Prefer the notification doc; fall back to the
+  // application doc for applicants that were never texted a notification. Every
+  // ref points at a doc that already exists — we only ever set/merge onto it.
   const byPhone = new Map<string, FirebaseFirestore.DocumentReference | null>();
+  const markSent = (p: string) => { if (p) byPhone.set(p, null); };
   for (const doc of [...interestedSnap.docs, ...appliedSnap.docs]) {
     const p = String(doc.data().phone ?? "");
-    if (p && !byPhone.has(p)) byPhone.set(p, doc.ref);
-    if (p && doc.data().carePlanUpdateSentAt) byPhone.set(p, null); // already sent — poison the entry
+    if (!p) continue;
+    if (doc.data().carePlanUpdateSentAt) { markSent(p); continue; } // already sent — poison
+    if (byPhone.get(p) === null) continue;                          // already poisoned by a sibling doc
+    if (!byPhone.has(p)) byPhone.set(p, doc.ref);
   }
   for (const doc of applicationsSnap.docs) {
     const p = String(doc.data().phone ?? "");
-    if (p && !byPhone.has(p)) byPhone.set(p, doc.ref.parent.firestore.collection("job_notifications").doc(doc.id));
+    if (!p) continue;
+    if (doc.data().carePlanUpdateSentAt) { markSent(p); continue; } // already sent via application-doc guard
+    if (byPhone.has(p)) continue;                                    // notification doc (or poison) already chosen
+    byPhone.set(p, doc.ref);                                         // guard on the application doc itself
   }
 
   const { generateCaraMessage } = await import("../utils/caraMessage");
@@ -410,9 +446,10 @@ export async function notifyEngagedCaregiversOfCarePlan(
       });
       await sendMessage(cgSession.chatId, msg);
       sent++;
-      // Guard write is best-effort; the docId-based ref for application-only
-      // caregivers may create a marker doc, which future runs read the same way.
-      await guardRef.set({ jobId, phone, carePlanUpdateSentAt: new Date().toISOString() }, { merge: true })
+      // Best-effort guard write onto the EXISTING notification/application doc —
+      // merge, never create. A failure here only risks a duplicate follow-up on
+      // a retry; it can never wedge the all-declined check.
+      await guardRef.set({ carePlanUpdateSentAt: new Date().toISOString() }, { merge: true })
         .catch(() => {});
     } catch (e) {
       console.error(`[carePlanInterview] follow-up send failed for ${phone}:`, e);

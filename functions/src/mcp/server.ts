@@ -1004,7 +1004,9 @@ export const MCP_TOOLS: McpTool[] = [
       "care-plan interview and whenever a family describes concrete care work. Categories: Personal Care, Mobility " +
       "Assistance, Meal Preparation, Medication Reminders, Transportation, Companionship, Light Housekeeping, " +
       "Dementia / Memory Care. Example taskDetail: {\"Personal Care\": [\"Bathing\", \"Dressing\"], \"Transportation\": " +
-      "[\"Doctor appointments\"]}. Merges with what's already saved — safe to call as each answer arrives.",
+      "[\"Doctor appointments\"]}. Merges with what's already saved — safe to call as each answer arrives. " +
+      "PRIVACY: these tasks are shown to caregivers before hiring — each task names the ACTIVITY only, NEVER a drug " +
+      "name, dosage, diagnosis, or the recipient's name (record medications with update_care_plan instead).",
     input_schema: {
       type: "object",
       properties: {

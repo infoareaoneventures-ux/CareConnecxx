@@ -414,12 +414,18 @@ async function notifyFamilyIfAllDeclined(jobId: string): Promise<void> {
 
   if (notifSnap.empty) return;
 
-  const allDeclined = notifSnap.docs.every(d =>
+  // Count ONLY docs that represent a real notification send (sentAt present).
+  // Every notifyAreaCaregivers doc has sentAt; this guards against any
+  // non-notification doc that shares the collection from wedging the check.
+  const notifiedDocs = notifSnap.docs.filter(d => !!d.data().sentAt);
+  if (notifiedDocs.length === 0) return;
+
+  const allDeclined = notifiedDocs.every(d =>
     d.data().status === "declined" || d.data().status === "applied"
   );
 
   // Only act if every notified caregiver has responded AND all declined
-  const anyApplied = notifSnap.docs.some(d => d.data().status === "applied");
+  const anyApplied = notifiedDocs.some(d => d.data().status === "applied");
   if (!allDeclined || anyApplied) return;
 
   // Look up the job post → get clientId → find family phone

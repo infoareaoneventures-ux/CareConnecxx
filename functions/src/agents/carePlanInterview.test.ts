@@ -1,39 +1,68 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Doc-store mock: docs keyed "collection/id"; set/update calls captured.
+// Query-capable doc-store mock: docs keyed "collection/id". where() filters over
+// direct children of a collection by equality; doc refs from queries write back
+// into the store (so sent-guards written this run are observable on re-run).
 const h = vi.hoisted(() => {
   const docs = new Map<string, Record<string, unknown>>();
   const writes: Array<{ op: "set" | "update"; path: string; data: Record<string, unknown> }> = [];
-  const docRef = (coll: string, id: string) => ({
+  const sendMessage = vi.fn(async () => ({ message_id: "m" }));
+  const getOrCreateSession = vi.fn(async (_phone: string) => ({ chatId: "chat", optedOut: false }));
+
+  const makeDocRef = (coll: string, id: string) => ({
+    id,
     get: async () => {
       const d = docs.get(`${coll}/${id}`);
       return { exists: !!d, data: () => d ?? undefined };
     },
-    set: async (data: Record<string, unknown>) => { writes.push({ op: "set", path: `${coll}/${id}`, data }); },
-    update: async (data: Record<string, unknown>) => { writes.push({ op: "update", path: `${coll}/${id}`, data }); },
+    set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+      writes.push({ op: "set", path: `${coll}/${id}`, data });
+      const prev = docs.get(`${coll}/${id}`) ?? {};
+      docs.set(`${coll}/${id}`, opts?.merge ? { ...prev, ...data } : data);
+    },
+    update: async (data: Record<string, unknown>) => {
+      writes.push({ op: "update", path: `${coll}/${id}`, data });
+      docs.set(`${coll}/${id}`, { ...(docs.get(`${coll}/${id}`) ?? {}), ...data });
+    },
   });
-  const collRef = (coll: string) => ({
-    doc: (id: string) => docRef(coll, id),
-    where: () => collRef(coll),
-    limit: () => collRef(coll),
-    get: async () => ({ empty: true, docs: [] }),
+
+  const queryDocs = (coll: string, filters: Array<[string, string, unknown]>) => {
+    const out: Array<{ id: string; data: () => Record<string, unknown>; ref: ReturnType<typeof makeDocRef> }> = [];
+    for (const [key, data] of docs) {
+      if (!key.startsWith(`${coll}/`)) continue;
+      const id = key.slice(coll.length + 1);
+      if (id.includes("/")) continue; // direct children only
+      if (filters.every(([f, , v]) => (data as Record<string, unknown>)[f] === v)) {
+        out.push({ id, data: () => data, ref: makeDocRef(coll, id) });
+      }
+    }
+    return out;
+  };
+
+  const makeQuery = (coll: string, filters: Array<[string, string, unknown]>): any => ({
+    doc: (id: string) => makeDocRef(coll, id),
+    where: (f: string, op: string, v: unknown) => makeQuery(coll, [...filters, [f, op, v]]),
+    limit: () => makeQuery(coll, filters),
+    get: async () => { const d = queryDocs(coll, filters); return { empty: d.length === 0, docs: d }; },
   });
+
   const firestoreFn: any = () => ({
-    collection: (coll: string) => collRef(coll),
+    collection: (coll: string) => makeQuery(coll, []),
     runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       get: async (ref: { get: () => Promise<unknown> }) => ref.get(),
-      update: (_ref: unknown, data: Record<string, unknown>) => { writes.push({ op: "update", path: "tx", data }); },
+      set: (ref: any, data: Record<string, unknown>, opts?: { merge?: boolean }) => { ref.set(data, opts); },
+      update: (ref: any, data: Record<string, unknown>) => { ref.update(data); },
     }),
   });
   firestoreFn.FieldValue = { delete: () => "__DELETE__" };
-  return { docs, writes, firestoreFn };
+  return { docs, writes, firestoreFn, sendMessage, getOrCreateSession };
 });
 
 vi.mock("firebase-admin", () => ({ __esModule: true, default: { firestore: h.firestoreFn }, firestore: h.firestoreFn }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
 vi.mock("../linq/client", () => ({
-  sendMessage: vi.fn(async () => ({ message_id: "m" })),
-  getOrCreateSession: vi.fn(async () => ({ chatId: "chat", optedOut: false })),
+  sendMessage: (...a: unknown[]) => h.sendMessage(...(a as [])),
+  getOrCreateSession: (...a: unknown[]) => h.getOrCreateSession(...(a as [string])),
 }));
 
 import {
@@ -42,11 +71,16 @@ import {
   buildCarePlanInterviewDirective,
   buildCaregiverSafeCareSummary,
   enrichJobPostFromCarePlan,
+  notifyEngagedCaregiversOfCarePlan,
+  startCarePlanInterview,
 } from "./carePlanInterview";
 
 beforeEach(() => {
   h.docs.clear();
   h.writes.length = 0;
+  h.sendMessage.mockClear();
+  h.getOrCreateSession.mockClear();
+  h.getOrCreateSession.mockImplementation(async () => ({ chatId: "chat", optedOut: false }));
   process.env.CARE_PLAN_INTERVIEW_ENABLED = "true";
 });
 afterEach(() => { delete process.env.CARE_PLAN_INTERVIEW_ENABLED; });
@@ -150,6 +184,11 @@ describe("buildCarePlanInterviewDirective", () => {
     expect(d).not.toMatch(/Still needed.*medications/); // meds are filled
   });
 
+  it("includes the drug-name privacy rule for task strings", async () => {
+    const d = await buildCarePlanInterviewDirective(CLIENT, { seniorName: "Rose" });
+    expect(d).toMatch(/NEVER a drug name/i);
+  });
+
   it("returns empty when the plan is already complete", async () => {
     seedPlan({
       detail: { rose_noname: { Transportation: ["Doctor appointments"] } },
@@ -176,8 +215,6 @@ describe("buildCaregiverSafeCareSummary — the privacy choke point", () => {
   });
 
   it("physically cannot emit medical data — inputs are task fields only", () => {
-    // The signature accepts (taskDetailByRecipient, careTypes) — there is no
-    // parameter through which medications/diagnoses/contacts could arrive.
     const { summary } = buildCaregiverSafeCareSummary({ k: { "Medication Reminders": ["Morning", "Evening"] } }, []);
     expect(summary).toBe("Medication Reminders (morning, evening)");
   });
@@ -201,7 +238,7 @@ describe("enrichJobPostFromCarePlan — targeted update, never a rebuild", () =>
     expect(w?.data).not.toHaveProperty("status");
   });
 
-  it("is idempotent on description (marker replaces, never stacks)", async () => {
+  it("is idempotent on the appended block (replaces, never stacks)", async () => {
     h.docs.set(`job_posts/${CLIENT}`, {
       status: "open",
       description: "Care for Rose.\n\nDay-to-day tasks: old summary",
@@ -213,9 +250,112 @@ describe("enrichJobPostFromCarePlan — targeted update, never a rebuild", () =>
     expect(desc).not.toMatch(/old summary/);
   });
 
+  it("preserves family text that contains the marker phrase mid-sentence (U3)", async () => {
+    h.docs.set(`job_posts/${CLIENT}`, {
+      status: "open",
+      description: "Rose needs help. Day-to-day tasks: are honestly her favorite topic.",
+    });
+    await enrichJobPostFromCarePlan(CLIENT, { summary: "Personal Care (bathing)", careTypes: ["Personal Care"] });
+    const desc = String(h.writes.find((x) => x.path === `job_posts/${CLIENT}`)?.data.description);
+    expect(desc).toMatch(/are honestly her favorite topic\./);          // family text survives
+    expect(desc).toMatch(/\n\nDay-to-day tasks: Personal Care \(bathing\)$/); // our block appended once at the end
+  });
+
   it("skips closed jobs entirely", async () => {
     h.docs.set(`job_posts/${CLIENT}`, { status: "closed", description: "x" });
     await enrichJobPostFromCarePlan(CLIENT, { summary: "s", careTypes: ["A"] });
     expect(h.writes.filter((x) => x.path === `job_posts/${CLIENT}`)).toEqual([]);
+  });
+});
+
+describe("notifyEngagedCaregiversOfCarePlan — engaged targeting + guard hygiene", () => {
+  const SAFE = { summary: "Personal Care (bathing)", careTypes: ["Personal Care"] };
+
+  it("texts an interested caregiver and guards on the EXISTING notification doc (no marker doc)", async () => {
+    h.docs.set("job_notifications/n1", { jobId: CLIENT, phone: "+1408", status: "interested", sentAt: "2026-07-15" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(1);
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+    // guard stamped on the real notification doc
+    expect(h.docs.get("job_notifications/n1")).toMatchObject({ carePlanUpdateSentAt: expect.any(String) });
+    // NO new job_notifications doc was created (only n1 exists)
+    const notifKeys = [...h.docs.keys()].filter((k) => k.startsWith("job_notifications/"));
+    expect(notifKeys).toEqual(["job_notifications/n1"]);
+  });
+
+  it("guards an application-only caregiver on the APPLICATION doc, never a job_notifications marker", async () => {
+    h.docs.set("job_applications/app1", { jobId: CLIENT, phone: "+1650" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(1);
+    // guard landed on the application doc
+    expect(h.docs.get("job_applications/app1")).toMatchObject({ carePlanUpdateSentAt: expect.any(String) });
+    // critically: NO doc was minted in job_notifications (which would wedge notifyFamilyIfAllDeclined)
+    const notifKeys = [...h.docs.keys()].filter((k) => k.startsWith("job_notifications/"));
+    expect(notifKeys).toEqual([]);
+  });
+
+  it("does not re-send when the notification doc already carries the guard (poison)", async () => {
+    h.docs.set("job_notifications/n1", { jobId: CLIENT, phone: "+1408", status: "interested", sentAt: "x", carePlanUpdateSentAt: "y" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(0);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not re-send when the application doc already carries the guard", async () => {
+    h.docs.set("job_applications/app1", { jobId: CLIENT, phone: "+1650", carePlanUpdateSentAt: "y" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(0);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("dedupes one phone that both has a notification and applied — single send", async () => {
+    h.docs.set("job_notifications/n1", { jobId: CLIENT, phone: "+1777", status: "applied", sentAt: "x" });
+    h.docs.set("job_applications/app1", { jobId: CLIENT, phone: "+1777" });
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(1);
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips opted-out caregivers", async () => {
+    h.docs.set("job_notifications/n1", { jobId: CLIENT, phone: "+1408", status: "interested", sentAt: "x" });
+    h.getOrCreateSession.mockImplementation(async () => ({ chatId: "chat", optedOut: true }));
+    const sent = await notifyEngagedCaregiversOfCarePlan(CLIENT, SAFE);
+    expect(sent).toBe(0);
+  });
+});
+
+describe("startCarePlanInterview — transactional single-send claim", () => {
+  const session = () => ({ userId: CLIENT, chatId: "chat", onboardingData: { seniorName: "Rose", careNeeds: ["bathing"] } });
+
+  it("claims the interview and sends the first question", async () => {
+    const ok = await startCarePlanInterview("+1408", "chat", session());
+    expect(ok).toBe(true);
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.docs.get("agent_sessions/+1408")).toMatchObject({ carePlanInterviewActive: true });
+  });
+
+  it("refuses when the flag is already set in the store (racing kickoff loses the claim)", async () => {
+    h.docs.set("agent_sessions/+1408", { carePlanInterviewActive: true });
+    const ok = await startCarePlanInterview("+1408", "chat", session()); // in-hand session lacks the flag
+    expect(ok).toBe(false);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the kill switch is off", async () => {
+    process.env.CARE_PLAN_INTERVIEW_ENABLED = "false";
+    const ok = await startCarePlanInterview("+1408", "chat", session());
+    expect(ok).toBe(false);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips when the plan is already complete", async () => {
+    seedPlan({
+      detail: { rose_noname: { "Personal Care": ["Bathing"] } },
+      medicationsConfirmedNone: true,
+      emergencyContacts: [{ name: "A", phone: "1" }],
+    });
+    const ok = await startCarePlanInterview("+1408", "chat", session());
+    expect(ok).toBe(false);
+    expect(h.sendMessage).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { storeCredential, PortalService } from "./credentialVault";
+import { isFlowStale, CREDENTIAL_FLOW_TTL_MS } from "../utils/sessionState";
 
 // A stored password must look like a real credential — at least 6 chars and no
 // internal whitespace (a sentence/question would have spaces and was already
@@ -106,8 +107,17 @@ export async function startCredentialCollection(params: {
     collectingCredentialService: params.service,
     collectingCredentialStep:    "username",
     collectingCredentialReason:  params.reason,
+    // Freshness stamp — an abandoned credential flow must never sit armed
+    // forever treating future texts as username/password candidates.
+    collectingCredentialSetAt:   new Date().toISOString(),
   });
 }
+
+// Every credential-flow field, for the staleness clear and START OVER.
+const CREDENTIAL_FIELDS = [
+  "collectingCredential", "collectingCredentialService", "collectingCredentialStep",
+  "collectingCredentialUsername", "collectingCredentialReason", "collectingCredentialSetAt",
+] as const;
 
 // ── Handle credential replies from the family ─────────────────────────────────
 // Returns true if the message was a credential reply and was handled.
@@ -122,6 +132,16 @@ export async function handleCredentialReply(params: {
   const { phone, userId, text, session } = params;
 
   if (!session.collectingCredential) return false;
+
+  // Staleness gate (30 min, or unstamped legacy state): clear the whole flow
+  // silently and hand the text back to normal routing — the most sensitive
+  // state in the app must not be immortal.
+  if (isFlowStale(session, "collectingCredential", "collectingCredentialSetAt", CREDENTIAL_FLOW_TTL_MS)) {
+    await db.collection("agent_sessions").doc(phone).update(
+      Object.fromEntries(CREDENTIAL_FIELDS.map((f) => [f, admin.firestore.FieldValue.delete()])),
+    ).catch(() => {});
+    return false;
+  }
 
   const service = session.collectingCredentialService as PortalService;
   const step    = session.collectingCredentialStep    as string;

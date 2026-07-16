@@ -10,11 +10,11 @@ const hoisted = vi.hoisted(() => {
   return { updateMock, docMock, collectionMock, sendViaInteractionAgent, storeCredential, quickComplete };
 });
 
-vi.mock("firebase-admin", () => ({
-  __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: () => ({ collection: hoisted.collectionMock }),
-}));
+vi.mock("firebase-admin", () => {
+  const firestoreFn: any = () => ({ collection: hoisted.collectionMock });
+  firestoreFn.FieldValue = { delete: () => "__DELETE__" };
+  return { __esModule: true, default: { firestore: firestoreFn }, firestore: firestoreFn };
+});
 
 vi.mock("../agents/caraAgent", () => ({
   sendViaInteractionAgent: (...args: unknown[]) => hoisted.sendViaInteractionAgent(...args),
@@ -55,6 +55,7 @@ describe("handleCredentialReply — never stores a question as a credential", ()
       text:    q,
       session: {
         collectingCredential:        true,
+        collectingCredentialSetAt:   new Date().toISOString(),
         collectingCredentialService: "mychart",
         collectingCredentialStep:    "username",
       },
@@ -74,6 +75,7 @@ describe("handleCredentialReply — never stores a question as a credential", ()
       text:    "Is this really safe? Where will you store it?",
       session: {
         collectingCredential:         true,
+        collectingCredentialSetAt:    new Date().toISOString(),
         collectingCredentialService:  "mychart",
         collectingCredentialStep:     "password",
         collectingCredentialUsername: "alice@example.com",
@@ -91,6 +93,7 @@ describe("handleCredentialReply — never stores a question as a credential", ()
       text:    "alice@example.com",
       session: {
         collectingCredential:        true,
+        collectingCredentialSetAt:   new Date().toISOString(),
         collectingCredentialService: "mychart",
         collectingCredentialStep:    "username",
       },
@@ -110,6 +113,7 @@ describe("handleCredentialReply — never stores a question as a credential", ()
       text:    "alice@example.com",
       session: {
         collectingCredential:        true,
+        collectingCredentialSetAt:   new Date().toISOString(),
         collectingCredentialService: "mychart",
         collectingCredentialStep:    "username",
       },
@@ -129,5 +133,38 @@ describe("handleCredentialReply — never stores a question as a credential", ()
     });
     expect(result).toBe(false);
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+  });
+
+  it("clears a STALE flow (started 2h ago) and hands the text back to normal routing", async () => {
+    const result = await handleCredentialReply({
+      phone:   "+15555550100",
+      userId:  "u1",
+      text:    "hi, checking on mom's visit tomorrow",
+      session: {
+        collectingCredential:        true,
+        collectingCredentialSetAt:   new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        collectingCredentialService: "mychart",
+        collectingCredentialStep:    "username",
+      },
+    });
+    expect(result).toBe(false);                       // not consumed — normal routing continues
+    expect(storeCredential).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledTimes(1);      // the clear
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled(); // silent expiry
+  });
+
+  it("treats an UNSTAMPED legacy flow as stale (never-expires guard)", async () => {
+    const result = await handleCredentialReply({
+      phone:   "+15555550100",
+      userId:  "u1",
+      text:    "alice@example.com",
+      session: {
+        collectingCredential:        true,
+        collectingCredentialService: "mychart",
+        collectingCredentialStep:    "username",
+      },
+    });
+    expect(result).toBe(false);
+    expect(storeCredential).not.toHaveBeenCalled();
   });
 });

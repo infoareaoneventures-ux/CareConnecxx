@@ -24,6 +24,7 @@ export const STATE_MACHINE_FLAGS = [
   "pendingDisputeDetail",
   "pendingAddFamilyMember",
   "collectingCredential",
+  "collectingCredentialSetAt",
   "stateExpiresAt",
   "jobPostingStep",
   "jobPostingData",
@@ -164,6 +165,32 @@ export const JOB_INVITE_FLAGS = [
   "pendingJobId",
   "pendingJobSentAt",
 ] as const;
+
+// ── Multi-step flow freshness ────────────────────────────────────────────────
+// Flows that collect over several turns (credentials, swaps, refunds) stamp a
+// per-flag SetAt and their consumers clear the flow when it's older than the
+// TTL — or when the stamp is missing (never-expires guard). Deliberately NOT
+// the shared stateExpiresAt field: it is shared across every flow and
+// deleting it while another flag is active is a known collision hazard.
+export const CREDENTIAL_FLOW_TTL_MS = 30 * 60 * 1000;      // password collection: strictest
+export const MULTI_STEP_FLOW_TTL_MS = 24 * 60 * 60 * 1000; // swap / refund flows
+
+/**
+ * True when a flow flag is set but its SetAt stamp is missing or older than
+ * ttlMs. Pure; callers clear the flow's fields and fall through.
+ */
+export function isFlowStale(
+  session: Record<string, unknown> | undefined | null,
+  flag: string,
+  setAtField: string,
+  ttlMs: number,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!session || !session[flag]) return false;
+  const setAt = session[setAtField] as string | undefined;
+  if (!setAt) return true;
+  return setAt < new Date(nowMs - ttlMs).toISOString();
+}
 
 // ── Interrupted-flow descriptions ────────────────────────────────────────────
 // When the expiry sweep clears a mid-flow state machine, the user used to be

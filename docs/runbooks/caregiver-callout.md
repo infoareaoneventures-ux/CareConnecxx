@@ -149,7 +149,7 @@ curl -X POST https://api.resend.com/emails \
   -H 'Authorization: Bearer {API_KEY}' \
   -H 'Content-Type: application/json' \
   -d '{
-    "from": "Evia <noreply@eviacares.com>",
+    "from": "Evia <support@eviacares.com>",
     "to": ["client@email.com"],
     "subject": "Caregiver Cancellation - Backup Options",
     "html": "<html>...</html>"
@@ -232,7 +232,7 @@ db.collection('refundRequests').doc('REQUEST_ID').update({
   status: 'processed',
   processedAt: admin.firestore.FieldValue.serverTimestamp(),
   stripeRefundId: refund.id,
-  processedBy: 'admin_email@eviacares.com'
+  processedBy: 'support@eviacares.com'
 });
 
 // Update appointment
@@ -291,7 +291,7 @@ firebase functions:log --only onCaregiverCallout
 | Linq (SMS/iMessage) issues | Linq Support | linqapp.com support |
 | Resend issues | Resend Support | resend.com/support |
 | Critical system failure | On-call engineer | PagerDuty |
-| HIPAA concern | Compliance team | compliance@eviacares.com |
+| HIPAA concern | Compliance team | support@eviacares.com |
 
 ---
 

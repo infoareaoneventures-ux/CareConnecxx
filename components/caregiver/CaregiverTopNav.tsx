@@ -9,6 +9,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
 import { CaregiverUserMenu } from './CaregiverUserMenu';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
+import { BloomMark } from '../ui/BloomMark';
 import { useUnreadMessageCount } from '../../hooks/useUnreadMessageCount';
 import { useCaraUnread } from '../../hooks/useCaraUnread';
 import type { Caregiver } from '../../types';
@@ -197,7 +198,7 @@ const DesktopNav: React.FC<{
   return (
     <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
       <Link to="/caregiver/dashboard" className="flex items-center gap-2">
-        <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
+        <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center shadow-sm"><BloomMark className="w-5 h-5 text-white" /></div>
         <span className="font-display font-semibold text-ink-900 tracking-tight text-lg">Evia</span>
       </Link>
 

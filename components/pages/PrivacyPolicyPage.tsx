@@ -74,12 +74,12 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">8. Data Retention</h2>
-          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years. PHI is retained per HIPAA requirements (minimum 6 years). You may request deletion of your account data by contacting us at privacy@eviacares.com.</p>
+          <p>We retain personal information for as long as your account is active or as needed to provide services. SMS consent records are retained for a minimum of 5 years. PHI is retained per HIPAA requirements (minimum 6 years). You may request deletion of your account data by contacting us at support@eviacares.com.</p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">9. Your Rights (CCPA / CPRA)</h2>
-          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, contact us at privacy@eviacares.com.</p>
+          <p>California residents have the right to know what personal information we collect, request deletion of personal information, opt out of the sale of personal information (we do not sell personal information), and non-discrimination for exercising these rights. To exercise your rights, contact us at support@eviacares.com.</p>
         </section>
 
         <section>
@@ -89,7 +89,6 @@ export const PrivacyPolicyPage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">11. Contact Us</h2>
-          <p>Privacy Officer: <a href="mailto:privacy@eviacares.com" className="text-primary-600 underline">privacy@eviacares.com</a></p>
           <p>General Support: <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
           <p>Evia Inc. &nbsp;·&nbsp; www.eviacares.com</p>
         </section>

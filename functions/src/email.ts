@@ -6,7 +6,7 @@ import { getAppUrl } from "./config/appUrl";
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@eviacares.com";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "support@eviacares.com";
 const FROM_NAME = process.env.RESEND_FROM_NAME || "Evia";
 const APP_URL = getAppUrl();
 

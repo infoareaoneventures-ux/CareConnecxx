@@ -269,7 +269,7 @@ const generalContent = [
       },
       {
         q: 'How do I report a bug or send product feedback?',
-        a: 'Email feedback@eviacares.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
+        a: 'Email support@eviacares.com or use the in-app feedback button in your Account Settings. We review every submission and release updates regularly based on user input.',
       },
     ],
   },

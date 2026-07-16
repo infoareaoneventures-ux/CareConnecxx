@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../lib/firebase';
 import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
+import { BloomMark } from '../ui/BloomMark';
 
 type Step = 'phone' | 'otp';
 
@@ -129,7 +130,7 @@ export const AuthLoginPage: React.FC = () => {
         {/* Logo */}
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
-            <span className="text-ink-900 font-semibold text-lg">C</span>
+            <BloomMark className="w-6 h-6 text-ink-900" />
           </div>
           <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
           <p className="text-ink-600 text-sm">Welcome back</p>

@@ -326,7 +326,7 @@ These Terms are governed by the laws of the State of Illinois, without regard to
 ## 17. DISPUTE RESOLUTION
 
 ### 17.1 Informal Resolution
-Before filing a claim, you agree to try to resolve disputes informally by contacting us at disputes@eviacares.com. We'll attempt to resolve the issue within 30 days.
+Before filing a claim, you agree to try to resolve disputes informally by contacting us at support@eviacares.com. We'll attempt to resolve the issue within 30 days.
 
 ### 17.2 Mandatory Arbitration
 **PLEASE READ CAREFULLY:** Any dispute arising from these Terms or our Services will be resolved through binding arbitration, not in court, except:
@@ -361,7 +361,7 @@ You may not assign these Terms without our consent. We may assign these Terms wi
 
 ### 18.5 Notices
 All notices to Evia should be sent to:
-- Email: legal@eviacares.com
+- Email: support@eviacares.com
 - Mail: Evia Legal Department, [Address]
 
 ### 18.6 Changes to Terms

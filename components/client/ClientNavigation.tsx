@@ -8,6 +8,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
+import { BloomMark } from '../ui/BloomMark';
 
 const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
 import { authService, dbService } from '../../services/api';
@@ -108,10 +109,10 @@ export const ClientNavigation: React.FC = () => {
 
           {/* Logo */}
           <div className="flex items-center cursor-pointer flex-shrink-0" onClick={() => navigate('/client/dashboard')}>
-            <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center mr-2">
-              <Heart className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 bg-ink-900 rounded-lg flex items-center justify-center mr-2">
+              <BloomMark className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-display font-bold text-ink-900">Care<span className="text-primary-600">Connex</span></span>
+            <span className="text-xl font-display font-bold text-ink-900">Evia</span>
           </div>
 
           {/* Desktop nav — flat centered tabs (tomo-style) */}

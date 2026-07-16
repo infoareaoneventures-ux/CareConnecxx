@@ -90,7 +90,7 @@ export async function runAdminAlertAging(now: Date = new Date()): Promise<AdminA
 
   let digestQueued = false;
   if (batch.length > 0) {
-    const adminEmail = process.env.ADMIN_EMAIL ?? "admin@eviacares.com";
+    const adminEmail = process.env.ADMIN_EMAIL ?? "support@eviacares.com";
     const nowIso     = now.toISOString();
 
     const typeLines = Object.entries(byType)

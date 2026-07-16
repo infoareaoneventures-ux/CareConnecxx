@@ -9,6 +9,7 @@ import { QRHandoff } from './QRHandoff';
 import { MobileHandoff } from './MobileHandoff';
 import { sanitizeName } from '../../../utils/sanitize';
 import { supportPhone } from '../../../utils/launchConfig';
+import { BloomMark } from '../../ui/BloomMark';
 
 export type OnboardingRole = 'client' | 'caregiver';
 type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
@@ -236,7 +237,7 @@ const CaregiverShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
     <div className="w-full max-w-sm space-y-8">
       <div className="text-center space-y-2">
         <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
-          <span className="text-ink-900 font-semibold text-lg">C</span>
+          <BloomMark className="w-6 h-6 text-ink-900" />
         </div>
         <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
         <p className="text-ink-600 text-sm">Your care coordinator</p>
@@ -253,7 +254,7 @@ const FamilyShell: React.FC<{ role: OnboardingRole | null; step: Step; children:
     <header className="px-6 pt-8 pb-2 flex items-center justify-between max-w-2xl w-full mx-auto">
       <Link to="/" className="flex items-center gap-2 group">
         <div className="w-9 h-9 rounded-xl bg-paper-100 border hairline flex items-center justify-center">
-          <span className="text-ink-900 font-semibold text-base">C</span>
+          <BloomMark className="w-5 h-5 text-ink-900" />
         </div>
         <span className="font-semibold text-ink-900 group-hover:text-ink-600 transition">Evia</span>
       </Link>

@@ -4965,7 +4965,8 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
       (stepFacts ? `FACTS about exactly where they are in signup — ground your answer in these when the question touches them, never contradict them: ${stepFacts} ` : "") +
       "(5) Ask NO question of your own — none. The signup question is re-asked automatically right after your reply, so a question from you would leave the user answering two different things at once. " +
-      "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report).",
+      "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report). " +
+      "(7) If they ask for an email or contact address, the only one that exists is support@eviacares.com — never invent any other address.",
     text,
     { maxTokens: 90 },
   )).trim();

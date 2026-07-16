@@ -628,7 +628,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <div className="bg-primary-50 rounded-2xl p-6 border border-primary-100">
                            <h4 className="font-semibold text-primary-900 mb-2">Don't see your city?</h4>
                            <p className="text-primary-700 text-sm mb-4">
-                              We're expanding throughout the Bay Area. Email <a href="mailto:hello@eviacares.com" className="font-semibold underline">hello@eviacares.com</a> to check availability in your neighborhood.
+                              We're expanding throughout the Bay Area. Email <a href="mailto:support@eviacares.com" className="font-semibold underline">support@eviacares.com</a> to check availability in your neighborhood.
                            </p>
                         </div>
                      </div>

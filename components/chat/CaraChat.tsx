@@ -7,6 +7,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { ClientNavigation } from '../client/ClientNavigation';
 import { CaregiverTopNav } from '../caregiver/CaregiverTopNav';
 import type { DirectMessage } from '../../types';
+import { BloomMark } from '../ui/BloomMark';
 
 // Evia web chat (U4, docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md).
 // Renders threads/cara_{uid} — the SAME conversation the user has with Evia
@@ -166,7 +167,7 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-200 bg-white flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0">
-          <span className="text-white font-bold">C</span>
+          <BloomMark className="w-5 h-5 text-white" />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-bold text-neutral-900 leading-tight">Evia</h1>

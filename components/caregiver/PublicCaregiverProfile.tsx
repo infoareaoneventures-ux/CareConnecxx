@@ -5,6 +5,7 @@ import { functions } from '../../lib/firebase';
 import { LookingForSection } from './LookingForSection';
 import type { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
+import { BloomMark } from '../ui/BloomMark';
 
 export const PublicCaregiverProfile: React.FC = () => {
   const { id } = useParams();
@@ -72,7 +73,7 @@ export const PublicCaregiverProfile: React.FC = () => {
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">C</div>
+            <div className="w-9 h-9 rounded-xl bg-ink-900 flex items-center justify-center shadow-sm"><BloomMark className="w-5 h-5 text-white" /></div>
             <span className="font-bold text-slate-900 tracking-tight">Evia</span>
           </Link>
           <Link to="/client/signup" className="text-sm font-semibold text-primary-600 hover:text-primary-700">

@@ -73,7 +73,7 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">10. Governing Law &amp; Dispute Resolution</h2>
-          <p>These Terms are governed by the laws of the State of Illinois. Before filing a claim, contact us at disputes@eviacares.com. Any unresolved dispute will be resolved through binding arbitration administered by the AAA in Chicago, Illinois. <strong>YOU AGREE TO BRING CLAIMS ONLY IN YOUR INDIVIDUAL CAPACITY</strong> and not as a plaintiff or class member in any class proceeding.</p>
+          <p>These Terms are governed by the laws of the State of Illinois. Before filing a claim, contact us at support@eviacares.com. Any unresolved dispute will be resolved through binding arbitration administered by the AAA in Chicago, Illinois. <strong>YOU AGREE TO BRING CLAIMS ONLY IN YOUR INDIVIDUAL CAPACITY</strong> and not as a plaintiff or class member in any class proceeding.</p>
         </section>
 
         <section>
@@ -83,7 +83,7 @@ export const TermsOfServicePage: React.FC = () => (
 
         <section>
           <h2 className="text-lg font-semibold text-ink-900 mb-2">12. Contact</h2>
-          <p>Evia &nbsp;·&nbsp; <a href="mailto:legal@eviacares.com" className="text-primary-600 underline">legal@eviacares.com</a> &nbsp;·&nbsp; <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
+          <p>Evia &nbsp;·&nbsp; <a href="mailto:support@eviacares.com" className="text-primary-600 underline">support@eviacares.com</a></p>
         </section>
 
         <p className="text-xs text-ink-400 pt-4 border-t hairline">BY USING EVIA SERVICES, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY THESE TERMS OF SERVICE.</p>

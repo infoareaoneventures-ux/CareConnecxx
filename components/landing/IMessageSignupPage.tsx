@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { BloomMark } from '../ui/BloomMark';
 
 const CONVERSATION: Array<{ from: 'cara' | 'user'; text: string; delay: number }> = [
   { from: 'cara', text: "Maria just finished today's visit 💙", delay: 0 },
@@ -109,7 +110,7 @@ export const IMessageSignupPage: React.FC = () => {
               {/* iMessage header */}
               <div className="flex flex-col items-center py-3 border-b border-white/5">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mb-1">
-                  <span className="text-white font-bold text-sm">C</span>
+                  <BloomMark className="w-4 h-4 text-white" />
                 </div>
                 <p className="text-white text-sm font-semibold">Evia 💙</p>
                 <p className="text-white/40 text-xs">eviacares.com</p>

@@ -173,7 +173,7 @@ California residents have additional rights to:
 
 ### 6.3 How to Exercise Your Rights
 To exercise any of these rights:
-- **Email:** privacy@eviacares.com
+- **Email:** support@eviacares.com
 - **Phone:** 1-800-CARE-NOW
 - **Mail:** Evia Privacy Office, [Address]
 - **Online:** Through your account settings
@@ -236,7 +236,7 @@ Your continued use of our services after changes indicates acceptance.
 
 **Privacy Officer**  
 Evia  
-Email: privacy@eviacares.com  
+Email: support@eviacares.com  
 Phone: 1-800-CARE-NOW  
 
 **HIPAA Complaints**  
@@ -254,7 +254,7 @@ We will not retaliate against you for filing a complaint.
 ## 12. STATE-SPECIFIC PRIVACY RIGHTS
 
 ### Nevada Residents
-You may opt-out of the sale of certain personal information. Contact us at privacy@eviacares.com.
+You may opt-out of the sale of certain personal information. Contact us at support@eviacares.com.
 
 ### Virginia Residents
 Under the Virginia Consumer Data Protection Act (VCDPA), you have rights similar to CCPA.

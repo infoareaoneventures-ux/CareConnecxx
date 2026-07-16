@@ -71,7 +71,7 @@ export async function handleAdminAlertCreated(
       return;
     }
 
-    const adminEmail = process.env.ADMIN_EMAIL ?? "admin@eviacares.com";
+    const adminEmail = process.env.ADMIN_EMAIL ?? "support@eviacares.com";
     const now = new Date().toISOString();
     const subject = `[Evia Alert] ${type ?? "unknown"} - ${priority ?? "medium"} priority`;
     const body =

@@ -6,7 +6,7 @@ import { appLink } from "./config/appUrl";
 // Initialize email service
 const resendApiKey = process.env.RESEND_API_KEY || functions.config().resend?.api_key;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "noreply@eviacares.com";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "support@eviacares.com";
 
 // SMS/iMessage is handled through Linq. Twilio is intentionally not part of launch messaging.
 

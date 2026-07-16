@@ -439,9 +439,9 @@ export const sendShiftReminders = functions.pubsub
 // ── Admin notification helpers ────────────────────────────────────────────────
 // Each writes to admin_alerts and optionally emails/texts the support line.
 
-const ADMIN_EMAIL   = process.env.ADMIN_EMAIL         || "admin@eviacares.com";
+const ADMIN_EMAIL   = process.env.ADMIN_EMAIL         || "support@eviacares.com";
 const SUPPORT_PHONE = process.env.VITE_SUPPORT_PHONE  || process.env.SUPPORT_PHONE || "";
-const RESEND_FROM   = process.env.RESEND_FROM_EMAIL   || "noreply@eviacares.com";
+const RESEND_FROM   = process.env.RESEND_FROM_EMAIL   || "support@eviacares.com";
 
 function getResend(): Resend | null {
     const key = process.env.RESEND_API_KEY;

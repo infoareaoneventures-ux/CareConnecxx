@@ -63,11 +63,11 @@ export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
 
                <p><strong>6. Data Retention</strong><br/>We retain account data for as long as your account is active. After account deletion, financial records are retained per IRS requirements (7 years); other personal data is purged within 90 days.</p>
 
-               <p><strong>7. Your Rights</strong><br/>You can access, correct, or delete your personal information at any time from your account settings, or by contacting privacy@eviacares.com.</p>
+               <p><strong>7. Your Rights</strong><br/>You can access, correct, or delete your personal information at any time from your account settings, or by contacting support@eviacares.com.</p>
 
                <p><strong>8. Children's Privacy</strong><br/>Evia is not directed at children under 18. We do not knowingly collect information from minors.</p>
 
-               <p><strong>9. Contact</strong><br/>For privacy questions, contact privacy@eviacares.com.</p>
+               <p><strong>9. Contact</strong><br/>For privacy questions, contact support@eviacares.com.</p>
              </>
            )}
         </div>

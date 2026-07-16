@@ -82,6 +82,7 @@ export async function handleCaregiverSwapRequest(
 
     await db.collection("agent_sessions").doc(caregiverPhone).update({
       swapStep: "confirm_shift",
+      swapStepSetAt: new Date().toISOString(),
       swapCandidates: JSON.stringify(shifts),
     });
 
@@ -96,7 +97,7 @@ export async function handleCaregiverSwapRequest(
       candidates = JSON.parse((session.swapCandidates as string) ?? "[]");
     } catch {
       await sendMessage(chatId, "Something went wrong — let me start over. Which shift do you need covered?");
-      await db.collection("agent_sessions").doc(caregiverPhone).update({ swapStep: "identify_shift", swapCandidates: admin.firestore.FieldValue.delete() });
+      await db.collection("agent_sessions").doc(caregiverPhone).update({ swapStep: "identify_shift", swapStepSetAt: new Date().toISOString(), swapCandidates: admin.firestore.FieldValue.delete() });
       return;
     }
     const pick = parseInt(text.trim(), 10);
@@ -109,6 +110,7 @@ export async function handleCaregiverSwapRequest(
 
     await db.collection("agent_sessions").doc(caregiverPhone).update({
       swapStep: "broadcasting",
+      swapStepSetAt: new Date().toISOString(),
       swapShiftId: shift.id,
       swapShiftDate: shift.date,
       swapClientId: shift.clientId,

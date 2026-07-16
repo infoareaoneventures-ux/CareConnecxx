@@ -21,7 +21,7 @@ import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "../
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
-import { isJobInviteStale, JOB_INVITE_FLAGS } from "../utils/sessionState";
+import { isJobInviteStale, JOB_INVITE_FLAGS, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
 
 const db = admin.firestore();
 
@@ -2067,6 +2067,20 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // every inbound text.)
 
     // ── Caregiver shift swap — multi-step state machine ───────────────────
+    // 24h freshness gate: an abandoned swap flow must not consume unrelated
+    // texts days later (it had NO expiry — unlike cancelStep below).
+    if (isFlowStale(session as unknown as Record<string, unknown>, "swapStep", "swapStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
+      await db.collection("agent_sessions").doc(phone).update({
+        swapStep:       admin.firestore.FieldValue.delete(),
+        swapStepSetAt:  admin.firestore.FieldValue.delete(),
+        swapCandidates: admin.firestore.FieldValue.delete(),
+        swapShiftId:    admin.firestore.FieldValue.delete(),
+        swapShiftDate:  admin.firestore.FieldValue.delete(),
+        swapClientId:   admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      (session as any).swapStep = undefined;
+      // fall through to normal routing
+    }
     if ((session as any).swapStep) {
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {

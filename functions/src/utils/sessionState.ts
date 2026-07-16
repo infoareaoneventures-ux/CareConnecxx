@@ -41,6 +41,7 @@ export const STATE_MACHINE_FLAGS = [
   "pendingClientShiftConfirm",
   // Caregiver shift swap flow
   "swapStep",
+  "swapStepSetAt",
   "swapCandidates",
   "swapShiftId",
   "swapShiftDate",
@@ -50,6 +51,7 @@ export const STATE_MACHINE_FLAGS = [
   "pendingSwapFromName",
   // Client caregiver swap flow
   "clientSwapStep",
+  "clientSwapStepSetAt",
   "clientSwapVisits",
   "clientSwapAppointmentId",
   "clientSwapDate",
@@ -67,6 +69,7 @@ export const STATE_MACHINE_FLAGS = [
   "pendingAvailability",
   // Refund flow
   "refundStep",
+  "refundStepSetAt",
   "refundCandidates",
   "refundAppointmentId",
   "refundVisitDescription",

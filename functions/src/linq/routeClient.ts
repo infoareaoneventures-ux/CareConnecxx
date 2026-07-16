@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
-import { isStateExpired, clearFlags } from "../utils/sessionState";
+import { isStateExpired, clearFlags, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
@@ -343,6 +343,15 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
   }
 
   // ── Refund self-service flow (multi-step state machine) ───────────────────
+  // 24h freshness gate — an abandoned refund flow had NO expiry and would
+  // consume unrelated texts days later. Missing stamp (legacy) = stale.
+  if (isFlowStale(session as unknown as Record<string, unknown>, "refundStep", "refundStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
+    await clearFlags(phone, db, [
+      "refundStep", "refundStepSetAt", "refundCandidates", "refundAppointmentId", "refundVisitDescription", "refundReason",
+    ]).catch(() => {});
+    (session as any).refundStep = undefined;
+    // fall through to normal routing
+  }
   if ((session as any).refundStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
@@ -411,6 +420,14 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
   }
 
   // ── Client caregiver swap flow — multi-step state machine ───────────────
+  // 24h freshness gate — same reasoning as refundStep above.
+  if (isFlowStale(session as unknown as Record<string, unknown>, "clientSwapStep", "clientSwapStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
+    await clearFlags(phone, db, [
+      "clientSwapStep", "clientSwapStepSetAt", "clientSwapVisits", "clientSwapAppointmentId", "clientSwapDate", "clientSwapOptions",
+    ]).catch(() => {});
+    (session as any).clientSwapStep = undefined;
+    // fall through to normal routing
+  }
   if ((session as any).clientSwapStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {

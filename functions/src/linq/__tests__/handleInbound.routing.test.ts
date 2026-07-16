@@ -283,6 +283,14 @@ vi.mock("../../utils/sessionState", () => ({
   staleConfirmFlags: vi.fn(() => []),
   HIGH_STAKES_CONFIRM_FLAGS: ["pendingInterviewConfirm", "pendingCancelConfirm", "awaitingRecurringConfirmation"],
   CONFIRM_FLAG_TTL_MS: 60 * 60 * 1000,
+  // Job-invite + multi-step flow freshness (2026-07-15). Default to fresh so
+  // existing routing assertions are unaffected.
+  isJobInviteStale: vi.fn(() => false),
+  JOB_INVITE_FLAGS: ["awaitingJobResponse", "awaitingAvailabilityConfirmation", "pendingJobId", "pendingJobSentAt"],
+  JOB_INVITE_TTL_MS: 48 * 60 * 60 * 1000,
+  isFlowStale: vi.fn(() => false),
+  MULTI_STEP_FLOW_TTL_MS: 24 * 60 * 60 * 1000,
+  CREDENTIAL_FLOW_TTL_MS: 30 * 60 * 1000,
 }));
 vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg"),

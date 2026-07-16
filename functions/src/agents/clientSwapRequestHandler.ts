@@ -76,6 +76,7 @@ export async function handleClientSwapRequest(
 
     await db.collection("agent_sessions").doc(clientPhone).update({
       clientSwapStep: "select_appointment",
+      clientSwapStepSetAt: new Date().toISOString(),
       clientSwapVisits: JSON.stringify(visits),
     });
 
@@ -90,7 +91,7 @@ export async function handleClientSwapRequest(
       visits = JSON.parse((session.clientSwapVisits as string) ?? "[]");
     } catch {
       await sendMessage(chatId, "Something went wrong — let me start over. Which visit do you want to swap the caregiver for?");
-      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapVisits: admin.firestore.FieldValue.delete() });
+      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapStepSetAt: new Date().toISOString(), clientSwapVisits: admin.firestore.FieldValue.delete() });
       return;
     }
 
@@ -157,6 +158,7 @@ export async function handleClientSwapRequest(
 
     await db.collection("agent_sessions").doc(clientPhone).update({
       clientSwapStep: "select_caregiver",
+      clientSwapStepSetAt: new Date().toISOString(),
       clientSwapAppointmentId: visit.id,
       clientSwapDate: visit.date,
       clientSwapOptions: JSON.stringify(options),
@@ -179,7 +181,7 @@ export async function handleClientSwapRequest(
       options = JSON.parse((session.clientSwapOptions as string) ?? "[]");
     } catch {
       await sendMessage(chatId, "Something went wrong — let me start over. Which visit do you want to swap the caregiver for?");
-      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapOptions: admin.firestore.FieldValue.delete() });
+      await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: "identify_appointment", clientSwapStepSetAt: new Date().toISOString(), clientSwapOptions: admin.firestore.FieldValue.delete() });
       return;
     }
     const pick = parseInt(text.trim(), 10);

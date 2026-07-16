@@ -5,6 +5,7 @@ import {
   INBOUND_LOCK_TTL_MS,
   isJobInviteStale,
   JOB_INVITE_TTL_MS,
+  isFlowStale,
 } from "./sessionState";
 
 // Minimal Firestore double exposing just runTransaction + doc().delete().
@@ -57,6 +58,37 @@ describe("releaseInboundProcessing", () => {
     const { db, del } = makeDb({ lockedAt: NOW });
     await releaseInboundProcessing("+1555", db);
     expect(del).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isFlowStale", () => {
+  const NOW_MS = Date.parse("2026-07-15T12:00:00Z");
+  const iso = (msAgo: number) => new Date(NOW_MS - msAgo).toISOString();
+  const TTL = 24 * 60 * 60 * 1000;
+
+  it("false when the flag is not set", () => {
+    expect(isFlowStale({}, "swapStep", "swapStepSetAt", TTL, NOW_MS)).toBe(false);
+  });
+
+  it("false for a fresh flow", () => {
+    expect(isFlowStale(
+      { swapStep: "confirm_shift", swapStepSetAt: iso(60 * 60 * 1000) },
+      "swapStep", "swapStepSetAt", TTL, NOW_MS,
+    )).toBe(false);
+  });
+
+  it("true past the TTL", () => {
+    expect(isFlowStale(
+      { refundStep: "confirm", refundStepSetAt: iso(TTL + 1000) },
+      "refundStep", "refundStepSetAt", TTL, NOW_MS,
+    )).toBe(true);
+  });
+
+  it("true when the flag is set with NO stamp (legacy never-expires guard)", () => {
+    expect(isFlowStale(
+      { collectingCredential: true },
+      "collectingCredential", "collectingCredentialSetAt", TTL, NOW_MS,
+    )).toBe(true);
   });
 });
 

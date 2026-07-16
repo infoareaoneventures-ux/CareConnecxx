@@ -81,6 +81,7 @@ export async function handleRefundRequest(
 
     await db.collection("agent_sessions").doc(phone).update({
       refundStep:       "select_visit",
+      refundStepSetAt:  new Date().toISOString(),
       refundCandidates: JSON.stringify(visits),
     });
 
@@ -131,6 +132,7 @@ export async function handleRefundRequest(
     const visitDesc = `${visit.date} with ${visit.caregiverName}${visit.cost ? ` ($${visit.cost})` : ""}`;
     await db.collection("agent_sessions").doc(phone).update({
       refundStep:             "confirm",
+      refundStepSetAt:        new Date().toISOString(),
       refundAppointmentId:    visit.id,
       refundVisitDescription: visitDesc,
     });
@@ -162,8 +164,9 @@ export async function handleRefundRequest(
     const desc    = (session.refundVisitDescription as string) ?? "that visit";
 
     await db.collection("agent_sessions").doc(phone).update({
-      refundStep:   "submitted",
-      refundReason: reason,
+      refundStep:      "submitted",
+      refundStepSetAt: new Date().toISOString(),
+      refundReason:    reason,
     });
 
     const msgR4opener = await generateCaraMessage({
@@ -237,6 +240,7 @@ export async function handleRefundRequest(
 
     await db.collection("agent_sessions").doc(phone).update({
       refundStep:             admin.firestore.FieldValue.delete(),
+      refundStepSetAt:        admin.firestore.FieldValue.delete(),
       refundAppointmentId:    admin.firestore.FieldValue.delete(),
       refundCandidates:       admin.firestore.FieldValue.delete(),
       refundReason:           admin.firestore.FieldValue.delete(),

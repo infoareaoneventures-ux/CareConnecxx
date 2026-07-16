@@ -15,6 +15,8 @@ const hoisted = vi.hoisted(() => {
     onboardingStep: "caregiver_awaiting_bgcheck",
     caregiverId: "cg-1",
     bgcheckInviteUrl: "https://apply.checkr.com/invite/abc",
+    bgcheckInviteSentAt: new Date().toISOString(),
+    backgroundCheckData: { checkrCandidateId: "cand_old", invitationStatus: "sent", submittedAt: new Date().toISOString() },
     onboardingData: { name: "Jane Doe", email: "jane@x.com" },
   };
   // doc() supports nested subcollections (e.g. caregivers/{id}/private/background,
@@ -30,6 +32,9 @@ const hoisted = vi.hoisted(() => {
   // The shared candidate-first Checkr helper (checkrApi.ts). Returning a fixed
   // result mirrors a successful candidate→invitation round trip.
   const checkrInvite = vi.fn(async (_args: unknown) => ({ invitationUrl: "https://new/x", candidateId: "cand_new" }));
+  // Cancel-invitation helper (checkrApi.ts) — U5 cancels the OLD invitation
+  // before a re-mint so two live invitations never coexist.
+  const cancelInvite = vi.fn(async (_candidateId: string) => 1);
 
   const stripeInstance = {
     identity:     { verificationSessions: { create: vi.fn(async () => ({ id: "vs_1", url: "https://verify.stripe/abc" })) } },
@@ -39,7 +44,7 @@ const hoisted = vi.hoisted(() => {
   };
   const StripeClass = vi.fn(function () { return stripeInstance; });
 
-  return { sendMessage, updateMock, setMock, sessionData, collectionMock, checkrInvite, StripeClass };
+  return { sendMessage, updateMock, setMock, sessionData, collectionMock, checkrInvite, cancelInvite, StripeClass };
 });
 
 vi.mock("firebase-admin", () => {
@@ -60,6 +65,7 @@ vi.mock("../linq/client", () => ({
 
 vi.mock("../checkrApi", () => ({
   createCheckrInvitation: (...a: unknown[]) => hoisted.checkrInvite(...a),
+  cancelCheckrInvitationsForCandidate: (...a: unknown[]) => hoisted.cancelInvite(...(a as [string])),
   checkrPost: vi.fn(),
   CheckrApiError: class CheckrApiError extends Error {},
 }));
@@ -82,12 +88,16 @@ vi.mock("../utils/language", () => ({ languageFromSession: () => "en", t: {} }))
 vi.mock("../safety/supervisor", () => ({ supervise: async (_ctx: unknown, content: string) => content }));
 vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({}) }));
 
+const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
 beforeEach(() => {
   vi.clearAllMocks();
   hoisted.sessionData.chatId = "chat-1";
   hoisted.sessionData.onboardingStep = "caregiver_awaiting_bgcheck";
   hoisted.sessionData.caregiverId = "cg-1";
   hoisted.sessionData.bgcheckInviteUrl = "https://apply.checkr.com/invite/abc";
+  hoisted.sessionData.bgcheckInviteSentAt = new Date().toISOString();
+  hoisted.sessionData.backgroundCheckData = { checkrCandidateId: "cand_old", invitationStatus: "sent", submittedAt: new Date().toISOString() };
   hoisted.sessionData.onboardingData = { name: "Jane Doe", email: "jane@x.com" };
 });
 
@@ -170,6 +180,100 @@ describe("resendStuckStep — Checkr invite reuse (Fix 2)", () => {
     expect(hoisted.updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ "backgroundCheckData.checkrCandidateId": "cand_new" })
     );
+  }, 20_000);
+
+  it("caches a fresh bgcheckInviteSentAt stamp on consent confirm (so the reuse guard can age it)", async () => {
+    delete (hoisted.sessionData as any).bgcheckInviteUrl;
+    const { confirmBgcheckConsent } = await import("./onboardingConversation");
+    await confirmBgcheckConsent("+15551112222", {
+      legalFirstName: "Jane", legalLastName: "Doe", zipCode: "95110", state: "CA",
+    });
+
+    expect(hoisted.updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ bgcheckInviteUrl: "https://new/x", bgcheckInviteSentAt: expect.any(String) })
+    );
+  }, 20_000);
+});
+
+// U5 (2026-07-16): Checkr invitations die after 7 days. The reuse guard must
+// resend a still-LIVE invite but cancel + re-mint a stale/expired one instead of
+// handing out a dead link. Re-mint routes through the /bgcheck consent page →
+// confirmBgcheckConsent (never minted here — consent-first + legal-name form).
+describe("handleCaregiverSendBgcheck — invite expiry re-mint (U5)", () => {
+  function lastLinkPart_() {
+    const call = hoisted.sendMessage.mock.calls.at(-1);
+    return (call?.[1] as any)?.parts?.[0];
+  }
+
+  it("reuses a 2-day-old invite (still live) — no cancel, no re-mint", async () => {
+    hoisted.sessionData.bgcheckInviteSentAt = daysAgo(2);
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    expect(hoisted.cancelInvite).not.toHaveBeenCalled();
+    expect(hoisted.checkrInvite).not.toHaveBeenCalled();
+    expect(lastLinkPart_()).toEqual({ type: "link", value: "https://apply.checkr.com/invite/abc" });
+  }, 20_000);
+
+  it("stale (7 days) → cancels the OLD invitation, clears the cache, routes to the /bgcheck consent page (no mint here)", async () => {
+    hoisted.sessionData.bgcheckInviteSentAt = daysAgo(7);
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    // Old invitation cancelled by candidate id so two live invites never coexist.
+    expect(hoisted.cancelInvite).toHaveBeenCalledWith("cand_old");
+    // Cached (dead) URL dropped.
+    expect(hoisted.updateMock).toHaveBeenCalledWith(expect.objectContaining({ bgcheckInviteUrl: null }));
+    // Falls through to the consent page; the mint happens on re-authorization.
+    expect(hoisted.checkrInvite).not.toHaveBeenCalled();
+    const part = lastLinkPart_();
+    expect(part.type).toBe("link");
+    expect(part.value).toContain("/bgcheck?t=");
+    expect(hoisted.updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ onboardingStep: "caregiver_awaiting_bgcheck_consent" })
+    );
+  }, 20_000);
+
+  it("invitationStatus 'expired' → re-mint even with a recent stamp", async () => {
+    hoisted.sessionData.bgcheckInviteSentAt = new Date().toISOString();
+    (hoisted.sessionData as any).backgroundCheckData = { checkrCandidateId: "cand_old", invitationStatus: "expired" };
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    expect(hoisted.cancelInvite).toHaveBeenCalledWith("cand_old");
+    expect(hoisted.updateMock).toHaveBeenCalledWith(expect.objectContaining({ bgcheckInviteUrl: null }));
+    expect(lastLinkPart_().value).toContain("/bgcheck?t=");
+  }, 20_000);
+
+  it("no stamp but submittedAt 1 day old → reused (fallback age signal), NO re-mint", async () => {
+    delete (hoisted.sessionData as any).bgcheckInviteSentAt;
+    (hoisted.sessionData as any).backgroundCheckData = { checkrCandidateId: "cand_old", invitationStatus: "sent", submittedAt: daysAgo(1) };
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    expect(hoisted.cancelInvite).not.toHaveBeenCalled();
+    expect(lastLinkPart_()).toEqual({ type: "link", value: "https://apply.checkr.com/invite/abc" });
+  }, 20_000);
+
+  it("both stamp AND submittedAt absent → treated stale, re-mint routed", async () => {
+    delete (hoisted.sessionData as any).bgcheckInviteSentAt;
+    (hoisted.sessionData as any).backgroundCheckData = { checkrCandidateId: "cand_old", invitationStatus: "sent" };
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    expect(hoisted.cancelInvite).toHaveBeenCalledWith("cand_old");
+    expect(hoisted.updateMock).toHaveBeenCalledWith(expect.objectContaining({ bgcheckInviteUrl: null }));
+    expect(lastLinkPart_().value).toContain("/bgcheck?t=");
+  }, 20_000);
+
+  it("no invite ever cached (no consent yet) → no cancel, no Checkr mint (consent-first)", async () => {
+    delete (hoisted.sessionData as any).bgcheckInviteUrl;
+    const { resendStuckStep } = await import("./onboardingConversation");
+    await resendStuckStep("+15551112222");
+
+    expect(hoisted.cancelInvite).not.toHaveBeenCalled();
+    expect(hoisted.checkrInvite).not.toHaveBeenCalled();
+    expect(lastLinkPart_().value).toContain("/bgcheck?t=");
   }, 20_000);
 });
 

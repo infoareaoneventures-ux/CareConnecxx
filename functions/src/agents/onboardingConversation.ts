@@ -3,7 +3,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { unwrapJson } from "../utils/jsonUtils";
 import { canChargeBundledMvr, canChargeStandaloneMvr, mvrPriceId } from "../mvrConfig";
 import { writeCaregiverBackgroundPII } from "../caregiverPrivate";
-import { createCheckrInvitation } from "../checkrApi";
+import { createCheckrInvitation, cancelCheckrInvitationsForCandidate } from "../checkrApi";
 import Stripe from "stripe";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
 import { sendMessage, signalThinking, AgentSession } from "../linq/client";
@@ -144,7 +144,7 @@ async function sendOnboardingLinkFailureMessage(
   phone: string,
   chatId: string,
   session: AgentSession,
-  kind: "background-check" | "payout setup" | "background-check renewal",
+  kind: "background-check" | "payout setup" | "background-check renewal" | "client-payment",
 ): Promise<void> {
   // "I'll text you the moment it's ready" is a tracked promise, not vibes:
   // record a `link` commitment BEFORE sending the copy, so the sweep re-attempts
@@ -152,22 +152,32 @@ async function sendOnboardingLinkFailureMessage(
   // this, the sentence had no mechanism behind it — the caregiver's signup
   // silently dead-ended here (2026-07-07 live test).
   const linkType: OnboardingLinkType =
-    kind === "payout setup" ? "caregiver_payouts" : "caregiver_background_check";
+    kind === "payout setup"     ? "caregiver_payouts"
+    : kind === "client-payment" ? "client_payment"
+    : "caregiver_background_check";
+  // The membership-checkout failure addresses the FAMILY; every caregiver link
+  // failure addresses the caregiver. Parameterize audience/userType so the copy
+  // and the tracked commitment name the right person (was hardcoded caregiver).
+  const isClient = kind === "client-payment";
+  const audience: "family" | "caregiver" = isClient ? "family" : "caregiver";
+  const userType: "client" | "caregiver" = isClient ? "client" : "caregiver";
+  // Human phrase for the copy — "client-payment" would read wrong to the family.
+  const linkLabel = isClient ? "membership setup" : kind;
   await recordCommitment({
     phone,
     chatId,
     kind:        "link",
     promiseText: `onboarding ${kind} link failed to generate — retry the send`,
     linkType,
-    userType:    "caregiver",
+    userType,
     source:      "onboardingConversation:link_failure",
     dueInMs:     5 * 60_000,
   });
   await sendMessage(chatId, await generateCaraMessage({
-    audience: "caregiver",
+    audience,
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: `A caregiver needs a ${kind} link, but Evia could not generate the real external link. Be honest, warm, and brief. Say you are on it and will text the link once it is ready. Do not include any URL.`,
-    fallback: `I hit a snag pulling up your ${kind} link — I'm on it and I'll text you the moment it's ready.`,
+    context: `A ${isClient ? "family" : "caregiver"} needs a ${linkLabel} link, but Evia could not generate the real external link. Be honest, warm, and brief. Say you are on it and will text the link once it is ready. Do not include any URL.`,
+    fallback: `I hit a snag pulling up your ${linkLabel} link — I'm on it and I'll text you the moment it's ready.`,
     maxTokens: 70,
   }));
 }
@@ -859,7 +869,7 @@ export async function handleOnboardingStep(
       // bgcheckInviteUrl must not survive a restart: the reuse guard in
       // handleCaregiverSendBgcheck would resend the OLD invitation (old legal
       // name/package) instead of minting one for the corrected details.
-      await updateSession(phone, { onboardingStep: "ask_role", waitlisted: false, userType: null, onboardingData: {}, bgcheckInviteUrl: null });
+      await updateSession(phone, { onboardingStep: "ask_role", waitlisted: false, userType: null, onboardingData: {}, bgcheckInviteUrl: null, bgcheckInviteSentAt: null });
       step = "ask_role";
       session.onboardingStep = "ask_role";
       (session as any).userType = null;
@@ -905,7 +915,7 @@ export async function handleOnboardingStep(
     // would be silently kept in their old role. bgcheckInviteUrl is cleared so a
     // restarted signup mints a fresh Checkr invitation (corrected name/package)
     // instead of the reuse guard resending the old one.
-    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false, bgcheckInviteUrl: null });
+    await updateSession(phone, { onboardingStep: "ask_role", onboardingData: {}, userType: null, waitlisted: false, bgcheckInviteUrl: null, bgcheckInviteSentAt: null });
     await sendMessage(chatId,
       "No problem, let's start fresh.\n\n" +
       "Are you looking for care for a loved one, or are you a caregiver looking for work?"
@@ -2343,28 +2353,29 @@ async function handleClientPlanReply(
   await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
 }
 
-async function handleClientSendPayment(phone: string, chatId: string, session: AgentSession): Promise<void> {
+export async function handleClientSendPayment(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const d    = session.onboardingData ?? {};
 
   const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
   const priceId   = ((d.selectedPlanPriceId as string) || resolveClientPriceId()).trim();
-  let checkoutUrl = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
+  let checkoutUrl: string;
   await signalThinking(chatId, session.service);
   try {
     // Real recurring membership — mode "subscription" actually starts billing.
     // (Falls back to setup/card-on-file only if no price is configured, so the
     // flow never hard-fails — but with STRIPE_MEMBERSHIP_PRICE_ID set this bills.)
     const stripeSession = await createClientMembershipCheckout(phone, caraPhone, priceId);
-    if (stripeSession.url) {
-      // Branded wrapper (/pay/{id} → v1-linkRedirect): the texted link unfurls
-      // as an Evia membership card instead of raw checkout.stripe.com.
-      checkoutUrl = await createBrandedLink("pay", stripeSession.url, phone);
-    }
+    if (!stripeSession.url) throw new Error("Stripe checkout session created without a URL");
+    // Branded wrapper (/pay/{id} → v1-linkRedirect): the texted link unfurls
+    // as an Evia membership card instead of raw checkout.stripe.com.
+    checkoutUrl = await createBrandedLink("pay", stripeSession.url, phone);
   } catch (err) {
-    // Stripe checkout failed — the app-URL fallback below still goes out (the
-    // transport delivers it inline as text, not a blank card), but a failure
-    // at the PAYMENT step is a conversion-killer: page ops instead of only
-    // console-logging into the void.
+    // Stripe checkout failed. NEVER fall through to the /payment/success page:
+    // that page is for AFTER a real charge, so texting it here would strand the
+    // family on a "success" screen with no subscription (R7). A failure at the
+    // PAYMENT step is a conversion-killer — page ops, then hand off to the
+    // shared apology/retry path: it records a `link` commitment (the retry sweep
+    // re-attempts the send) and sends grounded copy with NO URL.
     console.error("handleClientSendPayment stripe error:", err);
     await db.collection("admin_alerts").add({
       type:      "stripe_checkout_create_failed",
@@ -2375,6 +2386,8 @@ async function handleClientSendPayment(phone: string, chatId: string, session: A
       resolved:  false,
       createdAt: new Date().toISOString(),
     }).catch(() => {});
+    await sendOnboardingLinkFailureMessage(phone, chatId, session, "client-payment");
+    return;
   }
 
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
@@ -3006,22 +3019,83 @@ async function handleInboundDocument(
   }
 }
 
+// Checkr invitations die 7 days after mint (docs.checkr.com). Reuse a cached
+// invite only while it is still LIVE — buffer under 7 days so a link handed to
+// the caregiver near the edge still opens.
+const BGCHECK_INVITE_STALE_MS = 6.5 * 24 * 60 * 60 * 1000;
+
+// Is the cached bgcheckInviteUrl too old (or webhook-expired) to reuse? Reads
+// the live caregiver doc for the webhook-set invitationStatus and the mint
+// timestamp used as the age fallback when the session predates bgcheckInviteSentAt.
+async function isBgcheckInviteStale(session: AgentSession): Promise<boolean> {
+  let invitationStatus: string | undefined;
+  let submittedAt:      string | undefined;
+  if (session.caregiverId) {
+    const snap = await db.collection("caregivers").doc(session.caregiverId).get();
+    const bg = ((snap.data()?.backgroundCheckData ?? {}) as Record<string, unknown>);
+    invitationStatus = bg.invitationStatus as string | undefined;
+    submittedAt      = bg.submittedAt as string | undefined;
+  }
+  // The invitation.expired webhook already records this and deletes invitationUrl.
+  if (invitationStatus === "expired") return true;
+  // Prefer the explicit mint stamp; pre-fix sessions fall back to the caregiver
+  // doc's submittedAt (stamped at mint). BOTH absent → treat as stale (we cannot
+  // prove the invite is live). A present stamp/submittedAt guards a genuinely
+  // recent invite from being force-re-minted.
+  const sentAt = (session as any).bgcheckInviteSentAt as string | undefined;
+  const ageSource = sentAt ?? submittedAt;
+  if (!ageSource) return true;
+  const ageMs = Date.now() - new Date(ageSource).getTime();
+  if (Number.isNaN(ageMs)) return true;
+  return ageMs > BGCHECK_INVITE_STALE_MS;
+}
+
+// Cancel the caregiver's OLD Checkr invitation(s) before a re-mint so two live
+// invitations never race to the webhook (matched by checkrCandidateId). Best
+// effort + dry-run-guarded — a failed cancel must not block re-minting.
+async function cancelStaleBgcheckInvitation(session: AgentSession): Promise<void> {
+  if (!session.caregiverId) return;
+  try {
+    const snap = await db.collection("caregivers").doc(session.caregiverId).get();
+    const candidateId = (snap.data()?.backgroundCheckData?.checkrCandidateId) as string | undefined;
+    if (!candidateId) return;
+    await guardSideEffect(
+      "checkr.invitation.cancel",
+      () => cancelCheckrInvitationsForCandidate(candidateId),
+      0,
+      { candidateId },
+    );
+  } catch (err) {
+    console.error("cancelStaleBgcheckInvitation error (non-fatal):", err);
+  }
+}
+
 async function handleCaregiverSendBgcheck(phone: string, chatId: string, session: AgentSession): Promise<void> {
   // Re-send path (resendStuckStep / repeat webhook): the caregiver already
   // authorized on the consent page and a Checkr invitation exists — resend THAT
   // link instead of POSTing a new /v1/invitations (a second candidate would
   // split webhook state and can double-bill). The same link is also in their
   // email from Checkr, which re-sends daily reminders.
-  // TODO expiry: Checkr invitations expire after 7 days (docs.checkr.com). If a
-  // reuse is stale, this resends a dead link; a future pass can fall through to
-  // a fresh POST past ~6 days and overwrite bgcheckInviteUrl + checkrCandidateId.
   const cachedUrl = (session as any).bgcheckInviteUrl as string | undefined;
   if (cachedUrl && session.caregiverId) {
-    await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
-    await sendMessage(chatId, "Here's your background-check link again — takes about 5 minutes. It's also in your email from Checkr:");
-    await sendMessage(chatId, { parts: [{ type: "link", value: cachedUrl }] });
-    resolveCommitment(phone, "link", "link_sent").catch(() => {});
-    return;
+    if (!(await isBgcheckInviteStale(session))) {
+      // Still live → reuse the cached invitation, no new Checkr resource.
+      await updateSession(phone, { onboardingStep: "caregiver_awaiting_bgcheck" });
+      await sendMessage(chatId, "Here's your background-check link again — takes about 5 minutes. It's also in your email from Checkr:");
+      await sendMessage(chatId, { parts: [{ type: "link", value: cachedUrl }] });
+      resolveCommitment(phone, "link", "link_sent").catch(() => {});
+      return;
+    }
+    // Stale / webhook-expired: resending would hand out a dead link. Cancel the
+    // OLD Checkr invitation so it can't co-exist with the replacement, drop the
+    // cached URL, and fall through to the /bgcheck consent page. Re-authorizing
+    // there re-mints a fresh invitation via confirmBgcheckConsent, whose re-point
+    // branch updates checkrCandidateId so the webhook follows the new candidate.
+    // We never mint here — the fresh invite needs the legal name from the consent
+    // form, and consent-first stays intact (Checkr is only ever called post-consent).
+    await cancelStaleBgcheckInvitation(session);
+    await updateSession(phone, { bgcheckInviteUrl: null });
+    // fall through to the consent-link flow below.
   }
 
   // Webapp parity (founder, 2026-07-08): NOTHING touches Checkr until the
@@ -3142,7 +3216,9 @@ export async function confirmBgcheckConsent(
   const inviteUrl = inv.invitationUrl;
   // Cache the real Checkr link so a later "send me the link" request resends
   // THIS invitation instead of minting a duplicate (see sendOnboardingLink).
-  await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
+  // Stamp the mint time so the reuse guard can tell a live invite from a stale
+  // one (Checkr's 7-day expiry) instead of resending a dead link.
+  await updateSession(phone, { bgcheckInviteUrl: inviteUrl, bgcheckInviteSentAt: new Date().toISOString() });
 
   // Pre-create the caregivers doc so the Checkr webhook can find this caregiver
   // by checkrCandidateId when the report comes back. Keyed by the Firebase Auth
@@ -3272,7 +3348,7 @@ export async function sendBgCheckRenewalLink(phone: string, chatId: string, sess
       { invitationUrl: "https://dryrun.local/checkr", candidateId: "cand_dryrun" },
     );
     inviteUrl = inv.invitationUrl;
-    await updateSession(phone, { bgcheckInviteUrl: inviteUrl });
+    await updateSession(phone, { bgcheckInviteUrl: inviteUrl, bgcheckInviteSentAt: new Date().toISOString() });
 
     const candidateId = inv.candidateId as string | undefined;
     if (caregiverId) {
@@ -3530,10 +3606,21 @@ export async function sendOnboardingLink(
     }
 
     case "client_payment": {
-      url = `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`;
       const selectedPriceId = d.selectedPlanPriceId as string | undefined;
-      const stripeSession = await createClientMembershipCheckout(phone, caraPhone, selectedPriceId);
-      if (stripeSession.url) url = await createBrandedLink("pay", stripeSession.url, phone);
+      try {
+        const stripeSession = await createClientMembershipCheckout(phone, caraPhone, selectedPriceId);
+        if (!stripeSession.url) throw new Error("Stripe checkout session created without a URL");
+        url = await createBrandedLink("pay", stripeSession.url, phone);
+      } catch (err) {
+        // Same guarantee as handleClientSendPayment: a checkout-create failure
+        // must NEVER fall through to /payment/success (post-charge page, R7).
+        // Alert ops + route through the shared apology/retry path (commitment
+        // recorded, grounded copy, no URL) and stop — do not send a link.
+        console.error("sendOnboardingLink client_payment stripe error:", err);
+        await alertOnboardingLinkFailure(phone, "client_payment", err);
+        await sendOnboardingLinkFailureMessage(phone, chatId, session, "client-payment");
+        return { success: false, linkType };
+      }
       break;
     }
 

@@ -1607,7 +1607,7 @@ export const dbService = {
 
     sendCaraMessage: async (message: string, clientMessageId: string): Promise<{
         available: boolean;
-        status?: 'ok' | 'rateLimited' | 'notSetUp' | 'finishSetup' | 'caraBusy' | 'smsFlowActive';
+        status?: 'ok' | 'rateLimited' | 'notSetUp' | 'finishSetup' | 'caraBusy' | 'smsFlowActive' | 'duplicate';
         reply?: string;
         rateLimited?: boolean;
         showMatches?: boolean;

@@ -95,8 +95,15 @@ export async function cancelCheckrInvitationsForCandidate(candidateId: string): 
       // Only cancel invitations that are still actionable — completed / expired /
       // already-canceled ones are inert and DELETE would 4xx.
       if (inv.status === "completed" || inv.status === "expired" || inv.status === "canceled") continue;
-      await checkrRequest("DELETE", `/invitations/${encodeURIComponent(inv.id)}`);
-      cancelled++;
+      // Per-invitation catch: one failed DELETE (e.g. a race with Checkr-side
+      // expiry) must not abort cancelling the REMAINING open invitations — the
+      // whole point is leaving zero live duplicates behind.
+      try {
+        await checkrRequest("DELETE", `/invitations/${encodeURIComponent(inv.id)}`);
+        cancelled++;
+      } catch (err) {
+        console.error(`cancelCheckrInvitationsForCandidate: DELETE failed for invitation ${inv.id} (continuing):`, err);
+      }
     }
     return cancelled;
   } catch (err) {

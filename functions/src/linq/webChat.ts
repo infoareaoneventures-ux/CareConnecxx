@@ -1,8 +1,9 @@
 // Web → Evia unified-thread turn (docs/plans/2026-07-02-001-feat-cara-web-chat-phone-login-plan.md, U2).
 //
 // Ordered send invariant: rate check → resolve session → onboarding guard →
-// opt-out check → per-phone lock → await user-message mirror → agent →
-// (skipSend branch only) manual reply mirror → release lock.
+// idempotency claim → per-phone lock → FRESH session re-read (opt-out + chatId
+// recomputed post-lock; active-SMS-flow guard) → await user-message mirror →
+// agent → (skipSend branch only) manual reply mirror → release lock.
 //
 // With a live Linq chat the agent runs WITHOUT skipSend, so sendSplit delivers
 // the reply over SMS/iMessage and sendMessage auto-mirrors it into
@@ -23,7 +24,7 @@ export class AgentUnavailableError extends Error {
 
 export interface WebChatResult {
   available:    boolean;
-  status:       "ok" | "rateLimited" | "notSetUp" | "finishSetup" | "caraBusy" | "smsFlowActive";
+  status:       "ok" | "rateLimited" | "notSetUp" | "finishSetup" | "caraBusy" | "smsFlowActive" | "duplicate";
   reply:        string;
   rateLimited?: boolean;
   showMatches?: boolean;
@@ -140,8 +141,10 @@ export async function handleWebChatTurn(args: {
     };
   }
 
-  const optedOut = session.optedOut === true;
-  const chatId   = (session.chatId as string | undefined) ?? "";
+  // NOTE: optedOut / chatId are deliberately NOT captured here — they are
+  // recomputed from the FRESH post-lock re-read below. A STOP processed while
+  // this turn waited on the lock must flip the send off (TCPA), and a chatId
+  // that appeared/vanished mid-wait must be honored.
 
   // ── Turn idempotency (U3) ──────────────────────────────────────────────────
   // A retried web turn (same clientMessageId) must not re-run a turn that fired
@@ -164,16 +167,17 @@ export async function handleWebChatTurn(args: {
     const claim = await claimWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey);
     if (claim === "duplicate") {
       // Deterministic response, no agent run, no send (ONE VOICE — a retry must
-      // not produce a second SMS). The user's inbound bubble was mirrored on the
-      // first turn (idempotent by clientMessageId) and the first turn's reply
-      // reconciles via the thread listener.
+      // not produce a second SMS). Status "duplicate" (NOT "ok"): the client's
+      // "ok" branch waits for a mirrored doc that will never arrive on this
+      // path — the UI must clear its pending bubble and show the reply as a
+      // notice instead of dead air.
       return {
         available:   true,
-        status:      "ok",
+        status:      "duplicate",
         reply:       "I already got that one — no need to resend.",
         showMatches: false,
         toolsCalled: [],
-        ...(optedOut ? { optedOut: true } : {}),
+        ...(session.optedOut === true ? { optedOut: true } : {}),
         ...withId,
       };
     }
@@ -198,29 +202,42 @@ export async function handleWebChatTurn(args: {
     };
   }
 
-  // ── Active-SMS-flow guard (U2), evaluated AFTER the lock on a FRESH re-read ──
-  // The pre-lock snapshot was read ~3s before the lock resolved; an SMS turn can
-  // set a flag in that window (TOCTOU). Re-read now and defer if a fresh flow is
-  // in flight. Read-only — the web path never clears or stamps flags.
-  session = (await sessionRef.get()).data() ?? session;
-  if (hasActiveSmsFlow(session)) {
-    await releaseInboundProcessing(phone, db);
-    await releaseClaim();
-    const flow = describeInterruptedFlow(session);
-    return {
-      available: true,
-      status:    "smsFlowActive",
-      reply:     flow
-        ? `Looks like we're in the middle of ${flow} over text — let's finish that there, then this chat picks right back up.`
-        : "We've got something in progress over text right now — let's wrap that up there first, then I'm all yours here.",
-      showMatches: false,
-      ...(optedOut ? { optedOut: true } : {}),
-      ...withId,
-    };
-  }
-
   const toolsCalled: string[] = [];
   try {
+    // ── Post-lock fresh re-read (TOCTOU) ─────────────────────────────────────
+    // The pre-lock snapshot was read ~3s before the lock resolved; an SMS turn
+    // can set a flag (or process a STOP) in that window. Re-read now, INSIDE
+    // the try — a throw here must not leak the lock or the claim (the catch
+    // deletes the zero-tool claim, the finally releases the lock).
+    session = (await sessionRef.get()).data() ?? session;
+
+    // Recompute send facts from the FRESH session: a STOP processed while this
+    // turn waited on the lock must kill the Linq send (TCPA), so the pre-lock
+    // optedOut/chatId must never be trusted here.
+    const optedOut = session.optedOut === true;
+    const chatId   = (session.chatId as string | undefined) ?? "";
+
+    // ── Active-SMS-flow guard (U2), evaluated on the fresh re-read ──────────
+    // Defer if a fresh flow is in flight. Read-only — the web path never
+    // clears or stamps flags.
+    if (hasActiveSmsFlow(session)) {
+      // Release the CLAIM first — its stale window (10 min) dwarfs the lock's
+      // 90s TTL, so the expensive resource goes first. The finally below then
+      // releases the lock exactly once.
+      await releaseClaim();
+      const flow = describeInterruptedFlow(session);
+      return {
+        available: true,
+        status:    "smsFlowActive",
+        reply:     flow
+          ? `Looks like we're in the middle of ${flow} over text — let's finish that there, then this chat picks right back up.`
+          : "We've got something in progress over text right now — let's wrap that up there first, then I'm all yours here.",
+        showMatches: false,
+        ...(optedOut ? { optedOut: true } : {}),
+        ...withId,
+      };
+    }
+
     // Mirror the user's message BEFORE the agent runs so the reply always
     // lands after it. A retry with the same clientMessageId must not
     // duplicate the bubble.
@@ -339,17 +356,21 @@ export async function handleWebChatTurn(args: {
       ...withId,
     };
   } catch (err) {
-    // Agent turns are NOT internally idempotent. If any tool executed before the
-    // failure, booking/SMS side effects may already be committed — settle
+    // Agent turns are NOT internally idempotent. If a WRITE tool executed before
+    // the failure, booking/SMS side effects may already be committed — settle
     // "processed" so a same-id retry returns the deterministic duplicate reply
-    // instead of re-firing them. If ZERO tools ran, delete the claim so the
-    // retry can safely reprocess. Then rethrow the original error unchanged
-    // (AgentUnavailableError for the qaAgent case) — the caller's contract.
+    // instead of re-firing them. Read-only tools (get_* / list_*) have no side
+    // effects, so a failure after ONLY reads deletes the claim — the retry can
+    // safely reprocess instead of the user being stonewalled with a duplicate
+    // notice for a turn that never answered. Then rethrow the original error
+    // unchanged (AgentUnavailableError for the qaAgent case) — the caller's
+    // contract.
     if (claimKey) {
+      const firedSideEffects = toolsCalled.some((t) => !/^(get_|list_)/.test(t));
       await settleWebhookEvent(
         WEB_TURN_CLAIMS_COLLECTION,
         claimKey,
-        toolsCalled.length > 0 ? "processed" : "failed",
+        firedSideEffects ? "processed" : "failed",
       );
     }
     throw err;

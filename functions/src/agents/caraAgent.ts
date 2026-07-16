@@ -484,6 +484,9 @@ async function bookingAgent(payload: Record<string, unknown>): Promise<void> {
     await db.collection("agent_sessions").doc(p as string).update({
       hireMode: caregiverName,
       pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
+      // Same 30-min deadline every routeIntent.ts hireMode set-site stamps —
+      // without it this flag never expires and wedges the web-chat guard.
+      stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
     await sendViaInteractionAgent(p as string, {
       content:

@@ -302,7 +302,28 @@ export function isStateExpired(
 // flag lifecycle stays SMS-router-owned. A drift test (sessionState.test.ts)
 // asserts GUARDED_SMS_FLAGS and PASSIVE_SMS_FLAGS partition STATE_MACHINE_FLAGS,
 // so a newly-added flag fails the build until it is categorized here.
-type WebGuardStrategy = "confirm" | "invite" | "stampedStep" | "generic";
+type WebGuardStrategy =
+  | "confirm"
+  | "invite"
+  | "stampedStep"
+  | "generic"
+  // Per-flag explicit stamp: the flag was set alongside `setAtField` (an ISO
+  // string) and its SMS-side consumer clears it after `ttlMs`. Missing stamp ⇒
+  // stale (same isFlowStale semantics as "stampedStep") — a stamp-less write of
+  // one of these flags must never wedge the web surface forever.
+  | { setAtField: string; ttlMs: number }
+  // The flag's VALUE is itself the ISO timestamp (e.g. pendingInstantPayoutConfirm,
+  // instantPayoutHandler.ts). Stale when the parsed value is older than `ttlMs`;
+  // an unparseable value is treated as STALE (the SMS router clears this flow
+  // aggressively — a 10-min money confirm must not wedge web turns).
+  | { valueStampTtlMs: number };
+
+// pendingMatches parity: routeIntent.ts clears pendingMatches when
+// pendingMatchesSetAt is older than 2h (the "stale list" rule).
+export const PENDING_MATCHES_TTL_MS = 2 * 60 * 60 * 1000;
+// pendingInstantPayoutConfirm parity: routeCaregiver.ts clears the confirm when
+// its ISO value is older than 10 minutes.
+export const INSTANT_PAYOUT_CONFIRM_TTL_MS = 10 * 60 * 1000;
 
 /**
  * Guarded primary flags → the staleness strategy used to decide whether an
@@ -310,6 +331,11 @@ type WebGuardStrategy = "confirm" | "invite" | "stampedStep" | "generic";
  *  - "confirm":     staleConfirmFlags (1h TTL; missing stamp = stale)
  *  - "invite":      isJobInviteStale (48h TTL on pendingJobSentAt)
  *  - "stampedStep": isFlowStale on `${flag}SetAt` (24h MULTI_STEP TTL)
+ *  - {setAtField, ttlMs}: isFlowStale on an EXPLICIT stamp field + TTL
+ *                   (missing stamp = stale) — used where the SMS side already
+ *                   stamps a differently-named field or a non-24h TTL.
+ *  - {valueStampTtlMs}: the flag VALUE is the ISO stamp; stale past the TTL or
+ *                   unparseable.
  *  - "generic":     stamp-less flow — stale only when stateExpiresAt is present
  *                   AND passed; ABSENT stateExpiresAt ⇒ active (deny-by-default).
  */
@@ -318,7 +344,11 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["pendingTimeSelection", "generic"],
   ["pendingRebook", "generic"],
   ["pendingInterviewOutcome", "generic"],
-  ["pendingMatches", "generic"],
+  // Set by matchingAgent.ts alongside pendingMatchesSetAt; routeIntent.ts
+  // treats the list as stale after 2h. Without this stamp strategy a web
+  // matching turn (find_replacement_caregivers) would wedge every subsequent
+  // web turn forever (pendingMatches carries no stateExpiresAt).
+  ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
   ["pendingCancelConfirm", "confirm"],
   ["pendingInterviewConfirm", "confirm"],
   ["awaitingRecurringConfirmation", "confirm"],
@@ -329,14 +359,19 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["caregiverRescheduling", "generic"],
   ["awaitingJobResponse", "invite"],
   ["awaitingAvailabilityConfirmation", "invite"],
-  ["pendingShiftApproval", "generic"],
+  // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
+  ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   ["pendingDisputeDetail", "generic"],
   ["pendingAddFamilyMember", "generic"],
-  ["collectingCredential", "stampedStep"],
+  // SMS router parity: credentialCollector.ts clears this flow after
+  // CREDENTIAL_FLOW_TTL_MS (30 min), not the 24h multi-step TTL.
+  ["collectingCredential", { setAtField: "collectingCredentialSetAt", ttlMs: CREDENTIAL_FLOW_TTL_MS }],
   ["jobPostingStep", "generic"],
   ["modifyScheduleStep", "generic"],
   ["swapStep", "stampedStep"],
-  ["pendingSwapRequestId", "generic"],
+  // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
+  // pendingSwapRequestIdSetAt); routeCaregiver.ts clears on the same stamp.
+  ["pendingSwapRequestId", { setAtField: "pendingSwapSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   ["clientSwapStep", "stampedStep"],
   ["healthcareFlowStep", "generic"],
   ["timesheetStep", "generic"],
@@ -344,7 +379,9 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["refundStep", "stampedStep"],
   ["cancelStep", "generic"],
   ["profileUpdateStep", "generic"],
-  ["pendingInstantPayoutConfirm", "generic"],
+  // instantPayoutHandler.ts writes the ISO timestamp AS the flag value;
+  // routeCaregiver.ts clears it after 10 minutes.
+  ["pendingInstantPayoutConfirm", { valueStampTtlMs: INSTANT_PAYOUT_CONFIRM_TTL_MS }],
 ];
 
 /**
@@ -413,6 +450,20 @@ export function hasActiveSmsFlow(
   if (!session) return false;
   for (const [flag, strategy] of GUARDED_SMS_FLAGS) {
     if (!session[flag]) continue;
+    if (typeof strategy === "object") {
+      if ("valueStampTtlMs" in strategy) {
+        // The flag value IS the ISO stamp. Unparseable ⇒ stale (never wedge).
+        const v = session[flag];
+        if (typeof v !== "string") continue;
+        const setMs = Date.parse(v);
+        if (isNaN(setMs)) continue;
+        if (setMs >= nowMs - strategy.valueStampTtlMs) return true;
+      } else {
+        // Explicit per-flag stamp + TTL; missing stamp ⇒ stale (isFlowStale).
+        if (!isFlowStale(session, flag, strategy.setAtField, strategy.ttlMs, nowMs)) return true;
+      }
+      continue;
+    }
     switch (strategy) {
       case "confirm":
         if (!staleConfirmFlags(session, nowMs).includes(flag)) return true;

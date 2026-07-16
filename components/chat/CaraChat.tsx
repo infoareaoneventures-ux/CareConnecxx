@@ -117,6 +117,15 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
           setDraft(body);
           setNotice(res.reply || "You've got something in progress with Evia over text — finish that first, then this chat picks back up.");
           break;
+        case 'duplicate':
+          // The server already processed this clientMessageId on an earlier
+          // attempt — no mirrored doc will arrive for THIS turn, so waiting
+          // (the 'ok' path) would leave the bubble stuck forever. Clear it and
+          // surface Evia's deterministic reply as a notice. No draft restore:
+          // resending the same message is exactly what shouldn't happen.
+          setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
+          setNotice(res.reply || 'Evia already got that message — no need to resend.');
+          break;
         case 'notSetUp':
           setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
           setMode('notSetUp');

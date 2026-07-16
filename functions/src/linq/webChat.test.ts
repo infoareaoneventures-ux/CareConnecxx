@@ -8,13 +8,20 @@ const hoisted = vi.hoisted(() => {
   const docs = new Map<string, any>();            // doc path -> data
   const queryItems = new Map<string, any[]>();    // collection path -> items for where() queries
   const writes: Array<{ op: string; path: string; data?: any }> = [];
+  const getCallCounts = new Map<string, number>();      // doc path -> get() calls so far
+  const failGetOnCall = new Map<string, number>();      // doc path -> 1-based call index to reject
 
   const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
-    get: vi.fn(async () => ({
-      exists: docs.has(path),
-      data: () => docs.get(path),
-    })),
+    get: vi.fn(async () => {
+      const n = (getCallCounts.get(path) ?? 0) + 1;
+      getCallCounts.set(path, n);
+      if (failGetOnCall.get(path) === n) throw new Error(`simulated get() failure on call ${n} for ${path}`);
+      return {
+        exists: docs.has(path),
+        data: () => docs.get(path),
+      };
+    }),
     set: vi.fn(async (data: any, opts?: any) => {
       writes.push({ op: "set", path, data });
       docs.set(path, opts?.merge ? { ...(docs.get(path) ?? {}), ...data } : data);
@@ -49,6 +56,8 @@ const hoisted = vi.hoisted(() => {
     docs,
     queryItems,
     writes,
+    getCallCounts,
+    failGetOnCall,
     collectionMock: vi.fn((path: string) => makeCollRef(path)),
     claimMock: vi.fn(async (..._args: any[]) => true),
     releaseMock: vi.fn(async (..._args: any[]) => {}),
@@ -66,6 +75,8 @@ const hoisted = vi.hoisted(() => {
       docs.clear();
       queryItems.clear();
       writes.length = 0;
+      getCallCounts.clear();
+      failGetOnCall.clear();
     },
   };
 });
@@ -446,6 +457,10 @@ describe("handleWebChatTurn", () => {
       // Lock released and the turn claim released so a same-id retry isn't wedged.
       expect(hoisted.releaseMock).toHaveBeenCalledOnce();
       expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_c-flow`, "failed");
+      // Claim released BEFORE the lock: the claim's stale window (10 min) dwarfs
+      // the lock TTL (90s), so the expensive resource must go first.
+      expect(hoisted.settleLedgerMock.mock.invocationCallOrder[0])
+        .toBeLessThan(hoisted.releaseMock.mock.invocationCallOrder[0]);
       // Read-only: the session flag was never cleared/stamped by the web path.
       expect(hoisted.docs.get(`agent_sessions/${PHONE}`)).toMatchObject({
         pendingCancelConfirm: { appointmentId: "a1" },
@@ -492,14 +507,15 @@ describe("handleWebChatTurn", () => {
 
   // ── U3: idempotent turns keyed on clientMessageId ──────────────────────────
   describe("U3 turn idempotency", () => {
-    it("duplicate claim: no agent run, no send, deterministic reply", async () => {
+    it("duplicate claim: status 'duplicate' (NOT 'ok' — the UI must not wait for a mirrored doc), no agent run, no send", async () => {
       seedUser();
       seedSession();
       hoisted.claimLedgerMock.mockResolvedValue("duplicate");
 
       const res = await handleWebChatTurn({ uid: UID, message: "book maria", clientMessageId: "dup-1" });
 
-      expect(res.status).toBe("ok");
+      expect(res.status).toBe("duplicate");
+      expect(res.reply).toBeTruthy();
       expect(res.clientMessageId).toBe("dup-1");
       expect(hoisted.qaMock).not.toHaveBeenCalled();
       expect(hoisted.sendLinqMock).not.toHaveBeenCalled();
@@ -582,6 +598,60 @@ describe("handleWebChatTurn", () => {
       expect(res.status).toBe("ok");
       expect(hoisted.claimLedgerMock).not.toHaveBeenCalled();
       expect(hoisted.settleLedgerMock).not.toHaveBeenCalled();
+    });
+
+    it("agent failure after ONLY read-only (get_*/list_*) tools deletes the claim — a retry can reprocess", async () => {
+      seedUser();
+      seedSession();
+      hoisted.qaMock.mockImplementation(async (params: any) => {
+        params._toolCallsOut?.push("get_payout_status", "list_upcoming_shifts");
+        throw new Error("crash after reads only");
+      });
+
+      await expect(handleWebChatTurn({ uid: UID, message: "payout status?", clientMessageId: "r-1" }))
+        .rejects.toBeInstanceOf(AgentUnavailableError);
+
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_r-1`, "failed");
+    });
+  });
+
+  // ── Post-lock lifecycle (launch-readiness review fixes) ────────────────────
+  describe("post-lock re-read lifecycle", () => {
+    it("a throw in the post-lock re-read releases the lock AND deletes the claim (no leak)", async () => {
+      seedUser();
+      seedSession();
+      // Call 1 = pre-lock read, call 2 = post-lock fresh re-read → reject.
+      hoisted.failGetOnCall.set(`agent_sessions/${PHONE}`, 2);
+
+      await expect(handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "leak-1" }))
+        .rejects.toThrow(/simulated get\(\) failure/);
+
+      // Lock released exactly once (finally), claim deleted (zero tools ran).
+      expect(hoisted.releaseMock).toHaveBeenCalledOnce();
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_leak-1`, "failed");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+    });
+
+    it("a STOP processed while waiting on the lock kills the Linq send (optedOut recomputed post-lock — TCPA)", async () => {
+      seedUser();
+      seedSession(); // chatId present, not opted out at the pre-lock read
+      // The SMS router processes STOP while this turn contends for the lock:
+      // mutate the session doc during claimInboundProcessing, before the re-read.
+      hoisted.claimMock.mockImplementation(async () => {
+        hoisted.docs.set(`agent_sessions/${PHONE}`, {
+          ...hoisted.docs.get(`agent_sessions/${PHONE}`),
+          optedOut: true,
+        });
+        return true;
+      });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hello?" });
+
+      expect(res.status).toBe("ok");
+      expect(res.optedOut).toBe(true);
+      // Fresh optedOut → skipSend branch even though a chatId exists.
+      expect(hoisted.qaMock).toHaveBeenCalledWith(expect.objectContaining({ skipSend: true, chatId: "" }));
+      expect(hoisted.sendLinqMock).not.toHaveBeenCalled();
     });
   });
 });

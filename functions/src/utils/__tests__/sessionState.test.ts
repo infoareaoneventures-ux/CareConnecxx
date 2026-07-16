@@ -4,6 +4,7 @@ import {
   CONFIRM_FLAG_TTL_MS, HIGH_STAKES_CONFIRM_FLAGS,
   hasActiveSmsFlow, GUARDED_SMS_FLAGS, PASSIVE_SMS_FLAGS, STATE_MACHINE_FLAGS,
   JOB_INVITE_TTL_MS, MULTI_STEP_FLOW_TTL_MS,
+  PENDING_MATCHES_TTL_MS, INSTANT_PAYOUT_CONFIRM_TTL_MS, CREDENTIAL_FLOW_TTL_MS,
 } from "../sessionState";
 
 describe("readFlag (validated session access)", () => {
@@ -147,12 +148,59 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
     expect(hasActiveSmsFlow({ pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: stale }, NOW)).toBe(false);
   });
 
-  it("money flag pendingInstantPayoutConfirm (generic, no stateExpiresAt) defers by default", () => {
-    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: true }, NOW)).toBe(true);
+  it("pendingInstantPayoutConfirm (value-stamped): 5-min-old ISO value defers, 15-min-old does not (10-min SMS parity)", () => {
+    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: iso(NOW - 5 * 60 * 1000) }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: iso(NOW - 15 * 60 * 1000) }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow(
+      { pendingInstantPayoutConfirm: iso(NOW - INSTANT_PAYOUT_CONFIRM_TTL_MS - 1000) }, NOW,
+    )).toBe(false);
   });
 
-  it("money flag pendingSwapRequestId (generic) defers by default", () => {
-    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1" }, NOW)).toBe(true);
+  it("pendingInstantPayoutConfirm with an unparseable value is stale (never wedges the web surface)", () => {
+    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: "yes please" }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: true }, NOW)).toBe(false);
+  });
+
+  it("pendingSwapRequestId (stamped on pendingSwapSetAt): fresh defers, past 24h or missing stamp does not", () => {
+    const freshStamp = iso(NOW - 60 * 60 * 1000);
+    const staleStamp = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
+    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1", pendingSwapSetAt: freshStamp }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1", pendingSwapSetAt: staleStamp }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1" }, NOW)).toBe(false);
+  });
+
+  it("pendingShiftApproval (stamped on pendingShiftApprovalSetAt): fresh defers, past 24h or missing stamp does not", () => {
+    const freshStamp = iso(NOW - 60 * 60 * 1000);
+    const staleStamp = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
+    expect(hasActiveSmsFlow(
+      { pendingShiftApproval: { appointmentId: "a1" }, pendingShiftApprovalSetAt: freshStamp }, NOW,
+    )).toBe(true);
+    expect(hasActiveSmsFlow(
+      { pendingShiftApproval: { appointmentId: "a1" }, pendingShiftApprovalSetAt: staleStamp }, NOW,
+    )).toBe(false);
+    expect(hasActiveSmsFlow({ pendingShiftApproval: { appointmentId: "a1" } }, NOW)).toBe(false);
+  });
+
+  it("pendingMatches (stamped, 2h routeIntent parity): fresh defers, >2h or missing stamp does not — a web matching turn must not wedge later web turns", () => {
+    const matches = [{ caregiverId: "cg-1" }];
+    expect(hasActiveSmsFlow(
+      { pendingMatches: matches, pendingMatchesSetAt: iso(NOW - 30 * 60 * 1000) }, NOW,
+    )).toBe(true);
+    expect(hasActiveSmsFlow(
+      { pendingMatches: matches, pendingMatchesSetAt: iso(NOW - PENDING_MATCHES_TTL_MS - 60 * 1000) }, NOW,
+    )).toBe(false);
+    expect(hasActiveSmsFlow({ pendingMatches: matches }, NOW)).toBe(false);
+  });
+
+  it("collectingCredential uses the 30-min CREDENTIAL_FLOW_TTL_MS (SMS router parity), not the 24h step TTL", () => {
+    expect(hasActiveSmsFlow(
+      { collectingCredential: true, collectingCredentialSetAt: iso(NOW - 10 * 60 * 1000) }, NOW,
+    )).toBe(true);
+    // 45 min old: stale under the 30-min credential TTL (used to defer under 24h).
+    expect(hasActiveSmsFlow(
+      { collectingCredential: true, collectingCredentialSetAt: iso(NOW - 45 * 60 * 1000) }, NOW,
+    )).toBe(false);
+    expect(CREDENTIAL_FLOW_TTL_MS).toBe(30 * 60 * 1000);
   });
 
   it("invite flag: fresh (within 48h) defers, past-TTL does not", () => {

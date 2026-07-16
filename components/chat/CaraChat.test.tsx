@@ -103,6 +103,37 @@ describe('CaraChat', () => {
     expect(screen.getByText(/wait a moment/i)).toBeTruthy();
   });
 
+  it('smsFlowActive removes the optimistic bubble, restores the draft, and shows the deferral reply as a notice', async () => {
+    hoisted.sendCaraMessage.mockResolvedValue({
+      status: 'smsFlowActive',
+      available: true,
+      reply: "Looks like we're in the middle of cancelling that shift over text — let's finish that there, then this chat picks right back up.",
+    });
+    render(<CaraChat userType="client" />);
+    await sendFromComposer('who is on friday?');
+
+    // Bubble cleared and the text went back to the composer for a later retry.
+    expect(screen.getByRole('log').textContent).not.toContain('who is on friday?');
+    expect((screen.getByLabelText('Message Evia') as HTMLTextAreaElement).value).toBe('who is on friday?');
+    expect(screen.getByText(/cancelling that shift over text/i)).toBeTruthy();
+  });
+
+  it('duplicate removes the optimistic bubble and shows the reply as a notice WITHOUT restoring the draft', async () => {
+    hoisted.sendCaraMessage.mockResolvedValue({
+      status: 'duplicate',
+      available: true,
+      reply: 'I already got that one — no need to resend.',
+    });
+    render(<CaraChat userType="client" />);
+    await sendFromComposer('book maria');
+
+    // No stuck "Sending…" bubble — the server will never mirror a doc for this turn.
+    expect(screen.getByRole('log').textContent).not.toContain('book maria');
+    expect(screen.getByText(/already got that one/i)).toBeTruthy();
+    // Draft stays empty: resending the same message is exactly what must not happen.
+    expect((screen.getByLabelText('Message Evia') as HTMLTextAreaElement).value).toBe('');
+  });
+
   it('notSetUp switches to the get-started state with CTA and no composer', async () => {
     hoisted.sendCaraMessage.mockResolvedValue({ status: 'notSetUp', available: false });
     render(<CaraChat userType="client" />);

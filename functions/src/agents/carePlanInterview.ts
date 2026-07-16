@@ -105,24 +105,20 @@ export async function getCarePlanCompleteness(
     missing.push("day-to-day care tasks");
   }
 
-  // 2) Medications — filled, or explicitly confirmed "none".
-  const medsFilled = filledArray(canon.medications) || canon.medicationsConfirmedNone === true;
-  if (medsFilled) filled.push(canon.medicationsConfirmedNone === true && !filledArray(canon.medications)
-    ? "medications (family confirmed: none)"
-    : "medications");
-  else missing.push("medications (or confirm there are none)");
-
-  // 3) Emergency contact — one on file, or explicitly declined.
+  // 2) Emergency contact — one on file, or explicitly declined.
+  // NOTE (founder, 2026-07-15): medications are NOT collected by the interview —
+  // tasks stay at "medication reminders" level; drug names never solicited.
   const contactFilled = filledArray(canon.emergencyContacts) || canon.emergencyContactDeclined === true;
   if (contactFilled) filled.push("emergency contact");
   else missing.push("an emergency contact (name + phone)");
 
-  // Optional (collected if offered, never blocking): dailyRoutine, dietary.
+  // Optional (asked once for routine, volunteered for dietary — never blocking):
   if (filledArray(canon.dailyRoutine))                                    filled.push("daily routine");
   if (canon.dietaryNotes || filledArray(canon.dietaryRestrictions))       filled.push("dietary notes");
+  if (filledArray(canon.medications))                                     filled.push("medications (volunteered — never ask)");
 
   return {
-    complete: recipientsMissingDetail === 0 && medsFilled && contactFilled,
+    complete: recipientsMissingDetail === 0 && contactFilled,
     missing,
     filled,
     taskDetailByRecipient,
@@ -167,18 +163,23 @@ export async function buildCarePlanInterviewDirective(
       "repeat the same transition sentence twice.\n" +
       "- Save answers the moment you have them: care tasks via save_care_task_detail (map what they describe onto " +
       "categories like Personal Care, Mobility Assistance, Meal Preparation, Medication Reminders, Transportation, " +
-      "Companionship, Light Housekeeping, Dementia / Memory Care, with the specific tasks under each); medications, " +
-      "emergency contact, daily routine, and dietary notes via update_care_plan.\n" +
+      "Companionship, Light Housekeeping, Dementia / Memory Care, with the specific tasks under each); emergency " +
+      "contact, daily routine, and dietary notes via update_care_plan.\n" +
+      "- MEDICATIONS: never ask about specific medications — no drug names, dosages, or schedules. Medication help is " +
+      "captured ONLY as generic \"medication reminders\" tasks. If the family volunteers drug names unprompted, save " +
+      "them quietly with update_care_plan (field medications) and keep every task entry generic — do not ask follow-ups " +
+      "about them.\n" +
       "- PRIVACY: care tasks are shared with caregivers before hiring, so a task entry must name the ACTIVITY only " +
       "(e.g. \"morning medication reminder\", \"help with bathing\") — NEVER a drug name, dosage, diagnosis, or the " +
-      "recipient's name. If the family gives medication names/doses, save those with update_care_plan (field " +
-      "medications), and keep the task entry generic (\"medication reminders\").\n" +
+      "recipient's name.\n" +
+      "- After the care tasks are saved, ask ONCE (one question) about their typical daily routine — wake, meals, " +
+      "rest, activities. Any answer is fine and a \"skip\"/\"not sure\" is fine too; save what they give via " +
+      "update_care_plan field dailyRoutine and NEVER ask about routine a second time. Dietary notes: save only if " +
+      "they volunteer them — never ask.\n" +
       "- The family is GIVING you this data — do not read it back for confirmation before saving; save it and move on. " +
       "Only confirm if their answer was genuinely ambiguous.\n" +
-      "- \"No medications\" is a real answer: save it with update_care_plan field medicationsConfirmedNone, value true, " +
-      "action set. If they refuse an emergency contact after one gentle explanation of why it matters, save " +
-      "emergencyContactDeclined true the same way — never badger.\n" +
-      "- If they share daily routine or dietary details along the way, save those too (optional — never ask twice).\n" +
+      "- If they refuse an emergency contact after one gentle explanation of why it matters, save " +
+      "emergencyContactDeclined true via update_care_plan — never badger.\n" +
       "- NEVER promise the plan is 'done' while items are still listed as needed above."
     );
   } catch (e) {

@@ -110,18 +110,17 @@ function seedPlan(opts: {
 }
 
 describe("getCarePlanCompleteness", () => {
-  it("reports everything missing on empty docs", async () => {
+  it("reports tasks + contact missing on empty docs — medications NEVER required", async () => {
     const c = await getCarePlanCompleteness(CLIENT, { seniorName: "Rose" });
     expect(c.complete).toBe(false);
     expect(c.missing.join(" ")).toMatch(/day-to-day care tasks/);
-    expect(c.missing.join(" ")).toMatch(/medications/);
     expect(c.missing.join(" ")).toMatch(/emergency contact/);
+    expect(c.missing.join(" ")).not.toMatch(/medication/i); // founder 07-15: meds not collected
   });
 
-  it("is complete with task detail + medications + emergency contact", async () => {
+  it("is complete with task detail + emergency contact alone (no meds needed)", async () => {
     seedPlan({
       detail: { rose_noname: { "Personal Care": ["Bathing", "Dressing"] } },
-      medications: [{ name: "lisinopril" }],
       emergencyContacts: [{ name: "Ana", phone: "+14085550000" }],
     });
     const c = await getCarePlanCompleteness(CLIENT);
@@ -130,16 +129,15 @@ describe("getCarePlanCompleteness", () => {
     expect(c.taskDetailByRecipient.rose_noname["Personal Care"]).toContain("Bathing");
   });
 
-  it("counts explicit 'none'/'declined' answers as filled", async () => {
+  it("counts an explicit contact decline as filled; volunteered meds surface as never-ask", async () => {
     seedPlan({
       detail: { rose_noname: { Companionship: ["Daily visits"] } },
-      medications: [],
-      medicationsConfirmedNone: true,
+      medications: [{ name: "lisinopril" }], // volunteered — must not gate anything
       emergencyContactDeclined: true,
     });
     const c = await getCarePlanCompleteness(CLIENT);
     expect(c.complete).toBe(true);
-    expect(c.filled.join(" ")).toMatch(/family confirmed: none/);
+    expect(c.filled.join(" ")).toMatch(/volunteered — never ask/);
   });
 
   it("stays incomplete while ANY recipient lacks task detail", async () => {
@@ -149,7 +147,7 @@ describe("getCarePlanCompleteness", () => {
         ed_noname:   { name: "Ed" },
       },
     });
-    h.docs.set(`care_plans/${CLIENT}`, { medicationsConfirmedNone: true, emergencyContacts: [{ name: "A", phone: "1" }] });
+    h.docs.set(`care_plans/${CLIENT}`, { emergencyContacts: [{ name: "A", phone: "1" }] });
     const c = await getCarePlanCompleteness(CLIENT);
     expect(c.complete).toBe(false);
     expect(c.missing.join(" ")).toMatch(/Ed/);
@@ -175,24 +173,26 @@ describe("buildCarePlanInterviewDirective", () => {
   it("lists filled fields as never-re-ask and missing fields in order", async () => {
     seedPlan({
       detail: { rose_noname: { "Personal Care": ["Bathing"] } },
-      medications: [{ name: "metformin" }],
     });
     const d = await buildCarePlanInterviewDirective(CLIENT, undefined);
     expect(d).toMatch(/NEVER re-ask/);
     expect(d).toMatch(/day-to-day care tasks for rose/i);
     expect(d).toMatch(/emergency contact/);
-    expect(d).not.toMatch(/Still needed.*medications/); // meds are filled
+    expect(d).not.toMatch(/Still needed.*medication/i); // meds never gate
   });
 
-  it("includes the drug-name privacy rule for task strings", async () => {
+  it("never asks for medications; routine asked once; dietary volunteer-only", async () => {
     const d = await buildCarePlanInterviewDirective(CLIENT, { seniorName: "Rose" });
+    expect(d).toMatch(/never ask about specific medications/i);
     expect(d).toMatch(/NEVER a drug name/i);
+    expect(d).toMatch(/ask ONCE.*daily routine/is);
+    expect(d).toMatch(/NEVER ask about routine a second time/i);
+    expect(d).toMatch(/Dietary notes: save only if they volunteer/i);
   });
 
   it("returns empty when the plan is already complete", async () => {
     seedPlan({
       detail: { rose_noname: { Transportation: ["Doctor appointments"] } },
-      medicationsConfirmedNone: true,
       emergencyContacts: [{ name: "A", phone: "1" }],
     });
     expect(await buildCarePlanInterviewDirective(CLIENT, undefined)).toBe("");
@@ -368,7 +368,6 @@ describe("startCarePlanInterview — transactional single-send claim", () => {
   it("skips when the plan is already complete", async () => {
     seedPlan({
       detail: { rose_noname: { "Personal Care": ["Bathing"] } },
-      medicationsConfirmedNone: true,
       emergencyContacts: [{ name: "A", phone: "1" }],
     });
     const ok = await startCarePlanInterview("+1408", "chat", session());

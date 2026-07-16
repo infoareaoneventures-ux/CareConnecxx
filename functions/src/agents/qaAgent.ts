@@ -34,6 +34,7 @@ import { raiseProviderFailureAlert } from "../observability/providerFailureAlert
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
+import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
 import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
 import {
@@ -1768,9 +1769,15 @@ export async function runQaAgent(params: {
   // leads collection naturally instead of the scripted runner that re-greeted
   // and double-sent. The tool surface is restricted to the onboarding tools below.
   if (onboardingMode && onboardingRole) {
+    // Caregiver rate hint comes from live SCC market data (cached 6h, fail-soft
+    // to the static range) — never blocks the turn on a Firestore hiccup.
+    const caregiverRateRangeText = onboardingRole === "caregiver"
+      ? await getMarketRateText()
+      : undefined;
     systemPrompt += "\n\n" + buildOnboardingDirective(
       onboardingRole,
       (session as any)?.onboardingData as Record<string, unknown> | undefined,
+      caregiverRateRangeText,
     );
   }
 

@@ -1,4 +1,5 @@
 import { ConversationStep } from "./conversationStep";
+import { getMarketRateText } from "../utils/marketRateRange";
 
 /**
  * CLIENT_STEPS — the linear client onboarding questions as data.
@@ -357,7 +358,8 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
       async nextQuestion(session) {
         const d = session.onboardingData ?? {};
         const city = (d.city as string) ?? "";
-        const rangeHint = city ? `Caregivers near ${city} typically run $18–28/hr` : "Caregivers typically run $18–28/hr";
+        const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
+        const rangeHint = city ? `Caregivers near ${city} typically run ${rateText}` : `Caregivers typically run ${rateText}`;
         return generateCaraMessage({
           audience: "family",
           context: `Evia is onboarding a family. They just shared caregiver preferences. Now ask about budget. In one line make clear the caregiver's hourly pay is SEPARATE from the Evia membership, include this hint verbatim: "${rangeHint}", and ask if they have an hourly budget in mind (they can say "not sure"). Warm and brief.`,

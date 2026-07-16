@@ -44,10 +44,13 @@ function labelFor(field: string): string {
 export function buildOnboardingDirective(
   role: OnboardingRole,
   onboardingData: Record<string, unknown> | undefined,
+  caregiverRateRangeText?: string,
 ): string {
   // Caregiver collection has its own directive (same structure + tone contract,
   // caregiver field checklist, plus the deterministic gate-handoff block).
-  if (role === "caregiver") return buildCaregiverOnboardingDirective(onboardingData);
+  // caregiverRateRangeText: live market-rate hint (utils/marketRateRange) —
+  // optional so this stays a pure function; omitted → static default.
+  if (role === "caregiver") return buildCaregiverOnboardingDirective(onboardingData, caregiverRateRangeText);
 
   const data    = onboardingData ?? {};
   const missing = missingRequiredFields(role, data);

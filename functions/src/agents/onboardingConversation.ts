@@ -25,6 +25,7 @@ import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { geocodeCityOrZip } from "../utils/geocode";
 import { paymentMethodLabel } from "../billing/paymentMethods";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { getMarketRateText } from "../utils/marketRateRange";
 import { generateOtp, verifyOtp, formatOtpForDisplay, OtpState } from "../utils/phoneVerification";
 import { languageFromSession, t as tr } from "../utils/language";
 import { SharedLocation } from "../utils/locationShare";
@@ -4731,11 +4732,12 @@ async function handleJobAskRate(
   const city = (d.city as string) ?? "";
   await mergeOnboardingData(phone, { petsInHome, smokingHousehold });
   await updateSession(phone, { onboardingStep: "job_ask_pay_method" });
+  const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
   await sendMessage(chatId,
     `Got it — ${petsLabel}, ${smokeLabel}. What hourly rate are you hoping to pay?\n\n` +
     (city
-      ? `Most families in ${city} pay $18–$28/hr. Reply with a number or "flexible".`
-      : `Most families pay $18–$28/hr. Reply with a number or "flexible".`)
+      ? `Most families in ${city} pay ${rateText}. Reply with a number or "flexible".`
+      : `Most families pay ${rateText}. Reply with a number or "flexible".`)
   );
 }
 

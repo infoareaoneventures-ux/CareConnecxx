@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { getMarketRateText } from "../utils/marketRateRange";
 import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
 import { AgentSession } from "../linq/client";
 
@@ -159,8 +160,9 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} authorized their background check but hasn't finished Checkr's form yet. Warmly nudge them: the secure link is in their email from Checkr, it takes about 5 minutes, families can't book them until it's done, and they can reply here to get the link texted again.`;
             fallback = `${greeting} Your background check is almost done — Checkr emailed you a secure link to finish (about 5 minutes).\n\nFamilies can't book you until it's complete. Reply here and I'll text you the link again.`;
           } else if (step === "caregiver_ask_rate") {
-            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge $18-28/hr, and they can always update it later. Encourage them to pick something.`;
-            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge $18-28/hr. You can always update it later. No pressure to get it perfect now.`;
+            const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
+            context = `${firstName || "This caregiver"} stalled on setting their hourly rate. Warmly, no pressure: most caregivers on Evia charge ${rateText}, and they can always update it later. Encourage them to pick something.`;
+            fallback = `${greeting} Still thinking about your hourly rate?\n\nMost caregivers on Evia charge ${rateText}. You can always update it later. No pressure to get it perfect now.`;
           } else if (step === "caregiver_send_photo" || step === "caregiver_awaiting_photo") {
             context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
             fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;

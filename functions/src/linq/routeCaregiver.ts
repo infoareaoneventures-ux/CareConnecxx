@@ -21,6 +21,7 @@ import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "../
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
+import { isJobInviteStale, JOB_INVITE_FLAGS } from "../utils/sessionState";
 
 const db = admin.firestore();
 
@@ -1564,6 +1565,19 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       // UNSURE — fall through to normal routing so Claude can answer the message
     }
 
+    // ── Job alert: staleness gate ────────────────────────────────────────────
+    // These flags sit at the top of routing, so WITHOUT a TTL a week-old
+    // unanswered invite would intercept everything — including ARRIVED at a
+    // shift. Stale (or unstamped) invites clear silently and the text routes
+    // normally; the QA agent can still answer job questions from context.
+    if (isJobInviteStale(session as unknown as Record<string, unknown>)) {
+      await db.collection("agent_sessions").doc(phone).update(
+        Object.fromEntries(JOB_INVITE_FLAGS.map((f) => [f, admin.firestore.FieldValue.delete()])),
+      ).catch(() => {});
+      for (const f of JOB_INVITE_FLAGS) (session as any)[f] = undefined;
+      // fall through to normal routing
+    }
+
     // ── Job alert: YES/NO/natural-language response ────────────────────────
     // Checked BEFORE the referral flow: a job alert is always the most recent
     // ask when these flags are set (same rationale as the permissions-step
@@ -2047,17 +2061,10 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       return "handled";
     }
 
-    // Caregiver availability reply (for interview scheduling)
-    if ((session as any).pendingInterviewAvailabilityRequest) {
-      await handleCaregiverAvailabilityReply(
-        phone,
-        session.caregiverId ?? "",
-        "",
-        chatId,
-        text
-      );
-      return "handled";
-    }
+    // (Removed 2026-07-15: a pendingInterviewAvailabilityRequest consumer sat
+    // here, but NOTHING in production sets that flag — only a test seeded it.
+    // A flag with no setter and no expiry was one hijack away from consuming
+    // every inbound text.)
 
     // ── Caregiver shift swap — multi-step state machine ───────────────────
     if ((session as any).swapStep) {

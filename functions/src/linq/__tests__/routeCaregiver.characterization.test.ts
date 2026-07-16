@@ -331,15 +331,6 @@ describe("characterization — duplicate inbound does NOT double-write", () => {
 
 // ── State-machine dispatch / early exits ──────────────────────────────────────
 describe("characterization — caregiver state-machine dispatch", () => {
-  it("availability-reply state dispatches to the interview availability handler and exits", async () => {
-    seed({ pendingInterviewAvailabilityRequest: true });
-
-    const outcome = await routeCaregiverMessage(ctx("Tuesday at 2pm works"));
-
-    expect(outcome).toBe("handled");
-    expect(handleCaregiverAvailabilityReply).toHaveBeenCalledOnce();
-  });
-
   it("an unmatched message with no active state falls through (so handleInbound takes the QA path)", async () => {
     seed();
     // All LLM guards return NO/NONE (default stub) → no coded path claims it.
@@ -349,12 +340,33 @@ describe("characterization — caregiver state-machine dispatch", () => {
     expect(referralDocs()).toHaveLength(0);
   });
 
-  it("a pending job-response state routes to handleJobResponse and exits early", async () => {
-    seed({ awaitingJobResponse: true });
+  it("a FRESH pending job-response state routes to handleJobResponse and exits early", async () => {
+    seed({ awaitingJobResponse: true, pendingJobSentAt: new Date().toISOString() });
 
     const outcome = await routeCaregiverMessage(ctx("yes I can take it"));
 
     expect(outcome).toBe("handled");
     expect(handleJobResponse).toHaveBeenCalledOnce();
+  });
+
+  it("a STALE job invite (3 days old) is cleared and does NOT own the reply", async () => {
+    seed({
+      awaitingJobResponse: true,
+      pendingJobId:        "job1",
+      pendingJobSentAt:    new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    const outcome = await routeCaregiverMessage(ctx("just saying hi, how are you?"));
+
+    expect(handleJobResponse).not.toHaveBeenCalled();
+    expect(outcome).toBe("fallthrough"); // text routes normally after the clear
+  });
+
+  it("a job-invite flag with NO sent stamp is treated as stale (never-expires guard)", async () => {
+    seed({ awaitingAvailabilityConfirmation: true, pendingJobId: "job1" });
+
+    await routeCaregiverMessage(ctx("just saying hi, how are you?"));
+
+    expect(handleAvailabilityConfirmation).not.toHaveBeenCalled();
   });
 });

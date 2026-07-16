@@ -48,7 +48,7 @@ import {
   sendOnboardingOffer,
   shouldReoffer,
 } from "../agents/profileCompleteness";
-import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing } from "../utils/sessionState";
+import { STATE_MACHINE_FLAGS, clearAllStateFlags, claimInboundProcessing, releaseInboundProcessing, isJobInviteStale } from "../utils/sessionState";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { writeFeedbackSignal } from "../ai/feedback";
 import {
@@ -2031,6 +2031,16 @@ const handleInboundInner = traceable(
     // toggled arrival notifications). The job question is always the most
     // recent ask when these flags are set, so it owns the reply; the
     // permissions step stays parked and re-nudges / auto-defaults later.
+    // Staleness gate mirrors routeCaregiverMessage: a stale/unstamped invite
+    // must not consume the permissions answer — clear it and let the
+    // permissions step own the reply.
+    if (atPermissionsStep && isJobInviteStale(session as unknown as Record<string, unknown>)) {
+      const { JOB_INVITE_FLAGS } = await import("../utils/sessionState");
+      await db.collection("agent_sessions").doc(phone).update(
+        Object.fromEntries(JOB_INVITE_FLAGS.map((f) => [f, admin.firestore.FieldValue.delete()])),
+      ).catch(() => {});
+      for (const f of JOB_INVITE_FLAGS) (session as any)[f] = undefined;
+    }
     if (atPermissionsStep && (session as any).awaitingJobResponse === true) {
       const { handleJobResponse } = await import("../triggers/jobNotifications");
       await handleJobResponse(phone, text, chatId, session as any);

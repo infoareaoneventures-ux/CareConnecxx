@@ -18,7 +18,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingLateMinutes",
   "awaitingIssueDescription",
   "caregiverRescheduling",
-  "pendingInterviewAvailabilityRequest",
   "awaitingJobResponse",
   "awaitingAvailabilityConfirmation",
   "pendingShiftApproval",
@@ -130,6 +129,41 @@ export function staleConfirmFlags(
   }
   return stale;
 }
+
+// ── Job-invite freshness ─────────────────────────────────────────────────────
+// awaitingJobResponse / awaitingAvailabilityConfirmation are checked at the
+// TOP of routeCaregiverMessage (and in the webhooks permissions-step bypass),
+// so a stale invite would intercept EVERYTHING — including ARRIVED at a shift
+// (hazard created when the 07-15 reorder fixed the referral hijack). The
+// senders stamp pendingJobSentAt; nothing read it until this gate. Missing
+// stamp counts as stale — the dangerous never-expires case, same semantics as
+// staleConfirmFlags.
+export const JOB_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * True when the session's job-invite state should no longer own inbound
+ * replies: either flag is set and the pendingJobSentAt stamp is missing or
+ * older than JOB_INVITE_TTL_MS. Pure — the caller clears the flags and falls
+ * through to normal routing.
+ */
+export function isJobInviteStale(
+  session: Record<string, unknown> | undefined | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!session) return false;
+  if (!session.awaitingJobResponse && !session.awaitingAvailabilityConfirmation) return false;
+  const sentAt = session.pendingJobSentAt as string | undefined;
+  if (!sentAt) return true;
+  return sentAt < new Date(nowMs - JOB_INVITE_TTL_MS).toISOString();
+}
+
+/** The full field set to delete when a stale job invite is cleared. */
+export const JOB_INVITE_FLAGS = [
+  "awaitingJobResponse",
+  "awaitingAvailabilityConfirmation",
+  "pendingJobId",
+  "pendingJobSentAt",
+] as const;
 
 // ── Interrupted-flow descriptions ────────────────────────────────────────────
 // When the expiry sweep clears a mid-flow state machine, the user used to be

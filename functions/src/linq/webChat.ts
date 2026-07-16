@@ -23,7 +23,7 @@ export class AgentUnavailableError extends Error {
 
 export interface WebChatResult {
   available:    boolean;
-  status:       "ok" | "rateLimited" | "notSetUp" | "finishSetup" | "caraBusy";
+  status:       "ok" | "rateLimited" | "notSetUp" | "finishSetup" | "caraBusy" | "smsFlowActive";
   reply:        string;
   rateLimited?: boolean;
   showMatches?: boolean;
@@ -98,7 +98,10 @@ export async function handleWebChatTurn(args: {
       reply:     "Your Evia account isn't set up yet. Finish onboarding first.",
     };
   }
-  const session = sessionSnap.data()!;
+  // Re-bound to a fresh re-read after the lock is held (see the TOCTOU note at
+  // the lock site); the pre-lock copy is used only for the identity / onboarding
+  // guards, which are stable across the ~3s the lock can take to resolve.
+  let session = sessionSnap.data()!;
 
   // Bind the resolved phone session to the authenticated Firebase identity.
   // users/{uid}.phone is owner-editable legacy data, so it cannot authorize a
@@ -125,7 +128,11 @@ export async function handleWebChatTurn(args: {
   // Mid-onboarding conversations are driven by the onboarding flow on the SMS
   // path; running the QA agent here would advance a parallel conversation and
   // clobber session flags. The web thread stays read-only until setup is done.
-  if (session.onboardingStep) {
+  // Completed sessions carry onboardingStep: "complete" PERMANENTLY, so only a
+  // set-and-not-"complete" step is mid-onboarding — same canonical test the SMS
+  // router uses (webhooks.ts:1435). Legacy sessions with no onboardingStep at
+  // all are treated as done.
+  if (session.onboardingStep && session.onboardingStep !== "complete") {
     return {
       available: false,
       status:    "finishSetup",
@@ -136,19 +143,78 @@ export async function handleWebChatTurn(args: {
   const optedOut = session.optedOut === true;
   const chatId   = (session.chatId as string | undefined) ?? "";
 
+  // ── Turn idempotency (U3) ──────────────────────────────────────────────────
+  // A retried web turn (same clientMessageId) must not re-run a turn that fired
+  // side effects or double-send SMS. Validate the id at the callable boundary —
+  // a crafted id with "/" would break ref.create() and the fail-open catch would
+  // silently disable idempotency — and treat a present-but-malformed id like a
+  // missing one (bypass the ledger; never block the turn). Claim BEFORE the lock
+  // so a duplicate short-circuits without contending. The claim is released on
+  // EVERY pre-agent early return so a same-id retry is not wedged for 10 minutes.
+  const { claimWebhookEvent, settleWebhookEvent, WEB_TURN_CLAIMS_COLLECTION } =
+    await import("../utils/webhookLedger");
+  const claimKey =
+    clientMessageId && /^[A-Za-z0-9_.-]{1,200}$/.test(clientMessageId)
+      ? `${phone}_${clientMessageId}`
+      : undefined;
+  const releaseClaim = async () => {
+    if (claimKey) await settleWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey, "failed");
+  };
+  if (claimKey) {
+    const claim = await claimWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey);
+    if (claim === "duplicate") {
+      // Deterministic response, no agent run, no send (ONE VOICE — a retry must
+      // not produce a second SMS). The user's inbound bubble was mirrored on the
+      // first turn (idempotent by clientMessageId) and the first turn's reply
+      // reconciles via the thread listener.
+      return {
+        available:   true,
+        status:      "ok",
+        reply:       "I already got that one — no need to resend.",
+        showMatches: false,
+        toolsCalled: [],
+        ...(optedOut ? { optedOut: true } : {}),
+        ...withId,
+      };
+    }
+  }
+
   // Serialize with SMS turns: claim the same per-phone lock the Linq webhook
   // holds, so a web send and a simultaneous text can't race on session state.
-  const { claimInboundProcessing, releaseInboundProcessing } = await import("../utils/sessionState");
+  const { claimInboundProcessing, releaseInboundProcessing, hasActiveSmsFlow, describeInterruptedFlow } =
+    await import("../utils/sessionState");
   let locked = false;
   for (let attempt = 0; attempt < LOCK_ATTEMPTS && !locked; attempt++) {
     locked = await claimInboundProcessing(phone, db);
     if (!locked) await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
   }
   if (!locked) {
+    await releaseClaim(); // same-id retry must not be blocked for the stale window
     return {
       available: true,
       status:    "caraBusy",
       reply:     "Evia is still replying to your last message — try again in a moment.",
+      ...withId,
+    };
+  }
+
+  // ── Active-SMS-flow guard (U2), evaluated AFTER the lock on a FRESH re-read ──
+  // The pre-lock snapshot was read ~3s before the lock resolved; an SMS turn can
+  // set a flag in that window (TOCTOU). Re-read now and defer if a fresh flow is
+  // in flight. Read-only — the web path never clears or stamps flags.
+  session = (await sessionRef.get()).data() ?? session;
+  if (hasActiveSmsFlow(session)) {
+    await releaseInboundProcessing(phone, db);
+    await releaseClaim();
+    const flow = describeInterruptedFlow(session);
+    return {
+      available: true,
+      status:    "smsFlowActive",
+      reply:     flow
+        ? `Looks like we're in the middle of ${flow} over text — let's finish that there, then this chat picks right back up.`
+        : "We've got something in progress over text right now — let's wrap that up there first, then I'm all yours here.",
+      showMatches: false,
+      ...(optedOut ? { optedOut: true } : {}),
       ...withId,
     };
   }
@@ -215,6 +281,8 @@ export async function handleWebChatTurn(args: {
       } else {
         await mirrorToWebThread({ userId: uid, direction: "outbound", text: helpReply, source: "cara_web" });
       }
+      // HELP sent a reply (side effect); a retry must not re-send it.
+      if (claimKey) await settleWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey, "processed");
       return {
         available:   true,
         status:      "ok",
@@ -258,6 +326,9 @@ export async function handleWebChatTurn(args: {
     const MATCH_TOOLS  = new Set(["find_replacement_caregivers", "request_booking"]);
     const showMatches  = toolsCalled.some((t) => MATCH_TOOLS.has(t));
 
+    // Turn succeeded: stamp the claim permanent so a retry short-circuits.
+    if (claimKey) await settleWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey, "processed");
+
     return {
       available:   true,
       status:      "ok",
@@ -267,6 +338,21 @@ export async function handleWebChatTurn(args: {
       ...(optedOut ? { optedOut: true } : {}),
       ...withId,
     };
+  } catch (err) {
+    // Agent turns are NOT internally idempotent. If any tool executed before the
+    // failure, booking/SMS side effects may already be committed — settle
+    // "processed" so a same-id retry returns the deterministic duplicate reply
+    // instead of re-firing them. If ZERO tools ran, delete the claim so the
+    // retry can safely reprocess. Then rethrow the original error unchanged
+    // (AgentUnavailableError for the qaAgent case) — the caller's contract.
+    if (claimKey) {
+      await settleWebhookEvent(
+        WEB_TURN_CLAIMS_COLLECTION,
+        claimKey,
+        toolsCalled.length > 0 ? "processed" : "failed",
+      );
+    }
+    throw err;
   } finally {
     await releaseInboundProcessing(phone, db);
   }

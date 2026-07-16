@@ -289,6 +289,150 @@ export function isStateExpired(
   return !isNaN(when.getTime()) && when < now;
 }
 
+// ── Web-turn guard: is a fresh SMS state-machine flow mid-flight? ────────────
+// The web chat path must defer to an in-flight SMS flow rather than run a
+// parallel agent turn that clobbers session flags (the split-brain hazard).
+// `hasActiveSmsFlow` is a READ-ONLY predicate, DENY-BY-DEFAULT: every primary
+// STATE_MACHINE_FLAGS flag is guarded UNLESS it is explicitly listed passive
+// or as a data companion below — so money flags (pendingInstantPayoutConfirm,
+// pendingSwapRequestId, pendingShiftApproval) and any FUTURE flag defer by
+// default rather than fall through an allow-list. Each guarded flag is composed
+// with its staleness helper (confirm/invite/stamped-step/generic), so a stale
+// flag never defers a web turn. The web path NEVER clears or stamps flags —
+// flag lifecycle stays SMS-router-owned. A drift test (sessionState.test.ts)
+// asserts GUARDED_SMS_FLAGS and PASSIVE_SMS_FLAGS partition STATE_MACHINE_FLAGS,
+// so a newly-added flag fails the build until it is categorized here.
+type WebGuardStrategy = "confirm" | "invite" | "stampedStep" | "generic";
+
+/**
+ * Guarded primary flags → the staleness strategy used to decide whether an
+ * instance of the flag is still "active" (defers a web turn) or stale (ignored):
+ *  - "confirm":     staleConfirmFlags (1h TTL; missing stamp = stale)
+ *  - "invite":      isJobInviteStale (48h TTL on pendingJobSentAt)
+ *  - "stampedStep": isFlowStale on `${flag}SetAt` (24h MULTI_STEP TTL)
+ *  - "generic":     stamp-less flow — stale only when stateExpiresAt is present
+ *                   AND passed; ABSENT stateExpiresAt ⇒ active (deny-by-default).
+ */
+export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
+  ["hireMode", "generic"],
+  ["pendingTimeSelection", "generic"],
+  ["pendingRebook", "generic"],
+  ["pendingInterviewOutcome", "generic"],
+  ["pendingMatches", "generic"],
+  ["pendingCancelConfirm", "confirm"],
+  ["pendingInterviewConfirm", "confirm"],
+  ["awaitingRecurringConfirmation", "confirm"],
+  ["pendingRecurringSchedule", "generic"],
+  ["awaitingCareNotes", "generic"],
+  ["awaitingLateMinutes", "generic"],
+  ["awaitingIssueDescription", "generic"],
+  ["caregiverRescheduling", "generic"],
+  ["awaitingJobResponse", "invite"],
+  ["awaitingAvailabilityConfirmation", "invite"],
+  ["pendingShiftApproval", "generic"],
+  ["pendingDisputeDetail", "generic"],
+  ["pendingAddFamilyMember", "generic"],
+  ["collectingCredential", "stampedStep"],
+  ["jobPostingStep", "generic"],
+  ["modifyScheduleStep", "generic"],
+  ["swapStep", "stampedStep"],
+  ["pendingSwapRequestId", "generic"],
+  ["clientSwapStep", "stampedStep"],
+  ["healthcareFlowStep", "generic"],
+  ["timesheetStep", "generic"],
+  ["availabilityStep", "generic"],
+  ["refundStep", "stampedStep"],
+  ["cancelStep", "generic"],
+  ["profileUpdateStep", "generic"],
+  ["pendingInstantPayoutConfirm", "generic"],
+];
+
+/**
+ * Explicitly-excluded entries: SetAt stamps, per-flow data companions, the
+ * shared `stateExpiresAt` deadline field, and PASSIVE ack / check-in flags that
+ * have their own reminder flows and are too low-stakes to defer a web turn
+ * (payout/bg-check acks, mid-shift task ack, day-before shift confirmations,
+ * pre-shift check-in). These are never treated as an active flow by the guard.
+ */
+export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
+  "hireModeDate",
+  "pendingCancelConfirmSetAt",
+  "pendingInterviewConfirmSetAt",
+  "awaitingRecurringConfirmationSetAt",
+  "collectingCredentialSetAt",
+  "stateExpiresAt",
+  "jobPostingData",
+  "modifyScheduleData",
+  "awaitingTaskAck",
+  "awaitingPreShiftUpdate",
+  "pendingShiftConfirmation",
+  "pendingClientShiftConfirm",
+  "swapStepSetAt",
+  "swapCandidates",
+  "swapShiftId",
+  "swapShiftDate",
+  "swapClientId",
+  "pendingSwapFromName",
+  "clientSwapStepSetAt",
+  "clientSwapVisits",
+  "clientSwapAppointmentId",
+  "clientSwapDate",
+  "clientSwapOptions",
+  "healthcareFlowData",
+  "pendingTimesheetId",
+  "pendingTimesheetDesc",
+  "pendingTimesheetQueue",
+  "pendingAvailability",
+  "refundStepSetAt",
+  "refundCandidates",
+  "refundAppointmentId",
+  "refundVisitDescription",
+  "refundReason",
+  "cancelCandidates",
+  "cancelShiftId",
+  "cancelShiftDate",
+  "cancelShiftClientId",
+  "cancelReason",
+  "profileUpdateField",
+  "profileUpdateValue",
+  "pendingPayoutNotificationAck",
+  "pendingPayoutNotificationAckSetAt",
+  "pendingBgCheckAck",
+  "pendingBgCheckAckSetAt",
+]);
+
+/**
+ * True when `session` has a FRESH (non-stale) SMS state-machine flow in flight —
+ * the web path should defer rather than run a parallel agent turn. Pure: no IO,
+ * no mutation. See the block comment above for the deny-by-default contract.
+ */
+export function hasActiveSmsFlow(
+  session: Record<string, unknown> | undefined | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!session) return false;
+  for (const [flag, strategy] of GUARDED_SMS_FLAGS) {
+    if (!session[flag]) continue;
+    switch (strategy) {
+      case "confirm":
+        if (!staleConfirmFlags(session, nowMs).includes(flag)) return true;
+        break;
+      case "invite":
+        if (!isJobInviteStale(session, nowMs)) return true;
+        break;
+      case "stampedStep":
+        if (!isFlowStale(session, flag, `${flag}SetAt`, MULTI_STEP_FLOW_TTL_MS, nowMs)) return true;
+        break;
+      case "generic":
+        // Stamp-less flow: stale only when a stateExpiresAt deadline is present
+        // AND passed. Absent deadline ⇒ active (deny-by-default → defer).
+        if (!isStateExpired(session, new Date(nowMs))) return true;
+        break;
+    }
+  }
+  return false;
+}
+
 /** Write one or more flags in a single update. */
 export async function setFlags(
   phone: string,

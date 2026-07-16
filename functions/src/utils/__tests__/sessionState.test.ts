@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { readFlag, isStateExpired, setFlags, clearFlags, staleConfirmFlags, CONFIRM_FLAG_TTL_MS, HIGH_STAKES_CONFIRM_FLAGS } from "../sessionState";
+import {
+  readFlag, isStateExpired, setFlags, clearFlags, staleConfirmFlags,
+  CONFIRM_FLAG_TTL_MS, HIGH_STAKES_CONFIRM_FLAGS,
+  hasActiveSmsFlow, GUARDED_SMS_FLAGS, PASSIVE_SMS_FLAGS, STATE_MACHINE_FLAGS,
+  JOB_INVITE_TTL_MS, MULTI_STEP_FLOW_TTL_MS,
+} from "../sessionState";
 
 describe("readFlag (validated session access)", () => {
   it("returns the value when present and no validator is given", () => {
@@ -124,5 +129,82 @@ describe("staleConfirmFlags (U2)", () => {
     // Exactly at the cutoff (setAt === cutoff) is not strictly less-than, so fresh.
     const session = { pendingCancelConfirm: true, pendingCancelConfirmSetAt: iso(NOW - CONFIRM_FLAG_TTL_MS) };
     expect(staleConfirmFlags(session, NOW)).toEqual([]);
+  });
+});
+
+// U2 — web-turn guard against fresh in-flight SMS flows (deny-by-default,
+// staleness-composed). Pure predicate, unit-tested in isolation here; the
+// webChat integration test mocks it.
+describe("hasActiveSmsFlow (U2 web guard)", () => {
+  it("no flags → not active", () => {
+    expect(hasActiveSmsFlow({}, NOW)).toBe(false);
+    expect(hasActiveSmsFlow(null, NOW)).toBe(false);
+    expect(hasActiveSmsFlow(undefined, NOW)).toBe(false);
+  });
+
+  it("confirm flag: fresh defers, stale does not", () => {
+    expect(hasActiveSmsFlow({ pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: fresh }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: stale }, NOW)).toBe(false);
+  });
+
+  it("money flag pendingInstantPayoutConfirm (generic, no stateExpiresAt) defers by default", () => {
+    expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: true }, NOW)).toBe(true);
+  });
+
+  it("money flag pendingSwapRequestId (generic) defers by default", () => {
+    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1" }, NOW)).toBe(true);
+  });
+
+  it("invite flag: fresh (within 48h) defers, past-TTL does not", () => {
+    const freshInvite = iso(NOW - 60 * 1000);
+    const staleInvite = iso(NOW - JOB_INVITE_TTL_MS - 60 * 1000);
+    expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: freshInvite }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: staleInvite }, NOW)).toBe(false);
+  });
+
+  it("stamped step flow (swapStep): fresh defers, past 24h TTL does not", () => {
+    const freshStep = iso(NOW - 60 * 1000);
+    const staleStep = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
+    expect(hasActiveSmsFlow({ swapStep: "pick", swapStepSetAt: freshStep }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ swapStep: "pick", swapStepSetAt: staleStep }, NOW)).toBe(false);
+  });
+
+  it("generic stamp-less flow: future stateExpiresAt defers, past does not, absent defers (deny-by-default)", () => {
+    expect(hasActiveSmsFlow({ hireMode: true, stateExpiresAt: iso(NOW + 60 * 1000) }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ hireMode: true, stateExpiresAt: iso(NOW - 60 * 1000) }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ hireMode: true }, NOW)).toBe(true);
+  });
+
+  it("passive ack flags never defer a web turn", () => {
+    expect(hasActiveSmsFlow({ pendingBgCheckAck: true }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ pendingPayoutNotificationAck: true }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ awaitingTaskAck: true }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ pendingShiftConfirmation: true }, NOW)).toBe(false);
+  });
+});
+
+// Drift guard: every STATE_MACHINE_FLAGS entry MUST be classified as either
+// guarded or explicitly passive. A newly-added flag that is neither fails here,
+// forcing a deliberate categorization instead of silently falling open on the
+// split-brain surface.
+describe("web-guard flag classification is exhaustive (drift test)", () => {
+  const guarded = new Set(GUARDED_SMS_FLAGS.map(([f]) => f));
+
+  it("guarded and passive sets are disjoint", () => {
+    const overlap = [...guarded].filter((f) => PASSIVE_SMS_FLAGS.has(f));
+    expect(overlap).toEqual([]);
+  });
+
+  it("guarded ∪ passive covers every STATE_MACHINE_FLAGS entry (no uncategorized flag)", () => {
+    const uncategorized = STATE_MACHINE_FLAGS.filter(
+      (f) => !guarded.has(f) && !PASSIVE_SMS_FLAGS.has(f),
+    );
+    expect(uncategorized).toEqual([]);
+  });
+
+  it("classification introduces no flag outside STATE_MACHINE_FLAGS", () => {
+    const known = new Set<string>(STATE_MACHINE_FLAGS);
+    const strays = [...guarded, ...PASSIVE_SMS_FLAGS].filter((f) => !known.has(f));
+    expect(strays).toEqual([]);
   });
 });

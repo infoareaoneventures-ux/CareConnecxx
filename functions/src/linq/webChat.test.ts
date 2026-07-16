@@ -56,6 +56,12 @@ const hoisted = vi.hoisted(() => {
     qaMock: vi.fn(async (..._args: any[]) => "Here's what I found!"),
     helpMock: vi.fn((role: string) => `capability help for ${role}`),
     sendLinqMock: vi.fn(async (..._args: any[]) => {}),
+    // U2 active-SMS-flow guard (defaults: no active flow).
+    activeFlowMock: vi.fn((..._args: any[]) => false),
+    describeFlowMock: vi.fn((..._args: any[]) => null as string | null),
+    // U3 turn-idempotency ledger (defaults: fresh claim, settle noop).
+    claimLedgerMock: vi.fn(async (..._args: any[]) => "claimed" as "claimed" | "duplicate"),
+    settleLedgerMock: vi.fn(async (..._args: any[]) => {}),
     reset() {
       docs.clear();
       queryItems.clear();
@@ -78,6 +84,14 @@ vi.mock("firebase-admin", () => ({
 vi.mock("../utils/sessionState", () => ({
   claimInboundProcessing: hoisted.claimMock,
   releaseInboundProcessing: hoisted.releaseMock,
+  hasActiveSmsFlow: hoisted.activeFlowMock,
+  describeInterruptedFlow: hoisted.describeFlowMock,
+}));
+
+vi.mock("../utils/webhookLedger", () => ({
+  claimWebhookEvent: hoisted.claimLedgerMock,
+  settleWebhookEvent: hoisted.settleLedgerMock,
+  WEB_TURN_CLAIMS_COLLECTION: "web_turn_claims",
 }));
 
 vi.mock("./threadMirror", () => ({
@@ -110,7 +124,12 @@ function seedUser(extra: Record<string, unknown> = {}) {
 }
 
 function seedSession(extra: Record<string, unknown> = {}) {
-  hoisted.docs.set(`agent_sessions/${PHONE}`, { chatId: "chat-1", userId: UID, seniorId: "senior-1", ...extra });
+  // Production sessions ALWAYS carry onboardingStep; a completed one is
+  // "complete" permanently. The old fixture omitted it — a state that doesn't
+  // exist in prod and masked the U1 block regression. Override per-test.
+  hoisted.docs.set(`agent_sessions/${PHONE}`, {
+    chatId: "chat-1", userId: UID, seniorId: "senior-1", onboardingStep: "complete", ...extra,
+  });
 }
 
 describe("handleWebChatTurn", () => {
@@ -119,6 +138,9 @@ describe("handleWebChatTurn", () => {
     vi.clearAllMocks();
     hoisted.claimMock.mockResolvedValue(true);
     hoisted.qaMock.mockResolvedValue("Here's what I found!");
+    hoisted.activeFlowMock.mockReturnValue(false);
+    hoisted.describeFlowMock.mockReturnValue(null);
+    hoisted.claimLedgerMock.mockResolvedValue("claimed");
   });
 
   it("happy path with a Linq chat: mirrors inbound once, runs agent without skipSend, never mirrors the reply manually", async () => {
@@ -367,6 +389,199 @@ describe("handleWebChatTurn", () => {
       expect(res.reply).toBe("Here's what I found!");
       expect(hoisted.qaMock).toHaveBeenCalledOnce();
       expect(hoisted.helpMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── U1: unblock completed sessions; keep mid-onboarding blocked ────────────
+  describe("U1 onboarding guard", () => {
+    it("completed session (onboardingStep 'complete') runs the agent and returns ok", async () => {
+      seedUser();
+      seedSession({ onboardingStep: "complete" });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "book maria for friday" });
+
+      expect(res.status).toBe("ok");
+      expect(res.available).toBe(true);
+      expect(hoisted.qaMock).toHaveBeenCalledOnce();
+    });
+
+    it("legacy session with no onboardingStep field runs the agent (ok)", async () => {
+      seedUser();
+      seedSession({ onboardingStep: undefined });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.qaMock).toHaveBeenCalledOnce();
+    });
+
+    it("opted-out completed session: reply generated, Linq send skipped", async () => {
+      seedUser();
+      seedSession({ onboardingStep: "complete", optedOut: true });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hello?" });
+
+      expect(res.status).toBe("ok");
+      expect(res.optedOut).toBe(true);
+      expect(hoisted.qaMock).toHaveBeenCalledWith(expect.objectContaining({ skipSend: true }));
+      expect(hoisted.sendLinqMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── U2: defer to a fresh in-flight SMS flow ────────────────────────────────
+  describe("U2 active-SMS-flow guard", () => {
+    it("active flow defers via smsFlowActive: no agent run, lock + claim released, flags untouched", async () => {
+      seedUser();
+      seedSession({ pendingCancelConfirm: { appointmentId: "a1" } });
+      hoisted.activeFlowMock.mockReturnValue(true);
+      hoisted.describeFlowMock.mockReturnValue("cancelling that shift");
+
+      const res = await handleWebChatTurn({ uid: UID, message: "who is on friday?", clientMessageId: "c-flow" });
+
+      expect(res.status).toBe("smsFlowActive");
+      expect(res.available).toBe(true);
+      expect(res.reply).toContain("cancelling that shift");
+      expect(res.clientMessageId).toBe("c-flow");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      // Lock released and the turn claim released so a same-id retry isn't wedged.
+      expect(hoisted.releaseMock).toHaveBeenCalledOnce();
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_c-flow`, "failed");
+      // Read-only: the session flag was never cleared/stamped by the web path.
+      expect(hoisted.docs.get(`agent_sessions/${PHONE}`)).toMatchObject({
+        pendingCancelConfirm: { appointmentId: "a1" },
+      });
+    });
+
+    it("no active flow: agent runs normally", async () => {
+      seedUser();
+      seedSession();
+      hoisted.activeFlowMock.mockReturnValue(false);
+
+      const res = await handleWebChatTurn({ uid: UID, message: "book maria" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.qaMock).toHaveBeenCalledOnce();
+    });
+
+    it("flag set between the pre-lock snapshot and the lock still defers (guard reads the fresh re-read)", async () => {
+      seedUser();
+      seedSession(); // clean snapshot at first read
+      // Guard is evaluated on the post-lock re-read; simulate the SMS turn having
+      // set a flag in the TOCTOU window by having hasActiveSmsFlow report active.
+      hoisted.activeFlowMock.mockReturnValue(true);
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("smsFlowActive");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+    });
+
+    it("deferral with no resumable description falls back to a generic grounded notice (no URL)", async () => {
+      seedUser();
+      seedSession({ pendingInstantPayoutConfirm: true });
+      hoisted.activeFlowMock.mockReturnValue(true);
+      hoisted.describeFlowMock.mockReturnValue(null);
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("smsFlowActive");
+      expect(res.reply).toMatch(/over text/i);
+      expect(res.reply).not.toMatch(/https?:\/\//);
+    });
+  });
+
+  // ── U3: idempotent turns keyed on clientMessageId ──────────────────────────
+  describe("U3 turn idempotency", () => {
+    it("duplicate claim: no agent run, no send, deterministic reply", async () => {
+      seedUser();
+      seedSession();
+      hoisted.claimLedgerMock.mockResolvedValue("duplicate");
+
+      const res = await handleWebChatTurn({ uid: UID, message: "book maria", clientMessageId: "dup-1" });
+
+      expect(res.status).toBe("ok");
+      expect(res.clientMessageId).toBe("dup-1");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      expect(hoisted.sendLinqMock).not.toHaveBeenCalled();
+      expect(hoisted.mirrorMock).not.toHaveBeenCalled();
+      // Never acquired the lock for a duplicate.
+      expect(hoisted.claimMock).not.toHaveBeenCalled();
+    });
+
+    it("success settles the claim processed", async () => {
+      seedUser();
+      seedSession();
+
+      await handleWebChatTurn({ uid: UID, message: "book maria", clientMessageId: "ok-1" });
+
+      expect(hoisted.claimLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_ok-1`);
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_ok-1`, "processed");
+    });
+
+    it("agent failure with ZERO tools executed deletes the claim (retry may reprocess)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.qaMock.mockRejectedValue(new Error("model down"));
+
+      await expect(handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "z-1" }))
+        .rejects.toBeInstanceOf(AgentUnavailableError);
+
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_z-1`, "failed");
+    });
+
+    it("agent failure AFTER a tool executed settles processed (retry returns the duplicate reply, not a re-fire)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.qaMock.mockImplementation(async (params: any) => {
+        params._toolCallsOut?.push("request_booking"); // a tool committed before the throw
+        throw new Error("crash after booking");
+      });
+
+      await expect(handleWebChatTurn({ uid: UID, message: "book maria", clientMessageId: "t-1" }))
+        .rejects.toBeInstanceOf(AgentUnavailableError);
+
+      expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_t-1`, "processed");
+    });
+
+    it("lock-unavailable caraBusy after a claim releases the claim (same-id retry not wedged)", async () => {
+      vi.useFakeTimers();
+      try {
+        seedUser();
+        seedSession();
+        hoisted.claimMock.mockResolvedValue(false);
+
+        const promise = handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "busy-1" });
+        await vi.runAllTimersAsync();
+        const res = await promise;
+
+        expect(res.status).toBe("caraBusy");
+        expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_busy-1`, "failed");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("malformed clientMessageId (contains '/') bypasses the ledger and still processes", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "bad/id" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.claimLedgerMock).not.toHaveBeenCalled();
+      expect(hoisted.settleLedgerMock).not.toHaveBeenCalled();
+      expect(hoisted.qaMock).toHaveBeenCalledOnce();
+    });
+
+    it("missing clientMessageId bypasses the ledger entirely", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.claimLedgerMock).not.toHaveBeenCalled();
+      expect(hoisted.settleLedgerMock).not.toHaveBeenCalled();
     });
   });
 });

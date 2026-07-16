@@ -26,6 +26,13 @@ export const CHECKR_EVENTS_COLLECTION = "processed_checkr_events";
 // claim and Linq's at-least-once retry can re-drive the turn (vs. the old write-
 // before-process dedup that left a failed turn permanently suppressed).
 export const LINQ_EVENTS_COLLECTION = "agent_event_log";
+// Web-chat turn idempotency. Keyed on `{phone}_{clientMessageId}` so a retried
+// web turn (same clientMessageId) claims the same doc: a duplicate returns a
+// deterministic response with no agent run and no send. Settle "processed" on
+// success or on a failure that already fired a tool (retry returns an apology,
+// never re-fires committed booking/SMS tools); settle "failed" (delete) on a
+// zero-tool failure or a pre-agent early return so the retry can reprocess.
+export const WEB_TURN_CLAIMS_COLLECTION = "web_turn_claims";
 
 export type WebhookClaim = "claimed" | "duplicate";
 

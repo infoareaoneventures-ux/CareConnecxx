@@ -109,6 +109,14 @@ export const CaraChat: React.FC<{ userType: 'client' | 'caregiver' }> = ({ userT
           setDraft(body);
           setNotice('Evia is still replying to your last message — try again in a moment.');
           break;
+        case 'smsFlowActive':
+          // A fresh SMS flow is mid-flight; the web turn deferred without running
+          // the agent. Restore the draft and show Evia's grounded notice so the
+          // user can finish over text (or retry once it clears).
+          setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
+          setDraft(body);
+          setNotice(res.reply || "You've got something in progress with Evia over text — finish that first, then this chat picks back up.");
+          break;
         case 'notSetUp':
           setPending((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
           setMode('notSetUp');

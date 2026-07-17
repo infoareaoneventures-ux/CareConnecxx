@@ -2336,11 +2336,20 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   // is a money moment — the setup/identity link goes out only after the family
   // says yes (handleClientPlanReply owns the reply), never unrequested. One
   // message, one job: price + what it covers + a clear yes/no question.
+  //
+  // R12 (hallucination hardening 2026-07-17): when the live Stripe price lookup
+  // fails (priceLabel === ""), the briefing must NOT ask the model to "state
+  // the price" — an ungrounded ask invites an invented dollar amount. The
+  // no-price branch forbids any specific number instead.
+  const pricePart = priceLabel
+    ? `Now state the price in one warm, simple message: Evia is ${priceLabel}, `
+    : `Do NOT state a specific dollar amount — say 'a simple monthly membership'. ` +
+      `In one warm, simple message: Evia is a simple monthly membership, `;
   const msg = await generateCaraMessage({
     audience: "family",
     context:
       `Evia just showed a family real local caregivers for ${seniorName} (photos + profiles, sent above). ` +
-      `Now state the price in one warm, simple message: Evia is ${priceLabel || "a simple monthly membership"}, ` +
+      pricePart +
       `and for that Evia coordinates everything for ${seniorName} — scheduling, weekly summaries, and keeping ` +
       `the whole family in the loop. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
       `already set up, and do NOT mention sending any link. END with one clear yes/no question asking if ` +
@@ -2626,7 +2635,7 @@ async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSessio
     const parsed = await parseWithClaude(
       "The caregiver was just asked whether they want an optional Motor Vehicle Record (driving) check added to their profile. " +
       "Clear agreement (\"yes\", \"sure\", \"yeah add it\", \"sounds good\", \"I do drive so yes\") → yes. " +
-      "Clear decline (\"no\", \"nah\", \"skip\", \"not now\", \"I don't drive\") → no. " +
+      "Clear decline (\"no\", \"nah\", \"skip\", \"not now\", \"not at the moment\", \"not right now\", \"maybe later\", \"I don't drive\") → no. " +
       "They asked a question (what it costs, what it is, how long it takes) → question. " +
       "Anything else or ambiguous → unclear. Reply with exactly one word: yes, no, question, or unclear.",
       raw

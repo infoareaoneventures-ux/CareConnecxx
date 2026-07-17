@@ -425,7 +425,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
             const cancelNotifMsgA = await generateCaraMessage({
               audience: "caregiver",
-              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${appt.date}' — do not name the client unless given.`,
               fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
               maxTokens: 80,
             });
@@ -598,7 +598,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
             const cancelNotifMsgB = await generateCaraMessage({
               audience: "caregiver",
-              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience.`,
+              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${appt.date}' — do not name the client unless given.`,
               fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
               maxTokens: 80,
             });

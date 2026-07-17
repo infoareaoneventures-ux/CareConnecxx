@@ -307,11 +307,16 @@ describe("booking tools", () => {
       expect(hoisted.adds.length).toBe(0);
     });
 
-    it("falls back to $20 when the caregiver has no rate on file", async () => {
+    // U6 (hallucination hardening 2026-07-17, R9): the old silent $20 fallback
+    // is GONE — a missing rate is a structured RATE_UNKNOWN error telling the
+    // agent to confirm the real rate, never a fabricated number.
+    it("returns RATE_UNKNOWN (not a fabricated $20) when the caregiver has no rate on file", async () => {
       hoisted.docState.set("caregivers/cg2", { name: "Sam" });
       const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg2" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.hourlyRate).toBe(20);
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("RATE_UNKNOWN");
+      expect(r.message).toMatch(/confirm/i);
+      expect(JSON.stringify(r)).not.toContain("20");
     });
 
     it("returns NOT_FOUND for an unknown caregiver", async () => {
@@ -372,6 +377,17 @@ describe("booking tools", () => {
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
     });
+
+    // U6 (R9): a quote must never be built on a fabricated $20 either — the
+    // quote and the eventual booking share one rate resolver, and both refuse.
+    it("returns RATE_UNKNOWN instead of quoting a fabricated $20 when no rate is on file", async () => {
+      hoisted.docState.set("caregivers/cg3", { name: "Pat" });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg3", dates: ["2026-07-01"], startTime: "09:00", endTime: "10:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("RATE_UNKNOWN");
+    });
   });
 
   // ── U9b: request_booking now commits via the SAME quote primitive ────────────
@@ -401,6 +417,28 @@ describe("booking tools", () => {
       const r = await handleToolCall("request_booking", baseInput) as any; // no caregiver doc seeded
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    // U6 (hallucination hardening 2026-07-17, R9): a caregiver with no
+    // hourlyRate on file must NEVER be booked at a silent $20. The tool
+    // returns a structured error instructing the agent to ask for / confirm
+    // the rate, and no booking task is created.
+    it("returns a structured ask-for-rate error (RATE_UNKNOWN) instead of booking at a silent $20", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no hourlyRate
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("RATE_UNKNOWN");
+      expect(r.message).toMatch(/confirm/i);
+      expect(r.message).toMatch(/rate/i);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("a non-numeric hourlyRate is treated as unknown (no coerced booking)", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "flexible" });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("RATE_UNKNOWN");
       expect(createBookingTask).not.toHaveBeenCalled();
     });
 

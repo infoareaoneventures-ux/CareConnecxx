@@ -723,7 +723,7 @@ export function buildClientSystemPrompt(
   ].join("\n");
 }
 
-function buildCaregiverSystemPrompt(
+export function buildCaregiverSystemPrompt(
   caregiver: any,
   todayAppt: any | null,
   zepContext?: string,
@@ -731,7 +731,10 @@ function buildCaregiverSystemPrompt(
   coreContext?: string,
 ): string {
   const name = caregiver?.name ?? "there";
-  const rate = caregiver?.hourlyRate ?? 22;
+  // R9 (hallucination hardening 2026-07-17): no fabricated money defaults.
+  // When no hourlyRate is on file, the earnings line is OMITTED entirely —
+  // never a made-up "$22/hr" the caregiver could be told as fact.
+  const rate = typeof caregiver?.hourlyRate === "number" ? (caregiver.hourlyRate as number) : null;
 
   const apptLine = todayAppt
     ? `Today's visit: ${todayAppt.date} at ${todayAppt.startTime ?? "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
@@ -777,7 +780,9 @@ function buildCaregiverSystemPrompt(
     coreContext ? `\n${coreContext}\n` : "",
     zepSection,
     contextSection,
-    `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`,
+    rate !== null
+      ? `The caregiver earns $${rate}/hr. Payments are processed automatically after each visit.`
+      : `Payments are processed automatically after each visit. No hourly rate is on file for this caregiver — never state or guess a dollar rate; use get_caregiver_info or the tools below if they ask about pay.`,
     ``,
     `TOOLS — call them when needed:`,
     `- get_caregiver_appointments: check your upcoming schedule`,

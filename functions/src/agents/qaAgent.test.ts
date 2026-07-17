@@ -43,6 +43,7 @@ import {
   detectMultiQuestionDataCollection,
   detectSupportDeflection,
   buildClientSystemPrompt,
+  buildCaregiverSystemPrompt,
   buildCaregiverCoreContext,
   isTrivialQuickReply,
   MEMORY_SOURCE_PRIORITY_POLICY,
@@ -369,6 +370,32 @@ describe("sanitizeAnthropicMessages — keeps the history window API-valid", () 
       { role: "user", content: blocks },
     ];
     expect(sanitizeAnthropicMessages(msgs as any)).toEqual(msgs);
+  });
+});
+
+// U6 (hallucination hardening 2026-07-17, R9): the caregiver prompt never
+// fabricates a default hourly rate. With a real rate on file it states it;
+// with none, the earnings line is omitted entirely — no silent "$22/hr".
+describe("buildCaregiverSystemPrompt — earnings line (R9, no fabricated money defaults)", () => {
+  it("states the real rate when hourlyRate is on file", () => {
+    const prompt = buildCaregiverSystemPrompt({ name: "Maria", hourlyRate: 27 }, null);
+    expect(prompt).toContain("$27");
+    expect(prompt).toContain("The caregiver earns $27/hr.");
+  });
+
+  it("omits the earnings line entirely when hourlyRate is unset (no $22 default)", () => {
+    const prompt = buildCaregiverSystemPrompt({ name: "Maria" }, null);
+    expect(prompt).not.toContain("$22");
+    expect(prompt).not.toContain("earns $");
+    // The payments fact survives; the prompt explicitly forbids guessing a rate.
+    expect(prompt).toContain("Payments are processed automatically after each visit.");
+    expect(prompt).toContain("never state or guess a dollar rate");
+  });
+
+  it("treats a non-numeric hourlyRate as unset (no invented number)", () => {
+    const prompt = buildCaregiverSystemPrompt({ name: "Maria", hourlyRate: "flexible" }, null);
+    expect(prompt).not.toContain("earns $");
+    expect(prompt).not.toContain("$22");
   });
 });
 

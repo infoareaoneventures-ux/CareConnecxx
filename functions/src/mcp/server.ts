@@ -85,8 +85,13 @@ function bookingTimeToMinutes(t: unknown): number | null {
 }
 
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
-// fallbacks used by the live `request_booking` path (name/fullName, rate→$20)
-// so a quote and the eventual booking agree.
+// name fallbacks used by the live `request_booking` path (name/fullName) so a
+// quote and the eventual booking agree.
+//
+// R9 (hallucination hardening 2026-07-17): when NO hourlyRate is on file this
+// returns a structured RATE_UNKNOWN error instead of the old silent $20
+// default. A fabricated rate here became a fabricated quote AND a fabricated
+// booking charge — the agent must ask for / confirm the real rate instead.
 async function resolveCaregiverRate(
   caregiverId: string,
 ): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: string; message: string }> {
@@ -94,11 +99,18 @@ async function resolveCaregiverRate(
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
   const cg = cgSnap.data() || {};
-  return {
-    ok:            true,
-    caregiverName: (cg.name ?? cg.fullName ?? "your caregiver") as string,
-    hourlyRate:    (typeof cg.hourlyRate === "number" ? cg.hourlyRate : 20) as number,
-  };
+  const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
+  if (typeof cg.hourlyRate !== "number" || !(cg.hourlyRate > 0)) {
+    return {
+      ok:   false,
+      code: "RATE_UNKNOWN",
+      message:
+        `${caregiverName} has no hourly rate on file, so nothing was quoted or booked. ` +
+        `Do NOT assume, invent, or state any dollar rate. Tell the family you need to confirm ` +
+        `this caregiver's rate first, and do not quote or book until a real rate is on file.`,
+    };
+  }
+  return { ok: true, caregiverName, hourlyRate: cg.hourlyRate as number };
 }
 
 // Build a full cost quote for a proposed booking. No write — safe to call freely.
@@ -2827,7 +2839,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
 }
 
 // Structured error response so Claude can reason about failures rather than hallucinating
-function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN", message: string) {
+function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN", message: string) {
   return { _toolError: true, success: false, code, message };
 }
 

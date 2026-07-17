@@ -124,10 +124,23 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
     const distStr = withinRadius
       ? `${Math.round(distanceMeters)}m from the address`
       : `${Math.round((distanceMeters / 1000) * 10) / 10}km from the address`;
+    // R12 (hallucination hardening 2026-07-17): ground the senior's name in the
+    // briefing. The appointment's own attribution (seniorName, stamped by the
+    // booking path) wins; the senior profile is the fallback. When neither has
+    // a name, the briefing explicitly forbids inventing one — an ungrounded
+    // "with their loved one" plus a name-pushing voice is how "Marcus" happened.
+    const seniorName =
+      (typeof appt.seniorName === "string" && appt.seniorName.trim())
+        ? appt.seniorName.trim()
+        : (typeof senior?.name === "string" && senior.name.trim())
+          ? senior.name.trim()
+          : "";
     const arrivedMsg = withinRadius
       ? await generateCaraMessage({
           audience: "family",
-          context: `Evia is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with their loved one.`,
+          context: seniorName
+            ? `Evia is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit with ${seniorName}.`
+            : `Evia is notifying the family that their caregiver ${appt.caregiverName} just arrived for today's visit. Do not name the senior — say 'their visit'; never invent a name.`,
           fallback: `${appt.caregiverName} has arrived for today's visit.`,
         })
       : `${appt.caregiverName} has checked in but appears to be ${distStr}. They may be parking.`;

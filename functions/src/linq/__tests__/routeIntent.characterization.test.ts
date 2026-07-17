@@ -178,6 +178,7 @@ vi.mock("../../memory/zepClient", () => ({
 vi.mock("../inboundHelpers", () => ({ handleRecurringConfirm: vi.fn(async () => {}) }));
 
 import { routeIntentAndRespond } from "../routeIntent";
+import { generateCaraMessage } from "../../utils/caraMessage";
 
 const PHONE = "+15553334444";
 const CLIENT_ID = "client-1";
@@ -315,6 +316,58 @@ describe("characterization — duplicate ADD_FAMILY_MEMBER inbound", () => {
     classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
     await routeIntentAndRespond({ ...ctx("555-222-3333"), session: session2 });
     expect(handleToolCall).toHaveBeenCalledOnce(); // still ONE, not two
+  });
+});
+
+// ── U7 (hallucination hardening 2026-07-17, R12): the caregiver cancellation
+// notice briefings are grounded — the LLM is told to refer to the cancelled
+// visit ONLY as "the visit on {date}" and never to name the client (whose name
+// the briefing does not supply). Both coded cancel-confirm sites are pinned:
+// the natural-language BOOKING_CONFIRM branch and the strict-YES branch.
+describe("U7 — cancellation-notice briefings are grounded (R12)", () => {
+  const APPT_DATE = "2026-07-20";
+
+  function seedCancelConfirm() {
+    seed({
+      pendingCancelConfirm: { appointmentId: "a1" },
+      pendingCancelConfirmSetAt: new Date().toISOString(), // fresh — survives the stale sweep
+    });
+    hoisted.docState.set("appointments/a1", {
+      clientId: CLIENT_ID, caregiverId: "cg1", date: APPT_DATE, status: "confirmed",
+    });
+    hoisted.docState.set("caregivers/cg1", { phone: "+15550001111" });
+  }
+
+  function caregiverBriefing() {
+    const call = vi.mocked(generateCaraMessage).mock.calls
+      .find((c: any[]) => (c[0] as any)?.audience === "caregiver");
+    expect(call, "expected a caregiver-audience generateCaraMessage briefing").toBeTruthy();
+    return String((call![0] as any).context);
+  }
+
+  it("natural-language confirm (BOOKING_CONFIRM): briefing says 'the visit on {date}' only, never the client's name", async () => {
+    seedCancelConfirm();
+    classifyIntentDetailed.mockResolvedValue({ intent: "BOOKING_CONFIRM", degraded: false });
+
+    await routeIntentAndRespond(ctx("sounds good"));
+
+    const context = caregiverBriefing();
+    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE}'`);
+    expect(context).toContain("do not name the client unless given");
+    // The appointment was actually cancelled (briefing is grounded in a real state change).
+    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
+  });
+
+  it("strict YES: briefing says 'the visit on {date}' only, never the client's name", async () => {
+    seedCancelConfirm();
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+
+    await routeIntentAndRespond(ctx("YES"));
+
+    const context = caregiverBriefing();
+    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE}'`);
+    expect(context).toContain("do not name the client unless given");
+    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
   });
 });
 

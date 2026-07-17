@@ -176,12 +176,14 @@ vi.mock("../emotionalContext", () => ({
 let questionMode = false;   // isQuestionOrOther → YES when true
 let stepAnswer   = "";      // raw value the current step's parse prompt returns
 let awaitingKind = "other"; // classifyAwaitingReply verdict at awaiting steps
+let wantsLink    = "NO";    // wantsGateLinkResend verdict (identity/stripe/bgcheck resend gate)
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: vi.fn(async (prompt: string) => {
     if (prompt.includes("You are extracting onboarding details from one message")) return "{}";
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
     if (prompt.includes("general question or off-topic comment")) return questionMode ? "YES" : "NO";
+    if (prompt.includes("Classify their message")) return wantsLink; // wantsGateLinkResend
     if (prompt.includes("Classify the reply")) return awaitingKind;
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     return stepAnswer;
@@ -227,8 +229,11 @@ beforeEach(() => {
   questionMode = false;
   stepAnswer = "";
   awaitingKind = "other";
+  wantsLink = "NO";
   stripeSpies.accountsCreate.mockClear();
   stripeSpies.accountLinksCreate.mockClear();
+  stripeSpies.checkoutCreate.mockClear();
+  stripeSpies.identityCreate.mockClear();
   axiosPost.mockClear();
   checkrInvite.mockClear();
 });
@@ -677,5 +682,97 @@ describe("client gate absorb — volunteered details at awaiting steps", () => {
     await handleOnboardingStep(PHONE, CHAT, "she needs help with bathing please", session);
 
     expect(stored().onboardingData.careNeeds).toEqual(["Bathing"]);
+  });
+});
+
+// ── 7. Gate-step link RESEND (2026-07-16): every parked step owes a real link
+//    on request. Prose-only replies at these steps were the "just resent it"
+//    false-claim bug (Hamse, 2026-07-15) — the model kept promising a link no
+//    code path could send. Resent links must go out as link PARTS (rich preview
+//    cards via the isCardSafeUrl chokepoint), never model-composed URLs. ──────
+describe("gate-step link resend — the link actually goes out, as a link part", () => {
+  const linkParts = (): string[] => sentMessages.flatMap((m) =>
+    m.text && typeof m.text === "object" && Array.isArray((m.text as any).parts)
+      ? (m.text as any).parts.filter((p: any) => p.type === "link").map((p: any) => String(p.value))
+      : []);
+
+  it("photo: an 'other' reply (resend ask) at caregiver_awaiting_photo resends the tokened upload link", async () => {
+    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
+    awaitingKind = "other";
+    await handleOnboardingStep(PHONE, CHAT, "can you resend the link", session);
+    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+  });
+
+  it("photo: a question ('link hasn't been sent yet') gets answered AND the real link follows", async () => {
+    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
+    awaitingKind = "question";
+    await handleOnboardingStep(PHONE, CHAT, "the link hasn't been sent yet", session);
+    expect(linkParts().some((u) => u.includes("/upload/photo?t="))).toBe(true);
+  });
+
+  it("photo: a pure ack does NOT re-blast the link", async () => {
+    const session = seed("caregiver_awaiting_photo", { ...FULL_DATA });
+    awaitingKind = "ack";
+    await handleOnboardingStep(PHONE, CHAT, "sounds good", session);
+    expect(linkParts()).toHaveLength(0);
+  });
+
+  it("documents: an 'other' reply resends the certification upload link", async () => {
+    const session = seed("caregiver_awaiting_documents", { ...FULL_DATA });
+    awaitingKind = "other";
+    await handleOnboardingStep(PHONE, CHAT, "resend it please", session);
+    expect(linkParts().some((u) => u.includes("/upload/document?t="))).toBe(true);
+  });
+
+  it("client payment: a 'never got the link' question mints a fresh checkout and sends it", async () => {
+    const session = seed("client_awaiting_payment", {}, { userType: "client" });
+    awaitingKind = "question";
+    await handleOnboardingStep(PHONE, CHAT, "I never got the link", session);
+    expect(stripeSpies.checkoutCreate).toHaveBeenCalled();
+    expect(linkParts().length).toBeGreaterThan(0);
+  });
+
+  it("client identity: a status question does NOT re-mint a link; a broken-link report DOES", async () => {
+    const s1 = seed("client_awaiting_identity", {}, { userType: "client" });
+    awaitingKind = "question";
+    wantsLink = "NO";
+    await handleOnboardingStep(PHONE, CHAT, "how long does verification take?", s1);
+    expect(stripeSpies.identityCreate).not.toHaveBeenCalled();
+    expect(linkParts()).toHaveLength(0);
+
+    sentMessages.length = 0;
+    const s2 = seed("client_awaiting_identity", {}, { userType: "client" });
+    wantsLink = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "that link doesn't work", s2);
+    expect(stripeSpies.identityCreate).toHaveBeenCalledTimes(1);
+    expect(linkParts().length).toBeGreaterThan(0);
+  });
+
+  it("stripe connect: a payout-link ask re-mints the account link", async () => {
+    const session = seed("caregiver_awaiting_stripe", { ...FULL_DATA });
+    awaitingKind = "other";
+    wantsLink = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "can you send me the payout link again", session);
+    expect(stripeSpies.accountLinksCreate).toHaveBeenCalledTimes(1);
+    expect(linkParts()).toContain("https://stripe.local/connect-onboarding");
+  });
+
+  it("bgcheck wait: 'text me the link' honors the step's own promise — the stored Checkr invitation goes out", async () => {
+    const session = seed("caregiver_awaiting_bgcheck", { ...FULL_DATA }, { bgcheckInviteUrl: "https://checkr.local/invite" });
+    awaitingKind = "other";
+    wantsLink = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "can you text me that link", session);
+    expect(linkParts()).toContain("https://checkr.local/invite");
+  });
+
+  it("moved-on guard: no resend when the fresh session shows the step already advanced", async () => {
+    const stale: any = {
+      chatId: CHAT, service: "SMS", optedOut: false, createdAt: "now",
+      userType: "caregiver", onboardingStep: "caregiver_awaiting_photo", onboardingData: { ...FULL_DATA },
+    };
+    seed("caregiver_send_documents", { ...FULL_DATA }); // fresh doc: already past the photo gate
+    awaitingKind = "other";
+    await handleOnboardingStep(PHONE, CHAT, "resend the link", stale);
+    expect(linkParts()).toHaveLength(0);
   });
 });

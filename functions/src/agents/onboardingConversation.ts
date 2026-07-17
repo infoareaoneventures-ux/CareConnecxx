@@ -1095,11 +1095,25 @@ export async function handleOnboardingStep(
         return;
       }
       if (idReplyKind === "question") {
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        // Identity links expire and only the 7-day stale nudge could re-mint
+        // one — a "link doesn't work / never got it" report earns a fresh
+        // link right now. Status questions ("how long?") stay answer-only:
+        // they may have already submitted and just be waiting on Stripe.
+        const idAnswer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, idAnswer);
+        if (await wantsGateLinkResend(text)) {
+          if (await resendGateLink(phone, chatId, "client_awaiting_identity", "client_identity",
+            "Here's a fresh link for the quick 30-second identity check:")) return;
+        }
+        await runGateLinkNet(phone, chatId, session, idAnswer);
         return;
       }
       if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
         "the quick identity check — I'll send your caregiver options as soon as it clears")) return;
+      if (await wantsGateLinkResend(text)) {
+        if (await resendGateLink(phone, chatId, "client_awaiting_identity", "client_identity",
+          "Here's a fresh link for the quick 30-second identity check:")) return;
+      }
       const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
       const msgIdentity = await generateCaraMessage({
         audience: "family",
@@ -1109,6 +1123,7 @@ export async function handleOnboardingStep(
         maxTokens: 80,
       });
       await sendMessage(chatId, msgIdentity);
+      await runGateLinkNet(phone, chatId, session, msgIdentity);
       return;
     }
     case "client_awaiting_payment": {
@@ -1120,20 +1135,32 @@ export async function handleOnboardingStep(
         return;
       }
       if (payReplyKind === "question") {
+        // Answer, then ALWAYS follow with a fresh checkout link (membership
+        // handler pattern) — a family who lost or never got the link had no
+        // conversational way back to checkout (same defect class as the
+        // caregiver photo step, but on the revenue path).
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
+          "Here's your membership link again — it takes about 30 seconds:");
         return;
       }
       if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
         "finishing your membership setup via the link I sent — it takes about 30 seconds")) return;
+      if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
+        "Here's your membership link again — it takes about 30 seconds:")) return;
+      // resendGateLink declined = payment landed while we were replying — the
+      // live fact below grounds the confirmation.
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
-      await sendMessage(chatId, await generateCaraMessage({
+      const clientPayNudge = await generateCaraMessage({
         audience: "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
         context: `The family member just texted: "${text}". ` + (liveClientPayFact ? `${liveClientPayFact} ` : "") +
           "Respond to what they actually said, grounded in the live status above if present — if the payment already WENT THROUGH, confirm it's active and do NOT nudge them to tap the link again; otherwise warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
         fallback: "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳",
         maxTokens: 70,
-      }));
+      });
+      await sendMessage(chatId, clientPayNudge);
+      await runGateLinkNet(phone, chatId, session, clientPayNudge);
       return;
     }
     case "job_ask_pay_rate":     return handleJobAskPayRate(phone, chatId, text, session);
@@ -1164,20 +1191,32 @@ export async function handleOnboardingStep(
         return;
       }
       if (photoReplyKind === "question") {
+        // Reported problems ("link doesn't work", "never got it") classify as
+        // questions — answer, then ALWAYS follow with the real link (membership
+        // handler pattern). Prose alone here was the 2026-07-15 live bug: the
+        // model claimed "just resent it" with no code path able to send.
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        await resendGateLink(phone, chatId, "caregiver_awaiting_photo", "caregiver_photo",
+          "Here's your photo upload link again — it opens right on your phone:");
         return;
       }
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "your profile photo — the upload link I sent is ready whenever you are")) return;
+      if (await resendGateLink(phone, chatId, "caregiver_awaiting_photo", "caregiver_photo",
+        "Here's your photo upload link again — it opens right on your phone:")) return;
+      // resendGateLink declined = the step advanced under us (photo landed) —
+      // the live fact below grounds the confirmation.
       const livePhotoFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_photo(phone, session);
-      await sendMessage(chatId, await generateCaraMessage({
+      const photoNudge = await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
         context: `The caregiver just texted: "${text}". ` + (livePhotoFact ? `${livePhotoFact} ` : "") +
           "Respond to what they actually said, grounded in the live status above if present — if the photo is already IN, confirm you've got it and do NOT ask them to upload it again; otherwise warmly nudge them to tap the upload link you already sent.",
         fallback: "Still waiting for your photo! Tap the upload link I sent 📷",
         maxTokens: 60,
-      }));
+      });
+      await sendMessage(chatId, photoNudge);
+      await runGateLinkNet(phone, chatId, session, photoNudge);
       return;
     }
     case "caregiver_send_documents":  return handleCaregiverSendDocuments(phone, chatId, session);
@@ -1211,27 +1250,29 @@ export async function handleOnboardingStep(
         return;
       }
       if (docIntent === "question") {
+        // Answer, then follow with the REAL link instead of a "tap the link"
+        // line pointing at a message that may never have arrived (see the
+        // caregiver_awaiting_photo note — same defect class).
         await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-        await sendMessage(chatId, await generateCaraMessage({
-          audience: "caregiver",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "You just answered the caregiver's question at the certifications step. In ONE short natural line: whenever they're ready they can tap the upload link you sent, or just tell you to skip it.",
-          fallback: "Whenever you're ready — tap the link to upload, or just tell me to skip it.",
-          maxTokens: 50,
-        }));
+        await resendGateLink(phone, chatId, "caregiver_awaiting_documents", "caregiver_documents",
+          "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:");
         return;
       }
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "your certifications via the upload link — or just tell me to skip it")) return;
+      if (await resendGateLink(phone, chatId, "caregiver_awaiting_documents", "caregiver_documents",
+        "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:")) return;
       const liveDocsFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_documents(phone, session);
-      await sendMessage(chatId, await generateCaraMessage({
+      const docsNudge = await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
         context: `The caregiver just texted: "${text}". ` + (liveDocsFact ? `${liveDocsFact} ` : "") +
           "Respond to what they actually said, grounded in the live status above if present — if certifications are already on file, acknowledge that and let them add more or move on; otherwise warmly nudge them to tap the upload link you already sent, and weave in naturally that they can also just tell you to skip it if they don't have certifications.",
         fallback: "Tap the link I sent to upload your certifications — or if you don't have any, just tell me to skip it.",
         maxTokens: 70,
-      }));
+      });
+      await sendMessage(chatId, docsNudge);
+      await runGateLinkNet(phone, chatId, session, docsNudge);
       return;
     }
     case "caregiver_ask_mvr":          return handleCaregiverAskMvr(phone, chatId, text, session);
@@ -1259,11 +1300,24 @@ export async function handleOnboardingStep(
         return;
       }
       if (bgReplyKind === "question") {
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        // The step's own copy promises "I can text the link too — just ask" —
+        // honor it: a link ask or a missing/broken-link report gets the stored
+        // Checkr invitation (or the consent page pre-authorization) for real.
+        const bgAnswer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, bgAnswer);
+        if (await wantsGateLinkResend(text)) {
+          if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
+            "Here's your background-check link:")) return;
+        }
+        await runGateLinkNet(phone, chatId, session, bgAnswer);
         return;
       }
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "finishing the background-check form Checkr emailed you")) return;
+      if (await wantsGateLinkResend(text)) {
+        if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
+          "Here's your background-check link:")) return;
+      }
       const liveBgFact = await buildLiveBgcheckFact(session);
       const msgBgcheck = await generateCaraMessage({
         audience: "caregiver",
@@ -1273,6 +1327,7 @@ export async function handleOnboardingStep(
         maxTokens: 100,
       });
       await sendMessage(chatId, msgBgcheck);
+      await runGateLinkNet(phone, chatId, session, msgBgcheck);
       return;
     }
     case "caregiver_send_stripe_connect": return handleCaregiverSendStripeConnect(phone, chatId, session);
@@ -1285,20 +1340,37 @@ export async function handleOnboardingStep(
         return;
       }
       if (stripeReplyKind === "question") {
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
+        // Connect links expire fast — a "link doesn't work / never got it"
+        // report earns a re-minted link right now (sendOnboardingLink re-mints;
+        // expired links must never strand a caregiver until the 7-day nudge).
+        // Status questions stay answer-only: they may have finished and Stripe
+        // is reviewing.
+        const stripeAnswer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, stripeAnswer);
+        if (await wantsGateLinkResend(text)) {
+          if (await resendGateLink(phone, chatId, "caregiver_awaiting_stripe", "caregiver_payouts",
+            "Here's a fresh payout-setup link:")) return;
+        }
+        await runGateLinkNet(phone, chatId, session, stripeAnswer);
         return;
       }
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "setting up your payout account via the link I sent")) return;
+      if (await wantsGateLinkResend(text)) {
+        if (await resendGateLink(phone, chatId, "caregiver_awaiting_stripe", "caregiver_payouts",
+          "Here's a fresh payout-setup link:")) return;
+      }
       const livePayoutFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_stripe(phone, session);
-      await sendMessage(chatId, await generateCaraMessage({
+      const stripeNudge = await generateCaraMessage({
         audience: "caregiver",
         language: session.preferredLanguage === "es" ? "es" : "en",
         context: `The caregiver just texted: "${text}". ` + (livePayoutFact ? `${livePayoutFact} ` : "") +
           "Ground your reply in the live status above if present — if payouts are already LIVE, congratulate them and do NOT nudge them to finish setup; if Stripe is still reviewing, reassure them it's almost done; otherwise warmly nudge them to tap the link you already sent so they can get paid after each visit.",
         fallback: "Tap the link I sent to set up your payout account so you can get paid after each visit.",
         maxTokens: 70,
-      }));
+      });
+      await sendMessage(chatId, stripeNudge);
+      await runGateLinkNet(phone, chatId, session, stripeNudge);
       return;
     }
     default:
@@ -2703,6 +2775,81 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     maxTokens: 160,
   }));
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
+}
+
+// ── Gate-step link resend (2026-07-16) ────────────────────────────────────────
+// Six parked steps (photo, documents, client payment, client identity, Stripe
+// Connect, bgcheck-wait) could TALK about their link but had no code path that
+// could actually resend it — the LLM nudge then improvised "just resent it to
+// your thread" (a false claim; live bug, Hamse 2026-07-15) or hallucinated a
+// dead URL. Every awaiting step now owes a real resend. The fresh re-read
+// mirrors handleCaregiverResendMembership: a webhook may have advanced the step
+// between the inbound and this reply, and re-blasting a link at someone who
+// already finished reads as not listening — on a moved-on step the caller falls
+// through to its live-fact-grounded reply instead. Delivery goes through
+// sendOnboardingLink, so the link arrives as the same rich preview card as the
+// original send (isCardSafeUrl chokepoint in linq/client.ts).
+async function resendGateLink(
+  phone:      string,
+  chatId:     string,
+  parkedStep: string,
+  linkType:   OnboardingLinkType,
+  intro:      string,
+): Promise<boolean> {
+  const fresh = (await db.collection("agent_sessions").doc(phone).get().catch(() => null))?.data() as AgentSession | undefined;
+  if (fresh && (fresh.onboardingStep ?? parkedStep) !== parkedStep) return false;
+  await sendMessage(chatId, intro);
+  try {
+    const result = await sendOnboardingLink(phone, linkType);
+    // client_payment reports success:false AFTER already sending the grounded
+    // apology/retry message itself (checkout-create failure, R7) — treat as
+    // handled so the caller doesn't stack a second reply on top.
+    if (linkType === "client_payment" || result.success) return true;
+  } catch (err) {
+    console.error("resendGateLink: delivery failed", { phone, parkedStep, linkType, err: (err as Error)?.message });
+  }
+  // The intro just promised a link that didn't go out — that is exactly the
+  // silent-broken-promise class this wave kills. Track it so the commitment
+  // sweep retries in ~5 minutes and escalates to a human on a second failure.
+  await recordCommitment({
+    phone, chatId,
+    kind:        "link",
+    promiseText: intro.slice(0, 300),
+    linkType,
+    userType:    (fresh?.userType === "caregiver" ? "caregiver" : "client"),
+    source:      "resendGateLink:delivery_failed",
+    dueInMs:     5 * 60_000,
+  }).catch(() => {});
+  return true; // the promise is tracked — don't stack another reply on top
+}
+
+// Narrow resend-intent gate for the steps where the user may have ALREADY done
+// their part and be waiting on a third party (identity verification clearing,
+// Stripe reviewing the Connect account, Checkr's emailed form): a blind resend
+// on every text would re-push a link at someone mid-wait, so only a reply that
+// asks for the link or reports it missing/broken/expired earns one.
+async function wantsGateLinkResend(text: string): Promise<boolean> {
+  const raw = await parseWithClaude(
+    "The user is mid-signup and was previously sent a secure link to tap. Classify their message: " +
+      "asks for the link or for it to be (re)sent/texted, or reports it never arrived, isn't showing up, " +
+      "doesn't work, won't open, or expired → YES. Anything else (status questions, thanks, unrelated chat, " +
+      "saying they already finished) → NO. Reply with exactly one word: YES or NO.",
+    text,
+  ).catch(() => "NO");
+  return raw.trim().toUpperCase().startsWith("Y");
+}
+
+// Belt-and-suspenders for gate-step replies that end in PROSE with no
+// deterministic link following: if the model narrated an incoming link anyway
+// (despite the voice-level ban in caraMessage.ts), the link-promise net
+// delivers it for real — same net the qaAgent loop runs after onboarding turns.
+async function runGateLinkNet(phone: string, chatId: string, session: AgentSession, reply: string): Promise<void> {
+  if (!reply.trim()) return;
+  const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
+  await fulfillNarratedLinkPromise({
+    phone, chatId, reply,
+    userType: session.userType === "caregiver" ? "caregiver" : "client",
+  }).catch((err) => console.error("gate-step link-promise net failed", err));
 }
 
 async function handleCaregiverResendMembership(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
@@ -5053,7 +5200,9 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
       (stepFacts ? `FACTS about exactly where they are in signup — ground your answer in these when the question touches them, never contradict them: ${stepFacts} ` : "") +
       "(5) Ask NO question of your own — none. The signup question is re-asked automatically right after your reply, so a question from you would leave the user answering two different things at once. " +
       "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report). " +
-      "(7) If they ask for an email or contact address, the only one that exists is support@eviacares.com — never invent any other address.",
+      "(7) If they ask for an email or contact address, the only one that exists is support@eviacares.com — never invent any other address. " +
+      "(8) NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you just sent, " +
+      "resent, or will send a link: real links are delivered by the system as separate tappable messages, not by you.",
     text,
     { maxTokens: 90 },
   )).trim();

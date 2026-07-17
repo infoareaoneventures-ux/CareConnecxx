@@ -30,7 +30,9 @@ export async function answerHumanQuestionOnly(opts: {
       "Do not ask them to continue the workflow; the caller will send that prompt separately. " +
       "You receive a situation BRIEFING, not a transcript — your output goes STRAIGHT to the user's phone. " +
       "NEVER reply to the briefing's author, ask for missing context, or say you don't see a message — " +
-      "if details are missing, answer as best you can with what you have.",
+      "if details are missing, answer as best you can with what you have. " +
+      "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
+      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages.",
     opts.text,
     { maxTokens: opts.maxTokens ?? 160 },
   ).catch(() => HUMAN_MIDFLOW_FALLBACK);

@@ -85,7 +85,9 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
     system:
       "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
-      "Answer briefly (1–2 sentences). Be warm and helpful.",
+      "Answer briefly (1–2 sentences). Be warm and helpful. " +
+      "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
+      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages.",
     messages: [{ role: "user", content: text }],
   });
   return ((response.content[0] as { text: string }).text ?? "").trim();

@@ -511,6 +511,7 @@ export function buildClientSystemPrompt(
     `If you need more info from the family before you can call the tool (e.g. you don't know what they want), ASK a concrete question — don't say "let me check" first.`,
     ``,
     `ONE VOICE (non-negotiable): The family experiences this whole turn as ONE person texting them. Some tools deliver messages to the family themselves (a caregiver photo gallery, a signup link, a booking explanation) — their results say so ("sent": true, "instruction", or words like "already messaged the family"). When a result says the family already received something, NEVER restate, summarize, or rephrase it in your reply — a real person doesn't text the same thing twice in a row. Follow the result's instruction for what (if anything) your reply should add. When a result says nothing was sent, YOUR reply is the family's only update — deliver it fully and honestly.`,
+    `Never assert you did or did not send a message you have no record of — offer to (re)send instead.`,
     ``,
     MEMORY_SOURCE_PRIORITY_POLICY,
     ``,
@@ -536,6 +537,8 @@ export function buildClientSystemPrompt(
     `If asked something outside those sources, say "I don't have that information yet" or "I don't see that in the notes."`,
     `Do not fill gaps with plausible-sounding details. Do not speculate beyond what's documented.`,
     `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the cached context above. If it isn't there, ASK — never substitute a plausible-sounding city (e.g. don't say "Santa Clara" when the context shows "Gilroy", and don't pick a city out of thin air just because one is geographically nearby).`,
+    `Never invent a person's name, a caregiver, or a relationship. If a name or relationship isn't in the sources above, say you don't have it and ASK — never guess a name or attach a made-up person to this family's care.`,
+    `An empty or null tool result means none exist — say so plainly ("nothing on file"), never invent entries.`,
     `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
     ``,
     `TOOLS — use them proactively and in sequence:`,
@@ -768,6 +771,7 @@ function buildCaregiverSystemPrompt(
     `HONESTY: Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot). But if the caregiver directly asks whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question.`,
     `You act; you don't describe what you could do. When you can do something, do it and report back.`,
     `ONE VOICE (non-negotiable): The caregiver experiences this turn as ONE person texting them. If a tool result says something was already sent to them ("sent": true, an "instruction" field, or words like "already messaged"), NEVER restate or rephrase it in your reply — a real person doesn't text the same thing twice in a row. Follow the result's instruction for what (if anything) to add.`,
+    `Never assert you did or did not send a message you have no record of — offer to (re)send instead.`,
     ``,
     apptLine,
     coreContext ? `\n${coreContext}\n` : "",
@@ -832,7 +836,17 @@ function buildCaregiverSystemPrompt(
     `- get_support_tickets: check the status of your existing support tickets before opening a new one`,
     `- create_support_ticket: LAST RESORT only — for issues no other tool can resolve. Never tell a caregiver "the team will follow up" for something you can do right now with the tools above (status checks, links, swaps, payouts, earnings).`,
     ``,
-    `Only state facts from the appointment details above or tool results in this conversation. If you don't have an answer, call a tool or say you'll check.`,
+    `KNOWLEDGE BOUNDARY (non-negotiable):`,
+    `The only facts you may state about ${name}'s clients, schedule, pay, or account are what appears in:`,
+    `the appointment details above, the cached context above, the Zep context above, or tool results from this conversation.`,
+    `If asked something outside those sources, say "I don't have that information yet" — or call the tool that would know.`,
+    `Do not fill gaps with plausible-sounding details. Do not speculate beyond what's documented.`,
+    `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the context above. If it isn't there, ASK — never substitute a plausible-sounding city.`,
+    `Never invent a person's name, a client, a family member, or a relationship. If a name isn't in the sources above, say you don't have it and ASK — never guess a name or attach a made-up person to their work.`,
+    `An empty or null tool result means none exist — say so plainly ("nothing on file"), never invent entries.`,
+    `If a tool result contains "_toolError": true, tell the caregiver you can't access that right now and offer to try again.`,
+    ``,
+    MEMORY_SOURCE_PRIORITY_POLICY,
     ``,
     `Evia is efficient and respectful with caregivers — like a reliable work coordinator who makes their job easier, not a manager or cheerleader.`,
     ``,
@@ -3027,7 +3041,11 @@ export async function runQaAgent(params: {
 // coming Thursday at 3") would let a fabricated reply that parrots an example
 // read as SUPPORTED, which is the exact failure this gate exists to catch.
 // Deterministic fallbacks skip the check (built verbatim from Firestore facts,
-// and re-gating them could only loop). Fails open on checker error/timeout.
+// and re-gating them could only loop). FAILS CLOSED (U4, 2026-07-17): a checker
+// error/timeout or a garbage verdict swaps in the deterministic fallback —
+// unlike the main handoff gate, the downside here is only a blander greeting,
+// never a held thread, so an unverifiable fact-asserting reply must not ship.
+// Only an explicit SUPPORTED verdict lets the model reply through unchanged.
 export async function gateQuickReplyGrounding(params: {
   reply: string;
   usedDeterministicFallback: boolean;
@@ -3050,13 +3068,21 @@ export async function gateQuickReplyGrounding(params: {
       buildHandoffGroundingPayload(groundingContext, recent, reply),
       { maxTokens: 8, signal: controller.signal },
     );
-    if (parseHandoffGroundingVerdict(verdictRaw) === "unsupported") {
+    if (/\bUNSUPPORTED\b/i.test(verdictRaw ?? "")) {
+      return { reply: fallback(), triggered: true, swapped: true };
+    }
+    // Stricter than parseHandoffGroundingVerdict (which maps garbage →
+    // supported for the main gate): here anything short of an explicit
+    // SUPPORTED is unverifiable, so fail closed to the deterministic fallback.
+    // (\bSUPPORTED\b does not match inside "UNSUPPORTED" — no word boundary.)
+    if (!/\bSUPPORTED\b/i.test(verdictRaw ?? "")) {
       return { reply: fallback(), triggered: true, swapped: true };
     }
     return { reply, triggered: true, swapped: false };
   } catch {
-    // Fail open — a checker outage must not degrade greetings.
-    return { reply, triggered: true, swapped: false };
+    // Fail closed — an unverified fact-asserting reply must not ship; the
+    // deterministic fallback is always safe to send (built from Firestore facts).
+    return { reply: fallback(), triggered: true, swapped: true };
   } finally {
     clearTimeout(timer);
   }
@@ -3217,8 +3243,8 @@ export async function runQuickReply(params: {
   // UNSUPPORTED, swap in the deterministic context-led fallback (a greeting
   // never warrants a human handoff — the fix is to say less, not to hold the
   // thread). CONTEXT is the facts only, not the persona (see
-  // gateQuickReplyGrounding). Fail open on checker error/garbage, like the
-  // main gate.
+  // gateQuickReplyGrounding). Fails CLOSED on checker error/garbage (U4):
+  // the deterministic fallback goes out instead of an unverified model reply.
   {
     const groundingContext = userType === "caregiver"
       ? (cgSnapshot ? `Caregiver snapshot:\n${cgSnapshot}` : "")

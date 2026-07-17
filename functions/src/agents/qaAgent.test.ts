@@ -463,10 +463,22 @@ describe("gateQuickReplyGrounding", () => {
     expect(out).toEqual({ reply: "Ana is coming Friday at 10.", triggered: true, swapped: false });
   });
 
-  it("fails open when the checker throws — the reply still goes out", async () => {
+  it("fails CLOSED when the checker throws — deterministic fallback goes out, not the model reply (U4)", async () => {
     const checker = vi.fn().mockRejectedValue(new Error("checker down"));
     const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
-    expect(out).toEqual({ reply: "Maria is coming Thursday at 3.", triggered: true, swapped: false });
+    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+  });
+
+  it("fails CLOSED on a garbage/unparseable verdict — deterministic fallback goes out (U4)", async () => {
+    const checker = vi.fn().mockResolvedValue("hmm, hard to say really");
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
+    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+  });
+
+  it("fails CLOSED on an empty verdict — deterministic fallback goes out (U4)", async () => {
+    const checker = vi.fn().mockResolvedValue("");
+    const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
+    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
   });
 
   it("never re-gates a deterministic fallback (checker not called — no loop)", async () => {

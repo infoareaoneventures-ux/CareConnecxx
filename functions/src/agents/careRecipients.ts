@@ -79,6 +79,41 @@ export function normalizeAdditionalRecipients(raw: unknown): CareRecipient[] {
   return out;
 }
 
+// Prompt-grounding line for family-facing LLM message generation: who is
+// texting vs who the care is for. Failure mode this exists to prevent
+// (founder report 2026-07-17): a nudge context that named only the account
+// holder ("Anahi's setup and payment are COMPLETE…") made the model write
+// "book Anahi's first visits" when the visits are for her mom Rosie. Any
+// generated family-facing copy whose context interpolates a client name must
+// include this line so the model never attributes care to the account holder.
+export function describeWhoIsWho(d: Record<string, unknown>): string {
+  const accountHolder = String(d.firstName ?? d.name ?? "").trim().split(/\s+/)[0] ?? "";
+  const relationship  = String(d.relationship ?? "").trim().toLowerCase();
+  const who = accountHolder || "the account holder";
+
+  if (relationship === "self") {
+    return `WHO'S WHO: ${who} is arranging care for THEMSELVES — the person texting IS the care recipient. ` +
+      "Speak to them directly (\"you\"); never refer to them in the third person and never say \"your loved one\".";
+  }
+
+  const recipients = allCareRecipients(d).filter(
+    (r) => recipientPlanKey(r.name) !== recipientPlanKey(accountHolder),
+  );
+  if (recipients.length > 0) {
+    const list = recipients
+      .map((r) => r.relationship ? `${r.name} (their ${r.relationship})` : r.name)
+      .join(" and ");
+    return `WHO'S WHO: the person texting is ${who}, the family member coordinating care — NOT the one receiving it. ` +
+      `The care recipient${recipients.length > 1 ? "s are" : " is"} ${list}: all visits, caregivers, and care are for ` +
+      `${recipients.length > 1 ? "them" : list.split(" (")[0]}, never for ${who}. ` +
+      `Never write phrases like "${who}'s visits" or "${who}'s care".`;
+  }
+
+  if (!accountHolder) return "";
+  return `WHO'S WHO: the person texting is ${who}, arranging care for a loved one (recipient's name not on file yet). ` +
+    `Never assume the care is for ${who} themselves.`;
+}
+
 // Every care recipient in the signup: primary (seniorName/relationship/age)
 // first, then additional ones — primary excluded from dupes by key.
 export function allCareRecipients(d: Record<string, unknown>): CareRecipient[] {

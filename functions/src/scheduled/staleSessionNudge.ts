@@ -4,6 +4,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { AgentSession } from "../linq/client";
 
 const db = admin.firestore();
@@ -209,6 +210,12 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
             fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;
           }
+          // firstName above is the ACCOUNT HOLDER (the family member texting),
+          // not the care recipient — without this grounding the model has
+          // attributed visits to the account holder ("book Anahi's first
+          // visits" when the care is for her mom Rosie, 2026-07-17).
+          const whoIsWho = describeWhoIsWho((session.onboardingData ?? {}) as Record<string, unknown>);
+          if (whoIsWho) context = `${whoIsWho} ${context}`;
         }
 
         // Ground the per-step nudge in the user's LIVE state so a branch's

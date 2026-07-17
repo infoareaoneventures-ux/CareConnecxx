@@ -5,6 +5,7 @@ import {
   resolveRecipientKey,
   normalizeAdditionalRecipients,
   allCareRecipients,
+  describeWhoIsWho,
 } from "./careRecipients";
 
 describe("recipientPlanKey", () => {
@@ -85,5 +86,59 @@ describe("allCareRecipients / normalizeAdditionalRecipients", () => {
     expect(normalizeAdditionalRecipients(undefined)).toEqual([]);
     expect(normalizeAdditionalRecipients("not an array")).toEqual([]);
     expect(normalizeAdditionalRecipients([null, 42, { age: 90 }])).toEqual([]);
+  });
+});
+
+describe("describeWhoIsWho", () => {
+  it("names the recipient and forbids attributing care to the account holder", () => {
+    const line = describeWhoIsWho({
+      firstName: "Anahi",
+      seniorName: "Rosie",
+      relationship: "mother",
+    });
+    expect(line).toContain("the person texting is Anahi");
+    expect(line).toContain("Rosie (their mother)");
+    expect(line).toContain("never for Anahi");
+    expect(line).toContain("\"Anahi's visits\"");
+  });
+
+  it("lists every recipient in a multi-recipient household", () => {
+    const line = describeWhoIsWho({
+      firstName: "Anahi",
+      seniorName: "Rosie",
+      relationship: "mother",
+      additionalRecipients: [{ name: "Frank", relationship: "father" }],
+    });
+    expect(line).toContain("Rosie (their mother) and Frank (their father)");
+    expect(line).toContain("recipients are");
+  });
+
+  it("self signups say the person texting IS the recipient", () => {
+    const line = describeWhoIsWho({
+      firstName: "Rosa",
+      seniorName: "Rosa",
+      relationship: "self",
+    });
+    expect(line).toContain("Rosa is arranging care for THEMSELVES");
+    expect(line).toContain("IS the care recipient");
+    expect(line).not.toContain("the family member coordinating care");
+  });
+
+  it("no recipient on file yet: still warns care is not for the account holder", () => {
+    const line = describeWhoIsWho({ firstName: "Anahi" });
+    expect(line).toContain("recipient's name not on file yet");
+    expect(line).toContain("Never assume the care is for Anahi");
+  });
+
+  it("returns empty when nothing is known", () => {
+    expect(describeWhoIsWho({})).toBe("");
+  });
+
+  it("recipient matching the account holder's name is not double-listed", () => {
+    // seniorName equal to the texter without relationship=self (legacy shape):
+    // fall through to the loved-one-unknown line rather than "Anahi's care is
+    // for Anahi, never for Anahi".
+    const line = describeWhoIsWho({ firstName: "Anahi", seniorName: "Anahi" });
+    expect(line).toContain("Never assume the care is for Anahi");
   });
 });

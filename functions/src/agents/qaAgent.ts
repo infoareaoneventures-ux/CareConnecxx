@@ -529,7 +529,7 @@ export function buildClientSystemPrompt(
     `  · find_replacement_caregivers — when they need coverage`,
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · quote_booking — show the family the COST of a booking before committing (read-only; books nothing). Prefer this first when they ask "how much" or before request_booking, so they see the price and agree.`,
-    `  · request_booking — commit the visit once they've agreed (this is the write)`,
+    `  · request_booking — commit the visit once they've agreed (this is the write). If this household cares for more than one person, always pass recipientFirstName so the visit is attributed to the right person — ask which person it's for if unclear.`,
     `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
     `  · get_callout_backups / select_callout_backup / request_callout_refund — when a caregiver calls out: show backup options, assign the family's choice, or file a refund if none work`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
@@ -541,7 +541,7 @@ export function buildClientSystemPrompt(
     `  · manage_credentials — list, check, or delete stored portal logins`,
     `  · suggest_upcoming_care — call this proactively during casual conversation to check if ${seniorName} has upcoming care coverage. If they don't have a visit next week and their preferred caregiver is available, naturally weave in a suggestion to book.`,
     `  · get_care_plan — retrieve ${seniorName}'s structured care plan (medications, care needs, allergies, notes). Use when families ask what's on file or before booking a complex visit.`,
-    `  · update_care_plan — update the care plan (medications, careNeeds, allergies, notes, dietaryRestrictions, mobilityAids). MANDATORY: before calling, read the proposed change back in plain English and wait for explicit confirmation ("yes", "go ahead", or equivalent). Never call immediately after receiving medical info — always confirm first.`,
+    `  · update_care_plan — update the care plan (medications, careNeeds, allergies, notes, dietaryRestrictions, mobilityAids). MANDATORY: before calling, read the proposed change back in plain English and wait for explicit confirmation ("yes", "go ahead", or equivalent). Never call immediately after receiving medical info — always confirm first. If the household cares for more than one person, always pass recipientFirstName for medications, diagnoses, dailyRoutine, dietary, or doctor facts so each person's data stays their own (emergencyContacts and accessCodes stay household-level).`,
     `  · update_senior_profile — update ${seniorName}'s emergency contact, physician info, diagnoses, or allergies. Confirm before calling.`,
     `  · reschedule_appointment — move an existing visit to a new date/time. Confirm the change with the family first, then call.`,
     `  · set_visit_update_frequency — tune how often mid-visit updates arrive while a caregiver is with ${seniorName}. "Update me every hour" → frequencyMinutes: 60; "fewer updates" → a longer interval; "stop the visit updates" → mode: "off"; "back to normal" → mode: "default" (every ~2 hours). Confirm the new setting back warmly.`,
@@ -1744,7 +1744,7 @@ export async function runQaAgent(params: {
       "Step 1 — On your FIRST reply this mode is active, call get_care_plan to pull the current care plan, and combine it with the senior profile and learned facts already in your context above. " +
       "Step 2 — Summarize what's on file in ONE short, warm prose sentence (e.g. \"I have Anita, 78, in Gilroy, needing help with bathing and meds.\") and end with ONE open question (\"Is any of that wrong?\" or \"What should we update?\"). Never invent a city or detail you can't see in the context. " +
       "Step 3 — Wait for the family to name what's wrong. When they do, read the proposed change back in plain English (\"Got it — updating her name to Anita. Confirm?\") and wait for an explicit yes before calling the update tool. " +
-      "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for medications, careNeeds, dietary, special instructions. Use update_memory_file for durable narrative facts (personality, routines, family). " +
+      "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for medications, careNeeds, dietary, special instructions — passing recipientFirstName whenever the household cares for more than one person. Use update_memory_file for durable narrative facts (personality, routines, family). " +
       "Step 5 — After each successful patch, ask if there's anything else to fix (ONE question). When the family says \"that's it\", \"all good\", \"nothing else\", or equivalent, keep the closing reply warm and short. " +
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
   }

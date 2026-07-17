@@ -2011,6 +2011,10 @@ export async function persistClientCareRecords(
         relationship: r.relationship ?? "",
         careNeeds,
         conditions,
+        // Provenance for multi-recipient households: these needs/conditions are
+        // a signup-time COPY shared across everyone — the care-plan interview
+        // confirms them per person rather than trusting them as individual.
+        ...(recipients.length > 1 ? { sharedAtSignup: true } : {}),
         updatedAt:    new Date().toISOString(),
       };
     }

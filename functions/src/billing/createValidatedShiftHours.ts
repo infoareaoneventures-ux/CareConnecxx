@@ -122,6 +122,10 @@ export async function createValidatedShiftHours(input: {
       caregiverName: appointment.caregiverName ?? "Caregiver",
       clientId: appointment.clientId,
       clientName: appointment.clientName ?? "Client",
+      // Multi-recipient attribution rides along from the appointment (fail-soft:
+      // absent = the household's sole recipient).
+      ...(appointment.seniorName ? { seniorName: appointment.seniorName } : {}),
+      ...(appointment.recipientKey ? { recipientKey: appointment.recipientKey } : {}),
       payRate: bookedRate,
       currency: BILLING_CURRENCY,
       paymentMethod: normalizePaymentMethod(appointment.paymentMethod),

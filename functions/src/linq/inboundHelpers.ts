@@ -23,6 +23,8 @@ export async function handleRecurringConfirm(
     endTime:       string;
     durationHours: number;
     hourlyRate:    number;
+    seniorName?:   string; // multi-recipient booking passthrough (bookingExecutor)
+    recipientKey?: string;
   } | undefined;
 
   if (!pending) {
@@ -33,7 +35,10 @@ export async function handleRecurringConfirm(
   }
 
   const clientId   = session.userId ?? phone;
-  const seniorName = (session as any).onboardingData?.seniorName ?? (session as any).seniorName ?? "";
+  // The booking's attributed recipient wins over the account's primary senior —
+  // a recurring schedule born from "book for John" must stay John's.
+  const seniorName = pending.seniorName
+    ?? (session as any).onboardingData?.seniorName ?? (session as any).seniorName ?? "";
   const today      = new Date().toISOString().split("T")[0];
   const now        = new Date().toISOString();
 
@@ -57,6 +62,7 @@ export async function handleRecurringConfirm(
     caregiverName:    pending.caregiverName,
     clientPhone:      phone,
     seniorName,
+    ...(pending.recipientKey ? { recipientKey: pending.recipientKey } : {}),
     days:             pending.days,
     startTime:        pending.startTime,
     endTime:          pending.endTime,
@@ -76,6 +82,7 @@ export async function handleRecurringConfirm(
       caregiverId:         pending.caregiverId,
       caregiverName:       pending.caregiverName,
       seniorName:          seniorName || null,
+      ...(pending.recipientKey ? { recipientKey: pending.recipientKey } : {}),
       date,
       startTime:           pending.startTime,
       endTime:             pending.endTime,

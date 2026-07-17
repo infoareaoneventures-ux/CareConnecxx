@@ -406,6 +406,7 @@ async function handleMsConfirm(
       caregiverId:         sched.caregiverId,
       caregiverName:       sched.caregiverName,
       seniorName:          sched.seniorName || null,
+      ...(sched.recipientKey ? { recipientKey: sched.recipientKey } : {}),
       date,
       startTime:           newStart,
       endTime:             newEnd,

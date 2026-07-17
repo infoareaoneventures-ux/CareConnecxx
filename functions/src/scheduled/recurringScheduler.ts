@@ -16,6 +16,7 @@ export interface RecurringSchedule {
   clientPhone:       string;
   seniorName:        string;
   seniorId?:         string;         // Multi-senior: explicit reference to senior_profiles doc
+  recipientKey?:     string;         // Multi-recipient: carePlans recipientPlans key (2026-07-16)
   days:              string[];       // ["Mon", "Wed", "Fri"]
   startTime:         string;         // "09:00"
   endTime:           string;         // "13:00"
@@ -142,6 +143,7 @@ async function extendSchedule(
       durationHours:       schedule.durationHours,
       hourlyRate:          schedule.hourlyRate,
       seniorName:          schedule.seniorName || null,
+      ...(schedule.recipientKey ? { recipientKey: schedule.recipientKey } : {}),
       ...canonicalApptFields({ startTime: schedule.startTime, durationHours: schedule.durationHours, hourlyRate: schedule.hourlyRate }),
       status:              "confirmed",
       billingAuthority:    BILLING_AUTHORITY_VERSION,

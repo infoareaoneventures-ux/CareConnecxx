@@ -38,7 +38,7 @@ export const onCarePlanWrite = functions.firestore
 
 function buildChangeSummary(before: Record<string, unknown>, after: Record<string, unknown>): string {
   const changes: string[] = [];
-  const fields = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes"];
+  const fields = ["medications", "diagnoses", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "recipientMedical"];
   for (const field of fields) {
     const bVal = JSON.stringify(before[field]);
     const aVal = JSON.stringify(after[field]);

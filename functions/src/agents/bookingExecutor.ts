@@ -51,6 +51,10 @@ interface BookingTask {
   createdAt:             string;
   agentTaskId?:          string;
   isEmergencyReplacement?: boolean;
+  // Multi-recipient attribution (2026-07-16) — only stamped when the household
+  // has 2+ care recipients; absent = the household's sole recipient (fail-soft).
+  recipientName?:        string;
+  recipientKey?:         string;
 }
 
 export async function executeBookings(taskId: string, clientPhone: string): Promise<void> {
@@ -173,6 +177,12 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     db.collection("users").doc(task.clientId).get(),
   ]);
   const offerClientName = (clientSnapForOffer.data()?.name as string | undefined) || undefined;
+  // Hoisted above the batch so appointment docs carry the recipient display name
+  // (task.recipientName from a multi-recipient booking wins; else the primary).
+  const offerSeniorName = task.recipientName
+    ?? clientSnapForOffer.data()?.seniorName
+    ?? (clientSnapForOffer.data()?.senior as { name?: string } | undefined)?.name
+    ?? null;
 
   // Write each appointment — this is the ONLY place appointments are written by the agent.
   // Family approval does NOT confirm the visit: the caregiver must accept the shift offer
@@ -188,6 +198,8 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       caregiverId:        task.caregiverId,
       caregiverName:      task.caregiverName,
       ...(offerClientName ? { clientName: offerClientName } : {}),
+      ...(offerSeniorName ? { seniorName: offerSeniorName } : {}),
+      ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
       date:               appt.date,
       startTime:          appt.startTime,
       endTime:            appt.endTime,
@@ -239,9 +251,6 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     return;
   }
 
-  const offerSeniorName = clientSnapForOffer.data()?.seniorName
-    ?? (clientSnapForOffer.data()?.senior as { name?: string } | undefined)?.name
-    ?? null;
   const offerFirstAppt = task.appointments[0];
   const offerVisitPay  = ((caregiverSnapForOffer.data()?.hourlyRate ?? 20) * offerFirstAppt.durationHours).toFixed(2);
   const offerClientLabel = offerSeniorName ? `with ${offerSeniorName}` : "with a client";
@@ -359,6 +368,8 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
         pendingRecurringSchedule: {
           caregiverId:   task.caregiverId,
           caregiverName: task.caregiverName,
+          ...(task.recipientName ? { seniorName: task.recipientName } : {}),
+          ...(task.recipientKey  ? { recipientKey: task.recipientKey } : {}),
           days:          [dayOfWeek],
           startTime:     firstAppt.startTime,
           endTime:       firstAppt.endTime,
@@ -444,6 +455,8 @@ export async function createBookingTask(params: {
   appointments:           BookingAppointment[];
   hourlyRate:             number;
   isEmergencyReplacement?: boolean;
+  recipientName?:         string;
+  recipientKey?:          string;
 }): Promise<string> {
   // Canonical eligibility gate — only profile_complete + approved caregivers
   // are bookable (covers pending/failed background checks, adverse actions,
@@ -489,6 +502,8 @@ export async function createBookingTask(params: {
     expiresAt:             new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
     createdAt:             now.toISOString(),
     ...(params.isEmergencyReplacement && { isEmergencyReplacement: true }),
+    ...(params.recipientName ? { recipientName: params.recipientName } : {}),
+    ...(params.recipientKey  ? { recipientKey:  params.recipientKey }  : {}),
   });
   return ref.id;
 }

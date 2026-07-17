@@ -128,6 +128,8 @@ export async function buildAndSaveJobPost(params: {
       careNeeds,
       careLevel,
       conditions,
+      // Signup-time copy shared across the household — see onboardingConversation.
+      ...(recipients.length > 1 ? { sharedAtSignup: true } : {}),
       updatedAt:    new Date().toISOString(),
     };
   }

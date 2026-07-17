@@ -197,6 +197,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
       caregiverId:         sched.caregiverId,
       caregiverName:       sched.caregiverName,
       seniorName:          sched.seniorName || null,
+      ...(sched.recipientKey ? { recipientKey: sched.recipientKey } : {}),
       date,
       startTime:           sched.startTime,
       endTime:             sched.endTime,

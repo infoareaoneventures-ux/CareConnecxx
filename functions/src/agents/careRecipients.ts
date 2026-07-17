@@ -29,6 +29,32 @@ export function householdSeniorDocId(clientUid: string, name: string): string {
   return `${clientUid}_${recipientPlanKey(name)}`;
 }
 
+// Shared resolution of a family-supplied first name to a recipientPlans key
+// (extracted from save_care_task_detail — every recipient-scoped tool goes
+// through this so name matching can never diverge between tools).
+//   • Named: exact key match, else first-name prefix match against existing
+//     keys, else a fresh key minted from the name (named lookups always
+//     resolve — a new recipient is a valid outcome).
+//   • Unnamed: the sole existing plan wins; 2+ plans is ambiguous; none on
+//     file can't resolve.
+export type RecipientKeyResolution =
+  | { ok: true; key: string; named: boolean }
+  | { ok: false; reason: "ambiguous" | "none_on_file" };
+
+export function resolveRecipientKey(
+  planKeys: string[],
+  recipientFirstName?: string,
+): RecipientKeyResolution {
+  const name = String(recipientFirstName ?? "").trim();
+  if (name) {
+    const wanted = recipientPlanKey(name.split(" ")[0]);
+    const key = planKeys.find((k) => k === wanted || k.startsWith(`${wanted.split("_")[0]}_`)) ?? wanted;
+    return { ok: true, key, named: true };
+  }
+  if (planKeys.length === 1) return { ok: true, key: planKeys[0], named: false };
+  return { ok: false, reason: planKeys.length ? "ambiguous" : "none_on_file" };
+}
+
 // Validate/normalize the LLM-extracted additionalRecipients array from
 // onboardingData (shape guard only — extraction itself is LLM-driven).
 export function normalizeAdditionalRecipients(raw: unknown): CareRecipient[] {

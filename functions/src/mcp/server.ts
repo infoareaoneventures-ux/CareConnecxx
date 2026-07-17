@@ -302,6 +302,7 @@ export const MCP_TOOLS: McpTool[] = [
         dates:       { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
         startTime:   { type: "string", description: "e.g. '09:00'" },
         endTime:     { type: "string", description: "e.g. '17:00'" },
+        recipientFirstName: { type: "string", description: "First name of the care recipient this visit is for. Pass it whenever the household cares for more than one person (so the visit is attributed to the right person); omit for single-recipient households." },
       },
       required: ["caregiverId", "dates", "startTime", "endTime"],
     },
@@ -990,9 +991,10 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", description: "Which field to update: 'medications', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', 'notes', 'emergencyContacts', 'dailyRoutine', 'accessCodes', 'dietaryRestrictions', 'medicationsConfirmedNone' (boolean — family explicitly said there are no medications), or 'emergencyContactDeclined' (boolean — family explicitly declined to give one)" },
-        value:    { description: "The new value. For array fields (medications, careNeeds, doctorContacts, emergencyContacts, dailyRoutine), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}. dailyRoutine items: {time, description, category: meal|medication|activity|hygiene}." },
+        field:    { type: "string", description: "Which field to update: 'medications', 'diagnoses', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', 'notes', 'emergencyContacts', 'dailyRoutine', 'accessCodes', 'dietaryRestrictions', 'medicationsConfirmedNone' (boolean — family explicitly said there are no medications), or 'emergencyContactDeclined' (boolean — family explicitly declined to give one)" },
+        value:    { description: "The new value. For array fields (medications, diagnoses, careNeeds, doctorContacts, emergencyContacts, dailyRoutine), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}. dailyRoutine items: {time, description, category: meal|medication|activity|hygiene}." },
         action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
+        recipientFirstName: { type: "string", description: "First name of the care recipient this fact is about. REQUIRED whenever the household cares for more than one person and the field is medications, diagnoses, dailyRoutine, dietaryRestrictions, dietaryNotes, specialInstructions, or doctorContacts — it keeps each person's care data separate. Omit for single-recipient households and for household-level fields (emergencyContacts, accessCodes)." },
       },
       required: ["clientId", "field", "value", "action"],
     },
@@ -1287,6 +1289,7 @@ export const MCP_TOOLS: McpTool[] = [
         mood:          { type: "string",  enum: ["good","fair","poor"], description: "Senior's mood during visit" },
         medsGiven:     { type: "boolean", description: "Whether medications were administered" },
         activities:    { type: "array",   items: { type: "string" }, description: "Activities done during the visit" },
+        recipientFirstName: { type: "string", description: "First name of the care recipient this entry is about — pass it when the household cares for more than one person; omit otherwise." },
       },
       required: ["caregiverId", "appointmentId", "notes"],
     },
@@ -3437,7 +3440,7 @@ async function executeToolCall(
 
       case "request_booking": {
         return runActionNativeMcpWrite(name, input, async () => {
-        const { clientId, caregiverId, dates, startTime, endTime, phone } = input;
+        const { clientId, caregiverId, dates, startTime, endTime, phone, recipientFirstName } = input;
         // Session-injected ownership fields are checked here; the booking shape
         // (caregiverId/dates/times) + caregiver lookup are validated by the shared
         // quote primitive below, so the two paths can never diverge.
@@ -3457,6 +3460,44 @@ async function executeToolCall(
           durationHours: quote.durationHours,
         }));
 
+        // Recipient attribution (2026-07-16): resolve WHO this visit is for so
+        // multi-recipient households get correctly-attributed appointments.
+        // Only stamped when the household actually has 2+ recipients on file —
+        // single-recipient households keep today's shape (absent = the sole
+        // recipient, fail-soft everywhere). Ambiguity NEVER blocks the money
+        // path: no name in a multi-home defaults to the primary senior + a note
+        // the agent can use to confirm.
+        let recipientName: string | undefined;
+        let recipientKey:  string | undefined;
+        let recipientResolved: "named" | "defaulted_primary" | undefined;
+        try {
+          const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
+          if (multiRecipientScopingEnabled()) {
+            const { resolveRecipientKey, recipientPlanKey } = await import("../agents/careRecipients");
+            const webPlanSnap = await db.collection("carePlans").doc(clientId as string).get();
+            const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
+            const planKeys = Object.keys(plans);
+            if (planKeys.length > 1) {
+              const res = resolveRecipientKey(planKeys, recipientFirstName ? String(recipientFirstName) : undefined);
+              if (res.ok) {
+                recipientKey  = res.key;
+                recipientName = String(plans[res.key]?.name ?? recipientFirstName ?? "").trim() || undefined;
+                recipientResolved = "named";
+              } else {
+                const userSnap = await db.collection("users").doc(clientId as string).get();
+                const primary = String(userSnap.data()?.seniorName ?? "").trim();
+                if (primary) {
+                  recipientName = primary;
+                  recipientKey  = recipientPlanKey(primary.split(" ")[0]);
+                  recipientResolved = "defaulted_primary";
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[request_booking] recipient attribution failed (booking proceeds unattributed):", e);
+        }
+
         // Route through the REAL booking path: createBookingTask writes an
         // `agent_tasks` `booking_confirmation` (which the YES/CONFIRM webhook flow and
         // executeBookings actually consume) and enforces the pending-bgcheck booking
@@ -3469,6 +3510,8 @@ async function executeToolCall(
           caregiverName: quote.caregiverName,
           appointments,
           hourlyRate:    quote.hourlyRate,
+          ...(recipientName ? { recipientName } : {}),
+          ...(recipientKey  ? { recipientKey }  : {}),
         });
         if (!taskId) {
           // createBookingTask returns "" when it blocks the booking (e.g. bgcheck pending)
@@ -3488,7 +3531,13 @@ async function executeToolCall(
           };
         }
         logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
-        return { success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate };
+        return {
+          success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate,
+          ...(recipientResolved === "defaulted_primary" && recipientName
+            ? { recipientResolved, recipientName,
+                note: `This household has more than one care recipient and no recipientFirstName was given — the visit was attributed to ${recipientName}. If it's for someone else, confirm with the family and rebook with recipientFirstName.` }
+            : {}),
+        };
         });
       }
 
@@ -4465,8 +4514,9 @@ async function executeToolCall(
     }
 
     if (name === "update_care_plan") {
-      const { clientId, field, value, action } = input as {
+      const { clientId, field, value, action, recipientFirstName } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove";
+        recipientFirstName?: string;
       };
       // emergencyContacts/dailyRoutine/accessCodes/dietaryRestrictions are the
       // web Care Plan tab's fields — same doc since the 2026-07-12 cutover, so
@@ -4474,19 +4524,102 @@ async function executeToolCall(
       // medicationsConfirmedNone / emergencyContactDeclined (2026-07-15): the
       // care-plan interview needs "asked, and the answer was none/declined" to
       // be distinguishable from "not asked yet" — an empty array can't say that.
-      const ALLOWED_FIELDS = ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "emergencyContacts", "dailyRoutine", "accessCodes", "dietaryRestrictions", "medicationsConfirmedNone", "emergencyContactDeclined"];
+      const ALLOWED_FIELDS = ["medications", "diagnoses", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "emergencyContacts", "dailyRoutine", "accessCodes", "dietaryRestrictions", "medicationsConfirmedNone", "emergencyContactDeclined"];
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }
       const ref = db.collection("care_plans").doc(clientId);
+      const nowIso = new Date().toISOString();
+
+      // Multi-recipient scoping (2026-07-16): person-specific facts land in the
+      // recipientMedical map (keyed by recipientPlanKey, same doc) so a couple's
+      // medications/routine never merge. The account-level field stays the
+      // HOUSEHOLD UNION — every legacy reader (in-shift med prompts, briefings,
+      // web normalizeCarePlan) keeps working unchanged. emergencyContacts and
+      // accessCodes are deliberately household-level, never scoped.
+      const RECIPIENT_SCOPED_FIELDS = ["medications", "diagnoses", "dailyRoutine", "dietaryRestrictions", "dietaryNotes", "specialInstructions", "doctorContacts", "medicationsConfirmedNone"];
+      const ARRAY_SCOPED = new Set(["medications", "diagnoses", "dailyRoutine", "dietaryRestrictions", "doctorContacts"]);
+      const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
+      let unscopedNote: string | undefined;
+
+      if (multiRecipientScopingEnabled() && RECIPIENT_SCOPED_FIELDS.includes(field)) {
+        const { resolveRecipientKey } = await import("../agents/careRecipients");
+        const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
+        const planKeys = Object.keys((webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
+
+        if (recipientFirstName) {
+          const res = resolveRecipientKey(planKeys, recipientFirstName);
+          if (res.ok) {
+            const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+            const canonSnap = await ref.get();
+            const recipientMedical = (canonSnap.data()?.recipientMedical ?? {}) as Record<string, Record<string, unknown>>;
+            const entry = recipientMedical[res.key] ?? {};
+
+            let nextVal: unknown;
+            if (ARRAY_SCOPED.has(field)) {
+              const list = Array.isArray(entry[field]) ? [...(entry[field] as unknown[])] : [];
+              if (action === "append") {
+                if (!list.some((v) => sameValue(v, value))) list.push(value);
+                nextVal = list;
+              } else if (action === "remove") {
+                nextVal = list.filter((v) => !sameValue(v, value));
+              } else {
+                nextVal = Array.isArray(value) ? value : [value];
+              }
+            } else {
+              nextVal = value; // scalar fields: set semantics whatever the action
+            }
+
+            await ref.set({
+              recipientMedical: {
+                [res.key]: {
+                  [field]: nextVal,
+                  name: String(recipientFirstName).trim().split(" ")[0],
+                  updatedAt: nowIso,
+                },
+              },
+              updatedAt: nowIso,
+            }, { merge: true });
+
+            // Household-union mirror (array fields only — scalars stay per-person;
+            // a person-specific note must never overwrite the household one).
+            if (ARRAY_SCOPED.has(field)) {
+              if (action === "append") {
+                await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
+              } else if (action === "remove") {
+                // Only shrink the union when NO other recipient still has the value
+                // (John also takes Aspirin → removing Mary's must not hide his).
+                const othersStillHaveIt = Object.entries(recipientMedical).some(([k, e]) =>
+                  k !== res.key && Array.isArray(e[field]) && (e[field] as unknown[]).some((v) => sameValue(v, value)));
+                if (!othersStillHaveIt) {
+                  await ref.set({ [field]: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
+                }
+              } else {
+                // set: additive union only — replacing one person's list must never
+                // drop another person's (or legacy unattributed) household values.
+                const arr = (Array.isArray(value) ? value : [value]).filter((v) => v !== undefined && v !== null);
+                if (arr.length) {
+                  await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(...arr) }, { merge: true });
+                }
+              }
+            }
+            return { success: true, updated: field, action, scoped: true, recipient: res.key };
+          }
+        } else if (planKeys.length > 1) {
+          // Never block a live flow on a missing name — write account-level and
+          // nudge so the model self-corrects next turn.
+          unscopedNote = `Saved at the household level. This family has ${planKeys.length} care recipients — pass recipientFirstName to attribute ${field} to one person.`;
+        }
+      }
+
       if (action === "append") {
         await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
       } else if (action === "remove") {
         await ref.set({ [field]: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
       } else {
-        await ref.set({ [field]: value, updatedAt: new Date().toISOString() }, { merge: true });
+        await ref.set({ [field]: value, updatedAt: nowIso }, { merge: true });
       }
-      return { success: true, updated: field, action };
+      return { success: true, updated: field, action, ...(unscopedNote ? { scoped: false, note: unscopedNote } : {}) };
     }
 
     if (name === "save_care_task_detail") {
@@ -4507,26 +4640,22 @@ async function executeToolCall(
       }
       if (!Object.keys(clean).length) return toolError("INVALID_INPUT", "taskDetail contained no usable category → tasks entries");
 
-      const { recipientPlanKey } = await import("../agents/careRecipients");
+      const { resolveRecipientKey } = await import("../agents/careRecipients");
       const planRef  = db.collection("carePlans").doc(clientId);
       const planSnap = await planRef.get();
       const plans    = (planSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
       const planKeys = Object.keys(plans);
 
-      // Resolve which recipient this detail belongs to: named recipient first,
-      // else the sole existing plan, else a fresh key from the given name.
-      let key = "";
-      if (recipientFirstName) {
-        const wanted = recipientPlanKey(String(recipientFirstName).split(" ")[0]);
-        key = planKeys.find((k) => k === wanted || k.startsWith(`${wanted.split("_")[0]}_`)) ?? wanted;
-      } else if (planKeys.length === 1) {
-        key = planKeys[0];
-      } else if (planKeys.length > 1) {
-        return toolError("INVALID_INPUT",
-          `This family has ${planKeys.length} care recipients — pass recipientFirstName to say whose tasks these are.`);
-      } else {
-        return toolError("INVALID_INPUT", "No care recipient on file yet — pass recipientFirstName.");
+      // Resolve which recipient this detail belongs to (shared resolver): named
+      // recipient first, else the sole existing plan, else it can't resolve.
+      const resolution = resolveRecipientKey(planKeys, recipientFirstName);
+      if (!resolution.ok) {
+        return resolution.reason === "ambiguous"
+          ? toolError("INVALID_INPUT",
+              `This family has ${planKeys.length} care recipients — pass recipientFirstName to say whose tasks these are.`)
+          : toolError("INVALID_INPUT", "No care recipient on file yet — pass recipientFirstName.");
       }
+      const key = resolution.key;
 
       // Merge ADDITIVELY with what's saved: per-category task union, and the
       // category list unions into careNeeds (the match-keyword source).
@@ -4953,16 +5082,36 @@ async function executeToolCall(
     }
 
     if (name === "create_care_journal_entry") {
-      const { caregiverId, appointmentId, notes, mood, medsGiven, activities } = input as Record<string, unknown>;
+      const { caregiverId, appointmentId, notes, mood, medsGiven, activities, recipientFirstName } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !notes) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and notes are required");
       const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
       if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
       const appt = apptSnap.data()!;
       if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
+      // Recipient attribution: an explicit name from the caregiver wins, else
+      // the appointment's own attribution rides along. Fail-soft: absent = the
+      // household's sole recipient. Kill-switch aware for the explicit path.
+      let recipientName: string | null = null;
+      let recipientKey:  string | null = (appt.recipientKey as string | undefined) ?? null;
+      try {
+        const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
+        if (recipientFirstName && multiRecipientScopingEnabled()) {
+          const { resolveRecipientKey } = await import("../agents/careRecipients");
+          const webPlanSnap = await db.collection("carePlans").doc(appt.clientId as string).get();
+          const res = resolveRecipientKey(
+            Object.keys((webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, unknown>),
+            String(recipientFirstName));
+          if (res.ok) { recipientKey = res.key; recipientName = String(recipientFirstName).trim().split(" ")[0]; }
+        } else if (appt.seniorName) {
+          recipientName = String(appt.seniorName);
+        }
+      } catch (e) { console.warn("[create_care_journal_entry] recipient attribution failed:", e); }
       const entryRef = await db.collection("care_journal").add({
         seniorId: appt.seniorId ?? appt.clientId, caregiverId, appointmentId,
         clientId: appt.clientId, notes, mood: mood ?? null,
         medsGiven: medsGiven ?? null, activities: activities ?? [],
+        ...(recipientName ? { recipientName } : {}),
+        ...(recipientKey  ? { recipientKey }  : {}),
         source: "cara_sms", timestamp: nowIso,
       });
       await apptSnap.ref.update({ journalEntryLogged: true }).catch(() => {});

@@ -34,6 +34,16 @@ export function carePlanInterviewEnabled(): boolean {
   return process.env.CARE_PLAN_INTERVIEW_ENABLED === "true";
 }
 
+// Multi-recipient household scoping (2026-07-16). Default ON — this is a KILL
+// switch, not a launch gate: off ("false") reverts update_care_plan /
+// request_booking / create_care_journal_entry to their pre-wave account-level
+// writes without a redeploy. Reads are fail-soft and unconditional (absent
+// recipientMedical / recipient fields = account-level data is the answer), so
+// flipping this off never hides data.
+export function multiRecipientScopingEnabled(): boolean {
+  return process.env.MULTI_RECIPIENT_SCOPING_ENABLED !== "false";
+}
+
 // U6: routing-convergence shadow comparison. OFF by default and scoped per flow:
 // ROUTING_CONVERGENCE_SHADOW is a comma-separated list of flow keys for which the
 // shadow harness runs (e.g. "reminder_management,modify_schedule"). A flow is

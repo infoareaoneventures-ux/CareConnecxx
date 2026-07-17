@@ -1,6 +1,9 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
+import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { guardModelOutput } from "../safety/outputGuard";
+import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
 import { parseScheduledTimeMs } from "../utils/scheduledTime";
@@ -114,7 +117,8 @@ export async function scheduleTrigger(
 // Regenerates the message at fire time using current memory context, so the
 // message feels written in the moment rather than frozen from days ago.
 
-async function generateTriggerMessage(
+// Exported for tests (U2 — anti-invention clause + output guard).
+export async function generateTriggerMessage(
   trigger: ProactiveTrigger,
   memoryContext: string
 ): Promise<string> {
@@ -126,7 +130,8 @@ async function generateTriggerMessage(
         "You are Evia, a care coordinator. Write a single brief follow-up text message (1–2 sentences).\n" +
         "Tone: warm, specific, natural — like a care coordinator who remembers the context.\n" +
         "Use the family's care context and the reason for the follow-up to make it feel relevant.\n" +
-        "No bullet points. No emoji. No preamble. Output only the message text.",
+        "No bullet points. No emoji. No preamble. Output only the message text.\n" +
+        ANTI_INVENTION_CLAUSE,
       messages: [{
         role:    "user",
         content:
@@ -136,6 +141,11 @@ async function generateTriggerMessage(
       }],
     });
     const text = ((resp.content[0] as { text: string }).text ?? "").trim();
+    // Output guard (U2, R2): a meta-response or composed URL is never delivered
+    // — the stored trigger message goes out instead.
+    if (text && caraOutputGuardEnabled() && !guardModelOutput(text).ok) {
+      return trigger.message;
+    }
     return text || trigger.message;
   } catch {
     return trigger.message; // fall back to the stored message
@@ -145,7 +155,8 @@ async function generateTriggerMessage(
 // ── Context-aware suppression for Claude-scheduled triggers ───────────────────
 // Checks recent conversation to see if the follow-up is still relevant before sending.
 
-async function shouldFireTrigger(
+// Exported for tests (U2 — anti-invention clause + output guard).
+export async function shouldFireTrigger(
   trigger: ProactiveTrigger,
   recentMessages: Array<{ role: string; content: string }>
 ): Promise<boolean> {
@@ -165,6 +176,9 @@ async function shouldFireTrigger(
         "You decide if a scheduled follow-up message should still be sent, given recent conversation.\n" +
         "Reply YES if the follow-up is still relevant and useful.\n" +
         "Reply NO if the family already addressed this topic, the situation has resolved, or it would feel out of context.\n" +
+        // U2: shared grounding rule rides here too; the one-word directive
+        // stays last so the reply format is unambiguous.
+        ANTI_INVENTION_CLAUSE + "\n" +
         "One word only: YES or NO.",
       messages: [{
         role:    "user",
@@ -174,7 +188,13 @@ async function shouldFireTrigger(
           `Recent conversation:\n${recentText}`,
       }],
     });
-    const answer = ((resp.content[0] as { text: string }).text ?? "").trim().toUpperCase();
+    const raw = ((resp.content[0] as { text: string }).text ?? "").trim();
+    // Output guard (U2): a guard-rejected verdict is untrusted — default open,
+    // same as the catch below.
+    if (raw && caraOutputGuardEnabled() && !guardModelOutput(raw).ok) {
+      return true;
+    }
+    const answer = raw.toUpperCase();
     return answer !== "NO";
   } catch {
     return true; // default open on failure

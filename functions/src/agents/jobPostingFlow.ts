@@ -2,8 +2,9 @@ import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./buildJobPost";
-import { isConvergenceFlipped } from "../config/featureFlags";
-import { generateCaraMessage } from "../utils/caraMessage";
+import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
+import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { guardModelOutput } from "../safety/outputGuard";
 
 const db = admin.firestore();
 
@@ -60,10 +61,20 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
     const response = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 200,
-      system:     prompt,
+      // U2 (hallucination hardening): parse results are echoed back to the
+      // user ("Got it — starting ${stored}!"), so this raw-output path carries
+      // the shared anti-invention rule too.
+      system:     prompt + "\n" + ANTI_INVENTION_CLAUSE,
       messages:   [{ role: "user", content: userText }],
     });
-    return ((response.content[0] as { text: string }).text ?? "").trim();
+    const parsed = ((response.content[0] as { text: string }).text ?? "").trim();
+    // Output guard (U2, R2): a meta-response/URL from the parser is a parse
+    // failure — every call site already handles "__parse_error__" (raw text or
+    // validated default). Kill switch: CARA_OUTPUT_GUARD_ENABLED=false.
+    if (parsed && caraOutputGuardEnabled() && !guardModelOutput(parsed).ok) {
+      return "__parse_error__";
+    }
+    return parsed;
   } catch {
     return "__parse_error__";
   }
@@ -77,6 +88,11 @@ async function isQuestionOrOther(text: string): Promise<boolean> {
   return result.toUpperCase().startsWith("Y");
 }
 
+// U2: deterministic mid-flow fallback — sent instead of a guard-rejected model
+// answer. The step handler re-asks the current question right after, so short
+// honest copy is enough (mirrors humanReply's HUMAN_MIDFLOW_FALLBACK).
+export const JP_MIDFLOW_FALLBACK = "Good question — I don't want to guess on that one.";
+
 async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
   const d = (session as any).onboardingData as Record<string, unknown> ?? {};
   const response = await getSharedClient().messages.create({
@@ -87,10 +103,17 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
       "Answer briefly (1–2 sentences). Be warm and helpful. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
-      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages.",
+      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +
+      ANTI_INVENTION_CLAUSE,
     messages: [{ role: "user", content: text }],
   });
-  return ((response.content[0] as { text: string }).text ?? "").trim();
+  const answer = ((response.content[0] as { text: string }).text ?? "").trim();
+  // Output guard (U2, R2): a meta-response or composed URL never reaches the
+  // family's phone — the deterministic fallback goes out instead.
+  if (answer && caraOutputGuardEnabled() && !guardModelOutput(answer).ok) {
+    return JP_MIDFLOW_FALLBACK;
+  }
+  return answer;
 }
 
 async function getJobData(phone: string): Promise<Record<string, unknown>> {

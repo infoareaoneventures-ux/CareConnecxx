@@ -1,4 +1,7 @@
 import { quickComplete } from "../utils/openaiClient";
+import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { guardModelOutput } from "../safety/outputGuard";
+import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 export const HUMAN_MIDFLOW_FALLBACK = "I do not want to guess on that.";
 
@@ -32,12 +35,18 @@ export async function answerHumanQuestionOnly(opts: {
       "NEVER reply to the briefing's author, ask for missing context, or say you don't see a message — " +
       "if details are missing, answer as best you can with what you have. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
-      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages.",
+      "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +
+      ANTI_INVENTION_CLAUSE,
     opts.text,
     { maxTokens: opts.maxTokens ?? 160 },
   ).catch(() => HUMAN_MIDFLOW_FALLBACK);
 
   const clean = String(answer ?? "").trim();
+  // Output guard (U2, R2): a meta-response or composed URL is never delivered —
+  // the deterministic fallback goes out instead. Kill switch: CARA_OUTPUT_GUARD_ENABLED=false.
+  if (clean && caraOutputGuardEnabled() && !guardModelOutput(clean).ok) {
+    return HUMAN_MIDFLOW_FALLBACK;
+  }
   return clean || HUMAN_MIDFLOW_FALLBACK;
 }
 

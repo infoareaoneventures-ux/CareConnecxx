@@ -7,7 +7,9 @@ import { getPermissions } from "../agents/permissionsConversation";
 import { handlePromptGet } from "../mcp/server";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getRelevantFacts } from "../memory/learnedFacts";
-import { generateCaraMessage } from "../utils/caraMessage";
+import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { guardModelOutput } from "../safety/outputGuard";
+import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 const db = admin.firestore();
 
@@ -55,7 +57,8 @@ async function getWeekData(seniorId: string, userId: string) {
 
 // ── Claude digest generation ──────────────────────────────────────────────────
 
-async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, userId: string): Promise<string> {
+// Exported for tests (U2 — anti-invention clause + output guard).
+export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, userId: string): Promise<string> {
   const { journal, pastAppts, upcoming, seniorName, clientName } = data;
 
   const [memCtx, facts] = await Promise.all([
@@ -102,21 +105,31 @@ async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, use
     memoryContext:  memLine,
   });
 
+  // Deterministic digest — sent on API failure AND when the model output is
+  // rejected by the output guard (U2, R2): raw meta-responses/URLs never ship.
+  const fallbackDigest = () =>
+    `Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
+    `${completedCount} visit(s) completed\n\n` +
+    (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
+    `Have a wonderful ${dayName}.`;
+
   try {
     const response = await getSharedClient().messages.create({
       model:      "claude-sonnet-4-6",
       max_tokens: 400,
+      // U2: the digest prompt arrives fully-formed via handlePromptGet as the
+      // user message, so the anti-invention rule rides in the system slot.
+      system:     ANTI_INVENTION_CLAUSE,
       messages:   [{ role: "user", content: prompt }],
     });
-    return ((response.content[0] as { text: string }).text ?? "").trim();
+    const text = ((response.content[0] as { text: string }).text ?? "").trim();
+    if (text && caraOutputGuardEnabled() && !guardModelOutput(text).ok) {
+      return fallbackDigest();
+    }
+    return text;
   } catch (err) {
     console.error("weeklyDigest Claude error:", err);
-    return (
-      `Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
-      `${completedCount} visit(s) completed\n\n` +
-      (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
-      `Have a wonderful ${dayName}.`
-    );
+    return fallbackDigest();
   }
 }
 

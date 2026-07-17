@@ -7,9 +7,60 @@ import { getRelevantFacts } from "../memory/learnedFacts";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { businessTodayStr } from "../utils/scheduledTime";
-import { generateCaraMessage } from "../utils/caraMessage";
+import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { guardModelOutput } from "../safety/outputGuard";
+import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 const db = admin.firestore();
+
+// ── Briefing generation (U2 — hallucination hardening) ───────────────────────
+// Both morning-briefing model calls bypass generateCaraMessage, so they carry
+// the shared anti-invention rule and route their output through the model-
+// output guard themselves. Exported for tests.
+
+// Caregiver briefing: the briefing prompt arrives fully-formed via
+// handlePromptGet as the user message, so the anti-invention rule rides in the
+// system slot. Empty, guard-rejected, or errored output → the deterministic
+// fallback lines.
+export async function generateCaregiverBriefingContent(
+  briefingPrompt: string,
+  fallback: string
+): Promise<string> {
+  try {
+    const aiResponse = await getSharedClient().messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      system:     ANTI_INVENTION_CLAUSE,
+      messages:   [{ role: "user", content: briefingPrompt }],
+    });
+    const text = ((aiResponse.content[0] as { text: string }).text ?? "").trim();
+    if (!text) return fallback;
+    if (caraOutputGuardEnabled() && !guardModelOutput(text).ok) return fallback;
+    return text;
+  } catch {
+    return fallback;
+  }
+}
+
+// Family briefing: returns "" when the model output is empty or guard-rejected
+// so the call site's existing catch → generateCaraMessage fallback takes over
+// (raw rejected output is never delivered).
+export async function generateFamilyBriefingText(briefingContent: string): Promise<string> {
+  const resp = await getSharedClient().messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 180,
+    system:
+      "You write a brief morning text for a family member whose loved one has a caregiver visit today.\n" +
+      "Tone: warm, direct, practical — like a trusted care coordinator texting. No bullet points, no emoji.\n" +
+      "Format: 2-3 sentences max. Start with caregiver arrival info. Add one specific care note if available.\n" +
+      "Output only the message text.\n" +
+      ANTI_INVENTION_CLAUSE,
+    messages: [{ role: "user", content: briefingContent }],
+  });
+  const text = ((resp.content[0] as { text: string }).text ?? "").trim();
+  if (text && caraOutputGuardEnabled() && !guardModelOutput(text).ok) return "";
+  return text;
+}
 
 // Runs every day at 7am Pacific. With .timeZone() set, the cron string is
 // interpreted IN that timezone — "0 12 * * *" here meant noon PT, not 12:00
@@ -104,13 +155,7 @@ export const sendMorningBriefings = functions.pubsub
             medLine:       medLine ?? "",
             verifiedNote:  verifiedNote ?? "",
           });
-          const aiResponse = await getSharedClient().messages.create({
-            model:    "claude-haiku-4-5-20251001",
-            max_tokens: 200,
-            messages: [{ role: "user", content: briefingPrompt }],
-          });
-          content = ((aiResponse.content[0] as { text: string }).text ?? "").trim()
-            || fallbackLines.join("\n\n");
+          content = await generateCaregiverBriefingContent(briefingPrompt, fallbackLines.join("\n\n"));
         } catch {
           content = fallbackLines.join("\n\n");
         }
@@ -294,24 +339,12 @@ async function sendFamilyMorningBriefings(
           : "";
         const memLine = memCtx ? memCtx.slice(0, 300) : "";
 
-        const resp = await getSharedClient().messages.create({
-          model:      "claude-haiku-4-5-20251001",
-          max_tokens: 180,
-          system:
-            "You write a brief morning text for a family member whose loved one has a caregiver visit today.\n" +
-            "Tone: warm, direct, practical — like a trusted care coordinator texting. No bullet points, no emoji.\n" +
-            "Format: 2-3 sentences max. Start with caregiver arrival info. Add one specific care note if available.\n" +
-            "Output only the message text.",
-          messages: [{
-            role: "user",
-            content:
-              `Senior: ${seniorName}\n` +
-              `Caregiver: ${caregiverName} arriving ${schedule}\n` +
-              factsLine + "\n" +
-              memLine,
-          }],
-        });
-        content = ((resp.content[0] as { text: string }).text ?? "").trim();
+        content = await generateFamilyBriefingText(
+          `Senior: ${seniorName}\n` +
+          `Caregiver: ${caregiverName} arriving ${schedule}\n` +
+          factsLine + "\n" +
+          memLine
+        );
         if (!content) throw new Error("empty");
       } catch {
         // Fallback via generateCaraMessage

@@ -11,6 +11,7 @@ import {
   answerHumanQuestionOnly,
   appendReAsk,
 } from "./humanReply";
+import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
 
 describe("humanReply", () => {
   beforeEach(() => {
@@ -47,5 +48,34 @@ describe("humanReply", () => {
 
   it("does not append an empty re-ask", () => {
     expect(appendReAsk("I can check that.", "")).toBe("I can check that.");
+  });
+
+  // U2 — anti-invention clause + output guard on the quickComplete path.
+
+  it("carries the shared anti-invention clause in its system prompt", async () => {
+    quickComplete.mockResolvedValue("Yes — the visit stays on the schedule.");
+
+    await answerHumanQuestionOnly({
+      audience: "family",
+      situation: "family is confirming tomorrow's visit",
+      text: "is the visit still on?",
+    });
+
+    expect(String(quickComplete.mock.calls[0][0])).toContain(ANTI_INVENTION_CLAUSE);
+  });
+
+  it("routes a guard-rejected meta-response to the deterministic fallback", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    quickComplete.mockResolvedValue(
+      "Got it, but I need the briefing context to write this message — who's the caregiver here?",
+    );
+
+    await expect(answerHumanQuestionOnly({
+      audience: "caregiver",
+      situation: "caregiver is choosing a shift",
+      text: "will I still be paid?",
+    })).resolves.toBe(HUMAN_MIDFLOW_FALLBACK);
+
+    warn.mockRestore();
   });
 });

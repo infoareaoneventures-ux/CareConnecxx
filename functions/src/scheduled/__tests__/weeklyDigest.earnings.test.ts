@@ -112,29 +112,46 @@ vi.mock("firebase-functions/v1", () => {
 });
 
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: hoisted.sendSpy }));
-vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: hoisted.caraMsgSpy }));
+// Real module spread so weeklyDigest's ANTI_INVENTION_CLAUSE import (U2) stays
+// the genuine shared constant; only generateCaraMessage is stubbed.
+vi.mock("../../utils/caraMessage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/caraMessage")>();
+  return { ...actual, generateCaraMessage: hoisted.caraMsgSpy };
+});
 // Client loop only — force-skip it so the test isolates caregiver earnings.
 vi.mock("../../agents/permissionsConversation", () => ({
   getPermissions: vi.fn(async () => ({ canSendWeeklyDigest: false })),
 }));
-// Imported by the module but exercised only in the (skipped) client loop.
-vi.mock("../../utils/claudeClient", () => ({ getSharedClient: () => ({}) }));
+// Controllable model client for the generateDigest (U2) tests below; the
+// earnings loop never touches it.
+const claudeHoisted = vi.hoisted(() => ({ messagesCreate: vi.fn() }));
+vi.mock("../../utils/claudeClient", () => ({
+  getSharedClient: () => ({
+    messages: { create: (...args: unknown[]) => claudeHoisted.messagesCreate(...args) },
+  }),
+}));
 vi.mock("../../linq/client", () => ({}));
-vi.mock("../../mcp/server", () => ({ handlePromptGet: vi.fn(async () => "") }));
+vi.mock("../../mcp/server", () => ({ handlePromptGet: vi.fn(() => "digest prompt") }));
 vi.mock("../../memory/memoryFiles", () => ({ getMemoryContext: vi.fn(async () => "") }));
-vi.mock("../../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(async () => "") }));
+vi.mock("../../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(async () => []) }));
 
 import {
   runWeeklyDigests,
+  generateDigest,
   shiftGrossCents,
   isShiftEarnedSince,
   EARNED_SHIFT_STATUSES,
 } from "../weeklyDigest";
+import { ANTI_INVENTION_CLAUSE } from "../../utils/caraMessage";
 
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
 
-beforeEach(() => hoisted.reset());
+beforeEach(() => {
+  hoisted.reset();
+  claudeHoisted.messagesCreate.mockReset();
+  delete process.env.CARA_OUTPUT_GUARD_ENABLED;
+});
 afterEach(() => vi.clearAllMocks());
 
 describe("shiftGrossCents", () => {
@@ -227,5 +244,59 @@ describe("runWeeklyDigests — caregiver earnings", () => {
 
     expect(hoisted.sendSpy).not.toHaveBeenCalled();
     expect(hoisted.digestWrites).toHaveLength(0);
+  });
+});
+
+// ── generateDigest — U2 anti-invention clause + output guard ─────────────────
+
+describe("generateDigest (U2)", () => {
+  // Minimal week with one completed visit so the model path is reached.
+  const weekData: any = {
+    journal:    [],
+    pastAppts:  [{}],
+    upcoming:   [],
+    seniorName: "Rosie",
+    clientName: "Anahi",
+  };
+
+  // The exact leaked-incident shape: the model replies to the briefing author.
+  const META_OUTPUT =
+    "Got it, but I need the briefing context to write this message, " +
+    "who's the caregiver, what shift/client situation are we talking about...";
+
+  it("carries ANTI_INVENTION_CLAUSE as the system prompt", async () => {
+    claudeHoisted.messagesCreate.mockResolvedValue({ content: [{ text: "Rosie had a steady week — 1 visit completed." }] });
+
+    await generateDigest(weekData, "u1");
+
+    const params = claudeHoisted.messagesCreate.mock.calls[0][0] as { system: string };
+    expect(params.system).toContain(ANTI_INVENTION_CLAUSE);
+  });
+
+  it("returns valid model text unchanged", async () => {
+    claudeHoisted.messagesCreate.mockResolvedValue({ content: [{ text: "Rosie had a steady week — 1 visit completed." }] });
+    await expect(generateDigest(weekData, "u1")).resolves.toBe("Rosie had a steady week — 1 visit completed.");
+  });
+
+  it("guard-rejected meta-response → deterministic fallback digest, raw output never returned", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    claudeHoisted.messagesCreate.mockResolvedValue({ content: [{ text: META_OUTPUT }] });
+
+    const digest = await generateDigest(weekData, "u1");
+
+    expect(digest).toContain("Good morning Anahi. Here's Rosie's week:");
+    expect(digest).toContain("1 visit(s) completed");
+    expect(digest).not.toContain("briefing context");
+    warn.mockRestore();
+  });
+
+  it("API failure still returns the deterministic fallback (existing behavior preserved)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    claudeHoisted.messagesCreate.mockRejectedValue(new Error("api down"));
+
+    const digest = await generateDigest(weekData, "u1");
+
+    expect(digest).toContain("Good morning Anahi. Here's Rosie's week:");
+    errSpy.mockRestore();
   });
 });

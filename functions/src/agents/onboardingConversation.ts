@@ -34,6 +34,7 @@ import { downloadMedia, storeInboundMedia, InboundMediaPart } from "../utils/med
 import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
+import { caregiverAnnualDisplay, caregiverAnnualAmount, clientMonthlyDisplay, mvrDisplay } from "../config/pricing";
 // conversationStep + onboardingSteps.client are KEPT: the loop-only cut deleted
 // the scripted CONVERSATIONAL collection handlers, but the post-collection intake
 // steps (client_ask_start/preferences/budget/confirm_intake) still run on this
@@ -1292,7 +1293,7 @@ export async function handleOnboardingStep(
       // A plain "thanks / sounds good" is NOT a status inquiry — re-explaining
       // the Checkr flow at someone who just acknowledged it reads as not
       // listening (founder report, 2026-07-09).
-      const bgReplyKind = await classifyAwaitingReply(text, "finish the background-check form Checkr emailed them (results take 1–3 days after they submit)");
+      const bgReplyKind = await classifyAwaitingReply(text, "finish the background-check form Checkr emailed them (Evia texts them the moment results are in)");
       if (bgReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
           "The caregiver just acknowledged your last message (a thanks or 'sounds good') while their background check is with Checkr — you'll text them the moment results are in.",
@@ -1322,8 +1323,8 @@ export async function handleOnboardingStep(
       const msgBgcheck = await generateCaraMessage({
         audience: "caregiver",
         context: `The caregiver just texted: "${text}". ` + (liveBgFact ? `${liveBgFact} ` : "") +
-          "A caregiver texted Evia while their background check is with Checkr. Ground your reply in the live status above if present; otherwise: if they haven't finished Checkr's form yet, the secure link is in their email from Checkr (Checkr re-sends it daily, and they can ask Evia to text the link too); once they've finished, results usually take 1–3 days and Evia will text them the moment they're in.",
-        fallback: "Your background check is with Checkr now. If you haven't finished their form, the secure link is in your email (I can text it to you too — just ask). Once you're done, results usually take 1–3 days and I'll text you the moment they're in.",
+          "A caregiver texted Evia while their background check is with Checkr. Ground your reply in the live status above if present; otherwise: if they haven't finished Checkr's form yet, the secure link is in their email from Checkr (Checkr re-sends it daily, and they can ask Evia to text the link too); once they've finished, Evia will text them the moment their results are in. Never promise a specific turnaround time.",
+        fallback: "Your background check is with Checkr now. If you haven't finished their form, the secure link is in your email (I can text it to you too — just ask). Once you're done, I'll text you the moment your results are in.",
         maxTokens: 100,
       });
       await sendMessage(chatId, msgBgcheck);
@@ -2604,10 +2605,10 @@ async function handleCaregiverAskMvr(phone: string, chatId: string, textOrSessio
       language: textOrSession.preferredLanguage === "es" ? "es" : "en",
       context:
         "Mid-signup, ask the caregiver whether they ever drive clients to appointments or errands. " +
-        "If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — a one-time $11.50 add-on (charged together with their membership, doesn't change the annual price) that puts a verified-driver badge on their profile that families who need a driver look for. " +
+        `If they do, there's an optional Motor Vehicle Record check they can bundle with their membership — a one-time ${mvrDisplay()} add-on (charged together with their membership, doesn't change the annual price) that puts a verified-driver badge on their profile that families who need a driver look for. ` +
         "Weave the choice in naturally, like a person would ('want me to add it? totally fine to leave it off') — do NOT write a stiff 'Reply YES or NO' instruction. Do NOT include any URL.",
       fallback:
-        "Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check for a one-time $11.50 — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?",
+        `Do you ever drive clients to appointments or errands? If so, I can add a Motor Vehicle Record check for a one-time ${mvrDisplay()} — it gives you a verified-driver badge families look for. Want me to add it, or leave it off?`,
       maxTokens: 120,
     }));
     return;
@@ -2764,7 +2765,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
       "The caregiver's profile is done — the last stretch is activating their membership. Facts you MUST convey, woven in naturally (not as a list): " +
-      "it's $54.99/year, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), " +
+      `it's ${caregiverAnnualDisplay()}, it INCLUDES the background check every caregiver completes (the next step right after payment — no separate charge for it), ` +
       "and it unlocks applying to jobs, getting booked, and Evia's scheduling + payout tools. Once their background check comes back clear, they're approved to care for clients" +
       (mvrCharged ? ". Their order also includes the driving-record (MVR) check they asked for" : "") +
       (openJobCount > 0
@@ -2773,7 +2774,7 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
       ". End leading into the activation link you're sending right after this message. Do NOT include any URL.",
     fallback:
       `${openJobCount > 0 ? `The ${openJobCount} open care ${openJobCount === 1 ? "job" : "jobs"} near ${city} ${openJobCount === 1 ? "is" : "are"} still waiting — ` : ""}you're almost ready to apply! ` +
-      `Activate your membership ($54.99/year) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
+      `Activate your membership (${caregiverAnnualDisplay()}) — it includes your background check and unlocks applying to jobs near you, getting booked, and my scheduling + payout tools. ` +
       `Once your background check clears, you're approved to care for clients.` +
       `${mvrCharged ? " Your order includes the membership + MVR driver check." : ""} Tap to activate:`,
     maxTokens: 160,
@@ -3264,11 +3265,11 @@ async function handleCaregiverSendBgcheck(phone: string, chatId: string, session
     audience: "caregiver",
     language: session.preferredLanguage === "es" ? "es" : "en",
     context:
-      "The caregiver just paid their membership — they're nearly done. Naturally explain: the last big step is the background check every caregiver completes, and it's already included in the membership they just paid (no extra charge). The link coming right below opens Evia's secure page where they review the disclosure and authorize the check — takes about a minute. After they authorize, Checkr emails them a secure link to finish; their SSN and date of birth are entered directly with Checkr, never with Evia. Once results come back clear (usually 1–3 days) they're approved and families can book them. Do NOT include any URL.",
+      "The caregiver just paid their membership — they're nearly done. Naturally explain: the last big step is the background check every caregiver completes, and it's already included in the membership they just paid (no extra charge). The link coming right below opens Evia's secure page where they review the disclosure and authorize the check — takes about a minute. After they authorize, Checkr emails them a secure link to finish; their SSN and date of birth are entered directly with Checkr, never with Evia. Evia texts them the moment results come back clear — then they're approved and families can book them. Never promise a specific turnaround time. Do NOT include any URL.",
     fallback:
       "Almost done! Last big step: your background check — it's already included in your membership, no extra charge. " +
       "Tap the link below to review and authorize it (about a minute). Checkr will then email you a secure link to finish — your SSN and date of birth go directly to Checkr, never to me. " +
-      "Once it clears (usually 1–3 days), you're approved and families can book you.",
+      "I'll text you the moment it clears — then you're approved and families can book you.",
     maxTokens: 150,
   }));
   // Rich preview card (2026-07-12): /bgcheck is served through the
@@ -3442,10 +3443,10 @@ export async function confirmBgcheckConsent(
       audience: "caregiver",
       language: session.preferredLanguage === "es" ? "es" : "en",
       context:
-        `The caregiver just reviewed and authorized their background check on Evia's secure page. Naturally confirm: authorization received, and Checkr has emailed them a secure link${email ? ` at ${email}` : ""} to finish — about 5 minutes, and their SSN and date of birth are entered directly with Checkr, never with Evia. Checkr re-sends the email daily if they miss it. You'll text them the moment results come in, usually within 1–3 days — then families can book them. Do NOT include any URL.`,
+        `The caregiver just reviewed and authorized their background check on Evia's secure page. Naturally confirm: authorization received, and Checkr has emailed them a secure link${email ? ` at ${email}` : ""} to finish — about 5 minutes, and their SSN and date of birth are entered directly with Checkr, never with Evia. Checkr re-sends the email daily if they miss it. You'll text them the moment results come in — then families can book them. Never promise a specific turnaround time. Do NOT include any URL.`,
       fallback:
         `Authorization received! Checkr just emailed you a secure link${email ? ` at ${email}` : ""} to finish up — about 5 minutes, and your SSN and date of birth go directly to Checkr, never to me. ` +
-        `I'll text you the moment your results are in (usually 1–3 days) — then families can book you.`,
+        `I'll text you the moment your results are in — then families can book you.`,
       maxTokens: 130,
     }));
   }
@@ -3523,7 +3524,7 @@ export async function sendBgCheckRenewalLink(phone: string, chatId: string, sess
   await sendMessage(chatId, "Here's your background check renewal link - usually about 5 minutes:");
   await sendMessage(chatId, { parts: [{ type: "link", value: inviteUrl }] });
   resolveCommitment(phone, "link", "link_sent").catch(() => {});
-  await sendMessage(chatId, "I'll text you the moment results come in (usually 1–3 days). Bookings stay paused until it clears.");
+  await sendMessage(chatId, "I'll text you the moment results come in. Bookings stay paused until it clears.");
 }
 
 async function handleCaregiverSendStripeConnect(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -5122,19 +5123,19 @@ async function handleJobConfirmPost(
 // an entry fall back to the generic prompt. Money/compliance facts only — keep
 // each entry short, the model weaves in what's relevant.
 const MEMBERSHIP_STEP_FACTS =
-  "The $54.99/year caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, " +
+  `The ${caregiverAnnualDisplay()} caregiver membership INCLUDES their required background check (no separate charge) and unlocks applying to jobs, ` +
   "getting booked, and Evia's scheduling + payout tools. It renews yearly. Right after payment comes the background-check step; " +
-  "once it clears (usually 1–3 days) they're approved and families can book them. The optional Approved Driver (MVR) check is a one-time $11.50 add-on " +
-  "charged together with the membership in the same checkout — it does not change the $54.99 annual renewal.";
+  `Evia texts them the moment it clears — then they're approved and families can book them (never promise a specific turnaround time). The optional Approved Driver (MVR) check is a one-time ${mvrDisplay()} add-on ` +
+  `charged together with the membership in the same checkout — it does not change the ${caregiverAnnualAmount()} annual renewal.`;
 const BGCHECK_CONSENT_STEP_FACTS =
   "Their background check is already paid for — included in the membership, no extra charge. The link Evia sent opens Evia's secure page to review " +
   "the FCRA disclosure and authorize the check (it asks for their LEGAL name because records are searched against it). After they authorize, Checkr — " +
   "the background-check company — emails them a secure link to finish; SSN and date of birth are entered directly with Checkr and never stored by Evia. " +
-  "Results usually take 1–3 days; once clear they're approved and families can book them.";
+  "Evia texts them the moment results clear — then they're approved and families can book them (never promise a specific turnaround time).";
 const BGCHECK_WAIT_STEP_FACTS =
   "Their background check is with Checkr now, already paid for via the membership. If they haven't finished Checkr's form, the secure link is in their " +
-  "email from Checkr (re-sent daily; Evia can text it again too). Results usually take 1–3 days after finishing; Evia texts them the moment it clears — " +
-  "then they're approved and families can book them.";
+  "email from Checkr (re-sent daily; Evia can text it again too). Evia texts them the moment it clears — " +
+  "then they're approved and families can book them (never promise a specific turnaround time).";
 const PAYOUTS_STEP_FACTS =
   "Their background check cleared — they're approved on Evia. The payout link sets up their Stripe account so they get paid after each visit: " +
   "earnings pay out daily automatically, and instant payouts are free.";
@@ -5146,10 +5147,10 @@ const DOCUMENTS_STEP_FACTS =
   "The link Evia sent opens a phone-friendly upload page. After this comes the optional Approved Driver (MVR) question, then activating their membership.";
 const MVR_STEP_FACTS =
   "The Approved Driver check is an OPTIONAL one-time add-on: it adds a Motor Vehicle Record (driving) check so families who need a driver see a verified-driver " +
-  "badge on their profile. It's a one-time $11.50 charge and does NOT change their $54.99 annual membership — entirely their choice, and they can add it " +
+  `badge on their profile. It's a one-time ${mvrDisplay()} charge and does NOT change their ${caregiverAnnualAmount()} annual membership — entirely their choice, and they can add it ` +
   "anytime later by texting Evia or from the Payments page.";
 const CLIENT_PAYMENT_STEP_FACTS =
-  "The family membership is $29.95/month — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. " +
+  `The family membership is ${clientMonthlyDisplay()} — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. ` +
   "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, Evia starts finding caregivers.";
 const CLIENT_IDENTITY_STEP_FACTS =
   "Before payment, Evia runs a quick one-time identity check through Stripe Identity — it's secure, takes about 30 seconds, and keeps every family on the platform " +

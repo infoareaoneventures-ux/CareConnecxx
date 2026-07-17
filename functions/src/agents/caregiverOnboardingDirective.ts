@@ -8,7 +8,8 @@
 // Checkr background check, Stripe Connect payouts), which the loop must never
 // attempt itself.
 //
-// Pure function over the onboardingContract — no I/O, no heavy imports.
+// Pure function over the onboardingContract — no I/O; value imports are
+// display constants only (config/pricing, marketRateRange's static FALLBACK_RANGE).
 // Internal identifiers keep the legacy "cara"/caregiver naming; every
 // user-facing string says "Evia".
 
@@ -16,6 +17,8 @@ import {
   CAREGIVER_REQUIRED_FIELDS,
   missingRequiredFields,
 } from "./onboardingContract";
+import { FALLBACK_RANGE } from "../utils/marketRateRange";
+import { caregiverAnnualDisplay } from "../config/pricing";
 
 // Human-readable label for each required caregiver field, used in the
 // known/missing checklist. Order of asks comes from CAREGIVER_REQUIRED_FIELDS.
@@ -33,7 +36,9 @@ export const CAREGIVER_FIELD_LABEL: Record<string, string> = {
 
 // Static fallback shown when the caller didn't fetch the live range (tests,
 // unexpected paths). Live callers pass utils/marketRateRange's getMarketRateText().
-const DEFAULT_RATE_RANGE_TEXT = "$18–28/hr";
+// Derived from the same FALLBACK_RANGE that getMarketRateText falls back to,
+// so the two static hints can never drift apart (R7 sibling — no re-typed literals).
+const DEFAULT_RATE_RANGE_TEXT = `$${FALLBACK_RANGE.min}–${FALLBACK_RANGE.max}/hr`;
 
 /**
  * Build the caregiver onboarding system-prompt block for the data collected so
@@ -102,7 +107,7 @@ export function buildCaregiverOnboardingDirective(
     `  - The name you collect is the caregiver you're texting — they are signing THEMSELVES up for work. If they mention a past client's name, that is never their own name.`,
     `  - JOB TYPE: save jobType as their primary preference (occasional, part_time, or full_time). If they clearly want MORE than one ("part-time but I'd take occasional weekend work too"), ALSO call save_onboarding_field("jobTypes", ["part_time","occasional"]) with every type they named — families see all of them.`,
     `  - RATE: share the typical range (${rateRangeText}) if they seem unsure, but their rate is THEIR call - never pressure them up or down. EMAIL: mention it's used to set up their payout account. BIO: families see it on their profile; a sentence or two in their own words is plenty. If they clearly choose to skip the bio, call save_onboarding_field with fieldName "bio" and fieldValue "SKIP" so the verified pipeline can record the opt-out.`,
-    `  - MONEY / TRUST QUESTIONS: if they ask how they get paid, whether this is legit, what it costs, or about the background check — answer briefly and honestly (they set their own rate; they get paid after each visit through their payout account; membership is $54.99/year (covers the required background check) and comes AFTER their profile; a background check is required for all caregivers) — then return to the next needed item. Never dodge, never oversell.`,
+    `  - MONEY / TRUST QUESTIONS: if they ask how they get paid, whether this is legit, what it costs, or about the background check — answer briefly and honestly (they set their own rate; they get paid after each visit through their payout account; membership is ${caregiverAnnualDisplay()} (covers the required background check) and comes AFTER their profile; a background check is required for all caregivers) — then return to the next needed item. Never dodge, never oversell.`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
     `  - Voice memos work here: they can tap-and-hold to send one instead of typing. Offer this ONCE per conversation, warmly and in your own words (e.g. "if typing it all out is a pain, just send me a voice memo — I'll listen") — the first time you ask an open-ended question (their caregiving story, their bio), or sooner if their replies look effortful (very short fragments, heavy typos). Check the conversation: if you've already offered it, never repeat it.`,
     ``,

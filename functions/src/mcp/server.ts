@@ -47,6 +47,7 @@ export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
 ]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
+import { caregiverAnnualAmount, clientMonthlyAmount } from "../config/pricing";
 import { logAgentAction } from "../observability/actionLedger";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import {
@@ -6426,7 +6427,7 @@ async function executeToolCall(
         if (!membershipActive) {
           missing.push({
             item: "membership payment",
-            detail: "Their $54.99/yr membership hasn't been recorded as paid.",
+            detail: `Their ${caregiverAnnualAmount()}/yr membership hasn't been recorded as paid.`,
             fix: "send_onboarding_link (linkType caregiver_membership)",
           });
         }
@@ -6495,7 +6496,7 @@ async function executeToolCall(
         if (!membershipActive) {
           missing.push({
             item: "membership payment",
-            detail: "Their $29.95/mo membership isn't active — Evia can't start the caregiver search without it.",
+            detail: `Their ${clientMonthlyAmount()}/mo membership isn't active — Evia can't start the caregiver search without it.`,
             fix: "send_onboarding_link (linkType client_payment)",
           });
         }

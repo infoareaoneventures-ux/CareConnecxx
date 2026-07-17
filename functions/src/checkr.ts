@@ -677,8 +677,8 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
             // helper falls back to sendToPhone for session-less caregivers).
             await sendBgcheckNoticeToCaregiver(cgData.phone, caregiverUid,
               `Hi ${(cgData.name as string | undefined)?.split(" ")[0] ?? "there"} — ` +
-              `your background check is under review. This is normal and usually takes a few business days. ` +
-              `Our team will reach out if anything is needed. Hang tight.`);
+              `your background check is under review. This is normal — our team will reach out if anything is needed, ` +
+              `and I'll text you the moment it's resolved. Hang tight.`);
             // Ack flag lands after the send so it also lands on a session the
             // helper's sendToPhone fallback just created.
             await db.collection("agent_sessions").doc(cgData.phone).update({

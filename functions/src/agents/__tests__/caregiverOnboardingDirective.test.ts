@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { buildOnboardingDirective } from "../onboardingDirective";
 import { buildCaregiverOnboardingDirective, CAREGIVER_FIELD_LABEL } from "../caregiverOnboardingDirective";
 import { CAREGIVER_REQUIRED_FIELDS } from "../onboardingContract";
+import { FALLBACK_RANGE } from "../../utils/marketRateRange";
+import { caregiverAnnualDisplay } from "../../config/pricing";
 
 // Mirrors onboardingDirective.test.ts for the caregiver role: same tone
 // contract, same tool mechanics, plus the caregiver-specific gate-handoff
@@ -161,5 +163,15 @@ describe("buildCaregiverOnboardingDirective", () => {
   it("user-facing brand is Evia (never Cara) in the directive prose", () => {
     const d = buildCaregiverOnboardingDirective({});
     expect(d).not.toMatch(/\bCara\b/);
+  });
+
+  it("default rate-range hint derives from marketRateRange's FALLBACK_RANGE (U5, no re-typed literal)", () => {
+    const d = buildCaregiverOnboardingDirective({});
+    expect(d).toContain(`$${FALLBACK_RANGE.min}–${FALLBACK_RANGE.max}/hr`);
+  });
+
+  it("membership price in the money/trust line comes from config/pricing (R7)", () => {
+    const d = buildCaregiverOnboardingDirective({});
+    expect(d).toContain(`membership is ${caregiverAnnualDisplay()}`);
   });
 });

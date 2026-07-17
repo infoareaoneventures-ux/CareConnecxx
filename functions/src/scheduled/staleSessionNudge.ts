@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { getMarketRateText } from "../utils/marketRateRange";
+import { caregiverAnnualDisplay, clientMonthlyDisplay } from "../config/pricing";
 import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { AgentSession } from "../linq/client";
@@ -168,8 +169,8 @@ export const sendStaleSessionNudges = functions.pubsub
             context = `${firstName || "This caregiver"} stalled before adding a profile photo. Warmly nudge: a clear headshot makes families much more likely to request an interview, and they can reply here to get the upload link again.`;
             fallback = `${greeting} Your profile is almost live.\n\nAdding a photo makes families much more likely to request an interview. A clear headshot is all you need. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_membership" || step === "caregiver_awaiting_membership") {
-            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their $54.99/year membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
-            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour $54.99/year membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
+            context = `${firstName || "This caregiver"} stalled right before activating membership. Warmly nudge: their ${caregiverAnnualDisplay()} membership includes their required background check and unlocks getting booked and Evia's payout tools, and they can reply here to get the link again.`;
+            fallback = `${greeting} You're one step from being able to apply to jobs near you.\n\nYour ${caregiverAnnualDisplay()} membership includes your background check and unlocks getting booked and Evia's payout tools. Reply here and I'll send the link again.`;
           } else if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
             context = `${firstName || "This caregiver"} stalled on uploading certifications (CNA, HHA, etc.). Warmly nudge: they can upload now or reply SKIP to keep going, and reply here to get the upload link again. You MUST mention they can reply "SKIP" to continue.`;
             fallback = `${greeting} Almost done — just your certifications left (CNA, HHA, etc.).\n\nYou can upload them now or reply SKIP to keep going. Reply here and I'll send the upload link again.`;
@@ -189,11 +190,11 @@ export const sendStaleSessionNudges = functions.pubsub
           }
         } else {
           if (step === "client_send_payment" || step === "client_awaiting_payment") {
-            // Accurate money copy (2026-07-09): this checkout is a $29.95/month
-            // subscription that bills immediately — never claim "no charges
-            // until you book" or frame it as card-on-file.
-            context = `${firstName || "This family member"} stalled at the last step — starting their $29.95/month Evia membership, which is what lets Evia begin finding and coordinating caregivers. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
-            fallback = `${greeting} The last step is starting your membership ($29.95/month) so I can begin finding caregivers for you.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
+            // Accurate money copy (2026-07-09): this checkout is a monthly
+            // subscription (clientMonthlyDisplay) that bills immediately — never
+            // claim "no charges until you book" or frame it as card-on-file.
+            context = `${firstName || "This family member"} stalled at the last step — starting their ${clientMonthlyDisplay()} Evia membership, which is what lets Evia begin finding and coordinating caregivers. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
+            fallback = `${greeting} The last step is starting your membership (${clientMonthlyDisplay()}) so I can begin finding caregivers for you.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
           } else if (step === "client_awaiting_identity") {
             context = `${firstName || "This family member"} stalled on a quick identity check. Warmly reassure: it's a 30-second step that keeps every family on the platform safe, and they can reply here to get a fresh link.`;
             fallback = `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\nReply here and I'll send you a fresh link.`;

@@ -4,6 +4,7 @@ import {
   timesheetAutoApprovalEnabled,
   isRoutingShadowEnabled,
   isConvergenceFlipped,
+  caraOutputGuardEnabled,
 } from "./featureFlags";
 
 describe("realWorldHealthcareActionsEnabled (H-U9)", () => {
@@ -58,6 +59,27 @@ describe("routing convergence flags (U6/U10)", () => {
     process.env.CONVERGENCE_FLIPPED = "reminder_management";
     expect(isConvergenceFlipped("reminder_management")).toBe(true);
     expect(isConvergenceFlipped("refund")).toBe(false);
+  });
+});
+
+// Hallucination hardening U1: KILL switch (default ON), not a launch gate —
+// off only when the env var is exactly "false".
+describe("caraOutputGuardEnabled (hallucination U1)", () => {
+  afterEach(() => { delete process.env.CARA_OUTPUT_GUARD_ENABLED; });
+
+  it("defaults ON when the env var is unset", () => {
+    delete process.env.CARA_OUTPUT_GUARD_ENABLED;
+    expect(caraOutputGuardEnabled()).toBe(true);
+  });
+  it("is OFF only when exactly 'false'", () => {
+    process.env.CARA_OUTPUT_GUARD_ENABLED = "false";
+    expect(caraOutputGuardEnabled()).toBe(false);
+  });
+  it("stays ON for any other value", () => {
+    process.env.CARA_OUTPUT_GUARD_ENABLED = "true";
+    expect(caraOutputGuardEnabled()).toBe(true);
+    process.env.CARA_OUTPUT_GUARD_ENABLED = "0";
+    expect(caraOutputGuardEnabled()).toBe(true);
   });
 });
 

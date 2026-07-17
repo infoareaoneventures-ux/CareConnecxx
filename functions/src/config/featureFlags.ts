@@ -44,6 +44,16 @@ export function multiRecipientScopingEnabled(): boolean {
   return process.env.MULTI_RECIPIENT_SCOPING_ENABLED !== "false";
 }
 
+// Model-output guard on generateCaraMessage (hallucination hardening U1,
+// 2026-07-17). Default ON — this is a KILL switch, not a launch gate: off
+// ("false") reverts generateCaraMessage to delivering raw model output without
+// a redeploy if the guard ever false-positives on legitimate copy. The guard
+// itself is fail-open (never throws, never blocks on internal error); this
+// switch only disables the meta-response/URL rejection → fallback behavior.
+export function caraOutputGuardEnabled(): boolean {
+  return process.env.CARA_OUTPUT_GUARD_ENABLED !== "false";
+}
+
 // U6: routing-convergence shadow comparison. OFF by default and scoped per flow:
 // ROUTING_CONVERGENCE_SHADOW is a comma-separated list of flow keys for which the
 // shadow harness runs (e.g. "reminder_management,modify_schedule"). A flow is

@@ -24,6 +24,56 @@ const db = admin.firestore();
 export const HISTORY_WINDOW = 24;  // recent messages kept verbatim
 export const ROLLUP_TRIGGER = 30;  // start folding once live messages exceed this
 
+// Window guardrail (hallucination hardening U3): transport-recorded outbound
+// rows (scheduled nudges, gate messages — source: "outbound_transport") now
+// share the window with real conversation turns, and a week of nudges must not
+// displace everything the user ever said. getConversationHistory over-fetches
+// and composes the window here, guaranteeing at least the last
+// MIN_USER_ROWS_KEPT user-role rows survive.
+export const HISTORY_OVERFETCH_LIMIT = 60;
+export const MIN_USER_ROWS_KEPT = 6;
+
+export interface HistoryRow {
+  role:    "user" | "assistant";
+  content: string;
+  /** "outbound_transport" for transport-recorded rows; undefined = regular. */
+  source?: string;
+}
+
+/**
+ * Compose the returned history window from chronologically-ordered rows:
+ * the most recent HISTORY_WINDOW messages, but with at least the last
+ * MIN_USER_ROWS_KEPT user-role rows guaranteed to survive. When assistant
+ * rows would displace them, the OLDEST assistant rows tagged
+ * source === "outbound_transport" are dropped first (rows without a source
+ * tag are regular turns and are never shed). Output stays chronological.
+ */
+export function composeHistoryWindow(rows: HistoryRow[]): HistoryRow[] {
+  if (rows.length <= HISTORY_WINDOW) return rows;
+
+  const selected = new Set<number>();
+  for (let i = rows.length - HISTORY_WINDOW; i < rows.length; i++) selected.add(i);
+
+  // The last MIN_USER_ROWS_KEPT user rows, newest first — newest are the most
+  // valuable, so they claim swap slots before older ones if droppables run out.
+  const requiredUsers: number[] = [];
+  for (let i = rows.length - 1; i >= 0 && requiredUsers.length < MIN_USER_ROWS_KEPT; i--) {
+    if (rows[i].role === "user") requiredUsers.push(i);
+  }
+
+  for (const userIdx of requiredUsers) {
+    if (selected.has(userIdx)) continue;
+    const droppable = [...selected]
+      .filter((i) => rows[i].role === "assistant" && rows[i].source === "outbound_transport")
+      .sort((a, b) => a - b)[0];
+    if (droppable === undefined) break; // nothing safe to shed — keep the window as-is
+    selected.delete(droppable);
+    selected.add(userIdx);
+  }
+
+  return [...selected].sort((a, b) => a - b).map((i) => rows[i]);
+}
+
 // Fire this AFTER the user's reply is sent so it never adds latency, but still
 // await it at the call site: Gen-1 functions throttle CPU once the HTTP response is
 // sent, so un-awaited background work gets killed.

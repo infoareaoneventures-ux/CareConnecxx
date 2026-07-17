@@ -54,6 +54,16 @@ export function caraOutputGuardEnabled(): boolean {
   return process.env.CARA_OUTPUT_GUARD_ENABLED !== "false";
 }
 
+// Outbound history recording at the transport choke point (hallucination
+// hardening U3, 2026-07-17). Default ON — this is a KILL switch, not a launch
+// gate: off ("false") stops recordOutboundHistory from writing outbound sends
+// into agent_conversations/{phone}/messages without a redeploy (e.g. if the
+// expanded collection's redaction/retention posture needs a founder decision
+// first). Recording is fire-and-forget and never blocks delivery either way.
+export function outboundHistoryRecordEnabled(): boolean {
+  return process.env.OUTBOUND_HISTORY_RECORD_ENABLED !== "false";
+}
+
 // U6: routing-convergence shadow comparison. OFF by default and scoped per flow:
 // ROUTING_CONVERGENCE_SHADOW is a comma-separated list of flow keys for which the
 // shadow harness runs (e.g. "reminder_management,modify_schedule"). A flow is

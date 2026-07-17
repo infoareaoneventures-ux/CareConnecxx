@@ -122,11 +122,15 @@ vi.mock("./caraAgent", () => ({ buildClickableMessage: (s: string) => s }));
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn(() => Promise.resolve(null)) }));
 
 // contextManagement: the loop needs patch/truncate (no-op) in addition to the
-// two the pure-fn test stubbed. HISTORY_WINDOW is a plain constant read directly
-// by getConversationHistory's .limit(HISTORY_WINDOW + 1) — must mirror the real
-// module's value or that call throws on an undefined mock export.
+// two the pure-fn test stubbed. HISTORY_OVERFETCH_LIMIT is a plain constant read
+// directly by getConversationHistory's .limit(...) — must mirror the real
+// module's value or that call throws on an undefined mock export; the window
+// composer passes rows through untouched (guardrail behavior is covered by
+// qaAgent.history.test.ts).
 vi.mock("./contextManagement", () => ({
-  HISTORY_WINDOW:         24,
+  HISTORY_WINDOW:           24,
+  HISTORY_OVERFETCH_LIMIT:  60,
+  composeHistoryWindow:     (rows: unknown[]) => rows,
   maybeRollUpHistory:     vi.fn(() => Promise.resolve()),
   buildToolResultContent: vi.fn(async (_uid: string, _name: string, result: unknown) => JSON.stringify(result)),
   patchDanglingToolCalls: vi.fn(() => 0),

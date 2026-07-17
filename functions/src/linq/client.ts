@@ -484,6 +484,10 @@ export interface SendOptions {
   /** Internal — set by the drain sweep so a still-blocked send reports back
    *  instead of re-enqueueing itself. */
   _noQueue?: boolean;
+  /** Internal — set by callers whose text is already persisted to
+   *  agent_conversations (qaAgent's saveConversationTurn paths) or is filler,
+   *  so the transport's outbound-history recorder doesn't double-write. */
+  skipHistoryRecord?: boolean;
 }
 
 /**
@@ -518,6 +522,7 @@ async function queueOrDrop(
       ...(typeof message === "string" ? { text: message } : { message }),
       superviseContext,
       preferredService: opts.preferredService,
+      ...(opts.skipHistoryRecord ? { skipHistoryRecord: true } : {}),
       reason,
       source: opts.source ?? (target.kind === "chat" ? "safeSend" : "sendToPhone"),
       ttlMs: opts.queueTtlMs,
@@ -558,6 +563,10 @@ export async function sendMessage(
         target: { kind: "chat", chatId },
         ...(typeof textOrMessage === "string" ? { text: textOrMessage } : { message: textOrMessage }),
         ...(opts.preferredService ? { preferredService: opts.preferredService } : {}),
+        // Preserved across redelivery: a saveConversationTurn-backed reply that
+        // dead-letters must not get recorded a second time when the drain
+        // re-enters sendMessageDeliver.
+        ...(opts.skipHistoryRecord ? { skipHistoryRecord: true } : {}),
         reason: "send_failed",
         source: opts.source ?? "sendMessage:transport_failure",
         ttlMs:  opts.queueTtlMs ?? 60 * 60 * 1000,
@@ -583,6 +592,7 @@ async function sendMessageDeliver(
 
   // Mirror Evia's outbound message into the web chat inbox (threads/{id}/messages).
   // Fire-and-forget — mirroring must never delay or block SMS delivery.
+  let mirrorText = "";
   try {
     const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
     // Mirror the cleaned text so the web inbox matches what actually went out
@@ -593,9 +603,25 @@ async function sendMessageDeliver(
     const rawMirror = typeof textOrMessage === "string"
       ? lintPreservingLayout(textOrMessage)
       : extractMirrorText(textOrMessage);
-    const mirrorText = redactPii(rawMirror).text;
+    mirrorText = redactPii(rawMirror).text;
     void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
   } catch { /* non-critical */ }
+
+  // Outbound history recorder (hallucination hardening U3 / R4). Fired AFTER
+  // the first successful transport return below — never beside the mirror
+  // block above — so a hard transport failure leaves no phantom history row;
+  // the dead-letter drain re-enters this function and records exactly once on
+  // the successful redelivery. Records ONCE per logical sendMessage call (not
+  // per split bubble) using the same cleaned mirror text, so history matches
+  // what actually went out. Fire-and-forget: never delays or blocks SMS.
+  let historyRecorded = false;
+  const recordHistoryOnce = (): void => {
+    if (historyRecorded || opts.skipHistoryRecord || !mirrorText) return;
+    historyRecorded = true;
+    void import("./threadMirror")
+      .then(({ recordOutboundHistory }) => recordOutboundHistory({ chatId, text: mirrorText }))
+      .catch(() => { /* non-critical — recorder is itself fail-soft */ });
+  };
 
   // Structured callers (already LinqMessage) send as-is. Plain strings may
   // contain URLs — split them into text + per-URL link messages so iMessage/
@@ -606,6 +632,7 @@ async function sendMessageDeliver(
         ? { ...textOrMessage, preferred_service: preferredService }
         : textOrMessage;
     const r = await sendOneMessage(chatId, merged);
+    recordHistoryOnce();
     await trackForcedIMessage(r.message_id, chatId, merged);
     return r;
   }
@@ -615,6 +642,7 @@ async function sendMessageDeliver(
   if (urls.length === 0) {
     const msg: LinqMessage = { parts: [{ type: "text", value: textOrMessage }], ...svc };
     const r = await sendOneMessage(chatId, msg);
+    recordHistoryOnce();
     await trackForcedIMessage(r.message_id, chatId, msg);
     return r;
   }
@@ -625,6 +653,9 @@ async function sendMessageDeliver(
   if (textOnly) {
     const msg: LinqMessage = { parts: [{ type: "text", value: textOnly }], ...svc };
     const r = await sendOneMessage(chatId, msg);
+    // First part delivered — record the FULL mirror text once; the link
+    // bubbles below are part of the same logical message.
+    recordHistoryOnce();
     firstId = r.message_id;
     await trackForcedIMessage(r.message_id, chatId, msg);
     // Small delay so the link cards arrive AFTER the text bubble, not raced
@@ -640,6 +671,7 @@ async function sendMessageDeliver(
     if (i > 0) await new Promise<void>((res) => setTimeout(res, 600));
     const msg: LinqMessage = { parts: [{ type: "link", value: urls[i] }], ...svc };
     const r = await sendOneMessage(chatId, msg);
+    recordHistoryOnce(); // no-op if the textOnly part already recorded
     await trackForcedIMessage(r.message_id, chatId, msg);
     if (!firstId) firstId = r.message_id;
   }
@@ -792,7 +824,9 @@ export async function signalThinking(chatId: string, service: LinqService): Prom
     await startTyping(chatId);
     return;
   }
-  await sendMessage(chatId, "On it — one sec…").catch(() => {/* best-effort */});
+  // Filler: never recorded to agent_conversations — a typing signal is not a
+  // conversational turn (hallucination hardening U3).
+  await sendMessage(chatId, "On it — one sec…", { skipHistoryRecord: true }).catch(() => {/* best-effort */});
 }
 
 // ── Voice memos ───────────────────────────────────────────────────────────────
@@ -1135,6 +1169,22 @@ export async function sendToPhone(
       phone,
     };
     await ref.set(newSession);
+
+    // First-contact sends deliver via createChat, bypassing sendMessageDeliver's
+    // recorder — record here AFTER the successful createChat return and AFTER
+    // the session doc exists (resolvePhones reads agent_sessions). Same cleaned
+    // text contract as the mirror: lint + redact (U3 / R4).
+    if (!opts.skipHistoryRecord) {
+      void (async () => {
+        try {
+          const { recordOutboundHistory, extractMirrorText } = await import("./threadMirror");
+          const raw = typeof textOrMessage === "string"
+            ? lintPreservingLayout(textOrMessage)
+            : extractMirrorText(textOrMessage);
+          await recordOutboundHistory({ chatId: chat_id, text: redactPii(raw).text });
+        } catch { /* non-critical — recorder is itself fail-soft */ }
+      })();
+    }
 
     // Best-practice: share contact card after first outbound on iMessage (non-blocking)
     if (newSession.service === "iMessage") {

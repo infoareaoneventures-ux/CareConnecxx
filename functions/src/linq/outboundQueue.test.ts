@@ -176,6 +176,26 @@ describe("enqueueOutbound", () => {
     expect(doc.expiresAt).toBe(new Date(NOW + sixHours).toISOString());
   });
 
+  it("persists skipHistoryRecord so a redelivered send keeps skipping the history recorder (U3)", async () => {
+    await enqueueOutbound({
+      target: { kind: "chat", chatId: "chat-2" },
+      text:   "QA reply already persisted by saveConversationTurn",
+      reason: "send_failed",
+      skipHistoryRecord: true,
+    });
+    const doc = [...hoisted.queueDocs.values()][0];
+    expect(doc.skipHistoryRecord).toBe(true);
+  });
+
+  it("defaults skipHistoryRecord to false when the caller does not set it", async () => {
+    await enqueueOutbound({
+      target: { kind: "phone", phone: "+15550001111" },
+      text:   "hello",
+      reason: "circuit_open",
+    });
+    expect([...hoisted.queueDocs.values()][0].skipHistoryRecord).toBe(false);
+  });
+
   it("returns false (degrades to drop) when the queue write fails — never throws", async () => {
     hoisted.setQueueAddThrow(true);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -215,6 +235,17 @@ describe("drainOutboundQueue", () => {
       "Your Thursday visit was cancelled.",
       { phone: "+15550002222", role: "client" },
       expect.objectContaining({ _noQueue: true }),
+    );
+  });
+
+  it("replays skipHistoryRecord on redelivery so the recorder stays skipped (U3)", async () => {
+    hoisted.queueDocs.set("q1", queuedDoc({ skipHistoryRecord: true }));
+    const r = await drainOutboundQueue();
+    expect(r.sent).toBe(1);
+    expect(sendToPhone).toHaveBeenCalledWith(
+      "+15550001111",
+      "Your Thursday visit was cancelled.",
+      expect.objectContaining({ skipHistoryRecord: true, _noQueue: true }),
     );
   });
 

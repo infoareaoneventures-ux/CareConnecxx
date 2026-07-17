@@ -16,7 +16,8 @@ import {
   buildToolResultContent,
   patchDanglingToolCalls,
   truncateOldToolCallArgs,
-  HISTORY_WINDOW,
+  composeHistoryWindow,
+  HISTORY_OVERFETCH_LIMIT,
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import {
@@ -177,15 +178,19 @@ async function getCaregiverTodayAppointment(caregiverId: string) {
 
 // ── Conversation memory ───────────────────────────────────────────────────────
 
-async function getConversationHistory(
+// Exported for tests (outbound-history window guardrail, U3).
+export async function getConversationHistory(
   phone: string
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
   const [recentSnap, summarySnap] = await Promise.all([
     db.collection("agent_conversations").doc(phone).collection("messages")
       .orderBy("timestamp", "desc")
-      // +1 headroom so a summary doc inside the window can't shrink the
-      // verbatim history below HISTORY_WINDOW real messages.
-      .limit(HISTORY_WINDOW + 1)
+      // Over-fetch well past HISTORY_WINDOW (U3 guardrail): transport-recorded
+      // outbound rows (scheduled nudges, gate messages) can crowd the window,
+      // and composeHistoryWindow needs older rows available to guarantee the
+      // last user turns survive. Headroom also absorbs a summary doc inside
+      // the window.
+      .limit(HISTORY_OVERFETCH_LIMIT)
       .get(),
     db.collection("agent_conversations").doc(phone).collection("messages")
       .where("role", "==", "summary")
@@ -193,13 +198,19 @@ async function getConversationHistory(
       .get(),
   ]);
 
-  const messages = recentSnap.docs
+  const rows = recentSnap.docs
     .filter(d => d.data().role !== "summary")
     .map(d => ({
       role:    d.data().role as "user" | "assistant",
       content: sanitizePromptContext(d.data().content as string),
+      // Transport-recorded rows carry source: "outbound_transport"; missing
+      // source = regular turn (never shed by the window composer).
+      ...(typeof d.data().source === "string" ? { source: d.data().source as string } : {}),
     }))
     .reverse();
+
+  const messages = composeHistoryWindow(rows)
+    .map(({ role, content }) => ({ role, content }));
 
   if (!summarySnap.empty) {
     const summaryText = sanitizePromptContext(summarySnap.docs[0].data().content as string, 3000);
@@ -886,7 +897,17 @@ async function getPrefetchedContext(phone: string): Promise<{
 // Exported so the commitment sweep (commitmentTracker.ts) can deliver a
 // skipSend re-run's reply through the same chunking path.
 
-export async function sendSplit(chatId: string, text: string): Promise<void> {
+// `opts` is threaded through to sendMessage untouched. NEVER set
+// skipHistoryRecord inside this helper: sendSplit is also the delivery path
+// for sends that are NOT otherwise persisted (commitmentTracker's proactive
+// follow-ups, the DND quiet-hours ack) and those must keep being recorded by
+// the transport. Only the three saveConversationTurn-backed call sites (main
+// reply, checkpoint resume, runQuickReply) pass the skip flag themselves.
+export async function sendSplit(
+  chatId: string,
+  text: string,
+  opts?: import("../linq/client").SendOptions,
+): Promise<void> {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 300) {
@@ -900,7 +921,7 @@ export async function sendSplit(chatId: string, text: string): Promise<void> {
 
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await new Promise<void>((r) => setTimeout(r, 1000));
-    await sendMessage(chatId, buildClickableMessage(chunks[i]));
+    await sendMessage(chatId, buildClickableMessage(chunks[i]), opts ?? {});
   }
 }
 
@@ -1367,7 +1388,9 @@ export async function runQaAgent(params: {
       // re-silencing the family.
       resumedReply = await supervise(resumedReply, { phone, role: userType }).catch(() => resumedReply);
       await saveConversationTurn(phone, text, resumedReply);
-      await sendSplit(chatId, resumedReply);
+      // saveConversationTurn just persisted this reply — skip the transport's
+      // outbound-history recorder so the resumed turn lands exactly once (U3).
+      await sendSplit(chatId, resumedReply, { skipHistoryRecord: true });
       await clearCheckpoint(phone);
       metrics.historyRolledUp = await maybeRollUpHistory(phone);
       emitTurnMetrics(metrics, { reply: resumedReply });
@@ -2205,7 +2228,8 @@ export async function runQaAgent(params: {
               block.name === "perform_web_action" &&
               ((block.input as any)?.actionType === "browse" || (block.input as any)?.loginAction)
             ) {
-              await sendSplit(chatId, "On it — give me a moment.").catch(() => {});
+              // Filler, same class as signalThinking — never recorded (U3).
+              await sendSplit(chatId, "On it — give me a moment.", { skipHistoryRecord: true }).catch(() => {});
             }
 
             const toolHandler = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
@@ -2851,7 +2875,9 @@ export async function runQaAgent(params: {
     }
 
     await saveConversationTurn(phone, text, reply);
-    if (!skipSend) await sendSplit(chatId, reply);
+    // saveConversationTurn just persisted this reply — skip the transport's
+    // outbound-history recorder so the turn lands exactly once (U3).
+    if (!skipSend) await sendSplit(chatId, reply, { skipHistoryRecord: true });
 
     // Link-promise net (onboarding): the model narrated an incoming link
     // ("I'm pulling up your secure photo link — I'll send it here") without
@@ -3229,7 +3255,9 @@ export async function runQuickReply(params: {
   reply = lintMessage(redactPii(reply).text) || "Hey! How's everything going?";
 
   await saveConversationTurn(phone, text, reply);
-  await sendMessage(chatId, buildClickableMessage(reply)).catch(() => {});
+  // saveConversationTurn just persisted this reply — skip the transport's
+  // outbound-history recorder so the quick-reply turn lands exactly once (U3).
+  await sendMessage(chatId, buildClickableMessage(reply), { skipHistoryRecord: true }).catch(() => {});
   metrics.historyRolledUp = await maybeRollUpHistory(phone);
   emitTurnMetrics(metrics, { reply });
   return reply;

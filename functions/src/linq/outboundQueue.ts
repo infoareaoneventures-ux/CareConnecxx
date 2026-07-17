@@ -40,6 +40,9 @@ export interface EnqueueParams {
   message?:          LinqMessage;
   superviseContext?: SuperviseContext;
   preferredService?: SendOptions["preferredService"];
+  /** Preserved so a redelivered send keeps skipping the outbound-history
+   *  recorder (saveConversationTurn-backed replies must record exactly once). */
+  skipHistoryRecord?: boolean;
   reason:            QueueDropReason;
   /** Caller tag for observability (e.g. "safeSend", "mcp:send_caregiver_message"). */
   source?:           string;
@@ -76,6 +79,7 @@ export async function enqueueOutbound(params: EnqueueParams): Promise<boolean> {
       payloadMessage:   params.message ?? null,
       superviseContext: params.superviseContext ?? null,
       preferredService: params.preferredService ?? null,
+      skipHistoryRecord: params.skipHistoryRecord ?? false,
       reason:           params.reason,
       source:           params.source ?? "unknown",
       status:           "queued",
@@ -105,6 +109,7 @@ interface QueueDoc {
   payloadMessage:    LinqMessage | null;
   superviseContext:  SuperviseContext | null;
   preferredService:  SendOptions["preferredService"] | null;
+  skipHistoryRecord?: boolean;
   reason:            QueueDropReason;
   source:            string;
   status:            string;
@@ -209,6 +214,7 @@ export async function drainOutboundQueue(): Promise<DrainResult> {
       const payload = d.payloadMessage ?? d.payloadText ?? "";
       const opts: SendOptions = {
         ...(d.preferredService ? { preferredService: d.preferredService } : {}),
+        ...(d.skipHistoryRecord ? { skipHistoryRecord: true } : {}),
         _noQueue: true, // a still-blocked send reports back instead of re-enqueueing
       };
 

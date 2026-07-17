@@ -28,7 +28,7 @@ vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(), detectAnd
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(), isInDND: () => false }));
 vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: vi.fn(), stopTyping: vi.fn() }));
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
-vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn() }));
+vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn(), HISTORY_WINDOW: 24, HISTORY_OVERFETCH_LIMIT: 60, composeHistoryWindow: (rows: unknown[]) => rows }));
 
 import {
   hasListShape,

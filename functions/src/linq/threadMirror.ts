@@ -7,6 +7,7 @@
 // best-effort: failures are logged and never block message delivery.
 
 import * as admin from "firebase-admin";
+import { outboundHistoryRecordEnabled } from "../config/featureFlags";
 
 const db = admin.firestore();
 
@@ -21,6 +22,10 @@ const CARA_AVATAR =
 // window instead of being invisible until the instance recycles.
 const CHAT_USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const chatUserCache = new Map<string, { userIds: string[]; cachedAt: number }>();
+
+// Mirror every member of a family group, bounded by a generous cap far above
+// realistic family size to avoid an unbounded scan. Shared by both resolvers.
+const GROUP_MIRROR_LIMIT = 50;
 
 async function resolveUserIds(params: { userId?: string; chatId?: string }): Promise<string[]> {
   if (params.userId) return [params.userId];
@@ -58,12 +63,9 @@ async function resolveUserIds(params: { userId?: string; chatId?: string }): Pro
     }
     if (groupCached) chatUserCache.delete(groupKey); // expired — re-query below
 
-    // Mirror every member of a family group, bounded by a generous cap far
-    // above realistic family size to avoid an unbounded scan. We query for one
-    // more than the cap so we can tell "exactly at cap" (complete) from "over
-    // cap" (truly truncated) and only warn — rather than silently dropping
-    // members from their web inbox — in the latter case.
-    const GROUP_MIRROR_LIMIT = 50;
+    // We query for one more than the cap so we can tell "exactly at cap"
+    // (complete) from "over cap" (truly truncated) and only warn — rather than
+    // silently dropping members from their web inbox — in the latter case.
     const groupSnap = await db.collection("agent_sessions")
       .where("groupChatId", "==", params.chatId)
       .limit(GROUP_MIRROR_LIMIT + 1)
@@ -80,6 +82,110 @@ async function resolveUserIds(params: { userId?: string; chatId?: string }): Pro
   } catch (err) {
     console.warn("threadMirror: chatId->userId lookup failed", err);
     return [];
+  }
+}
+
+// chatId -> PHONE resolution for the outbound-history recorder (hallucination
+// hardening U3). Deliberately a SIBLING of resolveUserIds with its own cache:
+// resolveUserIds returns/caches the session's `userId` FIELD (a Firebase uid),
+// but agent_conversations is keyed by PHONE — which is the agent_sessions DOC
+// ID. Reusing the uid cache here would record history under the wrong key.
+const chatPhoneCache = new Map<string, { phones: string[]; cachedAt: number }>();
+
+export async function resolvePhones(chatId: string): Promise<string[]> {
+  if (!chatId) return [];
+
+  // Direct lookup first; group fan-out only when no direct session matches.
+  // Cache keys are namespaced ("direct:" vs "group:") for the same reason as
+  // resolveUserIds' cache: a chatId that happens to equal some other session's
+  // groupChatId must never return the wrong branch's cached phones.
+  try {
+    const directKey = `direct:${chatId}`;
+    const directCached = chatPhoneCache.get(directKey);
+    if (directCached && Date.now() - directCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
+      return directCached.phones;
+    }
+    if (directCached) chatPhoneCache.delete(directKey); // expired — re-query below
+
+    const directSnap = await db.collection("agent_sessions")
+      .where("chatId", "==", chatId)
+      .limit(1)
+      .get();
+
+    if (!directSnap.empty) {
+      // The agent_sessions doc id IS the phone number.
+      const phones = [directSnap.docs[0].id];
+      chatPhoneCache.set(directKey, { phones, cachedAt: Date.now() });
+      return phones;
+    }
+
+    const groupKey = `group:${chatId}`;
+    const groupCached = chatPhoneCache.get(groupKey);
+    if (groupCached && Date.now() - groupCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
+      return groupCached.phones;
+    }
+    if (groupCached) chatPhoneCache.delete(groupKey); // expired — re-query below
+
+    // Group fan-out: one row per member phone, matching the mirror's group
+    // handling. Same over-cap detection as resolveUserIds.
+    const groupSnap = await db.collection("agent_sessions")
+      .where("groupChatId", "==", chatId)
+      .limit(GROUP_MIRROR_LIMIT + 1)
+      .get();
+    if (groupSnap.docs.length > GROUP_MIRROR_LIMIT) {
+      console.warn(`threadMirror: group ${chatId} exceeded the ${GROUP_MIRROR_LIMIT}-member phone-resolution cap — some members may be missing from outbound history; investigate.`);
+    }
+    const phones = [...new Set(groupSnap.docs
+      .slice(0, GROUP_MIRROR_LIMIT)
+      .map((doc) => doc.id)
+      .filter((id): id is string => !!id))];
+    chatPhoneCache.set(groupKey, { phones, cachedAt: Date.now() });
+    return phones;
+  } catch (err) {
+    console.warn("threadMirror: chatId->phone lookup failed", err);
+    return [];
+  }
+}
+
+// Record an outbound send as an assistant turn in the QA agent's history
+// (agent_conversations/{phone}/messages) so scripted/scheduled/trigger sends
+// are visible to it afterward — the "who is Marcus" denial class (R4).
+// Fire-and-forget-safe: never throws, never blocks delivery. Schema matches
+// qaAgent's saveConversationTurn ({ role, content, timestamp: Date.now() });
+// the extra `source` tag marks transport-recorded rows so the history window
+// composer can shed them before user turns (getConversationHistory reads only
+// role/content, so the field is inert there).
+export async function recordOutboundHistory(params: {
+  chatId: string;
+  text:   string;
+}): Promise<void> {
+  try {
+    if (!outboundHistoryRecordEnabled()) return;
+
+    const text = (params.text ?? "").trim();
+    if (!text) return;
+    // Attachment-only sends carry no conversational content worth recording —
+    // extractMirrorText renders media parts as "[attachment]".
+    if (!text.replace(/\[attachment\]/g, "").trim()) return;
+
+    const phones = await resolvePhones(params.chatId);
+    if (phones.length === 0) return; // pre-session send: nothing to key by
+
+    const timestamp = Date.now();
+    await Promise.all(phones.map((phone) =>
+      db.collection("agent_conversations").doc(phone).collection("messages").add({
+        role:      "assistant",
+        content:   text,
+        timestamp,
+        source:    "outbound_transport",
+      })
+    ));
+  } catch (err) {
+    // Counts/keys only — never log message text.
+    console.warn("threadMirror: outbound history record failed (non-blocking)", {
+      chatId: params.chatId,
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

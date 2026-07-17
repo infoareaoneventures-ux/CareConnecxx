@@ -228,6 +228,8 @@ vi.mock("./contextManagement", () => ({
   patchDanglingToolCalls:    vi.fn(() => 0),
   truncateOldToolCallArgs:   vi.fn(() => 0),
   HISTORY_WINDOW:            24,
+  HISTORY_OVERFETCH_LIMIT:   60,
+  composeHistoryWindow:      (rows: unknown[]) => rows,
 }));
 vi.mock("./toolCapabilities", () => ({
   selectToolsForIntent: (tools: unknown[]) => tools,

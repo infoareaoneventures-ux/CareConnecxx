@@ -5,6 +5,7 @@ import {
   isRoutingShadowEnabled,
   isConvergenceFlipped,
   caraOutputGuardEnabled,
+  outboundHistoryRecordEnabled,
 } from "./featureFlags";
 
 describe("realWorldHealthcareActionsEnabled (H-U9)", () => {
@@ -80,6 +81,27 @@ describe("caraOutputGuardEnabled (hallucination U1)", () => {
     expect(caraOutputGuardEnabled()).toBe(true);
     process.env.CARA_OUTPUT_GUARD_ENABLED = "0";
     expect(caraOutputGuardEnabled()).toBe(true);
+  });
+});
+
+// Hallucination hardening U3: KILL switch (default ON), not a launch gate —
+// off only when the env var is exactly "false".
+describe("outboundHistoryRecordEnabled (hallucination U3)", () => {
+  afterEach(() => { delete process.env.OUTBOUND_HISTORY_RECORD_ENABLED; });
+
+  it("defaults ON when the env var is unset", () => {
+    delete process.env.OUTBOUND_HISTORY_RECORD_ENABLED;
+    expect(outboundHistoryRecordEnabled()).toBe(true);
+  });
+  it("is OFF only when exactly 'false'", () => {
+    process.env.OUTBOUND_HISTORY_RECORD_ENABLED = "false";
+    expect(outboundHistoryRecordEnabled()).toBe(false);
+  });
+  it("stays ON for any other value", () => {
+    process.env.OUTBOUND_HISTORY_RECORD_ENABLED = "true";
+    expect(outboundHistoryRecordEnabled()).toBe(true);
+    process.env.OUTBOUND_HISTORY_RECORD_ENABLED = "0";
+    expect(outboundHistoryRecordEnabled()).toBe(true);
   });
 });
 

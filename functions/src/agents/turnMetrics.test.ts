@@ -273,4 +273,45 @@ describe("emitTurnMetrics", () => {
       expect(mirrored.learnedFactsCount).toBe(0);
     });
   });
+
+  // U1 (memory grounding): typed Zep context outcome — loaded/empty/unavailable/
+  // timeout plus fetch latency, recorded without any raw memory content.
+  describe("zep context status fields", () => {
+    it("accepts and serializes zepContextStatus and zepContextLatencyMs", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.zepContextStatus = "timeout";
+      m.zepContextLatencyMs = 6003;
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.zepContextStatus).toBe("timeout");
+      expect(payload.zepContextLatencyMs).toBe(6003);
+    });
+
+    it("defaults both fields to undefined when no Zep thread was queried", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.zepContextStatus).toBeUndefined();
+      expect(payload.zepContextLatencyMs).toBeUndefined();
+    });
+
+    it("mirrors status and latency (null when unset) on quality/experiment turns", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.zepContextStatus = "unavailable";
+      m.zepContextLatencyMs = 42;
+      m.frustrationDetected = true; // forces the Firestore mirror to fire
+      emitTurnMetrics(m, { reply: "ok" });
+      let mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.zepContextStatus).toBe("unavailable");
+      expect(mirrored.zepContextLatencyMs).toBe(42);
+
+      firestoreMock.add.mockClear();
+      const bare = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      bare.frustrationDetected = true;
+      emitTurnMetrics(bare, { reply: "ok" });
+      mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.zepContextStatus).toBeNull();
+      expect(mirrored.zepContextLatencyMs).toBeNull();
+    });
+  });
 });

@@ -10,24 +10,43 @@
 import { ZepClient } from "@getzep/zep-cloud";
 import type { Zep } from "@getzep/zep-cloud";
 import * as admin from "firebase-admin";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 const db = admin.firestore();
 
 // ── Structured Zep failure logging ───────────────────────────────────────────
 // Emits a JSON log entry that Cloud Monitoring can use for alerting.
 // severity + zep_failure key are stable — set up a log-based metric on these.
+//
+// Privacy (R21): log lines carry operation + sanitized error class + an opaque
+// correlation hash only. Never raw thread IDs, Zep user IDs, query text, or
+// provider error messages (SDK messages can embed the request URL, which
+// contains the thread ID).
 
-function logZepFailure(operation: string, err: unknown, context?: Record<string, unknown>): void {
-  const code    = (err as any)?.status ?? (err as any)?.code ?? "unknown";
-  const message = (err as any)?.message ?? String(err);
+// Opaque, deterministic reference for correlating failure lines about the same
+// thread/user without exposing the identifier itself.
+function correlationHash(source?: string): string | undefined {
+  if (!source) return undefined;
+  return createHash("sha256").update(source).digest("hex").slice(0, 12);
+}
+
+function errorClassOf(err: unknown): string {
+  return err instanceof Error ? err.constructor.name : typeof err;
+}
+
+function logZepFailure(operation: string, err: unknown, correlationSource?: string): void {
+  const rawCode = (err as any)?.status ?? (err as any)?.code;
+  const code =
+    typeof rawCode === "number" || (typeof rawCode === "string" && /^[A-Za-z0-9_]{1,32}$/.test(rawCode))
+      ? rawCode
+      : "unknown";
   console.error(JSON.stringify({
     severity:  "ERROR",
     zep_failure: true,
     operation,
     error_code:  code,
-    error_message: message,
-    ...context,
+    error_class: errorClassOf(err),
+    correlation: correlationHash(correlationSource),
     timestamp: new Date().toISOString(),
   }));
 }
@@ -54,9 +73,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function withZepRetry<T>(
-  fn:       () => Promise<T>,
-  opName:   string,
-  context?: Record<string, unknown>
+  fn:                 () => Promise<T>,
+  opName:             string,
+  correlationSource?: string
 ): Promise<T> {
   const MAX_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -71,7 +90,7 @@ async function withZepRetry<T>(
         status === 429 ||                   // rate limited
         (status >= 500 && status < 600);    // server error
       if (!isRetryable || attempt === MAX_ATTEMPTS - 1) {
-        logZepFailure(opName, err, context);
+        logZepFailure(opName, err, correlationSource);
         throw err;
       }
       // Exponential back-off: 200 ms → 400 ms → 800 ms (+ jitter)
@@ -79,6 +98,44 @@ async function withZepRetry<T>(
     }
   }
   throw lastErr;
+}
+
+// ── Timeout helper ─────────────────────────────────────────────────────────────
+// Races a Zep call against a hard cap. The timer is ALWAYS cleared in finally,
+// so a fast success can never emit a delayed timeout signal, and the SDK's
+// RequestOptions abortSignal is aborted on timeout so the losing request is
+// actually cancelled instead of hanging in the background. A late rejection
+// from the aborted call resolves the already-lost branch — never an unhandled
+// rejection.
+
+type TimedOutcome<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "timeout" };
+
+async function raceZepTimeout<T>(
+  run:       (requestOptions: { abortSignal: AbortSignal }) => Promise<T>,
+  timeoutMs: number,
+): Promise<TimedOutcome<T>> {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<TimedOutcome<T>>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ kind: "timeout" });
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      run({ abortSignal: controller.signal }).then(
+        (value) => ({ kind: "value" as const, value }),
+        (error) => ({ kind: "error" as const, error }),
+      ),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ── Stable Zep userId derived from phone ──────────────────────────────────────
@@ -156,7 +213,7 @@ export async function initializeZepOnFirstContact(phone: string): Promise<void> 
     });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      logZepFailure("initializeZepOnFirstContact.user.add", err, { userId });
+      logZepFailure("initializeZepOnFirstContact.user.add", err, userId);
     }
   }
 
@@ -171,52 +228,91 @@ export async function initializeZepOnFirstContact(phone: string): Promise<void> 
     await db.collection("agent_sessions").doc(phone).set({ zepThreadId: threadId }, { merge: true });
   } catch (err: any) {
     if (!err?.message?.includes("already exists")) {
-      logZepFailure("initializeZepOnFirstContact.thread.create", err, { userId, threadId });
+      logZepFailure("initializeZepOnFirstContact.thread.create", err, userId);
     }
   }
 }
 
-// ── Add incoming user message to Zep ──────────────────────────────────────────
-// Fire-and-forget before every Claude call AND before handleOnboardingStep
+// ── Transcript write adapters ──────────────────────────────────────────────────
+// Two tiers, split so error handling is explicit at the call site:
+//   *Strict     — throws after retry exhaustion and returns the provider's
+//                 messageUuids. This is the ONLY tier the memory-operation
+//                 retry worker may call: a swallowed failure there would mark
+//                 an operation complete that never reached Zep.
+//   *BestEffort — legacy fire-and-forget for paths where a Zep miss must not
+//                 block the user turn (failure is logged, never thrown).
+// The optional `uuid` lets the worker send a deterministic per-source-turn
+// message UUID for idempotent retries (KTD5).
 
-export async function addUserMessageToZep(params: {
+export interface ZepMessageWriteResult {
+  messageUuids: string[];
+}
+
+export async function addUserMessageToZepStrict(params: {
   threadId: string;
   content: string;
   userName: string;
   sentAt?: Date;
-}): Promise<void> {
+  uuid?: string;
+}): Promise<ZepMessageWriteResult> {
   const message: Zep.Message = {
+    uuid: params.uuid,
     createdAt: (params.sentAt ?? new Date()).toISOString(),
     name: params.userName,
     role: "user",
     content: params.content,
   };
-  await withZepRetry(
+  const res = await withZepRetry(
     () => getZep().thread.addMessages(params.threadId, { messages: [message] }),
     "addUserMessageToZep",
-    { threadId: params.threadId }
-  ).catch(() => {}); // fire-and-forget: retry exhausted → logged, don't throw
+    params.threadId
+  );
+  return { messageUuids: res.messageUuids ?? [] };
 }
 
-// ── Add Evia's reply to Zep ────────────────────────────────────────────────────
-// Fire-and-forget after Claude/QA agent sends a reply
-
-export async function addAssistantMessageToZep(params: {
+export async function addAssistantMessageToZepStrict(params: {
   threadId: string;
   content: string;
-}): Promise<void> {
+  sentAt?: Date;
+  uuid?: string;
+}): Promise<ZepMessageWriteResult> {
   const message: Zep.Message = {
-    createdAt: new Date().toISOString(),
+    uuid: params.uuid,
+    createdAt: (params.sentAt ?? new Date()).toISOString(),
     name: "Evia",
     role: "assistant",
     content: params.content,
   };
-  await withZepRetry(
+  const res = await withZepRetry(
     () => getZep().thread.addMessages(params.threadId, { messages: [message] }),
     "addAssistantMessageToZep",
-    { threadId: params.threadId }
-  ).catch(() => {}); // fire-and-forget
+    params.threadId
+  );
+  return { messageUuids: res.messageUuids ?? [] };
 }
+
+// Best-effort: retry exhausted → already logged by withZepRetry, don't throw.
+
+export async function addUserMessageToZepBestEffort(params: {
+  threadId: string;
+  content: string;
+  userName: string;
+  sentAt?: Date;
+}): Promise<void> {
+  await addUserMessageToZepStrict(params).catch(() => {});
+}
+
+export async function addAssistantMessageToZepBestEffort(params: {
+  threadId: string;
+  content: string;
+}): Promise<void> {
+  await addAssistantMessageToZepStrict(params).catch(() => {});
+}
+
+// Legacy aliases — existing call sites keep working; U3 migrates them to the
+// explicit *BestEffort names (or to the worker's strict tier).
+export const addUserMessageToZep = addUserMessageToZepBestEffort;
+export const addAssistantMessageToZep = addAssistantMessageToZepBestEffort;
 
 // ── Add business data to Zep knowledge graph ──────────────────────────────────
 // Zep auto-extracts facts, entities, relationships from JSON
@@ -232,7 +328,7 @@ export async function addBusinessDataToZep(params: {
       data: JSON.stringify(params.data),
     }),
     "addBusinessDataToZep",
-    { userId: params.userId }
+    params.userId
   );
   // Callers that want fire-and-forget must wrap with .catch() themselves
 }
@@ -240,25 +336,77 @@ export async function addBusinessDataToZep(params: {
 // ── Get assembled context for Claude ──────────────────────────────────────────
 // Returns: user summary + relevant facts with valid_from/valid_to dates.
 // Self-heals missing template on first call per cold-start.
+//
+// Discriminated outcome (R5): callers must branch on `status`, never on the
+// context string — "empty" is Zep answering with nothing durable yet, while
+// "unavailable"/"timeout" mean the memory layer is missing this turn and the
+// prompt needs the memory_unavailable marker.
 
-export async function getZepContext(threadId: string): Promise<string> {
-  // Ensure template exists — no-op after first successful check per instance.
-  await ensureCaraContextTemplate().catch(() => {});
+export type ZepContextStatus = "loaded" | "empty" | "unavailable" | "timeout";
 
-  try {
-    const userContext = await getZep().thread.getUserContext(threadId, {
-      templateId: CARA_TEMPLATE_ID,
-    });
-    return userContext.context ?? "";
-  } catch {
+export interface ZepContextResult {
+  status:      ZepContextStatus;
+  /** Non-empty only when status === "loaded". */
+  context:     string;
+  latencyMs:   number;
+  /** Sanitized error class, set only when status === "unavailable". */
+  errorClass?: string;
+}
+
+export const ZEP_CONTEXT_TIMEOUT_MS = 6_000; // past calls have hung 30s+ when Zep is unhealthy
+
+// Never rejects — every failure mode is folded into the result's status, so
+// callers can safely include this in a Promise.all without a .catch shim.
+export async function getZepContextResult(
+  threadId: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<ZepContextResult> {
+  const timeoutMs = opts.timeoutMs ?? ZEP_CONTEXT_TIMEOUT_MS;
+  const startedAt = Date.now();
+
+  const outcome = await raceZepTimeout(async (requestOptions) => {
+    // Template self-heal shares the cap — it is a Zep call and can hang too.
+    await ensureCaraContextTemplate().catch(() => {});
     try {
-      const userContext = await getZep().thread.getUserContext(threadId);
+      const userContext = await getZep().thread.getUserContext(
+        threadId, { templateId: CARA_TEMPLATE_ID }, requestOptions,
+      );
       return userContext.context ?? "";
-    } catch (err) {
-      logZepFailure("getZepContext", err, { threadId });
-      return "";
+    } catch {
+      // Template lookup failed (e.g. template missing on this project) —
+      // fall back to the default context assembly before declaring an outage.
+      const userContext = await getZep().thread.getUserContext(threadId, undefined, requestOptions);
+      return userContext.context ?? "";
     }
+  }, timeoutMs);
+
+  const latencyMs = Date.now() - startedAt;
+
+  if (outcome.kind === "timeout") {
+    console.warn(JSON.stringify({
+      severity:    "WARNING",
+      zep_timeout: true,
+      operation:   "getZepContext",
+      timeout_ms:  timeoutMs,
+      correlation: correlationHash(threadId),
+      timestamp:   new Date().toISOString(),
+    }));
+    return { status: "timeout", context: "", latencyMs };
   }
+  if (outcome.kind === "error") {
+    logZepFailure("getZepContext", outcome.error, threadId);
+    return { status: "unavailable", context: "", latencyMs, errorClass: errorClassOf(outcome.error) };
+  }
+  const context = outcome.value.trim() ? outcome.value : "";
+  return { status: context ? "loaded" : "empty", context, latencyMs };
+}
+
+// Legacy string read — kept for callers that predate the typed result. Returns
+// "" for empty AND unavailable AND timeout, so it cannot be used to infer Zep
+// health. New code must call getZepContextResult instead.
+export async function getZepContext(threadId: string): Promise<string> {
+  const result = await getZepContextResult(threadId);
+  return result.status === "loaded" ? result.context : "";
 }
 
 // ── Search memory ──────────────────────────────────────────────────────────────
@@ -276,7 +424,7 @@ export async function searchZepMemory(
       .filter(Boolean)
       .join("\n");
   } catch (err) {
-    logZepFailure("searchZepMemory", err, { userId, query: query.slice(0, 50) });
+    logZepFailure("searchZepMemory", err, userId);
     return "";
   }
 }
@@ -303,7 +451,7 @@ export async function pushOnboardingDataToZep(params: {
   try {
     await getZep().user.update(userId, { firstName: params.firstName });
   } catch (err) {
-    logZepFailure("pushOnboardingDataToZep.user.update", err, { userId });
+    logZepFailure("pushOnboardingDataToZep.user.update", err, userId);
   }
 
   await addBusinessDataToZep({

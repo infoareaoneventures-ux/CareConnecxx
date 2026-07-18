@@ -22,7 +22,7 @@ vi.mock("../utils/claudeRetry",    () => ({ callClaudeWithRetry: vi.fn() }));
 vi.mock("../safety/supervisor",    () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
-vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
+vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn() }));
 vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(), detectAndApplyCorrection: vi.fn() }));
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(), isInDND: () => false }));
@@ -50,7 +50,11 @@ import {
   WARMTH_REFLECTION_OPENERS,
   ensureNonEmptyTurnText,
   sanitizeAnthropicMessages,
+  applyZepContextResult,
+  ZEP_UNAVAILABLE_MARKER,
 } from "./qaAgent";
+import { createTurnMetrics, type TurnMetrics } from "./turnMetrics";
+import type { ZepContextResult } from "../memory/zepClient";
 
 describe("hasListShape", () => {
   it.each([
@@ -538,5 +542,129 @@ describe("gateQuickReplyGrounding", () => {
     // a fabricated reply matching an example would read as SUPPORTED.
     expect(payload).not.toContain("Examples of good context-led greetings");
     expect(payload).not.toContain("Maria's coming Thursday at 3");
+  });
+});
+
+// U1: typed Zep context → prompt/metrics mapping. One shared function serves
+// both the client and caregiver branches, so parity is structural — these
+// tests pin the semantics per status and prove the two roles cannot diverge.
+describe("applyZepContextResult", () => {
+  const roles = ["client", "caregiver"] as const;
+
+  function freshMetrics(userType: "client" | "caregiver"): TurnMetrics {
+    return createTurnMetrics({ phone: "+15550001111", userType, pathway: "qa" });
+  }
+
+  function result(status: ZepContextResult["status"], context = ""): ZepContextResult {
+    return { status, context, latencyMs: 123 };
+  }
+
+  it.each(roles)("loaded → returns the context and records status/latency (%s)", (role) => {
+    const metrics = freshMetrics(role);
+    const out = applyZepContextResult(result("loaded", "## CARE CONTEXT\nfacts"), metrics, role);
+    expect(out).toBe("## CARE CONTEXT\nfacts");
+    expect(metrics.zepContextStatus).toBe("loaded");
+    expect(metrics.zepContextLatencyMs).toBe(123);
+    expect(metrics.zepUnavailable).toBeUndefined();
+    expect(metrics.zepContextEmpty).toBeUndefined();
+  });
+
+  it.each(roles)("empty → no marker, zepContextEmpty set, zepUnavailable NOT set (%s)", (role) => {
+    const metrics = freshMetrics(role);
+    const out = applyZepContextResult(result("empty"), metrics, role);
+    expect(out).toBe("");
+    expect(out).not.toContain("memory_unavailable");
+    expect(metrics.zepContextStatus).toBe("empty");
+    expect(metrics.zepContextEmpty).toBe(true);
+    expect(metrics.zepUnavailable).toBeUndefined();
+  });
+
+  it.each(roles)("unavailable → injects the memory_unavailable marker (%s)", (role) => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const metrics = freshMetrics(role);
+      const out = applyZepContextResult(result("unavailable"), metrics, role);
+      expect(out).toBe(ZEP_UNAVAILABLE_MARKER);
+      expect(metrics.zepContextStatus).toBe("unavailable");
+      expect(metrics.zepUnavailable).toBe(true);
+      expect(metrics.zepContextEmpty).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it.each(roles)("timeout → injects the memory_unavailable marker (%s)", (role) => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const metrics = freshMetrics(role);
+      const out = applyZepContextResult(result("timeout"), metrics, role);
+      expect(out).toBe(ZEP_UNAVAILABLE_MARKER);
+      expect(metrics.zepContextStatus).toBe("timeout");
+      expect(metrics.zepUnavailable).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("null (no zepThreadId) → empty string with NO status recorded — no memory was expected", () => {
+    const metrics = freshMetrics("client");
+    const out = applyZepContextResult(null, metrics, "client");
+    expect(out).toBe("");
+    expect(metrics.zepContextStatus).toBeUndefined();
+    expect(metrics.zepContextLatencyMs).toBeUndefined();
+    expect(metrics.zepUnavailable).toBeUndefined();
+    expect(metrics.zepContextEmpty).toBeUndefined();
+  });
+
+  it("client and caregiver produce identical outputs and metric fields for every status", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const statuses: Array<ZepContextResult["status"]> = ["loaded", "empty", "unavailable", "timeout"];
+      for (const status of statuses) {
+        const clientMetrics = freshMetrics("client");
+        const caregiverMetrics = freshMetrics("caregiver");
+        const clientOut = applyZepContextResult(result(status, "ctx"), clientMetrics, "client");
+        const caregiverOut = applyZepContextResult(result(status, "ctx"), caregiverMetrics, "caregiver");
+        expect(caregiverOut).toBe(clientOut);
+        expect({
+          zepContextStatus:    caregiverMetrics.zepContextStatus,
+          zepContextLatencyMs: caregiverMetrics.zepContextLatencyMs,
+          zepUnavailable:      caregiverMetrics.zepUnavailable,
+          zepContextEmpty:     caregiverMetrics.zepContextEmpty,
+        }).toEqual({
+          zepContextStatus:    clientMetrics.zepContextStatus,
+          zepContextLatencyMs: clientMetrics.zepContextLatencyMs,
+          zepUnavailable:      clientMetrics.zepUnavailable,
+          zepContextEmpty:     clientMetrics.zepContextEmpty,
+        });
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("the marker wording is exactly the existing memory_unavailable instruction", () => {
+    expect(ZEP_UNAVAILABLE_MARKER).toBe(
+      "[SYSTEM: memory_unavailable] Long-term memory service is unavailable this turn. " +
+      "Stored health facts (allergies, medications, conditions, doctor names) are NOT loaded. " +
+      "If the user asks about any of these, say you don't have it available right now and ask them to confirm; " +
+      "do not state any health fact you can't see in the cached context or learned facts above.",
+    );
+  });
+
+  it("warn lines on unavailable/timeout carry role + status only — no IDs, no error detail", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const metrics = freshMetrics("client");
+      const failure: ZepContextResult = { status: "unavailable", context: "", latencyMs: 5, errorClass: "TypeError" };
+      applyZepContextResult(failure, metrics, "client");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0].map(String).join(" ");
+      expect(line).toContain("unavailable");
+      expect(line).toContain("client");
+      expect(line).not.toMatch(/thread|[0-9]{7,}/);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

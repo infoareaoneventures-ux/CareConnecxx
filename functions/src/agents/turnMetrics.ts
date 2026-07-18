@@ -127,6 +127,14 @@ export interface TurnMetrics {
   zepContextEmpty?:   boolean;
   learnedFactsCount?: number;
 
+  // U1 (memory grounding): typed Zep context outcome for this turn, set only
+  // when a zepThreadId was actually queried. Canonical discriminator — the
+  // zepUnavailable / zepContextEmpty booleans above are derived from it and
+  // kept for existing dashboards. latency is the wall-clock of the context
+  // fetch (including the internal timeout cap). No raw content, ever.
+  zepContextStatus?:    "loaded" | "empty" | "unavailable" | "timeout";
+  zepContextLatencyMs?: number;
+
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
   resumedFromCheckpoint?: boolean;
@@ -324,6 +332,8 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       historyRolledUp:              !!metrics.historyRolledUp,
       zepContextEmpty:              !!metrics.zepContextEmpty,
       learnedFactsCount:            metrics.learnedFactsCount ?? 0,
+      zepContextStatus:             metrics.zepContextStatus ?? null,
+      zepContextLatencyMs:          metrics.zepContextLatencyMs ?? null,
     });
   }
 }

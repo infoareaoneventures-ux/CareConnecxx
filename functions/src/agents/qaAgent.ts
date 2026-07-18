@@ -9,7 +9,7 @@ import { redactPii } from "../safety/redactPii";
 import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
-import { getZepContext } from "../memory/zepClient";
+import { getZepContextResult, type ZepContextResult } from "../memory/zepClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 import {
   maybeRollUpHistory,
@@ -1319,6 +1319,46 @@ export function sanitizeAnthropicMessages<T extends { role: string; content: unk
   return nonEmpty.slice(start);
 }
 
+// Sentinel injected when Zep fails. Claude sees this in the system prompt and
+// knows long-term memory (allergies, meds, conditions) is missing this turn,
+// so it must hedge medical-adjacent answers and confirm before acting on them.
+// Empty string is reserved for "no zepThreadId" / "no memory expected."
+export const ZEP_UNAVAILABLE_MARKER =
+  "[SYSTEM: memory_unavailable] Long-term memory service is unavailable this turn. " +
+  "Stored health facts (allergies, medications, conditions, doctor names) are NOT loaded. " +
+  "If the user asks about any of these, say you don't have it available right now and ask them to confirm; " +
+  "do not state any health fact you can't see in the cached context or learned facts above.";
+
+// U1: single mapping from the typed Zep context result to prompt text +
+// metrics. Both the client and caregiver branches call this, so their status
+// semantics cannot drift (R6): unavailable/timeout inject the marker, a
+// genuinely-empty result does not, and no caller infers Zep health from a
+// string. `null` means no zepThreadId — no memory was expected this turn, so
+// no status is recorded.
+export function applyZepContextResult(
+  result:  ZepContextResult | null,
+  metrics: TurnMetrics,
+  role:    "client" | "caregiver",
+): string {
+  if (!result) return "";
+  metrics.zepContextStatus    = result.status;
+  metrics.zepContextLatencyMs = result.latencyMs;
+  switch (result.status) {
+    case "loaded":
+      return result.context;
+    case "empty":
+      metrics.zepContextEmpty = true;
+      return "";
+    case "unavailable":
+    case "timeout":
+      metrics.zepUnavailable = true;
+      // No thread ID / error detail here — zepClient already logged the
+      // sanitized failure line (R21).
+      console.warn(`qaAgent: Zep context ${result.status} (${role}) — injecting memory_unavailable marker`);
+      return ZEP_UNAVAILABLE_MARKER;
+  }
+}
+
 export async function runQaAgent(params: {
   text:          string;
   phone:         string;
@@ -1463,40 +1503,21 @@ export async function runQaAgent(params: {
   let systemPrompt: string;
   let history: Array<{ role: "user" | "assistant"; content: string }>;
 
-  // Sentinel injected when Zep fails. Claude sees this in the system prompt and
-  // knows long-term memory (allergies, meds, conditions) is missing this turn,
-  // so it must hedge medical-adjacent answers and confirm before acting on them.
-  // Empty string is reserved for "no zepThreadId" / "no memory expected."
-  const ZEP_UNAVAILABLE_MARKER =
-    "[SYSTEM: memory_unavailable] Long-term memory service is unavailable this turn. " +
-    "Stored health facts (allergies, medications, conditions, doctor names) are NOT loaded. " +
-    "If the user asks about any of these, say you don't have it available right now and ask them to confirm; " +
-    "do not state any health fact you can't see in the cached context or learned facts above.";
-
-  // 6s hard cap on Zep — past calls have hung 30s+ when Zep is unhealthy.
-  // On timeout OR throw, we inject the marker so Claude knows context is missing.
-  const withZepTimeout = (p: Promise<string>, role: "client" | "caregiver"): Promise<string> =>
-    Promise.race([
-      p,
-      new Promise<string>((r) => setTimeout(() => {
-        console.warn(`qaAgent: Zep context timed out (${role}, 6s cap) — injecting memory_unavailable marker`);
-        r(ZEP_UNAVAILABLE_MARKER);
-      }, 6_000)),
-    ]);
+  // Zep context is fetched through getZepContextResult (typed loaded/empty/
+  // unavailable/timeout, 6s hard cap with a timer that clears on success) and
+  // mapped to prompt text + metrics by applyZepContextResult above.
 
   if (userType === "caregiver" && caregiverId) {
-    const [caregiver, todayAppt, hist, cgZepContext, cgSnapshot] = await Promise.all([
+    const [caregiver, todayAppt, hist, cgZepResult, cgSnapshot] = await Promise.all([
       getCaregiverProfile(caregiverId),
       getCaregiverTodayAppointment(caregiverId),
       getConversationHistory(phone),
-      zepThreadId ? withZepTimeout(getZepContext(zepThreadId).catch((err) => {
-        console.warn("qaAgent: Zep context unavailable (caregiver)", err instanceof Error ? err.message : err);
-        return ZEP_UNAVAILABLE_MARKER;
-      }), "caregiver") : Promise.resolve(""),
+      zepThreadId ? getZepContextResult(zepThreadId) : Promise.resolve(null),
       // Situation snapshot — the caregiver standing context was nearly bare;
       // this surfaces pending interviews/applications/offers so Evia can lead.
       buildCaregiverSnapshot(caregiverId, session),
     ]);
+    const cgZepContext = applyZepContextResult(cgZepResult, metrics, "caregiver");
     const contextFlags = session ? {
       pendingPayoutNotificationAck: (session as any).pendingPayoutNotificationAck as string | undefined,
       pendingBgCheckAck:            (session as any).pendingBgCheckAck            as string | undefined,
@@ -1508,8 +1529,6 @@ export async function runQaAgent(params: {
       caregiver, todayAppt, cgZepContext || undefined, contextFlags, cgCoreContext || undefined,
     );
     if (cgSnapshot) systemPrompt += `\n\n${cgSnapshot}`;
-    if (cgZepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
-    if (zepThreadId && cgZepContext === "") metrics.zepContextEmpty = true;
     history = hist;
 
     // Clear the context flags after a reply consumes them — they're one-shot context.
@@ -1586,18 +1605,16 @@ export async function runQaAgent(params: {
     // Load Zep context, memory files, learned facts, active visit, and booking patterns in parallel.
     // Unconfirmed-identity sessions skip all of these — they all key off userId
     // and would surface another person's care data on a linked phone.
-    const [zepContext, memoryContext, facts, activeVisit, bookingPatterns] = unconfirmedIdentity
-      ? ["", "", [] as Array<{ fact: string; category: string }>, null, ""]
+    const [zepResult, memoryContext, facts, activeVisit, bookingPatterns] = unconfirmedIdentity
+      ? [null as ZepContextResult | null, "", [] as Array<{ fact: string; category: string }>, null, ""]
       : await Promise.all([
-        zepThreadId ? withZepTimeout(getZepContext(zepThreadId).catch((err) => {
-          console.warn("qaAgent: Zep context unavailable (client)", err instanceof Error ? err.message : err);
-          return ZEP_UNAVAILABLE_MARKER;
-        }), "client") : Promise.resolve(""),
+        zepThreadId ? getZepContextResult(zepThreadId) : Promise.resolve(null),
         getMemoryContext(userId).catch(() => ""),
         getRelevantFacts(userId).catch(() => []),
         getActiveVisit(userId).catch(() => null),
         getBookingPatterns(userId),
       ]);
+    const zepContext = applyZepContextResult(zepResult, metrics, "client");
 
     // Lazy-bootstrap memory files for users who completed onboarding before the
     // memory-files code shipped, or whose initial write silently failed. Runs
@@ -1634,9 +1651,10 @@ export async function runQaAgent(params: {
 
     // Sprint 8: record which memory tier supplied context this turn. Derived
     // from the already-loaded locals — no extra reads, no loader signature
-    // changes. Zep is "available" only when it returned real content (not the
-    // injected unavailable marker).
-    const zepLive = !!zepContext && zepContext !== ZEP_UNAVAILABLE_MARKER;
+    // changes. Zep counts only when it actually loaded content (typed status —
+    // unavailable/timeout/empty never masquerade as recall). zepUnavailable /
+    // zepContextEmpty were already set by applyZepContextResult above.
+    const zepLive = zepResult?.status === "loaded";
     metrics.memoryRecallTier = zepLive
       ? "zep"
       : memoryContext
@@ -1646,11 +1664,6 @@ export async function runQaAgent(params: {
           : "none";
     metrics.memoryFactsRetrieved = facts.length;
     metrics.learnedFactsCount = facts.length;
-    if (zepContext === ZEP_UNAVAILABLE_MARKER) metrics.zepUnavailable = true;
-    // Distinct from zepUnavailable: this is Zep responding successfully but
-    // returning no context (new thread, or a thread with nothing durable yet),
-    // not a timeout/throw. Only meaningful when a zepThreadId was actually queried.
-    if (zepThreadId && zepContext === "") metrics.zepContextEmpty = true;
 
     // U4: pre-injected core context (identity, location, account status,
     // care-team roster, full care plan). Confirmed-identity only — never for

@@ -141,6 +141,14 @@ export async function handleWebChatTurn(args: {
     };
   }
 
+  // R1 (memory-grounding U2): the turn is ACCEPTED — rate, session, identity
+  // binding, and onboarding guards all passed. Mark session activity for
+  // nightly memory selection now, BEFORE the model runs, so an agent failure
+  // still leaves the turn counted. Best-effort inside markSessionActivity; the
+  // rejected paths above must never reach this line.
+  const { markSessionActivity } = await import("../memory/conversationMemory");
+  await markSessionActivity(phone, db);
+
   // NOTE: optedOut / chatId are deliberately NOT captured here — they are
   // recomputed from the FRESH post-lock re-read below. A STOP processed while
   // this turn waited on the lock must flip the send off (TCPA), and a chatId

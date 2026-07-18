@@ -131,48 +131,128 @@ export async function analyzeBookingPatterns(): Promise<void> {
   console.log(`[analyzeBookingPatterns] Updated patterns for ${Object.keys(byClient).length} clients`);
 }
 
+// ── Nightly family-memory consolidation (memory-grounding U2, R2/R4/KTD3) ────
+//
+// Selection is a server-side indexed query (agent_sessions composite index:
+// onboardingStep ASC, optedOut ASC, userType ASC, lastMessageAt DESC — see
+// firestore.indexes.json). Client-only by construction: caregiver sessions can
+// never enter the family-memory prompt because userType == "client" is an
+// equality filter, not a post-hoc JS check. The lastMessageAt cutoff is a
+// Firestore Timestamp compared to the Timestamp the ingress seams write
+// (conversationMemory.sessionActivityFields) — never an ISO string.
+
+export const NIGHTLY_MEMORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_PAGE_SIZE = 100;
+const CONSOLIDATION_CONCURRENCY = 4;
+
+export interface NightlyMemoryCounts {
+  eligible: number;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+}
+
+/**
+ * Paginated (document cursor), bounded-concurrency consolidation over recently
+ * active completed opted-in CLIENT sessions. Per-user failures never abort the
+ * batch (R4). Returns aggregate counts only — logs carry no IDs and no content
+ * (R21).
+ */
+export async function runNightlyMemoryConsolidation(): Promise<NightlyMemoryCounts> {
+  const counts: NightlyMemoryCounts = { eligible: 0, attempted: 0, succeeded: 0, failed: 0, skipped: 0 };
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - NIGHTLY_MEMORY_WINDOW_MS);
+  const processed = new Set<string>(); // paging-duplicate guard: one attempt per session doc
+
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  for (;;) {
+    let query = db
+      .collection("agent_sessions")
+      .where("onboardingStep", "==", "complete")
+      .where("optedOut", "==", false)
+      .where("userType", "==", "client")
+      .where("lastMessageAt", ">=", cutoff)
+      .orderBy("lastMessageAt", "desc")
+      .limit(SESSION_PAGE_SIZE);
+    if (cursor) query = query.startAfter(cursor);
+
+    const page = await query.get();
+    if (page.empty) break;
+    counts.eligible += page.docs.length;
+
+    const targets: Array<{ userId: string; phone: string }> = [];
+    for (const doc of page.docs) {
+      const userId = (doc.data().userId as string | undefined) ?? doc.id;
+      if (!userId || processed.has(doc.id)) {
+        counts.skipped++;
+        continue;
+      }
+      processed.add(doc.id);
+      targets.push({ userId, phone: doc.id });
+    }
+
+    for (let i = 0; i < targets.length; i += CONSOLIDATION_CONCURRENCY) {
+      const chunk = targets.slice(i, i + CONSOLIDATION_CONCURRENCY);
+      await Promise.all(
+        chunk.map(async ({ userId, phone }) => {
+          counts.attempted++;
+          try {
+            await consolidateMemoryForUser(userId, phone);
+            counts.succeeded++;
+          } catch (err) {
+            // R21: sanitized error class only — no userId/phone, no message
+            // text (provider errors can echo prompt content).
+            counts.failed++;
+            console.error("[consolidateMemoryNightly] consolidation failure", {
+              errorClass: (err as Error)?.name ?? "Error",
+            });
+          }
+        }),
+      );
+    }
+
+    if (page.docs.length < SESSION_PAGE_SIZE) break;
+    cursor = page.docs[page.docs.length - 1];
+  }
+
+  return counts;
+}
+
+/**
+ * Full nightly job body, exported for tests. The memory batch is isolated so a
+ * total selection/consolidation failure still runs the existing housekeeping
+ * tasks (booking patterns, conversation compression, execution-agent cleanup).
+ */
+export async function runNightlyMemoryJob(): Promise<void> {
+  try {
+    const counts = await runNightlyMemoryConsolidation();
+    // Aggregate-only scheduler log (R21): counts and nothing else.
+    console.log("[consolidateMemoryNightly] memory batch", counts);
+  } catch (err) {
+    console.error("[consolidateMemoryNightly] memory batch aborted", {
+      errorClass: (err as Error)?.name ?? "Error",
+    });
+  }
+
+  // Analyze booking patterns for proactive suggestions
+  await analyzeBookingPatterns().catch(err =>
+    console.error("[nightlyMemory] analyzeBookingPatterns error:", err)
+  );
+
+  // Compress conversations longer than 15 messages
+  await compressOldConversations().catch(err =>
+    console.error("[nightlyMemory] compressOldConversations error:", err)
+  );
+
+  // Auto-complete execution agents idle for >24 hours
+  await cleanupStaleExecutionAgents().catch(err =>
+    console.error("[nightlyMemory] cleanupStaleExecutionAgents error:", err)
+  );
+}
+
 // Runs nightly at 10 PM PT (06:00 UTC next day)
 export const consolidateMemoryNightly = functions.pubsub
   .schedule("0 6 * * *")
   .onRun(async () => {
-    // Find all active sessions updated in last 7 days
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    const snap = await db
-      .collection("agent_sessions")
-      .where("onboardingStep", "==", "complete")
-      .where("optedOut", "==", false)
-      .get();
-
-    const users: Array<{ userId: string; phone: string }> = [];
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      if (data.lastMessageAt && data.lastMessageAt >= sevenDaysAgo) {
-        const userId = data.userId ?? doc.id;
-        if (userId) users.push({ userId, phone: doc.id });
-      }
-    }
-
-    console.log(`consolidateMemoryNightly: processing ${users.length} users`);
-
-    for (const { userId, phone } of users) {
-      await consolidateMemoryForUser(userId, phone).catch((err) =>
-        console.error(`memory consolidation error for ${userId}:`, err)
-      );
-    }
-
-    // Analyze booking patterns for proactive suggestions
-    await analyzeBookingPatterns().catch(err =>
-      console.error("[nightlyMemory] analyzeBookingPatterns error:", err)
-    );
-
-    // Compress conversations longer than 30 messages
-    await compressOldConversations().catch(err =>
-      console.error("[nightlyMemory] compressOldConversations error:", err)
-    );
-
-    // Auto-complete execution agents idle for >24 hours
-    await cleanupStaleExecutionAgents().catch(err =>
-      console.error("[nightlyMemory] cleanupStaleExecutionAgents error:", err)
-    );
+    await runNightlyMemoryJob();
   });

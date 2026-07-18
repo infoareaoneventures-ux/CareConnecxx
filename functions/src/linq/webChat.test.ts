@@ -615,6 +615,85 @@ describe("handleWebChatTurn", () => {
     });
   });
 
+  // ── U2 memory-grounding (R1): activity marking at verified ingress ─────────
+  describe("U2 activity marking (lastMessageAt)", () => {
+    const activityWrites = () =>
+      hoisted.writes.filter(
+        (w) => w.path === `agent_sessions/${PHONE}` && w.op === "update" && w.data && "lastMessageAt" in w.data,
+      );
+
+    it("accepted turn writes lastMessageAt as a server timestamp BEFORE the agent runs", async () => {
+      seedUser();
+      seedSession();
+      let sessionAtAgentTime: any;
+      hoisted.qaMock.mockImplementation(async () => {
+        sessionAtAgentTime = { ...hoisted.docs.get(`agent_sessions/${PHONE}`) };
+        return "ok!";
+      });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "book maria" });
+
+      expect(res.status).toBe("ok");
+      expect(activityWrites()).toHaveLength(1);
+      expect(activityWrites()[0].data.lastMessageAt).toEqual({ __serverTimestamp: true });
+      // Written before model execution (KTD2).
+      expect(sessionAtAgentTime.lastMessageAt).toEqual({ __serverTimestamp: true });
+    });
+
+    it("model failure still leaves the activity written", async () => {
+      seedUser();
+      seedSession();
+      hoisted.qaMock.mockRejectedValue(new Error("model down"));
+
+      await expect(handleWebChatTurn({ uid: UID, message: "hi" }))
+        .rejects.toBeInstanceOf(AgentUnavailableError);
+
+      expect(activityWrites()).toHaveLength(1);
+      expect(hoisted.docs.get(`agent_sessions/${PHONE}`).lastMessageAt).toEqual({ __serverTimestamp: true });
+    });
+
+    it("rate-limited request does not write activity", async () => {
+      seedUser();
+      seedSession();
+      hoisted.docs.set(`rate_limits/web_${UID}`, { count: 10, windowStart: Date.now() });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "spam" });
+
+      expect(res.status).toBe("rateLimited");
+      expect(activityWrites()).toHaveLength(0);
+    });
+
+    it("missing session (notSetUp) does not write activity", async () => {
+      seedUser();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("notSetUp");
+      expect(activityWrites()).toHaveLength(0);
+    });
+
+    it("unbound identity (session bound to another uid, no verified token phone) does not write activity", async () => {
+      seedUser();
+      seedSession({ userId: "someone-else" });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("notSetUp");
+      expect(activityWrites()).toHaveLength(0);
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+    });
+
+    it("mid-onboarding session (finishSetup) does not write activity", async () => {
+      seedUser();
+      seedSession({ onboardingStep: "caregiver_credentials" });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("finishSetup");
+      expect(activityWrites()).toHaveLength(0);
+    });
+  });
+
   // ── Post-lock lifecycle (launch-readiness review fixes) ────────────────────
   describe("post-lock re-read lifecycle", () => {
     it("a throw in the post-lock re-read releases the lock AND deletes the claim (no leak)", async () => {

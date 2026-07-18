@@ -58,6 +58,7 @@ import {
   addBusinessDataToZep,
   getZepUserId,
 } from "../memory/zepClient";
+import { sessionActivityFields } from "../memory/conversationMemory";
 import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
 import { extractLocationPart, reverseGeocode, SharedLocation } from "../utils/locationShare";
@@ -957,7 +958,14 @@ const handleInboundInner = traceable(
   // chatId we created — replying to a stale chatId returns 400).
   if (sessionSnap.exists) {
     const stored = sessionSnap.data() as AgentSession & { chatId?: string };
-    const update: Record<string, unknown> = { lastInboundAt: new Date().toISOString() };
+    // R1 (memory-grounding U2): lastMessageAt (server Timestamp) rides in the
+    // same update as lastInboundAt — signature is verified and the session is
+    // resolved by this point, and it lands BEFORE model execution so a model
+    // failure still leaves the turn counted for nightly memory selection.
+    const update: Record<string, unknown> = {
+      lastInboundAt: new Date().toISOString(),
+      ...sessionActivityFields(),
+    };
     // Remember the Linq message id so react_to_message can tapback this message.
     // Tolerant field chain — same shapes the other event handlers accept.
     const inboundMessageId = (ev.data?.id ?? ev.data?.message_id ?? ev.data?.message?.id) as string | undefined;

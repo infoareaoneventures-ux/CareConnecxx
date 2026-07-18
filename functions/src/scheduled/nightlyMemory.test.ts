@@ -70,9 +70,50 @@ const hoisted = vi.hoisted(() => {
     return ref;
   };
 
+  // agent_conversations/{phone}/messages — in-memory store for the
+  // compression tests (U3/R9). Map<phone, Map<docId, data>>.
+  const conversations = new Map<string, Map<string, Record<string, unknown>>>();
+  let summarySeq = 0;
+
+  const makeMessagesCol = (phone: string): any => ({
+    orderBy: (field: string, _dir?: string) => ({
+      get: async () => {
+        const msgs = conversations.get(phone) ?? new Map();
+        const docs = [...msgs.entries()]
+          .sort((a, b) => Number(a[1][field] ?? 0) - Number(b[1][field] ?? 0))
+          .map(([id, data]) => ({
+            id,
+            data: () => data,
+            ref: { __phone: phone, __id: id },
+          }));
+        return { docs };
+      },
+    }),
+    doc: (id?: string) => ({ __phone: phone, __id: id ?? `summary-${++summarySeq}` }),
+  });
+
+  const batch = () => {
+    const ops: Array<() => void> = [];
+    return {
+      delete: (ref: { __phone: string; __id: string }) =>
+        ops.push(() => conversations.get(ref.__phone)?.delete(ref.__id)),
+      set: (ref: { __phone: string; __id: string }, data: Record<string, unknown>) =>
+        ops.push(() => {
+          if (!conversations.has(ref.__phone)) conversations.set(ref.__phone, new Map());
+          conversations.get(ref.__phone)!.set(ref.__id, data);
+        }),
+      commit: async () => { for (const op of ops) op(); },
+    };
+  };
+
   const collection = (name: string): any => {
     if (name === "agent_sessions") return makeSessionsQuery();
-    if (name === "agent_conversations") return { listDocuments: async () => [] };
+    if (name === "agent_conversations") {
+      return {
+        listDocuments: async () => [...conversations.keys()].map(id => ({ id })),
+        doc: (phone: string) => ({ collection: (_sub: string) => makeMessagesCol(phone) }),
+      };
+    }
     // appointments (booking-pattern housekeeping): empty result short-circuits.
     const empty: any = {
       where: () => empty,
@@ -84,16 +125,19 @@ const hoisted = vi.hoisted(() => {
   return {
     FakeTimestamp,
     sessions,
+    conversations,
     whereCalls,
     state,
     collection,
+    batch,
     consolidateMock: vi.fn(async (_userId: string, _phone?: string) => {}),
     cleanupMock: vi.fn(async () => {}),
+    claudeCreate: vi.fn(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] })),
   };
 });
 
 vi.mock("firebase-admin", () => {
-  const firestore = Object.assign(() => ({ collection: hoisted.collection }), {
+  const firestore = Object.assign(() => ({ collection: hoisted.collection, batch: hoisted.batch }), {
     Timestamp: hoisted.FakeTimestamp,
     FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }) },
   });
@@ -119,10 +163,16 @@ vi.mock("../agents/executionAgent", () => ({
 }));
 
 vi.mock("../utils/claudeClient", () => ({
-  getSharedClient: () => ({ messages: { create: vi.fn() } }),
+  getSharedClient: () => ({ messages: { create: hoisted.claudeCreate } }),
 }));
 
-import { runNightlyMemoryConsolidation, runNightlyMemoryJob, NIGHTLY_MEMORY_WINDOW_MS } from "./nightlyMemory";
+import {
+  runNightlyMemoryConsolidation,
+  runNightlyMemoryJob,
+  compressOldConversations,
+  NIGHTLY_MEMORY_WINDOW_MS,
+  AGED_PENDING_SYNC_MS,
+} from "./nightlyMemory";
 
 const DAY = 24 * 60 * 60 * 1000;
 const ts = (daysBack: number) => hoisted.FakeTimestamp.fromMillis(Date.now() - daysBack * DAY);
@@ -140,11 +190,14 @@ function seedSession(phone: string, extra: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   hoisted.sessions.clear();
+  hoisted.conversations.clear();
   hoisted.whereCalls.length = 0;
   hoisted.state.failSessionsQuery = false;
   hoisted.consolidateMock.mockClear();
   hoisted.consolidateMock.mockImplementation(async () => {});
   hoisted.cleanupMock.mockClear();
+  hoisted.claudeCreate.mockClear();
+  hoisted.claudeCreate.mockImplementation(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] }));
 });
 
 describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
@@ -296,6 +349,107 @@ describe("runNightlyMemoryJob — housekeeping isolation (R4)", () => {
       expect(abortLog![1]).toEqual({ errorClass: "Error" });
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+});
+
+// ── Compression protection for unresolved memory sync (U3, R9) ───────────────
+//
+// A source row whose memorySyncStatus is still set (the memory-operation
+// worker has not confirmed Zep/fact writes) must never be summarized or
+// deleted; compression stops at the first such row. Aged pending rows surface
+// in the job's aggregate counts.
+
+const CONV_PHONE = "+14085559999";
+
+function seedConversation(count: number, pendingIdx: number[] = [], opts: { pendingAgeMs?: number } = {}) {
+  const msgs = new Map<string, Record<string, unknown>>();
+  const base = Date.now() - count * 60_000;
+  for (let i = 0; i < count; i++) {
+    msgs.set(`m${String(i).padStart(3, "0")}`, {
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `message ${i}`,
+      timestamp: pendingIdx.includes(i) && opts.pendingAgeMs
+        ? Date.now() - opts.pendingAgeMs
+        : base + i * 60_000,
+      ...(pendingIdx.includes(i) ? { memorySyncStatus: "pending" } : {}),
+    });
+  }
+  hoisted.conversations.set(CONV_PHONE, msgs);
+  return msgs;
+}
+
+describe("compressOldConversations — unresolved memorySyncStatus rows are never compressed (R9)", () => {
+  it("compresses a long conversation normally when no row is pending", async () => {
+    seedConversation(20);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts).toEqual({
+        conversations: 1, compressedMessages: 10, skippedPendingSync: 0, agedPendingRows: 0, failed: 0,
+      });
+      expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
+      const msgs = hoisted.conversations.get(CONV_PHONE)!;
+      // 10 retained + 1 new summary.
+      expect(msgs.size).toBe(11);
+      expect([...msgs.values()].filter(m => m.role === "summary")).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("a pending row early in the compress window blocks compression entirely (fewer than 5 compressible rows)", async () => {
+    seedConversation(20, [3]);
+    const counts = await compressOldConversations();
+
+    // toCompress would be rows 0-9; the pending row at 3 truncates it to 0-2
+    // (< 5) → nothing is summarized or deleted this run.
+    expect(counts.compressedMessages).toBe(0);
+    expect(counts.skippedPendingSync).toBe(7);
+    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+    expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(20);
+    expect(hoisted.conversations.get(CONV_PHONE)!.get("m003")!.memorySyncStatus).toBe("pending");
+  });
+
+  it("rows OLDER than the first pending row still compress; the pending row and younger rows survive verbatim", async () => {
+    seedConversation(20, [8]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.compressedMessages).toBe(8); // rows 0-7 only
+      expect(counts.skippedPendingSync).toBe(2); // rows 8-9 were compress-eligible but protected
+      const msgs = hoisted.conversations.get(CONV_PHONE)!;
+      // 20 - 8 compressed + 1 summary = 13.
+      expect(msgs.size).toBe(13);
+      const pendingRow = msgs.get("m008")!;
+      expect(pendingRow.memorySyncStatus).toBe("pending");
+      expect(pendingRow.content).toBe("message 8"); // verbatim, not summarized
+      // The summary slots immediately before the first retained (pending) row.
+      const summary = [...msgs.values()].find(m => m.role === "summary")!;
+      expect(summary.timestamp).toBe(Number(pendingRow.timestamp) - 1);
+      // The summarizer never saw the pending row's content.
+      const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+      expect(prompt).not.toContain("message 8");
+      expect(prompt).toContain("message 7");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("aged pending rows surface in the job's aggregate counts without identifying the conversation (R21)", async () => {
+    seedConversation(20, [2], { pendingAgeMs: AGED_PENDING_SYNC_MS + 60 * 60 * 1000 });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runNightlyMemoryJob();
+
+      const compressionLog = logSpy.mock.calls.find(c => String(c[0]).includes("compression"));
+      expect(compressionLog).toBeDefined();
+      expect(compressionLog![1]).toMatchObject({ agedPendingRows: 1, conversations: 1 });
+      expect(JSON.stringify(compressionLog)).not.toContain(CONV_PHONE);
+    } finally {
+      logSpy.mockRestore();
     }
   });
 });

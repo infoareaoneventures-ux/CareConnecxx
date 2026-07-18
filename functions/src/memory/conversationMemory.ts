@@ -1,11 +1,13 @@
 // Shared turn-persistence policy boundary (memory-grounding hardening plan
-// 2026-07-17-002, KTD1/KTD2 — U2 slice).
+// 2026-07-17-002, KTD1/KTD2 — U2 slice; U3 adds deterministic turn persistence).
 //
 // U2 scope: verified-ingress ACTIVITY marking (R1) and the pure decision logic
-// for the one-time activity backfill (R3). A later unit (U3) grows this module
-// into deterministic Firestore turn persistence, Zep transcript scheduling, and
-// learned-fact extraction scheduling — keep it a clean policy module: no
-// telemetry with raw content, no model calls, no per-callsite special cases.
+// for the one-time activity backfill (R3). U3 adds persistCompletedTurn — the
+// ONE owner for completed-session turn memory: deterministic Firestore rows +
+// a reference-only turn_sync memory operation in a single atomic batch (R9),
+// dispatched by scheduled/memoryOperationWorker.ts. Keep it a clean policy
+// module: no telemetry with raw content, no model calls, no per-callsite
+// special cases.
 //
 // R1 contract: every ACCEPTED inbound turn for an existing verified session
 // writes agent_sessions/{phone}.lastMessageAt = server Timestamp BEFORE model
@@ -15,6 +17,12 @@
 // the nightly range query compares one type).
 
 import * as admin from "firebase-admin";
+import {
+  buildTurnSyncOperationDoc,
+  hashSourceTurnKey,
+  MEMORY_OPERATIONS_COLLECTION,
+  turnSyncOperationId,
+} from "./memoryOperations";
 
 /** Canonical field name for the nightly-selection activity timestamp. */
 export const SESSION_ACTIVITY_FIELD = "lastMessageAt";
@@ -133,4 +141,126 @@ export function decideActivityBackfill(input: ActivityBackfillInput): ActivityBa
   }
 
   return { role, repairUserType, history: "recent_history", writeLastMessageAtMs: ts };
+}
+
+// ── Deterministic turn persistence (U3, R8/R9/R21) ───────────────────────────
+//
+// One API for every completed-session web/SMS agent or quick-reply turn: write
+// the user+assistant rows to agent_conversations/{phone}/messages with
+// DETERMINISTIC doc IDs derived from the stable source-turn key (Linq eventId /
+// web clientMessageId) and create the reference-only turn_sync memory
+// operation in the SAME Firestore batch. Retrying the same key is a no-op
+// (batch.create on the deterministic operation ID makes the whole batch fail
+// atomically with ALREADY_EXISTS → reported as a deduplicated success). The
+// worker (scheduled/memoryOperationWorker.ts) later dispatches Zep transcript
+// writes and learned-fact extraction, then clears memorySyncStatus.
+//
+// R8: a persistence failure after tools/reply already committed is observable
+// (typed outcome + aggregate log) but never throws into the caller's turn and
+// never re-drives the turn.
+
+export type TurnChannel = "linq" | "web";
+
+export interface CompletedTurnInput {
+  channel: TurnChannel;
+  /** Stable source key: the Linq eventId (SMS) or web clientMessageId. */
+  sourceKey: string;
+  phone: string;
+  userId: string;
+  userText: string;
+  assistantText: string;
+  /** Original turn timestamp (epoch ms). Defaults to now. */
+  turnTimestampMs?: number;
+  /**
+   * true only for eligible CLIENT turns — caregiver turns are excluded from
+   * family-fact extraction (R8). The caller owns the role judgment.
+   */
+  extractFacts: boolean;
+}
+
+export type TurnPersistenceOutcome =
+  | { ok: true; operationId: string; sourceTurnKeyHash: string; deduplicated: boolean }
+  | { ok: false; errorClass: string };
+
+/** Deterministic per-turn message doc ID (role-scoped). */
+export function turnMessageDocId(sourceTurnKeyHash: string, role: "user" | "assistant"): string {
+  return `turn_${sourceTurnKeyHash}_${role}`;
+}
+
+export async function persistCompletedTurn(
+  input: CompletedTurnInput,
+  db: admin.firestore.Firestore = admin.firestore(),
+): Promise<TurnPersistenceOutcome> {
+  const sourceKey = input.sourceKey?.trim();
+  if (!sourceKey) {
+    // No stable key → no idempotency promise (Implementation-Time Checks:
+    // "missing web client ID"). Observable, non-throwing; the wiring pass
+    // decides any fallback.
+    return { ok: false, errorClass: "missing_source_key" };
+  }
+  if (!input.userText?.trim() || !input.assistantText?.trim()) {
+    // Mirror of qaAgent.saveConversationTurn's empty-turn guard: an empty
+    // history row 400s later model calls.
+    return { ok: false, errorClass: "empty_turn" };
+  }
+
+  const sourceTurnKeyHash = hashSourceTurnKey(input.channel, sourceKey);
+  const operationId = turnSyncOperationId(sourceTurnKeyHash);
+  try {
+    const ts = input.turnTimestampMs ?? Date.now();
+    const messagesCol = db.collection("agent_conversations").doc(input.phone).collection("messages");
+    const userDocId = turnMessageDocId(sourceTurnKeyHash, "user");
+    const assistantDocId = turnMessageDocId(sourceTurnKeyHash, "assistant");
+
+    const { doc: operationDoc } = buildTurnSyncOperationDoc({
+      channel: input.channel,
+      sourceKey,
+      phone: input.phone,
+      userId: input.userId,
+      turnTimestampMs: ts,
+      extractFacts: input.extractFacts,
+      userMessagePath: `agent_conversations/${input.phone}/messages/${userDocId}`,
+      assistantMessagePath: `agent_conversations/${input.phone}/messages/${assistantDocId}`,
+    });
+
+    const rowShared = {
+      sourceTurnKeyHash,
+      sourceChannel: input.channel,
+      // Unresolved sync protects the row from nightly compression (R9).
+      memorySyncStatus: "pending",
+    };
+
+    const batch = db.batch();
+    // create() (not set) on the deterministic operation ID: a duplicate turn
+    // fails the WHOLE batch atomically, so a completed operation can never be
+    // reset to pending and rows never re-acquire memorySyncStatus.
+    batch.create(db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId), operationDoc);
+    batch.set(messagesCol.doc(userDocId), {
+      role: "user", content: input.userText, timestamp: ts, ...rowShared,
+    });
+    batch.set(messagesCol.doc(assistantDocId), {
+      role: "assistant", content: input.assistantText, timestamp: ts + 1, ...rowShared,
+    });
+    await batch.commit();
+    return { ok: true, operationId, sourceTurnKeyHash, deduplicated: false };
+  } catch (err) {
+    if (isAlreadyExistsError(err)) {
+      return { ok: true, operationId, sourceTurnKeyHash, deduplicated: true };
+    }
+    // R21: aggregate/reference-free log — error class + channel only.
+    console.error(JSON.stringify({
+      severity: "ERROR",
+      memory_turn_persistence_failed: true,
+      channel: input.channel,
+      error_class: err instanceof Error ? err.constructor.name : typeof err,
+      timestamp: new Date().toISOString(),
+    }));
+    return { ok: false, errorClass: err instanceof Error ? err.constructor.name : typeof err };
+  }
+}
+
+function isAlreadyExistsError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  if (code === 6 || code === "already-exists" || code === "ALREADY_EXISTS") return true;
+  return err instanceof Error && /already[\s_-]?exists/i.test(err.message);
 }

@@ -373,7 +373,14 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "subcollection",
     caraWrites: true,
     webReads: false,
-    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only.",
+    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only. Memory-grounding U3 (KTD7/R23): new facts use deterministic nf_{normHash} doc IDs; docs carry bounded mentionTurnKeys (retry-safe per-source-turn weight increments) and bounded sourceMessageRefs provenance paths.",
+  },
+  memory_operations: {
+    path: "memory_operations",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Server-only durable retry ledger for cross-store memory writes (memory/memoryOperations.ts; drained by scheduled/memoryOperationWorker.ts via the shared leased-operation engine in operations/externalSideEffect.ts). Deterministic doc IDs from the source-turn key hash (turn_sync_{hash}); kinds: turn_sync now, correction/forget in a later unit. Docs hold references/hashes/statuses/timestamps ONLY — never raw message text, fact text, phone scalars, or Zep user/thread IDs (reference paths may resolve to phone-keyed docs; never logged). Explicit deny block in firestore.rules. Completed ops expire after 30 days (expiresAt); failed/unresolved ops never auto-expire.",
   },
   memory_embeddings: {
     path: "memory_embeddings",
@@ -394,7 +401,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "phone",
     caraWrites: true,
     webReads: false,
-    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only.",
+    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only. Memory-grounding U3 (R9): shared-turn rows use deterministic IDs turn_{sourceTurnKeyHash}_{role} and carry sourceTurnKeyHash/sourceChannel/memorySyncStatus; rows with unresolved memorySyncStatus are excluded from nightly compression until the memory-operation worker confirms Zep/fact sync.",
   },
   user_preferences: {
     path: "user_preferences",

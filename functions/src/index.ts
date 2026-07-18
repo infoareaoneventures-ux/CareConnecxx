@@ -159,6 +159,7 @@ export { sendFamilySatisfactionCheckins } from './scheduled/familySatisfactionCh
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
+export { memoryOperationWorker } from './scheduled/memoryOperationWorker';
 export { wowMomentsDaily } from './scheduled/wowMomentsJob';
 export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
 export { extendRecurringSchedules } from './scheduled/recurringScheduler';

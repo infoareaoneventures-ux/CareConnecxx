@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { createHash } from "crypto";
 import { quickComplete } from "../utils/openaiClient";
 import { embedText, rankBySimilarity, EMBED_MODEL } from "./embeddings";
 
@@ -15,6 +16,10 @@ export interface LearnedFact {
   lastMentionedAt: string;
   supersededAt?:   string;           // ISO — set when this fact is replaced or retracted
   supersededBy?:   string;           // docId of the replacement fact
+  /** Bounded per-turn mention ledger (KTD7): a retried extraction increments at most once per source-turn key. */
+  mentionTurnKeys?: string[];
+  /** Bounded source-row provenance (R23 groundwork) — Firestore paths, never copied text. */
+  sourceMessageRefs?: string[];
 }
 
 export interface LearnedFactWithId extends LearnedFact {
@@ -24,6 +29,33 @@ export interface LearnedFactWithId extends LearnedFact {
 // Normalize a fact string for deduplication comparison
 function normalizeFact(fact: string): string {
   return fact.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// KTD7: deterministic normalized-fact doc key. Two concurrent extractions of
+// the same fact target the SAME document ref inside a transaction, so the
+// query-then-add() race that produced duplicate facts is structurally gone.
+// Legacy auto-ID facts remain addressable via the _norm index (see below).
+export function deterministicFactDocId(fact: string): string {
+  return `nf_${createHash("sha256").update(normalizeFact(fact)).digest("hex").slice(0, 24)}`;
+}
+
+/** Bounds for the per-fact mention/provenance ledgers (KTD7 / R23). */
+export const MENTION_TURN_KEYS_MAX = 20;
+export const FACT_SOURCE_REFS_MAX = 6;
+
+export interface FactWriteProvenance {
+  /** Opaque source-turn key hash — makes retried extraction idempotent per turn. */
+  sourceTurnKeyHash?: string;
+  /** Firestore paths of the turn's source rows (bounded; never copied text). */
+  sourceMessageRefs?: string[];
+}
+
+function mergeBoundedRefs(existing: unknown, incoming: string[] | undefined): string[] | null {
+  if (!incoming || incoming.length === 0) return null;
+  const base = Array.isArray(existing) ? (existing as string[]) : [];
+  const merged = [...base];
+  for (const ref of incoming) if (!merged.includes(ref)) merged.push(ref);
+  return merged.slice(-FACT_SOURCE_REFS_MAX);
 }
 
 // Recency decay applied at QUERY time (not at write time — stored weight is the
@@ -58,7 +90,8 @@ function unwrapJson(raw: string): string {
 export async function extractAndStoreFacts(
   userId:     string,
   text:       string,
-  zepUserId?: string
+  zepUserId?:  string,
+  provenance?: FactWriteProvenance
 ): Promise<void> {
   if (!text || text.length < 10) return;
 
@@ -92,36 +125,66 @@ export async function extractAndStoreFacts(
   for (const item of extracted) {
     if (!item.fact || !item.category) continue;
     const norm = normalizeFact(item.fact);
+    const deterministicRef = factsCol.doc(deterministicFactDocId(item.fact));
 
-    // Check for existing active (non-superseded) fact with same normalized text
-    const existing = await factsCol
+    // Legacy auto-ID docs predate the deterministic key — find an ACTIVE one
+    // through the _norm index so a re-mention updates it instead of minting a
+    // deterministic duplicate. Fail-open: a failed query falls back to the
+    // deterministic ref.
+    const legacySnap = await factsCol
       .where("_norm", "==", norm)
-      .limit(1)
-      .get();
+      .limit(5)
+      .get()
+      .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+    const legacyActive = legacySnap.docs.find(
+      (d) => d.id !== deterministicRef.id && !d.data().supersededAt,
+    );
 
-    const activeExisting = existing.docs.find((d) => !d.data().supersededAt);
-    if (activeExisting) {
-      const currentWeight = activeExisting.data().weight ?? 1;
-      await activeExisting.ref.update({
-        weight:          Math.min(currentWeight + 1, 10),
-        lastMentionedAt: nowIso,
-      });
-    } else {
-      // Embed the fact for later semantic retrieval. Fail-open: null embedding
-      // is fine, the fact still stores and substring/weight retrieval still works.
-      const embedding = await embedText(item.fact);
-      await factsCol.add({
-        userId,
-        fact:            item.fact,
-        _norm:           norm,
-        weight:          1,
-        category:        item.category,
-        createdAt:       nowIso,
-        lastMentionedAt: nowIso,
-        ...(embedding ? { embedding, embeddingModel: EMBED_MODEL } : {}),
-      });
-      newFacts.push({ fact: item.fact, category: item.category });
-    }
+    // Embed BEFORE the transaction (no network calls inside transactions);
+    // only used on create. Fail-open: null embedding still stores the fact.
+    const embedding = await embedText(item.fact);
+
+    let createdNew = false;
+    // KTD7: the read-modify-write is transactional, so two concurrent
+    // extractions serialize instead of both passing a stale dedupe check.
+    await db.runTransaction(async (t) => {
+      createdNew = false;
+      const targetRef = legacyActive ? legacyActive.ref : deterministicRef;
+      const snap = await t.get(targetRef);
+      if (snap.exists) {
+        const data = snap.data() ?? {};
+        // Superseded/retracted facts are never passively resurrected here —
+        // correction/forget semantics own that doc (R23 groundwork).
+        if (data.supersededAt) return;
+        const mentionKeys: string[] = Array.isArray(data.mentionTurnKeys) ? data.mentionTurnKeys : [];
+        const turnKey = provenance?.sourceTurnKeyHash;
+        // Retried extraction (worker retry, duplicate delivery) increments a
+        // fact AT MOST ONCE per source-turn key.
+        if (turnKey && mentionKeys.includes(turnKey)) return;
+        const mergedRefs = mergeBoundedRefs(data.sourceMessageRefs, provenance?.sourceMessageRefs);
+        t.update(targetRef, {
+          weight:          Math.min(Number(data.weight ?? 1) + 1, 10),
+          lastMentionedAt: nowIso,
+          ...(turnKey ? { mentionTurnKeys: [...mentionKeys, turnKey].slice(-MENTION_TURN_KEYS_MAX) } : {}),
+          ...(mergedRefs ? { sourceMessageRefs: mergedRefs } : {}),
+        });
+      } else {
+        createdNew = true;
+        t.set(targetRef, {
+          userId,
+          fact:            item.fact,
+          _norm:           norm,
+          weight:          1,
+          category:        item.category,
+          createdAt:       nowIso,
+          lastMentionedAt: nowIso,
+          mentionTurnKeys: provenance?.sourceTurnKeyHash ? [provenance.sourceTurnKeyHash] : [],
+          sourceMessageRefs: (provenance?.sourceMessageRefs ?? []).slice(0, FACT_SOURCE_REFS_MAX),
+          ...(embedding ? { embedding, embeddingModel: EMBED_MODEL } : {}),
+        });
+      }
+    });
+    if (createdNew) newFacts.push({ fact: item.fact, category: item.category });
   }
 
   // Push newly-stored facts to Zep knowledge graph (fire-and-forget)

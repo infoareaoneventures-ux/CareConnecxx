@@ -1321,6 +1321,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Memory-operation ledger (memory/memoryOperations.ts, drained by the
+    // memoryOperationWorker schedule) — server-only durable retry state for
+    // cross-store memory writes (Zep transcript, learned facts; correction/
+    // forget kinds later). Docs hold references/hashes/statuses only, but the
+    // reference paths can resolve to phone-keyed docs, so no client may ever
+    // read them. Default deny already covers this; the explicit block is the
+    // documented contract (memory-grounding plan 2026-07-17-002, KTD6/R14).
+    match /memory_operations/{operationId} {
+      allow read, write: if false;
+    }
+
     // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
     // Written/read exclusively by Cloud Functions via the Admin SDK (which
     // bypasses rules). No client should ever touch these, so deny outright.

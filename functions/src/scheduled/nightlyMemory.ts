@@ -9,20 +9,49 @@ const db = admin.firestore();
 
 // ── Conversation compression ──────────────────────────────────────────────────
 
-async function compressConversationForPhone(phone: string): Promise<void> {
+// R9 (memory-grounding U3): a source row whose memory sync is unresolved
+// (memorySyncStatus still set — the retry worker has not confirmed Zep/fact
+// writes) must NOT be summarized or deleted; the worker reads canonical
+// content from that row. Pending rows older than this bound are surfaced in
+// the job's aggregate counts so a wedged worker is visible.
+export const AGED_PENDING_SYNC_MS = 24 * 60 * 60 * 1000;
+
+interface PhoneCompressionResult {
+  compressed: number;
+  /** Compress-eligible rows left in place because their memory sync is unresolved. */
+  pendingBlocked: number;
+  /** Unresolved rows older than AGED_PENDING_SYNC_MS (worker health signal). */
+  agedPending: number;
+}
+
+async function compressConversationForPhone(phone: string): Promise<PhoneCompressionResult> {
   const col = db.collection("agent_conversations").doc(phone).collection("messages");
   const allSnap = await col.orderBy("timestamp", "asc").get();
 
   const summaryDocs = allSnap.docs.filter(d => d.data().role === "summary");
   const realDocs    = allSnap.docs.filter(d => d.data().role !== "summary");
 
+  // R9 guard: compression stops at the FIRST row with unresolved sync — that
+  // row and everything younger stay verbatim until the worker clears it.
+  const hasPendingSync = (d: (typeof realDocs)[number]) => typeof d.data().memorySyncStatus === "string";
+  const firstPendingIdx = realDocs.findIndex(hasPendingSync);
+  const agedCutoff = Date.now() - AGED_PENDING_SYNC_MS;
+  const agedPending = realDocs.filter(
+    d => hasPendingSync(d) && Number(d.data().timestamp ?? Date.now()) < agedCutoff,
+  ).length;
+
   // Compress earlier than the previous threshold (was 30) — qaAgent only loads
   // the 10 most-recent + 1 summary, so turns 11-30 had no fallback. Triggering
   // at 15 means active users get summary continuity within a couple of days.
-  if (realDocs.length <= 15) return;
+  if (realDocs.length <= 15) return { compressed: 0, pendingBlocked: 0, agedPending };
 
-  const toCompress = realDocs.slice(0, realDocs.length - 10);
-  if (toCompress.length < 5) return;
+  let toCompress = realDocs.slice(0, realDocs.length - 10);
+  let pendingBlocked = 0;
+  if (firstPendingIdx >= 0 && firstPendingIdx < toCompress.length) {
+    pendingBlocked = toCompress.length - firstPendingIdx;
+    toCompress = toCompress.slice(0, firstPendingIdx);
+  }
+  if (toCompress.length < 5) return { compressed: 0, pendingBlocked, agedPending };
 
   const existingSummary = summaryDocs[0]?.data()?.content as string | undefined;
   const newMessages     = toCompress
@@ -42,8 +71,10 @@ async function compressConversationForPhone(phone: string): Promise<void> {
 
   const summaryText = (response.content[0] as Anthropic.TextBlock).text;
 
-  // Delete old summary and compressed messages, write new summary
-  const firstRetained  = realDocs[realDocs.length - 10];
+  // Delete old summary and compressed messages, write new summary. The summary
+  // slots immediately before the first RETAINED row (which, when the pending
+  // guard truncated the window, is the first still-unsynced row).
+  const firstRetained  = realDocs[toCompress.length];
   const summaryTimestamp = (firstRetained.data().timestamp as number) - 1;
 
   // Firebase batches are capped at 500 ops — chunk deletes if needed
@@ -56,15 +87,35 @@ async function compressConversationForPhone(phone: string): Promise<void> {
   }
 
   console.log(`[compressConversation] Compressed ${toCompress.length} messages for ${phone}`);
+  return { compressed: toCompress.length, pendingBlocked, agedPending };
 }
 
-async function compressOldConversations(): Promise<void> {
+export interface CompressionCounts {
+  conversations: number;
+  compressedMessages: number;
+  skippedPendingSync: number;
+  agedPendingRows: number;
+  failed: number;
+}
+
+export async function compressOldConversations(): Promise<CompressionCounts> {
+  const counts: CompressionCounts = {
+    conversations: 0, compressedMessages: 0, skippedPendingSync: 0, agedPendingRows: 0, failed: 0,
+  };
   const convDocs = await db.collection("agent_conversations").listDocuments();
   for (const docRef of convDocs) {
-    await compressConversationForPhone(docRef.id).catch(err =>
-      console.error(`[compressOldConversations] ${docRef.id}:`, err)
-    );
+    counts.conversations++;
+    try {
+      const r = await compressConversationForPhone(docRef.id);
+      counts.compressedMessages += r.compressed;
+      counts.skippedPendingSync += r.pendingBlocked;
+      counts.agedPendingRows += r.agedPending;
+    } catch (err) {
+      counts.failed++;
+      console.error(`[compressOldConversations] ${docRef.id}:`, err);
+    }
   }
+  return counts;
 }
 
 // ── Booking pattern analysis ──────────────────────────────────────────────────
@@ -239,10 +290,14 @@ export async function runNightlyMemoryJob(): Promise<void> {
     console.error("[nightlyMemory] analyzeBookingPatterns error:", err)
   );
 
-  // Compress conversations longer than 15 messages
-  await compressOldConversations().catch(err =>
-    console.error("[nightlyMemory] compressOldConversations error:", err)
-  );
+  // Compress conversations longer than 15 messages. Aggregate-only log (R21):
+  // counts, no phones — agedPendingRows > 0 means the memory-operation worker
+  // is leaving source rows unresolved past its expected horizon (R9).
+  const compression = await compressOldConversations().catch(err => {
+    console.error("[nightlyMemory] compressOldConversations error:", err);
+    return null;
+  });
+  if (compression) console.log("[nightlyMemory] compression", compression);
 
   // Auto-complete execution agents idle for >24 hours
   await cleanupStaleExecutionAgents().catch(err =>

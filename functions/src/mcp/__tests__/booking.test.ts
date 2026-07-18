@@ -322,6 +322,34 @@ describe("booking tools", () => {
       expect(JSON.stringify(r)).not.toContain("20");
     });
 
+    // Legacy prod docs can carry hourlyRate as a STRING ("25", "$25") — the
+    // onboarding correction path stored raw user text whenever Number() failed.
+    // Strict plain-numeric strings (optional leading "$") coerce and flow like
+    // numbers; anything else stays RATE_UNKNOWN (never a guessed rate).
+    it('coerces a legacy string rate "25" and returns the number 25', async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "25" });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.hourlyRate).toBe(25);
+      expect(hoisted.adds.length).toBe(0); // still a pure read
+    });
+
+    it('coerces a legacy "$27.50" string rate to 27.5 (leading $ stripped)', async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "$27.50" });
+      const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cg1", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.hourlyRate).toBe(27.5);
+    });
+
+    it("keeps RATE_UNKNOWN for junk, empty, negative, zero, and unit-suffixed rates", async () => {
+      for (const bad of ["abc", "", "-5", 0, "25/hr", "Infinity", "1e3"]) {
+        hoisted.docState.set("caregivers/cgbad", { name: "Pat", hourlyRate: bad });
+        const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "cgbad" }) as any;
+        expect(r._toolError, `hourlyRate=${JSON.stringify(bad)}`).toBe(true);
+        expect(r.code, `hourlyRate=${JSON.stringify(bad)}`).toBe("RATE_UNKNOWN");
+      }
+    });
+
     it("returns NOT_FOUND for an unknown caregiver", async () => {
       const r = await handleToolCall("get_caregiver_booking_rate", { caregiverId: "ghost" }) as any;
       expect(r._toolError).toBe(true);
@@ -379,6 +407,17 @@ describe("booking tools", () => {
       }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("NOT_FOUND");
+    });
+
+    it('quotes with a coerced legacy string rate ("25") exactly like a numeric 25', async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "25" });
+      const r = await handleToolCall("quote_booking", {
+        caregiverId: "cg1", dates: "2026-07-01", startTime: "10:00", endTime: "12:00", // 2h
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.hourlyRate).toBe(25);
+      expect(r.totalEstimate).toBe(50); // 2h * $25
+      expect(hoisted.adds.length).toBe(0); // still no write
     });
 
     // U6 (R9): a quote must never be built on a fabricated $20 either — the
@@ -443,6 +482,19 @@ describe("booking tools", () => {
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("RATE_UNKNOWN");
       expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    // Legacy string rates: a doc carrying hourlyRate "$27.50" (raw user text
+    // written straight through) must book exactly as if it were 27.5 — same
+    // quote math, same createBookingTask payload, agreement preserved.
+    it('books with a coerced legacy "$27.50" string rate exactly like 27.5', async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "$27.50" });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(true);
+      expect(r.estimatedTotal).toBe(440); // 8h * $27.50 * 2 days
+      expect(createBookingTask).toHaveBeenCalledTimes(1);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.hourlyRate).toBe(27.5);
     });
 
     it("surfaces a blocked booking (e.g. pending background check) without erroring", async () => {

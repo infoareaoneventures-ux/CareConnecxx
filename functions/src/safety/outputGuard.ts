@@ -60,6 +60,15 @@ const ADDRESS_AUTHOR = /\b(?:to|can'?t|cannot|before i(?: can)?)\s+(?:write|comp
 // (a) claiming not to see a message/briefing (inability shape).
 const INABILITY = /\b(?:don'?t|do not|can'?t|cannot)\s+see\s+(?:a|the|any|your)\s+(?:message|briefing|transcript|context)\b/i;
 
+// (a) an imperative ask for the info needed to write the message ("Please
+// provide the caregiver's name…", "Share the shift details and I'll draft the
+// text", "Let me know who the client is"). Requires an info-seeking object
+// within the same clause (bounded, no nesting — ReDoS-safe), so ordinary
+// imperatives in real copy ("please let me know if the time works") never
+// match. Still only signal (a): the CONJUNCTION rule below demands a
+// briefing/transcript reference or role question on top.
+const IMPERATIVE_ASK = /\b(?:please\s+)?(?:provide|share|send|give\s+me|tell\s+me|let\s+me\s+know)\b[^.!?\n]{0,80}\b(?:name|details|context|information|info|who\s+the|which\s+(?:client|caregiver|senior|shift))\b/i;
+
 // (b) an explicit briefing/transcript reference — word-boundary-aware, so
 // "debriefing" never matches.
 const BRIEFING_REF = /\b(?:briefing|transcript)s?\b/i;
@@ -71,12 +80,21 @@ const ROLE_QUESTION = /\bwho(?:'s|\s+is|\s+are)\s+(?:the|this|that|your|my|our)\
 // url — any http(s)://, www., or bare-domain occurrence. Composed links are
 // always wrong; real links are sent by the system as separate card bubbles.
 // ---------------------------------------------------------------------------
+// All bare-domain patterns carry a negative lookbehind for "@": email
+// addresses (support@eviacares.com — the platform email appears in legitimate
+// copy) are not composed links and must never trip the check.
 const URL_PATTERNS: RegExp[] = [
   /\bhttps?:\/\/\S+/i,
-  /\bwww\.[a-z0-9-]+\.[a-z]{2,}\b/i,
-  // Bare domain with a common TLD (eviacares.com etc.). Bounded TLD list keeps
-  // false positives out ("5 p.m.", file names like resume.pdf never match).
-  /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|co|app|us|care|health|link|me)\b/i,
+  /\bwww\.[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/i,
+  // Bare domain with an UNAMBIGUOUS TLD (eviacares.com etc.). Bounded TLD list
+  // keeps false positives out ("5 p.m.", file names like resume.pdf never match).
+  /(?<!@)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|app|care|health|link)\b/i,
+  // Short AMBIGUOUS TLDs (.me/.us/.co) false-positive on missing-space typos
+  // ("text.me later", "trust.us"). Those only count with a URL-ish shape:
+  // 2+ labels before the TLD, or a trailing /path. (www./http(s) shapes are
+  // already caught by the patterns above.)
+  /(?<!@)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\.(?:me|us|co)\b/i,
+  /(?<!@)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:me|us|co)\/\S/i,
 ];
 
 /**
@@ -92,10 +110,11 @@ export function guardModelOutput(text: string): GuardResult {
     const needInfo      = NEED_INFO.test(text);
     const addressAuthor = ADDRESS_AUTHOR.test(text);
     const inability     = INABILITY.test(text);
+    const imperativeAsk = IMPERATIVE_ASK.test(text);
     const briefingRef   = BRIEFING_REF.test(text);
     const roleQuestion  = ROLE_QUESTION.test(text);
 
-    const contextRequest = needInfo || addressAuthor || inability;
+    const contextRequest = needInfo || addressAuthor || inability || imperativeAsk;
     const isMeta =
       (contextRequest && (briefingRef || roleQuestion)) ||
       (roleQuestion && briefingRef);

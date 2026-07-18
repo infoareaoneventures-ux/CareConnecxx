@@ -84,6 +84,26 @@ function bookingTimeToMinutes(t: unknown): number | null {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
+// Legacy prod caregiver docs can carry hourlyRate as a STRING ("25", "$25"):
+// the onboarding correction path stored the raw user text whenever Number()
+// failed to parse it (onboardingConversation.ts), and update_signup_field
+// accepts free-text field values. A caregiver with a perfectly good "25" on
+// file must stay bookable, so coerce STRICT plain-numeric strings — trimmed,
+// with at most one leading "$" stripped (the plausible user-typed shape).
+// Anything else ("flexible", "25/hr", "", "abc") stays unknown: returns null.
+function coerceHourlyRate(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) && raw > 0 ? raw : null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim().replace(/^\$/, "");
+    // Strict shape: digits with an optional decimal part. Rejects "", "-5",
+    // "Infinity", "25/hr", "1e3" — those are RATE_UNKNOWN, not a guess.
+    if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
 // name fallbacks used by the live `request_booking` path (name/fullName) so a
 // quote and the eventual booking agree.
@@ -92,6 +112,8 @@ function bookingTimeToMinutes(t: unknown): number | null {
 // returns a structured RATE_UNKNOWN error instead of the old silent $20
 // default. A fabricated rate here became a fabricated quote AND a fabricated
 // booking charge — the agent must ask for / confirm the real rate instead.
+// String rates that parse cleanly (legacy docs) coerce via coerceHourlyRate
+// and flow exactly like numeric rates — quote and booking agree either way.
 async function resolveCaregiverRate(
   caregiverId: string,
 ): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: string; message: string }> {
@@ -100,7 +122,8 @@ async function resolveCaregiverRate(
   if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
   const cg = cgSnap.data() || {};
   const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
-  if (typeof cg.hourlyRate !== "number" || !(cg.hourlyRate > 0)) {
+  const hourlyRate = coerceHourlyRate(cg.hourlyRate);
+  if (hourlyRate === null) {
     return {
       ok:   false,
       code: "RATE_UNKNOWN",
@@ -111,7 +134,7 @@ async function resolveCaregiverRate(
         `If the family needs this resolved now, use create_support_ticket so the team can confirm the caregiver's rate.`,
     };
   }
-  return { ok: true, caregiverName, hourlyRate: cg.hourlyRate as number };
+  return { ok: true, caregiverName, hourlyRate };
 }
 
 // Build a full cost quote for a proposed booking. No write — safe to call freely.

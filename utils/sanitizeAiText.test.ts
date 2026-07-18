@@ -69,4 +69,42 @@ describe("sanitizeAiText", () => {
     const text = "I need more information before I can help with that.";
     expect(sanitizeAiText(text, FALLBACK)).toBe(text);
   });
+
+  // Imperative-ask meta shapes (mirrors outputGuard.ts): "please provide/
+  // share/let me know" + an info-seeking object counts as signal (a); the
+  // conjunction rule still requires a briefing/transcript reference or role
+  // question before anything is replaced.
+  it("replaces an imperative ask for names/details combined with a briefing reference", () => {
+    const meta =
+      "Please provide the caregiver's name and the shift details from the briefing so I can write this message.";
+    expect(sanitizeAiText(meta, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("replaces a 'share … details' imperative combined with a transcript reference", () => {
+    const meta = "Share the shift details from the transcript and I'll draft the text.";
+    expect(sanitizeAiText(meta, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("leaves an ordinary imperative in real copy unchanged ('please let me know if 2pm works')", () => {
+    const text = "Please let me know if 2pm works for you.";
+    expect(sanitizeAiText(text, FALLBACK)).toBe(text);
+  });
+
+  it("leaves an imperative ask ALONE unchanged — no briefing/transcript/role reference (conjunction rule)", () => {
+    const text = "Please provide your name when you arrive at the front desk.";
+    expect(sanitizeAiText(text, FALLBACK)).toBe(text);
+  });
+
+  // The SPA sanitizer deliberately has NO URL leg (see the module header —
+  // outputGuard's URL check is SMS-specific). These pin that emails, prose
+  // typos, and even real domains pass through unchanged here.
+  it("leaves the platform email address unchanged (no URL leg in the SPA sanitizer)", () => {
+    const text = "You can reach us at support@eviacares.com";
+    expect(sanitizeAiText(text, FALLBACK)).toBe(text);
+  });
+
+  it("leaves a missing-space typo like 'text.me later today' unchanged", () => {
+    const text = "text.me later today";
+    expect(sanitizeAiText(text, FALLBACK)).toBe(text);
+  });
 });

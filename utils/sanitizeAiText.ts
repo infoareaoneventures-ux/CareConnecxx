@@ -12,7 +12,12 @@
  * NOTE: the marker patterns below MIRROR functions/src/safety/outputGuard.ts
  * and must be kept ALIGNED BY REVIEW — the frontend and functions bundles are
  * separate builds, so no import across that boundary is possible. If a
- * pattern changes on either side, change both.
+ * pattern changes on either side, change both. The mirror covers the
+ * META-RESPONSE markers only: outputGuard's URL check is deliberately NOT
+ * mirrored here — it exists because SMS delivers real links as separate card
+ * bubbles (a composed URL is always wrong there); the SPA has no such
+ * delivery split, and replacing a whole shift note with canned fallback over
+ * a domain mention would destroy legitimate content.
  *
  * Matching rules (same as outputGuard.ts):
  *  - All patterns are word-boundary-aware (\b) — "debriefing" must never
@@ -20,7 +25,9 @@
  *    regression).
  *  - meta-response requires a CONJUNCTION of two DISTINCT signals:
  *      (a) a context-request / inability shape — asking for more information,
- *          or addressing the prompt author about writing the message; and
+ *          an imperative ask for the info needed to write the message
+ *          ("please provide the caregiver's name…"), or addressing the
+ *          prompt author about writing the message; and
  *      (b) a briefing/transcript reference or a role question ("who's the
  *          caregiver").
  *    A bare mention of "morning briefing" or "certificate or transcript"
@@ -37,6 +44,15 @@ const ADDRESS_AUTHOR = /\b(?:to|can'?t|cannot|before i(?: can)?)\s+(?:write|comp
 
 // (a) claiming not to see a message/briefing (inability shape).
 const INABILITY = /\b(?:don'?t|do not|can'?t|cannot)\s+see\s+(?:a|the|any|your)\s+(?:message|briefing|transcript|context)\b/i;
+
+// (a) an imperative ask for the info needed to write the message ("Please
+// provide the caregiver's name…", "Share the shift details and I'll draft the
+// text", "Let me know who the client is"). Requires an info-seeking object
+// within the same clause (bounded, no nesting — ReDoS-safe), so ordinary
+// imperatives in real copy ("please let me know if the time works") never
+// match. Still only signal (a): the CONJUNCTION rule demands a
+// briefing/transcript reference or role question on top.
+const IMPERATIVE_ASK = /\b(?:please\s+)?(?:provide|share|send|give\s+me|tell\s+me|let\s+me\s+know)\b[^.!?\n]{0,80}\b(?:name|details|context|information|info|who\s+the|which\s+(?:client|caregiver|senior|shift))\b/i;
 
 // (b) an explicit briefing/transcript reference — word-boundary-aware, so
 // "debriefing" never matches.
@@ -56,7 +72,8 @@ export function sanitizeAiText(text: string, fallback: string): string {
     if (typeof text !== "string" || !text.trim()) return fallback;
 
     const contextRequest =
-      NEED_INFO.test(text) || ADDRESS_AUTHOR.test(text) || INABILITY.test(text);
+      NEED_INFO.test(text) || ADDRESS_AUTHOR.test(text) || INABILITY.test(text) ||
+      IMPERATIVE_ASK.test(text);
     const briefingRef = BRIEFING_REF.test(text);
     const roleQuestion = ROLE_QUESTION.test(text);
 

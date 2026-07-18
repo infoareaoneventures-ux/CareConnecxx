@@ -7,8 +7,8 @@ import { getPermissions } from "../agents/permissionsConversation";
 import { handlePromptGet } from "../mcp/server";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getRelevantFacts } from "../memory/learnedFacts";
-import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
-import { guardModelOutput } from "../safety/outputGuard";
+import { generateCaraMessage } from "../utils/caraMessage";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 const db = admin.firestore();

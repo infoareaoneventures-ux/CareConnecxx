@@ -1,8 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
-import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
-import { guardModelOutput } from "../safety/outputGuard";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";

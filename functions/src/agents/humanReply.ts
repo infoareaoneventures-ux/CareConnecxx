@@ -1,6 +1,5 @@
 import { quickComplete } from "../utils/openaiClient";
-import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
-import { guardModelOutput } from "../safety/outputGuard";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 export const HUMAN_MIDFLOW_FALLBACK = "I do not want to guess on that.";

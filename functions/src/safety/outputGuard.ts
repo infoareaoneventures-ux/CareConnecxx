@@ -20,6 +20,19 @@
 //     substrings out of legitimate words ("debriefing" must never match).
 //   - Never log the message text itself — only counts/reasons.
 
+// Shared anti-invention prompt rule (hallucination hardening U1/U2, R1). Spliced
+// into both caraMessage voices and appended to every direct messages.create
+// generator's system prompt so the wording never drifts. It REPLACES the old
+// "Be concrete — real names, dates, times, amounts — never vague" imperative,
+// which pressured the model into producing a name even when the briefing gave
+// none (the "Marcus" incident). Lives HERE (not caraMessage.ts) so consumers
+// like humanReply survive tests that shallow-mock "../utils/caraMessage" with
+// only generateCaraMessage — caraMessage.ts re-exports it for compatibility.
+export const ANTI_INVENTION_CLAUSE =
+  "Be concrete with the names, dates, times, and amounts given in the briefing — never vague. " +
+  "Use ONLY names, dates, times, and amounts that appear in the briefing; " +
+  "if a name or number is not given, refer generically ('your visit', 'the caregiver') and NEVER invent one.";
+
 export interface GuardResult {
   ok:      boolean;
   reason?: "meta_response" | "url";

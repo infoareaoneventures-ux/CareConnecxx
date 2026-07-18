@@ -7,9 +7,9 @@ import { getRelevantFacts } from "../memory/learnedFacts";
 import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { businessTodayStr } from "../utils/scheduledTime";
-import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
-import { guardModelOutput } from "../safety/outputGuard";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 
 const db = admin.firestore();

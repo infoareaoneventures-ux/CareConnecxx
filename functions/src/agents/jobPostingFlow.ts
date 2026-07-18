@@ -3,9 +3,9 @@ import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./buildJobPost";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
-import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "./careRecipients";
-import { guardModelOutput } from "../safety/outputGuard";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 
 const db = admin.firestore();
 

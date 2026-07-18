@@ -1,17 +1,12 @@
 import { getSharedClient } from "./claudeClient";
-import { guardModelOutput } from "../safety/outputGuard";
+import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 
-// Shared anti-invention rule (hallucination hardening U1, R1). Spliced into BOTH
-// voices below and imported by the direct messages.create generators (morning
-// briefing, weekly digest, triggers, job-posting flow, human-reply helper) so the
-// wording never drifts. It REPLACES the old "Be concrete — real names, dates,
-// times, amounts — never vague" imperative, which pressured the model into
-// producing a name even when the briefing gave none (the "Marcus" incident).
-export const ANTI_INVENTION_CLAUSE =
-  "Be concrete with the names, dates, times, and amounts given in the briefing — never vague. " +
-  "Use ONLY names, dates, times, and amounts that appear in the briefing; " +
-  "if a name or number is not given, refer generically ('your visit', 'the caregiver') and NEVER invent one.";
+// The shared anti-invention rule lives in safety/outputGuard.ts (see the comment
+// there for why); re-exported here so existing imports keep working. Direct
+// generator SOURCE files must import it from outputGuard, not from here — tests
+// commonly shallow-mock this module with only generateCaraMessage.
+export { ANTI_INVENTION_CLAUSE };
 
 // Evia's voice for messages to caregivers
 export const CAREGIVER_VOICE =

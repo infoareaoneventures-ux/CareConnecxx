@@ -554,9 +554,16 @@ export async function sendMessage(
     // into the durable queue instead; the every-minute drain redelivers with
     // backoff and pages ops if it exhausts. Known tradeoff: a partial multi-
     // bubble send (text ok, link failed) redelivers the whole message — a
-    // rare duplicate beats a silent loss. Drain-originated sends (_noQueue)
-    // still throw so the queue's own attempt accounting stays correct.
+    // rare duplicate SMS beats a silent loss (history still records exactly
+    // once — see historyAlreadyRecorded below). Drain-originated sends
+    // (_noQueue) still throw so the queue's own attempt accounting stays
+    // correct.
     if (opts._noQueue) throw err;
+    // Partial-bubble failure: sendMessageDeliver tags the error when the
+    // history row was already recorded before a later bubble threw, so the
+    // redelivery delivers the SMS but records nothing.
+    const historyAlreadyRecorded =
+      (err as { historyRecorded?: boolean } | null)?.historyRecorded === true;
     try {
       const { enqueueOutbound } = await import("./outboundQueue");
       const queued = await enqueueOutbound({
@@ -564,9 +571,10 @@ export async function sendMessage(
         ...(typeof textOrMessage === "string" ? { text: textOrMessage } : { message: textOrMessage }),
         ...(opts.preferredService ? { preferredService: opts.preferredService } : {}),
         // Preserved across redelivery: a saveConversationTurn-backed reply that
-        // dead-letters must not get recorded a second time when the drain
-        // re-enters sendMessageDeliver.
-        ...(opts.skipHistoryRecord ? { skipHistoryRecord: true } : {}),
+        // dead-letters (or a partial-bubble send that already recorded) must
+        // not get recorded a second time when the drain re-enters
+        // sendMessageDeliver.
+        ...(opts.skipHistoryRecord || historyAlreadyRecorded ? { skipHistoryRecord: true } : {}),
         reason: "send_failed",
         source: opts.source ?? "sendMessage:transport_failure",
         ttlMs:  opts.queueTtlMs ?? 60 * 60 * 1000,
@@ -613,70 +621,86 @@ async function sendMessageDeliver(
   // the dead-letter drain re-enters this function and records exactly once on
   // the successful redelivery. Records ONCE per logical sendMessage call (not
   // per split bubble) using the same cleaned mirror text, so history matches
-  // what actually went out. Fire-and-forget: never delays or blocks SMS.
+  // what actually went out. AWAITED at each call site (not fire-and-forget):
+  // these are Gen-1 functions, and post-return background work can be torn
+  // down before the Firestore write lands — a silently lost row. The recorder
+  // runs only after transport succeeded and is internally fail-soft, so
+  // awaiting costs one Firestore write of latency and can never fail the send.
   let historyRecorded = false;
-  const recordHistoryOnce = (): void => {
+  const recordHistoryOnce = async (): Promise<void> => {
     if (historyRecorded || opts.skipHistoryRecord || !mirrorText) return;
     historyRecorded = true;
-    void import("./threadMirror")
-      .then(({ recordOutboundHistory }) => recordOutboundHistory({ chatId, text: mirrorText }))
-      .catch(() => { /* non-critical — recorder is itself fail-soft */ });
+    try {
+      const { recordOutboundHistory } = await import("./threadMirror");
+      await recordOutboundHistory({ chatId, text: mirrorText });
+    } catch { /* non-critical — recorder is itself fail-soft */ }
   };
 
-  // Structured callers (already LinqMessage) send as-is. Plain strings may
-  // contain URLs — split them into text + per-URL link messages so iMessage/
-  // RCS clients render rich preview cards instead of bare URLs.
-  if (typeof textOrMessage !== "string") {
-    const merged: LinqMessage =
-      preferredService && !textOrMessage.preferred_service
-        ? { ...textOrMessage, preferred_service: preferredService }
-        : textOrMessage;
-    const r = await sendOneMessage(chatId, merged);
-    recordHistoryOnce();
-    await trackForcedIMessage(r.message_id, chatId, merged);
-    return r;
+  try {
+    // Structured callers (already LinqMessage) send as-is. Plain strings may
+    // contain URLs — split them into text + per-URL link messages so iMessage/
+    // RCS clients render rich preview cards instead of bare URLs.
+    if (typeof textOrMessage !== "string") {
+      const merged: LinqMessage =
+        preferredService && !textOrMessage.preferred_service
+          ? { ...textOrMessage, preferred_service: preferredService }
+          : textOrMessage;
+      const r = await sendOneMessage(chatId, merged);
+      await recordHistoryOnce();
+      await trackForcedIMessage(r.message_id, chatId, merged);
+      return r;
+    }
+
+    const { textOnly, urls } = splitTextAndUrls(textOrMessage);
+
+    if (urls.length === 0) {
+      const msg: LinqMessage = { parts: [{ type: "text", value: textOrMessage }], ...svc };
+      const r = await sendOneMessage(chatId, msg);
+      await recordHistoryOnce();
+      await trackForcedIMessage(r.message_id, chatId, msg);
+      return r;
+    }
+
+    let firstId = "";
+
+    // 1. Send the narrative text first (if anything remains after URL strip)
+    if (textOnly) {
+      const msg: LinqMessage = { parts: [{ type: "text", value: textOnly }], ...svc };
+      const r = await sendOneMessage(chatId, msg);
+      // First part delivered — record the FULL mirror text once; the link
+      // bubbles below are part of the same logical message.
+      await recordHistoryOnce();
+      firstId = r.message_id;
+      await trackForcedIMessage(r.message_id, chatId, msg);
+      // Small delay so the link cards arrive AFTER the text bubble, not raced
+      // ahead of it by Linq's pipeline.
+      await new Promise<void>((res) => setTimeout(res, 600));
+    }
+
+    // 2. One dedicated link-part message per URL — Linq fetches OG metadata
+    // and renders each as a rich preview card on iMessage/RCS, plain URL on SMS.
+    // preferred_service is propagated to every follow-up so a forced protocol is
+    // not silently dropped after the first bubble.
+    for (let i = 0; i < urls.length; i++) {
+      if (i > 0) await new Promise<void>((res) => setTimeout(res, 600));
+      const msg: LinqMessage = { parts: [{ type: "link", value: urls[i] }], ...svc };
+      const r = await sendOneMessage(chatId, msg);
+      await recordHistoryOnce(); // no-op if the textOnly part already recorded
+      await trackForcedIMessage(r.message_id, chatId, msg);
+      if (!firstId) firstId = r.message_id;
+    }
+
+    return { message_id: firstId };
+  } catch (err) {
+    // Partial-bubble failure: an earlier bubble delivered AND recorded, then a
+    // later bubble threw. Tag the error so sendMessage's dead-letter carries
+    // skipHistoryRecord — the drain's redelivery re-sends the SMS but must not
+    // record a second history row.
+    if (historyRecorded && err !== null && typeof err === "object") {
+      (err as { historyRecorded?: boolean }).historyRecorded = true;
+    }
+    throw err;
   }
-
-  const { textOnly, urls } = splitTextAndUrls(textOrMessage);
-
-  if (urls.length === 0) {
-    const msg: LinqMessage = { parts: [{ type: "text", value: textOrMessage }], ...svc };
-    const r = await sendOneMessage(chatId, msg);
-    recordHistoryOnce();
-    await trackForcedIMessage(r.message_id, chatId, msg);
-    return r;
-  }
-
-  let firstId = "";
-
-  // 1. Send the narrative text first (if anything remains after URL strip)
-  if (textOnly) {
-    const msg: LinqMessage = { parts: [{ type: "text", value: textOnly }], ...svc };
-    const r = await sendOneMessage(chatId, msg);
-    // First part delivered — record the FULL mirror text once; the link
-    // bubbles below are part of the same logical message.
-    recordHistoryOnce();
-    firstId = r.message_id;
-    await trackForcedIMessage(r.message_id, chatId, msg);
-    // Small delay so the link cards arrive AFTER the text bubble, not raced
-    // ahead of it by Linq's pipeline.
-    await new Promise<void>((res) => setTimeout(res, 600));
-  }
-
-  // 2. One dedicated link-part message per URL — Linq fetches OG metadata
-  // and renders each as a rich preview card on iMessage/RCS, plain URL on SMS.
-  // preferred_service is propagated to every follow-up so a forced protocol is
-  // not silently dropped after the first bubble.
-  for (let i = 0; i < urls.length; i++) {
-    if (i > 0) await new Promise<void>((res) => setTimeout(res, 600));
-    const msg: LinqMessage = { parts: [{ type: "link", value: urls[i] }], ...svc };
-    const r = await sendOneMessage(chatId, msg);
-    recordHistoryOnce(); // no-op if the textOnly part already recorded
-    await trackForcedIMessage(r.message_id, chatId, msg);
-    if (!firstId) firstId = r.message_id;
-  }
-
-  return { message_id: firstId };
 }
 
 // ── Forced-iMessage retry tracking ───────────────────────────────────────────
@@ -1173,17 +1197,17 @@ export async function sendToPhone(
     // First-contact sends deliver via createChat, bypassing sendMessageDeliver's
     // recorder — record here AFTER the successful createChat return and AFTER
     // the session doc exists (resolvePhones reads agent_sessions). Same cleaned
-    // text contract as the mirror: lint + redact (U3 / R4).
+    // text contract as the mirror: lint + redact (U3 / R4). AWAITED — these are
+    // Gen-1 functions, and un-awaited work can be torn down before the write
+    // lands; the recorder is fail-soft so this can never fail the send.
     if (!opts.skipHistoryRecord) {
-      void (async () => {
-        try {
-          const { recordOutboundHistory, extractMirrorText } = await import("./threadMirror");
-          const raw = typeof textOrMessage === "string"
-            ? lintPreservingLayout(textOrMessage)
-            : extractMirrorText(textOrMessage);
-          await recordOutboundHistory({ chatId: chat_id, text: redactPii(raw).text });
-        } catch { /* non-critical — recorder is itself fail-soft */ }
-      })();
+      try {
+        const { recordOutboundHistory, extractMirrorText } = await import("./threadMirror");
+        const raw = typeof textOrMessage === "string"
+          ? lintPreservingLayout(textOrMessage)
+          : extractMirrorText(textOrMessage);
+        await recordOutboundHistory({ chatId: chat_id, text: redactPii(raw).text });
+      } catch { /* non-critical — recorder is itself fail-soft */ }
     }
 
     // Best-practice: share contact card after first outbound on iMessage (non-blocking)

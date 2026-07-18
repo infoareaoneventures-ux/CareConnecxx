@@ -316,6 +316,9 @@ describe("booking tools", () => {
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("RATE_UNKNOWN");
       expect(r.message).toMatch(/confirm/i);
+      // Escalation guidance: the agent is pointed at create_support_ticket so
+      // a family who needs it resolved now has a real path.
+      expect(r.message).toContain("create_support_ticket");
       expect(JSON.stringify(r)).not.toContain("20");
     });
 

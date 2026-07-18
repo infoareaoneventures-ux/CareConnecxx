@@ -273,7 +273,7 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     expect(sentText()).not.toContain("just sent");
   });
 
-  it("bare LINK during cooldown resends once; a second LINK in the same window does NOT", async () => {
+  it("bare LINK during cooldown resends once; a second LINK in the same window gets TRUTHFUL spent copy", async () => {
     const session = seed(PHOTO_STEP, { ...FULL_DATA }, cooldownState(2));
 
     // First LINK — the escape hatch: real resend, bypass consumed.
@@ -282,11 +282,19 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     const bypassStamp = stored()?.gateLinkBypassUsedAt?.[PHOTO_STEP];
     expect(typeof bypassStamp).toBe("string");
 
-    // Second LINK, same window — deterministic copy, no second card.
+    // Second LINK, same window — no second card, and the copy is TRUTHFUL:
+    // it acknowledges the recent resend with a minutes count and points at the
+    // window reset. It must NOT re-promise "reply LINK" (the hatch is spent)
+    // and must NOT claim a fresh send happened this turn.
     sentMessages.length = 0;
     await handleOnboardingStep(PHONE, CHAT, "LINK", stored());
     expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
+    const out = sentText();
+    expect(out).not.toContain("reply LINK");
+    expect(out).not.toContain("just sent");
+    expect(out).not.toContain("just resent");
+    expect(out).toContain("I resent that link about 1 minute ago");
+    expect(out).toMatch(/send it again in about \d+ minutes?/);
   });
 
   it("classifier ERROR during cooldown (defaults to `other`): deterministic copy, no crash, no resend", async () => {
@@ -394,10 +402,57 @@ describe("U9 — membership / MVR checkout resends", () => {
     expect(linkParts()).toContain("https://pay/membership");
     expect(typeof stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBe("string");
 
+    // Second LINK, same window — truthful spent copy: acknowledges the recent
+    // resend + window reset, never re-promises LINK, never claims a fresh send.
     sentMessages.length = 0;
     await handleOnboardingStep(PHONE, CHAT, "link", stored());
     expect(linkParts()).toHaveLength(0);
-    expect(sentText()).toContain("reply LINK");
+    const out = sentText();
+    expect(out).not.toContain("reply LINK");
+    expect(out).not.toContain("just sent");
+    expect(out).toContain("I resent that link about 1 minute ago");
+    expect(out).toMatch(/send it again in about \d+ minutes?/);
+  });
+
+  it("paid membership + LINK: paid confirmation path, NO cooldown/bypass stamp written", async () => {
+    // A2: the paid short-circuit sends NO link — the LINK path must not record
+    // a send that never happened.
+    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, {
+      caregiverSubscriptionId: "sub_live",
+      membershipCheckoutUrl:   "https://pay/stale",
+    });
+
+    await handleOnboardingStep(PHONE, CHAT, "LINK", session);
+
+    expect(linkParts()).toHaveLength(0);
+    expect(sentText().toLowerCase()).toContain("came through");
+    expect(sentText()).not.toContain("reply LINK");
+    expect(stored()?.gateLinkResentAt?.[MEMBERSHIP_STEP]).toBeUndefined();
+    expect(stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBeUndefined();
+  });
+
+  it("paid + second LINK: still the paid path — never 'I sent that link' cooldown copy", async () => {
+    // Even with stale pre-payment cooldown state (window open AND bypass
+    // spent), the paid short-circuit wins over ANY cooldown copy.
+    const session = seed(MEMBERSHIP_STEP, { ...FULL_DATA }, {
+      caregiverSubscriptionId: "sub_live",
+      membershipCheckoutUrl:   "https://pay/stale",
+      gateLinkResentAt:     { [MEMBERSHIP_STEP]: minutesAgo(2) },
+      gateLinkBypassUsedAt: { [MEMBERSHIP_STEP]: minutesAgo(1) },
+    });
+
+    await handleOnboardingStep(PHONE, CHAT, "LINK", session);
+    sentMessages.length = 0;
+    await handleOnboardingStep(PHONE, CHAT, "LINK", stored());
+
+    expect(linkParts()).toHaveLength(0);
+    const out = sentText();
+    expect(out.toLowerCase()).toContain("came through");
+    expect(out).not.toContain("I sent that link");
+    expect(out).not.toContain("I resent that link");
+    expect(out).not.toContain("reply LINK");
+    // Stale stamps untouched — no fresh bypass/send was recorded.
+    expect(stored()?.gateLinkBypassUsedAt?.[MEMBERSHIP_STEP]).toBe(session.gateLinkBypassUsedAt[MEMBERSHIP_STEP]);
   });
 
   it("MVR: `other` inside the window gets the deterministic copy, not the payment link", async () => {

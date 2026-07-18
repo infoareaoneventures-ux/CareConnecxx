@@ -147,10 +147,29 @@ export async function resolvePhones(chatId: string): Promise<string[]> {
   }
 }
 
+// ── History URL neutralization ───────────────────────────────────────────────
+// The web-inbox mirror keeps literal URLs (users tap them there), but the
+// agent-history row must NOT: texted links are frequently tokenized bearer
+// URLs (Stripe checkout, /bgcheck consent, /upload token pages), and history
+// text is interpolated into LLM prompts — a literal URL there both leaks the
+// token into every downstream prompt and invites the model to re-compose URLs,
+// which the voice rules forbid. The agent only needs to know a link was sent,
+// so every URL (http(s)://… and scheme-less www.…) becomes "[link]".
+const HISTORY_URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`)\]]+/gi;
+
+/** Pure: replace every URL in history-bound text with "[link]". Applied only
+ *  to agent_conversations history rows — never to the web-inbox mirror text. */
+export function neutralizeUrlsForHistory(text: string): string {
+  return text.replace(HISTORY_URL_RE, "[link]");
+}
+
 // Record an outbound send as an assistant turn in the QA agent's history
 // (agent_conversations/{phone}/messages) so scripted/scheduled/trigger sends
 // are visible to it afterward — the "who is Marcus" denial class (R4).
-// Fire-and-forget-safe: never throws, never blocks delivery. Schema matches
+// Fail-soft: never throws, and a recording failure never blocks delivery.
+// Callers AWAIT it (Gen-1 functions can tear down post-return background work
+// before a fire-and-forget write lands). URLs are neutralized to "[link]"
+// before the write — see neutralizeUrlsForHistory above. Schema matches
 // qaAgent's saveConversationTurn ({ role, content, timestamp: Date.now() });
 // the extra `source` tag marks transport-recorded rows so the history window
 // composer can shed them before user turns (getConversationHistory reads only
@@ -162,7 +181,7 @@ export async function recordOutboundHistory(params: {
   try {
     if (!outboundHistoryRecordEnabled()) return;
 
-    const text = (params.text ?? "").trim();
+    const text = neutralizeUrlsForHistory((params.text ?? "").trim());
     if (!text) return;
     // Attachment-only sends carry no conversational content worth recording —
     // extractMirrorText renders media parts as "[attachment]".

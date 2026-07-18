@@ -62,4 +62,11 @@ describe("sanitizeAiText", () => {
     const text = "Maria, who is your caregiver, will arrive at 2 PM.";
     expect(sanitizeAiText(text, FALLBACK)).toBe(text);
   });
+
+  it("leaves a context-request shape ALONE unchanged — no briefing/transcript/role reference (pins the && conjunction)", () => {
+    // A regression from `&&` to `||` in the meta-response rule would replace
+    // this legitimate copy: one signal (a) with no signal (b) must pass.
+    const text = "I need more information before I can help with that.";
+    expect(sanitizeAiText(text, FALLBACK)).toBe(text);
+  });
 });

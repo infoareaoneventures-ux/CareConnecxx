@@ -128,10 +128,11 @@ vi.mock("../../safety/supervisor", () => ({
 vi.mock("../../observability/auditLog", () => ({ logMessageSent: vi.fn(async () => {}) }));
 
 import { sendMessage, signalThinking } from "../client";
-import { resolvePhones, recordOutboundHistory } from "../threadMirror";
+import { resolvePhones, recordOutboundHistory, neutralizeUrlsForHistory } from "../threadMirror";
 
-// Recording is fire-and-forget (void promise) — give the microtask/macrotask
-// queue a beat to settle before asserting absence.
+// Recording is awaited on the send path (Gen-1 teardown safety), but give the
+// microtask/macrotask queue a beat to settle before asserting ABSENCE so a
+// regression back to fire-and-forget can't sneak a late row past the check.
 const settle = () => new Promise<void>((r) => setTimeout(r, 30));
 
 beforeEach(() => {
@@ -219,6 +220,57 @@ describe("recordOutboundHistory (direct)", () => {
     hoisted.state.sessions = [{ __id: "+15551230013", chatId: "roh-flag", userId: "u" }];
     await recordOutboundHistory({ chatId: "roh-flag", text: "hello" });
     expect(hoisted.state.convAdds).toHaveLength(0);
+  });
+});
+
+describe("URL neutralization — history never stores tokenized/bearer URLs", () => {
+  it("neutralizeUrlsForHistory replaces http(s) and www URLs with [link]; plain text untouched", () => {
+    expect(neutralizeUrlsForHistory("Pay here: https://checkout.stripe.com/pay/cs_a1B2 today"))
+      .toBe("Pay here: [link] today");
+    expect(neutralizeUrlsForHistory("Upload at www.eviacares.com/upload/photo?t=tok_9 please"))
+      .toBe("Upload at [link] please");
+    expect(neutralizeUrlsForHistory("http://example.com/bgcheck?token=abc\nSecond line"))
+      .toBe("[link]\nSecond line");
+    expect(neutralizeUrlsForHistory("No links in this message.")).toBe("No links in this message.");
+  });
+
+  it("records [link] (never the URL or token) for a tokenized checkout send", async () => {
+    hoisted.state.sessions = [{ __id: "+15551250001", chatId: "nu-token", userId: "u" }];
+    await sendMessage("nu-token", "Tap here to pay: https://checkout.stripe.com/pay/cs_test_SECRETTOKEN");
+    await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(1));
+    const content = String(hoisted.state.convAdds[0].data.content);
+    expect(content).toContain("Tap here to pay");
+    expect(content).toContain("[link]");
+    expect(content).not.toContain("http");
+    expect(content).not.toContain("cs_test_SECRETTOKEN");
+  });
+
+  it("neutralizes a structured link-part send (extractMirrorText yields the URL as text)", async () => {
+    hoisted.state.sessions = [{ __id: "+15551250002", chatId: "nu-struct", userId: "u" }];
+    await sendMessage("nu-struct", {
+      parts: [{ type: "link", value: "https://checkout.stripe.com/pay/cs_456" }],
+    });
+    await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(1));
+    const content = String(hoisted.state.convAdds[0].data.content);
+    expect(content).toBe("[link]");
+    expect(content).not.toContain("http");
+  });
+
+  it("leaves the web-inbox mirror text untouched (URLs neutralized in HISTORY only)", async () => {
+    hoisted.state.sessions = [{ __id: "+15551250003", chatId: "nu-mirror", userId: "uid-m" }];
+    await sendMessage("nu-mirror", "Tap here to pay: https://checkout.stripe.com/pay/cs_777");
+    await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(1));
+    await settle(); // mirror is still fire-and-forget
+    const mirrored = hoisted.state.otherAdds.filter((a) => a.path === "threads/cara_uid-m/messages");
+    expect(mirrored.length).toBeGreaterThan(0);
+    expect(String(mirrored[0].data.text)).toContain("https://checkout.stripe.com/pay/cs_777");
+  });
+
+  it("records plain no-URL text verbatim", async () => {
+    hoisted.state.sessions = [{ __id: "+15551250004", chatId: "nu-plain", userId: "u" }];
+    await sendMessage("nu-plain", "Maria confirmed for Friday at 10am.");
+    await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(1));
+    expect(hoisted.state.convAdds[0].data.content).toBe("Maria confirmed for Friday at 10am.");
   });
 });
 
@@ -343,6 +395,45 @@ describe("sendMessage → outbound history recording", () => {
     await sendMessage("sm-fail-skip", "QA reply already saved.", { skipHistoryRecord: true });
     expect(hoisted.state.queueAdds).toHaveLength(1);
     expect(hoisted.state.queueAdds[0].data.skipHistoryRecord).toBe(true);
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("partial-bubble failure (text ok, link throws): dead-letter carries skipHistoryRecord and drain redelivery records nothing", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    hoisted.state.sessions = [{ __id: "+15551240013", chatId: "sm-partial", userId: "u" }];
+
+    // Text bubble delivers; the follow-up link bubble hard-fails (non-transient
+    // — no response.status, so withRetry throws immediately).
+    let messageCalls = 0;
+    hoisted.postMock.mockImplementation(async (url: string) => {
+      if (/\/chats\/.+\/messages$/.test(url)) {
+        messageCalls++;
+        if (messageCalls === 1) return { data: { id: "msg-1" }, headers: {} };
+        throw new Error("network down");
+      }
+      return { data: {}, headers: {} };
+    });
+
+    const res = await sendMessage("sm-partial", "Tap here to pay: https://checkout.stripe.com/pay/cs_789");
+    expect(res.message_id).toBe(""); // dead-lettered, not thrown
+    // The successful text bubble already recorded exactly one history row…
+    expect(hoisted.state.convAdds).toHaveLength(1);
+    // …so the dead-letter must be flagged: redelivery re-sends the SMS but
+    // records nothing (no double row).
+    expect(hoisted.state.queueAdds).toHaveLength(1);
+    expect(hoisted.state.queueAdds[0].data.skipHistoryRecord).toBe(true);
+
+    // Drain redelivery: the sweep replays skipHistoryRecord + _noQueue.
+    hoisted.postMock.mockImplementation(async (url: string) => {
+      if (/\/chats\/.+\/messages$/.test(url)) return { data: { id: "msg-2" }, headers: {} };
+      return { data: {}, headers: {} };
+    });
+    const payload = hoisted.state.queueAdds[0].data.payloadText as string;
+    await sendMessage("sm-partial", payload, { _noQueue: true, skipHistoryRecord: true });
+    await settle();
+    expect(hoisted.state.convAdds).toHaveLength(1); // exactly ONE row total
     errSpy.mockRestore();
     warnSpy.mockRestore();
   });

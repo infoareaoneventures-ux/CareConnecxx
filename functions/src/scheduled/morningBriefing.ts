@@ -23,9 +23,18 @@ const db = admin.firestore();
 // handlePromptGet as the user message, so the anti-invention rule rides in the
 // system slot. Empty, guard-rejected, or errored output → the deterministic
 // fallback lines.
+//
+// knownUrls: URLs the SYSTEM put into the prompt (the maps link). The guard's
+// R3 url rule targets INVENTED URLs — the model echoing a prompt-supplied link
+// is correct behavior, and rejecting it degraded the briefing to the fallback
+// lines every day. Known URLs are stripped from the text BEFORE the guard
+// judges it (so only model-authored URLs can trip it), the DELIVERED text is
+// untouched, and a known URL the model dropped is re-appended deterministically
+// so the briefing always carries its link (the fallback shape always did).
 export async function generateCaregiverBriefingContent(
   briefingPrompt: string,
-  fallback: string
+  fallback: string,
+  knownUrls: string[] = []
 ): Promise<string> {
   try {
     const aiResponse = await getSharedClient().messages.create({
@@ -34,9 +43,16 @@ export async function generateCaregiverBriefingContent(
       system:     ANTI_INVENTION_CLAUSE,
       messages:   [{ role: "user", content: briefingPrompt }],
     });
-    const text = ((aiResponse.content[0] as { text: string }).text ?? "").trim();
+    let text = ((aiResponse.content[0] as { text: string }).text ?? "").trim();
     if (!text) return fallback;
-    if (caraOutputGuardEnabled() && !guardModelOutput(text).ok) return fallback;
+    const urls = knownUrls.filter((u): u is string => typeof u === "string" && u.length > 0);
+    // Neutralize prompt-supplied URLs so the guard judges only model-authored ones.
+    let judged = text;
+    for (const u of urls) judged = judged.split(u).join(" ");
+    if (caraOutputGuardEnabled() && !guardModelOutput(judged).ok) return fallback;
+    // Restore any known URL the model left out — the delivered briefing must
+    // always include its system link, same as the fallback lines do.
+    for (const u of urls) if (!text.includes(u)) text = `${text}\n\n${u}`;
     return text;
   } catch {
     return fallback;
@@ -156,7 +172,10 @@ export const sendMorningBriefings = functions.pubsub
             medLine:       medLine ?? "",
             verifiedNote:  verifiedNote ?? "",
           });
-          content = await generateCaregiverBriefingContent(briefingPrompt, fallbackLines.join("\n\n"));
+          // mapsUrl is prompt-supplied — pass it as a known URL so the output
+          // guard doesn't reject the model for echoing it (R3 targets invented
+          // URLs only).
+          content = await generateCaregiverBriefingContent(briefingPrompt, fallbackLines.join("\n\n"), [mapsUrl]);
         } catch {
           content = fallbackLines.join("\n\n");
         }

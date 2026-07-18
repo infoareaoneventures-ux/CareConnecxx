@@ -80,6 +80,43 @@ describe("generateCaregiverBriefingContent (U2)", () => {
     modelReturns("   ");
     await expect(generateCaregiverBriefingContent("p", FALLBACK)).resolves.toBe(FALLBACK);
   });
+
+  // Prompt-supplied URLs (the maps link) — the guard's url rule targets
+  // INVENTED URLs only. Before this fix, the model echoing the system-provided
+  // maps link tripped guardModelOutput(reason "url") and degraded the briefing
+  // to the fallback lines EVERY day.
+  describe("known prompt-supplied URLs", () => {
+    const MAPS_URL = "https://maps.google.com/?q=12%20Elm%20St";
+
+    it("model output echoing exactly the prompt-supplied maps URL is NOT rejected — link still present", async () => {
+      const out = `Morning Sam! Rosie today 9:00–13:00 at 12 Elm St.\n${MAPS_URL}\nReply ARRIVED when you get there.`;
+      modelReturns(out);
+      const result = await generateCaregiverBriefingContent("briefing prompt", FALLBACK, [MAPS_URL]);
+      expect(result).toBe(out);
+      expect(result).toContain(MAPS_URL);
+    });
+
+    it("model output containing a DIFFERENT invented URL is still rejected to the fallback", async () => {
+      modelReturns(`Morning Sam! Check https://evia-fake.example.com/visit for details.`);
+      await expect(generateCaregiverBriefingContent("briefing prompt", FALLBACK, [MAPS_URL]))
+        .resolves.toBe(FALLBACK);
+    });
+
+    it("re-appends the known URL when the model dropped it (delivered briefing always carries its link)", async () => {
+      modelReturns("Morning Sam! Rosie today at 9. Reply ARRIVED when you get there.");
+      const result = await generateCaregiverBriefingContent("briefing prompt", FALLBACK, [MAPS_URL]);
+      expect(result).toContain(MAPS_URL);
+      expect(result.startsWith("Morning Sam!")).toBe(true);
+    });
+
+    it("a guard-off run still delivers the echoed known URL unchanged (kill switch respected)", async () => {
+      process.env.CARA_OUTPUT_GUARD_ENABLED = "false";
+      const out = `Morning Sam! ${MAPS_URL}`;
+      modelReturns(out);
+      await expect(generateCaregiverBriefingContent("briefing prompt", FALLBACK, [MAPS_URL]))
+        .resolves.toBe(out);
+    });
+  });
 });
 
 describe("generateFamilyBriefingText (U2)", () => {

@@ -55,6 +55,13 @@ describe("guardModelOutput — meta_response", () => {
     expect(guardModelOutput("Maria, who is your caregiver, will arrive at 2pm today."))
       .toEqual({ ok: true });
   });
+
+  it("passes a context-request shape ALONE — no briefing/transcript/role reference (pins the && conjunction)", () => {
+    // A regression from `&&` to `||` in the meta_response rule would reject
+    // this legitimate copy: one signal (a) with no signal (b) must pass.
+    expect(guardModelOutput("I need more information before I can help with that."))
+      .toEqual({ ok: true });
+  });
 });
 
 describe("guardModelOutput — url", () => {

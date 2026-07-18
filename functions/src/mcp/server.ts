@@ -107,7 +107,8 @@ async function resolveCaregiverRate(
       message:
         `${caregiverName} has no hourly rate on file, so nothing was quoted or booked. ` +
         `Do NOT assume, invent, or state any dollar rate. Tell the family you need to confirm ` +
-        `this caregiver's rate first, and do not quote or book until a real rate is on file.`,
+        `this caregiver's rate first, and do not quote or book until a real rate is on file. ` +
+        `If the family needs this resolved now, use create_support_ticket so the team can confirm the caregiver's rate.`,
     };
   }
   return { ok: true, caregiverName, hourlyRate: cg.hourlyRate as number };

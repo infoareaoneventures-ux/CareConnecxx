@@ -924,6 +924,17 @@ export async function handleOnboardingStep(
     return;
   }
 
+  // ── Strict LINK keyword at a parked awaiting step (U9) ──────────────────────
+  // The resend-cooldown copy promises "reply LINK and I'll resend it" — honor
+  // it deterministically, BEFORE any LLM classification ("send it again"
+  // classifies `other`, and classifier failure DEFAULTS to `other`, so during
+  // a cooldown the escape hatch must not depend on a model call). Scoped to
+  // the gate-parked awaiting steps only; anywhere else "LINK" flows through
+  // normal handling.
+  if (norm === "LINK" && isGateLinkKeywordStep(step)) {
+    if (await handleGateLinkKeyword(phone, chatId, step, session)) return;
+  }
+
   // ── Emotional context (both flows) ──────────────────────────────────────────
   // Onboarding is where families first say the hard things ("Mom has Alzheimer's
   // and I'm scared"). Classify the posture once per turn, blend with any 12h-TTL
@@ -1081,12 +1092,10 @@ export async function handleOnboardingStep(
     case "client_confirm_intake":   return handleClientConfirmIntake(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
-    case "caregiver_awaiting_identity": {
-      // Retired caregiver identity step: advance legacy sessions into the
-      // canonical background-check flow instead of leaving them stranded.
-      await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-      return handleCaregiverSendBgcheck(phone, chatId, session);
-    }
+    // caregiver_awaiting_identity: REMOVED (U12, R17) — the step was retired and
+    // both of its handlers only forwarded to caregiver_send_bgcheck. A stale
+    // prod session still parked on the string falls through to the defensive
+    // default below (absorber path), which never crashes and never wipes state.
     case "client_awaiting_identity": {
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
       if (idReplyKind === "ack") {
@@ -1113,7 +1122,7 @@ export async function handleOnboardingStep(
         "the quick identity check — I'll send your caregiver options as soon as it clears")) return;
       if (await wantsGateLinkResend(text)) {
         if (await resendGateLink(phone, chatId, "client_awaiting_identity", "client_identity",
-          "Here's a fresh link for the quick 30-second identity check:")) return;
+          "Here's a fresh link for the quick 30-second identity check:", { throttled: true })) return;
       }
       const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
       const msgIdentity = await generateCaraMessage({
@@ -1148,7 +1157,7 @@ export async function handleOnboardingStep(
       if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
         "finishing your membership setup via the link I sent — it takes about 30 seconds")) return;
       if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
-        "Here's your membership link again — it takes about 30 seconds:")) return;
+        "Here's your membership link again — it takes about 30 seconds:", { throttled: true })) return;
       // resendGateLink declined = payment landed while we were replying — the
       // live fact below grounds the confirmation.
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
@@ -1204,7 +1213,7 @@ export async function handleOnboardingStep(
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "your profile photo — the upload link I sent is ready whenever you are")) return;
       if (await resendGateLink(phone, chatId, "caregiver_awaiting_photo", "caregiver_photo",
-        "Here's your photo upload link again — it opens right on your phone:")) return;
+        "Here's your photo upload link again — it opens right on your phone:", { throttled: true })) return;
       // resendGateLink declined = the step advanced under us (photo landed) —
       // the live fact below grounds the confirmation.
       const livePhotoFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_photo(phone, session);
@@ -1262,7 +1271,7 @@ export async function handleOnboardingStep(
       if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
         "your certifications via the upload link — or just tell me to skip it")) return;
       if (await resendGateLink(phone, chatId, "caregiver_awaiting_documents", "caregiver_documents",
-        "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:")) return;
+        "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:", { throttled: true })) return;
       const liveDocsFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_documents(phone, session);
       const docsNudge = await generateCaraMessage({
         audience: "caregiver",
@@ -1317,7 +1326,7 @@ export async function handleOnboardingStep(
         "finishing the background-check form Checkr emailed you")) return;
       if (await wantsGateLinkResend(text)) {
         if (await resendGateLink(phone, chatId, "caregiver_awaiting_bgcheck", "caregiver_background_check",
-          "Here's your background-check link:")) return;
+          "Here's your background-check link:", { throttled: true })) return;
       }
       const liveBgFact = await buildLiveBgcheckFact(session);
       const msgBgcheck = await generateCaraMessage({
@@ -1359,7 +1368,7 @@ export async function handleOnboardingStep(
         "setting up your payout account via the link I sent")) return;
       if (await wantsGateLinkResend(text)) {
         if (await resendGateLink(phone, chatId, "caregiver_awaiting_stripe", "caregiver_payouts",
-          "Here's a fresh payout-setup link:")) return;
+          "Here's a fresh payout-setup link:", { throttled: true })) return;
       }
       const livePayoutFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_stripe(phone, session);
       const stripeNudge = await generateCaraMessage({
@@ -2794,6 +2803,154 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
   await sendMessage(chatId, { parts: [{ type: "link", value: checkoutUrl }] });
 }
 
+// ── Gate-link resend cooldown (U9, R13 — 2026-07-17) ─────────────────────────
+// A parked step's `other`-classified inbounds could re-blast the link card on
+// EVERY text ("hm" → card, "ok but" → card, …). Per-step SetAt+TTL cooldown
+// (the isFlowStale idiom, sessionState.ts): the first `other` resend stamps
+// `gateLinkResentAt[step]`; within the 10-minute window further `other`
+// inbounds get DETERMINISTIC, truthful copy that never claims a fresh send —
+// an LLM reply briefed on the resend flow could improvise "just resent it",
+// exactly the incident class this wave kills. A bare LINK reply (strict
+// keyword, binary-protocol carve-out) bypasses the cooldown once per window,
+// because classifyAwaitingReply classifies "send it again" as `other` AND
+// defaults to `other` on classifier failure — a caregiver whose link was
+// carrier-filtered must have a same-minute escape hatch. `ack`/`question`
+// paths are untouched (questions still get answered AND their link follows).
+// Missing/corrupt cooldown state fails OPEN: resend proceeds — never wedge a
+// gate on bookkeeping.
+export const GATE_LINK_RESEND_COOLDOWN_MS = 10 * 60 * 1000;
+
+/**
+ * Minutes since the step's last cooldown-stamped link send, when inside the
+ * 10-minute window; null when outside the window, never stamped, or the stamp
+ * is corrupt (fail-open). When the LINK bypass resent more recently than the
+ * window opener, minutes count from that LATEST send so the copy stays honest.
+ */
+export function gateLinkCooldownMinutes(
+  sessionData: Record<string, unknown> | undefined | null,
+  step:        string,
+  nowMs:       number = Date.now(),
+): number | null {
+  try {
+    const resentAt = (sessionData?.gateLinkResentAt as Record<string, unknown> | undefined)?.[step];
+    if (typeof resentAt !== "string") return null;
+    const setMs = Date.parse(resentAt);
+    if (isNaN(setMs)) return null; // corrupt stamp → fail open (no cooldown)
+    const age = nowMs - setMs;
+    if (age < 0 || age >= GATE_LINK_RESEND_COOLDOWN_MS) return null;
+    let latestMs = setMs;
+    const bypassAt = (sessionData?.gateLinkBypassUsedAt as Record<string, unknown> | undefined)?.[step];
+    if (typeof bypassAt === "string") {
+      const bMs = Date.parse(bypassAt);
+      if (!isNaN(bMs) && bMs > latestMs && bMs <= nowMs) latestMs = bMs;
+    }
+    return Math.max(1, Math.round((nowMs - latestMs) / 60_000));
+  } catch {
+    return null; // corrupt cooldown state must never wedge a gate
+  }
+}
+
+/**
+ * DETERMINISTIC in-cooldown reply — never LLM-generated, never a completed-
+ * action claim ("just resent it"); the only forward promise is the LINK hatch.
+ */
+export function gateLinkCooldownCopy(minutes: number): string {
+  return `I sent that link about ${minutes} minute${minutes === 1 ? "" : "s"} ago — if it hasn't come through, reply LINK and I'll resend it.`;
+}
+
+/** True when this window's one LINK bypass is already spent. Fail-closed to false. */
+export function gateLinkBypassConsumed(
+  sessionData: Record<string, unknown> | undefined | null,
+  step:        string,
+  nowMs:       number = Date.now(),
+): boolean {
+  try {
+    const resentAt = (sessionData?.gateLinkResentAt as Record<string, unknown> | undefined)?.[step];
+    const bypassAt = (sessionData?.gateLinkBypassUsedAt as Record<string, unknown> | undefined)?.[step];
+    if (typeof resentAt !== "string" || typeof bypassAt !== "string") return false;
+    const setMs = Date.parse(resentAt);
+    const bMs   = Date.parse(bypassAt);
+    if (isNaN(setMs) || isNaN(bMs)) return false;
+    // Consumed only within the CURRENT window: a bypass stamped before this
+    // window's opener belongs to an old window and resets automatically.
+    return bMs >= setMs && nowMs - setMs < GATE_LINK_RESEND_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function stampGateLinkResent(phone: string, step: string): Promise<void> {
+  // Best-effort bookkeeping — a failed stamp must never fail the turn.
+  await updateSession(phone, { [`gateLinkResentAt.${step}`]: new Date().toISOString() }).catch(() => {});
+}
+
+async function stampGateLinkBypassUsed(phone: string, step: string): Promise<void> {
+  await updateSession(phone, { [`gateLinkBypassUsedAt.${step}`]: new Date().toISOString() }).catch(() => {});
+}
+
+// The parked steps whose `other` branch resends via resendGateLink, with the
+// same intro copy those branches use — the LINK keyword hatch is scoped to
+// exactly these plus the membership/MVR checkout steps (handled bespoke below
+// because their resend lives in handleCaregiverResendMembership/Mvr).
+const GATE_LINK_KEYWORD_TARGETS: Record<string, { linkType: OnboardingLinkType; intro: string }> = {
+  client_awaiting_identity:     { linkType: "client_identity",           intro: "Here's a fresh link for the quick 30-second identity check:" },
+  client_awaiting_payment:      { linkType: "client_payment",            intro: "Here's your membership link again — it takes about 30 seconds:" },
+  caregiver_awaiting_photo:     { linkType: "caregiver_photo",           intro: "Here's your photo upload link again — it opens right on your phone:" },
+  caregiver_awaiting_documents: { linkType: "caregiver_documents",       intro: "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:" },
+  caregiver_awaiting_bgcheck:   { linkType: "caregiver_background_check", intro: "Here's your background-check link:" },
+  caregiver_awaiting_stripe:    { linkType: "caregiver_payouts",         intro: "Here's a fresh payout-setup link:" },
+};
+
+/** Steps where a bare LINK reply is honored as the cooldown escape hatch. */
+export function isGateLinkKeywordStep(step: string): boolean {
+  return step in GATE_LINK_KEYWORD_TARGETS
+    || step === "caregiver_awaiting_membership"
+    || step === "caregiver_awaiting_mvr";
+}
+
+// A bare "LINK" at a parked awaiting step — the deterministic escape hatch the
+// in-cooldown copy promises. Runs BEFORE classifyAwaitingReply (strict keyword,
+// CLAUDE.md binary-protocol carve-out; no LLM between the promise and the
+// resend). Once per window: the first LINK inside a cooldown resends for real
+// and consumes the bypass; a second LINK in the same window gets the
+// deterministic copy. Outside any cooldown it's just a normal first resend
+// (opens the window). Returns false only when the step advanced under us — the
+// caller falls through to normal routing.
+async function handleGateLinkKeyword(phone: string, chatId: string, step: string, session: AgentSession): Promise<boolean> {
+  let fresh: Record<string, unknown> | undefined;
+  try {
+    fresh = (await db.collection("agent_sessions").doc(phone).get()).data() as Record<string, unknown> | undefined;
+  } catch { /* fail-open: no cooldown state → plain resend below */ }
+  const mins       = gateLinkCooldownMinutes(fresh, step);
+  const inCooldown = mins !== null;
+  if (inCooldown && gateLinkBypassConsumed(fresh, step)) {
+    // This window's bypass is spent — deterministic copy, no resend.
+    await sendMessage(chatId, gateLinkCooldownCopy(mins));
+    return true;
+  }
+  if (step === "caregiver_awaiting_membership" || step === "caregiver_awaiting_mvr") {
+    // No text → no classification; the handler's paid short-circuit still wins.
+    if (step === "caregiver_awaiting_membership") {
+      await handleCaregiverResendMembership(phone, chatId, session);
+    } else {
+      await handleCaregiverResendMvr(phone, chatId, session);
+    }
+    if (inCooldown) await stampGateLinkBypassUsed(phone, step);
+    else await stampGateLinkResent(phone, step);
+    return true;
+  }
+  const target = GATE_LINK_KEYWORD_TARGETS[step];
+  if (!target) return false;
+  if (inCooldown) {
+    // Once-per-window bypass: resend for real (unthrottled), consume the bypass.
+    const handled = await resendGateLink(phone, chatId, step, target.linkType, target.intro);
+    if (handled) await stampGateLinkBypassUsed(phone, step);
+    return handled;
+  }
+  // Not in cooldown — a normal throttled resend that opens the window.
+  return resendGateLink(phone, chatId, step, target.linkType, target.intro, { throttled: true });
+}
+
 // ── Gate-step link resend (2026-07-16) ────────────────────────────────────────
 // Six parked steps (photo, documents, client payment, client identity, Stripe
 // Connect, bgcheck-wait) could TALK about their link but had no code path that
@@ -2806,18 +2963,34 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
 // through to its live-fact-grounded reply instead. Delivery goes through
 // sendOnboardingLink, so the link arrives as the same rich preview card as the
 // original send (isCardSafeUrl chokepoint in linq/client.ts).
+// `throttled: true` marks an `other`-branch resend: it is gated by the U9
+// cooldown above and stamps the window on a successful send. Question-path
+// callers stay unthrottled — a reported problem always earns the real link.
 async function resendGateLink(
   phone:      string,
   chatId:     string,
   parkedStep: string,
   linkType:   OnboardingLinkType,
   intro:      string,
+  opts:       { throttled?: boolean } = {},
 ): Promise<boolean> {
   const fresh = (await db.collection("agent_sessions").doc(phone).get().catch(() => null))?.data() as AgentSession | undefined;
   if (fresh && (fresh.onboardingStep ?? parkedStep) !== parkedStep) return false;
+  if (opts.throttled) {
+    const mins = gateLinkCooldownMinutes(fresh as Record<string, unknown> | undefined, parkedStep);
+    if (mins !== null) {
+      // In-cooldown: deterministic copy IS the reply (handled → caller must
+      // not stack an LLM nudge on top, which could falsely claim a send).
+      await sendMessage(chatId, gateLinkCooldownCopy(mins));
+      return true;
+    }
+  }
   await sendMessage(chatId, intro);
   try {
     const result = await sendOnboardingLink(phone, linkType);
+    // Open the cooldown window only on a REAL send — a failed send must not
+    // start a cooldown that mutes its own retry.
+    if (result.success && opts.throttled) await stampGateLinkResent(phone, parkedStep);
     // client_payment reports success:false AFTER already sending the grounded
     // apology/retry message itself (checkout-create failure, R7) — treat as
     // handled so the caller doesn't stack a second reply on top.
@@ -2873,6 +3046,9 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
   // If the caregiver replied with a question while waiting on Stripe, answer it
   // before resending the link. A pure "thanks / sounds good" gets a brief ack
   // WITHOUT re-blasting the link.
+  // Only an `other`-classified inbound is cooldown-gated (U9); question-path
+  // resends and no-text callers (stale-nudge repair) stay unthrottled.
+  let throttled = false;
   if (text) {
     const kind = await classifyAwaitingReply(text, "finish their membership payment via the link Evia sent");
     if (kind === "ack") {
@@ -2886,15 +3062,19 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
     } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
       "finishing your membership payment via the link I sent")) {
       return;
+    } else {
+      throttled = true; // `other` fell through to the resend below
     }
   }
   // A webhook may have processed the payment between the inbound and this reply —
   // re-blasting the checkout link at someone who already paid reads as not
   // listening. Fresh-read the completion flag; if it's paid, confirm instead.
   let membershipPaid = false;
+  let freshMembershipData: Record<string, unknown> | undefined;
   try {
     const snap = await db.collection("agent_sessions").doc(phone).get();
-    membershipPaid = !!((snap.data() as any)?.caregiverSubscriptionId);
+    freshMembershipData = snap.data() as Record<string, unknown> | undefined;
+    membershipPaid = !!((freshMembershipData as any)?.caregiverSubscriptionId);
   } catch { /* fail-soft: treat as not paid → resend link as before */ }
   if (membershipPaid) {
     const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_membership(phone, session);
@@ -2908,6 +3088,14 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
     }));
     return;
   }
+  // U9 cooldown — `other`-branch resends only; paid short-circuit above wins.
+  if (throttled) {
+    const mins = gateLinkCooldownMinutes(freshMembershipData, "caregiver_awaiting_membership");
+    if (mins !== null) {
+      await sendMessage(chatId, gateLinkCooldownCopy(mins));
+      return;
+    }
+  }
   const url = (session as any).membershipCheckoutUrl as string | undefined;
   if (url) {
     await sendMessage(chatId, "Tap the link below to complete your membership payment:");
@@ -2916,6 +3104,7 @@ async function handleCaregiverResendMembership(phone: string, chatId: string, se
     // Re-generate if URL was lost
     await handleCaregiverSendMembership(phone, chatId, session);
   }
+  if (throttled) await stampGateLinkResent(phone, "caregiver_awaiting_membership");
 }
 
 // ── Add-MVR-later (standalone "Approved Driver" upgrade over SMS) ─────────────
@@ -2984,6 +3173,9 @@ async function handleCaregiverSendMvr(phone: string, chatId: string, session: Ag
 }
 
 async function handleCaregiverResendMvr(phone: string, chatId: string, session: AgentSession, text?: string): Promise<void> {
+  // Only an `other`-classified inbound is cooldown-gated (U9) — see the
+  // membership handler above for the shape.
+  let throttled = false;
   if (text) {
     const kind = await classifyAwaitingReply(text, "add their Approved Driver check via the payment link Evia sent");
     if (kind === "ack") {
@@ -2997,14 +3189,18 @@ async function handleCaregiverResendMvr(phone: string, chatId: string, session: 
     } else if (await tryAbsorbGateProfileUpdate(phone, chatId, text, session,
       "adding your Approved Driver check via the payment link I sent")) {
       return;
+    } else {
+      throttled = true; // `other` fell through to the resend below
     }
   }
   // Don't re-send the MVR payment link if the webhook already recorded payment
   // (the driving check is under way) — confirm instead.
   let mvrPaidNow = false;
+  let freshMvrData: Record<string, unknown> | undefined;
   try {
     const snap = await db.collection("agent_sessions").doc(phone).get();
-    mvrPaidNow = (snap.data() as any)?.mvrPaid === true;
+    freshMvrData = snap.data() as Record<string, unknown> | undefined;
+    mvrPaidNow = (freshMvrData as any)?.mvrPaid === true;
   } catch { /* fail-soft: treat as not paid → resend link as before */ }
   if (mvrPaidNow) {
     const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_mvr(phone, session);
@@ -3018,6 +3214,14 @@ async function handleCaregiverResendMvr(phone: string, chatId: string, session: 
     }));
     return;
   }
+  // U9 cooldown — `other`-branch resends only; paid short-circuit above wins.
+  if (throttled) {
+    const mins = gateLinkCooldownMinutes(freshMvrData, "caregiver_awaiting_mvr");
+    if (mins !== null) {
+      await sendMessage(chatId, gateLinkCooldownCopy(mins));
+      return;
+    }
+  }
   const url = (session as any).mvrCheckoutUrl as string | undefined;
   if (url) {
     await sendMessage(chatId, "Tap the link below to add your Approved Driver check:");
@@ -3025,6 +3229,7 @@ async function handleCaregiverResendMvr(phone: string, chatId: string, session: 
   } else {
     await handleCaregiverSendMvr(phone, chatId, session);
   }
+  if (throttled) await stampGateLinkResent(phone, "caregiver_awaiting_mvr");
 }
 
 async function handleCaregiverSendPhoto(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -4333,10 +4538,9 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         // clears we go straight to collecting payment (card on file).
         await updateSession(phone, { onboardingStep: "client_send_payment" });
         await handleClientSendPayment(phone, chatId, session);
-      } else if (step === "caregiver_awaiting_identity") {
-        await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
-        await handleCaregiverSendBgcheck(phone, chatId, session);
       }
+      // (caregiver_awaiting_identity forwarding removed — U12, R17: the retired
+      // step no longer exists; caregivers never receive an identity task.)
       break;
     }
 

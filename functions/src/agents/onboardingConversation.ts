@@ -47,7 +47,7 @@ import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
-import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
+import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 
@@ -2477,9 +2477,12 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
   }
 
   await updateSession(phone, { onboardingStep: "client_awaiting_payment" });
+  // R11 (hallucination hardening 2026-07-17): pre-checkout briefing — the
+  // caregivers are for the care recipient, never for the account holder.
+  const whoIsWho = describeWhoIsWho(d as Record<string, unknown>);
   const msg7 = await generateCaraMessage({
     audience: "family",
-    context: `Evia has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the last step is to start their membership so Evia can begin coordinating care, and that it takes about 30 seconds.`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `Evia has collected everything needed to start finding caregivers for ${d.seniorName ?? "a loved one"}. Let the family know warmly, then tell them the last step is to start their membership so Evia can begin coordinating care, and that it takes about 30 seconds.`,
     fallback: `Perfect — I have everything I need to start finding caregivers for ${d.seniorName ?? "your loved one"}.\n\nLast step: start your membership so I can begin coordinating care.\nTakes about 30 seconds:`,
     maxTokens: 100,
   });
@@ -2488,7 +2491,7 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
     fallback: `I'll start searching${d.seniorName ? ` for ${d.seniorName}` : ""} while you set that up.`,
     maxTokens: 60,
   }));

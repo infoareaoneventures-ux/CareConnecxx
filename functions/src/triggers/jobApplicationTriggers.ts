@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 
 // Applications in these statuses count toward the job's applicantCount.
 // "withdrawn" applications do NOT count.
@@ -137,10 +138,17 @@ export const onJobApplicationCreated = functions.firestore
             const rate       = app.proposedRate as number | undefined;
             const rateLine   = typeof rate === "number" ? ` at $${rate}/hr` : "";
             const seniorPart = seniorName ? ` for ${seniorName}` : "";
+            // R11: ground who's who — the job post is care FOR the recipient,
+            // never for the account holder reading this.
+            const whoIsWho = describeWhoIsWho({
+                ...(sessionData.onboardingData ?? {}),
+                seniorName: sessionData.onboardingData?.seniorName ?? job.seniorName,
+            });
 
             const message = await generateCaraMessage({
                 audience: "family",
                 context:
+                    (whoIsWho ? whoIsWho + " " : "") +
                     `Tell the family that ${cgFirstName} just applied to their job post${seniorPart}${rateLine}. ` +
                     `Keep it warm, one-to-two sentences. Offer to pull up the caregiver's profile — don't dump details. ` +
                     `End with a soft invitation like "Want me to share their profile?" or "Want to set up an intro call?"`,

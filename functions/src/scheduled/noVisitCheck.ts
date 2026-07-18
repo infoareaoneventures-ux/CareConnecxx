@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 
 const db = admin.firestore();
 
@@ -60,12 +61,20 @@ export const runNoVisitCheck = functions.pubsub
 
         if (clientSessionSnap.empty) continue;
         const clientPhone  = clientSessionSnap.docs[0].id;
-        const seniorName   = (clientSessionSnap.docs[0].data() as any).seniorName ?? "your loved one";
+        const sessionData  = clientSessionSnap.docs[0].data() as any;
+        const seniorName   = sessionData.seniorName ?? "your loved one";
         const cgName       = schedule.caregiverName ?? "your caregiver";
+        // R11: ground who's who — the reader coordinates care; the visits are
+        // for the care recipient, never for the account holder.
+        const whoIsWho     = describeWhoIsWho({
+          ...(sessionData.onboardingData ?? {}),
+          seniorName: sessionData.onboardingData?.seniorName ?? sessionData.seniorName,
+        });
 
         const noVisitMsg = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Senior: ${seniorName}. ` +
             (cgName !== "your caregiver" ? `Their regular caregiver: ${cgName}. ` : "") +
             `${seniorName} hasn't had a visit in the past 7 days. ` +

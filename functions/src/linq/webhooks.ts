@@ -39,6 +39,7 @@ import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { isBereavementTrigger, activateBereavementMode } from "../agents/bereavement";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import {
   classifyCompleteness,
@@ -1926,9 +1927,13 @@ const handleInboundInner = traceable(
       const d = (session.onboardingData ?? {}) as Record<string, unknown>;
       const seniorName = (d.seniorName as string) || "your loved one";
       const city       = (d.city as string) || "your area";
+      // R11: ground who's who — the reader is the account holder; the care is
+      // for the recipient, never for the reader.
+      const whoIsWho = describeWhoIsWho(d);
       const holdReply = await generateCaraMessage({
         audience: "family",
         context:
+          (whoIsWho ? whoIsWho + " " : "") +
           `This family finished setup for ${seniorName} in ${city}, but no caregivers were available there ` +
           `yet, so they're on the waitlist — everything is saved, they have NOT been charged, and Evia will ` +
           `text them the moment a caregiver in their area becomes available. They just sent: ` +

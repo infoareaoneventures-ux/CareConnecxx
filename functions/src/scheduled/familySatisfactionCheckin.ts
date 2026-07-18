@@ -16,6 +16,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import {
   evaluateWeeklyFamilyBudget,
   type WeeklyBudgetTally,
@@ -63,9 +64,12 @@ export const sendFamilySatisfactionCheckins = functions.pubsub
 
         const seniorName = ((session.onboardingData as any)?.seniorName ?? "") as string;
         const seniorPart = seniorName ? ` with ${seniorName}'s care` : "";
+        // R11: ground who's who — the care is for the recipient, never the reader.
+        const whoIsWho = describeWhoIsWho((session.onboardingData ?? {}) as Record<string, unknown>);
         const message = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Send a brief, warm satisfaction check-in to a family with ongoing care${seniorPart}. ` +
             `Ask how things have been going overall and whether there's anything you can do better. ` +
             `Genuine and low-pressure, one or two sentences, no bullets, not a formal survey.`,

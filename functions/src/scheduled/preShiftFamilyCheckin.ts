@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { businessTodayStr, businessNowMinutes } from "../utils/scheduledTime";
 
 const db = admin.firestore();
@@ -79,10 +80,17 @@ export const sendPreShiftFamilyCheckin = functions.pubsub
         const clientSnap   = await db.collection("users").doc(clientId).get().catch(() => null);
         const familyFirst  = ((clientSnap?.data()?.displayName ?? clientSnap?.data()?.name ?? "") as string)
           .split(" ")[0] || "";
+        // R11: ground who's who — the visit is for the care recipient, never
+        // for the family member being texted.
+        const whoIsWho = describeWhoIsWho({
+          ...(sessionData.onboardingData ?? {}),
+          seniorName: sessionData.onboardingData?.seniorName ?? appt.clientName ?? appt.seniorName,
+        });
 
         const message = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Write a friendly, brief text to ${familyFirst || "the family"} — ` +
             `${cgFirstName} is about 15 minutes away from starting ${seniorName}'s care visit.\n` +
             `Ask if there's anything they'd like added to today's plan — any tasks or special instructions ` +

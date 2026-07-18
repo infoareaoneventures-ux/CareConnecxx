@@ -3,6 +3,7 @@ import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { isStateExpired, clearFlags, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
 import { handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
@@ -34,6 +35,14 @@ async function handlePreShiftUpdate(
     caregiverName: string;
     seniorName:    string;
   };
+
+  // R11 (hallucination hardening 2026-07-17): the reader is the account
+  // holder; the visit is for the care recipient — ground who's who in the
+  // family-facing confirmations below.
+  const whoIsWho = describeWhoIsWho({
+    ...(((session as any).onboardingData ?? {}) as Record<string, unknown>),
+    seniorName: (session as any).onboardingData?.seniorName ?? info.seniorName,
+  });
 
 
   // isQuestionOrOther check — CLAUDE.md requirement
@@ -105,6 +114,7 @@ async function handlePreShiftUpdate(
     const addMsg = await generateCaraMessage({
       audience: "family",
       context:
+        (whoIsWho ? whoIsWho + " " : "") +
         `The family just added ${tasks.length} task${tasks.length > 1 ? "s" : ""} to ` +
         `${info.seniorName}'s care visit today: ${tasks.join(", ")}. ` +
         `${cgFirstName} will be notified when they check in. ` +
@@ -120,6 +130,7 @@ async function handlePreShiftUpdate(
     const declineMsg = await generateCaraMessage({
       audience: "family",
       context:
+        (whoIsWho ? whoIsWho + " " : "") +
         `The family said no additional tasks for ${info.seniorName}'s care visit today — ` +
         `the regular care plan is all set. Write a brief, warm 1-sentence confirmation back to them.`,
       fallback: `Perfect — the regular care plan is all set for today's visit!`,

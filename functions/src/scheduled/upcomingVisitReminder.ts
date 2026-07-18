@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { apptStartMs, businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
@@ -46,10 +47,16 @@ export const upcomingVisitReminder = functions.pubsub
         const cgName    = (appt.caregiverName ?? "Your caregiver") as string;
         const time      = (appt.startTime    ?? appt.time ?? "") as string;
         const seniorName = (appt.seniorName ?? appt.clientName ?? "") as string;
+        // R11: ground who's who — the visit is for the care recipient, not the reader.
+        const whoIsWho = describeWhoIsWho({
+          ...((session.onboardingData ?? {}) as Record<string, unknown>),
+          seniorName: (session.onboardingData as any)?.seniorName ?? appt.seniorName ?? appt.clientName,
+        });
 
         const reminderMsg = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Send a brief upcoming visit reminder to a family. ` +
             `Caregiver: ${cgName}. Visit time: ${time || "today"}.` +
             (seniorName ? ` Senior: ${seniorName}.` : "") +

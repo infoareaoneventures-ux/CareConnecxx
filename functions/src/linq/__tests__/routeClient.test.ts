@@ -77,6 +77,7 @@ vi.mock("../../shiftHours", () => ({ approveShiftHoursForClient: (...a: any[]) =
 vi.mock("../../observability/actionLedger", () => ({ logAgentAction: (...a: any[]) => (hoisted.logAgentAction as Function).apply(null, a) }));
 
 import { routeClientStateMachines } from "../routeClient";
+import { generateCaraMessage } from "../../utils/caraMessage";
 
 const PHONE = "+15553334444";
 const recentApproval = { appointmentId: "appt1", amount: "120.00", caregiverName: "Bob" };
@@ -129,5 +130,53 @@ describe("U11 — routeClientStateMachines shift-hours approval", () => {
     expect(hoisted.approveShiftHoursForClient).not.toHaveBeenCalled();
     expect(hoisted.updates.some(u => u.path === `agent_sessions/${PHONE}` && "pendingShiftApproval" in u.data)).toBe(true);
     expect(outcome).toBe("fallthrough");
+  });
+});
+
+// U8 (hallucination hardening 2026-07-17, R11) — representative behavior test
+// for the transactional route-reply group: the pre-shift task check-in
+// confirmations interpolate the SENIOR's name, so their briefing context must
+// carry describeWhoIsWho grounding (care belongs to the recipient, never to
+// the account holder replying).
+describe("U8 — pre-shift check-in reply carries who-is-who grounding (R11)", () => {
+  beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); });
+
+  function preShiftCtx(sessionPatch: Record<string, unknown> = {}) {
+    const session = {
+      userId: "client1",
+      phone: PHONE,
+      awaitingPreShiftUpdate: { appointmentId: "appt9", caregiverName: "Bob Smith", seniorName: "Rosie" },
+      stateExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      onboardingData: { firstName: "Anahi", seniorName: "Rosie", relationship: "mother" },
+      ...sessionPatch,
+    };
+    return { phone: PHONE, chatId: "chat1", text: "no thanks", norm: "NO THANKS", session: session as any };
+  }
+
+  it("decline reply: family confirmation context contains the WHO'S WHO line naming Rosie", async () => {
+    // quickComplete mocked to "" → not a question; parse "" → decline branch.
+    const outcome = await routeClientStateMachines(preShiftCtx());
+    expect(outcome).toBe("handled");
+    const familyCall = vi.mocked(generateCaraMessage).mock.calls
+      .map(c => c[0] as any)
+      .find(o => o.audience === "family");
+    expect(familyCall).toBeTruthy();
+    expect(familyCall.context).toContain("WHO'S WHO");
+    expect(familyCall.context).toContain("Rosie");
+    expect(familyCall.context).toContain("NOT the one receiving it");
+  });
+
+  it("self-signup: no 'coordinating' disambiguation — reader IS the recipient", async () => {
+    const outcome = await routeClientStateMachines(preShiftCtx({
+      awaitingPreShiftUpdate: { appointmentId: "appt9", caregiverName: "Bob Smith", seniorName: "Gloria" },
+      onboardingData: { firstName: "Gloria", seniorName: "Gloria", relationship: "self" },
+    }));
+    expect(outcome).toBe("handled");
+    const familyCall = vi.mocked(generateCaraMessage).mock.calls
+      .map(c => c[0] as any)
+      .find(o => o.audience === "family");
+    expect(familyCall).toBeTruthy();
+    expect(familyCall.context).toContain("THEMSELVES");
+    expect(familyCall.context).not.toContain("family member coordinating care");
   });
 });

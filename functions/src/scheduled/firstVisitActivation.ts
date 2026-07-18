@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { toMillis } from "./pendingTimesheetNudge";
 
 const db = admin.firestore();
@@ -87,10 +88,18 @@ export const sendFirstVisitActivation = functions.pubsub
 
         const phone      = (s.phone ?? sessionDoc.id) as string;
         const seniorName = (s.seniorName ?? s.onboardingData?.seniorName ?? "your loved one") as string;
+        // R11 (hallucination hardening 2026-07-17): the reader is the ACCOUNT
+        // HOLDER; the visit is for the care recipient — ground who's who so the
+        // model never writes "book <account holder>'s first visit".
+        const whoIsWho = describeWhoIsWho({
+          ...((s.onboardingData ?? {}) as Record<string, unknown>),
+          seniorName: s.onboardingData?.seniorName ?? s.seniorName,
+        });
 
         const message = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `The family finished signing up a few days ago but hasn't booked a first visit for ${seniorName} yet. ` +
             `Warmly offer to find a caregiver and get a first visit on the calendar. One or two inviting sentences, no pressure or guilt.`,
           fallback:

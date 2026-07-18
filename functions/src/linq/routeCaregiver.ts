@@ -301,6 +301,8 @@ async function handleShiftConfirmation(
       const familyMsg = await generateCaraMessage({
         audience: "family",
         context:
+          // R11: who-is-who attribution — care belongs to the recipient, not the reader.
+          `The reader is the family member coordinating care; the care recipient is ${info.seniorName}. ` +
           `${cgFirstName} just confirmed they'll be at ${info.seniorName}'s care visit ` +
           `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
           `Write a warm, reassuring message letting the family know everything's confirmed. ` +
@@ -342,6 +344,8 @@ async function handleShiftConfirmation(
       const alertMsg = await generateCaraMessage({
         audience: "family",
         context:
+          // R11: who-is-who attribution — care belongs to the recipient, not the reader.
+          `The reader is the family member coordinating care; the care recipient is ${info.seniorName}. ` +
           `Unfortunately ${cgFirstName} just let us know they can't make ${info.seniorName}'s visit ` +
           `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
           `Write an urgent but calm message to the family alerting them. ` +

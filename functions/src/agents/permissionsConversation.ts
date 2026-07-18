@@ -3,6 +3,7 @@ import { getSharedClient } from "../utils/claudeClient";
 import { quickComplete } from "../utils/openaiClient";
 import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "./careRecipients";
 import { buildHelpSmsReply } from "./capabilityDiscovery";
 import { languageFromSession } from "../utils/language";
 import { appLink, getAppUrl } from "../config/appUrl";
@@ -286,6 +287,9 @@ export async function sendClientPermissionsFlow(
   session: AgentSession
 ): Promise<void> {
   const d = session.onboardingData ?? {};
+  // R11: ground who's who — the caregivers are for the care recipient, never
+  // for the account holder being texted.
+  const whoIsWho = describeWhoIsWho(d as Record<string, unknown>);
   await db.collection("agent_sessions").doc(phone).update({
     onboardingStep:     "client_permissions_contact",
     permissionsContext: "client",
@@ -293,7 +297,7 @@ export async function sendClientPermissionsFlow(
 
   const msgPerm1 = await generateCaraMessage({
     audience: "family",
-    context: `Evia has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Evia needs to ask a couple of quick questions. Introduce this warmly and ask if Evia can reach out to caregivers on the family's behalf to schedule interviews once they select someone. End with that yes/no question itself — never a stiff "Reply YES or NO" instruction or a menu.`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `Evia has already started searching for caregivers for ${d.seniorName ?? "a loved one"}. Before sending matches, Evia needs to ask a couple of quick questions. Introduce this warmly and ask if Evia can reach out to caregivers on the family's behalf to schedule interviews once they select someone. End with that yes/no question itself — never a stiff "Reply YES or NO" instruction or a menu.`,
     fallback: `I'm already searching for caregivers for ${d.seniorName ?? "your loved one"}. Before I send you matches, two quick questions so I know how to best help you.\n\nCan I reach out to caregivers on your behalf to schedule interviews once you select someone?`,
   });
   await sendMessage(chatId, msgPerm1);

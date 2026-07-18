@@ -4,6 +4,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./buildJobPost";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { describeWhoIsWho } from "./careRecipients";
 import { guardModelOutput } from "../safety/outputGuard";
 
 const db = admin.firestore();
@@ -148,6 +149,9 @@ export async function startJobPostingFlow(
 ): Promise<void> {
   const name = seniorFirstName(session);
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  // R11: ground who's who — the job is care FOR the recipient, never for the
+  // account holder posting it.
+  const whoIsWho = describeWhoIsWho(((session as any).onboardingData ?? {}) as Record<string, unknown>);
   await db.collection("agent_sessions").doc(phone).update({
     jobPostingStep: "jp_ask_start",
     jobPostingData: {},
@@ -156,7 +160,7 @@ export async function startJobPostingFlow(
   const msg = await generateCaraMessage({
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-    context: `Kicking off posting a new care job for the senior named ${name}. This is the first question: ask when they'd like care to start, giving examples like "next Monday", "ASAP", or "June 1". Be warm and a little excited.`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `Kicking off posting a new care job for the senior named ${name}. This is the first question: ask when they'd like care to start, giving examples like "next Monday", "ASAP", or "June 1". Be warm and a little excited.`,
     fallback: `Let's post a new care job for ${name}! 🎉\n\nWhen would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`,
     maxTokens: 90,
   });

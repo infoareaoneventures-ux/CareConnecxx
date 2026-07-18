@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
@@ -55,11 +56,17 @@ export const sendClientThirtyMinReminders = functions.pubsub
         const cgFirstName = cgName.split(" ")[0];
         const seniorName  = (appt.seniorName ?? appt.clientName ?? "your loved one") as string;
         const lang        = (sessionSnap.data() as any)?.preferredLanguage === "es" ? "es" : "en";
+        // R11: ground who's who — the visit is for the care recipient, not the reader.
+        const whoIsWho = describeWhoIsWho({
+          ...((sessionSnap.data() as any)?.onboardingData ?? {}),
+          seniorName: (sessionSnap.data() as any)?.onboardingData?.seniorName ?? appt.seniorName ?? appt.clientName,
+        });
 
         const message = await generateCaraMessage({
           audience: "family",
           language: lang,
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Write a brief, warm heads-up to a family member that their caregiver is on the way.\n` +
             `Caregiver: ${cgFirstName}\n` +
             `Senior: ${seniorName}\n` +

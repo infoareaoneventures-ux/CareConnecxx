@@ -111,9 +111,11 @@ export async function handleCaregiverIssue(params: {
   // Non-911 path
   const familyMsg = await generateCaraMessage({
     audience: "family",
-    context: classification.severity === "urgent"
-      ? `Caregiver ${caregiverName} flagged an urgent concern during today's visit with ${seniorName}: ${classification.summary}. Let the family know the team is aware and invite them to reply with questions.`
-      : `Caregiver ${caregiverName} noted a routine update during today's visit with ${seniorName}: ${classification.summary}. Keep the family informed in a calm, reassuring tone — nothing urgent.`,
+    // R11: who-is-who attribution — care belongs to the recipient, not the reader.
+    context: `The reader is the family member coordinating care; the care recipient is ${seniorName}. ` +
+      (classification.severity === "urgent"
+        ? `Caregiver ${caregiverName} flagged an urgent concern during today's visit with ${seniorName}: ${classification.summary}. Let the family know the team is aware and invite them to reply with questions.`
+        : `Caregiver ${caregiverName} noted a routine update during today's visit with ${seniorName}: ${classification.summary}. Keep the family informed in a calm, reassuring tone — nothing urgent.`),
     fallback: classification.severity === "urgent"
       ? `${caregiverName} flagged a concern during today's visit with ${seniorName}: ${classification.summary}. Our team is aware. Reply with any questions.`
       : `Quick note from ${caregiverName} — ${classification.summary}. Nothing urgent, wanted to keep you informed.`,
@@ -332,7 +334,9 @@ export async function sendIssueFollowUp(issueLogId: string): Promise<void> {
   if (issue.clientPhone) {
     const familyFollowUpMsg = await generateCaraMessage({
       audience: "family",
-      context: `Evia is following up the day after a care concern was reported involving ${seniorName}. Gently check in to see how ${seniorName} is doing today and whether everything is okay.`,
+      // R11: who-is-who attribution — care belongs to the recipient, not the reader.
+      context: `The reader is the family member coordinating care; the care recipient is ${seniorName}. ` +
+        `Evia is following up the day after a care concern was reported involving ${seniorName}. Gently check in to see how ${seniorName} is doing today and whether everything is okay.`,
       fallback: `Just checking in — how is ${seniorName} doing today after yesterday's concern?\n\nEverything okay?`,
     });
     await sendViaInteractionAgent(issue.clientPhone, {

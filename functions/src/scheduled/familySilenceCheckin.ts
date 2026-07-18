@@ -14,6 +14,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 
 const db = admin.firestore();
 
@@ -68,9 +69,13 @@ export const familySilenceCheckinJob = functions.pubsub
         // the message reads naturally — never the same template twice.
         const seniorName = (session.onboardingData?.seniorName ?? "") as string;
         const seniorPart = seniorName ? ` and ${seniorName}` : "";
+        // R11: ground who's who — the reader is the account holder, not the
+        // care recipient; never attribute the care to the reader.
+        const whoIsWho = describeWhoIsWho((session.onboardingData ?? {}) as Record<string, unknown>);
         const message = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `It's been a few days since this family last messaged you. Send a brief, warm check-in — NOT pushy, NOT a sales prompt. ` +
             `Ask how they${seniorPart} are doing, or if anything's come up. Acknowledge it's been a bit. ` +
             `One or two sentences max. No bullets, no questions about scheduling unless they bring it up.`,

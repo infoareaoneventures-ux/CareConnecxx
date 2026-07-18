@@ -8,6 +8,7 @@ import { getMemoryContext } from "../memory/memoryFiles";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { generateCaraMessage, ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
+import { describeWhoIsWho } from "../agents/careRecipients";
 import { guardModelOutput } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 
@@ -319,6 +320,13 @@ async function sendFamilyMorningBriefings(
       const seniorName    = (clientData.seniorName ?? "your loved one") as string;
       const startTime     = (appt.startTime ?? "") as string;
       const schedule      = startTime ? `at ${startTime}` : "today";
+      // R11 (hallucination hardening 2026-07-17): the reader is the account
+      // holder; the visit is for the care recipient — ground who's who in BOTH
+      // model calls (primary briefing + generateCaraMessage fallback).
+      const whoIsWho = describeWhoIsWho({
+        ...((session.onboardingData ?? {}) as Record<string, unknown>),
+        seniorName: (session.onboardingData as any)?.seniorName ?? clientData.seniorName,
+      });
 
       // Load memory context for care priorities
       const [facts, memCtx] = await Promise.all([
@@ -340,6 +348,7 @@ async function sendFamilyMorningBriefings(
         const memLine = memCtx ? memCtx.slice(0, 300) : "";
 
         content = await generateFamilyBriefingText(
+          (whoIsWho ? whoIsWho + "\n" : "") +
           `Senior: ${seniorName}\n` +
           `Caregiver: ${caregiverName} arriving ${schedule}\n` +
           factsLine + "\n" +
@@ -354,6 +363,7 @@ async function sendFamilyMorningBriefings(
         content = await generateCaraMessage({
           audience: "family",
           context:
+            (whoIsWho ? whoIsWho + " " : "") +
             `Write a brief morning text to a family member letting them know their caregiver is coming today. ` +
             `Caregiver: ${caregiverName}, arriving ${schedule}. Senior: ${seniorName}.` +
             (noteLine ? ` Care note: ${noteLine.trim()}` : ""),

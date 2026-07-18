@@ -48,6 +48,15 @@ export const sendStaleSessionNudges = functions.pubsub
         const sent = await resendStuckStep(doc.id);
         if (sent) {
           await doc.ref.update({ stuckRecoverySentAt: new Date().toISOString() });
+          // A recovery that actually re-delivered a gate link must open the
+          // SAME per-step resend cooldown the inbound `other` path uses —
+          // otherwise a nudge followed by an immediate "hm ok" reply delivers
+          // two link cards within a minute. Scoped to the gate-parked steps
+          // the cooldown governs (isGateLinkKeywordStep); the text-only 48h
+          // nudges below never stamp.
+          const step = session.onboardingStep as string;
+          const { isGateLinkKeywordStep, stampGateLinkResent } = await import("../agents/gateLinkCooldown");
+          if (isGateLinkKeywordStep(step)) await stampGateLinkResent(doc.id, step);
           console.log(`[staleSessionNudge] Re-sent stuck step for ${doc.id} (step: ${session.onboardingStep})`);
         }
       } catch (err) {

@@ -179,7 +179,8 @@ vi.mock("../../utils/openaiClient", () => ({
   }),
 }));
 
-import { handleOnboardingStep, GATE_LINK_RESEND_COOLDOWN_MS } from "../onboardingConversation";
+import { handleOnboardingStep } from "../onboardingConversation";
+import { GATE_LINK_RESEND_COOLDOWN_MS, stampGateLinkResent } from "../gateLinkCooldown";
 
 const PHONE = "+15555550100";
 const CHAT  = "chat-1";
@@ -295,6 +296,24 @@ describe("U9 — gate-link resend cooldown (resendGateLink path)", () => {
     expect(out).not.toContain("just resent");
     expect(out).toContain("I resent that link about 1 minute ago");
     expect(out).toMatch(/send it again in about \d+ minutes?/);
+  });
+
+  it("a window opened by the stale-session NUDGE throttles the next `other` inbound (shared stamp)", async () => {
+    // FIX 2 (2026-07-17): the daily nudge cron re-delivers gate links via
+    // resendStuckStep and stamps gateLinkResentAt[step] through the shared
+    // gateLinkCooldown module — so a nudge followed by an immediate `other`
+    // reply must get the deterministic cooldown copy, NOT a second link card
+    // within the same minute.
+    const session = seed(PHOTO_STEP, { ...FULL_DATA });
+    await stampGateLinkResent(PHONE, PHOTO_STEP); // what the nudge writes after its link send
+    awaitingKind = "other";
+
+    await handleOnboardingStep(PHONE, CHAT, "hm okay", stored() ?? session);
+
+    expect(linkParts()).toHaveLength(0);
+    expect(sentText()).toContain("reply LINK");
+    expect(sentText()).toContain("about 1 minute ago");
+    expect(sentText()).not.toContain("just sent");
   });
 
   it("classifier ERROR during cooldown (defaults to `other`): deterministic copy, no crash, no resend", async () => {

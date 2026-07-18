@@ -679,6 +679,43 @@ describe("onboarding + rate limit", () => {
     expect(classifyIntentDetailed).not.toHaveBeenCalled();
   });
 
+  // ── Gate-awaiting step routing (characterization, 2026-07-17) ─────────────
+  // The gate-link resend cooldown lives entirely in the SCRIPTED handler
+  // (handleOnboardingStep → handleGateLinkKeyword/resendGateLink). These pin
+  // the assumption that makes that sufficient: an inbound text while parked at
+  // ANY gate-awaiting step routes to the scripted handler and NEVER reaches
+  // runQaAgent / runQuickReply / intent classification — so no LLM loop can
+  // resend a gate link (or improvise "just resent it") around the cooldown.
+  // If a refactor ever routes these turns to the loop, the cooldown gains a
+  // bypass and this test is the tripwire.
+  describe.each([
+    ["caregiver_awaiting_membership", "caregiver"], // representative checkout gate
+    ["caregiver_awaiting_mvr",        "caregiver"],
+    ["caregiver_awaiting_photo",      "caregiver"],
+    ["caregiver_awaiting_documents",  "caregiver"],
+    ["caregiver_awaiting_bgcheck",    "caregiver"],
+    ["caregiver_awaiting_bgcheck_consent", "caregiver"],
+    ["caregiver_awaiting_stripe",     "caregiver"],
+    ["client_awaiting_payment",       "client"],
+    ["client_awaiting_identity",      "client"],
+  ])("gate-awaiting step %s", (step, userType) => {
+    it("routes inbound text to the scripted handler — never the QA agent loop", async () => {
+      seedSession({
+        userType,
+        onboardingStep: step,
+        ...(userType === "caregiver" ? { caregiverId: "cg1" } : {}),
+      });
+
+      await handleInbound(makeEvent("hm ok but where is it"));
+
+      expect(handleOnboardingStep).toHaveBeenCalledTimes(1);
+      expect(handleOnboardingStep.mock.calls[0][0]).toBe(PHONE);
+      expect(runQaAgent).not.toHaveBeenCalled();
+      expect(runQuickReply).not.toHaveBeenCalled();
+      expect(classifyIntentDetailed).not.toHaveBeenCalled();
+    });
+  });
+
   it("rate-limited phones are dropped silently AFTER onboarding routing", async () => {
     seedSession();
     hoisted.docState.set(`agent_rate/${PHONE}`, {

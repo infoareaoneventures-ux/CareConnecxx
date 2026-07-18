@@ -50,6 +50,17 @@ import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
+import {
+  GATE_LINK_KEYWORD_TARGETS,
+  gateLinkBypassConsumed,
+  gateLinkBypassSpentCopy,
+  gateLinkCooldownMinutes,
+  gateLinkCooldownResetMinutes,
+  gateLinkInCooldownReplyCopy,
+  isGateLinkKeywordStep,
+  stampGateLinkBypassUsed,
+  stampGateLinkResent,
+} from "./gateLinkCooldown";
 
 /** iMessage/RCS can share a location pin; plain SMS cannot. */
 function isRichService(service?: string): boolean {
@@ -2804,160 +2815,11 @@ async function handleCaregiverSendMembership(phone: string, chatId: string, sess
 }
 
 // ── Gate-link resend cooldown (U9, R13 — 2026-07-17) ─────────────────────────
-// A parked step's `other`-classified inbounds could re-blast the link card on
-// EVERY text ("hm" → card, "ok but" → card, …). Per-step SetAt+TTL cooldown
-// (the isFlowStale idiom, sessionState.ts): the first `other` resend stamps
-// `gateLinkResentAt[step]`; within the 10-minute window further `other`
-// inbounds get DETERMINISTIC, truthful copy that never claims a fresh send —
-// an LLM reply briefed on the resend flow could improvise "just resent it",
-// exactly the incident class this wave kills. A bare LINK reply (strict
-// keyword, binary-protocol carve-out) bypasses the cooldown once per window,
-// because classifyAwaitingReply classifies "send it again" as `other` AND
-// defaults to `other` on classifier failure — a caregiver whose link was
-// carrier-filtered must have a same-minute escape hatch. `ack`/`question`
-// paths are untouched (questions still get answered AND their link follows).
-// Missing/corrupt cooldown state fails OPEN: resend proceeds — never wedge a
-// gate on bookkeeping.
-export const GATE_LINK_RESEND_COOLDOWN_MS = 10 * 60 * 1000;
-
-/**
- * Minutes since the step's last cooldown-stamped link send, when inside the
- * 10-minute window; null when outside the window, never stamped, or the stamp
- * is corrupt (fail-open). When the LINK bypass resent more recently than the
- * window opener, minutes count from that LATEST send so the copy stays honest.
- */
-export function gateLinkCooldownMinutes(
-  sessionData: Record<string, unknown> | undefined | null,
-  step:        string,
-  nowMs:       number = Date.now(),
-): number | null {
-  try {
-    const resentAt = (sessionData?.gateLinkResentAt as Record<string, unknown> | undefined)?.[step];
-    if (typeof resentAt !== "string") return null;
-    const setMs = Date.parse(resentAt);
-    if (isNaN(setMs)) return null; // corrupt stamp → fail open (no cooldown)
-    const age = nowMs - setMs;
-    if (age < 0 || age >= GATE_LINK_RESEND_COOLDOWN_MS) return null;
-    let latestMs = setMs;
-    const bypassAt = (sessionData?.gateLinkBypassUsedAt as Record<string, unknown> | undefined)?.[step];
-    if (typeof bypassAt === "string") {
-      const bMs = Date.parse(bypassAt);
-      if (!isNaN(bMs) && bMs > latestMs && bMs <= nowMs) latestMs = bMs;
-    }
-    return Math.max(1, Math.round((nowMs - latestMs) / 60_000));
-  } catch {
-    return null; // corrupt cooldown state must never wedge a gate
-  }
-}
-
-/**
- * DETERMINISTIC in-cooldown reply — never LLM-generated, never a completed-
- * action claim ("just resent it"); the only forward promise is the LINK hatch.
- */
-export function gateLinkCooldownCopy(minutes: number): string {
-  return `I sent that link about ${minutes} minute${minutes === 1 ? "" : "s"} ago — if it hasn't come through, reply LINK and I'll resend it.`;
-}
-
-/**
- * DETERMINISTIC copy for when this window's LINK bypass is already spent —
- * gateLinkCooldownCopy would be UNTRUTHFUL here (it promises "reply LINK and
- * I'll resend it" right after LINK was consumed). This variant acknowledges
- * the recent resend and points at the window reset instead: no fresh-send
- * claim, no re-promise of an immediate LINK resend.
- */
-export function gateLinkBypassSpentCopy(minutesSinceSend: number, minutesUntilReset: number): string {
-  const since = `${minutesSinceSend} minute${minutesSinceSend === 1 ? "" : "s"}`;
-  const reset = `${minutesUntilReset} minute${minutesUntilReset === 1 ? "" : "s"}`;
-  return `I resent that link about ${since} ago — give it a couple of minutes to come through. ` +
-    `If it still hasn't arrived, I can send it again in about ${reset}.`;
-}
-
-/**
- * Minutes until the step's cooldown window resets (the window opener stamp
- * ages past GATE_LINK_RESEND_COOLDOWN_MS). Only meaningful while in cooldown;
- * clamps to at least 1 and fails soft to 1 on missing/corrupt state.
- */
-export function gateLinkCooldownResetMinutes(
-  sessionData: Record<string, unknown> | undefined | null,
-  step:        string,
-  nowMs:       number = Date.now(),
-): number {
-  try {
-    const resentAt = (sessionData?.gateLinkResentAt as Record<string, unknown> | undefined)?.[step];
-    if (typeof resentAt !== "string") return 1;
-    const setMs = Date.parse(resentAt);
-    if (isNaN(setMs)) return 1;
-    return Math.max(1, Math.ceil((GATE_LINK_RESEND_COOLDOWN_MS - (nowMs - setMs)) / 60_000));
-  } catch {
-    return 1;
-  }
-}
-
-/**
- * The right deterministic in-cooldown reply for the step's current state:
- * gateLinkCooldownCopy while the LINK hatch is still available, the
- * bypass-spent variant once it's consumed — the "reply LINK" promise is only
- * ever made when a LINK would actually resend.
- */
-function gateLinkInCooldownReplyCopy(
-  sessionData: Record<string, unknown> | undefined | null,
-  step:        string,
-  minutes:     number,
-): string {
-  return gateLinkBypassConsumed(sessionData, step)
-    ? gateLinkBypassSpentCopy(minutes, gateLinkCooldownResetMinutes(sessionData, step))
-    : gateLinkCooldownCopy(minutes);
-}
-
-/** True when this window's one LINK bypass is already spent. Fail-closed to false. */
-export function gateLinkBypassConsumed(
-  sessionData: Record<string, unknown> | undefined | null,
-  step:        string,
-  nowMs:       number = Date.now(),
-): boolean {
-  try {
-    const resentAt = (sessionData?.gateLinkResentAt as Record<string, unknown> | undefined)?.[step];
-    const bypassAt = (sessionData?.gateLinkBypassUsedAt as Record<string, unknown> | undefined)?.[step];
-    if (typeof resentAt !== "string" || typeof bypassAt !== "string") return false;
-    const setMs = Date.parse(resentAt);
-    const bMs   = Date.parse(bypassAt);
-    if (isNaN(setMs) || isNaN(bMs)) return false;
-    // Consumed only within the CURRENT window: a bypass stamped before this
-    // window's opener belongs to an old window and resets automatically.
-    return bMs >= setMs && nowMs - setMs < GATE_LINK_RESEND_COOLDOWN_MS;
-  } catch {
-    return false;
-  }
-}
-
-async function stampGateLinkResent(phone: string, step: string): Promise<void> {
-  // Best-effort bookkeeping — a failed stamp must never fail the turn.
-  await updateSession(phone, { [`gateLinkResentAt.${step}`]: new Date().toISOString() }).catch(() => {});
-}
-
-async function stampGateLinkBypassUsed(phone: string, step: string): Promise<void> {
-  await updateSession(phone, { [`gateLinkBypassUsedAt.${step}`]: new Date().toISOString() }).catch(() => {});
-}
-
-// The parked steps whose `other` branch resends via resendGateLink, with the
-// same intro copy those branches use — the LINK keyword hatch is scoped to
-// exactly these plus the membership/MVR checkout steps (handled bespoke below
-// because their resend lives in handleCaregiverResendMembership/Mvr).
-const GATE_LINK_KEYWORD_TARGETS: Record<string, { linkType: OnboardingLinkType; intro: string }> = {
-  client_awaiting_identity:     { linkType: "client_identity",           intro: "Here's a fresh link for the quick 30-second identity check:" },
-  client_awaiting_payment:      { linkType: "client_payment",            intro: "Here's your membership link again — it takes about 30 seconds:" },
-  caregiver_awaiting_photo:     { linkType: "caregiver_photo",           intro: "Here's your photo upload link again — it opens right on your phone:" },
-  caregiver_awaiting_documents: { linkType: "caregiver_documents",       intro: "Here's the certifications upload link again — and if you don't have any, just tell me to skip it:" },
-  caregiver_awaiting_bgcheck:   { linkType: "caregiver_background_check", intro: "Here's your background-check link:" },
-  caregiver_awaiting_stripe:    { linkType: "caregiver_payouts",         intro: "Here's a fresh payout-setup link:" },
-};
-
-/** Steps where a bare LINK reply is honored as the cooldown escape hatch. */
-export function isGateLinkKeywordStep(step: string): boolean {
-  return step in GATE_LINK_KEYWORD_TARGETS
-    || step === "caregiver_awaiting_membership"
-    || step === "caregiver_awaiting_mvr";
-}
+// The cooldown STATE machinery (constants, window math, deterministic copy,
+// per-step stamps, keyword-step set) lives in ./gateLinkCooldown so the
+// stale-session nudge cron and the MCP send_onboarding_link tool share the
+// SAME per-step window as the scripted resend paths below. Only the
+// orchestrating send paths (handleGateLinkKeyword, resendGateLink) stay here.
 
 // A bare "LINK" at a parked awaiting step — the deterministic escape hatch the
 // in-cooldown copy promises. Runs BEFORE classifyAwaitingReply (strict keyword,

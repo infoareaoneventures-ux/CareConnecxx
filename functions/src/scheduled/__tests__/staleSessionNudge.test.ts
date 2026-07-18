@@ -11,16 +11,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ── In-memory Firestore: agent_sessions (where + doc) and caregivers (doc) ─────
 const store = {
-  sessions:   new Map<string, any>(),   // id → session data (also drives the nudge query)
+  sessions:   new Map<string, any>(),   // id → session data (drives the "!=" nudge query)
+  stuck:      new Map<string, any>(),   // id → session data (drives the "in" stuck-recovery query)
   caregivers: new Map<string, any>(),   // id → caregiver data (backgroundCheckData etc.)
-  updates:    new Map<string, any>(),   // id → last .update() payload
+  updates:    [] as Array<{ id: string; data: any }>, // every .update() payload, in order
 };
 
 vi.mock("firebase-admin", () => {
   const makeSessionDocRef = (id: string) => ({
     id,
-    get:    async () => ({ exists: store.sessions.has(id), data: () => store.sessions.get(id) }),
-    update: vi.fn(async (data: any) => { store.updates.set(id, data); }),
+    get:    async () => ({ exists: store.sessions.has(id) || store.stuck.has(id), data: () => store.sessions.get(id) ?? store.stuck.get(id) }),
+    update: vi.fn(async (data: any) => { store.updates.push({ id, data }); }),
   });
   const collection = (name: string) => {
     if (name === "caregivers") {
@@ -28,12 +29,19 @@ vi.mock("firebase-admin", () => {
     }
     // agent_sessions
     let lastOp = "";
+    let lastValues: string[] = [];
     const ref: any = {
-      where: (_f: string, op: string) => { lastOp = op; return ref; },
+      where: (_f: string, op: string, values: any) => { lastOp = op; lastValues = Array.isArray(values) ? values : []; return ref; },
       get:   async () => {
-        // The "in" query is the 7-day stuck-recovery sweep — keep it empty so the
-        // dynamic resendStuckStep import never runs in this unit test.
-        if (lastOp === "in") return { docs: [] };
+        // The "in" queries are the 7-day stuck-recovery sweep (WEBHOOK_AWAITING_STEPS)
+        // and the permissions auto-complete sweep (PERMISSION_STEPS) — filter the
+        // stuck store by the step list so each sweep only sees its own sessions.
+        if (lastOp === "in") {
+          const docs = [...store.stuck.entries()]
+            .filter(([, data]) => lastValues.includes(data.onboardingStep))
+            .map(([id, data]) => ({ id, data: () => data, ref: makeSessionDocRef(id) }));
+          return { docs };
+        }
         // The "!=" query is the nudge sweep.
         const docs = [...store.sessions.entries()].map(([id, data]) => ({
           id, data: () => data, ref: makeSessionDocRef(id),
@@ -64,6 +72,14 @@ vi.mock("../../utils/caraMessage", () => ({
 const sendSpy = vi.fn(async () => {});
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
 
+// The stuck-recovery sweep dynamically imports resendStuckStep — mock it so the
+// tests control whether a link actually went out (true) or not (false), without
+// loading the whole onboarding machine.
+const resendStuckStep = vi.fn(async (..._a: unknown[]) => true);
+vi.mock("../../agents/onboardingConversation", () => ({
+  resendStuckStep: (...a: unknown[]) => resendStuckStep(...a),
+}));
+
 import { sendStaleSessionNudges } from "../staleSessionNudge";
 
 const OLD = new Date(Date.now() - 60 * 60 * 60 * 1000).toISOString(); // 60h ago (> 48h stale)
@@ -77,11 +93,30 @@ function seedSession(id: string, data: Record<string, unknown>) {
 
 beforeEach(() => {
   store.sessions.clear();
+  store.stuck.clear();
   store.caregivers.clear();
-  store.updates.clear();
+  store.updates.length = 0;
   genCalls.length = 0;
   sendSpy.mockClear();
+  resendStuckStep.mockClear();
+  resendStuckStep.mockResolvedValue(true);
 });
+
+const EIGHT_DAYS_AGO = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+function seedStuckSession(id: string, step: string, data: Record<string, unknown> = {}) {
+  store.stuck.set(id, {
+    chatId: `chat-${id}`, optedOut: false,
+    createdAt: EIGHT_DAYS_AGO, updatedAt: EIGHT_DAYS_AGO,
+    onboardingStep: step,
+    ...data,
+  });
+}
+
+/** All gateLinkResentAt.* stamp writes recorded for a session id. */
+const stampWrites = (id: string) => store.updates.filter(
+  (u) => u.id === id && Object.keys(u.data).some((k) => k.startsWith("gateLinkResentAt.")),
+);
 
 describe("staleSessionNudge grounding", () => {
   it("bg-check nudge for a CLEARED check is grounded — never asserts 'hasn't finished the form'", async () => {
@@ -126,6 +161,60 @@ describe("staleSessionNudge grounding", () => {
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
     expect(genCalls[0].context).not.toContain("LIVE STATUS RIGHT NOW");
+  });
+
+  it("stuck-recovery link resend stamps gateLinkResentAt for the parked step (shared cooldown window)", async () => {
+    // FIX 2 (2026-07-17): the 7-day recovery re-delivers the gate link but never
+    // opened the resend cooldown — an inbound `other` reply right after the
+    // nudge delivered a SECOND link card within a minute.
+    seedStuckSession("+15550005555", "caregiver_awaiting_photo", { userType: "caregiver" });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(resendStuckStep).toHaveBeenCalledWith("+15550005555");
+    const stamps = stampWrites("+15550005555");
+    expect(stamps).toHaveLength(1);
+    const stampValue = stamps[0].data["gateLinkResentAt.caregiver_awaiting_photo"];
+    expect(typeof stampValue).toBe("string");
+    expect(isNaN(Date.parse(stampValue))).toBe(false);
+    // The recovery bookkeeping still happened too.
+    expect(store.updates.some((u) => u.id === "+15550005555" && typeof u.data.stuckRecoverySentAt === "string")).toBe(true);
+  });
+
+  it("stuck-recovery that could NOT resend (resendStuckStep false) writes no stamp", async () => {
+    seedStuckSession("+15550006666", "caregiver_awaiting_photo", { userType: "caregiver" });
+    resendStuckStep.mockResolvedValue(false);
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(stampWrites("+15550006666")).toHaveLength(0);
+  });
+
+  it("stuck-recovery at a non-cooldown step (bgcheck consent) sends but never stamps", async () => {
+    // caregiver_awaiting_bgcheck_consent has no `other`-branch resend cooldown —
+    // a stamp there would be dead state.
+    seedStuckSession("+15550007777", "caregiver_awaiting_bgcheck_consent", { userType: "caregiver" });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(resendStuckStep).toHaveBeenCalledWith("+15550007777");
+    expect(stampWrites("+15550007777")).toHaveLength(0);
+  });
+
+  it("text-only 48h nudge (no link delivered) writes no gateLinkResentAt stamp", async () => {
+    // The regular nudge sweep sends prose via sendViaInteractionAgent — its copy
+    // says "reply here and I'll send the link again", it never sends the link
+    // itself, so it must NOT open the cooldown window.
+    seedSession("+15550008888", {
+      onboardingStep: "caregiver_awaiting_photo", userType: "caregiver",
+      onboardingData: { name: "Ana" },
+    });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1); // the text nudge went out
+    expect(resendStuckStep).not.toHaveBeenCalled();
+    expect(stampWrites("+15550008888")).toHaveLength(0);
   });
 
   it("does not nudge a session that is not yet stale (cadence unchanged)", async () => {

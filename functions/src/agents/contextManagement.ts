@@ -105,10 +105,17 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
       .join("\n");
 
     const newSummary = await quickComplete(
+      // U11 (hallucination hardening, R6): the summary is re-injected as
+      // trusted context, so it must record only transcript facts and never
+      // shed named entities — dropping pleasantries must not license
+      // dropping a name, an amount, or a promise.
       "You maintain a running summary of an ongoing SMS conversation between a family and Evia, a " +
         "caregiving assistant. Merge the existing summary with the new messages into ONE concise summary " +
-        "(max 200 words). Preserve durable facts, decisions, preferences, and open threads; drop " +
-        "pleasantries. Write plain prose in the third person. Output only the summary.",
+        "(max 200 words). Record ONLY facts present in the existing summary or the new messages — never infer or invent. " +
+        "Preserve durable facts, decisions, preferences, and open threads. " +
+        "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
+        "Drop pleasantries, but never at the cost of a name, amount, or commitment. " +
+        "Write plain prose in the third person. Output only the summary.",
       `Existing summary:\n${existingSummary ?? "(none)"}\n\nNew messages:\n${transcript}`,
       { maxTokens: 350 },
     );

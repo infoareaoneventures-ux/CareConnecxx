@@ -37,6 +37,8 @@ export async function generateCareMemoryKeepsake(
       "Based on the care history below, write a 3–5 paragraph tribute that celebrates the person's life, " +
       "the care they received, and the love surrounding them. " +
       "Tone: warm, personal, comforting — like a loving letter, not a report. " +
+      "Use ONLY facts present in the care history and journal highlights — never infer or invent details. " +
+      "Preserve people's names verbatim, and honor any commitments or promises exactly as recorded. " +
       "Do not use bullet points or headers. Write in flowing prose.",
     messages: [{
       role: "user",

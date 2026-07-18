@@ -36,7 +36,7 @@ async function compressConversationForPhone(phone: string): Promise<void> {
   const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 400,
-    system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Begin your response with \"<summary>\".",
+    system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with \"<summary>\".",
     messages:   [{ role: "user", content: promptParts[0] }],
   });
 

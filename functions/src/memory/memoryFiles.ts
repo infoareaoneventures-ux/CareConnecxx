@@ -362,7 +362,8 @@ export async function handleMemoryQuery(
       "their care situation. Answer THEIR QUESTION directly and specifically using that context. " +
       "If they ask for one fact (a name, an age, a city), lead with that fact in one short sentence — " +
       "do NOT recap the whole profile. If the question is open-ended (e.g. \"what do you know about my mom\"), " +
-      "give a warm 2–3 sentence summary. If the answer isn't in what you know, say so briefly and offer to " +
+      "give a warm 2–3 sentence summary. Use ONLY facts present in what you know below — never infer or invent. " +
+      "If the answer isn't in what you know, say so briefly and offer to " +
       "note it. Plain conversational text — no bullet points, no headers.",
     messages: [{ role: "user", content: `What I know:\n${combined}\n\nTheir question: ${question}` }],
   });
@@ -397,7 +398,9 @@ export async function reconcileMemoryFile(
         "Remove duplicate facts. When a newer fact supersedes an older one (a changed " +
         "medication, dose, address, phone, or age), keep ONLY the current fact and drop the " +
         "stale one. Preserve every distinct fact that is still true — do not drop or invent " +
-        "anything else. Keep it concise. Reply with ONLY the revised markdown content.",
+        "anything else. Record ONLY facts present in the file — never infer or invent. " +
+        "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
+        "Keep it concise. Reply with ONLY the revised markdown content.",
       messages: [{ role: "user", content }],
     });
     const block = result.content[0];
@@ -461,6 +464,8 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     system:
       "You maintain memory files for a caregiving AI assistant named Evia. " +
       "Based on recent conversation events, extract new facts and decide which memory files to update. " +
+      "Record ONLY facts present in the recent conversation events — never infer or invent. " +
+      "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
       "Memory files: profile (identity/contact prefs), health (diagnoses/meds/allergies), " +
       "family (relationships/dynamics), recent_episodes (last 30 days events), procedural (routines). " +
       "Reply with JSON: [{\"file\": \"<type>\", \"append\": \"<markdown to append>\"}]. " +
@@ -515,7 +520,9 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
       max_tokens: 400,
       system:
         "Summarize the oldest entries in this care episode log into a brief paragraph. " +
-        "Keep the most recent entries verbatim. Reply with only the revised markdown content.",
+        "Keep the most recent entries verbatim. Record ONLY facts present in the log — never infer or invent. " +
+        "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
+        "Reply with only the revised markdown content.",
       messages: [{ role: "user", content: episodes }],
     });
     const trimmed = ((trimResult.content[0] as { text: string }).text ?? "").trim();

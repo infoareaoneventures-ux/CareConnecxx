@@ -1,6 +1,16 @@
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { Caregiver, Senior, Appointment, WeeklySchedule } from "../types";
 import { sanitizeForAI, sanitizePlainText, sanitizeName } from "../utils/sanitize";
+import { sanitizeAiText } from "../utils/sanitizeAiText";
+
+// Canned fallbacks for the AI text surfaces (hallucination hardening U10, R15).
+// Reused by both the error-catch path and the output sanitizer, so a
+// meta-response or empty model output renders the same neutral copy as an
+// outright API failure.
+const SEARCH_FALLBACK_TEXT =
+  "I'm having trouble connecting right now, but you can browse the list manually!";
+const BOOKING_FALLBACK_RESPONSE =
+  "I'm here to help you book a caregiver! Could you tell me what type of care you need?";
 
 const apptCostToHours = (cost: number, rate: number = 25) => Math.round(cost / rate);
 
@@ -58,7 +68,9 @@ Keep it factual, concise, and objective. Use medical terminology where appropria
         "claude-haiku-4-5-20251001",
         400
       );
-      return text.trim() || shorthand;
+      // Empty output or a meta-response falls back to the caregiver's own
+      // shorthand — same fallback the catch below uses.
+      return sanitizeAiText(text.trim(), shorthand);
     } catch (error) {
       console.error("AI Note Gen Error:", error);
       return shorthand;
@@ -94,11 +106,16 @@ JSON shape: { "responseText": string, "recommendedIds": string[], "recommendatio
         "claude-sonnet-4-6",
         1500
       );
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return {
+        ...parsed,
+        // responseText renders in the chat surface — sanitize before render.
+        responseText: sanitizeAiText(parsed.responseText, SEARCH_FALLBACK_TEXT),
+      };
     } catch (error) {
       console.error("AI Search Error:", error);
       return {
-        responseText: "I'm having trouble connecting right now, but you can browse the list manually!",
+        responseText: SEARCH_FALLBACK_TEXT,
         recommendedIds: [],
         recommendations: [],
         suggestions: [],
@@ -215,11 +232,16 @@ CONVERSATION:
 ${conversationHistory}`;
 
       const raw = await askClaude(system, userMsg, "claude-sonnet-4-6", 1000);
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return {
+        ...parsed,
+        // response renders in the booking chat surface — sanitize before render.
+        response: sanitizeAiText(parsed.response, BOOKING_FALLBACK_RESPONSE),
+      };
     } catch (error) {
       console.error("AI Conversational Booking Error:", error);
       return {
-        response: "I'm here to help you book a caregiver! Could you tell me what type of care you need?",
+        response: BOOKING_FALLBACK_RESPONSE,
         isEmergency: false,
         missingInfo: ["service", "date", "time", "duration"],
         nextQuestion: "What type of care do you need?",

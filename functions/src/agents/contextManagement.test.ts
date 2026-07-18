@@ -208,6 +208,44 @@ describe("maybeRollUpHistory", () => {
   });
 });
 
+// U11 (hallucination hardening, R6): the rollup summary is re-injected as
+// trusted context, so its prompt must instruct transcript-only facts and
+// verbatim entity preservation — and must no longer license unconditional
+// fact-dropping ("drop pleasantries") without the entity exemption.
+describe("rollup summary prompt grounding (U11, R6)", () => {
+  const capturedSystemPrompt = async (): Promise<string> => {
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6));
+    await maybeRollUpHistory("+15550001111");
+    expect(quickCompleteMock).toHaveBeenCalledTimes(1);
+    const call = quickCompleteMock.mock.calls[0] as unknown as [string, string];
+    return call[0];
+  };
+
+  it("instructs recording only transcript facts — never infer or invent", async () => {
+    const system = await capturedSystemPrompt();
+    expect(system).toContain(
+      "Record ONLY facts present in the existing summary or the new messages — never infer or invent."
+    );
+  });
+
+  it("instructs verbatim preservation of names, amounts, and commitments", async () => {
+    const system = await capturedSystemPrompt();
+    expect(system).toContain(
+      "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made."
+    );
+  });
+
+  it("still drops pleasantries, but only with the entity exemption attached", async () => {
+    const system = await capturedSystemPrompt();
+    expect(system).toContain(
+      "Drop pleasantries, but never at the cost of a name, amount, or commitment."
+    );
+    // The old unconditional phrasing ("…open threads; drop pleasantries.")
+    // licensed discarding named entities — it must be gone.
+    expect(system).not.toContain("open threads; drop");
+  });
+});
+
 describe("buildToolResultContent", () => {
   it("passes small results through untouched", async () => {
     const result = { ok: true, items: [1, 2, 3] };

@@ -21,91 +21,46 @@ const CARA_AVATAR =
 // cache is TTL'd so a newly added family-group member is discovered within the
 // window instead of being invisible until the instance recycles.
 const CHAT_USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const chatUserCache = new Map<string, { userIds: string[]; cachedAt: number }>();
 
 // Mirror every member of a family group, bounded by a generous cap far above
 // realistic family size to avoid an unbounded scan. Shared by both resolvers.
 const GROUP_MIRROR_LIMIT = 50;
 
-async function resolveUserIds(params: { userId?: string; chatId?: string }): Promise<string[]> {
-  if (params.userId) return [params.userId];
-  if (!params.chatId) return [];
+// One entry per resolved chatId, namespaced by lookup type ("direct:"/"group:").
+type SessionValueCache<T> = Map<string, { values: T[]; cachedAt: number }>;
 
-  // Resolve the direct lookup first; only fall back to group resolution when no
-  // direct session matches. Cache keys are namespaced by lookup type ("direct:"
-  // vs "group:") so a chatId that happens to equal some other session's
-  // groupChatId can never return the wrong branch's cached userIds.
-  let userIds: string[] = [];
-  try {
-    const directKey = `direct:${params.chatId}`;
-    const directCached = chatUserCache.get(directKey);
-    if (directCached && Date.now() - directCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
-      return directCached.userIds;
-    }
-    if (directCached) chatUserCache.delete(directKey); // expired — re-query below
-
-    const directSnap = await db.collection("agent_sessions")
-      .where("chatId", "==", params.chatId)
-      .limit(1)
-      .get();
-
-    if (!directSnap.empty) {
-      const userId = directSnap.docs[0].data().userId as string | undefined;
-      if (userId) userIds = [userId];
-      chatUserCache.set(directKey, { userIds, cachedAt: Date.now() });
-      return userIds;
-    }
-
-    const groupKey = `group:${params.chatId}`;
-    const groupCached = chatUserCache.get(groupKey);
-    if (groupCached && Date.now() - groupCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
-      return groupCached.userIds;
-    }
-    if (groupCached) chatUserCache.delete(groupKey); // expired — re-query below
-
-    // We query for one more than the cap so we can tell "exactly at cap"
-    // (complete) from "over cap" (truly truncated) and only warn — rather than
-    // silently dropping members from their web inbox — in the latter case.
-    const groupSnap = await db.collection("agent_sessions")
-      .where("groupChatId", "==", params.chatId)
-      .limit(GROUP_MIRROR_LIMIT + 1)
-      .get();
-    if (groupSnap.docs.length > GROUP_MIRROR_LIMIT) {
-      console.warn(`threadMirror: group ${params.chatId} exceeded the ${GROUP_MIRROR_LIMIT}-member mirror cap — some members may be missing from web-inbox mirroring; investigate.`);
-    }
-    userIds = [...new Set(groupSnap.docs
-      .slice(0, GROUP_MIRROR_LIMIT)
-      .map((doc) => doc.data().userId as string | undefined)
-      .filter((id): id is string => !!id))];
-    chatUserCache.set(groupKey, { userIds, cachedAt: Date.now() });
-    return userIds;
-  } catch (err) {
-    console.warn("threadMirror: chatId->userId lookup failed", err);
-    return [];
-  }
+// Minimal structural view of a query doc — satisfied by the real
+// QueryDocumentSnapshot and by the test doubles.
+interface SessionDoc {
+  id: string;
+  data: () => Record<string, unknown>;
 }
 
-// chatId -> PHONE resolution for the outbound-history recorder (hallucination
-// hardening U3). Deliberately a SIBLING of resolveUserIds with its own cache:
-// resolveUserIds returns/caches the session's `userId` FIELD (a Firebase uid),
-// but agent_conversations is keyed by PHONE — which is the agent_sessions DOC
-// ID. Reusing the uid cache here would record history under the wrong key.
-const chatPhoneCache = new Map<string, { phones: string[]; cachedAt: number }>();
-
-export async function resolvePhones(chatId: string): Promise<string[]> {
-  if (!chatId) return [];
-
-  // Direct lookup first; group fan-out only when no direct session matches.
-  // Cache keys are namespaced ("direct:" vs "group:") for the same reason as
-  // resolveUserIds' cache: a chatId that happens to equal some other session's
-  // groupChatId must never return the wrong branch's cached phones.
+// Shared chatId -> session-value resolution used by both resolveUserIds
+// (session `userId` FIELD, a Firebase uid) and resolvePhones (agent_sessions
+// DOC ID, the phone number). Resolves the direct lookup first; only falls back
+// to group fan-out when no direct session matches. Cache keys are namespaced
+// by lookup type ("direct:" vs "group:") so a chatId that happens to equal
+// some other session's groupChatId can never return the wrong branch's cached
+// values. Each caller supplies its OWN cache map — the uid and phone caches
+// must never be shared, or history would be recorded under the wrong key.
+async function resolveSessionValues<T>(params: {
+  chatId: string;
+  cache: SessionValueCache<T>;
+  pickFromDoc: (doc: SessionDoc) => T | undefined;
+  /** Over-cap console.warn text (the two callers name different consequences). */
+  overCapWarning: (chatId: string) => string;
+  /** Lookup label for the failure warn, e.g. "chatId->userId". */
+  failureLabel: string;
+}): Promise<T[]> {
+  const { chatId, cache, pickFromDoc } = params;
   try {
     const directKey = `direct:${chatId}`;
-    const directCached = chatPhoneCache.get(directKey);
+    const directCached = cache.get(directKey);
     if (directCached && Date.now() - directCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
-      return directCached.phones;
+      return directCached.values;
     }
-    if (directCached) chatPhoneCache.delete(directKey); // expired — re-query below
+    if (directCached) cache.delete(directKey); // expired — re-query below
 
     const directSnap = await db.collection("agent_sessions")
       .where("chatId", "==", chatId)
@@ -113,38 +68,74 @@ export async function resolvePhones(chatId: string): Promise<string[]> {
       .get();
 
     if (!directSnap.empty) {
-      // The agent_sessions doc id IS the phone number.
-      const phones = [directSnap.docs[0].id];
-      chatPhoneCache.set(directKey, { phones, cachedAt: Date.now() });
-      return phones;
+      const value = pickFromDoc(directSnap.docs[0]);
+      const values = value ? [value] : [];
+      cache.set(directKey, { values, cachedAt: Date.now() });
+      return values;
     }
 
     const groupKey = `group:${chatId}`;
-    const groupCached = chatPhoneCache.get(groupKey);
+    const groupCached = cache.get(groupKey);
     if (groupCached && Date.now() - groupCached.cachedAt < CHAT_USER_CACHE_TTL_MS) {
-      return groupCached.phones;
+      return groupCached.values;
     }
-    if (groupCached) chatPhoneCache.delete(groupKey); // expired — re-query below
+    if (groupCached) cache.delete(groupKey); // expired — re-query below
 
-    // Group fan-out: one row per member phone, matching the mirror's group
-    // handling. Same over-cap detection as resolveUserIds.
+    // We query for one more than the cap so we can tell "exactly at cap"
+    // (complete) from "over cap" (truly truncated) and only warn — rather than
+    // silently dropping members — in the latter case.
     const groupSnap = await db.collection("agent_sessions")
       .where("groupChatId", "==", chatId)
       .limit(GROUP_MIRROR_LIMIT + 1)
       .get();
     if (groupSnap.docs.length > GROUP_MIRROR_LIMIT) {
-      console.warn(`threadMirror: group ${chatId} exceeded the ${GROUP_MIRROR_LIMIT}-member phone-resolution cap — some members may be missing from outbound history; investigate.`);
+      console.warn(params.overCapWarning(chatId));
     }
-    const phones = [...new Set(groupSnap.docs
+    const values = [...new Set(groupSnap.docs
       .slice(0, GROUP_MIRROR_LIMIT)
-      .map((doc) => doc.id)
-      .filter((id): id is string => !!id))];
-    chatPhoneCache.set(groupKey, { phones, cachedAt: Date.now() });
-    return phones;
+      .map((doc) => pickFromDoc(doc))
+      .filter((v): v is T => !!v))];
+    cache.set(groupKey, { values, cachedAt: Date.now() });
+    return values;
   } catch (err) {
-    console.warn("threadMirror: chatId->phone lookup failed", err);
+    console.warn(`threadMirror: ${params.failureLabel} lookup failed`, err);
     return [];
   }
+}
+
+const chatUserCache: SessionValueCache<string> = new Map();
+
+async function resolveUserIds(params: { userId?: string; chatId?: string }): Promise<string[]> {
+  if (params.userId) return [params.userId];
+  if (!params.chatId) return [];
+  return resolveSessionValues({
+    chatId:      params.chatId,
+    cache:       chatUserCache,
+    pickFromDoc: (doc) => doc.data().userId as string | undefined,
+    overCapWarning: (chatId) =>
+      `threadMirror: group ${chatId} exceeded the ${GROUP_MIRROR_LIMIT}-member mirror cap — some members may be missing from web-inbox mirroring; investigate.`,
+    failureLabel: "chatId->userId",
+  });
+}
+
+// chatId -> PHONE resolution for the outbound-history recorder (hallucination
+// hardening U3). Deliberately a SIBLING of resolveUserIds with its own cache:
+// resolveUserIds returns/caches the session's `userId` FIELD (a Firebase uid),
+// but agent_conversations is keyed by PHONE — which is the agent_sessions DOC
+// ID. Reusing the uid cache here would record history under the wrong key.
+const chatPhoneCache: SessionValueCache<string> = new Map();
+
+export async function resolvePhones(chatId: string): Promise<string[]> {
+  if (!chatId) return [];
+  return resolveSessionValues({
+    chatId,
+    cache:       chatPhoneCache,
+    // The agent_sessions doc id IS the phone number.
+    pickFromDoc: (doc) => doc.id,
+    overCapWarning: (cid) =>
+      `threadMirror: group ${cid} exceeded the ${GROUP_MIRROR_LIMIT}-member phone-resolution cap — some members may be missing from outbound history; investigate.`,
+    failureLabel: "chatId->phone",
+  });
 }
 
 // ── History URL neutralization ───────────────────────────────────────────────
@@ -161,6 +152,63 @@ const HISTORY_URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`)\]]+/gi;
  *  to agent_conversations history rows — never to the web-inbox mirror text. */
 export function neutralizeUrlsForHistory(text: string): string {
   return text.replace(HISTORY_URL_RE, "[link]");
+}
+
+// ── Transport-row prune (nudge-only history growth) ─────────────────────────
+// maybeRollUpHistory folds agent_conversations history ONLY on qaAgent turns,
+// so a phone that never converses (pure nudge/gate recipients) accumulates
+// transport-recorded rows without bound. This deterministic, LLM-free sweep
+// keeps the newest TRANSPORT_ROWS_KEPT source == "outbound_transport" rows per
+// phone and deletes older ones. Only rows carrying the transport source tag
+// can ever match the query — real user/assistant turns and the summary row
+// have no `source` field and are untouchable here.
+export const TRANSPORT_ROWS_KEPT = 60;
+
+// Throttle: run the prune on every Nth recorded write via a module-level
+// counter. Tradeoff (deliberate): the counter resets on cold start and is
+// per-instance, so the cadence is approximate — fine for a hygiene sweep,
+// because each run trims ALL excess rows for that phone, so a missed trigger
+// only delays cleanup, never loses it. Chosen over time-derived triggers
+// (timestamp minute % N) because a burst of writes inside one qualifying
+// minute would prune on every write; the counter is deterministic (no
+// Math.random) and amortizes to exactly 1-in-N.
+export const TRANSPORT_PRUNE_EVERY_N = 20;
+let transportWriteCounter = 0;
+
+/** Test hook — the throttle counter is module state and tests need a known start. */
+export function resetTransportPruneCounterForTests(): void {
+  transportWriteCounter = 0;
+}
+
+/**
+ * Delete the oldest transport-recorded rows beyond TRANSPORT_ROWS_KEPT for one
+ * phone. Fail-soft: never throws (it runs inside the send path via
+ * recordOutboundHistory). Deletes are capped at 100 per run — the next
+ * triggered run picks up any remainder. Requires the composite index
+ * messages(source ASC, timestamp DESC) in firestore.indexes.json.
+ * Returns the number of rows deleted (0 on failure).
+ */
+export async function pruneTransportRows(phone: string): Promise<number> {
+  try {
+    const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
+      .where("source", "==", "outbound_transport")
+      .orderBy("timestamp", "desc")
+      .limit(TRANSPORT_ROWS_KEPT + 100) // batch deletes ≤ 100 per run
+      .get();
+    const stale = snap.docs.slice(TRANSPORT_ROWS_KEPT);
+    if (stale.length === 0) return 0;
+    const batch = db.batch();
+    for (const doc of stale) batch.delete(doc.ref);
+    await batch.commit();
+    return stale.length;
+  } catch (err) {
+    // Counts/keys only — never log message text.
+    console.warn("threadMirror: transport-row prune failed (non-blocking)", {
+      phone,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return 0;
+  }
 }
 
 // Record an outbound send as an assistant turn in the QA agent's history
@@ -199,6 +247,15 @@ export async function recordOutboundHistory(params: {
         source:    "outbound_transport",
       })
     ));
+
+    // Hygiene sweep AFTER the row write, throttled to 1-in-N writes so it is
+    // not a per-write cost. AWAITED (same Gen-1 teardown reasoning as the
+    // recording itself) but internally fail-soft — a prune failure can never
+    // fail the send, and the surrounding catch absorbs anything unexpected.
+    transportWriteCounter += 1;
+    if (transportWriteCounter % TRANSPORT_PRUNE_EVERY_N === 0) {
+      await Promise.all(phones.map((phone) => pruneTransportRows(phone)));
+    }
   } catch (err) {
     // Counts/keys only — never log message text.
     console.warn("threadMirror: outbound history record failed (non-blocking)", {

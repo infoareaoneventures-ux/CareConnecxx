@@ -35,7 +35,10 @@ const hoisted = vi.hoisted(() => {
       rows = rows.slice(0, lim);
       return {
         empty: rows.length === 0,
-        docs: rows.map((r, i) => ({ id: `d${i}`, data: () => r })),
+        // Stable per-row doc ids (assigned at seed time): getConversationHistory
+        // merges two queries and dedupes by doc id, so the same row must carry
+        // the same id in both result sets — positional ids would break that.
+        docs: rows.map((r, i) => ({ id: (r.__id as string) ?? `d${i}`, data: () => r })),
       };
     };
     return q;
@@ -108,12 +111,20 @@ vi.mock("../linq/client",          () => ({ sendMessage: hoisted.sendMessageMock
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
 
 import { getConversationHistory, sendSplit } from "./qaAgent";
-import { HISTORY_WINDOW, MIN_USER_ROWS_KEPT, composeHistoryWindow } from "./contextManagement";
+import {
+  HISTORY_WINDOW,
+  HISTORY_OVERFETCH_LIMIT,
+  MIN_USER_ROWS_KEPT,
+  composeHistoryWindow,
+} from "./contextManagement";
 
 const PHONE = "+15559990000";
 
 function seed(rows: Array<{ role: string; content: string; timestamp: number; source?: string }>) {
-  hoisted.conversations.set(PHONE, rows as Array<Record<string, unknown>>);
+  hoisted.conversations.set(
+    PHONE,
+    rows.map((r, i) => ({ ...r, __id: `m${i}` })) as Array<Record<string, unknown>>,
+  );
 }
 
 beforeEach(() => {
@@ -145,6 +156,50 @@ describe("getConversationHistory — U3 window guardrail", () => {
     const idxFirstNudge = history.findIndex((m) => m.content.startsWith("nudge-"));
     expect(idxUser5).toBeGreaterThanOrEqual(0);
     expect(idxUser5).toBeLessThan(idxFirstNudge);
+  });
+
+  it("keeps user rows buried behind 70 transport rows — beyond the over-fetch horizon", async () => {
+    // A user silent behind 60+ CONSECUTIVE transport rows falls off the
+    // over-fetch entirely; the dedicated role=="user" query must still feed
+    // their turns to the window composer.
+    const rows: Array<{ role: string; content: string; timestamp: number; source?: string }> = [];
+    for (let i = 0; i < 3; i++) {
+      rows.push({ role: "user", content: `buried-user-${i}`, timestamp: 1000 + i });
+    }
+    const floodSize = HISTORY_OVERFETCH_LIMIT + 10; // 70 — strictly beyond the over-fetch
+    for (let i = 0; i < floodSize; i++) {
+      rows.push({ role: "assistant", content: `nudge-${i}`, timestamp: 2000 + i, source: "outbound_transport" });
+    }
+    seed(rows);
+
+    const history = await getConversationHistory(PHONE);
+
+    expect(history).toHaveLength(HISTORY_WINDOW);
+    for (let i = 0; i < 3; i++) {
+      expect(history.some((m) => m.role === "user" && m.content === `buried-user-${i}`)).toBe(true);
+    }
+    // Chronological: the buried user turns precede every surviving nudge.
+    const lastUserIdx = history.findIndex((m) => m.content === "buried-user-2");
+    const firstNudgeIdx = history.findIndex((m) => m.content.startsWith("nudge-"));
+    expect(lastUserIdx).toBeGreaterThanOrEqual(0);
+    expect(lastUserIdx).toBeLessThan(firstNudgeIdx);
+    // No duplicates from the two-query merge.
+    expect(new Set(history.map((m) => m.content)).size).toBe(history.length);
+  });
+
+  it("does not duplicate user rows that appear in BOTH queries (dedupe by doc id)", async () => {
+    // All rows fit inside the over-fetch, so every user row is returned by both
+    // the recent query and the dedicated user query.
+    const rows: Array<{ role: string; content: string; timestamp: number }> = [];
+    for (let i = 0; i < 10; i++) {
+      rows.push({ role: "user", content: `u${i}`, timestamp: 1000 + i * 2 });
+      rows.push({ role: "assistant", content: `a${i}`, timestamp: 1001 + i * 2 });
+    }
+    seed(rows);
+
+    const history = await getConversationHistory(PHONE);
+    expect(history).toHaveLength(20);
+    expect(new Set(history.map((m) => m.content)).size).toBe(20);
   });
 
   it("never sheds regular (untagged) assistant rows to make room", async () => {

@@ -14,14 +14,17 @@ const hoisted = vi.hoisted(() => {
   const state = {
     // agent_sessions rows; __id is the doc id (== phone).
     sessions: [] as Array<Record<string, unknown> & { __id: string }>,
-    // agent_conversations/{phone}/messages adds — the recorder's output.
-    convAdds: [] as Array<{ phone: string; data: Record<string, unknown> }>,
+    // agent_conversations/{phone}/messages rows — the recorder's output (and
+    // the prune's input; each row carries a stable doc id).
+    convAdds: [] as Array<{ id: string; phone: string; data: Record<string, unknown> }>,
     // linq_outbound_queue adds — the dead-letter path.
     queueAdds: [] as Array<{ id: string; data: Record<string, unknown> }>,
     // Every other .add (threads mirror, admin_alerts, …) — must never throw.
     otherAdds: [] as Array<{ path: string; data: Record<string, unknown> }>,
     convAddThrows: false,
+    convQueryThrows: false,
     qid: 0,
+    rowId: 0,
   };
 
   const makeChain = (name: string) => {
@@ -62,21 +65,64 @@ const hoisted = vi.hoisted(() => {
       set: async () => {},
       update: async () => {},
       delete: async () => {},
-      collection: (sub: string) => ({
-        add: async (data: Record<string, unknown>) => {
-          if (name === "agent_conversations" && sub === "messages") {
+      collection: (sub: string) => {
+        if (name === "agent_conversations" && sub === "messages") {
+          // Queryable messages subcollection: supports the recorder's .add AND
+          // the prune's .where("source","==",…).orderBy("timestamp","desc")
+          // .limit(n).get() chain (docs expose .ref for batch deletes).
+          const filters: Array<[string, unknown]> = [];
+          let lim = Infinity;
+          let desc = false;
+          const q: Record<string, unknown> = {};
+          q.add = async (data: Record<string, unknown>) => {
             if (state.convAddThrows) throw new Error("firestore unavailable");
-            state.convAdds.push({ phone: id, data });
-            return { id: `row-${state.convAdds.length}` };
-          }
-          state.otherAdds.push({ path: `${name}/${id}/${sub}`, data });
-          return { id: "y" };
-        },
-      }),
+            const rowId = `row-${++state.rowId}`;
+            state.convAdds.push({ id: rowId, phone: id, data });
+            return { id: rowId };
+          };
+          q.where = (f: string, _o: string, v: unknown) => { filters.push([f, v]); return q; };
+          q.orderBy = (_f: string, dir?: string) => { desc = dir === "desc"; return q; };
+          q.limit = (n: number) => { lim = n; return q; };
+          q.get = async () => {
+            if (state.convQueryThrows) throw new Error("firestore unavailable");
+            const rows = state.convAdds
+              .filter((r) => r.phone === id)
+              .filter((r) => filters.every(([f, v]) => r.data[f] === v))
+              .sort((a, b) => (a.data.timestamp as number) - (b.data.timestamp as number));
+            if (desc) rows.reverse();
+            const items = rows.slice(0, lim === Infinity ? rows.length : lim);
+            return {
+              empty: items.length === 0,
+              docs: items.map((r) => ({ id: r.id, data: () => r.data, ref: { __convRowId: r.id } })),
+            };
+          };
+          return q;
+        }
+        return {
+          add: async (data: Record<string, unknown>) => {
+            state.otherAdds.push({ path: `${name}/${id}/${sub}`, data });
+            return { id: "y" };
+          },
+        };
+      },
     }),
   });
 
-  const firestore = Object.assign(() => ({ collection }), {
+  const batch = () => {
+    const deletes: Array<{ __convRowId?: string }> = [];
+    return {
+      set: () => {},
+      delete: (ref: { __convRowId?: string }) => deletes.push(ref),
+      commit: async () => {
+        for (const ref of deletes) {
+          const idx = state.convAdds.findIndex((r) => r.id === ref.__convRowId);
+          if (idx >= 0) state.convAdds.splice(idx, 1);
+        }
+      },
+    };
+  };
+
+  const firestore = Object.assign(() => ({ collection, batch }), {
     FieldValue: {
       increment: (n: number) => ({ __inc: n }),
       serverTimestamp: () => ({ __serverTimestamp: true }),
@@ -99,7 +145,9 @@ const hoisted = vi.hoisted(() => {
       state.queueAdds.length = 0;
       state.otherAdds.length = 0;
       state.convAddThrows = false;
+      state.convQueryThrows = false;
       state.qid = 0;
+      state.rowId = 0;
     },
   };
 });
@@ -128,7 +176,15 @@ vi.mock("../../safety/supervisor", () => ({
 vi.mock("../../observability/auditLog", () => ({ logMessageSent: vi.fn(async () => {}) }));
 
 import { sendMessage, signalThinking } from "../client";
-import { resolvePhones, recordOutboundHistory, neutralizeUrlsForHistory } from "../threadMirror";
+import {
+  resolvePhones,
+  recordOutboundHistory,
+  neutralizeUrlsForHistory,
+  pruneTransportRows,
+  resetTransportPruneCounterForTests,
+  TRANSPORT_ROWS_KEPT,
+  TRANSPORT_PRUNE_EVERY_N,
+} from "../threadMirror";
 
 // Recording is awaited on the send path (Gen-1 teardown safety), but give the
 // microtask/macrotask queue a beat to settle before asserting ABSENCE so a
@@ -137,6 +193,7 @@ const settle = () => new Promise<void>((r) => setTimeout(r, 30));
 
 beforeEach(() => {
   hoisted.reset();
+  resetTransportPruneCounterForTests(); // throttle counter is module state
   vi.clearAllMocks();
   // Default: transport succeeds.
   hoisted.postMock.mockImplementation(async (url: string) => {
@@ -456,5 +513,101 @@ describe("sendMessage → outbound history recording", () => {
     await settle();
     expect(hoisted.state.convAdds).toHaveLength(0);
     expect(messagePosts().length).toBe(1); // delivery unaffected
+  });
+});
+
+// ── Transport-row prune (nudge-only history growth) ──────────────────────────
+// A phone that never converses never triggers maybeRollUpHistory, so transport
+// rows would grow without bound. pruneTransportRows keeps the newest
+// TRANSPORT_ROWS_KEPT source-tagged rows and deletes older ones — and NEVER
+// touches user/assistant rows without the tag or the summary row.
+
+function seedConvRows(phone: string, rows: Array<Record<string, unknown>>): void {
+  for (const data of rows) {
+    hoisted.state.convAdds.push({ id: `seed-${++hoisted.state.rowId}`, phone, data });
+  }
+}
+
+const transportRow = (ts: number) => ({
+  role: "assistant", content: `nudge-${ts}`, timestamp: ts, source: "outbound_transport",
+});
+
+describe("pruneTransportRows", () => {
+  const PHONE = "+15551260001";
+
+  it("keeps the newest TRANSPORT_ROWS_KEPT transport rows and deletes older ones", async () => {
+    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT + 10 }, (_, i) => transportRow(1000 + i)));
+    const deleted = await pruneTransportRows(PHONE);
+    expect(deleted).toBe(10);
+    const remaining = hoisted.state.convAdds.filter((r) => r.phone === PHONE);
+    expect(remaining).toHaveLength(TRANSPORT_ROWS_KEPT);
+    // The survivors are exactly the NEWEST 60 (timestamps 1010..1069).
+    const timestamps = remaining.map((r) => r.data.timestamp as number).sort((a, b) => a - b);
+    expect(timestamps[0]).toBe(1010);
+    expect(timestamps[timestamps.length - 1]).toBe(1000 + TRANSPORT_ROWS_KEPT + 9);
+  });
+
+  it("NEVER deletes untagged user/assistant rows or the summary row, however old", async () => {
+    seedConvRows(PHONE, [
+      { role: "summary",   content: "Earlier facts.",  timestamp: 1 },
+      { role: "user",      content: "hi there",        timestamp: 2 },
+      { role: "assistant", content: "hello!",          timestamp: 3 }, // regular turn — no source tag
+      ...Array.from({ length: TRANSPORT_ROWS_KEPT + 5 }, (_, i) => transportRow(1000 + i)),
+    ]);
+    const deleted = await pruneTransportRows(PHONE);
+    expect(deleted).toBe(5);
+    const remaining = hoisted.state.convAdds.filter((r) => r.phone === PHONE);
+    expect(remaining.some((r) => r.data.role === "summary")).toBe(true);
+    expect(remaining.some((r) => r.data.content === "hi there")).toBe(true);
+    expect(remaining.some((r) => r.data.content === "hello!")).toBe(true);
+    expect(remaining.filter((r) => r.data.source === "outbound_transport")).toHaveLength(TRANSPORT_ROWS_KEPT);
+  });
+
+  it("no-ops at or under the cap", async () => {
+    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT }, (_, i) => transportRow(1000 + i)));
+    expect(await pruneTransportRows(PHONE)).toBe(0);
+    expect(hoisted.state.convAdds.filter((r) => r.phone === PHONE)).toHaveLength(TRANSPORT_ROWS_KEPT);
+  });
+
+  it("caps deletes at 100 per run; the next run picks up the remainder", async () => {
+    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT + 150 }, (_, i) => transportRow(1000 + i)));
+    expect(await pruneTransportRows(PHONE)).toBe(100);
+    expect(hoisted.state.convAdds.filter((r) => r.phone === PHONE)).toHaveLength(TRANSPORT_ROWS_KEPT + 50);
+    expect(await pruneTransportRows(PHONE)).toBe(50);
+    expect(hoisted.state.convAdds.filter((r) => r.phone === PHONE)).toHaveLength(TRANSPORT_ROWS_KEPT);
+  });
+
+  it("is fail-soft: a query failure resolves to 0 and never throws or logs message text", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT + 5 }, (_, i) => transportRow(1000 + i)));
+    hoisted.state.convQueryThrows = true;
+    await expect(pruneTransportRows(PHONE)).resolves.toBe(0);
+    const warned = warnSpy.mock.calls.map((c) => JSON.stringify(c)).join(" ");
+    expect(warned).not.toContain("nudge-");
+    warnSpy.mockRestore();
+  });
+});
+
+describe("recordOutboundHistory → prune trigger (1-in-N throttle)", () => {
+  const PHONE = "+15551260002";
+
+  it("prunes only on every Nth recorded write, then trims to the cap", async () => {
+    hoisted.state.sessions = [{ __id: PHONE, chatId: "prune-trigger", userId: "u" }];
+    // Pre-seed a backlog well over the cap, all OLDER than the new writes.
+    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT + 10 }, (_, i) => transportRow(1000 + i)));
+
+    // N-1 writes: no prune yet — backlog plus every new row still present.
+    for (let i = 0; i < TRANSPORT_PRUNE_EVERY_N - 1; i++) {
+      await recordOutboundHistory({ chatId: "prune-trigger", text: `update ${i}` });
+    }
+    expect(hoisted.state.convAdds.filter((r) => r.phone === PHONE))
+      .toHaveLength(TRANSPORT_ROWS_KEPT + 10 + TRANSPORT_PRUNE_EVERY_N - 1);
+
+    // The Nth write fires the sweep and trims this phone to the cap.
+    await recordOutboundHistory({ chatId: "prune-trigger", text: "the Nth update" });
+    const remaining = hoisted.state.convAdds.filter((r) => r.phone === PHONE);
+    expect(remaining).toHaveLength(TRANSPORT_ROWS_KEPT);
+    // Newest rows survive — the Nth write itself is still there.
+    expect(remaining.some((r) => r.data.content === "the Nth update")).toBe(true);
   });
 });

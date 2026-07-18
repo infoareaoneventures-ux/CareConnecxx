@@ -539,6 +539,23 @@ async function queueOrDrop(
   return "dropped";
 }
 
+// Shared outbound-text cleanup for the web-inbox mirror and the outbound-
+// history recorder (sendMessageDeliver's mirror block AND sendToPhone's
+// createChat record site). normalizeParts applies BOTH lintPreservingLayout
+// AND redactPii to every part actually sent, so anything persisted about the
+// send must apply both too — otherwise the web inbox / agent history would
+// show SSNs, card numbers, or cross-user emails that were redacted before
+// sending. Structured messages render via extractMirrorText (media parts
+// become "[attachment]"). threadMirror is imported lazily to match the
+// call sites' existing load behavior.
+async function cleanOutboundText(textOrMessage: string | LinqMessage): Promise<string> {
+  const { extractMirrorText } = await import("./threadMirror");
+  const raw = typeof textOrMessage === "string"
+    ? lintPreservingLayout(textOrMessage)
+    : extractMirrorText(textOrMessage);
+  return redactPii(raw).text;
+}
+
 export async function sendMessage(
   chatId: string,
   textOrMessage: string | LinqMessage,
@@ -602,16 +619,10 @@ async function sendMessageDeliver(
   // Fire-and-forget — mirroring must never delay or block SMS delivery.
   let mirrorText = "";
   try {
-    const { mirrorToWebThread, extractMirrorText } = await import("./threadMirror");
+    const { mirrorToWebThread } = await import("./threadMirror");
     // Mirror the cleaned text so the web inbox matches what actually went out
-    // over SMS/iMessage. normalizeParts applies BOTH lintPreservingLayout AND
-    // redactPii to every sent part, so the mirror must apply both too — otherwise
-    // the web inbox would show SSNs / card numbers / cross-user emails that were
-    // redacted before sending.
-    const rawMirror = typeof textOrMessage === "string"
-      ? lintPreservingLayout(textOrMessage)
-      : extractMirrorText(textOrMessage);
-    mirrorText = redactPii(rawMirror).text;
+    // over SMS/iMessage — see cleanOutboundText for the lint+redact contract.
+    mirrorText = await cleanOutboundText(textOrMessage);
     void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
   } catch { /* non-critical */ }
 
@@ -1202,11 +1213,8 @@ export async function sendToPhone(
     // lands; the recorder is fail-soft so this can never fail the send.
     if (!opts.skipHistoryRecord) {
       try {
-        const { recordOutboundHistory, extractMirrorText } = await import("./threadMirror");
-        const raw = typeof textOrMessage === "string"
-          ? lintPreservingLayout(textOrMessage)
-          : extractMirrorText(textOrMessage);
-        await recordOutboundHistory({ chatId: chat_id, text: redactPii(raw).text });
+        const { recordOutboundHistory } = await import("./threadMirror");
+        await recordOutboundHistory({ chatId: chat_id, text: await cleanOutboundText(textOrMessage) });
       } catch { /* non-critical — recorder is itself fail-soft */ }
     }
 

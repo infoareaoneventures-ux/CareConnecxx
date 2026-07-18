@@ -18,6 +18,7 @@ import {
   truncateOldToolCallArgs,
   composeHistoryWindow,
   HISTORY_OVERFETCH_LIMIT,
+  MIN_USER_ROWS_KEPT,
 } from "./contextManagement";
 import { createTurnMetrics, emitTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import {
@@ -182,7 +183,7 @@ async function getCaregiverTodayAppointment(caregiverId: string) {
 export async function getConversationHistory(
   phone: string
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
-  const [recentSnap, summarySnap] = await Promise.all([
+  const [recentSnap, recentUserSnap, summarySnap] = await Promise.all([
     db.collection("agent_conversations").doc(phone).collection("messages")
       .orderBy("timestamp", "desc")
       // Over-fetch well past HISTORY_WINDOW (U3 guardrail): transport-recorded
@@ -192,22 +193,44 @@ export async function getConversationHistory(
       // the window.
       .limit(HISTORY_OVERFETCH_LIMIT)
       .get(),
+    // Over-fetch horizon guard: a user silent behind HISTORY_OVERFETCH_LIMIT+
+    // consecutive transport rows would lose ALL their turns from the candidate
+    // set — composeHistoryWindow can only protect rows it can see. Fetch the
+    // last user rows directly so they always reach the composer. Requires the
+    // composite index messages(role ASC, timestamp DESC) in
+    // firestore.indexes.json. FAIL-SOFT on a missing/failed index: degrade to
+    // the pre-guard behavior (recentSnap only) rather than failing the whole
+    // agent turn — this keeps deploy ordering (indexes vs functions) non-fatal.
+    db.collection("agent_conversations").doc(phone).collection("messages")
+      .where("role", "==", "user")
+      .orderBy("timestamp", "desc")
+      .limit(MIN_USER_ROWS_KEPT)
+      .get()
+      .catch((err): { docs: [] } => {
+        console.warn("getConversationHistory: user-row horizon query failed (missing index?) — degrading to over-fetch only", err instanceof Error ? err.message : err);
+        return { docs: [] };
+      }),
     db.collection("agent_conversations").doc(phone).collection("messages")
       .where("role", "==", "summary")
       .limit(1)
       .get(),
   ]);
 
-  const rows = recentSnap.docs
+  // Merge both queries, deduped by doc id (a recent user row appears in both),
+  // then restore chronological order for the window composer.
+  const byId = new Map<string, (typeof recentSnap.docs)[number]>();
+  for (const d of [...recentSnap.docs, ...recentUserSnap.docs]) byId.set(d.id, d);
+
+  const rows = [...byId.values()]
     .filter(d => d.data().role !== "summary")
+    .sort((a, b) => ((a.data().timestamp as number) ?? 0) - ((b.data().timestamp as number) ?? 0))
     .map(d => ({
       role:    d.data().role as "user" | "assistant",
       content: sanitizePromptContext(d.data().content as string),
       // Transport-recorded rows carry source: "outbound_transport"; missing
       // source = regular turn (never shed by the window composer).
       ...(typeof d.data().source === "string" ? { source: d.data().source as string } : {}),
-    }))
-    .reverse();
+    }));
 
   const messages = composeHistoryWindow(rows)
     .map(({ role, content }) => ({ role, content }));

@@ -6,6 +6,7 @@ import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureF
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "./careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
+import { describeSharedProfile } from "./profileBriefing";
 
 const db = admin.firestore();
 
@@ -96,12 +97,16 @@ export const JP_MIDFLOW_FALLBACK = "Good question — I don't want to guess on t
 
 async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
   const d = (session as any).onboardingData as Record<string, unknown> ?? {};
+  // Recall grounding — without it, "what city did I tell you?" gets a
+  // grounded-sounding denial even though the answer is on the session.
+  const sharedProfile = describeSharedProfile(session as any);
   const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
       "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
+      (sharedProfile ? `${sharedProfile} ` : "") +
       "Answer briefly (1–2 sentences). Be warm and helpful. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
       "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +

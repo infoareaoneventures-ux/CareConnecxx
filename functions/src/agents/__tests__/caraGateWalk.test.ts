@@ -443,6 +443,42 @@ describe("bg-check status questions are grounded in live backgroundCheckData", (
   });
 });
 
+// ── 4b. Recall grounding at gate steps (founder report 2026-07-17: Hamse asked
+// "what zip code did I share with you?" at caregiver_awaiting_membership and got
+// "I don't have your zip showing" even though it was saved on the session — the
+// mid-flow answer prompt carried no shared-profile facts) ──────────────────────
+describe("gate questions are grounded in what the user already shared", () => {
+  beforeEach(() => { vi.mocked(quickComplete).mockClear(); });
+
+  const sharedPrompt = (): string | undefined =>
+    vi.mocked(quickComplete).mock.calls.find(([p]) => p.includes("THEY'VE ALREADY SHARED"))?.[0];
+
+  it("membership gate: the answer prompt carries the saved city/zip/rate", async () => {
+    const session = seed("caregiver_awaiting_membership", { ...FULL_DATA });
+    awaitingKind = "question";
+
+    await handleOnboardingStep(PHONE, CHAT, "What zip code did I share with you?", session);
+
+    const p = sharedPrompt();
+    expect(p, "mid-flow answer prompt should carry the shared-profile briefing").toBeTruthy();
+    expect(p).toContain("San Jose (ZIP 95110)");
+    expect(p).toContain("rate: $22/hr");
+    expect(sentMessages.length).toBeGreaterThan(0);
+  });
+
+  it("presents a bare-ZIP city (Hamse data shape) as a ZIP, not a city name", async () => {
+    const session = seed("caregiver_awaiting_membership",
+      { ...FULL_DATA, city: "95130", zipCode: "95130" });
+    awaitingKind = "question";
+
+    await handleOnboardingStep(PHONE, CHAT, "So what was the city I shared with you", session);
+
+    const p = sharedPrompt();
+    expect(p).toBeTruthy();
+    expect(p).toContain("location: ZIP 95130");
+  });
+});
+
 // ── 5. Live status grounding for EVERY gate/awaiting step (spec 2026-07-09-002:
 // the bg-check fix generalized — a status question at any gate step is grounded
 // in the user's real Firestore state via LIVE_GATE_FACT_BUILDERS) ──────────────

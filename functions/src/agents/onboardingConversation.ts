@@ -50,6 +50,7 @@ import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
+import { describeSharedProfile } from "./profileBriefing";
 import {
   GATE_LINK_KEYWORD_TARGETS,
   gateLinkBypassConsumed,
@@ -5353,6 +5354,10 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
   const d = session.onboardingData ?? {};
   const name = (d.name ?? d.firstName ?? "") as string;
   const step = (session.onboardingStep ?? "") as string;
+  // Everything they've already told us — without this, a recall question
+  // ("what zip did I share?") hits the anti-invention rules with an empty
+  // context and produces a grounded-sounding denial (Hamse, 2026-07-17).
+  const sharedProfile = describeSharedProfile(session);
   let stepFacts = STEP_QUESTION_FACTS[step];
   // The static STEP_QUESTION_FACTS describe the PROCESS; without the user's
   // actual live state a status question ("did my payment go through?", "where's
@@ -5377,6 +5382,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
       "(3) Never VOLUNTEER a robotic self-label (e.g. describing yourself as an assistant powered by AI, or as a chatbot) and never refer to yourself in the third person. But if directly asked whether you are an AI, a bot, or a human, answer honestly and warmly — never deny it or dodge the question. Also never use phrases like 'I'm here to help' or 'let me know if you need further assistance'. " +
       "(4) If you don't actually know the answer, say you'll get it sorted — never make up a feature or process. " +
       (stepFacts ? `FACTS about exactly where they are in signup — ground your answer in these when the question touches them, never contradict them: ${stepFacts} ` : "") +
+      (sharedProfile ? `${sharedProfile} ` : "") +
       "(5) Ask NO question of your own — none. The signup question is re-asked automatically right after your reply, so a question from you would leave the user answering two different things at once. " +
       "(6) Speak TO the person, never ABOUT them in the third person, and never narrate progress or process (no \"I'll keep her on track\", \"I'll get everything set for the next step\" — that reads like an internal status report). " +
       "(7) If they ask for an email or contact address, the only one that exists is support@eviacares.com — never invent any other address. " +

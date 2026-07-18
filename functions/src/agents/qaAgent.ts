@@ -37,6 +37,7 @@ import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
+import { describeSharedProfile } from "./profileBriefing";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
 import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
@@ -3213,8 +3214,13 @@ export async function runQuickReply(params: {
           ? `You ARE Evia — a care coordinator texting with ${seniorName}, who receives care themselves. Speak to them directly ("you") — never refer to them in the third person and never say "your loved one".`
           : `You ARE Evia — a care coordinator texting with a family caring for ${seniorName}.`} Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
 
+  // Recall grounding — what they've already shared during signup. Without it a
+  // quick-path "what zip did I give you?" turns into a grounded-sounding denial
+  // even though the fact is sitting on the session (Hamse, 2026-07-17).
+  const sharedProfile = describeSharedProfile(session as { userType?: unknown; onboardingData?: Record<string, unknown> } | undefined);
+
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: persona },
+    { role: "system", content: sharedProfile ? `${persona}\n\n${sharedProfile}` : persona },
     ...recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     { role: "user", content: text },
   ];

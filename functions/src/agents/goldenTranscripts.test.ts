@@ -143,6 +143,13 @@ vi.mock("../utils/claudeRetry", () => ({
 // chatbot-like drafts are repaired before send.
 vi.mock("../utils/openaiClient", () => ({
   quickComplete:   vi.fn(async (sys: string, user: string) => {
+    // U7 grounding verifier: golden transcripts are grounded controls (their
+    // claims are backed by scripted tool results / context), so a healthy
+    // verifier answers SUPPORTED. Without this the echo fallback parses as
+    // indeterminate and high-risk claims get fail-closed neutral copy.
+    if (sys.includes("fact-check gate")) {
+      return "SUPPORTED";
+    }
     if (sys.includes("human conversation repair editor")) {
       const lower = user.toLowerCase();
       if (lower.includes("name, age") || lower.includes("city") || lower.includes("zip")) {

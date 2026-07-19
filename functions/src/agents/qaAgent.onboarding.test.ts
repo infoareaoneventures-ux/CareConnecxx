@@ -137,6 +137,7 @@ vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn(() => P
 vi.mock("./contextManagement", () => ({
   HISTORY_WINDOW:           24,
   HISTORY_OVERFETCH_LIMIT:  60,
+  MIN_USER_ROWS_KEPT:       6,
   composeHistoryWindow:     (rows: unknown[]) => rows,
   maybeRollUpHistory:     vi.fn(() => Promise.resolve()),
   buildToolResultContent: vi.fn(async (_uid: string, _name: string, result: unknown) => JSON.stringify(result)),

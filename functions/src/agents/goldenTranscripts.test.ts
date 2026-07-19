@@ -236,6 +236,7 @@ vi.mock("./contextManagement", () => ({
   truncateOldToolCallArgs:   vi.fn(() => 0),
   HISTORY_WINDOW:            24,
   HISTORY_OVERFETCH_LIMIT:   60,
+  MIN_USER_ROWS_KEPT:        6,
   composeHistoryWindow:      (rows: unknown[]) => rows,
 }));
 vi.mock("./toolCapabilities", () => ({

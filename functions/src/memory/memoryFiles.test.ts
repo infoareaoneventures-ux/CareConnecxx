@@ -5,6 +5,8 @@ const store = new Map<string, string>();
 
 const hoisted = vi.hoisted(() => ({
   store: new Map<string, string>(),
+  // U8: per-object Storage metadata — { timeCreated?, metadata? (custom map) }.
+  fileMeta: new Map<string, { timeCreated?: string; metadata?: Record<string, string> }>(),
   // memory_embeddings subcollection mock: docId -> { file, block, embedding, ... }
   embeddings: new Map<string, any>(),
   nextEmbedId: 0,
@@ -25,11 +27,26 @@ vi.mock("./memoryOperations", () => ({
 vi.mock("firebase-admin", () => {
   const makeFile = (name: string) => ({
     name,
+    // Snapshot of the object's Storage metadata at listing time (real GCS
+    // populates File.metadata on getFiles) — { timeCreated, metadata: {...} }.
+    metadata: hoisted.fileMeta.get(name) ?? {},
     download: vi.fn(async () => {
       if (!hoisted.store.has(name)) throw new Error("404");
       return [Buffer.from(hoisted.store.get(name)!, "utf-8")];
     }),
-    save: vi.fn(async (content: string) => { hoisted.store.set(name, content); }),
+    save: vi.fn(async (content: string, opts?: { metadata?: { metadata?: Record<string, string> } }) => {
+      hoisted.store.set(name, content);
+      const existing = hoisted.fileMeta.get(name) ?? {};
+      hoisted.fileMeta.set(name, {
+        timeCreated: existing.timeCreated ?? new Date().toISOString(),
+        metadata:    opts?.metadata?.metadata,
+      });
+    }),
+    exists: vi.fn(async () => [hoisted.store.has(name)]),
+    delete: vi.fn(async () => {
+      hoisted.store.delete(name);
+      hoisted.fileMeta.delete(name);
+    }),
   });
   const bucket = {
     file: (name: string) => makeFile(name),
@@ -146,11 +163,16 @@ import {
   reconcileFactAcrossMemoryFiles,
   deleteEmbeddingRowsMatching,
   MEMORY_QUERY_RECONCILIATION_COPY,
+  isTransientToolFile,
+  cleanupExpiredTransientToolFiles,
+  TRANSIENT_TOOL_MEMORY_CLASS,
+  TRANSIENT_TOOL_TTL_MS,
 } from "./memoryFiles";
 import * as embeddingsMod from "./embeddings";
 
 beforeEach(() => {
   hoisted.store.clear();
+  hoisted.fileMeta.clear();
   hoisted.embeddings.clear();
   hoisted.nextEmbedId = 0;
   hoisted.convMessages.length = 0;
@@ -204,9 +226,9 @@ describe("searchMemory", () => {
 
 describe("arbitrary keys", () => {
   it("reads and writes ad-hoc file slugs and lists them", async () => {
-    await writeMemoryFile("u1", "tool_output_123", "offloaded payload");
-    expect(await readMemoryFile("u1", "tool_output_123")).toBe("offloaded payload");
-    expect(await listMemoryFiles("u1")).toContain("tool_output_123");
+    await writeMemoryFile("u1", "adhoc_output_123", "offloaded payload");
+    expect(await readMemoryFile("u1", "adhoc_output_123")).toBe("offloaded payload");
+    expect(await listMemoryFiles("u1")).toContain("adhoc_output_123");
   });
 
   it("sanitizes slugs so they cannot escape the user prefix", async () => {
@@ -467,5 +489,226 @@ describe("consolidateMemoryForUser — excludeFromMemoryConsolidationAt rows (U4
     await consolidateMemoryForUser("u1", "+14085550001");
 
     expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── U8: transient tool-file isolation (R20) ──────────────────────────────────
+// Offloaded tool results are transient working data: readable by exact pointer
+// during their 24h lifetime, but invisible to every default retrieval surface
+// — prompt concatenation, substring search, semantic candidates, consolidation
+// context, and (via listMemoryFiles/getMemoryContext) MCP cara_knows.
+
+describe("transient tool-file isolation (U8, R20)", () => {
+  const TOOL_SLUG = "tool_get_invoice_history_1752700000000";
+
+  beforeEach(async () => {
+    await writeMemoryFile("u1", "profile", "Senior: Margaret");
+    await writeMemoryFile("u1", "durable_notes", "Family prefers morning visits");
+    await writeMemoryFile("u1", TOOL_SLUG, "invoice INV-9932 total $412.50", {
+      memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
+      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+    });
+  });
+
+  it("isTransientToolFile classifies by metadata OR legacy tool_ prefix", () => {
+    expect(isTransientToolFile(TOOL_SLUG)).toBe(true); // prefix
+    expect(isTransientToolFile({ name: "opaque_snapshot", memoryClass: "transient_tool" })).toBe(true); // metadata
+    expect(isTransientToolFile("durable_notes")).toBe(false);
+    expect(isTransientToolFile("profile")).toBe(false);
+    expect(isTransientToolFile({ name: "health", memoryClass: undefined })).toBe(false);
+  });
+
+  it("writeMemoryFile stamps memoryClass/expiresAt onto the Storage object", () => {
+    const meta = hoisted.fileMeta.get(`memory/u1/${TOOL_SLUG}.md`);
+    expect(meta?.metadata?.memoryClass).toBe("transient_tool");
+    expect(Date.parse(meta?.metadata?.expiresAt ?? "")).toBeGreaterThan(Date.now());
+    // Durable writes carry no memory class.
+    expect(hoisted.fileMeta.get("memory/u1/profile.md")?.metadata).toBeUndefined();
+  });
+
+  it("listMemoryFiles excludes transient files by default; includeTransient opts in (cleanup/maintenance only)", async () => {
+    const listed = await listMemoryFiles("u1");
+    expect(listed).toContain("profile");
+    expect(listed).toContain("durable_notes");
+    expect(listed).not.toContain(TOOL_SLUG);
+    expect(await listMemoryFiles("u1", { includeTransient: true })).toContain(TOOL_SLUG);
+  });
+
+  it("getMemoryContext (prompt/cara_knows context) excludes transient content but keeps canonical + durable ad-hoc files", async () => {
+    const ctx = await getMemoryContext("u1");
+    expect(ctx).toContain("Margaret");
+    expect(ctx).toContain("morning visits"); // intentional durable ad-hoc file survives
+    expect(ctx).not.toContain("INV-9932");
+  });
+
+  it("substring search cannot surface a transient file; durable ad-hoc files stay searchable", async () => {
+    expect(await searchMemory("u1", "INV-9932")).toEqual([]);
+    expect(await searchMemory("u1", "morning visits")).toHaveLength(1);
+  });
+
+  it("writeMemoryFile never indexes embeddings for a transient file even when the embedding API works", async () => {
+    // Let the beforeEach durable writes' fire-and-forget reindexes settle,
+    // then reset the call count so only the transient write is measured.
+    await new Promise((r) => setTimeout(r, 5));
+    vi.mocked(embeddingsMod.embedMany).mockClear();
+
+    const vec = new Array(8).fill(1);
+    vi.mocked(embeddingsMod.embedMany).mockResolvedValue([vec]);
+    await writeMemoryFile("u2", "tool_snapshot_999", "big payload");
+    await new Promise((r) => setTimeout(r, 5)); // reindex is fire-and-forget
+    expect(hoisted.embeddings.size).toBe(0);
+    expect(vi.mocked(embeddingsMod.embedMany)).not.toHaveBeenCalled();
+  });
+
+  it("semantic search filters LEGACY tool_ embedding rows out of the candidate set", async () => {
+    const vec = new Array(8).fill(0); vec[0] = 1;
+    // A row left behind by an old (pre-U8) tool offload.
+    hoisted.embeddings.set("legacy1", { file: "tool_old_offload_123", block: "invoice INV-9932 total $412.50", embedding: vec });
+    // A durable row that must still rank.
+    hoisted.embeddings.set("durable1", { file: "health", block: "Type 2 diabetes managed with metformin", embedding: vec });
+    vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(vec);
+
+    const hits = await searchMemoryHybrid("u1", "diabetes management");
+    expect(hits.some((h) => h.section.includes("metformin"))).toBe(true);
+    expect(hits.every((h) => !h.file.startsWith("tool_"))).toBe(true);
+    expect(hits.some((h) => h.section.includes("INV-9932"))).toBe(false);
+  });
+
+  it("exact pointer read keeps working during the transient lifetime (active-loop read path)", async () => {
+    expect(await readMemoryFile("u1", TOOL_SLUG)).toBe("invoice INV-9932 total $412.50");
+  });
+
+  it("consolidation context excludes transient files (they never become durable memory)", async () => {
+    hoisted.convMessages.push({ role: "user", content: "Mom loves gardening", timestamp: Date.now() - 1000 });
+
+    await consolidateMemoryForUser("u1", "+14085550001");
+
+    expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
+    const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls[0]);
+    expect(prompt).not.toContain("INV-9932");
+    expect(prompt).toContain("Margaret"); // durable memory still present
+  });
+});
+
+// ── U8/KTD14: expired transient cleanup ──────────────────────────────────────
+
+describe("cleanupExpiredTransientToolFiles (U8, KTD14)", () => {
+  const DAY = TRANSIENT_TOOL_TTL_MS;
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  const seedObject = (
+    path: string,
+    content: string,
+    meta?: { timeCreated?: string; metadata?: Record<string, string> },
+  ) => {
+    hoisted.store.set(path, content);
+    if (meta) hoisted.fileMeta.set(path, meta); // omitted = legacy object without usable metadata
+  };
+
+  it("never deletes a file younger than 24h — even when its expiresAt claims otherwise (hard guard)", async () => {
+    seedObject("memory/u1/tool_fresh_1.md", "x", {
+      timeCreated: iso(Date.now() - 60_000),
+      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - 1) }, // lying expiry
+    });
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 1, retained: 1, deleted: 0, malformed: 0, failed: 0 });
+    expect(hoisted.store.has("memory/u1/tool_fresh_1.md")).toBe(true);
+  });
+
+  it("deletes an expired transient file AND its embedding rows; unrelated rows survive", async () => {
+    seedObject("memory/u1/tool_expired_2.md", "invoice data", {
+      timeCreated: iso(Date.now() - DAY - 3_600_000),
+      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - 3_600_000) },
+    });
+    hoisted.embeddings.set("e1", { file: "tool_expired_2", block: "invoice data", embedding: [1] });
+    hoisted.embeddings.set("e2", { file: "health", block: "unrelated durable block", embedding: [1] });
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(hoisted.store.has("memory/u1/tool_expired_2.md")).toBe(false);
+    expect(hoisted.embeddings.has("e1")).toBe(false);
+    expect(hoisted.embeddings.has("e2")).toBe(true);
+  });
+
+  it("never scans canonical or durable ad-hoc files, however old they are", async () => {
+    seedObject("memory/u1/profile.md", "Senior: Margaret", { timeCreated: iso(Date.now() - 40 * DAY) });
+    seedObject("memory/u1/durable_notes.md", "notes", { timeCreated: iso(Date.now() - 40 * DAY) });
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 });
+    expect(hoisted.store.size).toBe(2);
+  });
+
+  it("legacy tool_ slug with no metadata at all: the slug epoch-ms timestamp decides (fallback)", async () => {
+    const oldTs   = Date.now() - 2 * DAY;
+    const freshTs = Date.now() - 60_000;
+    seedObject(`memory/u1/tool_legacy_${oldTs}.md`, "old offload");
+    seedObject(`memory/u1/tool_legacy_${freshTs}.md`, "fresh offload");
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 2, retained: 1, deleted: 1, malformed: 0, failed: 0 });
+    expect(hoisted.store.has(`memory/u1/tool_legacy_${oldTs}.md`)).toBe(false);
+    expect(hoisted.store.has(`memory/u1/tool_legacy_${freshTs}.md`)).toBe(true);
+  });
+
+  it("a malformed slug without metadata is RETAINED and counted — never guessed at", async () => {
+    seedObject("memory/u1/tool_no_timestamp.md", "who knows how old");
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 0, malformed: 1, failed: 0 });
+    expect(hoisted.store.has("memory/u1/tool_no_timestamp.md")).toBe(true);
+  });
+
+  it("a metadata-classified transient file with a non-tool slug is still cleaned by class", async () => {
+    seedObject("memory/u1/opaque_snapshot.md", "x", {
+      timeCreated: iso(Date.now() - 2 * DAY),
+      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - DAY) },
+    });
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(hoisted.store.has("memory/u1/opaque_snapshot.md")).toBe(false);
+  });
+
+  it("repeated runs are idempotent — the second pass deletes nothing and fails nothing", async () => {
+    seedObject("memory/u1/tool_expired_3.md", "x", {
+      timeCreated: iso(Date.now() - 2 * DAY),
+      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - DAY) },
+    });
+
+    const first = await cleanupExpiredTransientToolFiles();
+    expect(first.deleted).toBe(1);
+
+    const second = await cleanupExpiredTransientToolFiles();
+    expect(second).toEqual({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 });
+  });
+
+  it("cleanup respects the freshly written offload end-to-end: written now → retained; expiry passed → deleted", async () => {
+    // Written through the real writer (metadata path), not seeded by hand.
+    await writeMemoryFile("u1", "tool_roundtrip_1", "payload", {
+      memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
+      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+    });
+
+    const fresh = await cleanupExpiredTransientToolFiles();
+    expect(fresh).toEqual({ scanned: 1, retained: 1, deleted: 0, malformed: 0, failed: 0 });
+    expect(await readMemoryFile("u1", "tool_roundtrip_1")).toBe("payload"); // exact read still works
+
+    // Age the object past its lifetime.
+    hoisted.fileMeta.set("memory/u1/tool_roundtrip_1.md", {
+      timeCreated: new Date(Date.now() - 2 * TRANSIENT_TOOL_TTL_MS).toISOString(),
+      metadata: { memoryClass: "transient_tool", expiresAt: new Date(Date.now() - 1000).toISOString() },
+    });
+
+    const later = await cleanupExpiredTransientToolFiles();
+    expect(later).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(await readMemoryFile("u1", "tool_roundtrip_1")).toBe("");
   });
 });

@@ -15,7 +15,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
-import { writeMemoryFile } from "../memory/memoryFiles";
+import {
+  writeMemoryFile,
+  TRANSIENT_TOOL_MEMORY_CLASS,
+  TRANSIENT_TOOL_TTL_MS,
+} from "../memory/memoryFiles";
 
 const db = admin.firestore();
 
@@ -154,12 +158,21 @@ export async function buildToolResultContent(
 
   const slug = `tool_${toolName}_${Date.now()}`.toLowerCase();
   try {
-    await writeMemoryFile(userId, slug, full);
+    // R20 (memory-grounding U8): offloads are transient WORKING data, never
+    // durable family memory. The Storage object carries memoryClass/expiresAt
+    // so default retrieval (prompt context, substring/semantic search,
+    // consolidation, cara_knows) excludes it and nightly cleanup deletes it
+    // after its 24-hour lifetime. The exact read_memory_file pointer keeps
+    // working for the active loop throughout that lifetime.
+    await writeMemoryFile(userId, slug, full, {
+      memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
+      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+    });
     return JSON.stringify({
       _offloaded: true,
       file:    slug,
-      note:    `Full result (${full.length} chars) saved to memory file "${slug}". ` +
-               `Use read_memory_file with file="${slug}" or search_memory to retrieve specific details.`,
+      note:    `Full result (${full.length} chars) saved to temporary memory file "${slug}" (kept ~24h). ` +
+               `Use read_memory_file with file="${slug}" to retrieve specific details.`,
       preview: full.slice(0, 1200),
     });
   } catch {

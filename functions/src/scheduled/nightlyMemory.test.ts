@@ -132,6 +132,10 @@ const hoisted = vi.hoisted(() => {
     batch,
     consolidateMock: vi.fn(async (_userId: string, _phone?: string) => {}),
     cleanupMock: vi.fn(async () => {}),
+    // U8 (R20/KTD14): expired transient tool-file cleanup, mocked at the
+    // memoryFiles boundary — behavior is tested in memoryFiles.test.ts; here
+    // we pin scheduling, aggregate-only logging, and failure isolation.
+    transientCleanupMock: vi.fn(async () => ({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 })),
     claudeCreate: vi.fn(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] })),
   };
 });
@@ -156,6 +160,7 @@ vi.mock("firebase-functions/v1", () => ({
 
 vi.mock("../memory/memoryFiles", () => ({
   consolidateMemoryForUser: hoisted.consolidateMock,
+  cleanupExpiredTransientToolFiles: hoisted.transientCleanupMock,
 }));
 
 vi.mock("../agents/executionAgent", () => ({
@@ -196,6 +201,10 @@ beforeEach(() => {
   hoisted.consolidateMock.mockClear();
   hoisted.consolidateMock.mockImplementation(async () => {});
   hoisted.cleanupMock.mockClear();
+  hoisted.transientCleanupMock.mockClear();
+  hoisted.transientCleanupMock.mockImplementation(
+    async () => ({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 }),
+  );
   hoisted.claudeCreate.mockClear();
   hoisted.claudeCreate.mockImplementation(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] }));
 });
@@ -344,10 +353,60 @@ describe("runNightlyMemoryJob — housekeeping isolation (R4)", () => {
       await expect(runNightlyMemoryJob()).resolves.toBeUndefined();
 
       expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
+      expect(hoisted.transientCleanupMock).toHaveBeenCalledTimes(1);
       const abortLog = errorSpy.mock.calls.find((c) => String(c[0]).includes("memory batch aborted"));
       expect(abortLog).toBeDefined();
       expect(abortLog![1]).toEqual({ errorClass: "Error" });
     } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+// ── U8 (R20/KTD14): nightly transient tool-file cleanup wiring ────────────────
+
+describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
+  it("runs the cleanup once per job and logs aggregate counts only (R21)", async () => {
+    hoisted.transientCleanupMock.mockResolvedValueOnce({
+      scanned: 7, retained: 3, deleted: 3, malformed: 1, failed: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await runNightlyMemoryJob();
+
+      expect(hoisted.transientCleanupMock).toHaveBeenCalledTimes(1);
+      const cleanupLog = logSpy.mock.calls.find((c) => String(c[0]).includes("transient tool-file cleanup"));
+      expect(cleanupLog).toBeDefined();
+      expect(cleanupLog![1]).toEqual({ scanned: 7, retained: 3, deleted: 3, malformed: 1, failed: 0 });
+      // Aggregate only — no user IDs, phones, or slugs.
+      expect(JSON.stringify(cleanupLog)).not.toMatch(/\+\d{7,}|tool_|memory\//);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("a cleanup failure is isolated: sanitized error log, remaining housekeeping still runs", async () => {
+    hoisted.transientCleanupMock.mockRejectedValueOnce(new Error("bucket listing exploded for u123"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await expect(runNightlyMemoryJob()).resolves.toBeUndefined();
+
+      // Execution-agent cleanup (the step after) still ran.
+      expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
+      const errLog = errorSpy.mock.calls.find((c) =>
+        String(c[0]).includes("cleanupExpiredTransientToolFiles error"));
+      expect(errLog).toBeDefined();
+      expect(errLog![1]).toEqual({ errorClass: "Error" }); // R21: no raw message text
+      expect(JSON.stringify(errLog)).not.toContain("u123");
+      // No cleanup counts log was emitted for the failed run.
+      expect(logSpy.mock.calls.some((c) => String(c[0]).includes("transient tool-file cleanup"))).toBe(false);
+    } finally {
+      logSpy.mockRestore();
       errorSpy.mockRestore();
     }
   });

@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
-import { consolidateMemoryForUser } from "../memory/memoryFiles";
+import { consolidateMemoryForUser, cleanupExpiredTransientToolFiles } from "../memory/memoryFiles";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
 
 const db = admin.firestore();
@@ -314,6 +314,18 @@ export async function runNightlyMemoryJob(): Promise<void> {
     return null;
   });
   if (compression) console.log("[nightlyMemory] compression", compression);
+
+  // R20/KTD14 (U8): delete expired transient tool-result offloads and their
+  // embeddings. Aggregate-only log (R21): scanned/retained/deleted/malformed/
+  // failed counts — no user IDs, no slugs. Isolated so a Storage failure never
+  // blocks the remaining housekeeping.
+  const transientCleanup = await cleanupExpiredTransientToolFiles().catch(err => {
+    console.error("[nightlyMemory] cleanupExpiredTransientToolFiles error:", {
+      errorClass: (err as Error)?.name ?? "Error",
+    });
+    return null;
+  });
+  if (transientCleanup) console.log("[nightlyMemory] transient tool-file cleanup", transientCleanup);
 
   // Auto-complete execution agents idle for >24 hours
   await cleanupStaleExecutionAgents().catch(err =>

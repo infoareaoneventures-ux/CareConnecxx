@@ -43,6 +43,34 @@ export type MemoryFile = CanonicalMemoryFile | (string & {});
 
 const ALL_FILES: CanonicalMemoryFile[] = ["profile", "health", "family", "recent_episodes", "procedural"];
 
+// ── Transient tool-result files (memory-grounding U8, R20/KTD14) ─────────────
+// Large tool results the agent loop offloads (contextManagement.ts) are
+// TRANSIENT WORKING DATA, not durable family memory. They stay readable by
+// exact pointer (readMemoryFile) for their 24-hour lifetime, but are excluded
+// from every default retrieval surface: prompt concatenation
+// (getMemoryContext), substring search, semantic candidates, consolidation
+// context, and — because those all flow through listMemoryFiles /
+// getMemoryContext — the MCP cara_knows/search_memory tools too. Nightly
+// cleanup (cleanupExpiredTransientToolFiles) deletes expired objects plus
+// their embedding rows.
+
+export const TRANSIENT_TOOL_MEMORY_CLASS = "transient_tool";
+export const TRANSIENT_TOOL_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Classifies a memory file as a transient tool offload: Storage custom
+ * metadata `memoryClass=transient_tool` (new writes) OR the legacy
+ * `tool_` slug prefix (files written before metadata tagging existed).
+ */
+export function isTransientToolFile(
+  file: string | { name: string; memoryClass?: string | null },
+): boolean {
+  const name        = typeof file === "string" ? file : file.name;
+  const memoryClass = typeof file === "string" ? undefined : file.memoryClass;
+  if (memoryClass === TRANSIENT_TOOL_MEMORY_CLASS) return true;
+  return sanitizeFileName(name).startsWith("tool_");
+}
+
 // Restrict slugs to a safe charset so a file name can never escape the user's prefix.
 function sanitizeFileName(file: string): string {
   const slug = String(file).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
@@ -54,13 +82,26 @@ function filePath(userId: string, file: MemoryFile): string {
 }
 
 // Enumerate the memory files that actually exist for a user (canonical + ad-hoc).
-export async function listMemoryFiles(userId: string): Promise<string[]> {
+// R20 (U8): transient tool offloads are EXCLUDED by default — every default
+// retrieval surface built on this listing (getMemoryContext, substring search,
+// consolidation, MCP cara_knows) inherits the exclusion. Cleanup/maintenance
+// callers opt in with { includeTransient: true }.
+export async function listMemoryFiles(
+  userId: string,
+  options?: { includeTransient?: boolean },
+): Promise<string[]> {
   try {
     const bucket = storage.bucket();
     const [files] = await bucket.getFiles({ prefix: `memory/${userId}/` });
     return files
-      .map((f) => f.name.slice(`memory/${userId}/`.length).replace(/\.md$/, ""))
-      .filter(Boolean);
+      .map((f) => ({
+        name: f.name.slice(`memory/${userId}/`.length).replace(/\.md$/, ""),
+        memoryClass: (f.metadata?.metadata as Record<string, string> | null | undefined)
+          ?.memoryClass as string | undefined,
+      }))
+      .filter((f) => f.name)
+      .filter((f) => options?.includeTransient === true || !isTransientToolFile(f))
+      .map((f) => f.name);
   } catch {
     return [];
   }
@@ -76,22 +117,57 @@ export async function readMemoryFile(userId: string, file: MemoryFile): Promise<
   }
 }
 
+export interface WriteMemoryFileOptions {
+  /** `transient_tool` marks the object as a short-lived tool-result offload (R20/KTD14). */
+  memoryClass?: typeof TRANSIENT_TOOL_MEMORY_CLASS;
+  /** ISO timestamp after which nightly cleanup may delete the transient object. */
+  expiresAt?: string;
+}
+
 export async function writeMemoryFile(
   userId: string,
   file: MemoryFile,
-  content: string
+  content: string,
+  options?: WriteMemoryFileOptions,
 ): Promise<void> {
   const bucket = storage.bucket();
+  const custom: Record<string, string> = {};
+  if (options?.memoryClass) custom.memoryClass = options.memoryClass;
+  if (options?.expiresAt)   custom.expiresAt   = options.expiresAt;
   await bucket.file(filePath(userId, file)).save(content, {
     contentType: "text/markdown",
-    metadata:    { cacheControl: "no-cache" },
+    metadata: {
+      cacheControl: "no-cache",
+      ...(Object.keys(custom).length > 0 ? { metadata: custom } : {}),
+    },
   });
+
+  // R20 (U8): transient tool offloads never get embedding rows — semantic
+  // search must not be able to surface them. Prior rows for a reused slug are
+  // still purged, defensively (the existing per-file delete path).
+  if (options?.memoryClass === TRANSIENT_TOOL_MEMORY_CLASS || isTransientToolFile(String(file))) {
+    deleteEmbeddingRowsForFile(userId, sanitizeFileName(String(file))).catch((err) => {
+      console.warn("[memoryFiles] transient embedding purge failed:", err instanceof Error ? err.message : err);
+    });
+    return;
+  }
 
   // Refresh block embeddings for this file. Failure is non-fatal — substring
   // search still works; we just lose semantic recall until the next write.
   reindexMemoryFileEmbeddings(userId, file, content).catch((err) => {
     console.warn("[memoryFiles] reindex failed:", err instanceof Error ? err.message : err);
   });
+}
+
+// Delete every embedding row belonging to one file slug. Shared by the
+// transient-write purge, the reindex pre-pass, and deleteMemoryFile.
+async function deleteEmbeddingRowsForFile(userId: string, slug: string): Promise<void> {
+  const col   = db.collection("memory_embeddings").doc(userId).collection("blocks");
+  const prior = await col.where("file", "==", slug).get();
+  if (prior.empty) return;
+  const batch = db.batch();
+  prior.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 }
 
 // Replace all embeddings for a single memory file. Idempotent. Skipped silently
@@ -108,12 +184,7 @@ async function reindexMemoryFileEmbeddings(
   const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
 
   // Delete prior embeddings for this file (whole-file rewrite, so no diffing).
-  const prior = await col.where("file", "==", slug).get();
-  if (!prior.empty) {
-    const batch = db.batch();
-    prior.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-  }
+  await deleteEmbeddingRowsForFile(userId, slug);
 
   if (blocks.length === 0) return;
 
@@ -191,18 +262,106 @@ export async function deleteMemoryFile(userId: string, file: MemoryFile): Promis
   // Drop this file's embeddings so semantic search can't resurface deleted
   // content. Failure is non-fatal — orphaned embeddings only affect recall.
   try {
-    const col   = db.collection("memory_embeddings").doc(userId).collection("blocks");
-    const prior = await col.where("file", "==", slug).get();
-    if (!prior.empty) {
-      const batch = db.batch();
-      prior.docs.forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-    }
+    await deleteEmbeddingRowsForFile(userId, slug);
   } catch (err) {
     console.warn("[memoryFiles] embedding cleanup on delete failed:", err instanceof Error ? err.message : err);
   }
 
   return existed;
+}
+
+// ── Transient tool-file cleanup (memory-grounding U8, R20/KTD14) ─────────────
+// Deletes expired transient tool offloads (object + embedding rows via the
+// existing per-file delete path). Expiry resolution order:
+//   1. Storage custom metadata `expiresAt` (new writes);
+//   2. Storage `timeCreated` + 24h TTL;
+//   3. legacy `tool_<name>_<epochMs>` slug timestamp — LAST-resort fallback
+//      for old objects whose creation metadata is unavailable.
+// A transient file with a malformed slug and no usable metadata is RETAINED
+// and counted. A hard guard never deletes an object younger than the 24-hour
+// lifetime regardless of what any expiry field claims — an active loop may
+// still hold its pointer. Idempotent: deleted objects vanish from the next
+// scan. Returns aggregate counts only (R21) — no user IDs, no slugs.
+
+export interface TransientCleanupCounts {
+  scanned: number;
+  retained: number;
+  deleted: number;
+  malformed: number;
+  failed: number;
+}
+
+const MEMORY_OBJECT_RE  = /^memory\/([^/]+)\/([^/]+)\.md$/;
+const LEGACY_SLUG_TS_RE = /_(\d{10,})$/;
+
+export async function cleanupExpiredTransientToolFiles(
+  now: number = Date.now(),
+): Promise<TransientCleanupCounts> {
+  const counts: TransientCleanupCounts = { scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 };
+
+  let files: Array<{
+    name: string;
+    metadata?: { timeCreated?: string; metadata?: Record<string, string> | null };
+  }>;
+  try {
+    const bucket = storage.bucket();
+    [files] = (await bucket.getFiles({ prefix: "memory/" })) as unknown as [typeof files];
+  } catch (err) {
+    counts.failed++;
+    console.warn("[memoryFiles] transient cleanup listing failed:", {
+      errorClass: err instanceof Error ? err.name : "Error",
+    });
+    return counts;
+  }
+
+  for (const f of files) {
+    const match = MEMORY_OBJECT_RE.exec(f.name);
+    if (!match) continue;
+    const [, userId, slug] = match;
+    const custom = (f.metadata?.metadata ?? undefined) as Record<string, string> | undefined;
+    if (!isTransientToolFile({ name: slug, memoryClass: custom?.memoryClass })) continue;
+
+    counts.scanned++;
+
+    const timeCreatedMs = Date.parse(String(f.metadata?.timeCreated ?? ""));
+    // Hard guard: never delete an object younger than the 24h lifetime.
+    if (Number.isFinite(timeCreatedMs) && now - timeCreatedMs < TRANSIENT_TOOL_TTL_MS) {
+      counts.retained++;
+      continue;
+    }
+
+    const expiresAtMs = Date.parse(String(custom?.expiresAt ?? ""));
+    let expired: boolean;
+    if (Number.isFinite(expiresAtMs)) {
+      expired = now >= expiresAtMs;
+    } else if (Number.isFinite(timeCreatedMs)) {
+      expired = now - timeCreatedMs >= TRANSIENT_TOOL_TTL_MS;
+    } else {
+      // Legacy fallback: parse the epoch-ms suffix out of the slug.
+      const legacy = LEGACY_SLUG_TS_RE.exec(slug);
+      if (!legacy) {
+        counts.malformed++; // retained — no trustworthy age signal at all
+        continue;
+      }
+      expired = now - Number(legacy[1]) >= TRANSIENT_TOOL_TTL_MS;
+    }
+
+    if (!expired) {
+      counts.retained++;
+      continue;
+    }
+
+    try {
+      // Existing per-file delete path: removes the object AND its embedding rows.
+      const removed = await deleteMemoryFile(userId, slug);
+      if (removed) counts.deleted++;
+      else counts.failed++;
+    } catch {
+      counts.failed++;
+    }
+  }
+
+  return counts;
 }
 
 // ── Cross-file fact reconciliation for the correction/forget worker (U4b) ────
@@ -350,10 +509,13 @@ export async function searchMemoryHybrid(
         .doc(userId)
         .collection("blocks")
         .get();
-      const candidates = snap.docs.map((d) => {
-        const data = d.data() as { file: string; block: string; embedding: number[] };
-        return { file: data.file, block: data.block, embedding: data.embedding };
-      });
+      const candidates = snap.docs
+        .map((d) => d.data() as { file: string; block: string; embedding: number[]; memoryClass?: string })
+        // R20 (U8): transient tool-file rows (legacy `tool_` slugs — new
+        // transient writes create no rows at all) never become semantic
+        // candidates.
+        .filter((data) => !isTransientToolFile({ name: data.file, memoryClass: data.memoryClass }))
+        .map((data) => ({ file: data.file, block: data.block, embedding: data.embedding }));
       const ranked = rankBySimilarity(candidates, queryEmbed, topK);
       semanticHits = ranked.map((r) => ({
         file:    r.file,
@@ -382,7 +544,10 @@ export async function searchMemoryHybrid(
 
 // Returns existing files concatenated, trimmed to ~3000 tokens (~12 000 chars).
 // Enumerates the user's bucket prefix so ad-hoc files are included, with the five
-// canonical files ordered first.
+// canonical files ordered first. Transient tool offloads never appear here —
+// listMemoryFiles excludes them by default (R20/U8) — so every prompt built on
+// this context (qaAgent, briefing, digest, trigger engine, consolidation,
+// MCP cara_knows) inherits the exclusion.
 export async function getMemoryContext(userId: string): Promise<string> {
   if (await storageMemoryMasked(userId)) return ""; // U4a: reconciliation pending
   const present = await listMemoryFiles(userId);

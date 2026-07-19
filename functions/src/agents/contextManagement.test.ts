@@ -73,7 +73,11 @@ vi.mock("firebase-admin", () => ({
 }));
 
 vi.mock("../utils/openaiClient", () => ({ quickComplete: hoisted.quickCompleteMock }));
-vi.mock("../memory/memoryFiles", () => ({ writeMemoryFile: hoisted.writeMemoryFileMock }));
+vi.mock("../memory/memoryFiles", () => ({
+  writeMemoryFile:             hoisted.writeMemoryFileMock,
+  TRANSIENT_TOOL_MEMORY_CLASS: "transient_tool",
+  TRANSIENT_TOOL_TTL_MS:       24 * 60 * 60 * 1000,
+}));
 
 const quickCompleteMock = hoisted.quickCompleteMock;
 const writeMemoryFileMock = hoisted.writeMemoryFileMock;
@@ -264,6 +268,35 @@ describe("buildToolResultContent", () => {
     expect(parsed.file).toMatch(/^tool_get_invoice_history_/);
     expect(parsed.preview.length).toBeLessThanOrEqual(1200);
     expect(parsed.note).toContain("read_memory_file");
+  });
+
+  // U8 (memory-grounding, R20/KTD14): offloads are transient working data.
+  it("tags the offloaded file as transient_tool with an expiry ~24h out", async () => {
+    const before = Date.now();
+    const big = { rows: "x".repeat(TOOL_RESULT_OFFLOAD_THRESHOLD + 100) };
+    await buildToolResultContent("user1", "get_invoice_history", big);
+    const after = Date.now();
+
+    expect(writeMemoryFileMock).toHaveBeenCalledTimes(1);
+    const [userId, slug, , options] = (writeMemoryFileMock.mock.calls[0] ?? []) as unknown as
+      [string, string, string, { memoryClass?: string; expiresAt?: string }];
+    expect(userId).toBe("user1");
+    expect(slug).toMatch(/^tool_get_invoice_history_\d+$/);
+    expect(options).toBeDefined();
+    expect(options.memoryClass).toBe("transient_tool");
+    const expiresAtMs = Date.parse(options.expiresAt ?? "");
+    const DAY = 24 * 60 * 60 * 1000;
+    expect(expiresAtMs).toBeGreaterThanOrEqual(before + DAY);
+    expect(expiresAtMs).toBeLessThanOrEqual(after + DAY);
+  });
+
+  it("the pointer note directs to the exact read path only — transient files are excluded from search (U8)", async () => {
+    const big = { rows: "x".repeat(TOOL_RESULT_OFFLOAD_THRESHOLD + 100) };
+    const out = await buildToolResultContent("user1", "get_invoice_history", big);
+    const parsed = JSON.parse(out);
+    expect(parsed.note).toContain("read_memory_file");
+    expect(parsed.note).not.toContain("search_memory");
+    expect(parsed.note).toContain("24h"); // honest about the transient lifetime
   });
 
   it("truncates instead of offloading when there is no userId", async () => {

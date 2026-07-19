@@ -274,6 +274,84 @@ describe("emitTurnMetrics", () => {
     });
   });
 
+  // U7 (memory grounding, R18/R19/R21): risk-tier grounding gate telemetry —
+  // categories/verdict/action/latency counters, never raw draft or user text.
+  describe("grounding risk-tier fields", () => {
+    it("accepts and serializes the grounding counter fields", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.groundingClaimCategories = ["medical_condition", "money_payment"];
+      m.groundingClaimRisk = "high";
+      m.groundingVerdict = "indeterminate";
+      m.groundingVerifierIndeterminate = true;
+      m.groundingNeutralized = true;
+      m.groundingVerifierLatencyMs = 812;
+      emitTurnMetrics(m, { reply: "neutral copy" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.groundingClaimCategories).toEqual(["medical_condition", "money_payment"]);
+      expect(payload.groundingClaimRisk).toBe("high");
+      expect(payload.groundingVerdict).toBe("indeterminate");
+      expect(payload.groundingVerifierIndeterminate).toBe(true);
+      expect(payload.groundingNeutralized).toBe(true);
+      expect(payload.groundingVerifierLatencyMs).toBe(812);
+    });
+
+    it("neutralized and verifier-indeterminate turns raise quality flags (and thus mirror)", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.groundingNeutralized = true;
+      m.groundingVerifierIndeterminate = true;
+      emitTurnMetrics(m, { reply: "ok" });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.qualityFlags).toContain("grounding_neutralized");
+      expect(payload.qualityFlags).toContain("grounding_verifier_indeterminate");
+      expect(firestoreMock.add).toHaveBeenCalledTimes(1);
+    });
+
+    it("mirrors grounding fields with safe defaults on quality turns", () => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.groundingClaimCategories = ["allergy"];
+      m.groundingClaimRisk = "high";
+      m.groundingVerdict = "supported";
+      m.humanHandoffSuppressed = true; // forces mirror
+      emitTurnMetrics(m, { reply: "ok" });
+      let mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.groundingClaimCategories).toEqual(["allergy"]);
+      expect(mirrored.groundingClaimRisk).toBe("high");
+      expect(mirrored.groundingVerdict).toBe("supported");
+      expect(mirrored.groundingNeutralized).toBe(false);
+      expect(mirrored.groundingVerifierIndeterminate).toBe(false);
+      expect(mirrored.groundingVerifierLatencyMs).toBeNull();
+
+      firestoreMock.add.mockClear();
+      const bare = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      bare.frustrationDetected = true;
+      emitTurnMetrics(bare, { reply: "ok" });
+      mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      expect(mirrored.groundingClaimCategories).toEqual([]);
+      expect(mirrored.groundingClaimRisk).toBeNull();
+      expect(mirrored.groundingVerdict).toBeNull();
+    });
+
+    it("serialized metrics and mirror contain no raw input/output text (R21)", () => {
+      const draft = "She has Parkinson's and your invoice was $340.";
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.groundingClaimCategories = ["medical_condition", "money_payment"];
+      m.groundingClaimRisk = "high";
+      m.groundingVerdict = "unsupported";
+      m.humanHandoffTriggered = true; // forces mirror
+      emitTurnMetrics(m, { reply: draft });
+      const payload = infoSpy.mock.calls[0][1] as Record<string, unknown>;
+      const mirrored = firestoreMock.add.mock.calls[0][0] as Record<string, unknown>;
+      for (const record of [payload, mirrored]) {
+        const json = JSON.stringify(record);
+        expect(json).not.toContain("Parkinson");
+        expect(json).not.toContain("$340");
+        expect(json).not.toContain(draft);
+      }
+      // Only length/enum derivatives of the reply survive.
+      expect(payload.replyLength).toBe(draft.length);
+    });
+  });
+
   // U1 (memory grounding): typed Zep context outcome — loaded/empty/unavailable/
   // timeout plus fetch latency, recorded without any raw memory content.
   describe("zep context status fields", () => {

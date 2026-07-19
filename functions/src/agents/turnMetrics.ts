@@ -146,6 +146,18 @@ export interface TurnMetrics {
   reRememberAsked?:     boolean; // this turn asked the explicit re-remember confirmation
   reRememberConfirmed?: boolean; // a confirming reply cleared a tombstone this turn
 
+  // U7 (memory grounding, R18/R19/R21): risk-tier grounding gate telemetry.
+  // Categories/enums/latency ONLY — never draft text, user text, or prior
+  // replies. Aggregating these per turn yields the plan's monitoring counters:
+  // candidates by category, supported, neutralized, handedOff (=
+  // humanHandoffTriggered above), verifierIndeterminate, and latency.
+  groundingClaimCategories?: string[];           // deduped claim categories detected in the final draft
+  groundingClaimRisk?: "high" | "low";           // highest risk tier among the candidates
+  groundingVerdict?: "supported" | "unsupported" | "indeterminate"; // typed verifier outcome
+  groundingVerifierIndeterminate?: boolean;      // verifier timeout/garbage — could not verify
+  groundingNeutralized?: boolean;                // high-risk unverifiable claim → deterministic neutral copy
+  groundingVerifierLatencyMs?: number;           // wall-clock of the verifier call (incl. timeout cap)
+
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
   resumedFromCheckpoint?: boolean;
@@ -186,6 +198,8 @@ const QUALITY_FLAG_MAP: Array<[keyof TurnMetrics, string]> = [
   ["humanHandoffTriggered", "human_handoff_triggered"],
   ["humanHandoffSuppressed", "human_handoff_suppressed"],
   ["groundingTriggered", "grounding_triggered"],
+  ["groundingNeutralized", "grounding_neutralized"],
+  ["groundingVerifierIndeterminate", "grounding_verifier_indeterminate"],
   ["formatRevisionTriggered", "format_revision_triggered"],
   ["postProcessModified", "post_process_modified"],
   ["exhausted", "agent_loop_exhausted"],
@@ -345,6 +359,12 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
       learnedFactsCount:            metrics.learnedFactsCount ?? 0,
       zepContextStatus:             metrics.zepContextStatus ?? null,
       zepContextLatencyMs:          metrics.zepContextLatencyMs ?? null,
+      groundingClaimCategories:     metrics.groundingClaimCategories ?? [],
+      groundingClaimRisk:           metrics.groundingClaimRisk ?? null,
+      groundingVerdict:             metrics.groundingVerdict ?? null,
+      groundingVerifierIndeterminate: !!metrics.groundingVerifierIndeterminate,
+      groundingNeutralized:         !!metrics.groundingNeutralized,
+      groundingVerifierLatencyMs:   metrics.groundingVerifierLatencyMs ?? null,
     });
   }
 }

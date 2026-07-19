@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 import {
   shouldHandOffToHuman,
   isHandoffActive,
@@ -6,7 +8,14 @@ import {
   isHandoffGateEnabled,
   buildHandoffGroundingPayload,
   parseHandoffGroundingVerdict,
+  parseGroundingVerdictTyped,
+  isRiskTierGroundingEnabled,
+  neutralCopyForClaims,
+  resolveGroundingGateAction,
+  GROUNDING_NEUTRAL_COPY,
+  HANDOFF_GROUNDING_SYSTEM_PROMPT,
 } from "./humanHandoff";
+import { classifyGroundingClaims } from "./groundingClaims";
 
 const base = {
   confidenceClaimDetected: true,
@@ -134,6 +143,151 @@ describe("grounding-check FP guard", () => {
     expect(payload).toContain("turn-19");
     expect(payload).toContain("turn-12");
     expect(payload).not.toContain("turn-11");
+  });
+});
+
+describe("U7: current-inbound evidence block (R19)", () => {
+  it("carries the current user message as its own labeled block", () => {
+    const payload = buildHandoffGroundingPayload(
+      "ctx", [], "Got it — since your mom is 82, I'll keep that in mind.", "",
+      "my mom is 82 and lives in Sacramento",
+    );
+    expect(payload).toContain("CURRENT USER MESSAGE:\nmy mom is 82 and lives in Sacramento");
+    // Block ordering: the inbound sits between the conversation and tool results.
+    expect(payload.indexOf("RECENT CONVERSATION:")).toBeLessThan(payload.indexOf("CURRENT USER MESSAGE:"));
+    expect(payload.indexOf("CURRENT USER MESSAGE:")).toBeLessThan(payload.indexOf("TOOL RESULTS THIS TURN:"));
+  });
+
+  it("shows (none) when no current inbound is provided (legacy 4-arg call sites)", () => {
+    const payload = buildHandoffGroundingPayload("ctx", [], "draft");
+    expect(payload).toContain("CURRENT USER MESSAGE:\n(none)");
+  });
+
+  it("bounds an oversized inbound", () => {
+    const payload = buildHandoffGroundingPayload("ctx", [], "draft", "", "z".repeat(50_000));
+    expect(payload.length).toBeLessThan(4_000);
+    expect(payload).toContain("[…middle truncated…]");
+  });
+
+  it("the verifier prompt instructs that facts from the CURRENT MESSAGE are supported", () => {
+    // R19 explicit contract: a draft that truthfully repeats a fact the user
+    // just shared must be verifiable as SUPPORTED.
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("CURRENT MESSAGE is SUPPORTED");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("CURRENT MESSAGE");
+  });
+});
+
+describe("U7: parseGroundingVerdictTyped (strict, R19)", () => {
+  it("parses explicit verdicts", () => {
+    expect(parseGroundingVerdictTyped("SUPPORTED")).toBe("supported");
+    expect(parseGroundingVerdictTyped("supported")).toBe("supported");
+    expect(parseGroundingVerdictTyped("UNSUPPORTED")).toBe("unsupported");
+    expect(parseGroundingVerdictTyped("The draft is UNSUPPORTED by context")).toBe("unsupported");
+  });
+
+  it("never reads SUPPORTED out of the word UNSUPPORTED", () => {
+    expect(parseGroundingVerdictTyped("UNSUPPORTED")).toBe("unsupported");
+  });
+
+  it("garbage, empty, or non-string output is INDETERMINATE — never silently supported", () => {
+    expect(parseGroundingVerdictTyped("")).toBe("indeterminate");
+    expect(parseGroundingVerdictTyped("I think it looks fine")).toBe("indeterminate");
+    expect(parseGroundingVerdictTyped(undefined)).toBe("indeterminate");
+    expect(parseGroundingVerdictTyped(null)).toBe("indeterminate");
+    expect(parseGroundingVerdictTyped(42 as unknown as string)).toBe("indeterminate");
+  });
+
+  it("legacy parse keeps its documented fail-open mapping (kill-switch path)", () => {
+    expect(parseHandoffGroundingVerdict("total garbage")).toBe("supported");
+    expect(parseHandoffGroundingVerdict("")).toBe("supported");
+  });
+});
+
+describe("U7: GROUNDING_RISK_TIERS_ENABLED kill switch", () => {
+  it("is ON by default (absent = on), OFF only on explicit false", () => {
+    expect(isRiskTierGroundingEnabled({})).toBe(true);
+    expect(isRiskTierGroundingEnabled({ GROUNDING_RISK_TIERS_ENABLED: "true" })).toBe(true);
+    expect(isRiskTierGroundingEnabled({ GROUNDING_RISK_TIERS_ENABLED: "false" })).toBe(false);
+    expect(isRiskTierGroundingEnabled({ GROUNDING_RISK_TIERS_ENABLED: " FALSE " })).toBe(false);
+  });
+});
+
+describe("U7: deterministic neutral copy (fail-closed, R19)", () => {
+  it("selects category-specific copy for high-risk claims", () => {
+    expect(neutralCopyForClaims(classifyGroundingClaims("She has Parkinson's.")))
+      .toBe(GROUNDING_NEUTRAL_COPY.medical);
+    expect(neutralCopyForClaims(classifyGroundingClaims("She is allergic to penicillin.")))
+      .toBe(GROUNDING_NEUTRAL_COPY.medical);
+    expect(neutralCopyForClaims(classifyGroundingClaims("Your refund was processed yesterday.")))
+      .toBe(GROUNDING_NEUTRAL_COPY.payment);
+    expect(neutralCopyForClaims(classifyGroundingClaims("I've cancelled Thursday's visit for you.")))
+      .toBe(GROUNDING_NEUTRAL_COPY.action);
+    expect(neutralCopyForClaims(classifyGroundingClaims("He is her son.")))
+      .toBe(GROUNDING_NEUTRAL_COPY.identity);
+  });
+
+  it("medical copy wins when several high-risk categories co-occur", () => {
+    const claims = classifyGroundingClaims("She has Parkinson's and your invoice was $340.");
+    expect(neutralCopyForClaims(claims)).toBe(GROUNDING_NEUTRAL_COPY.medical);
+  });
+
+  it("returns null for low-risk-only or empty claim sets (documented fail-open fallback)", () => {
+    expect(neutralCopyForClaims(classifyGroundingClaims("She lives in Sacramento."))).toBeNull();
+    expect(neutralCopyForClaims([])).toBeNull();
+  });
+
+  it("every neutral copy string is honest double-check copy, not an invented fact", () => {
+    for (const copy of Object.values(GROUNDING_NEUTRAL_COPY)) {
+      expect(copy.toLowerCase()).toMatch(/double-check|verify/);
+      // and must never itself classify as a claim (loop guard — asserted in
+      // groundingClaims.test.ts as well from the classifier side)
+      expect(classifyGroundingClaims(copy)).toEqual([]);
+    }
+  });
+});
+
+describe("U7: resolveGroundingGateAction", () => {
+  const high = classifyGroundingClaims("She has Parkinson's.");
+  const low = classifyGroundingClaims("She lives in Sacramento.");
+
+  it("unsupported → handoff (the true invented-fact case, unchanged)", () => {
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: high, riskTiersEnabled: true })).toBe("handoff");
+    expect(resolveGroundingGateAction({ verdict: "unsupported", claims: low, riskTiersEnabled: true })).toBe("handoff");
+  });
+
+  it("supported → send (grounded claims pass unchanged)", () => {
+    expect(resolveGroundingGateAction({ verdict: "supported", claims: high, riskTiersEnabled: true })).toBe("send");
+  });
+
+  it("indeterminate + high risk → neutralize (fail CLOSED, R19)", () => {
+    expect(resolveGroundingGateAction({ verdict: "indeterminate", claims: high, riskTiersEnabled: true })).toBe("neutralize");
+  });
+
+  it("indeterminate + low risk → send (documented pre-U7 fail-open fallback)", () => {
+    expect(resolveGroundingGateAction({ verdict: "indeterminate", claims: low, riskTiersEnabled: true })).toBe("send");
+  });
+
+  it("kill switch off → legacy fail-open even for high risk", () => {
+    expect(resolveGroundingGateAction({ verdict: "indeterminate", claims: high, riskTiersEnabled: false })).toBe("send");
+  });
+});
+
+describe("U7: crisis handling stays AHEAD of the grounding gate", () => {
+  it("handleInbound runs crisis detection before any QA-agent dispatch", () => {
+    // The grounding gate lives inside runQaAgent's post-processing; crisis
+    // detection short-circuits in webhooks.handleInbound BEFORE runQaAgent /
+    // quick-reply routing, so an emergency message can never be neutralized or
+    // held by this gate. Source-order characterization: if someone moves agent
+    // dispatch above crisis detection, this fails loudly.
+    const src = fs.readFileSync(path.resolve(__dirname, "../linq/webhooks.ts"), "utf8");
+    const crisisIdx = src.indexOf("detectCrisis(text)");
+    const qaIdx = src.indexOf("await runQaAgent(");
+    expect(crisisIdx).toBeGreaterThan(-1);
+    expect(qaIdx).toBeGreaterThan(-1);
+    expect(crisisIdx).toBeLessThan(qaIdx);
+    // And the crisis fast-path RETURNS (short-circuit), it doesn't fall through.
+    const crisisBlock = src.slice(crisisIdx, qaIdx);
+    expect(crisisBlock).toContain("return;");
   });
 });
 

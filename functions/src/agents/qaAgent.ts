@@ -48,9 +48,20 @@ import {
   HANDOFF_GROUNDING_SYSTEM_PROMPT,
   buildHandoffGroundingPayload,
   parseHandoffGroundingVerdict,
+  parseGroundingVerdictTyped,
+  isRiskTierGroundingEnabled,
+  neutralCopyForClaims,
+  resolveGroundingGateAction,
+  type GroundingVerdict,
   shouldHandOffToHuman,
   isHandoffActive,
 } from "./humanHandoff";
+import {
+  classifyGroundingClaims,
+  claimCategories,
+  highestGroundingRisk,
+  type GroundingClaim,
+} from "./groundingClaims";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import { isOnboardingTool } from "./onboardingContract";
 import { isReGreet } from "./onboardingEvalGraders";
@@ -2732,12 +2743,14 @@ export async function runQaAgent(params: {
     const MEDICAL_CLAIM = /\b(doctor|physician|diagnos\w*|prescri\w*|medicat\w*|medicine|dosage|dose|doses|dosing|mg|ml|mcg|blood pressure|heart rate|blood sugar|fall|fell|fallen|injur\w*|hospital\w*|symptom\w*|condition\w*)\b/i;
     const hasMedicalContent = MEDICAL_CLAIM.test(reply);
     if (hasMedicalContent && detectLowConfidence(reply)) {
-      console.warn("qaAgent: grounding revision triggered", { userId, preview: reply.slice(0, 100) });
+      // R21: grounding-path telemetry carries hashes/enums only — never the
+      // question, draft, or a preview of either.
+      console.warn("qaAgent: grounding revision triggered", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
       metrics.groundingTriggered = true;
       db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question: text.slice(0, 200),
-        reply:    reply.slice(0, 500),
+        userId,
+        turnHash:  turnTextHash,
+        draftHash: hashText(reply),
         detectedAt: new Date().toISOString(),
         groundingTriggered: true,
       }).catch(() => {});
@@ -2764,23 +2777,23 @@ export async function runQaAgent(params: {
       }
     } else if (hasMedicalContent && detectMedicalAssertion(reply)) {
       // Confident, unhedged medical fact — flagged for the context-aware gate,
-      // not rewritten here. detectConfidenceClaim() also matches it, so the
+      // not rewritten here. The claim classifier also matches it, so the
       // handoff grounding check downstream verifies it against the care plan.
-      console.warn("qaAgent: confident medical assertion flagged for grounding gate", { userId, preview: reply.slice(0, 100) });
+      console.warn("qaAgent: confident medical assertion flagged for grounding gate", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
       metrics.groundingTriggered = true;
       db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question: text.slice(0, 200),
-        reply:    reply.slice(0, 500),
+        userId,
+        turnHash:  turnTextHash,
+        draftHash: hashText(reply),
         detectedAt: new Date().toISOString(),
         confidentMedicalClaim: true,
       }).catch(() => {});
     } else if (detectLowConfidence(reply)) {
-      console.warn("qaAgent: low-confidence reply (no medical claims)", { userId, preview: reply.slice(0, 100) });
+      console.warn("qaAgent: low-confidence reply (no medical claims)", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
       db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question: text.slice(0, 200),
-        reply:    reply.slice(0, 500),
+        userId,
+        turnHash:  turnTextHash,
+        draftHash: hashText(reply),
         detectedAt: new Date().toISOString(),
       }).catch(() => {});
     }
@@ -2995,43 +3008,81 @@ export async function runQaAgent(params: {
     // via CARA_CONFIDENCE_HANDOFF; the hold self-expires so the thread is never
     // permanently stranded.
     let handedOff = false;
+    // U7 (R18): risk-tier claim classification — pure/cheap, runs on every
+    // candidate reply. When the GROUNDING_RISK_TIERS_ENABLED kill switch is OFF
+    // the pre-U7 detector + fail-open verdict path is restored verbatim.
+    const riskTiersOn = isRiskTierGroundingEnabled();
+    const groundingClaims: GroundingClaim[] = riskTiersOn ? classifyGroundingClaims(reply) : [];
+    // Deterministic safety copy (neutral copy) must not be re-worded by the
+    // self-repeat guard below — track it like handedOff.
+    let groundingNeutralizedThisTurn = false;
     if (reply.trim() && shouldHandOffToHuman({
-      confidenceClaimDetected: detectConfidenceClaim(reply),
+      confidenceClaimDetected: riskTiersOn ? groundingClaims.length > 0 : detectConfidenceClaim(reply),
       toolCallsThisTurn:       metrics.toolCalls ?? 0,
       onboardingMode,
       isUserChannel:           channel === "[USER]",
     })) {
       metrics.confidenceClaimDetected = true;
-      // FP guard: the regex over-fires on the mainline flow (facts answered from
-      // the pre-injected core context, "I scheduled that" referencing a PRIOR
-      // turn, or a claim justified by a tool called THIS turn). A claim only
-      // warrants the handoff when its substance is supported by NONE of: the
-      // injected context (systemPrompt carries core context + snapshot + care
-      // plan), the conversation, or this turn's tool observations. That last
-      // source is why tool-backed turns are checked too rather than skipped —
-      // it closes the "called a tool then embellished past it" gap without
-      // false-flagging genuinely tool-backed claims. Checker error/garbage →
-      // fail open to sending (pre-gate behavior), never into a false hold.
+      if (riskTiersOn) {
+        metrics.groundingClaimCategories = claimCategories(groundingClaims);
+        metrics.groundingClaimRisk = highestGroundingRisk(groundingClaims) ?? undefined;
+      }
+      // FP guard: the classifier over-fires on the mainline flow (facts answered
+      // from the pre-injected core context, "I scheduled that" referencing a
+      // PRIOR turn, a claim justified by a tool called THIS turn, or a fact the
+      // user shared in THIS inbound message). A claim only warrants action when
+      // its substance is supported by NONE of: the injected context (systemPrompt
+      // carries core context + snapshot + care plan), the conversation, the
+      // CURRENT inbound message (R19 — truthfully repeating what the user just
+      // said is supported), or this turn's tool observations. Verdict handling
+      // is risk-tiered (U7): checker error/garbage/timeout is INDETERMINATE —
+      // high-risk claims then fail CLOSED to deterministic neutral copy; low-risk
+      // claims keep the documented pre-U7 fail-open fallback. With the kill
+      // switch off, garbage maps to supported exactly as before U7.
       const toolObservations = collectTurnToolObservations(messages, turnStartIndex);
-      let groundingVerdict: "supported" | "unsupported" = "supported";
+      let groundingVerdict: GroundingVerdict = riskTiersOn ? "indeterminate" : "supported";
+      const verifierStartedAt = Date.now();
       try {
         const gateController = new AbortController();
         const gateTimer = setTimeout(() => gateController.abort(), 8_000);
         const verdictRaw = await quickComplete(
           HANDOFF_GROUNDING_SYSTEM_PROMPT,
-          buildHandoffGroundingPayload(systemPrompt, history, reply, toolObservations),
+          buildHandoffGroundingPayload(systemPrompt, history, reply, toolObservations, text),
           { maxTokens: 8, signal: gateController.signal },
         );
         clearTimeout(gateTimer);
-        groundingVerdict = parseHandoffGroundingVerdict(verdictRaw);
+        groundingVerdict = riskTiersOn
+          ? parseGroundingVerdictTyped(verdictRaw)
+          : parseHandoffGroundingVerdict(verdictRaw);
       } catch {
-        // Fail open to sending — a checker outage must not hold threads.
+        // Checker outage/timeout: typed path already defaults to indeterminate
+        // (high-risk → neutral copy, never a false hold); legacy path stays
+        // fail-open to sending.
       }
+      metrics.groundingVerifierLatencyMs = Date.now() - verifierStartedAt;
+      metrics.groundingVerdict = groundingVerdict;
+      if (groundingVerdict === "indeterminate") metrics.groundingVerifierIndeterminate = true;
 
-      if (groundingVerdict === "unsupported") {
+      // R21: everything recorded from here on is hash/enum/latency only — the
+      // question, draft reply, and prior replies never enter telemetry.
+      const draftHash = hashText(reply);
+      const gateAction = resolveGroundingGateAction({
+        verdict: groundingVerdict,
+        claims: groundingClaims,
+        riskTiersEnabled: riskTiersOn,
+      });
+
+      if (gateAction === "handoff") {
         handedOff = true;
         metrics.humanHandoffTriggered = true;
-        console.warn("qaAgent: low-confidence handoff to human", { userId, preview: reply.slice(0, 100) });
+        console.warn("qaAgent: low-confidence handoff to human", {
+          userId,
+          turnHash: turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories,
+          claimRisk: metrics.groundingClaimRisk,
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+        });
         const handoffIso = new Date().toISOString();
         db.collection("agent_sessions").doc(phone).set({
           handedToHuman:       true,
@@ -3039,9 +3090,14 @@ export async function runQaAgent(params: {
           handedToHumanReason: "low_confidence_unbacked_claim",
         }, { merge: true }).catch(() => { /* non-critical */ });
         db.collection("agent_uncertainty_log").add({
-          userId, phone,
-          question:    text.slice(0, 200),
-          reply:       reply.slice(0, 500),
+          userId,
+          turnHash:  turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk:       metrics.groundingClaimRisk ?? null,
+          groundingVerdict,
+          action:          "handoff",
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
           detectedAt:  handoffIso,
           humanHandoff: true,
         }).catch(() => {});
@@ -3051,19 +3107,67 @@ export async function runQaAgent(params: {
           phone, userId, role: userType,
           source:   "qaAgent",
           message:  "Evia handed a thread to a teammate: an unbacked confident claim fell below the confidence bar.",
-          context:  { question: text.slice(0, 200), suppressedReply: reply.slice(0, 300) },
+          context:  {
+            turnHash:          turnTextHash,
+            draftHash,
+            claimCategories:   metrics.groundingClaimCategories ?? [],
+            claimRisk:         metrics.groundingClaimRisk ?? "unknown",
+            verdict:           groundingVerdict,
+            action:            "handoff",
+            verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+            pathway:           "qa",
+          },
         }).catch(() => {});
         reply = HUMAN_HANDOFF_COPY;
-      } else {
-        // Regex fired but the claim is grounded — send normally, keep the
-        // candidate visible so the pattern list can be tuned on real data.
-        metrics.humanHandoffSuppressed = true;
+      } else if (gateAction === "neutralize") {
+        // High-risk claim + indeterminate verification → FAIL CLOSED (R19).
+        // Deterministic category-specific neutral copy: honest, invents
+        // nothing, holds nothing — a checker outage must not ship an
+        // unverifiable medical/identity/action/payment claim, and must not
+        // page a human either.
+        groundingNeutralizedThisTurn = true;
+        metrics.groundingNeutralized = true;
+        console.warn("qaAgent: high-risk claim unverifiable — neutral copy sent", {
+          userId,
+          turnHash: turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories,
+          claimRisk: metrics.groundingClaimRisk,
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+        });
         db.collection("agent_uncertainty_log").add({
-          userId, phone,
-          question:    text.slice(0, 200),
-          reply:       reply.slice(0, 500),
+          userId,
+          turnHash:  turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk:       metrics.groundingClaimRisk ?? null,
+          groundingVerdict,
+          action:          "neutralize",
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
           detectedAt:  new Date().toISOString(),
-          handoffSuppressedBySupport: true,
+          groundingNeutralized: true,
+        }).catch(() => {});
+        reply = neutralCopyForClaims(groundingClaims) ?? HUMAN_HANDOFF_COPY;
+      } else {
+        // send: either the claim is grounded (supported — pass through
+        // unchanged), or it is LOW-RISK and unverifiable — the DOCUMENTED
+        // FALLBACK preserves pre-U7 behavior (fail open to sending; the
+        // downside is a possibly-wrong schedule/availability/age/location
+        // detail, logged below for tuning, never a stranded thread).
+        if (groundingVerdict === "supported") metrics.humanHandoffSuppressed = true;
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash:  turnTextHash,
+          draftHash,
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk:       metrics.groundingClaimRisk ?? null,
+          groundingVerdict,
+          action:          "send",
+          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+          detectedAt:  new Date().toISOString(),
+          ...(groundingVerdict === "supported"
+            ? { handoffSuppressedBySupport: true }
+            : { groundingLowRiskFallback: true }),
         }).catch(() => {});
       }
     }
@@ -3077,7 +3181,7 @@ export async function runQaAgent(params: {
     // forward; fail-open (send the rewrite, or the original if the rewrite is
     // empty/also-duplicate) so the guard never blocks a legitimate reply. The
     // metric flag makes frequency visible in cara_turn_metrics regardless.
-    if (!handedOff && reply.trim()) {
+    if (!handedOff && !groundingNeutralizedThisTurn && reply.trim()) {
       const selfRepeat = detectAgentSelfRepeat(reply, history);
       if (selfRepeat.repeated) {
         metrics.agentSelfRepeatDetected = true;
@@ -3281,11 +3385,28 @@ export async function gateQuickReplyGrounding(params: {
   groundingContext: string;
   recent: Array<{ role: "user" | "assistant"; content: string }>;
   fallback: () => string;
+  // U7 (R19): the current inbound message, passed as its own evidence block so
+  // a quick reply that truthfully repeats what the user just said is SUPPORTED.
+  currentInbound?: string;
   checker?: (systemPrompt: string, payload: string, opts: { maxTokens: number; signal: AbortSignal }) => Promise<string>;
-}): Promise<{ reply: string; triggered: boolean; swapped: boolean }> {
+  env?: Record<string, string | undefined>;
+}): Promise<{
+  reply: string;
+  triggered: boolean;
+  swapped: boolean;
+  // U7 telemetry (hash/enum-safe): claim categories + typed verdict for metrics.
+  claims: GroundingClaim[];
+  verdict: GroundingVerdict | null;
+}> {
   const { reply, usedDeterministicFallback, groundingContext, recent, fallback } = params;
-  if (usedDeterministicFallback || !detectConfidenceClaim(reply)) {
-    return { reply, triggered: false, swapped: false };
+  // U7 parity with the full path: the risk-tier classifier catches pronoun-led
+  // medical/age/location/identity/payment claims the legacy detector missed.
+  // Kill switch off → legacy detector, exactly the pre-U7 candidate set.
+  const riskTiersOn = isRiskTierGroundingEnabled(params.env);
+  const claims: GroundingClaim[] = riskTiersOn ? classifyGroundingClaims(reply) : [];
+  const isCandidate = riskTiersOn ? claims.length > 0 : detectConfidenceClaim(reply);
+  if (usedDeterministicFallback || !isCandidate) {
+    return { reply, triggered: false, swapped: false, claims, verdict: null };
   }
   const checker = params.checker
     ?? ((sys: string, payload: string, opts: { maxTokens: number; signal: AbortSignal }) => quickComplete(sys, payload, opts));
@@ -3294,24 +3415,24 @@ export async function gateQuickReplyGrounding(params: {
   try {
     const verdictRaw = await checker(
       HANDOFF_GROUNDING_SYSTEM_PROMPT,
-      buildHandoffGroundingPayload(groundingContext, recent, reply),
+      buildHandoffGroundingPayload(groundingContext, recent, reply, "", params.currentInbound ?? ""),
       { maxTokens: 8, signal: controller.signal },
     );
-    if (/\bUNSUPPORTED\b/i.test(verdictRaw ?? "")) {
-      return { reply: fallback(), triggered: true, swapped: true };
+    // Typed verdict (U7): supported / unsupported / indeterminate. The quick
+    // path was already fail-closed for BOTH risk tiers — anything short of an
+    // explicit SUPPORTED swaps in the deterministic fallback (a greeting never
+    // warrants a human handoff; the fix is to say less). That behavior is
+    // unchanged; the verdict is now typed so metrics can distinguish an
+    // UNSUPPORTED claim from an unverifiable (indeterminate) one.
+    const verdict = parseGroundingVerdictTyped(verdictRaw);
+    if (verdict !== "supported") {
+      return { reply: fallback(), triggered: true, swapped: true, claims, verdict };
     }
-    // Stricter than parseHandoffGroundingVerdict (which maps garbage →
-    // supported for the main gate): here anything short of an explicit
-    // SUPPORTED is unverifiable, so fail closed to the deterministic fallback.
-    // (\bSUPPORTED\b does not match inside "UNSUPPORTED" — no word boundary.)
-    if (!/\bSUPPORTED\b/i.test(verdictRaw ?? "")) {
-      return { reply: fallback(), triggered: true, swapped: true };
-    }
-    return { reply, triggered: true, swapped: false };
+    return { reply, triggered: true, swapped: false, claims, verdict };
   } catch {
     // Fail closed — an unverified fact-asserting reply must not ship; the
     // deterministic fallback is always safe to send (built from Firestore facts).
-    return { reply: fallback(), triggered: true, swapped: true };
+    return { reply: fallback(), triggered: true, swapped: true, claims, verdict: "indeterminate" };
   } finally {
     clearTimeout(timer);
   }
@@ -3494,21 +3615,42 @@ export async function runQuickReply(params: {
       groundingContext,
       recent: recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       fallback: contextFallbackGreeting,
+      // R19: the current inbound is its own evidence block — repeating a fact
+      // the user just shared must read as SUPPORTED, not swap to the fallback.
+      currentInbound: text,
     });
     if (gate.triggered) {
       metrics.confidenceClaimDetected = true;
       metrics.groundingTriggered = true;
+      metrics.groundingClaimCategories = claimCategories(gate.claims);
+      metrics.groundingClaimRisk = highestGroundingRisk(gate.claims) ?? undefined;
+      if (gate.verdict) metrics.groundingVerdict = gate.verdict;
+      if (gate.verdict === "indeterminate") metrics.groundingVerifierIndeterminate = true;
     }
     if (gate.swapped) {
-      console.warn("runQuickReply: unsupported claim in quick reply — using context fallback", { userId, preview: reply.slice(0, 100) });
+      // R21: hashes/enums only — no question/reply text or previews.
+      const turnHash = hashText(text);
+      console.warn("runQuickReply: unverified claim in quick reply — using context fallback", {
+        userId,
+        turnHash,
+        draftHash: hashText(reply),
+        claimCategories: metrics.groundingClaimCategories,
+        claimRisk: metrics.groundingClaimRisk,
+        verdict: gate.verdict,
+      });
       db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question:   text.slice(0, 200),
-        reply:      reply.slice(0, 500),
+        userId,
+        turnHash,
+        draftHash: hashText(reply),
+        claimCategories: metrics.groundingClaimCategories ?? [],
+        claimRisk:       metrics.groundingClaimRisk ?? null,
+        groundingVerdict: gate.verdict ?? null,
+        action:          "neutralize",
         detectedAt: new Date().toISOString(),
         quickReplyGroundingFallback: true,
       }).catch(() => {});
       metrics.groundingRewriteApplied = true;
+      if (gate.verdict === "indeterminate") metrics.groundingNeutralized = true;
     }
     reply = gate.reply;
   }

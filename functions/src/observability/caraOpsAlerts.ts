@@ -42,12 +42,66 @@ function boundContext(context: Record<string, unknown>): Record<string, unknown>
   }
 }
 
+// ── U7 (R21): grounding/handoff alert redaction ──────────────────────────────
+// Grounding-gate and human-handoff alerts describe a draft reply that may
+// contain invented medical/identity/payment claims — the alert must reference
+// the turn, never quote it. For these alert types the free-form `context` is
+// filtered to an allowlist of hash/enum/count keys and short primitive values,
+// so a call site can never (re)introduce a raw user message, draft reply, or
+// prior reply into admin_alerts. Other alert types are untouched.
+const GROUNDING_ALERT_TYPE = /(?:handoff|grounding)/i;
+const GROUNDING_CONTEXT_ALLOWED_KEYS = new Set([
+  "turnHash",
+  "draftHash",
+  "operationHash",
+  "claimCategories",
+  "claimRisk",
+  "groundingVerdict",
+  "verdict",
+  "action",
+  "verifierLatencyMs",
+  "latencyMs",
+  "pathway",
+  "riskTiersEnabled",
+  "count",
+]);
+const GROUNDING_CONTEXT_MAX_VALUE_CHARS = 64;
+
+function sanitizeGroundingAlertContext(context: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context)) {
+    if (!GROUNDING_CONTEXT_ALLOWED_KEYS.has(key)) continue;
+    if (typeof value === "string") {
+      if (value.length > GROUNDING_CONTEXT_MAX_VALUE_CHARS) continue;
+      out[key] = value;
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      out[key] = value;
+    } else if (Array.isArray(value)) {
+      const safe = value.filter(
+        (v): v is string => typeof v === "string" && v.length <= GROUNDING_CONTEXT_MAX_VALUE_CHARS,
+      );
+      if (safe.length) out[key] = safe;
+    }
+    // objects / anything else: dropped — nested blobs can smuggle raw content
+  }
+  return out;
+}
+
 // Best-effort alerting sink: never throws (a failed alert must not break the
 // caller's main flow). Returns true when the alert was persisted, false when
 // the write failed — callers that tell a user "I've flagged this for review"
 // can branch on this so they don't claim a flag that didn't persist.
 export async function createCaraOpsAlert(input: CaraOpsAlertInput): Promise<boolean> {
   const now = new Date().toISOString();
+  const isGroundingType = GROUNDING_ALERT_TYPE.test(input.type);
+  const sanitized = input.context && isGroundingType
+    ? sanitizeGroundingAlertContext(input.context)
+    : undefined;
+  // Grounding types persist only the sanitized context (dropped entirely when
+  // nothing survives the allowlist); other types keep the original behavior.
+  const context = isGroundingType
+    ? (sanitized && Object.keys(sanitized).length ? sanitized : undefined)
+    : input.context;
   try {
     await db.collection("admin_alerts").add({
       type: input.type,
@@ -65,7 +119,7 @@ export async function createCaraOpsAlert(input: CaraOpsAlertInput): Promise<bool
       ...(input.targetCollection ? { targetCollection: input.targetCollection } : {}),
       ...(input.targetDocId ? { targetDocId: input.targetDocId } : {}),
       ...(input.error ? { error: input.error.slice(0, 500) } : {}),
-      ...(input.context ? { context: boundContext(input.context) } : {}),
+      ...(context ? { context: boundContext(context) } : {}),
     });
     return true;
   } catch (err) {

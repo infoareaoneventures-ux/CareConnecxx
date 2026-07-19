@@ -86,14 +86,18 @@ describe("quick-reply grounding gate fails CLOSED (source wiring)", () => {
 
   it("checker error path returns the deterministic fallback (swapped), not the model reply", () => {
     const catchBlock = gateBody.slice(gateBody.indexOf("} catch {"));
-    expect(catchBlock).toContain("return { reply: fallback(), triggered: true, swapped: true };");
+    // U7: the catch now also reports a typed indeterminate verdict, but the
+    // fail-closed swap is unchanged.
+    expect(catchBlock).toContain('return { reply: fallback(), triggered: true, swapped: true, claims, verdict: "indeterminate" };');
     // The old fail-open return must be gone from the catch.
     expect(catchBlock).not.toContain("swapped: false");
   });
 
   it("only an explicit SUPPORTED verdict lets the model reply through", () => {
-    expect(gateBody).toContain("\\bSUPPORTED\\b");
-    expect(gateBody).toContain("\\bUNSUPPORTED\\b");
+    // U7: verdict parsing is the shared typed parser (garbage → indeterminate),
+    // and anything short of an explicit supported swaps to the fallback.
+    expect(gateBody).toContain("parseGroundingVerdictTyped(verdictRaw)");
+    expect(gateBody).toContain('if (verdict !== "supported")');
     // Garbage must not be normalized through the main gate's fail-open parser.
     expect(gateBody).not.toContain("parseHandoffGroundingVerdict(");
   });

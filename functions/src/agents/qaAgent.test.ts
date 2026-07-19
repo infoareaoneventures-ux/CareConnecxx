@@ -497,32 +497,32 @@ describe("gateQuickReplyGrounding", () => {
   it("swaps an UNSUPPORTED reply for the deterministic fallback", async () => {
     const checker = vi.fn().mockResolvedValue("UNSUPPORTED");
     const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
-    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+    expect(out).toMatchObject({ reply: fallback(), triggered: true, swapped: true });
     expect(checker).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a SUPPORTED reply unchanged", async () => {
     const checker = vi.fn().mockResolvedValue("SUPPORTED");
     const out = await gateQuickReplyGrounding({ ...base, reply: "Ana is coming Friday at 10.", checker });
-    expect(out).toEqual({ reply: "Ana is coming Friday at 10.", triggered: true, swapped: false });
+    expect(out).toMatchObject({ reply: "Ana is coming Friday at 10.", triggered: true, swapped: false });
   });
 
   it("fails CLOSED when the checker throws — deterministic fallback goes out, not the model reply (U4)", async () => {
     const checker = vi.fn().mockRejectedValue(new Error("checker down"));
     const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
-    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+    expect(out).toMatchObject({ reply: fallback(), triggered: true, swapped: true });
   });
 
   it("fails CLOSED on a garbage/unparseable verdict — deterministic fallback goes out (U4)", async () => {
     const checker = vi.fn().mockResolvedValue("hmm, hard to say really");
     const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
-    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+    expect(out).toMatchObject({ reply: fallback(), triggered: true, swapped: true });
   });
 
   it("fails CLOSED on an empty verdict — deterministic fallback goes out (U4)", async () => {
     const checker = vi.fn().mockResolvedValue("");
     const out = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker });
-    expect(out).toEqual({ reply: fallback(), triggered: true, swapped: true });
+    expect(out).toMatchObject({ reply: fallback(), triggered: true, swapped: true });
   });
 
   it("never re-gates a deterministic fallback (checker not called — no loop)", async () => {
@@ -541,7 +541,7 @@ describe("gateQuickReplyGrounding", () => {
   it("skips the checker entirely when the reply asserts no specific fact", async () => {
     const checker = vi.fn();
     const out = await gateQuickReplyGrounding({ ...base, reply: "Hey! How's everything going?", checker });
-    expect(out).toEqual({ reply: "Hey! How's everything going?", triggered: false, swapped: false });
+    expect(out).toMatchObject({ reply: "Hey! How's everything going?", triggered: false, swapped: false });
     expect(checker).not.toHaveBeenCalled();
   });
 
@@ -555,6 +555,149 @@ describe("gateQuickReplyGrounding", () => {
     // a fabricated reply matching an example would read as SUPPORTED.
     expect(payload).not.toContain("Examples of good context-led greetings");
     expect(payload).not.toContain("Maria's coming Thursday at 3");
+  });
+
+  // ── U7: risk-tier classifier parity on the quick path (R18) ────────────────
+  // The legacy detector needed a proper name, so pronoun-led medical/age/
+  // location/identity/payment claims bypassed this gate entirely. Each plan
+  // false-negative fixture must now be a candidate (checker invoked) and, when
+  // UNSUPPORTED, swap to the deterministic fallback.
+  describe("U7 risk-tier candidates (quick-path parity)", () => {
+    it.each([
+      ["She has Parkinson's.",                     "medical_condition"],
+      ["She is allergic to penicillin.",           "allergy"],
+      ["She had a stroke last year.",              "medical_event"],
+      ["He has kidney disease.",                   "medical_condition"],
+      ["She is 82.",                               "age"],
+      ["She lives in Sacramento.",                 "location"],
+      ["He is her son.",                           "relationship_identity"],
+      ["Your mom has an appointment Tuesday at 2.", "schedule_appointment"],
+      ["She is available tomorrow afternoon.",     "caregiver_availability"],
+      ["Your invoice was $340.",                   "money_payment"],
+      ["Your refund was processed yesterday.",     "money_payment"],
+      ["I've cancelled Thursday's visit for you.", "action_authorization"],
+    ] as const)("catches %p (%s) and swaps on UNSUPPORTED", async (reply, category) => {
+      const checker = vi.fn().mockResolvedValue("UNSUPPORTED");
+      const out = await gateQuickReplyGrounding({ ...base, reply, checker });
+      expect(checker).toHaveBeenCalledTimes(1);
+      expect(out.swapped).toBe(true);
+      expect(out.reply).toBe(fallback());
+      expect(out.verdict).toBe("unsupported");
+      expect(out.claims.map((c) => c.category)).toContain(category);
+    });
+
+    it("passes the CURRENT USER MESSAGE to the checker as its own evidence block (R19)", async () => {
+      const checker = vi.fn().mockResolvedValue("SUPPORTED");
+      await gateQuickReplyGrounding({
+        ...base,
+        reply: "Got it — your mom is 82, I'll note that.",
+        currentInbound: "my mom is 82",
+        checker,
+      });
+      const payload = checker.mock.calls[0][1] as string;
+      expect(payload).toContain("CURRENT USER MESSAGE:\nmy mom is 82");
+    });
+
+    it("a fact truthfully repeated from the current inbound is SUPPORTED and ships unchanged (R19)", async () => {
+      // The verifier sees the inbound in its evidence and answers SUPPORTED —
+      // the reply passes through instead of being swapped for the fallback.
+      const checker = vi.fn(async (_sys: string, payload: string) =>
+        payload.includes("CURRENT USER MESSAGE:\nmy mom is 82") ? "SUPPORTED" : "UNSUPPORTED");
+      const out = await gateQuickReplyGrounding({
+        ...base,
+        reply: "Got it — since she's 82, I'll keep that in mind.",
+        currentInbound: "my mom is 82",
+        checker,
+      });
+      expect(out.swapped).toBe(false);
+      expect(out.verdict).toBe("supported");
+      expect(out.reply).toBe("Got it — since she's 82, I'll keep that in mind.");
+    });
+
+    it("grounded prior-context control: tool/context-backed claim stays untouched", async () => {
+      const checker = vi.fn().mockResolvedValue("SUPPORTED");
+      const out = await gateQuickReplyGrounding({ ...base, reply: "Ana is coming Friday at 10.", checker });
+      expect(out.swapped).toBe(false);
+      expect(out.verdict).toBe("supported");
+    });
+
+    it("checker timeout/garbage on a HIGH-RISK claim fails closed with an indeterminate verdict", async () => {
+      const thrown = vi.fn().mockRejectedValue(new Error("timeout"));
+      const out1 = await gateQuickReplyGrounding({ ...base, reply: "She has Parkinson's.", checker: thrown });
+      expect(out1.swapped).toBe(true);
+      expect(out1.verdict).toBe("indeterminate");
+
+      const garbage = vi.fn().mockResolvedValue("who can say");
+      const out2 = await gateQuickReplyGrounding({ ...base, reply: "She is allergic to penicillin.", checker: garbage });
+      expect(out2.swapped).toBe(true);
+      expect(out2.verdict).toBe("indeterminate");
+    });
+
+    it("returned claims serialize to categories/risk only — no draft text (R21)", async () => {
+      const checker = vi.fn().mockResolvedValue("UNSUPPORTED");
+      const out = await gateQuickReplyGrounding({ ...base, reply: "She is allergic to penicillin.", checker });
+      const json = JSON.stringify({ claims: out.claims, verdict: out.verdict });
+      expect(json).not.toContain("penicillin");
+      expect(json).toContain("allergy");
+    });
+
+    it("kill switch OFF restores the legacy detector — pronoun-led claim is no longer a candidate", async () => {
+      const env = { GROUNDING_RISK_TIERS_ENABLED: "false" };
+      const checker = vi.fn().mockResolvedValue("UNSUPPORTED");
+      // Pre-U7 false negative: legacy detector misses it, gate skips entirely.
+      const missed = await gateQuickReplyGrounding({ ...base, reply: "She has Parkinson's.", checker, env });
+      expect(missed.triggered).toBe(false);
+      expect(missed.swapped).toBe(false);
+      expect(checker).not.toHaveBeenCalled();
+      // …while a legacy-detected claim still gates exactly as before.
+      const caught = await gateQuickReplyGrounding({ ...base, reply: "Maria is coming Thursday at 3.", checker, env });
+      expect(caught.triggered).toBe(true);
+      expect(caught.swapped).toBe(true);
+    });
+  });
+});
+
+// ── U7: full-path wiring characterization (quick/full parity, R19/R21) ───────
+// The full QA path's gate lives deep inside runQaAgent (too heavy to drive in a
+// unit test), so pin its wiring at the source level: the same classifier, the
+// same typed verdict parse, the current inbound as evidence, and no raw
+// question/draft content in the gate's telemetry writes.
+describe("U7 full-path grounding gate wiring (source characterization)", () => {
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const src: string = fs.readFileSync(path.resolve(__dirname, "qaAgent.ts"), "utf8");
+
+  it("full path passes the current inbound (text) as the payload's evidence block", () => {
+    expect(src).toContain("buildHandoffGroundingPayload(systemPrompt, history, reply, toolObservations, text)");
+  });
+
+  it("both paths classify with the same risk-tier classifier and honor the kill switch", () => {
+    const hits = src.match(/classifyGroundingClaims\(reply\)/g) ?? [];
+    expect(hits.length).toBeGreaterThanOrEqual(2); // main gate + quick gate
+    const switchHits = src.match(/isRiskTierGroundingEnabled\(/g) ?? [];
+    expect(switchHits.length).toBeGreaterThanOrEqual(2);
+    // Legacy detector stays callable behind the switch on both paths.
+    expect(src).toContain(": detectConfidenceClaim(reply)");
+  });
+
+  it("full path resolves the typed verdict through the risk-tier action resolver", () => {
+    expect(src).toContain("parseGroundingVerdictTyped(verdictRaw)");
+    expect(src).toContain("resolveGroundingGateAction({");
+    expect(src).toContain("neutralCopyForClaims(groundingClaims)");
+  });
+
+  it("gate telemetry carries hashes/enums — the raw question/draft snippets are gone (R21)", () => {
+    // The pre-U7 uncertainty-log/alert writes quoted the question and reply.
+    expect(src).not.toContain("suppressedReply: reply.slice");
+    expect(src).not.toContain("question:    text.slice(0, 200),\n          reply:       reply.slice(0, 500),");
+    // Handoff/neutralize/suppressed records all reference the turn by hash.
+    const gateRegion = src.slice(src.indexOf("resolveGroundingGateAction({"));
+    expect(gateRegion).toContain("turnHash:  turnTextHash");
+    expect(gateRegion).toContain("draftHash");
+  });
+
+  it("neutralized turns bypass the self-repeat rewrite (deterministic copy stays deterministic)", () => {
+    expect(src).toContain("!handedOff && !groundingNeutralizedThisTurn && reply.trim()");
   });
 });
 

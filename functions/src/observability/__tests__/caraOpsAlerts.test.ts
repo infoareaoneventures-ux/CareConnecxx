@@ -21,6 +21,7 @@ const sendToPhoneMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../linq/client", () => ({ sendToPhone: sendToPhoneMock }));
 
 import { classifyProviderError, raiseProviderFailureAlert } from "../providerFailureAlert";
+import { createCaraOpsAlert } from "../caraOpsAlerts";
 
 describe("classifyProviderError (U5)", () => {
   it.each([
@@ -144,5 +145,109 @@ describe("raiseProviderFailureAlert (U5)", () => {
     await expect(
       raiseProviderFailureAlert({ provider: "openai", error: new Error("insufficient_quota") })
     ).resolves.toBeUndefined();
+  });
+});
+
+// ── U7 (R21): grounding/handoff alert redaction ──────────────────────────────
+// Alerts about the grounding gate describe a draft that may contain invented
+// medical/identity/payment claims — they must reference the turn by hash/enum,
+// never quote the user's question, the draft reply, or a prior reply. The sink
+// enforces this so no call site can regress it.
+describe("createCaraOpsAlert grounding/handoff redaction (U7, R21)", () => {
+  beforeEach(() => {
+    addMock.mockClear();
+    addMock.mockResolvedValue(undefined);
+  });
+
+  it("strips raw input/output keys from a handoff alert's context, keeping hash/enum keys", async () => {
+    const ok = await createCaraOpsAlert({
+      type: "human_handoff_low_confidence",
+      severity: "high",
+      phone: "+15551234567",
+      userId: "user-1",
+      source: "qaAgent",
+      message: "Evia handed a thread to a teammate: an unbacked confident claim fell below the confidence bar.",
+      context: {
+        // R21-forbidden raw content a (future) call site might try to pass:
+        question: "does my mom have Parkinson's?",
+        suppressedReply: "Yes — she has Parkinson's and her invoice was $340.",
+        priorReply: "I already told you she has Parkinson's.",
+        // allowed telemetry:
+        turnHash: "ab12cd34",
+        draftHash: "ef56ab78",
+        claimCategories: ["medical_condition", "money_payment"],
+        claimRisk: "high",
+        verdict: "unsupported",
+        action: "handoff",
+        verifierLatencyMs: 640,
+        pathway: "qa",
+      },
+    });
+
+    expect(ok).toBe(true);
+    expect(addMock).toHaveBeenCalledTimes(1);
+    const doc = addMock.mock.calls[0][0] as Record<string, unknown>;
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain("Parkinson");
+    expect(json).not.toContain("$340");
+    expect(json).not.toContain("does my mom have");
+    expect(json).not.toContain("I already told you");
+    const context = doc.context as Record<string, unknown>;
+    expect(context).toEqual({
+      turnHash: "ab12cd34",
+      draftHash: "ef56ab78",
+      claimCategories: ["medical_condition", "money_payment"],
+      claimRisk: "high",
+      verdict: "unsupported",
+      action: "handoff",
+      verifierLatencyMs: 640,
+      pathway: "qa",
+    });
+  });
+
+  it("applies the same redaction to any grounding-typed alert", async () => {
+    await createCaraOpsAlert({
+      type: "grounding_neutralized_high_risk",
+      context: { draftPreview: "She is allergic to penicillin.", turnHash: "0011aabb", action: "neutralize" },
+    });
+    const doc = addMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(JSON.stringify(doc)).not.toContain("penicillin");
+    expect(doc.context).toEqual({ turnHash: "0011aabb", action: "neutralize" });
+  });
+
+  it("drops an allowed key whose value is suspiciously long (could smuggle raw text)", async () => {
+    await createCaraOpsAlert({
+      type: "human_handoff_low_confidence",
+      context: {
+        turnHash: "deadbeef",
+        verdict: "the draft says: 'she has Parkinson's and lives in Sacramento with her daughter Maria'…",
+      },
+    });
+    const doc = addMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(JSON.stringify(doc)).not.toContain("Parkinson");
+    expect(doc.context).toEqual({ turnHash: "deadbeef" });
+  });
+
+  it("omits context entirely when nothing survives the allowlist", async () => {
+    await createCaraOpsAlert({
+      type: "human_handoff_low_confidence",
+      context: { question: "raw question", suppressedReply: "raw reply" },
+    });
+    const doc = addMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(doc.context).toBeUndefined();
+    expect(JSON.stringify(doc)).not.toContain("raw question");
+  });
+
+  it("leaves non-grounding alert types untouched (unrelated alerts keep free-form context)", async () => {
+    await createCaraOpsAlert({
+      type: "provider_failure",
+      context: { providerErrorClass: "billing", provider: "openai", detail: "insufficient_quota on account" },
+    });
+    const doc = addMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(doc.context).toEqual({
+      providerErrorClass: "billing",
+      provider: "openai",
+      detail: "insufficient_quota on account",
+    });
   });
 });

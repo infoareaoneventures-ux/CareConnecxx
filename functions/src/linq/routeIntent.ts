@@ -37,8 +37,6 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { handleJobResponse } from "../triggers/jobNotifications";
 import {
-  addUserMessageToZep,
-  addAssistantMessageToZep,
   searchZepMemory,
   getZepUserId,
 } from "../memory/zepClient";
@@ -226,6 +224,13 @@ export interface IntentRouteContext {
   text: string;
   norm: string;
   session: AgentSession;
+  /**
+   * The Linq webhook wrapper's deduplicated event key (event_id / message_id /
+   * synthetic hash) — the stable source-turn key for completed-turn memory
+   * persistence (memory-grounding plan U3, R9). Optional: agent/test callers
+   * without one get no idempotency promise (typed `missing_source_key`).
+   */
+  eventId?: string;
 }
 
 async function handleAddFamilyMemberIntent(
@@ -1798,16 +1803,15 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     // ── Default: QA agent ─────────────────────────────────────────────────────
+    // Completed-session turn memory — Zep transcript, client learned-fact
+    // extraction, and durable history sync — is owned by ONE boundary:
+    // persistCompletedTurn → memory_operations → memoryOperationWorker
+    // (memory-grounding plan 2026-07-17-002 U3, R8-R10). The old direct
+    // addUserMessageToZep / addAssistantMessageToZep / extractAndStoreFacts
+    // tail that lived here is superseded — do NOT re-add per-callsite writes.
+    // Pre-completion onboarding Zep writes (webhooks.ts) and structured
+    // business-event writes are separate paths and remain in place (R10).
     const zepThreadId = (session as any).zepThreadId as string | undefined;
-
-    if (zepThreadId) {
-      addUserMessageToZep({
-        threadId: zepThreadId,
-        content:  text,
-        userName: (session as any).firstName ?? "Family",
-        sentAt:   new Date(),
-      }).catch(console.error);
-    }
 
     // ── Trivial quick-reply bypass — short generic greetings/thanks ─────────
     // For QUESTION-intent messages with no entity content, skip the full
@@ -1831,9 +1835,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         caregiverId: session.caregiverId,
         session:     session as unknown as Record<string, unknown>,
       });
-      if (zepThreadId && quickReply) {
-        addAssistantMessageToZep({ threadId: zepThreadId, content: quickReply }).catch(console.error);
-      }
+      await persistDefaultQaTurn(ctx, quickReply ?? "");
       return;
     }
 
@@ -1850,21 +1852,53 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       intent,
     });
 
-    if (zepThreadId && qaReply) {
-      addAssistantMessageToZep({
-        threadId: zepThreadId,
-        content:  qaReply,
-      }).catch(console.error);
-    }
+    await persistDefaultQaTurn(ctx, qaReply ?? "");
+}
 
-    // Extract persistent facts from the user's message and store them (fire-and-forget).
-    // Only for client messages — caregiver messages don't carry care-situation facts.
-    if (session.userType !== "caregiver" && session.userId) {
-      const { extractAndStoreFacts } = await import("../memory/learnedFacts");
-      extractAndStoreFacts(
-        session.userId as string,
-        text,
-        (session as any).zepThreadId ? getZepUserId(phone) : undefined
-      ).catch(() => {});
+// ── Completed-turn memory persistence (memory-grounding plan U3, R8/R9) ──────
+// One call per completed default QA/quick turn. qaAgent already wrote the
+// durable history pair (saveConversationTurn) and delivered the reply;
+// persistCompletedTurn ADOPTS those rows, creates the reference-only turn_sync
+// operation, and the one-minute memoryOperationWorker dispatches the Zep
+// transcript write and (client-only) learned-fact extraction with retries.
+// A persistence failure is a typed outcome + aggregate log — it must never
+// throw into a turn whose tools and reply already committed (R8).
+async function persistDefaultQaTurn(ctx: IntentRouteContext, assistantText: string): Promise<void> {
+  // Empty reply = the agent held/skipped the turn (DND, handoff hold, empty
+  // guard) — not a completed turn; the agent layer's judgment is authoritative.
+  if (!assistantText?.trim()) return;
+  const { phone, text, session } = ctx;
+  try {
+    const { persistCompletedTurn } = await import("../memory/conversationMemory");
+    const outcome = await persistCompletedTurn({
+      channel:       "linq",
+      sourceKey:     ctx.eventId ?? "",
+      phone,
+      userId:        session.userId ?? "",
+      userText:      text,
+      assistantText,
+      // R8: family-fact extraction stays CLIENT-only — the exact eligibility
+      // the removed direct tail used (non-caregiver role + linked userId).
+      extractFacts:  session.userType !== "caregiver" && Boolean(session.userId),
+      adoptExistingRows: true,
+    });
+    if (!outcome.ok) {
+      // R21: aggregate/enum-only log — channel + error class, no content/phone.
+      console.warn(JSON.stringify({
+        memory_turn_persistence_skipped: true,
+        channel:     "linq",
+        error_class: outcome.errorClass,
+        timestamp:   new Date().toISOString(),
+      }));
     }
+  } catch (err) {
+    // persistCompletedTurn is contractually non-throwing; belt-and-suspenders
+    // so a memory failure can never fail a turn that already replied (R8).
+    console.error(JSON.stringify({
+      memory_turn_persistence_skipped: true,
+      channel:     "linq",
+      error_class: err instanceof Error ? err.constructor.name : typeof err,
+      timestamp:   new Date().toISOString(),
+    }));
+  }
 }

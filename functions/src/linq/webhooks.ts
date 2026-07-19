@@ -837,11 +837,15 @@ export async function runSerializedByPhone(phone: string, fn: () => Promise<void
   }
 }
 
-export async function handleInbound(event: unknown): Promise<void> {
+// sourceEventId: the wrapper's deduplicated Linq event key (event_id /
+// message_id / synthetic hash). Threaded to routeIntentAndRespond as the
+// stable source-turn key for completed-turn memory persistence (memory
+// grounding plan U3, R9). Optional so agent/test callers stay compatible.
+export async function handleInbound(event: unknown, sourceEventId?: string): Promise<void> {
   const phone = (event as any)?.data?.sender_handle?.handle as string | undefined;
   // No phone → nothing to serialize on; inner will drop it.
-  if (!phone) return handleInboundInner(event);
-  return runSerializedByPhone(phone, () => handleInboundInner(event));
+  if (!phone) return handleInboundInner(event, sourceEventId);
+  return runSerializedByPhone(phone, () => handleInboundInner(event, sourceEventId));
 }
 
 // One LangSmith trace per inbound message ("turn"). Every nested LLM call
@@ -851,7 +855,7 @@ export async function handleInbound(event: unknown): Promise<void> {
 // strips the raw Linq payload down to a readable summary for the trace input.
 // No-op overhead when LANGSMITH_TRACING is unset.
 const handleInboundInner = traceable(
-  async function handleInboundTurn(event: unknown): Promise<void> {
+  async function handleInboundTurn(event: unknown, sourceEventId?: string): Promise<void> {
   const ev      = event as any;
   const phone   = ev.data?.sender_handle?.handle as string | undefined;
   const chatId  = ev.data?.chat?.id as string | undefined;
@@ -2742,7 +2746,7 @@ const handleInboundInner = traceable(
   // writes agent_error_log + admin_alerts and sends the deflection message;
   // the finally stops typing.
   try {
-    await routeIntentAndRespond({ phone, chatId, text, norm, session });
+    await routeIntentAndRespond({ phone, chatId, text, norm, session, eventId: sourceEventId });
   } catch (err) {
     console.error("handleInbound error:", err);
     await stopTyping(chatId).catch(() => {});
@@ -3151,7 +3155,7 @@ export const linqWebhook = functions
         return;
       }
       try {
-        await handleInbound(event);
+        await handleInbound(event, eventId);
         if (eventId) await settleWebhookEvent(LINQ_EVENTS_COLLECTION, eventId, "processed");
         sendOk();
       } catch (err) {

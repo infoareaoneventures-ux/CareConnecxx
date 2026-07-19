@@ -348,6 +348,43 @@ export async function handleWebChatTurn(args: {
       await mirrorToWebThread({ userId: uid, direction: "outbound", text: reply, source: "cara_web" });
     }
 
+    // ── Completed-turn memory parity (memory-grounding plan U3, R8/R9) ──────
+    // Web turns now share the SMS default tail's ONE persistence boundary:
+    // persistCompletedTurn ADOPTS the durable history pair qaAgent already
+    // wrote (saveConversationTurn), creates the reference-only turn_sync
+    // operation keyed on the validated clientMessageId, and the worker
+    // dispatches the Zep transcript + client-only learned-fact extraction.
+    // Typed non-throwing outcome: a persistence failure must never fail a
+    // reply that already went out, and never re-drives committed tools (R8).
+    if (reply?.trim()) {
+      const { persistCompletedTurn } = await import("../memory/conversationMemory");
+      const persisted = await persistCompletedTurn({
+        channel:       "web",
+        // claimKey exists only for a validated clientMessageId — reuse that
+        // judgment; an invalid/missing id gets no idempotency promise.
+        sourceKey:     claimKey ? clientMessageId! : "",
+        phone,
+        userId:        (session.userId as string | undefined) ?? uid,
+        userText:      message,
+        assistantText: reply,
+        // R8 parity with the SMS tail: family-fact extraction is CLIENT-only.
+        extractFacts:  session.userType !== "caregiver",
+        adoptExistingRows: true,
+      }).catch((err: unknown) => ({
+        ok: false as const,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+      }));
+      if (!persisted.ok) {
+        // R21: aggregate/enum-only log — channel + error class, nothing else.
+        console.warn(JSON.stringify({
+          memory_turn_persistence_skipped: true,
+          channel:     "web",
+          error_class: persisted.errorClass,
+          timestamp:   new Date().toISOString(),
+        }));
+      }
+    }
+
     const MATCH_TOOLS  = new Set(["find_replacement_caregivers", "request_booking"]);
     const showMatches  = toolsCalled.some((t) => MATCH_TOOLS.has(t));
 

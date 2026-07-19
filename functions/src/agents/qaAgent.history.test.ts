@@ -336,3 +336,34 @@ describe("skip-flag call sites — source-level guarantees", () => {
     expect(qaSrc.slice(idx, idx + 200)).not.toContain("skipHistoryRecord");
   });
 });
+
+// ── U3b (memory-grounding plan, R8/R9) — durable turn-pair contract ──────────
+// The shared completed-turn boundary (conversationMemory.persistCompletedTurn,
+// called by routeIntent's default tail and webChat) ADOPTS the history pair
+// qaAgent writes, instead of writing a second pair. These pins keep that
+// dependency honest: qaAgent must keep writing the pair, and must never call
+// the boundary itself — the ingress callers (SMS route / web callable) own it,
+// so web and SMS turns get EQUIVALENT persistence through one seam.
+describe("U3b — durable turn pair contract (adoption dependency)", () => {
+  const qaSrc = fs.readFileSync(path.resolve(__dirname, "qaAgent.ts"), "utf8");
+
+  it("qaAgent still writes the durable pair on the resume, main, and quick paths", () => {
+    // Exactly the three awaited saveConversationTurn call sites the adoption
+    // scan depends on (checkpoint resume, main reply, quick reply).
+    expect([...qaSrc.matchAll(/await saveConversationTurn\(/g)]).toHaveLength(3);
+  });
+
+  it("saveConversationTurn writes plain rows (no source tag) so they stay adoptable", () => {
+    const body = qaSrc.slice(
+      qaSrc.indexOf("async function saveConversationTurn"),
+      qaSrc.indexOf("// ── System prompt builders"),
+    );
+    expect(body).toContain('{ role: "user",      content: userText,       timestamp: now }');
+    expect(body).toContain('{ role: "assistant", content: assistantReply, timestamp: now + 1 }');
+    expect(body).not.toContain("source:");
+  });
+
+  it("qaAgent never calls the completed-turn boundary itself — ingress callers own it", () => {
+    expect(qaSrc).not.toContain("persistCompletedTurn");
+  });
+});

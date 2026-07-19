@@ -176,7 +176,29 @@ export interface CompletedTurnInput {
    * family-fact extraction (R8). The caller owns the role judgment.
    */
   extractFacts: boolean;
+  /**
+   * true when the agent layer already persisted this turn's durable
+   * user/assistant history pair (qaAgent.saveConversationTurn does this for
+   * BOTH the full and quick paths). persistCompletedTurn then ADOPTS those
+   * rows — tags them with the source-turn key + pending sync status and
+   * references them from the operation — instead of writing a second pair.
+   * The history reader has no content dedupe, so a second pair would duplicate
+   * every turn in the model prompt. If the pair cannot be found (the agent
+   * held the turn, skipped an empty turn, or its save failed), the turn is NOT
+   * persisted (`rows_not_found`): the agent layer's judgment about what
+   * constitutes a completed turn stays authoritative.
+   */
+  adoptExistingRows?: boolean;
 }
+
+/** How many recent rows the adoption scan reads (a turn writes 2; headroom for
+ *  interleaved transport-recorded sends). */
+export const ADOPTED_ROW_SCAN_LIMIT = 20;
+
+/** Rows older than this are never adopted — the turn being persisted JUST
+ *  happened, so a stale identical pair (e.g. a repeated greeting) must not be
+ *  retro-tagged with this turn's key. */
+export const ADOPTED_ROW_MAX_AGE_MS = 30 * 60 * 1000;
 
 export type TurnPersistenceOutcome =
   | { ok: true; operationId: string; sourceTurnKeyHash: string; deduplicated: boolean }
@@ -207,21 +229,7 @@ export async function persistCompletedTurn(
   const sourceTurnKeyHash = hashSourceTurnKey(input.channel, sourceKey);
   const operationId = turnSyncOperationId(sourceTurnKeyHash);
   try {
-    const ts = input.turnTimestampMs ?? Date.now();
     const messagesCol = db.collection("agent_conversations").doc(input.phone).collection("messages");
-    const userDocId = turnMessageDocId(sourceTurnKeyHash, "user");
-    const assistantDocId = turnMessageDocId(sourceTurnKeyHash, "assistant");
-
-    const { doc: operationDoc } = buildTurnSyncOperationDoc({
-      channel: input.channel,
-      sourceKey,
-      phone: input.phone,
-      userId: input.userId,
-      turnTimestampMs: ts,
-      extractFacts: input.extractFacts,
-      userMessagePath: `agent_conversations/${input.phone}/messages/${userDocId}`,
-      assistantMessagePath: `agent_conversations/${input.phone}/messages/${assistantDocId}`,
-    });
 
     const rowShared = {
       sourceTurnKeyHash,
@@ -230,17 +238,49 @@ export async function persistCompletedTurn(
       memorySyncStatus: "pending",
     };
 
+    let ts = input.turnTimestampMs ?? Date.now();
+    let userMessagePath: string;
+    let assistantMessagePath: string;
     const batch = db.batch();
+
+    if (input.adoptExistingRows) {
+      const adopted = await findAdoptableTurnRows(messagesCol, input, sourceTurnKeyHash);
+      if (!adopted) return { ok: false, errorClass: "rows_not_found" };
+      // The op's sourceTurnTimestamp is the ORIGINAL row timestamp — the worker
+      // uses it for per-user ordering and as the Zep createdAt (KTD5/R9).
+      ts = adopted.turnTimestampMs;
+      userMessagePath = adopted.userRef.path;
+      assistantMessagePath = adopted.assistantRef.path;
+      batch.update(adopted.userRef, rowShared);
+      batch.update(adopted.assistantRef, rowShared);
+    } else {
+      const userDocId = turnMessageDocId(sourceTurnKeyHash, "user");
+      const assistantDocId = turnMessageDocId(sourceTurnKeyHash, "assistant");
+      userMessagePath = `agent_conversations/${input.phone}/messages/${userDocId}`;
+      assistantMessagePath = `agent_conversations/${input.phone}/messages/${assistantDocId}`;
+      batch.set(messagesCol.doc(userDocId), {
+        role: "user", content: input.userText, timestamp: ts, ...rowShared,
+      });
+      batch.set(messagesCol.doc(assistantDocId), {
+        role: "assistant", content: input.assistantText, timestamp: ts + 1, ...rowShared,
+      });
+    }
+
+    const { doc: operationDoc } = buildTurnSyncOperationDoc({
+      channel: input.channel,
+      sourceKey,
+      phone: input.phone,
+      userId: input.userId,
+      turnTimestampMs: ts,
+      extractFacts: input.extractFacts,
+      userMessagePath,
+      assistantMessagePath,
+    });
+
     // create() (not set) on the deterministic operation ID: a duplicate turn
     // fails the WHOLE batch atomically, so a completed operation can never be
     // reset to pending and rows never re-acquire memorySyncStatus.
     batch.create(db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId), operationDoc);
-    batch.set(messagesCol.doc(userDocId), {
-      role: "user", content: input.userText, timestamp: ts, ...rowShared,
-    });
-    batch.set(messagesCol.doc(assistantDocId), {
-      role: "assistant", content: input.assistantText, timestamp: ts + 1, ...rowShared,
-    });
     await batch.commit();
     return { ok: true, operationId, sourceTurnKeyHash, deduplicated: false };
   } catch (err) {
@@ -257,6 +297,64 @@ export async function persistCompletedTurn(
     }));
     return { ok: false, errorClass: err instanceof Error ? err.constructor.name : typeof err };
   }
+}
+
+/**
+ * Locate the just-written durable turn pair (qaAgent.saveConversationTurn's
+ * auto-ID rows) so it can be adopted instead of duplicated. Newest-first scan;
+ * a candidate must:
+ *  • not already belong to a DIFFERENT turn (`sourceTurnKeyHash` unset, or
+ *    already this turn's — the retry case),
+ *  • not be a transport-recorded row (`source` tag),
+ *  • match this turn's exact content for its role,
+ *  • be recent (the turn just happened — see ADOPTED_ROW_MAX_AGE_MS).
+ * Newest-first matching makes repeated identical texts safe: the first match
+ * IS this turn's row; older identical rows were either adopted already or are
+ * outside the freshness bound.
+ */
+async function findAdoptableTurnRows(
+  messagesCol: admin.firestore.CollectionReference,
+  input: CompletedTurnInput,
+  sourceTurnKeyHash: string,
+): Promise<{
+  userRef: admin.firestore.DocumentReference;
+  assistantRef: admin.firestore.DocumentReference;
+  turnTimestampMs: number;
+} | null> {
+  const snap = await messagesCol
+    .orderBy("timestamp", "desc")
+    .limit(ADOPTED_ROW_SCAN_LIMIT)
+    .get();
+
+  const nowMs = Date.now();
+  let userDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let assistantDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+
+  for (const d of snap.docs) {
+    const row = d.data() as Record<string, unknown>;
+    const rowTs = row.timestamp;
+    if (typeof rowTs !== "number") continue;                    // summary/odd rows — never candidates
+    if (rowTs < nowMs - ADOPTED_ROW_MAX_AGE_MS) break;          // newest-first: everything after is older
+    // Rows owned by a DIFFERENT turn are never candidates; rows already tagged
+    // with THIS turn's hash stay adoptable so a retry reaches the operation's
+    // atomic ALREADY_EXISTS dedupe instead of a false rows_not_found.
+    if (row.sourceTurnKeyHash && row.sourceTurnKeyHash !== sourceTurnKeyHash) continue;
+    if (typeof row.source === "string") continue; // transport-recorded outbound, not the turn pair
+    if (!assistantDoc && row.role === "assistant" && row.content === input.assistantText) {
+      assistantDoc = d;
+    } else if (!userDoc && row.role === "user" && row.content === input.userText) {
+      userDoc = d;
+    }
+    if (userDoc && assistantDoc) break;
+  }
+
+  if (!userDoc || !assistantDoc) return null;
+  const userTs = (userDoc.data() as Record<string, unknown>).timestamp;
+  return {
+    userRef: userDoc.ref,
+    assistantRef: assistantDoc.ref,
+    turnTimestampMs: typeof userTs === "number" ? userTs : input.turnTimestampMs ?? Date.now(),
+  };
 }
 
 function isAlreadyExistsError(err: unknown): boolean {

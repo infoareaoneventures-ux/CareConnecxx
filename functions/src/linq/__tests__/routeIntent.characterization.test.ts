@@ -17,6 +17,8 @@
 // real MCP server (heavy) is never loaded.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
@@ -136,9 +138,29 @@ vi.mock("../../utils/openaiClient", () => ({
   quickComplete: (...a: any[]) => (quickComplete as Function).apply(null, a),
 }));
 
-// Remaining static imports — stubbed; none of these branches run in these tests.
+// qaAgent — controllable so the U3b default-tail tests can drive full/quick
+// paths; defaults (empty reply, non-trivial) keep the older tests' behavior.
+const runQaAgent = vi.fn(async (..._a: any[]): Promise<string> => "");
+const runQuickReply = vi.fn(async (..._a: any[]): Promise<string> => "");
+const isTrivialQuickReply = vi.fn((..._a: any[]) => false);
 vi.mock("../../agents/qaAgent", () => ({
-  runQaAgent: vi.fn(async () => {}), runQuickReply: vi.fn(async () => {}), isTrivialQuickReply: () => false,
+  runQaAgent: (...a: any[]) => (runQaAgent as Function).apply(null, a),
+  runQuickReply: (...a: any[]) => (runQuickReply as Function).apply(null, a),
+  isTrivialQuickReply: (...a: any[]) => (isTrivialQuickReply as Function).apply(null, a),
+}));
+
+// U3b — the ONE completed-turn memory boundary (dynamically imported by the
+// default QA/quick tail) plus the legacy learnedFacts module (only the
+// FACT_CORRECTION branch may still import it — never the default tail).
+const persistCompletedTurn = vi.fn(async (..._a: any[]) =>
+  ({ ok: true as const, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false }));
+vi.mock("../../memory/conversationMemory", () => ({
+  persistCompletedTurn: (...a: any[]) => (persistCompletedTurn as Function).apply(null, a),
+}));
+const extractAndStoreFacts = vi.fn(async (..._a: any[]) => {});
+vi.mock("../../memory/learnedFacts", () => ({
+  extractAndStoreFacts: (...a: any[]) => (extractAndStoreFacts as Function).apply(null, a),
+  detectAndApplyCorrection: vi.fn(async () => false),
 }));
 vi.mock("../../agents/taskApprovalHandler", () => ({
   handleTaskApproval: vi.fn(async () => {}), finalizeTaskApproval: vi.fn(async () => {}),
@@ -208,6 +230,10 @@ beforeEach(() => {
   sendMessage.mockResolvedValue({ message_id: "m1" });
   executeBookings.mockReset().mockResolvedValue(undefined);
   runMatchingForClient.mockReset().mockResolvedValue(undefined);
+  runQaAgent.mockResolvedValue("");
+  runQuickReply.mockResolvedValue("");
+  isTrivialQuickReply.mockReturnValue(false);
+  persistCompletedTurn.mockResolvedValue({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false });
 });
 
 function seedAwaitingBookingTask() {
@@ -412,5 +438,221 @@ describe("characterization — executeBookings failure fallback (U4)", () => {
       resolved: false,
     });
     expect(fallbackAlert.error).toContain("stripe timeout");
+  });
+});
+
+// ── U3b (memory-grounding plan 2026-07-17-002, R8-R10): the default QA/quick
+// tail persists completed turns through ONE boundary — persistCompletedTurn.
+// The old direct addUserMessageToZep / addAssistantMessageToZep /
+// extractAndStoreFacts tail is gone; behavior + source-scan tests below are
+// the plan's "one owner" exit criterion.
+describe("U3b — default QA/quick tail persists through persistCompletedTurn", () => {
+  it("full agent path: ONE persistCompletedTurn call carrying the Linq eventId, client extraction ON", async () => {
+    seed();
+    runQaAgent.mockResolvedValue("Here's the answer.");
+
+    await routeIntentAndRespond({ ...ctx("how is mom doing today"), eventId: "evt-123" });
+
+    expect(runQaAgent).toHaveBeenCalledOnce();
+    expect(persistCompletedTurn).toHaveBeenCalledOnce();
+    expect(persistCompletedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      channel:       "linq",
+      sourceKey:     "evt-123",
+      phone:         PHONE,
+      userId:        CLIENT_ID,
+      userText:      "how is mom doing today",
+      assistantText: "Here's the answer.",
+      extractFacts:  true,
+      adoptExistingRows: true,
+    }));
+    // The superseded direct tail is really gone.
+    expect(extractAndStoreFacts).not.toHaveBeenCalled();
+  });
+
+  it("quick-reply path: same boundary, same key — and the full agent never runs", async () => {
+    seed();
+    isTrivialQuickReply.mockReturnValue(true);
+    runQuickReply.mockResolvedValue("Hey! All good here.");
+
+    await routeIntentAndRespond({ ...ctx("thanks"), eventId: "evt-9" });
+
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(persistCompletedTurn).toHaveBeenCalledOnce();
+    expect(persistCompletedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "linq", sourceKey: "evt-9",
+      userText: "thanks", assistantText: "Hey! All good here.",
+      extractFacts: true, adoptExistingRows: true,
+    }));
+  });
+
+  it("caregiver turn: transcript persistence still happens but family-fact extraction is OFF (R8)", async () => {
+    seed({ userType: "caregiver", caregiverId: "cg-1" });
+    runQaAgent.mockResolvedValue("Your next shift is Friday.");
+
+    await routeIntentAndRespond({ ...ctx("when is my next shift"), eventId: "evt-cg" });
+
+    expect(persistCompletedTurn).toHaveBeenCalledOnce();
+    expect(persistCompletedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKey: "evt-cg", extractFacts: false,
+    }));
+  });
+
+  it("a persistence failure is swallowed as a typed outcome — the turn does not throw or re-drive (R8)", async () => {
+    seed();
+    runQaAgent.mockResolvedValue("Answer already delivered.");
+    persistCompletedTurn.mockResolvedValue({ ok: false, errorClass: "FirebaseError" });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(routeIntentAndRespond({ ...ctx("how is mom"), eventId: "evt-fail" }))
+        .resolves.toBeUndefined();
+      expect(runQaAgent).toHaveBeenCalledOnce(); // never re-driven
+      // R21: aggregate log only — error class + channel, no content, no phone.
+      const serialized = JSON.stringify(warnSpy.mock.calls);
+      expect(serialized).toContain("memory_turn_persistence_skipped");
+      expect(serialized).not.toContain(PHONE);
+      expect(serialized).not.toContain("how is mom");
+      expect(serialized).not.toContain("Answer already delivered.");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("even a throwing persistence boundary cannot fail the turn (belt-and-suspenders)", async () => {
+    seed();
+    runQaAgent.mockResolvedValue("Answer.");
+    persistCompletedTurn.mockRejectedValue(new Error("unexpected"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(routeIntentAndRespond({ ...ctx("hi there mom question"), eventId: "e" }))
+        .resolves.toBeUndefined();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("an empty agent reply (held/DND/skipped turn) is NOT persisted — the agent layer's judgment is authoritative", async () => {
+    seed();
+    runQaAgent.mockResolvedValue("");
+
+    await routeIntentAndRespond({ ...ctx("how is mom"), eventId: "evt-empty" });
+
+    expect(persistCompletedTurn).not.toHaveBeenCalled();
+  });
+
+  it("a missing eventId still persists but with an empty source key (typed missing_source_key downstream, no idempotency promise)", async () => {
+    seed();
+    runQaAgent.mockResolvedValue("Answer.");
+    persistCompletedTurn.mockResolvedValue({ ok: false, errorClass: "missing_source_key" });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await routeIntentAndRespond(ctx("how is mom"));
+      expect(persistCompletedTurn).toHaveBeenCalledWith(expect.objectContaining({ sourceKey: "" }));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+// ── U3b source scan — the plan's "one owner" exit criterion ──────────────────
+// Counts every PRODUCTION call site of the direct memory writers across
+// functions/src. After U3b the inventory is closed:
+//   • webhooks.ts keeps exactly ONE addUserMessageToZep — the pre-completion
+//     ONBOARDING write (R10: preserved).
+//   • memoryOperationWorker.ts is the only caller of the strict Zep adapters
+//     and of extractAndStoreFacts for completed turns.
+//   • caraAgent.ts keeps its ONE legacy memory-agent extractAndStoreFacts
+//     (an agent-payload channel, not the default QA/quick tail — out of U3b
+//     scope, documented here so any new call site fails this test).
+//   • routeIntent.ts has ZERO direct writers — the default tail is owned by
+//     persistCompletedTurn.
+describe("U3b source scan — one owner for completed-turn memory", () => {
+  const SRC_ROOT = path.resolve(__dirname, "../..");
+
+  // Definition modules (the functions are declared/wrapped here, so the name
+  // followed by "(" appears without being a production call site).
+  const DEFINITION_FILES = new Set(["memory/zepClient.ts", "memory/learnedFacts.ts"]);
+
+  const PATTERNS = {
+    userZep:      /\baddUserMessageToZep(?:Strict|BestEffort)?\s*\(/g,
+    assistantZep: /\baddAssistantMessageToZep(?:Strict|BestEffort)?\s*\(/g,
+    extractFacts: /\bextractAndStoreFacts\s*\(/g,
+  } as const;
+
+  function listProductionSources(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+        out.push(...listProductionSources(full));
+      } else if (
+        entry.name.endsWith(".ts") &&
+        !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".d.ts")
+      ) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  function inventory(): Record<string, { userZep: number; assistantZep: number; extractFacts: number }> {
+    const counts: Record<string, { userZep: number; assistantZep: number; extractFacts: number }> = {};
+    for (const file of listProductionSources(SRC_ROOT)) {
+      const rel = path.relative(SRC_ROOT, file).replace(/\\/g, "/");
+      if (DEFINITION_FILES.has(rel)) continue;
+      const src = fs.readFileSync(file, "utf8");
+      const row = {
+        userZep:      [...src.matchAll(PATTERNS.userZep)].length,
+        assistantZep: [...src.matchAll(PATTERNS.assistantZep)].length,
+        extractFacts: [...src.matchAll(PATTERNS.extractFacts)].length,
+      };
+      if (row.userZep + row.assistantZep + row.extractFacts > 0) counts[rel] = row;
+    }
+    return counts;
+  }
+
+  it("the production call-site inventory is exactly the allowed set — routeIntent's tail is gone, onboarding remains", () => {
+    expect(inventory()).toEqual({
+      // Pre-completion onboarding Zep write (R10: preserved).
+      "linq/webhooks.ts": { userZep: 1, assistantZep: 0, extractFacts: 0 },
+      // The retry worker — the ONE dispatcher for completed-turn memory.
+      "scheduled/memoryOperationWorker.ts": { userZep: 1, assistantZep: 1, extractFacts: 1 },
+      // Legacy agent-payload memory channel (pre-existing, not the default tail).
+      "agents/caraAgent.ts": { userZep: 0, assistantZep: 0, extractFacts: 1 },
+    });
+  });
+
+  it("routeIntent.ts no longer imports or calls the direct memory writers", () => {
+    const src = fs.readFileSync(path.join(SRC_ROOT, "linq/routeIntent.ts"), "utf8");
+    // Call sites (name followed by "(") — a comment naming the removed tail is fine.
+    expect([...src.matchAll(PATTERNS.userZep)]).toHaveLength(0);
+    expect([...src.matchAll(PATTERNS.assistantZep)]).toHaveLength(0);
+    expect([...src.matchAll(PATTERNS.extractFacts)]).toHaveLength(0);
+    // No import bindings for the writers either.
+    expect(src).not.toMatch(/import[^;]*\baddUserMessageToZep\b/);
+    expect(src).not.toMatch(/import[^;]*\baddAssistantMessageToZep\b/);
+    expect(src).not.toMatch(/import\s*\{[^}]*\bextractAndStoreFacts\b/);
+    // …because the shared boundary owns the tail now.
+    expect(src).toContain("persistCompletedTurn");
+  });
+
+  it("webhooks.ts keeps the onboarding Zep write on the pre-completion path only", () => {
+    const src = fs.readFileSync(path.join(SRC_ROOT, "linq/webhooks.ts"), "utf8");
+    // The single call site sits under the `step && step !== "complete"` branch
+    // and uses the onboarding thread variable — pin its shape.
+    expect(src).toContain("onboardingZepThreadId");
+    expect([...src.matchAll(/\baddUserMessageToZep\s*\(/g)]).toHaveLength(1);
+  });
+
+  it("web and SMS callers both route completed turns through persistCompletedTurn", () => {
+    const webChatSrc = fs.readFileSync(path.join(SRC_ROOT, "linq/webChat.ts"), "utf8");
+    const routeSrc = fs.readFileSync(path.join(SRC_ROOT, "linq/routeIntent.ts"), "utf8");
+    expect(webChatSrc).toContain("persistCompletedTurn");
+    expect(webChatSrc).toContain('channel:       "web"');
+    expect(routeSrc).toContain('channel:       "linq"');
+    // Both adopt qaAgent's durable pair — rows are written exactly once.
+    expect([...webChatSrc.matchAll(/adoptExistingRows: true/g)]).toHaveLength(1);
+    expect([...routeSrc.matchAll(/adoptExistingRows: true/g)]).toHaveLength(1);
   });
 });

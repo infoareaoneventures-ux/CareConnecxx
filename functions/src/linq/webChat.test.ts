@@ -71,6 +71,9 @@ const hoisted = vi.hoisted(() => {
     // U3 turn-idempotency ledger (defaults: fresh claim, settle noop).
     claimLedgerMock: vi.fn(async (..._args: any[]) => "claimed" as "claimed" | "duplicate"),
     settleLedgerMock: vi.fn(async (..._args: any[]) => {}),
+    // U3b completed-turn memory boundary (default: success outcome).
+    persistTurnMock: vi.fn(async (..._args: any[]): Promise<any> =>
+      ({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false })),
     reset() {
       docs.clear();
       queryItems.clear();
@@ -108,6 +111,13 @@ vi.mock("../utils/webhookLedger", () => ({
 vi.mock("./threadMirror", () => ({
   mirrorToWebThread: hoisted.mirrorMock,
 }));
+
+// U3b: stub ONLY persistCompletedTurn — markSessionActivity stays real so the
+// U2 activity-write tests keep exercising the shipping write path.
+vi.mock("../memory/conversationMemory", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../memory/conversationMemory")>();
+  return { ...actual, persistCompletedTurn: hoisted.persistTurnMock };
+});
 
 vi.mock("../agents/qaAgent", () => ({
   runQaAgent: hoisted.qaMock,
@@ -152,6 +162,7 @@ describe("handleWebChatTurn", () => {
     hoisted.activeFlowMock.mockReturnValue(false);
     hoisted.describeFlowMock.mockReturnValue(null);
     hoisted.claimLedgerMock.mockResolvedValue("claimed");
+    hoisted.persistTurnMock.mockResolvedValue({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false });
   });
 
   it("happy path with a Linq chat: mirrors inbound once, runs agent without skipSend, never mirrors the reply manually", async () => {
@@ -612,6 +623,131 @@ describe("handleWebChatTurn", () => {
         .rejects.toBeInstanceOf(AgentUnavailableError);
 
       expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_r-1`, "failed");
+    });
+  });
+
+  // ── U3b memory-grounding (R8/R9): completed-turn persistence parity ────────
+  describe("U3b completed-turn memory (persistCompletedTurn)", () => {
+    it("successful agent turn persists ONE completed turn: channel web, validated clientMessageId as source key, extraction ON for clients", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "mom prefers mornings", clientMessageId: "c-77" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.persistTurnMock).toHaveBeenCalledTimes(1);
+      expect(hoisted.persistTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel:       "web",
+        sourceKey:     "c-77",
+        phone:         PHONE,
+        userId:        UID,
+        userText:      "mom prefers mornings",
+        assistantText: "Here's what I found!",
+        extractFacts:  true,
+        adoptExistingRows: true,
+      }));
+      // Persistence runs AFTER the agent produced the reply.
+      expect(hoisted.qaMock.mock.invocationCallOrder[0])
+        .toBeLessThan(hoisted.persistTurnMock.mock.invocationCallOrder[0]);
+    });
+
+    it("caregiver session: turn persists but family-fact extraction is OFF (R8)", async () => {
+      seedUser();
+      seedSession({ userType: "caregiver", caregiverId: "cg-9" });
+
+      const res = await handleWebChatTurn({ uid: UID, message: "any shifts?", clientMessageId: "c-cg" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.persistTurnMock).toHaveBeenCalledWith(expect.objectContaining({
+        sourceKey: "c-cg", extractFacts: false,
+      }));
+    });
+
+    it("a typed persistence failure does not fail the reply and the claim still settles processed (R8)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.persistTurnMock.mockResolvedValue({ ok: false, errorClass: "FirebaseError" });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const res = await handleWebChatTurn({ uid: UID, message: "hello mom question", clientMessageId: "c-f1" });
+
+        expect(res.status).toBe("ok");
+        expect(res.reply).toBe("Here's what I found!");
+        expect(hoisted.settleLedgerMock).toHaveBeenCalledWith("web_turn_claims", `${PHONE}_c-f1`, "processed");
+        // R21: aggregate fields only — no phone, no message, no reply.
+        const serialized = JSON.stringify(warnSpy.mock.calls);
+        expect(serialized).toContain("memory_turn_persistence_skipped");
+        expect(serialized).not.toContain(PHONE);
+        expect(serialized).not.toContain("hello mom question");
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("even a throwing persistence boundary cannot fail the reply (belt-and-suspenders)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.persistTurnMock.mockRejectedValue(new Error("unexpected"));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const res = await handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "c-f2" });
+        expect(res.status).toBe("ok");
+        expect(res.reply).toBe("Here's what I found!");
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("missing clientMessageId: turn persists with an empty source key (no idempotency promise)", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "hi" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.persistTurnMock).toHaveBeenCalledWith(expect.objectContaining({ sourceKey: "" }));
+    });
+
+    it("malformed clientMessageId is not used as a source key (same judgment as the claim ledger)", async () => {
+      seedUser();
+      seedSession();
+
+      await handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "bad/id" });
+
+      expect(hoisted.persistTurnMock).toHaveBeenCalledWith(expect.objectContaining({ sourceKey: "" }));
+    });
+
+    it("duplicate clientMessageId retry: NO second persistence and no agent re-run (no double side effects)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.claimLedgerMock.mockResolvedValue("duplicate");
+
+      const res = await handleWebChatTurn({ uid: UID, message: "book maria", clientMessageId: "dup-9" });
+
+      expect(res.status).toBe("duplicate");
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      expect(hoisted.persistTurnMock).not.toHaveBeenCalled();
+    });
+
+    it("agent failure: nothing to persist (no completed turn)", async () => {
+      seedUser();
+      seedSession();
+      hoisted.qaMock.mockRejectedValue(new Error("model down"));
+
+      await expect(handleWebChatTurn({ uid: UID, message: "hi", clientMessageId: "c-err" }))
+        .rejects.toBeInstanceOf(AgentUnavailableError);
+
+      expect(hoisted.persistTurnMock).not.toHaveBeenCalled();
+    });
+
+    it("HELP command: static capability reply is not an agent turn — never persisted", async () => {
+      seedUser();
+      seedSession();
+
+      const res = await handleWebChatTurn({ uid: UID, message: "HELP", clientMessageId: "c-help" });
+
+      expect(res.status).toBe("ok");
+      expect(hoisted.persistTurnMock).not.toHaveBeenCalled();
     });
   });
 

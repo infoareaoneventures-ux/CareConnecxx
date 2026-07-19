@@ -106,8 +106,46 @@ const hoisted = vi.hoisted(() => {
     };
   };
 
+  // U9: memory_operations store for the completed-operation cleanup tests.
+  const memoryOps = new Map<string, Record<string, unknown>>();
+  const opsState = { failDelete: false };
+  const makeMemoryOpsQuery = (): any => {
+    const filters: Array<[string, string, unknown]> = [];
+    let lim = Infinity;
+    const ref: any = {
+      where(field: string, op: string, value: unknown) { filters.push([field, op, value]); return ref; },
+      orderBy() { return ref; },
+      limit(n: number) { lim = n; return ref; },
+      async get() {
+        const rows = [...memoryOps.entries()]
+          .filter(([, data]) =>
+            filters.every(([field, op, value]) => {
+              const val = (data as Record<string, unknown>)[field];
+              if (op === "==") return val === value;
+              if (op === "<=") return typeof val === "string" && typeof value === "string" && val <= value;
+              return true;
+            }),
+          )
+          .slice(0, lim)
+          .map(([id, data]) => ({
+            id,
+            data: () => data,
+            ref: {
+              delete: async () => {
+                if (opsState.failDelete) throw new Error("simulated delete failure");
+                memoryOps.delete(id);
+              },
+            },
+          }));
+        return { empty: rows.length === 0, docs: rows };
+      },
+    };
+    return ref;
+  };
+
   const collection = (name: string): any => {
     if (name === "agent_sessions") return makeSessionsQuery();
+    if (name === "memory_operations") return makeMemoryOpsQuery();
     if (name === "agent_conversations") {
       return {
         listDocuments: async () => [...conversations.keys()].map(id => ({ id })),
@@ -126,6 +164,8 @@ const hoisted = vi.hoisted(() => {
     FakeTimestamp,
     sessions,
     conversations,
+    memoryOps,
+    opsState,
     whereCalls,
     state,
     collection,
@@ -175,6 +215,8 @@ import {
   runNightlyMemoryConsolidation,
   runNightlyMemoryJob,
   compressOldConversations,
+  cleanupExpiredMemoryOperations,
+  MEMORY_OPERATION_CLEANUP_LIMIT,
   NIGHTLY_MEMORY_WINDOW_MS,
   AGED_PENDING_SYNC_MS,
 } from "./nightlyMemory";
@@ -196,6 +238,8 @@ function seedSession(phone: string, extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   hoisted.sessions.clear();
   hoisted.conversations.clear();
+  hoisted.memoryOps.clear();
+  hoisted.opsState.failDelete = false;
   hoisted.whereCalls.length = 0;
   hoisted.state.failSessionsQuery = false;
   hoisted.consolidateMock.mockClear();
@@ -582,5 +626,72 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
     } finally {
       logSpy.mockRestore();
     }
+  });
+});
+
+// ── U9: completed memory-operation cleanup (expiresAt + status/expiresAt index) ─
+describe("cleanupExpiredMemoryOperations (U9)", () => {
+  const HOUR = 60 * 60 * 1000;
+  const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString();
+
+  it("deletes only COMPLETED operations past expiresAt; everything else survives", async () => {
+    hoisted.memoryOps.set("op-expired", { status: "completed", expiresAt: iso(-HOUR) });
+    hoisted.memoryOps.set("op-live", { status: "completed", expiresAt: iso(HOUR) });
+    // Failed/unresolved operations never expire (privacy suppression must not
+    // be cleaned away) — even a bogus stale expiresAt cannot make them eligible.
+    hoisted.memoryOps.set("op-terminal", { status: "terminal_failed", expiresAt: null });
+    hoisted.memoryOps.set("op-retryable", { status: "retryable_failed", expiresAt: iso(-HOUR) });
+    hoisted.memoryOps.set("op-pending", { status: "pending", expiresAt: null });
+
+    const counts = await cleanupExpiredMemoryOperations();
+
+    expect(counts).toEqual({ scanned: 1, deleted: 1, failed: 0 });
+    expect(hoisted.memoryOps.has("op-expired")).toBe(false);
+    expect(hoisted.memoryOps.has("op-live")).toBe(true);
+    expect(hoisted.memoryOps.has("op-terminal")).toBe(true);
+    expect(hoisted.memoryOps.has("op-retryable")).toBe(true);
+    expect(hoisted.memoryOps.has("op-pending")).toBe(true);
+  });
+
+  it("is bounded per run and idempotent across repeated runs", async () => {
+    for (let i = 0; i < MEMORY_OPERATION_CLEANUP_LIMIT + 5; i++) {
+      hoisted.memoryOps.set(`op-${i}`, { status: "completed", expiresAt: iso(-HOUR) });
+    }
+
+    const first = await cleanupExpiredMemoryOperations();
+    expect(first.deleted).toBe(MEMORY_OPERATION_CLEANUP_LIMIT);
+
+    const second = await cleanupExpiredMemoryOperations();
+    expect(second.deleted).toBe(5);
+
+    const third = await cleanupExpiredMemoryOperations();
+    expect(third).toEqual({ scanned: 0, deleted: 0, failed: 0 });
+  });
+
+  it("counts per-doc delete failures without aborting the sweep", async () => {
+    hoisted.memoryOps.set("op-a", { status: "completed", expiresAt: iso(-HOUR) });
+    hoisted.opsState.failDelete = true;
+
+    const counts = await cleanupExpiredMemoryOperations();
+
+    expect(counts).toEqual({ scanned: 1, deleted: 0, failed: 1 });
+    expect(hoisted.memoryOps.has("op-a")).toBe(true);
+  });
+
+  it("runNightlyMemoryJob runs the cleanup with an aggregate-only log and isolates its failure", async () => {
+    hoisted.memoryOps.set("op-expired", { status: "completed", expiresAt: iso(-HOUR) });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runNightlyMemoryJob();
+      const cleanupLogs = logSpy.mock.calls.filter(c => String(c[0]).includes("memory-operation cleanup"));
+      expect(cleanupLogs).toHaveLength(1);
+      expect(cleanupLogs[0][1]).toEqual({ scanned: 1, deleted: 1, failed: 0 });
+      // R21: no operation IDs in the log line.
+      expect(JSON.stringify(cleanupLogs[0])).not.toContain("op-expired");
+    } finally {
+      logSpy.mockRestore();
+    }
+    // Housekeeping after the cleanup still ran.
+    expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
   });
 });

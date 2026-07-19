@@ -969,3 +969,51 @@ describe("source-row consolidation exclusion (KTD16/R23)", () => {
     expect(h.docs.get(`agent_conversations/${PHONE}/messages/m-old`)!.excludeFromMemoryConsolidationAt).toBeUndefined();
   });
 });
+
+// ── U9 (R21/R22): aged-operation alerting from the worker sweep ──────────────
+describe("aged unresolved operations (U9)", () => {
+  const TWO_HOURS_AGO = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+  it("a due operation older than the threshold raises ONE deduplicated alert and is counted", async () => {
+    seedSession();
+    // Parked pending turn (created 2h ago) that keeps failing — the shape the
+    // aged alert exists for.
+    seedTurn("op-aged", { createdAt: TWO_HOURS_AGO });
+    h.zepUser.mockRejectedValue(new Error("zep still down") as never);
+
+    const first = await runMemoryOperationWorker();
+    expect(first.agedPending).toBe(1);
+    expect(first.oldestDueAgeMs).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000 - 5_000);
+    expect(h.docs.has("admin_alerts/memory-operation-aged:op-aged")).toBe(true);
+
+    // Second sweep: same operation, same deterministic doc — still ONE alert.
+    requeue("op-aged");
+    const second = await runMemoryOperationWorker();
+    expect(second.agedPending).toBe(1);
+    const agedAlerts = [...h.docs.keys()].filter(k => k.startsWith("admin_alerts/memory-operation-aged:"));
+    expect(agedAlerts).toHaveLength(1);
+
+    // R21: the alert carries the opaque operation ID + enums/counts only — no
+    // refs, session paths, phones, hashes, or content.
+    const alert = h.docs.get("admin_alerts/memory-operation-aged:op-aged")!;
+    expect(alert.type).toBe("memory_operation_aged");
+    expect(alert.operationId).toBe("op-aged");
+    const serialized = JSON.stringify(alert);
+    expect(serialized).not.toContain(PHONE);
+    expect(serialized).not.toContain("agent_conversations");
+    expect(serialized).not.toContain("agent_sessions");
+    expect(serialized).not.toContain("hash-op-aged");
+  });
+
+  it("a fresh due operation never raises the aged alert", async () => {
+    seedSession();
+    seedTurn("op-fresh"); // createdAt = 60s ago
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.agedPending).toBe(0);
+    expect(counts.completed).toBe(1);
+    const agedAlerts = [...h.docs.keys()].filter(k => k.startsWith("admin_alerts/memory-operation-aged:"));
+    expect(agedAlerts).toHaveLength(0);
+  });
+});

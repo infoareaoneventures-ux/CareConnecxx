@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createTurnMetrics, emitTurnMetrics, setTurnMetricMirrorForTest } from "./turnMetrics";
+import { createTurnMetrics, emitTurnMetrics, setTurnMetricMirrorForTest, setZepOutcomeRecorderForTest } from "./turnMetrics";
 
 const firestoreMock = vi.hoisted(() => ({
   add: vi.fn(async () => ({ id: "metric-1" })),
@@ -391,5 +391,38 @@ describe("emitTurnMetrics", () => {
       expect(mirrored.zepContextStatus).toBeNull();
       expect(mirrored.zepContextLatencyMs).toBeNull();
     });
+  });
+});
+
+// ── U9: sustained-Zep-outage feed ─────────────────────────────────────────────
+// emitTurnMetrics is the sanctioned seam that forwards each turn's typed Zep
+// context outcome to the outage evaluator in observability/caraOpsAlerts
+// (which alerts only on SUSTAINED unavailable/timeout rates — never "empty").
+describe("Zep outcome forwarding (U9)", () => {
+  const recorded: string[] = [];
+
+  beforeEach(() => {
+    recorded.length = 0;
+    setZepOutcomeRecorderForTest((status) => recorded.push(status));
+  });
+
+  afterEach(() => {
+    setZepOutcomeRecorderForTest(null);
+  });
+
+  it.each(["loaded", "empty", "unavailable", "timeout"] as const)(
+    "forwards zepContextStatus %s exactly once per emitted turn",
+    (status) => {
+      const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+      m.zepContextStatus = status;
+      emitTurnMetrics(m, { reply: "ok" });
+      expect(recorded).toEqual([status]);
+    },
+  );
+
+  it("a turn that never queried Zep is not a sample", () => {
+    const m = createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "quick" });
+    emitTurnMetrics(m, { reply: "ok" });
+    expect(recorded).toEqual([]);
   });
 });

@@ -78,6 +78,10 @@ import {
   MEMORY_FINGERPRINT_KEY_SECRET,
 } from "../memory/fingerprintKey";
 import { logAudit } from "../observability/auditLog";
+import {
+  AGED_MEMORY_OPERATION_ALERT_MS,
+  raiseAgedMemoryOperationAlert,
+} from "../observability/caraOpsAlerts";
 
 const db = admin.firestore();
 
@@ -117,6 +121,10 @@ export interface MemoryWorkerCounts {
   factChangesCompleted: number;
   /** Source conversation rows newly excluded from consolidation (KTD16). */
   sourceRowsExcluded: number;
+  /** Due operations older than AGED_MEMORY_OPERATION_ALERT_MS (U9 health signal). */
+  agedPending: number;
+  /** Age of the oldest due operation this sweep (ms; 0 when none are due). */
+  oldestDueAgeMs: number;
 }
 
 interface DueOp {
@@ -129,6 +137,7 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
     due: 0, unsupportedKind: 0, claimMissed: 0, blockedByOlder: 0,
     completed: 0, retryable: 0, terminal: 0, zepDuplicates: 0,
     factChangesCompleted: 0, sourceRowsExcluded: 0,
+    agedPending: 0, oldestDueAgeMs: 0,
   };
   const nowIso = new Date(nowMs).toISOString();
 
@@ -146,6 +155,29 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
     for (const d of snap.docs) due.set(d.id, { id: d.id, data: d.data() });
   }
   counts.due = due.size;
+
+  // U9 aged-operation health check (evaluated over the due snapshot BEFORE
+  // processing: an operation that spent over an hour unresolved is a health
+  // event even if this very sweep finally resolves it). Every unresolved
+  // operation re-enters the due set within ≤30 minutes (max backoff / lease
+  // mirror), so a per-sweep look at the due batch cannot miss a stuck one.
+  // The alert itself is deduplicated per operation (deterministic doc ID).
+  for (const op of due.values()) {
+    const createdMs = Date.parse(String(op.data.createdAt ?? ""));
+    if (!Number.isFinite(createdMs)) continue;
+    const ageMs = nowMs - createdMs;
+    if (ageMs > counts.oldestDueAgeMs) counts.oldestDueAgeMs = ageMs;
+    if (ageMs >= AGED_MEMORY_OPERATION_ALERT_MS) {
+      counts.agedPending++;
+      await raiseAgedMemoryOperationAlert({
+        operationId: op.id,
+        kind: String(op.data.kind ?? ""),
+        status: String(op.data.status ?? ""),
+        ageMs,
+        attempts: Number(op.data.attempts ?? 0),
+      });
+    }
+  }
 
   // Split by kind: turn_sync work is grouped per user for source-turn
   // ordering; correction/forget operations are independent of that ordering.

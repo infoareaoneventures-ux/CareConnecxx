@@ -230,6 +230,34 @@ export function setTurnMetricMirrorForTest(fn: ((record: Record<string, unknown>
   turnMetricMirrorOverride = fn;
 }
 
+// U9 (memory grounding, R21/R22): every turn's typed Zep context outcome also
+// feeds the sustained-outage evaluator in observability/caraOpsAlerts, which
+// alerts only on a SUSTAINED unavailable/timeout rate — never on a single
+// event and never on "empty". emitTurnMetrics is the sanctioned seam: it is
+// the one place both reply pathways already report zepContextStatus. Lazy,
+// fully guarded require (same posture as mirrorTurnMetricRecord) so module
+// load and tests never depend on firebase-admin being initialized.
+let zepOutcomeRecorderOverride: ((status: string) => void) | null = null;
+
+export function setZepOutcomeRecorderForTest(fn: ((status: string) => void) | null): void {
+  zepOutcomeRecorderOverride = fn;
+}
+
+function recordZepOutcomeForAlerting(status: "loaded" | "empty" | "unavailable" | "timeout"): void {
+  if (zepOutcomeRecorderOverride) {
+    zepOutcomeRecorderOverride(status);
+    return;
+  }
+  try {
+    // Lazy require: caraOpsAlerts touches admin.firestore() at module load.
+    const alerts = require("../observability/caraOpsAlerts") as
+      typeof import("../observability/caraOpsAlerts");
+    void alerts.recordZepContextOutcome(status).catch(() => {});
+  } catch {
+    /* no-op */
+  }
+}
+
 export function createTurnMetrics(init: {
   phone:         string;
   userId?:       string;
@@ -290,6 +318,12 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
   delete (payload as { startedAt?: number }).startedAt;
 
   console.info("cara.turn", payload);
+
+  // U9: feed the sustained-Zep-outage window. Only turns that actually queried
+  // a Zep thread carry a status; turns with no Zep read are not samples.
+  if (metrics.zepContextStatus) {
+    recordZepOutcomeForAlerting(metrics.zepContextStatus);
+  }
 
   // Bounded Firestore mirror — ONLY for experiment-enrolled turns (a small
   // fraction of traffic), so the weekly experiment scorecard (experimentScorecard.ts)

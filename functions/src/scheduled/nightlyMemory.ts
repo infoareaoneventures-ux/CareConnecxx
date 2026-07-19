@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
 import { consolidateMemoryForUser, cleanupExpiredTransientToolFiles } from "../memory/memoryFiles";
+import { MEMORY_OPERATIONS_COLLECTION } from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
 
 const db = admin.firestore();
@@ -285,6 +286,49 @@ export async function runNightlyMemoryConsolidation(): Promise<NightlyMemoryCoun
   return counts;
 }
 
+// ── Completed memory-operation cleanup (U9, Implementation-Time Checks) ──────
+//
+// Completed turn_sync/correction/forget operations carry a 30-day expiresAt
+// stamped at completion. This nightly sweep deletes the expired ones through
+// the (status ASC, expiresAt ASC) composite index added for exactly this
+// query. Guarded by status == "completed" TWICE over: failed/unresolved
+// operations never receive an expiresAt AND the equality filter excludes them,
+// so pending correction/forget suppression state can never be cleaned away.
+// Deleting completed docs is also what makes the reconciliation reader's
+// self-heal ("a missing operation doc can only mean prior completion") true.
+
+/** Bounded per-night delete batch — 30-day retention leaves ample slack. */
+export const MEMORY_OPERATION_CLEANUP_LIMIT = 500;
+
+export interface MemoryOperationCleanupCounts {
+  scanned: number;
+  deleted: number;
+  failed: number;
+}
+
+export async function cleanupExpiredMemoryOperations(
+  nowMs: number = Date.now(),
+): Promise<MemoryOperationCleanupCounts> {
+  const counts: MemoryOperationCleanupCounts = { scanned: 0, deleted: 0, failed: 0 };
+  const nowIso = new Date(nowMs).toISOString();
+  const snap = await db.collection(MEMORY_OPERATIONS_COLLECTION)
+    .where("status", "==", "completed")
+    .where("expiresAt", "<=", nowIso)
+    .orderBy("expiresAt", "asc")
+    .limit(MEMORY_OPERATION_CLEANUP_LIMIT)
+    .get();
+  for (const doc of snap.docs) {
+    counts.scanned++;
+    try {
+      await doc.ref.delete();
+      counts.deleted++;
+    } catch {
+      counts.failed++;
+    }
+  }
+  return counts;
+}
+
 /**
  * Full nightly job body, exported for tests. The memory batch is isolated so a
  * total selection/consolidation failure still runs the existing housekeeping
@@ -326,6 +370,17 @@ export async function runNightlyMemoryJob(): Promise<void> {
     return null;
   });
   if (transientCleanup) console.log("[nightlyMemory] transient tool-file cleanup", transientCleanup);
+
+  // U9: delete completed memory operations past their 30-day expiresAt.
+  // Aggregate-only log (R21): counts, no operation IDs, no refs. Isolated so a
+  // ledger failure never blocks the remaining housekeeping.
+  const operationCleanup = await cleanupExpiredMemoryOperations().catch(err => {
+    console.error("[nightlyMemory] cleanupExpiredMemoryOperations error:", {
+      errorClass: (err as Error)?.name ?? "Error",
+    });
+    return null;
+  });
+  if (operationCleanup) console.log("[nightlyMemory] memory-operation cleanup", operationCleanup);
 
   // Auto-complete execution agents idle for >24 hours
   await cleanupStaleExecutionAgents().catch(err =>

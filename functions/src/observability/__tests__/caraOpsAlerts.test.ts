@@ -4,24 +4,48 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // dynamically imports linq/client for the admin SMS. Stub both so this test
 // stays a fast unit test with no real Firestore/Linq calls, mirroring the
 // heavy-dependency stubbing qaAgent.test.ts already uses.
-const addMock = vi.fn().mockResolvedValue(undefined);
+// vi.hoisted: caraOpsAlerts calls admin.firestore() at MODULE LOAD, which runs
+// before this file's const initializers — plain consts would hit the TDZ.
+// U9: the sustained-outage and aged-operation alerts dedupe via deterministic
+// doc IDs (doc(id).set(..., { merge: true })) — capture (id, data, opts).
+const { addMock, setMock, makeCollection } = vi.hoisted(() => {
+  const addMock = vi.fn(async () => undefined);
+  const setMock = vi.fn(async (..._args: unknown[]) => undefined);
+  const makeCollection = () => ({
+    add: addMock,
+    doc: (id: string) => ({
+      id,
+      set: (data: unknown, opts?: unknown) => setMock(id, data, opts),
+    }),
+  });
+  return { addMock, setMock, makeCollection };
+});
 vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: {
     apps: [],
     initializeApp: () => ({}),
-    firestore: () => ({ collection: () => ({ add: addMock }) }),
+    firestore: () => ({ collection: makeCollection }),
   },
   apps: [],
   initializeApp: () => ({}),
-  firestore: () => ({ collection: () => ({ add: addMock }) }),
+  firestore: () => ({ collection: makeCollection }),
 }));
 
 const sendToPhoneMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../linq/client", () => ({ sendToPhone: sendToPhoneMock }));
 
 import { classifyProviderError, raiseProviderFailureAlert } from "../providerFailureAlert";
-import { createCaraOpsAlert } from "../caraOpsAlerts";
+import {
+  createCaraOpsAlert,
+  recordZepContextOutcome,
+  raiseAgedMemoryOperationAlert,
+  __resetZepOutageWindowForTests,
+  ZEP_OUTAGE_WINDOW_MS,
+  ZEP_OUTAGE_MIN_SAMPLES,
+  ZEP_OUTAGE_ALERT_DEDUPE_MS,
+  AGED_MEMORY_OPERATION_ALERT_MS,
+} from "../caraOpsAlerts";
 
 describe("classifyProviderError (U5)", () => {
   it.each([
@@ -249,5 +273,152 @@ describe("createCaraOpsAlert grounding/handoff redaction (U7, R21)", () => {
       provider: "openai",
       detail: "insufficient_quota on account",
     });
+  });
+});
+
+// ── U9 (R21/R22): sustained-Zep-outage alert ──────────────────────────────────
+// Alert only on a SUSTAINED unavailable/timeout rate: a single failure never
+// pages, a legitimately empty Zep response NEVER pages, and a real outage
+// produces exactly one deduplicated admin_alerts doc per time bucket.
+describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
+  const T0 = Date.parse("2026-07-19T12:00:00Z");
+
+  beforeEach(() => {
+    setMock.mockClear();
+    setMock.mockResolvedValue(undefined);
+    __resetZepOutageWindowForTests();
+  });
+
+  it("empty Zep results never alert, no matter how many accumulate", async () => {
+    for (let i = 0; i < 25; i++) {
+      expect(await recordZepContextOutcome("empty", T0 + i * 1000)).toBe(false);
+    }
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it("a single unavailable event never alerts (below the minimum sample count)", async () => {
+    expect(await recordZepContextOutcome("unavailable", T0)).toBe(false);
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it("a sustained outage alerts once per dedupe bucket with counts-only content", async () => {
+    // Align inside one dedupe bucket so the in-process latch is what dedupes.
+    const base = Math.floor(T0 / ZEP_OUTAGE_ALERT_DEDUPE_MS) * ZEP_OUTAGE_ALERT_DEDUPE_MS;
+    const results: boolean[] = [];
+    for (let i = 0; i < ZEP_OUTAGE_MIN_SAMPLES + 3; i++) {
+      results.push(await recordZepContextOutcome(i % 2 ? "timeout" : "unavailable", base + i * 1000));
+    }
+    // Below MIN_SAMPLES: never; at MIN_SAMPLES: one alert; afterwards: latched.
+    expect(results.slice(0, ZEP_OUTAGE_MIN_SAMPLES - 1)).toEqual(
+      new Array(ZEP_OUTAGE_MIN_SAMPLES - 1).fill(false),
+    );
+    expect(results[ZEP_OUTAGE_MIN_SAMPLES - 1]).toBe(true);
+    expect(results.slice(ZEP_OUTAGE_MIN_SAMPLES)).toEqual([false, false, false]);
+    expect(setMock).toHaveBeenCalledTimes(1);
+
+    const [docId, doc, opts] = setMock.mock.calls[0];
+    expect(docId).toBe(`zep-sustained-outage:${Math.floor(base / ZEP_OUTAGE_ALERT_DEDUPE_MS)}`);
+    expect(opts).toEqual({ merge: true });
+    expect(doc.type).toBe("zep_sustained_outage");
+    expect(doc.severity).toBe("high");
+    // R21: aggregate counts only — no thread/user IDs, no query text, no phone.
+    expect(Object.keys(doc.context).sort()).toEqual(["failureRate", "failures", "samples", "windowMs"]);
+    expect(doc.context.samples).toBe(ZEP_OUTAGE_MIN_SAMPLES);
+    expect(doc.context.failures).toBe(ZEP_OUTAGE_MIN_SAMPLES);
+    const json = JSON.stringify(doc);
+    expect(json).not.toMatch(/thread|zepUser|query|phone|\+1\d{10}/i);
+  });
+
+  it("healthy samples dilute the rate below the threshold — no alert", async () => {
+    for (let i = 0; i < 8; i++) await recordZepContextOutcome("loaded", T0 + i * 1000);
+    for (let i = 0; i < 4; i++) await recordZepContextOutcome("unavailable", T0 + 9000 + i * 1000);
+    // 4 failures / 12 samples = 0.33 < 0.5
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it("failures older than the rolling window no longer count", async () => {
+    for (let i = 0; i < ZEP_OUTAGE_MIN_SAMPLES; i++) {
+      // Stay one sample short of alerting inside the old window.
+      if (i < ZEP_OUTAGE_MIN_SAMPLES - 1) await recordZepContextOutcome("unavailable", T0 + i * 1000);
+    }
+    // Past the window: the old failures are pruned, one fresh success is all
+    // that remains — far below the minimum sample count.
+    const later = T0 + ZEP_OUTAGE_WINDOW_MS + 60_000;
+    expect(await recordZepContextOutcome("loaded", later)).toBe(false);
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
+  it("never throws and reports false when the alert write fails", async () => {
+    setMock.mockRejectedValue(new Error("firestore down"));
+    let last = false;
+    for (let i = 0; i < ZEP_OUTAGE_MIN_SAMPLES; i++) {
+      last = await recordZepContextOutcome("timeout", T0 + i * 1000);
+    }
+    expect(last).toBe(false);
+  });
+});
+
+// ── U9 (R21/R22): aged-memory-operation alert ─────────────────────────────────
+describe("raiseAgedMemoryOperationAlert (U9)", () => {
+  beforeEach(() => {
+    setMock.mockClear();
+    setMock.mockResolvedValue(undefined);
+  });
+
+  it("writes one deterministic-ID doc per operation (set+merge dedupe)", async () => {
+    const input = {
+      operationId: "turn_sync_abc123",
+      kind: "turn_sync",
+      status: "pending",
+      ageMs: AGED_MEMORY_OPERATION_ALERT_MS + 5_000,
+      attempts: 0,
+    };
+    expect(await raiseAgedMemoryOperationAlert(input)).toBe(true);
+    expect(await raiseAgedMemoryOperationAlert(input)).toBe(true);
+
+    // Both calls target the SAME document — dedupe is the deterministic ID.
+    expect(setMock).toHaveBeenCalledTimes(2);
+    const ids = setMock.mock.calls.map((c) => c[0]);
+    expect(new Set(ids).size).toBe(1);
+    expect(ids[0]).toBe("memory-operation-aged:turn_sync_abc123");
+    expect(setMock.mock.calls[0][2]).toEqual({ merge: true });
+
+    const doc = setMock.mock.calls[0][1] as Record<string, unknown>;
+    expect(doc.type).toBe("memory_operation_aged");
+    expect(doc.severity).toBe("high");
+    expect(doc.operationId).toBe("turn_sync_abc123");
+    const context = doc.context as Record<string, unknown>;
+    expect(context.kind).toBe("turn_sync");
+    expect(context.status).toBe("pending");
+    expect(context.attempts).toBe(0);
+    expect(context.thresholdMs).toBe(AGED_MEMORY_OPERATION_ALERT_MS);
+  });
+
+  it("carries no refs, paths, phones, or content — enum/count allowlist only", async () => {
+    await raiseAgedMemoryOperationAlert({
+      operationId: "forget_deadbeef",
+      kind: "she is allergic to penicillin", // hostile kind value → sanitized
+      status: "agent_conversations/+14085550001/messages/m1", // hostile status
+      ageMs: 2 * AGED_MEMORY_OPERATION_ALERT_MS,
+      attempts: 3,
+    });
+    const doc = setMock.mock.calls[0][1] as Record<string, unknown>;
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain("penicillin");
+    expect(json).not.toContain("+14085550001");
+    expect(json).not.toContain("agent_conversations");
+    const context = doc.context as Record<string, unknown>;
+    expect(context.kind).toBe("other");
+    expect(context.status).toBe("other");
+  });
+
+  it("never throws and returns false when the write fails", async () => {
+    setMock.mockRejectedValueOnce(new Error("firestore down"));
+    await expect(
+      raiseAgedMemoryOperationAlert({
+        operationId: "op-x", kind: "forget", status: "retryable_failed",
+        ageMs: AGED_MEMORY_OPERATION_ALERT_MS, attempts: 2,
+      }),
+    ).resolves.toBe(false);
   });
 });

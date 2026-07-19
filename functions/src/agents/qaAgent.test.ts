@@ -789,3 +789,65 @@ describe("runQaAgent U4a wiring (source scan)", () => {
     expect(unguarded).toEqual([]);
   });
 });
+
+// U5 (R16/KTD11): topic-aware retrieval is WIRED (not rebuilt) and the prompt
+// label is honest — the facts block is a relevance selection, never presented
+// as a complete memory inventory.
+
+describe("buildClientSystemPrompt — honest learned-facts label (U5/R16)", () => {
+  const promptWithFacts = buildClientSystemPrompt(
+    { name: "Anita", needs: ["companionship"] },
+    [],
+    null,
+    null,
+    "- Mom takes metformin (medical)",
+  );
+
+  it("labels the block 'Relevant learned facts' and never claims it is complete", () => {
+    expect(promptWithFacts).toContain("Relevant learned facts");
+    // The old label presented ten facts as a full inventory — that phrasing
+    // (and any equivalent completeness claim) must be gone.
+    expect(promptWithFacts).not.toContain("complete list");
+    expect(promptWithFacts).not.toMatch(/\((?:the )?complete list|full list of facts|all known facts|these are all the facts/i);
+    expect(promptWithFacts).toContain("other stored facts may exist");
+  });
+
+  it("keeps the anti-invention boundary despite dropping the completeness claim", () => {
+    expect(promptWithFacts).toContain("never invent facts beyond your sources");
+    // Knowledge boundary still points at the (renamed) facts block.
+    expect(promptWithFacts).toContain("the learned facts above");
+  });
+
+  it("the no-facts fallback line is unchanged", () => {
+    const empty = buildClientSystemPrompt({ name: "Anita", needs: [] }, [], null, null, undefined);
+    expect(empty).toContain("No learned facts on file for this family yet.");
+    expect(empty).not.toContain("Relevant learned facts");
+  });
+});
+
+describe("runQaAgent U5 wiring (source scan) — current message reaches getRelevantFacts", () => {
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const src = fs.readFileSync(path.join(__dirname, "qaAgent.ts"), "utf8");
+
+  it("the prompt-assembly call site passes the current user message as the topic", () => {
+    expect(src).toContain("getRelevantFacts(userId, text).catch(() => [])");
+    // No topic-less prompt call remains anywhere in this module (the quick
+    // path does not consume learned facts, so this is the only call site).
+    const topicless = src
+      .split("\n")
+      .filter((line) => line.includes("getRelevantFacts(") && !line.includes("getRelevantFacts(userId, text)"));
+    expect(topicless).toEqual([]);
+  });
+
+  it("unconfirmed identity still receives NO facts — the fetch itself is skipped", () => {
+    const loadStart = src.indexOf("const [zepResult, memoryContext, facts");
+    expect(loadStart).toBeGreaterThan(-1);
+    const block = src.slice(loadStart, src.indexOf("]);", loadStart));
+    // The whole parallel context load (including the facts slot) is gated on
+    // the unconfirmedIdentity ternary — facts are hardcoded empty there.
+    expect(block).toContain("unconfirmedIdentity");
+    expect(block).toContain("[] as Array<{ fact: string; category: string }>");
+    expect(block).toContain("getRelevantFacts(userId, text)");
+  });
+});

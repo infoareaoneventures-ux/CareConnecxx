@@ -485,6 +485,66 @@ describe("getRelevantFacts — pending facts invisible on BOTH ranking paths", (
   });
 });
 
+// ── U5 (R16/KTD11): topic-aware reranking + weight fallback ──────────────────
+// The reranker already existed; U5 only wires the current message into it.
+// These tests pin the contract qaAgent now depends on: relevance beats raw
+// weight when embeddings are available, and EVERY embedding-unavailable shape
+// falls back to weight ordering (fail-open, no new algorithm).
+
+describe("getRelevantFacts — topic reranking and weight fallback (U5)", () => {
+  const MED_FACT = "Mom takes metformin twice daily";
+  const FAMILY_FACT = "Daughter visits every Sunday afternoon";
+  const MED_VEC = [1, 0, 0];
+  const FAMILY_VEC = [0, 1, 0];
+  const dot = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i], 0);
+
+  function seedBoth(withEmbeddings = true): void {
+    seedActiveFact("fam", FAMILY_FACT, 9, {
+      category: "family",
+      ...(withEmbeddings ? { embedding: FAMILY_VEC } : {}),
+    });
+    seedActiveFact("med", MED_FACT, 2, withEmbeddings ? { embedding: MED_VEC } : {});
+  }
+
+  it("a medication query outranks an unrelated high-weight family fact on the semantic path", async () => {
+    seedBoth();
+    vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(MED_VEC);
+    // Similarity-honest reranker (the module mock's default just slices).
+    vi.mocked(embeddingsMod.rankBySimilarity).mockImplementationOnce(
+      ((cands: Array<{ embedding: number[] }>, q: number[], k: number) =>
+        [...cands].sort((a, b) => dot(b.embedding, q) - dot(a.embedding, q)).slice(0, k)) as never,
+    );
+
+    const facts = await getRelevantFacts(USER, "what medication does mom take");
+    // Weight ordering alone would have put the family fact first (9 vs 2).
+    expect(facts.map((f) => f.fact)).toEqual([MED_FACT, FAMILY_FACT]);
+    expect(vi.mocked(embeddingsMod.embedText)).toHaveBeenCalledWith("what medication does mom take");
+  });
+
+  it("topic-embedding failure falls back to weight ordering without touching the reranker", async () => {
+    seedBoth();
+    vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(null); // provider down / no key
+    const facts = await getRelevantFacts(USER, "what medication does mom take");
+    expect(facts.map((f) => f.fact)).toEqual([FAMILY_FACT, MED_FACT]);
+    expect(vi.mocked(embeddingsMod.rankBySimilarity)).not.toHaveBeenCalled();
+  });
+
+  it("falls back to weight ordering when no stored fact carries an embedding", async () => {
+    seedBoth(false);
+    vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(MED_VEC);
+    const facts = await getRelevantFacts(USER, "what medication does mom take");
+    expect(facts.map((f) => f.fact)).toEqual([FAMILY_FACT, MED_FACT]);
+    expect(vi.mocked(embeddingsMod.rankBySimilarity)).not.toHaveBeenCalled();
+  });
+
+  it("a blank topic takes the weight path (qaAgent passes raw text, which may be empty)", async () => {
+    seedBoth();
+    const facts = await getRelevantFacts(USER, "   ");
+    expect(facts.map((f) => f.fact)).toEqual([FAMILY_FACT, MED_FACT]);
+    expect(vi.mocked(embeddingsMod.embedText)).not.toHaveBeenCalled();
+  });
+});
+
 // ── Passive-extraction guard (R23/KTD16) ─────────────────────────────────────
 
 const FACT = SHELLFISH;

@@ -505,8 +505,11 @@ export function buildClientSystemPrompt(
     ? `\nWhat Evia knows about this family:\n${memoryContext}\n`
     : "";
 
+  // U5 (R16): honest label — these are the facts most relevant to the current
+  // message (topic-reranked, up to ten), NOT a complete memory inventory. The
+  // anti-invention boundary stays: relevance-selected ≠ license to invent.
   const factsSection = learnedFactsText
-    ? `\nLearned facts (complete list — do not invent facts beyond this):\n${learnedFactsText}\n`
+    ? `\nRelevant learned facts (selected for this conversation — other stored facts may exist; never invent facts beyond your sources):\n${learnedFactsText}\n`
     : "\nNo learned facts on file for this family yet.\n";
 
   const visitSection = activeVisit
@@ -1786,7 +1789,11 @@ export async function runQaAgent(params: {
       : await Promise.all([
         zepThreadId && !reconciliationMask.omitZep ? getZepContextResult(zepThreadId) : Promise.resolve(null),
         reconciliationMask.omitStorage ? Promise.resolve("") : getMemoryContext(userId).catch(() => ""),
-        getRelevantFacts(userId).catch(() => []),
+        // U5 (R16/KTD11): pass the current message so the EXISTING topic
+        // reranker in getRelevantFacts ranks by relevance; it falls back to
+        // weight ordering when embeddings are unavailable. Blank/reaction
+        // turns trim to nothing inside and take the weight path.
+        getRelevantFacts(userId, text).catch(() => []),
         getActiveVisit(userId).catch(() => null),
         getBookingPatterns(userId),
       ]);

@@ -311,7 +311,11 @@ vi.mock("../../memory/zepClient", () => ({
 }));
 vi.mock("../../memory/learnedFacts", () => ({
   extractAndStoreFacts:     vi.fn(async () => {}),
-  detectAndApplyCorrection: vi.fn(async () => null),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
 }));
 vi.mock("../../utils/voiceTranscription", () => ({
   extractVoiceMemoPart: vi.fn(() => null),

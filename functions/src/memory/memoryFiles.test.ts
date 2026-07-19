@@ -8,6 +8,15 @@ const hoisted = vi.hoisted(() => ({
   // memory_embeddings subcollection mock: docId -> { file, block, embedding, ... }
   embeddings: new Map<string, any>(),
   nextEmbedId: 0,
+  // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
+  reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
+}));
+
+// U4a: the shared readers import the suppression check from memoryOperations —
+// mock it with a controllable state so suppression is tested at the READER.
+vi.mock("./memoryOperations", () => ({
+  getMemoryReconciliationState: vi.fn(async () => ({ ...hoisted.reconciliation })),
+  hasUnresolvedReconciliation: vi.fn(async () => hoisted.reconciliation.pending),
 }));
 
 vi.mock("firebase-admin", () => {
@@ -108,6 +117,9 @@ import {
   searchMemoryHybrid,
   listMemoryFiles,
   getMemoryContext,
+  handleMemoryQuery,
+  consolidateMemoryForUser,
+  MEMORY_QUERY_RECONCILIATION_COPY,
 } from "./memoryFiles";
 import * as embeddingsMod from "./embeddings";
 
@@ -116,6 +128,7 @@ beforeEach(() => {
   hoisted.embeddings.clear();
   hoisted.nextEmbedId = 0;
   store.clear();
+  hoisted.reconciliation = { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] };
   vi.mocked(embeddingsMod.embedText).mockReset().mockResolvedValue(null);
   vi.mocked(embeddingsMod.embedMany).mockReset().mockImplementation(async (texts: string[]) => texts.map(() => null));
 });
@@ -247,5 +260,70 @@ describe("getMemoryContext", () => {
     await appendToMemoryFile("u1", "recent_episodes", "- doctor visit");
     expect(await readMemoryFile("u1", "recent_episodes")).toContain("fall");
     expect(await readMemoryFile("u1", "recent_episodes")).toContain("doctor visit");
+  });
+});
+
+// ── U4a: reader-level reconciliation suppression (KTD9, R13/R14) ─────────────
+// A stale (even PARAPHRASED) copy of a corrected/forgotten fact sitting in a
+// memory file must not reach any prompt or tool result while the user's
+// correction/forget operation is unresolved — enforced INSIDE these shared
+// readers, so briefing/digest/trigger/matching and MCP cara_knows/search paths
+// inherit it without per-call-site wiring.
+
+describe("reconciliation suppression (U4a)", () => {
+  const STALE = "## health\nMom cannot take shellfish — severe reaction noted"; // paraphrase, not exact text
+
+  beforeEach(async () => {
+    await writeMemoryFile("u1", "health", STALE);
+    await writeMemoryFile("u1", "profile", "Senior: Margaret");
+    // Semantic candidate for the paraphrase path.
+    const vec = new Array(8).fill(0); vec[0] = 1;
+    hoisted.embeddings.set("emb1", { file: "health", block: "Mom cannot take shellfish", embedding: vec });
+  });
+
+  it("getMemoryContext returns EMPTY while Storage reconciliation is pending", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    expect(await getMemoryContext("u1")).toBe("");
+  });
+
+  it("substring search returns nothing for the masked user (paraphrased stale fixture)", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: false, pendingOperationIds: ["forget_x"] };
+    expect(await searchMemory("u1", "shellfish")).toEqual([]);
+  });
+
+  it("hybrid (semantic) search returns nothing for the masked user — no embedding call is even made", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: false, pendingOperationIds: ["forget_x"] };
+    expect(await searchMemoryHybrid("u1", "seafood allergy")).toEqual([]);
+    expect(vi.mocked(embeddingsMod.embedText)).not.toHaveBeenCalled();
+  });
+
+  it("per-store unmask: once Storage targets confirm, files return even while Zep is still masked", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: false, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    const ctx = await getMemoryContext("u1");
+    expect(ctx).toContain("Margaret");
+    expect(await searchMemory("u1", "shellfish")).toHaveLength(1);
+  });
+
+  it("handleMemoryQuery answers with the deterministic 'updating my memory' copy — not stale recall, not an outage claim", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    const send = vi.fn(async () => ({}));
+    await handleMemoryQuery("u1", "chat-1", send, "what do you know about mom?");
+    expect(send).toHaveBeenCalledWith("chat-1", MEMORY_QUERY_RECONCILIATION_COPY);
+    expect(MEMORY_QUERY_RECONCILIATION_COPY).toContain("updating my memory");
+    expect(MEMORY_QUERY_RECONCILIATION_COPY).not.toMatch(/unavailable|down|outage/i);
+  });
+
+  it("nightly consolidation SKIPS a user with unresolved reconciliation (no resurrection from old rows)", async () => {
+    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    // getSharedClient is mocked as an empty object — any model call would throw,
+    // so resolving cleanly proves the early skip.
+    await expect(consolidateMemoryForUser("u1", "+14085550001")).resolves.toBeUndefined();
+    expect(await readMemoryFile("u1", "health")).toBe(STALE); // untouched
+  });
+
+  it("all-clear users read normally (no false suppression)", async () => {
+    const ctx = await getMemoryContext("u1");
+    expect(ctx).toContain("Margaret");
+    expect(await searchMemory("u1", "shellfish")).toHaveLength(1);
   });
 });

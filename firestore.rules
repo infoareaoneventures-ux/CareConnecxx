@@ -1332,6 +1332,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Per-user memory-reconciliation suppression flags (memory/memoryOperations.ts,
+    // memory-grounding plan 2026-07-17-002 U4a, KTD9) — server-only: operation
+    // IDs/kinds while a correction/forget is unresolved. Default deny already
+    // covers this; the explicit block is the documented contract.
+    match /memory_reconciliation/{userId} {
+      allow read, write: if false;
+    }
+
     // Turn checkpoints — server-only resume state for in-flight qaAgent turns.
     // Written/read exclusively by Cloud Functions via the Admin SDK (which
     // bypasses rules). No client should ever touch these, so deny outright.

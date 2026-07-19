@@ -160,7 +160,11 @@ vi.mock("../../memory/conversationMemory", () => ({
 const extractAndStoreFacts = vi.fn(async (..._a: any[]) => {});
 vi.mock("../../memory/learnedFacts", () => ({
   extractAndStoreFacts: (...a: any[]) => (extractAndStoreFacts as Function).apply(null, a),
-  detectAndApplyCorrection: vi.fn(async () => false),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
 }));
 vi.mock("../../agents/taskApprovalHandler", () => ({
   handleTaskApproval: vi.fn(async () => {}), finalizeTaskApproval: vi.fn(async () => {}),

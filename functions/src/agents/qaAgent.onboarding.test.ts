@@ -104,7 +104,14 @@ vi.mock("../memory/memoryFiles",   () => ({
   getMemoryContext:      (...a: any[]) => getMemoryContext(...a),
   initializeMemoryFiles: (...a: any[]) => initializeMemoryFiles(...a),
 }));
-vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(() => Promise.resolve([])), detectAndApplyCorrection: vi.fn() }));
+vi.mock("../memory/learnedFacts",  () => ({
+  getRelevantFacts: vi.fn(() => Promise.resolve([])),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+}));
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(() => Promise.resolve(null)), isInDND: () => false }));
 
 // linq client — capture sendMessage to assert single-reply / no double-send.

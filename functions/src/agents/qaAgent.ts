@@ -1359,6 +1359,50 @@ export function applyZepContextResult(
   }
 }
 
+// U4a (KTD9/KTD10): injected while a correction/forget operation is still
+// reconciling across stores. DISTINCT from memory_unavailable — this is Evia
+// updating its memory on purpose, not a memory outage, so it must never set
+// zepUnavailable or page operations. Canonical live Firestore state and the
+// current (non-pending) learned facts remain in the prompt.
+export const MEMORY_RECONCILIATION_PENDING_MARKER =
+  "[SYSTEM: memory_reconciliation_pending] Evia is finishing an update to its stored memory after a recent " +
+  "correction or forget request. This is NOT an outage: long-term memory context is intentionally omitted this " +
+  "turn while the update completes. Rely on the live account data, the current learned facts above, and this " +
+  "conversation. If the user asks about the corrected or forgotten detail, use only the current value the user " +
+  "gave — never an older remembered version — and if you don't have it, say you're finishing a memory update " +
+  "rather than guessing.";
+
+export interface ReconciliationMaskingDecision {
+  /** Skip the Zep context fetch entirely this turn. */
+  omitZep: boolean;
+  /** Replace Storage memory-file context with "" this turn. */
+  omitStorage: boolean;
+  /** Non-empty when either store is masked — inject into the system prompt. */
+  instruction: string;
+}
+
+/**
+ * Maps the per-user reconciliation state to prompt masking + metrics.
+ * Per-store unmasking (KTD9 as amended): a store whose targets have ALL
+ * confirmed returns to the prompt while the still-unconfirmed store stays
+ * omitted — a single stuck Zep target never keeps Storage memory masked.
+ * Records memoryReconciliationPending only; NEVER zepUnavailable (no outage).
+ */
+export function applyReconciliationMasking(
+  state: { pending: boolean; zepMasked: boolean; storageMasked: boolean } | null | undefined,
+  metrics: TurnMetrics,
+): ReconciliationMaskingDecision {
+  if (!state?.pending) return { omitZep: false, omitStorage: false, instruction: "" };
+  metrics.memoryReconciliationPending = true;
+  const omitZep = !!state.zepMasked;
+  const omitStorage = !!state.storageMasked;
+  return {
+    omitZep,
+    omitStorage,
+    instruction: omitZep || omitStorage ? MEMORY_RECONCILIATION_PENDING_MARKER : "",
+  };
+}
+
 export async function runQaAgent(params: {
   text:          string;
   phone:         string;
@@ -1590,31 +1634,149 @@ export async function runQaAgent(params: {
       ]);
     }
 
-    // Detect and apply fact corrections before building context — reload facts if applied.
-    // Skipped for unconfirmed identity: we don't know whose facts these would be.
-    let correctionApplied = false;
+    // ── U4a: one-shot re-remember confirmation resolution (R23/KTD16) ────────
+    // If the PREVIOUS turn asked the explicit re-remember question, this reply
+    // resolves it: one confirming reply clears the tombstone through its own
+    // recorded operation; anything else changes nothing. The stored question
+    // state is one-shot — cleared regardless of the answer.
+    if (!unconfirmedIdentity && channel === "[USER]" && (session as any)?.pendingReRememberFactId) {
+      const pendingFactId = String((session as any).pendingReRememberFactId);
+      const pendingFact = (session as any).pendingReRememberFact as string | undefined;
+      const pendingCategory = (session as any).pendingReRememberCategory as string | undefined;
+      const pendingExpiresAt = (session as any).pendingReRememberExpiresAt as string | undefined;
+      await db.collection("agent_sessions").doc(phone).update({
+        pendingReRememberFactId:    admin.firestore.FieldValue.delete(),
+        pendingReRememberFact:      admin.firestore.FieldValue.delete(),
+        pendingReRememberCategory:  admin.firestore.FieldValue.delete(),
+        pendingReRememberExpiresAt: admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      const expired = !!pendingExpiresAt && Date.parse(pendingExpiresAt) < Date.now();
+      if (!expired) {
+        try {
+          const lf = await import("../memory/learnedFacts");
+          const verdict = await lf.classifyReRememberReply(text);
+          if (verdict === "confirm") {
+            const result = await lf.confirmReRemember({
+              userId,
+              factDocId: pendingFactId,
+              phone,
+              restatedFact: pendingFact
+                ? { fact: pendingFact, category: (pendingCategory as any) ?? "preference" }
+                : undefined,
+            });
+            metrics.reRememberConfirmed = result.ok;
+            const reply = result.ok
+              ? lf.RE_REMEMBER_CONFIRMED_COPY
+              : result.reason === "reconciliation_pending"
+                ? lf.RE_REMEMBER_BLOCKED_COPY
+                : lf.FACT_CHANGE_NO_MATCH_COPY;
+            if (!skipSend) await sendSplit(chatId, reply).catch(() => {});
+            emitTurnMetrics(metrics, { reply });
+            return reply;
+          }
+          // decline/other → no change (the tombstone stays); the turn continues.
+        } catch {
+          // Fail-open: an unresolved confirmation means NO change — safe default.
+        }
+      }
+    }
+
+    // ── U4a: typed correction/forget detection + transactional staging ───────
+    // (R11/R12/R15, KTD9/KTD10). The bounded active-fact candidate reader —
+    // never the ten-fact prompt reader — feeds detection; a staged change
+    // returns deterministic KTD10 acknowledgement copy that no model output
+    // can override. Skipped for unconfirmed identity (whose facts would these
+    // be?) and for non-USER channels (trigger/agent/system text is not a user
+    // assertion).
+    if (!unconfirmedIdentity && channel === "[USER]") {
+      let factChange: import("../memory/learnedFacts").FactChangeOutcome;
+      let lf: typeof import("../memory/learnedFacts") | null = null;
+      try {
+        lf = await import("../memory/learnedFacts");
+        factChange = await lf.detectAndStageFactChange({ userId, text, phone });
+      } catch (err) {
+        factChange = { kind: "failed", errorClass: err instanceof Error ? err.constructor.name : typeof err };
+      }
+      metrics.factChangeOutcome = factChange.kind;
+      if (factChange.kind === "pending" || factChange.kind === "completed") {
+        metrics.factChangeKind = factChange.change;
+      }
+
+      const ack = lf ? lf.factChangeAckCopy(factChange) : null;
+      if (ack) {
+        // Deterministic reply; the turn is intentionally NOT persisted as a
+        // completed turn, so the correction/forget/ambiguous text can never be
+        // passively extracted downstream (R23) — the staged operation owns
+        // this turn's meaning. R21: outcome enum only in the log.
+        console.info("qaAgent: fact-change deterministic ack", { userId, outcome: factChange.kind });
+        if (!skipSend) await sendSplit(chatId, ack).catch(() => {});
+        emitTurnMetrics(metrics, { reply: ack });
+        return ack;
+      }
+
+      // R23 entry point: a fresh verified assertion that matches a tombstoned/
+      // superseded fact is never silently stored OR silently dropped — ask the
+      // ONE explicit re-remember confirmation question in this turn. Cheap for
+      // the common case (limit-1 tombstone gate inside).
+      if (factChange.kind === "not_correction" && lf) {
+        try {
+          const restated = await lf.findTombstonedRestatement(userId, text);
+          if (restated) {
+            metrics.reRememberAsked = true;
+            metrics.tombstoneRefusals = (metrics.tombstoneRefusals ?? 0) + 1;
+            await db.collection("agent_sessions").doc(phone).update({
+              pendingReRememberFactId:    restated.factDocId,
+              pendingReRememberFact:      restated.fact,
+              pendingReRememberCategory:  restated.category,
+              pendingReRememberExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            }).catch(() => {});
+            if (!skipSend) await sendSplit(chatId, lf.RE_REMEMBER_QUESTION_COPY).catch(() => {});
+            emitTurnMetrics(metrics, { reply: lf.RE_REMEMBER_QUESTION_COPY });
+            return lf.RE_REMEMBER_QUESTION_COPY;
+          }
+        } catch {
+          // Fail-open — the restatement check must never break a turn; the
+          // write-side tombstone guard still refuses the store.
+        }
+      }
+    }
+
+    // ── U4a: per-user reconciliation masking (KTD9) ───────────────────────────
+    // One point read in the common case. While correction/forget work is
+    // unresolved, the still-unconfirmed stores are omitted from the prompt and
+    // the non-outage memory_reconciliation_pending instruction is injected.
+    let reconciliationMask: ReconciliationMaskingDecision = { omitZep: false, omitStorage: false, instruction: "" };
     if (!unconfirmedIdentity) {
       try {
-        const { detectAndApplyCorrection } = await import("../memory/learnedFacts");
-        correctionApplied = await detectAndApplyCorrection(userId, text, zepThreadId ? phone.replace(/\D/g, "") : undefined);
+        const { getMemoryReconciliationState } = await import("../memory/memoryOperations");
+        reconciliationMask = applyReconciliationMasking(await getMemoryReconciliationState(userId), metrics);
       } catch {
-        // Non-critical
+        // Fail-open at orchestration — the shared readers enforce their own
+        // suppression, so a check error here cannot leak masked Storage files.
       }
     }
 
     // Load Zep context, memory files, learned facts, active visit, and booking patterns in parallel.
     // Unconfirmed-identity sessions skip all of these — they all key off userId
     // and would surface another person's care data on a linked phone.
+    // U4a: a reconciliation-masked store is not even fetched — omitting the
+    // fetch (instead of discarding the result) is what keeps stale Zep context
+    // out of the prompt without recording an outage.
     const [zepResult, memoryContext, facts, activeVisit, bookingPatterns] = unconfirmedIdentity
       ? [null as ZepContextResult | null, "", [] as Array<{ fact: string; category: string }>, null, ""]
       : await Promise.all([
-        zepThreadId ? getZepContextResult(zepThreadId) : Promise.resolve(null),
-        getMemoryContext(userId).catch(() => ""),
+        zepThreadId && !reconciliationMask.omitZep ? getZepContextResult(zepThreadId) : Promise.resolve(null),
+        reconciliationMask.omitStorage ? Promise.resolve("") : getMemoryContext(userId).catch(() => ""),
         getRelevantFacts(userId).catch(() => []),
         getActiveVisit(userId).catch(() => null),
         getBookingPatterns(userId),
       ]);
-    const zepContext = applyZepContextResult(zepResult, metrics, "client");
+    let zepContext = applyZepContextResult(zepResult, metrics, "client");
+    if (reconciliationMask.instruction) {
+      zepContext = zepContext
+        ? `${reconciliationMask.instruction}\n\n${zepContext}`
+        : reconciliationMask.instruction;
+    }
 
     // Lazy-bootstrap memory files for users who completed onboarding before the
     // memory-files code shipped, or whose initial write silently failed. Runs
@@ -1686,11 +1848,6 @@ export async function runQaAgent(params: {
 
     const clientSnapshot = await clientSnapshotPromise.catch(() => "");
     if (clientSnapshot) systemPrompt += `\n\n${clientSnapshot}`;
-
-    // If correction was applied, log it so caller knows (useful for debugging)
-    if (correctionApplied) {
-      console.info("qaAgent: fact correction applied before prompt build", { userId });
-    }
   }
 
   // Voice mirror — derive style stats from the family's own inbound history

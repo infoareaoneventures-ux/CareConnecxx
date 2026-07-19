@@ -12,6 +12,15 @@ const h = vi.hoisted(() => ({
   graphSearch:        vi.fn(),
   graphAdd:           vi.fn(),
   getContextTemplate: vi.fn(async () => ({})),
+  // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
+  reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
+}));
+
+// U4a: the graph-search reader imports the suppression check from
+// memoryOperations — mock with controllable state.
+vi.mock("./memoryOperations", () => ({
+  getMemoryReconciliationState: vi.fn(async () => ({ ...h.reconciliation })),
+  hasUnresolvedReconciliation: vi.fn(async () => h.reconciliation.pending),
 }));
 
 vi.mock("@getzep/zep-cloud", () => ({
@@ -45,6 +54,7 @@ import {
   addAssistantMessageToZepStrict,
   addAssistantMessageToZepBestEffort,
   searchZepMemory,
+  searchZepMemoryResult,
 } from "./zepClient";
 
 const THREAD_ID = "thread-abc-123";
@@ -62,6 +72,7 @@ beforeEach(() => {
   h.getUserContext.mockReset();
   h.addMessages.mockReset();
   h.graphSearch.mockReset();
+  h.reconciliation = { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] };
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   warnSpy  = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -285,5 +296,54 @@ describe("searchZepMemory logging privacy", () => {
     const entry = JSON.parse(line) as Record<string, unknown>;
     expect(entry.operation).toBe("searchZepMemory");
     expect(entry.correlation).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+// ── U4a: reconciliation suppression at the graph-search reader (KTD9) ────────
+
+describe("searchZepMemoryResult — reconciliation suppression (U4a)", () => {
+  const ZEP_USER = "14155551234";
+  const APP_USER = "app-user-1";
+
+  it("returns a typed reconciliation_pending marker WITHOUT calling Zep while the user's Zep targets are unresolved", async () => {
+    h.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    const result = await searchZepMemoryResult(ZEP_USER, "shellfish allergy", { appUserId: APP_USER });
+    expect(result).toEqual({ status: "reconciliation_pending", facts: "" });
+    expect(h.graphSearch).not.toHaveBeenCalled();
+  });
+
+  it("legacy string searchZepMemory flattens the suppressed state to '' — stale edges cannot leak", async () => {
+    h.reconciliation = { pending: true, storageMasked: false, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    h.graphSearch.mockResolvedValueOnce({ edges: [{ fact: "Mom is allergic to shellfish" }] });
+    const result = await searchZepMemory(ZEP_USER, "allergies", APP_USER);
+    expect(result).toBe("");
+    expect(h.graphSearch).not.toHaveBeenCalled();
+  });
+
+  it("per-store: a user whose Zep targets confirmed searches normally even while Storage is still masked", async () => {
+    h.reconciliation = { pending: true, storageMasked: true, zepMasked: false, pendingOperationIds: ["forget_x"] };
+    h.graphSearch.mockResolvedValueOnce({ edges: [{ fact: "Mom prefers morning visits" }] });
+    const result = await searchZepMemoryResult(ZEP_USER, "visits", { appUserId: APP_USER });
+    expect(result).toEqual({ status: "loaded", facts: "- Mom prefers morning visits" });
+  });
+
+  it("all-clear users get loaded/empty statuses as before", async () => {
+    h.graphSearch.mockResolvedValueOnce({ edges: [] });
+    expect(await searchZepMemoryResult(ZEP_USER, "anything", { appUserId: APP_USER }))
+      .toEqual({ status: "empty", facts: "" });
+  });
+
+  it("provider failure is a typed unavailable — distinct from reconciliation_pending", async () => {
+    h.graphSearch.mockRejectedValueOnce(badRequest("down"));
+    expect(await searchZepMemoryResult(ZEP_USER, "anything", { appUserId: APP_USER }))
+      .toEqual({ status: "unavailable", facts: "" });
+  });
+
+  it("callers without an appUserId (no verified app identity) still search — suppression requires the app key", async () => {
+    h.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    h.graphSearch.mockResolvedValueOnce({ edges: [] });
+    const result = await searchZepMemoryResult(ZEP_USER, "anything");
+    expect(result.status).toBe("empty");
+    expect(h.graphSearch).toHaveBeenCalledTimes(1);
   });
 });

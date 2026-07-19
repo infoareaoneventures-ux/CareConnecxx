@@ -303,7 +303,14 @@ vi.mock("../safety/supervisor", () => ({ supervise: (msg: string) => Promise.res
 vi.mock("../safety/linter", () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../memory/zepClient", () => ({ getZepContext: vi.fn(() => Promise.resolve("")), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles", () => ({ getMemoryContext: vi.fn(() => Promise.resolve("")) }));
-vi.mock("../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(() => Promise.resolve([])), detectAndApplyCorrection: vi.fn() }));
+vi.mock("../memory/learnedFacts", () => ({
+  getRelevantFacts: vi.fn(() => Promise.resolve([])),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+}));
 vi.mock("../memory/preferences", () => ({ getPreferences: vi.fn(() => Promise.resolve(null)), isInDND: () => false }));
 vi.mock("../linq/client", () => ({ sendMessage: vi.fn(() => Promise.resolve()), startTyping: vi.fn(() => Promise.resolve()), stopTyping: vi.fn(() => Promise.resolve()) }));
 vi.mock("./caraAgent", () => ({ buildClickableMessage: (s: string) => s }));

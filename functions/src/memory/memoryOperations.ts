@@ -38,9 +38,11 @@ function db(): admin.firestore.Firestore {
 
 export const MEMORY_OPERATIONS_COLLECTION = "memory_operations";
 
-// Schema accommodates the later correction/forget units — only turn_sync is
-// produced in this unit.
-export type MemoryOperationKind = "turn_sync" | "correction" | "forget";
+// turn_sync: U3 completed-turn Zep/fact sync.
+// correction/forget: U4 staged cross-store fact changes (worker propagation in U4b).
+// re_remember: U4 explicit confirmed tombstone clear — recorded already-completed
+// for auditability-by-reference (KTD16/R23); it never enters the retry sweep.
+export type MemoryOperationKind = "turn_sync" | "correction" | "forget" | "re_remember";
 
 // Status values are shared with the external-side-effect engine so the two
 // ledgers speak one state language.
@@ -80,15 +82,17 @@ export interface MemoryOperationDoc {
   userId: string;
   /** Firestore path (may resolve to a phone-keyed doc — accepted; never logged). */
   sessionRef: string;
-  sourceTurnKeyHash: string;
-  sourceChannel: "linq" | "web";
+  /** turn_sync only. */
+  sourceTurnKeyHash?: string;
+  /** turn_sync only. */
+  sourceChannel?: "linq" | "web";
   /** Firestore paths of the deterministic source rows — never copied text. */
   sourceMessageRefs: string[];
   learnedFactRefs: string[];
-  /** Original source-turn timestamp (epoch ms) — Zep createdAt uses this, never dispatch time (KTD5). */
-  sourceTurnTimestamp: number;
-  /** Deterministic per-role Zep message UUIDs, persisted BEFORE dispatch (KTD5). */
-  zepMessageUuids: { user: string; assistant: string };
+  /** turn_sync only: original source-turn timestamp (epoch ms) — Zep createdAt uses this, never dispatch time (KTD5). */
+  sourceTurnTimestamp?: number;
+  /** turn_sync only: deterministic per-role Zep message UUIDs, persisted BEFORE dispatch (KTD5). */
+  zepMessageUuids?: { user: string; assistant: string };
   status: MemoryOperationStatus;
   attempts: number;
   nextRetryAt: string | null;
@@ -216,6 +220,285 @@ export function buildTurnSyncOperationDoc(
     expiresAt: null,
   };
   return { operationId: turnSyncOperationId(sourceTurnKeyHash), doc };
+}
+
+// ── Correction / forget operations (U4a — staging; worker propagation U4b) ───
+//
+// Deterministic IDs derive from the verified userId + the TARGET FACT doc ID +
+// the fact's change generation (a counter bumped by re-remember), so the same
+// request while work is unresolved maps to the same operation (idempotent),
+// while a genuinely new lifecycle of the same fact gets a fresh ID.
+
+export function factChangeOperationId(
+  kind: "correction" | "forget",
+  userId: string,
+  factDocId: string,
+  changeGeneration = 0,
+): string {
+  const hash = createHash("sha256")
+    .update(`evia-fact-op:v1:${kind}:${userId}:${factDocId}:${changeGeneration}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${kind}_${hash}`;
+}
+
+export function reRememberOperationId(userId: string, factDocId: string, changeGeneration = 0): string {
+  const hash = createHash("sha256")
+    .update(`evia-fact-op:v1:re_remember:${userId}:${factDocId}:${changeGeneration}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `re_remember_${hash}`;
+}
+
+export interface FactChangeOperationInput {
+  kind: "correction" | "forget";
+  userId: string;
+  phone?: string;
+  targetFactDocId: string;
+  changeGeneration?: number;
+  /** Firestore path of the fact being corrected/forgotten (never its text). */
+  targetFactPath: string;
+  /** Correction only: Firestore path of the staged replacement fact. */
+  replacementFactPath?: string;
+  /** Known bounded source-row provenance from the target fact — refs only. */
+  sourceMessageRefs?: string[];
+}
+
+export function buildFactChangeOperationDoc(
+  input: FactChangeOperationInput,
+): { operationId: string; doc: MemoryOperationDoc } {
+  const nowIso = new Date().toISOString();
+  const doc: MemoryOperationDoc = {
+    kind: input.kind,
+    userId: input.userId,
+    sessionRef: input.phone ? `agent_sessions/${input.phone}` : "",
+    sourceMessageRefs: (input.sourceMessageRefs ?? []).slice(0, 6),
+    learnedFactRefs: [
+      input.targetFactPath,
+      ...(input.replacementFactPath ? [input.replacementFactPath] : []),
+    ],
+    status: "pending",
+    attempts: 0,
+    nextRetryAt: nowIso,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    targets: {
+      // Not applicable to correction/forget — the fact docs themselves are
+      // staged in the SAME transaction that creates this operation (KTD9).
+      firestore: { status: "skipped" },
+      zepTranscript: { status: "skipped" },
+      // The worker (U4b) finalizes learned facts (strip/tombstone), reconciles
+      // Storage files + embeddings, and invalidates/deletes Zep edges/episodes.
+      learnedFacts: { status: "pending" },
+      storage: { status: "pending" },
+      embeddings: { status: "pending" },
+      zepEdges: { status: "pending" },
+      zepEpisodes: { status: "pending" },
+    },
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    completedAt: null,
+    expiresAt: null,
+  };
+  return {
+    operationId: factChangeOperationId(
+      input.kind, input.userId, input.targetFactDocId, input.changeGeneration ?? 0,
+    ),
+    doc,
+  };
+}
+
+/** Already-completed audit record for an explicit confirmed re-remember (KTD16). */
+export function buildReRememberOperationDoc(input: {
+  userId: string;
+  phone?: string;
+  targetFactDocId: string;
+  targetFactPath: string;
+  changeGeneration?: number;
+}): { operationId: string; doc: MemoryOperationDoc } {
+  const nowIso = new Date().toISOString();
+  const doc: MemoryOperationDoc = {
+    kind: "re_remember",
+    userId: input.userId,
+    sessionRef: input.phone ? `agent_sessions/${input.phone}` : "",
+    sourceMessageRefs: [],
+    learnedFactRefs: [input.targetFactPath],
+    status: "completed",
+    attempts: 0,
+    nextRetryAt: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    targets: {
+      firestore: { status: "skipped" },
+      zepTranscript: { status: "skipped" },
+      learnedFacts: { status: "completed" },
+      storage: { status: "skipped" },
+      embeddings: { status: "skipped" },
+      zepEdges: { status: "skipped" },
+      zepEpisodes: { status: "skipped" },
+    },
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    completedAt: nowIso,
+    expiresAt: new Date(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS).toISOString(),
+  };
+  return {
+    operationId: reRememberOperationId(
+      input.userId, input.targetFactDocId, input.changeGeneration ?? 0,
+    ),
+    doc,
+  };
+}
+
+// ── Per-user reconciliation flag (U4a suppression check, KTD9) ───────────────
+//
+// Design choice: a per-user FLAG DOC (memory_reconciliation/{userId}) rather
+// than an equality query on memory_operations. Rationale:
+//  • the check runs on EVERY prompt turn and inside every shared memory reader
+//    (getMemoryContext, searchMemory*, searchZepMemory) — a single point read
+//    is the cheapest possible primitive and needs no composite index deploy;
+//  • Firestore allows only one `in` filter per query, and the natural query
+//    (userId == X AND kind in [correction,forget] AND status in UNRESOLVED)
+//    needs two;
+//  • the flag is maintained TRANSACTIONALLY with staging (same transaction that
+//    creates the operation and marks the fact pending), so it can never lag a
+//    staged change; the worker clears entries on completion (U4b), and this
+//    reader self-heals entries whose operation is already completed/expired.
+//
+// The doc stores operation IDs + kinds only — never fact text (R14/R21).
+
+export const MEMORY_RECONCILIATION_COLLECTION = "memory_reconciliation";
+
+export interface ReconciliationFlagEntry {
+  kind: "correction" | "forget";
+  createdAt: string;
+}
+
+/** Field patch that ADDS one pending entry — for use inside the staging transaction. */
+export function reconciliationFlagAdd(
+  operationId: string,
+  kind: "correction" | "forget",
+): Record<string, unknown> {
+  return {
+    pendingOperations: { [operationId]: { kind, createdAt: new Date().toISOString() } },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export interface MemoryReconciliationState {
+  /** Any correction/forget operation unresolved for this user. */
+  pending: boolean;
+  /** Storage memory files + embeddings must stay omitted (KTD9 per-store). */
+  storageMasked: boolean;
+  /** Zep context / graph search must stay omitted (KTD9 per-store). */
+  zepMasked: boolean;
+  pendingOperationIds: string[];
+}
+
+export const RECONCILIATION_ALL_CLEAR: MemoryReconciliationState = {
+  pending: false,
+  storageMasked: false,
+  zepMasked: false,
+  pendingOperationIds: [],
+};
+
+const UNRESOLVED_TARGET_STATES = new Set(["pending", "failed"]);
+/** Bound on how many flagged operations one state read follows (R21-safe). */
+const RECONCILIATION_MAX_TRACKED_OPS = 20;
+
+function targetUnresolved(targets: Record<string, { status?: string } | undefined>, key: string): boolean {
+  return UNRESOLVED_TARGET_STATES.has(String(targets?.[key]?.status ?? ""));
+}
+
+/**
+ * Per-store suppression state for one user. Cheap: one point read for the
+ * common (no reconciliation) case; a bounded set of operation reads otherwise.
+ * Per-store unmasking (KTD9 as amended): once EVERY target in a store confirms
+ * across all unresolved operations, that store's context returns while the
+ * still-unconfirmed store stays omitted.
+ *
+ * Fail-open on read error (matching every shared memory reader's posture) with
+ * a sanitized aggregate log — the flag doc lives in the same Firestore as the
+ * memory it guards, so a read outage here implies the guarded reads fail too.
+ */
+export async function getMemoryReconciliationState(
+  userId: string,
+  dbArg?: admin.firestore.Firestore,
+): Promise<MemoryReconciliationState> {
+  if (!userId) return RECONCILIATION_ALL_CLEAR;
+  const store = dbArg ?? db();
+  try {
+    const flagRef = store.collection(MEMORY_RECONCILIATION_COLLECTION).doc(userId);
+    const flagSnap = await flagRef.get();
+    const pendingMap = (flagSnap.exists ? flagSnap.data()?.pendingOperations : null) as
+      | Record<string, ReconciliationFlagEntry>
+      | null
+      | undefined;
+    const opIds = pendingMap ? Object.keys(pendingMap).slice(0, RECONCILIATION_MAX_TRACKED_OPS) : [];
+    if (opIds.length === 0) return RECONCILIATION_ALL_CLEAR;
+
+    const opSnaps = await Promise.all(
+      opIds.map((id) => store.collection(MEMORY_OPERATIONS_COLLECTION).doc(id).get()),
+    );
+
+    let storageMasked = false;
+    let zepMasked = false;
+    const unresolvedIds: string[] = [];
+    const resolvedEntries: string[] = [];
+
+    for (let i = 0; i < opIds.length; i++) {
+      const snap = opSnaps[i];
+      const data = snap.exists ? snap.data() ?? {} : null;
+      // Missing (expired-after-completion) or completed → resolved: self-heal
+      // the flag entry. Failed/unresolved operations never expire, so a missing
+      // doc can only mean prior completion.
+      if (!data || data.status === "completed") {
+        resolvedEntries.push(opIds[i]);
+        continue;
+      }
+      unresolvedIds.push(opIds[i]);
+      const targets = (data.targets ?? {}) as Record<string, { status?: string }>;
+      if (targetUnresolved(targets, "storage") || targetUnresolved(targets, "embeddings")) {
+        storageMasked = true;
+      }
+      if (targetUnresolved(targets, "zepEdges") || targetUnresolved(targets, "zepEpisodes")) {
+        zepMasked = true;
+      }
+    }
+
+    if (resolvedEntries.length > 0) {
+      // Best-effort self-heal — next read gets the cheap all-clear point read.
+      const patch: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+      for (const id of resolvedEntries) {
+        patch[`pendingOperations.${id}`] = admin.firestore.FieldValue.delete();
+      }
+      flagRef.update(patch).catch(() => {});
+    }
+
+    return {
+      pending: unresolvedIds.length > 0,
+      storageMasked,
+      zepMasked,
+      pendingOperationIds: unresolvedIds,
+    };
+  } catch (err) {
+    // R21: outcome + error class only.
+    console.warn(JSON.stringify({
+      severity: "WARNING",
+      memory_reconciliation_check_failed: true,
+      error_class: errorClassOf(err),
+      timestamp: new Date().toISOString(),
+    }));
+    return RECONCILIATION_ALL_CLEAR;
+  }
+}
+
+/** Cheapest form of the check — true while ANY correction/forget is unresolved. */
+export async function hasUnresolvedReconciliation(
+  userId: string,
+  dbArg?: admin.firestore.Firestore,
+): Promise<boolean> {
+  return (await getMemoryReconciliationState(userId, dbArg)).pending;
 }
 
 // ── Claim / complete / fail (shared engine, KTD6) ────────────────────────────

@@ -1023,8 +1023,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     if (intent === "MEMORY_QUERY") {
       const zepUserId = getZepUserId(phone);
-      const zepFacts  = await searchZepMemory(zepUserId, text).catch(() => "");
       const memUserId = session.userId ?? session.caregiverId ?? phone;
+      // U4a (KTD9): the app userId keys reader-level reconciliation suppression
+      // inside searchZepMemory — a mid-reconciliation Zep edge never reaches
+      // the memory-query answer.
+      const zepFacts  = await searchZepMemory(zepUserId, text, memUserId).catch(() => "");
       const { handleMemoryQuery } = await import("../memory/memoryFiles");
       await handleMemoryQuery(memUserId, chatId, sendMessage, text, zepFacts || undefined);
       return;
@@ -1765,20 +1768,38 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── Fact correction — user is correcting a known fact ────────────────────
+    // ── Fact correction — user is correcting or retracting a known fact ──────
+    // U4a (R11/R12/R15, KTD9/KTD10): typed detection over the bounded active-
+    // fact candidate reader + transactional cross-store staging. A staged,
+    // ambiguous, or unmatched request gets its deterministic acknowledgement
+    // copy and ENDS the turn — pending forget never claims completion,
+    // ambiguity asks one clarifying question and changes nothing, and no-match
+    // is an honest "cannot identify that memory". The deterministic turn is
+    // deliberately not persisted as a completed turn, so it is never passively
+    // extracted (R23). not_correction/failed fall through to the QA agent.
     if (intent === "FACT_CORRECTION") {
-      const { detectAndApplyCorrection } = await import("../memory/learnedFacts");
+      const { detectAndStageFactChange, factChangeAckCopy } = await import("../memory/learnedFacts");
       const factUserId = session.userType === "caregiver"
         ? (session.caregiverId ?? session.userId ?? phone)
         : (session.userId ?? phone);
-      const zepUserId2 = (session as any).zepThreadId ? phone.replace(/\D/g, "") : undefined;
-      const applied = await detectAndApplyCorrection(factUserId, text, zepUserId2).catch(() => false);
+      const outcome = await detectAndStageFactChange({
+        userId: factUserId,
+        text,
+        phone,
+        // The intent classifier already judged this a correction/forget, so an
+        // empty fact store yields the honest no_match copy, not silence (R15).
+        assumeChangeIntent: true,
+      }).catch((err) => ({
+        kind: "failed" as const,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+      }));
 
-      if (applied) {
-        await sendMessage(chatId, "Got it — I've updated that.");
+      const ack = factChangeAckCopy(outcome);
+      if (ack) {
+        await sendMessage(chatId, ack);
         return;
       }
-      // Fall through to QA agent if we couldn't match a specific known fact
+      // not_correction / failed → fall through to the QA agent.
     }
 
     // ── Update onboarding — already-onboarded user wants to review/fix profile ─

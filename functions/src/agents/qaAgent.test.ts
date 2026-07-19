@@ -24,7 +24,18 @@ vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg })
 vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn() }));
-vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(), detectAndApplyCorrection: vi.fn() }));
+vi.mock("../memory/learnedFacts",  () => ({
+  getRelevantFacts: vi.fn(),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+  RE_REMEMBER_QUESTION_COPY: "re-remember-question",
+  RE_REMEMBER_CONFIRMED_COPY: "re-remember-confirmed",
+  RE_REMEMBER_BLOCKED_COPY: "re-remember-blocked",
+  FACT_CHANGE_NO_MATCH_COPY: "no-match",
+}));
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(), isInDND: () => false }));
 vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: vi.fn(), stopTyping: vi.fn() }));
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
@@ -51,7 +62,9 @@ import {
   ensureNonEmptyTurnText,
   sanitizeAnthropicMessages,
   applyZepContextResult,
+  applyReconciliationMasking,
   ZEP_UNAVAILABLE_MARKER,
+  MEMORY_RECONCILIATION_PENDING_MARKER,
 } from "./qaAgent";
 import { createTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import type { ZepContextResult } from "../memory/zepClient";
@@ -666,5 +679,91 @@ describe("applyZepContextResult", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+// U4a (KTD9/KTD10): reconciliation masking — the non-outage counterpart to the
+// memory_unavailable path. While a correction/forget operation is unresolved,
+// the still-unconfirmed stores are omitted and the distinct
+// memory_reconciliation_pending instruction is injected WITHOUT recording an
+// outage (zepUnavailable must never be set by this path).
+
+describe("applyReconciliationMasking (U4a)", () => {
+  function freshMetrics() {
+    return createTurnMetrics({ phone: "+15550001111", userType: "client", pathway: "qa" });
+  }
+
+  it("both stores unresolved → both omitted, instruction injected, NO outage recorded", () => {
+    const metrics = freshMetrics();
+    const out = applyReconciliationMasking(
+      { pending: true, zepMasked: true, storageMasked: true }, metrics,
+    );
+    expect(out.omitZep).toBe(true);
+    expect(out.omitStorage).toBe(true);
+    expect(out.instruction).toBe(MEMORY_RECONCILIATION_PENDING_MARKER);
+    expect(metrics.memoryReconciliationPending).toBe(true);
+    // Not an outage: none of the outage signals fire.
+    expect(metrics.zepUnavailable).toBeUndefined();
+    expect(metrics.zepContextStatus).toBeUndefined();
+  });
+
+  it("per-store unmask: confirmed Storage returns while Zep stays omitted (and vice versa)", () => {
+    const metrics = freshMetrics();
+    const zepOnly = applyReconciliationMasking(
+      { pending: true, zepMasked: true, storageMasked: false }, metrics,
+    );
+    expect(zepOnly).toMatchObject({ omitZep: true, omitStorage: false });
+    expect(zepOnly.instruction).toBe(MEMORY_RECONCILIATION_PENDING_MARKER);
+
+    const storageOnly = applyReconciliationMasking(
+      { pending: true, zepMasked: false, storageMasked: true }, freshMetrics(),
+    );
+    expect(storageOnly).toMatchObject({ omitZep: false, omitStorage: true });
+  });
+
+  it("all-clear / null state → nothing omitted, no instruction, no metric", () => {
+    for (const state of [null, undefined, { pending: false, zepMasked: false, storageMasked: false }] as const) {
+      const metrics = freshMetrics();
+      const out = applyReconciliationMasking(state as any, metrics);
+      expect(out).toEqual({ omitZep: false, omitStorage: false, instruction: "" });
+      expect(metrics.memoryReconciliationPending).toBeUndefined();
+    }
+  });
+
+  it("the marker is DISTINCT from memory_unavailable and reads as an update, not an outage", () => {
+    expect(MEMORY_RECONCILIATION_PENDING_MARKER).toContain("[SYSTEM: memory_reconciliation_pending]");
+    expect(MEMORY_RECONCILIATION_PENDING_MARKER).not.toContain("memory_unavailable");
+    expect(MEMORY_RECONCILIATION_PENDING_MARKER).toContain("NOT an outage");
+    expect(MEMORY_RECONCILIATION_PENDING_MARKER).toContain("finishing an update to its stored memory");
+    expect(MEMORY_RECONCILIATION_PENDING_MARKER).not.toBe(ZEP_UNAVAILABLE_MARKER);
+  });
+});
+
+// U4a wiring proof (source-scan, same style as the U3 characterization tests):
+// the client turn routes detection through the typed staged pipeline, masks the
+// fetches per-store, and never sends the old boolean corrector.
+
+describe("runQaAgent U4a wiring (source scan)", () => {
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const src = fs.readFileSync(path.join(__dirname, "qaAgent.ts"), "utf8");
+
+  it("uses the typed detectAndStageFactChange + deterministic ack copy — the boolean corrector is gone", () => {
+    expect(src).toContain("detectAndStageFactChange({ userId, text, phone })");
+    expect(src).toContain("factChangeAckCopy(factChange)");
+    expect(src).not.toContain("detectAndApplyCorrection");
+  });
+
+  it("masks the Zep and Storage FETCHES per-store and injects the reconciliation instruction", () => {
+    expect(src).toContain("zepThreadId && !reconciliationMask.omitZep ? getZepContextResult(zepThreadId)");
+    expect(src).toContain('reconciliationMask.omitStorage ? Promise.resolve("") : getMemoryContext(userId)');
+    expect(src).toContain("reconciliationMask.instruction");
+  });
+
+  it("wires the in-turn re-remember confirmation (question + one-shot resolution)", () => {
+    expect(src).toContain("findTombstonedRestatement(userId, text)");
+    expect(src).toContain("classifyReRememberReply(text)");
+    expect(src).toContain("pendingReRememberFactId");
+    expect(src).toContain("RE_REMEMBER_QUESTION_COPY");
   });
 });

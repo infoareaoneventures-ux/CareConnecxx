@@ -104,6 +104,13 @@ import {
   turnSyncOperationId,
   deriveZepMessageUuid,
   buildTurnSyncOperationDoc,
+  buildFactChangeOperationDoc,
+  buildReRememberOperationDoc,
+  factChangeOperationId,
+  reRememberOperationId,
+  getMemoryReconciliationState,
+  hasUnresolvedReconciliation,
+  reconciliationFlagAdd,
   claimMemoryOperation,
   completeMemoryOperation,
   failMemoryOperation,
@@ -114,6 +121,7 @@ import {
   MEMORY_OPERATION_RETRY_MAX_MS,
   MEMORY_OPERATION_LEASE_MS,
   COMPLETED_MEMORY_OPERATION_TTL_MS,
+  MEMORY_RECONCILIATION_COLLECTION,
 } from "./memoryOperations";
 
 const PHONE = "+14085550001";
@@ -371,5 +379,171 @@ describe("claim/complete/fail (shared leased-operation engine)", () => {
     expect(doc.targets.zepTranscript.status).toBe("completed");
     expect(doc.targets.learnedFacts.status).toBe("pending");
     expect(doc.targets.firestore.status).toBe("completed");
+  });
+});
+
+// ── U4a: correction/forget operation builders (KTD9, R14/R21) ────────────────
+
+describe("fact-change operations (U4a)", () => {
+  it("factChangeOperationId is deterministic per (kind, user, fact, generation) and distinct across each", () => {
+    const a = factChangeOperationId("forget", "user-1", "nf_abc", 0);
+    expect(factChangeOperationId("forget", "user-1", "nf_abc", 0)).toBe(a);
+    expect(a).toMatch(/^forget_[0-9a-f]{32}$/);
+    expect(factChangeOperationId("correction", "user-1", "nf_abc", 0)).not.toBe(a);
+    expect(factChangeOperationId("forget", "user-2", "nf_abc", 0)).not.toBe(a);
+    expect(factChangeOperationId("forget", "user-1", "nf_def", 0)).not.toBe(a);
+    // A re-remembered fact starts a NEW lifecycle → a fresh deterministic ID.
+    expect(factChangeOperationId("forget", "user-1", "nf_abc", 1)).not.toBe(a);
+    expect(reRememberOperationId("user-1", "nf_abc", 0)).toMatch(/^re_remember_[0-9a-f]{32}$/);
+  });
+
+  it("buildFactChangeOperationDoc: pending per-target statuses for the five propagation targets, n/a targets skipped", () => {
+    const { operationId, doc } = buildFactChangeOperationDoc({
+      kind: "forget",
+      userId: "user-1",
+      phone: PHONE,
+      targetFactDocId: "nf_abc",
+      targetFactPath: "learned_facts/user-1/facts/nf_abc",
+      sourceMessageRefs: ["agent_conversations/x/messages/m1"],
+    });
+    expect(operationId).toBe(factChangeOperationId("forget", "user-1", "nf_abc", 0));
+    expect(doc.kind).toBe("forget");
+    expect(doc.status).toBe("pending");
+    expect(doc.learnedFactRefs).toEqual(["learned_facts/user-1/facts/nf_abc"]);
+    expect(doc.targets.learnedFacts.status).toBe("pending");
+    expect(doc.targets.storage.status).toBe("pending");
+    expect(doc.targets.embeddings.status).toBe("pending");
+    expect(doc.targets.zepEdges.status).toBe("pending");
+    expect(doc.targets.zepEpisodes.status).toBe("pending");
+    expect(doc.targets.firestore.status).toBe("skipped");
+    expect(doc.targets.zepTranscript.status).toBe("skipped");
+    expect(doc.expiresAt).toBeNull(); // unresolved fact changes never auto-expire
+  });
+
+  it("a correction doc carries BOTH fact refs (old + replacement) — references only, never text", () => {
+    const { doc } = buildFactChangeOperationDoc({
+      kind: "correction",
+      userId: "user-1",
+      targetFactDocId: "nf_old",
+      targetFactPath: "learned_facts/user-1/facts/nf_old",
+      replacementFactPath: "learned_facts/user-1/facts/nf_new",
+    });
+    expect(doc.learnedFactRefs).toEqual([
+      "learned_facts/user-1/facts/nf_old",
+      "learned_facts/user-1/facts/nf_new",
+    ]);
+    const serialized = JSON.stringify(doc);
+    expect(serialized).not.toContain("shellfish");
+    for (const forbidden of ["fact", "text", "content", "phone", "query", "prompt", "reply"]) {
+      expect((doc as unknown as Record<string, unknown>)[forbidden]).toBeUndefined();
+    }
+  });
+
+  it("buildReRememberOperationDoc is born completed with a retention expiry — pure audit-by-reference", () => {
+    const { operationId, doc } = buildReRememberOperationDoc({
+      userId: "user-1",
+      targetFactDocId: "nf_abc",
+      targetFactPath: "learned_facts/user-1/facts/nf_abc",
+      changeGeneration: 2,
+    });
+    expect(operationId).toBe(reRememberOperationId("user-1", "nf_abc", 2));
+    expect(doc.kind).toBe("re_remember");
+    expect(doc.status).toBe("completed");
+    expect(doc.completedAt).toEqual(expect.any(String));
+    expect(doc.expiresAt).toEqual(expect.any(String));
+    expect(doc.targets.learnedFacts.status).toBe("completed");
+    expect(doc.targets.storage.status).toBe("skipped");
+  });
+});
+
+// ── U4a: per-user reconciliation flag + per-store masking (KTD9) ─────────────
+
+describe("getMemoryReconciliationState (U4a suppression check)", () => {
+  const UID = "user-1";
+  const flagPath = `${MEMORY_RECONCILIATION_COLLECTION}/${UID}`;
+
+  function seedFactChangeOp(
+    operationId: string,
+    kind: "correction" | "forget",
+    targetOverrides: Record<string, { status: string }> = {},
+    status = "pending",
+  ): void {
+    const { doc } = buildFactChangeOperationDoc({
+      kind, userId: UID, targetFactDocId: "nf_abc",
+      targetFactPath: `learned_facts/${UID}/facts/nf_abc`,
+    });
+    const record = doc as unknown as Record<string, unknown>;
+    record.status = status;
+    record.targets = { ...(record.targets as Record<string, unknown>), ...targetOverrides };
+    h.docs.set(`memory_operations/${operationId}`, record);
+  }
+
+  function seedFlag(...operationIds: Array<[string, "correction" | "forget"]>): void {
+    const pendingOperations: Record<string, unknown> = {};
+    for (const [id, kind] of operationIds) pendingOperations[id] = { kind, createdAt: new Date().toISOString() };
+    h.docs.set(flagPath, { pendingOperations, updatedAt: new Date().toISOString() });
+  }
+
+  it("no flag doc → cheap all-clear (one point read, nothing masked)", async () => {
+    const state = await getMemoryReconciliationState(UID);
+    expect(state).toEqual({ pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] });
+    expect(await hasUnresolvedReconciliation(UID)).toBe(false);
+  });
+
+  it("an unresolved forget masks BOTH stores while all targets are pending", async () => {
+    seedFactChangeOp("forget_op1", "forget");
+    seedFlag(["forget_op1", "forget"]);
+    const state = await getMemoryReconciliationState(UID);
+    expect(state.pending).toBe(true);
+    expect(state.storageMasked).toBe(true);
+    expect(state.zepMasked).toBe(true);
+    expect(state.pendingOperationIds).toEqual(["forget_op1"]);
+  });
+
+  it("per-store unmask: storage+embeddings confirmed → Storage returns while Zep stays masked", async () => {
+    seedFactChangeOp("forget_op1", "forget", {
+      storage: { status: "completed" },
+      embeddings: { status: "completed" },
+    });
+    seedFlag(["forget_op1", "forget"]);
+    const state = await getMemoryReconciliationState(UID);
+    expect(state.pending).toBe(true);
+    expect(state.storageMasked).toBe(false); // unmasked per-store
+    expect(state.zepMasked).toBe(true);      // still reconciling
+  });
+
+  it("a FAILED target stays masked (failed work remains masked and retryable)", async () => {
+    seedFactChangeOp("forget_op1", "forget", {
+      storage: { status: "failed" },
+      embeddings: { status: "completed" },
+      zepEdges: { status: "completed" },
+      zepEpisodes: { status: "completed" },
+    }, "retryable_failed");
+    seedFlag(["forget_op1", "forget"]);
+    const state = await getMemoryReconciliationState(UID);
+    expect(state.storageMasked).toBe(true);
+    expect(state.zepMasked).toBe(false);
+  });
+
+  it("completed and expired (missing) operations self-heal out of the flag → all clear again", async () => {
+    seedFactChangeOp("correction_done", "correction", {
+      learnedFacts: { status: "completed" }, storage: { status: "completed" },
+      embeddings: { status: "completed" }, zepEdges: { status: "completed" },
+      zepEpisodes: { status: "completed" },
+    }, "completed");
+    // "forget_gone" has no operation doc at all — expired after completion.
+    seedFlag(["correction_done", "correction"], ["forget_gone", "forget"]);
+
+    const state = await getMemoryReconciliationState(UID);
+    expect(state).toMatchObject({ pending: false, storageMasked: false, zepMasked: false });
+    // Self-heal removed both entries (best-effort update).
+    const flag = h.docs.get(flagPath)!;
+    expect(flag.pendingOperations).toEqual({});
+  });
+
+  it("reconciliationFlagAdd carries operation IDs/kinds only — no fact text field shape", () => {
+    const patch = reconciliationFlagAdd("forget_abc", "forget");
+    expect(Object.keys(patch).sort()).toEqual(["pendingOperations", "updatedAt"]);
+    expect((patch.pendingOperations as Record<string, unknown>).forget_abc).toMatchObject({ kind: "forget" });
   });
 });

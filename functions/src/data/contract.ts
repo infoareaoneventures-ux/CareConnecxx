@@ -373,14 +373,21 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "subcollection",
     caraWrites: true,
     webReads: false,
-    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only. Memory-grounding U3 (KTD7/R23): new facts use deterministic nf_{normHash} doc IDs; docs carry bounded mentionTurnKeys (retry-safe per-source-turn weight increments) and bounded sourceMessageRefs provenance paths.",
+    notes: "Individual learned facts under learned_facts/{userId}. Written/read by memory/learnedFacts.ts only. Server/agent-only. Memory-grounding U3 (KTD7/R23): new facts use deterministic nf_{normHash} doc IDs; docs carry bounded mentionTurnKeys (retry-safe per-source-turn weight increments) and bounded sourceMessageRefs provenance paths. Memory-grounding U4 (KTD9/KTD16): staged changes add pendingCorrectionOperationId/pendingForgetOperationId (fact ineligible for ALL retrieval while set), forgottenFingerprint + fingerprintKeyVersion (server-only HMAC-SHA256 of the normalized retired plaintext, keyed by the MEMORY_FINGERPRINT_KEY secret — blocks passive re-extraction; forgottenAt set at forget completion when plaintext/embedding are stripped), changeGeneration (bumped by confirmed re-remember; versions deterministic operation IDs), and reRememberedAt.",
   },
   memory_operations: {
     path: "memory_operations",
     docId: "composite",
     caraWrites: true,
     webReads: false,
-    notes: "Server-only durable retry ledger for cross-store memory writes (memory/memoryOperations.ts; drained by scheduled/memoryOperationWorker.ts via the shared leased-operation engine in operations/externalSideEffect.ts). Deterministic doc IDs from the source-turn key hash (turn_sync_{hash}); kinds: turn_sync now, correction/forget in a later unit. Docs hold references/hashes/statuses/timestamps ONLY — never raw message text, fact text, phone scalars, or Zep user/thread IDs (reference paths may resolve to phone-keyed docs; never logged). Explicit deny block in firestore.rules. Completed ops expire after 30 days (expiresAt); failed/unresolved ops never auto-expire.",
+    notes: "Server-only durable retry ledger for cross-store memory writes (memory/memoryOperations.ts; drained by scheduled/memoryOperationWorker.ts via the shared leased-operation engine in operations/externalSideEffect.ts). Deterministic doc IDs from the source-turn key hash (turn_sync_{hash}); kinds: turn_sync (U3), correction/forget (U4a staging — {kind}_{sha(userId:factDocId:changeGeneration)}, per-target statuses pending for learnedFacts/storage/embeddings/zepEdges/zepEpisodes; worker propagation lands in U4b), and re_remember (already-completed audit record for a confirmed tombstone clear). Docs hold references/hashes/statuses/timestamps ONLY — never raw message text, fact text, phone scalars, or Zep user/thread IDs (reference paths may resolve to phone-keyed docs; never logged). Explicit deny block in firestore.rules. Completed ops expire after 30 days (expiresAt); failed/unresolved ops never auto-expire.",
+  },
+  memory_reconciliation: {
+    path: "memory_reconciliation",
+    docId: "uid",
+    caraWrites: true,
+    webReads: false,
+    notes: "Server-only per-user correction/forget suppression flag (memory-grounding U4a, KTD9). One doc per userId holding pendingOperations: {operationId: {kind, createdAt}} — operation IDs/kinds ONLY, never fact text. Maintained TRANSACTIONALLY with staging in memory/learnedFacts.ts; read as a single cheap point read by every shared memory reader (getMemoryContext, searchMemory*, searchZepMemory, qaAgent prompt assembly) to enforce reconciliation suppression; the worker (U4b) clears entries on completion and the reader self-heals completed/expired entries. Explicit deny block in firestore.rules.",
   },
   memory_embeddings: {
     path: "memory_embeddings",

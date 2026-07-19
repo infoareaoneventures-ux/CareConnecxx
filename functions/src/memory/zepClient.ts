@@ -411,22 +411,59 @@ export async function getZepContext(threadId: string): Promise<string> {
 
 // ── Search memory ──────────────────────────────────────────────────────────────
 // Used when family texts "what do you know about mom?"
+//
+// U4a (KTD9): while a correction/forget operation's Zep targets are unresolved
+// for a user, graph search is suppressed AT THE READER — a stale or paraphrased
+// Zep edge must never reach a prompt or tool result mid-reconciliation. Callers
+// that know the APP userId pass it via `appUserId` (the first arg is the ZEP
+// userId — phone digits — which cannot key the reconciliation flag).
 
-export async function searchZepMemory(
+export type ZepMemorySearchStatus = "loaded" | "empty" | "reconciliation_pending" | "unavailable";
+
+export interface ZepMemorySearchResult {
+  status: ZepMemorySearchStatus;
+  /** Non-empty only when status === "loaded". */
+  facts:  string;
+}
+
+export async function searchZepMemoryResult(
   userId: string,
-  query: string
-): Promise<string> {
+  query: string,
+  opts: { appUserId?: string } = {},
+): Promise<ZepMemorySearchResult> {
+  if (opts.appUserId) {
+    try {
+      const { getMemoryReconciliationState } = await import("./memoryOperations");
+      const state = await getMemoryReconciliationState(opts.appUserId);
+      if (state.zepMasked) return { status: "reconciliation_pending", facts: "" };
+    } catch {
+      /* fail-open — matches the reader posture; check errors are logged inside */
+    }
+  }
   try {
     const results = await getZep().graph.search({ userId, query, limit: 5 });
-    if (!results?.edges?.length) return "";
-    return results.edges
+    if (!results?.edges?.length) return { status: "empty", facts: "" };
+    const facts = results.edges
       .map((e: any) => `- ${e.fact ?? e.name}`)
       .filter(Boolean)
       .join("\n");
+    return facts ? { status: "loaded", facts } : { status: "empty", facts: "" };
   } catch (err) {
     logZepFailure("searchZepMemory", err, userId);
-    return "";
+    return { status: "unavailable", facts: "" };
   }
+}
+
+// Legacy string read — "" for empty AND unavailable AND reconciliation-pending,
+// so callers cannot distinguish (or leak) suppressed state. New code should use
+// searchZepMemoryResult. `appUserId` gates reconciliation suppression.
+export async function searchZepMemory(
+  userId: string,
+  query: string,
+  appUserId?: string,
+): Promise<string> {
+  const result = await searchZepMemoryResult(userId, query, { appUserId });
+  return result.status === "loaded" ? result.facts : "";
 }
 
 // ── Push structured onboarding data to Zep graph ──────────────────────────────

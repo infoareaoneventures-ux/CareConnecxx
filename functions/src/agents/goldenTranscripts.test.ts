@@ -182,7 +182,14 @@ vi.mock("../safety/linter",     () => ({ lintMessage: (m: string) => m }));
 // Memory stubs — empty by default.
 vi.mock("../memory/zepClient",    () => ({ getZepContext: vi.fn(async () => ""), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles",  () => ({ getMemoryContext: vi.fn(async () => ""), initializeMemoryFiles: vi.fn(async () => undefined) }));
-vi.mock("../memory/learnedFacts", () => ({ getRelevantFacts: vi.fn(async () => []), detectAndApplyCorrection: vi.fn(async () => false) }));
+vi.mock("../memory/learnedFacts", () => ({
+  getRelevantFacts: vi.fn(async () => []),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+}));
 vi.mock("../memory/preferences",  () => ({ getPreferences: vi.fn(async () => null), isInDND: () => false }));
 
 // Emotional / skill / voice / recovery — neutral defaults.

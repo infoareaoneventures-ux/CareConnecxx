@@ -105,7 +105,14 @@ vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg, l
 vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
 vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn(), writeMemoryFile: vi.fn() }));
-vi.mock("../memory/learnedFacts",  () => ({ getRelevantFacts: vi.fn(), detectAndApplyCorrection: vi.fn() }));
+vi.mock("../memory/learnedFacts",  () => ({
+  getRelevantFacts: vi.fn(),
+  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+  factChangeAckCopy: vi.fn(() => null),
+  findTombstonedRestatement: vi.fn(async () => null),
+  classifyReRememberReply: vi.fn(async () => "other"),
+  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+}));
 vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(), isInDND: () => false }));
 vi.mock("../linq/client",          () => ({ sendMessage: hoisted.sendMessageMock, startTyping: vi.fn(), stopTyping: vi.fn() }));
 vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));

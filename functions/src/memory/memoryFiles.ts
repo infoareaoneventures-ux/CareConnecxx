@@ -6,6 +6,35 @@ import { embedText, embedMany, splitIntoBlocks, rankBySimilarity, EMBED_MODEL } 
 const storage = admin.storage();
 const db      = admin.firestore();
 
+// ── Reconciliation suppression (memory-grounding U4a, KTD9) ──────────────────
+// While a correction/forget operation is unresolved for a user AND its Storage/
+// embeddings targets have not confirmed, this module's READERS return nothing
+// for that user — enforced HERE, inside the shared readers, so qaAgent prompts,
+// morning briefing, weekly digest, trigger engine, matching, and the MCP
+// cara_knows/search_memory paths all inherit the suppression without
+// per-call-site wiring. Paraphrased stale copies in memory files cannot bypass
+// exact-string filters, so the whole store is conservatively omitted until the
+// worker (U4b) confirms reconciliation — per-store: a confirmed Storage store
+// unmasks even while Zep is still pending.
+//
+// The check is ONE point read on memory_reconciliation/{userId} in the common
+// case (see memoryOperations.getMemoryReconciliationState). Check errors fail
+// open with a sanitized log, matching every reader's existing posture.
+
+async function storageMemoryMasked(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const { getMemoryReconciliationState } = await import("./memoryOperations");
+    return (await getMemoryReconciliationState(userId)).storageMasked;
+  } catch {
+    return false;
+  }
+}
+
+/** Deterministic memory-query reply while reconciliation masks memory files (KTD10 — not an outage). */
+export const MEMORY_QUERY_RECONCILIATION_COPY =
+  "I'm in the middle of updating my memory after a recent correction, so I'm holding off on recalling stored details for a moment. Ask me again shortly and I'll have it sorted.";
+
 // The five canonical files Evia initializes and consolidates into. Callers may also
 // read/write arbitrary slugs (the `(string & {})` keeps autocomplete for the canonical
 // names while still accepting any other string — e.g. offloaded tool results).
@@ -186,6 +215,13 @@ export interface MemorySearchHit {
 // Substring search across all of a user's memory files. Returns the matching
 // sections so the QA agent can retrieve a fact without injecting all ~12K chars.
 export async function searchMemory(userId: string, query: string): Promise<MemorySearchHit[]> {
+  if (await storageMemoryMasked(userId)) return []; // U4a: reconciliation pending
+  return searchMemoryUnguarded(userId, query);
+}
+
+// Internal body — searchMemoryHybrid runs its own single mask check and then
+// calls this, so one hybrid search never pays the point read twice.
+async function searchMemoryUnguarded(userId: string, query: string): Promise<MemorySearchHit[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
 
@@ -220,11 +256,12 @@ export async function searchMemoryHybrid(
 ): Promise<MemorySearchHit[]> {
   const q = (query ?? "").trim();
   if (!q) return [];
+  if (await storageMemoryMasked(userId)) return []; // U4a: reconciliation pending
 
   // Run substring + query embedding in parallel — substring is local-ish (Storage
   // reads), embedding is one OpenAI call; we don't want to serialize them.
   const [substringHits, queryEmbed] = await Promise.all([
-    searchMemory(userId, q),
+    searchMemoryUnguarded(userId, q),
     embedText(q),
   ]);
 
@@ -270,6 +307,7 @@ export async function searchMemoryHybrid(
 // Enumerates the user's bucket prefix so ad-hoc files are included, with the five
 // canonical files ordered first.
 export async function getMemoryContext(userId: string): Promise<string> {
+  if (await storageMemoryMasked(userId)) return ""; // U4a: reconciliation pending
   const present = await listMemoryFiles(userId);
   const ordered = [
     ...ALL_FILES.filter((f) => present.includes(f)),
@@ -344,6 +382,13 @@ export async function handleMemoryQuery(
   question: string,
   zepContext?: string
 ): Promise<void> {
+  // U4a/KTD10: a memory query while reconciliation is pending gets the honest
+  // deterministic "updating my memory" copy — never a stale recall and never
+  // an outage claim. Deliberately checked BEFORE reading files/Zep context.
+  if (await storageMemoryMasked(userId)) {
+    await sendMessage(chatId, MEMORY_QUERY_RECONCILIATION_COPY);
+    return;
+  }
   const fileContext = await getMemoryContext(userId);
   const combined    = [fileContext, zepContext ? `## Recent context\n${zepContext}` : ""]
     .filter(Boolean)
@@ -422,6 +467,17 @@ export async function reconcileMemoryFile(
 const RECONCILABLE_FILES: CanonicalMemoryFile[] = ["profile", "health", "family"];
 
 export async function consolidateMemoryForUser(userId: string, phone?: string): Promise<void> {
+  // U4a/R23: never consolidate while a correction/forget is reconciling — a
+  // nightly pass over old conversation rows could re-write the very fact being
+  // removed. The user is simply skipped this run; the worker (U4b) marks source
+  // rows excluded before the flag clears.
+  try {
+    const { hasUnresolvedReconciliation } = await import("./memoryOperations");
+    if (await hasUnresolvedReconciliation(userId)) return;
+  } catch {
+    /* fail-open — matches this module's reader posture */
+  }
+
   // Resolve phone → agent_conversations doc key
   let conversationKey = phone ?? userId;
   if (!phone) {

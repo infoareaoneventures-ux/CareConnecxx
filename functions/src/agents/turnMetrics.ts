@@ -135,6 +135,17 @@ export interface TurnMetrics {
   zepContextStatus?:    "loaded" | "empty" | "unavailable" | "timeout";
   zepContextLatencyMs?: number;
 
+  // U4a (memory grounding): correction/forget + tombstone telemetry. Enums and
+  // counts ONLY (R21) — never fact text or operation content.
+  // factChangeOutcome mirrors learnedFacts.FactChangeOutcome.kind for this turn;
+  // factChangeKind distinguishes correction vs forget when one was staged.
+  memoryReconciliationPending?: boolean; // Zep/Storage omitted this turn — NOT an outage
+  factChangeOutcome?: "not_correction" | "no_match" | "ambiguous" | "pending" | "completed" | "failed";
+  factChangeKind?:    "correction" | "forget";
+  tombstoneRefusals?: number;  // passive writes refused by tombstone/staging guard
+  reRememberAsked?:     boolean; // this turn asked the explicit re-remember confirmation
+  reRememberConfirmed?: boolean; // a confirming reply cleared a tombstone this turn
+
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
   resumedFromCheckpoint?: boolean;

@@ -106,3 +106,77 @@ describe("describeSharedProfile — client", () => {
     expect(describeSharedProfile({ userType: "client", onboardingData: {} })).toBe("");
   });
 });
+
+// ── U6 canonical pinning (R17 / Memory Authority Order) ──────────────────────
+// The briefing is a SIGNUP SNAPSHOT — the lowest-priority memory layer. When
+// the caller passes the canonical live profile (senior_profiles data via
+// seniorProfileRepository), the snapshot may fill fields canonical lacks but
+// can never contradict canonical name/location/age/needs.
+describe("describeSharedProfile — canonical profile pinning", () => {
+  const SESSION = {
+    userType: "client",
+    onboardingData: {
+      firstName: "Anahi",
+      seniorName: "Rosie",
+      relationship: "mother",
+      city: "San Jose",
+      zipCode: "95112",
+      careNeeds: ["companionship"],
+      conditions: ["arthritis"],
+      age: 70, // stale signup answer — must never surface as a fact
+    },
+  };
+
+  it("canonical location wins over the stale signup snapshot", () => {
+    const brief = describeSharedProfile(SESSION, { location: "Sacramento", zipCode: "95814" });
+    expect(brief).toContain("Sacramento (ZIP 95814)");
+    expect(brief).not.toContain("San Jose");
+    expect(brief).not.toContain("95112");
+  });
+
+  it("canonical care needs win over the snapshot's", () => {
+    const brief = describeSharedProfile(SESSION, { needs: ["mobility help", "meal prep"] });
+    expect(brief).toContain("care needs: mobility help, meal prep");
+    expect(brief).not.toContain("companionship");
+  });
+
+  it("canonical diagnoses win over the snapshot's conditions", () => {
+    const brief = describeSharedProfile(SESSION, { diagnoses: ["dementia"] });
+    expect(brief).toContain("conditions mentioned: dementia");
+    expect(brief).not.toContain("arthritis");
+  });
+
+  it("canonical recipient name flows into WHO'S WHO", () => {
+    const brief = describeSharedProfile(SESSION, { name: "Rosemary" });
+    expect(brief).toContain("Rosemary");
+    expect(brief).not.toContain("Rosie");
+  });
+
+  it("the snapshot never asserts an age — canonical age cannot be contradicted", () => {
+    const brief = describeSharedProfile(SESSION, { age: 82 });
+    expect(brief).not.toMatch(/\bage\b/i);
+    expect(brief).not.toContain("70");
+  });
+
+  it("snapshot still fills fields the canonical profile does not carry", () => {
+    // Canonical carries only the name — location/needs/conditions come from
+    // the signup snapshot (fill, don't override).
+    const brief = describeSharedProfile(SESSION, { name: "Rosie" });
+    expect(brief).toContain("San Jose (ZIP 95112)");
+    expect(brief).toContain("care needs: companionship");
+    expect(brief).toContain("conditions mentioned: arthritis");
+  });
+
+  it("without a canonical profile the snapshot is unchanged (mid-signup surfaces)", () => {
+    const bare = describeSharedProfile(SESSION);
+    expect(bare).toBe(describeSharedProfile(SESSION, null));
+    expect(bare).toContain("San Jose (ZIP 95112)");
+    expect(bare).toContain("Rosie");
+  });
+
+  it("caregiver briefings ignore the canonical senior profile entirely", () => {
+    const withCanon = describeSharedProfile(HAMSE, { name: "Mary", location: "Sacramento" });
+    expect(withCanon).toBe(describeSharedProfile(HAMSE));
+    expect(withCanon).not.toContain("Sacramento");
+  });
+});

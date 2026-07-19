@@ -59,6 +59,7 @@ import {
   getZepUserId,
 } from "../memory/zepClient";
 import { sessionActivityFields } from "../memory/conversationMemory";
+import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
 import { extractLocationPart, reverseGeocode, SharedLocation } from "../utils/locationShare";
@@ -170,8 +171,12 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   const userId   = session.userId ?? "";
   const now      = new Date().toISOString();
 
-  const [seniorSnap, journalSnap, apptSnap, historySnap] = await Promise.all([
-    db.collection("senior_profiles").doc(seniorId).get(),
+  // U6 (R17): the cached seniorProfile uses the same canonical-first repository
+  // order as qaAgent's own read — a prefetch HIT and a prefetch MISS must see
+  // the identical senior (previously this cached canonical-only while the MISS
+  // path read legacy `seniors`, a per-turn split brain).
+  const [seniorProfileRead, journalSnap, apptSnap, historySnap] = await Promise.all([
+    getSeniorProfileWithSource(seniorId, db),
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .orderBy("timestamp", "desc").limit(3).get(),
@@ -184,10 +189,10 @@ async function handleTypingStarted(event: unknown): Promise<void> {
       .collection("messages").orderBy("timestamp", "desc").limit(10).get(),
   ]).catch(() => [null, null, null, null]);
 
-  if (!seniorSnap) return;
+  if (!seniorProfileRead) return;
 
   await db.collection("agent_prefetch").doc(phone).set({
-    seniorProfile:       seniorSnap.exists ? seniorSnap.data() : null,
+    seniorProfile:       seniorProfileRead.profile,
     recentJournal:       journalSnap ? journalSnap.docs.map((d) => d.data()) : [],
     nextAppointment:     apptSnap && !apptSnap.empty ? apptSnap.docs[0].data() : null,
     conversationHistory: historySnap

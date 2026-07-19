@@ -26,6 +26,7 @@ import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHour
 import { resolveShiftBillableAmount, shiftEndFromHours } from "../billing/shiftBillingAmounts";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
+import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
 // at most once per confirmation. When one runs as a confirmed action, its
@@ -2762,9 +2763,12 @@ export async function handleResourceRead(
   const seniorMatch = uri.match(/^cara:\/\/senior\/([^/]+)\/profile$/);
   if (seniorMatch) {
     const seniorId = params.seniorId ?? seniorMatch[1];
-    const snap     = await db.collection("seniors").doc(seniorId).get();
-    if (!snap.exists) return null;
-    return { uri, mimeType: "application/json", text: JSON.stringify(snap.data()) };
+    // U6 (R17): this resource used to read legacy `seniors` only — the one
+    // remaining legacy-first senior read in MCP. Same repository order as
+    // get_senior_profile now: canonical senior_profiles, legacy fallback.
+    const { profile } = await getSeniorProfileWithSource(seniorId, db);
+    if (!profile) return null;
+    return { uri, mimeType: "application/json", text: JSON.stringify(profile) };
   }
 
   // cara://user/{userId}/memory/{file}
@@ -3267,17 +3271,14 @@ async function executeToolCall(
         const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
         if (denied) return denied;
         logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_senior_profile").catch(() => {});
-        // Read from senior_profiles — the collection assertSeniorAccess authorized
-        // against — so a migrated household senior (random-id profile doc with no
-        // matching `seniors` doc) doesn't return a false NOT_FOUND. Fall back to
-        // the legacy `seniors` collection only when no profile doc exists.
-        const profileSnap = await db.collection("senior_profiles").doc(input.seniorId as string).get();
-        const snap = profileSnap.exists
-          ? profileSnap
-          : await db.collection("seniors").doc(input.seniorId as string).get();
-        if (!snap.exists) return toolError("NOT_FOUND", "Senior profile not found");
-        const data = snap.data()!;
-        return { success: true, results: data, hasMore: false };
+        // Canonical-first via the shared repository (U6/R17): senior_profiles —
+        // the collection assertSeniorAccess authorized against — wins, so a
+        // migrated household senior (random-id profile doc with no matching
+        // `seniors` doc) doesn't return a false NOT_FOUND; the legacy `seniors`
+        // collection is consulted only when no profile doc exists.
+        const { profile } = await getSeniorProfileWithSource(input.seniorId as string, db);
+        if (!profile) return toolError("NOT_FOUND", "Senior profile not found");
+        return { success: true, results: profile, hasMore: false };
       }
 
       case "list_household_seniors": {

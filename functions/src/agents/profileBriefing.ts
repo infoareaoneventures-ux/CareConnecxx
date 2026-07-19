@@ -16,6 +16,14 @@
 // mid-signup or mid-flow includes describeSharedProfile(session) in its
 // prompt. Facts only, already-collected only — this block never asks for
 // anything and never speculates; empty fields are simply omitted.
+//
+// Authority (U6, memory-grounding plan): this briefing is a SIGNUP SNAPSHOT —
+// the lowest-priority memory layer. Callers that hold the canonical live
+// profile (senior_profiles via data/seniorProfileRepository) pass it as the
+// second argument; any field canonical also carries (recipient name, location,
+// care needs, conditions) is then presented FROM canonical, so the snapshot
+// fills gaps but can never contradict newer canonical data. The snapshot never
+// emits an age fact at all, so canonical age cannot be overridden here.
 
 import { describeWhoIsWho } from "./careRecipients";
 
@@ -68,7 +76,13 @@ const INSTRUCTION =
   "rate, schedule, or email, answer DIRECTLY from these facts; never say you don't have them or ask them to " +
   "resend; if a detail is truly not listed here, only then say you don't have that one yet): ";
 
-export function describeSharedProfile(session: SessionLike): string {
+export function describeSharedProfile(
+  session: SessionLike,
+  // Canonical senior profile (senior_profiles doc data, canonical-first via
+  // seniorProfileRepository). Optional: mid-signup surfaces have no canonical
+  // profile yet and pass nothing — the snapshot then stands alone.
+  canonicalProfile?: Record<string, unknown> | null,
+): string {
   const d = (session?.onboardingData ?? {}) as Record<string, unknown>;
   const userType = String(session?.userType ?? "");
   const facts: string[] = [];
@@ -100,11 +114,15 @@ export function describeSharedProfile(session: SessionLike): string {
   } else {
     // Client/family — who's-who first (mandatory whenever a client name is
     // interpolated into family-facing LLM context; see careRecipients.ts).
-    const loc = describeLocation(d);
+    // Canonical-wins precedence (U6): where the canonical live profile carries
+    // a value, it is presented instead of the possibly-stale signup answer.
+    const canon = (canonicalProfile ?? {}) as Record<string, unknown>;
+    const canonLoc = describeLocation({ city: canon.location, zipCode: canon.zipCode });
+    const loc = canonLoc || describeLocation(d);
     if (loc) facts.push(`location: ${loc}`);
-    const careNeeds = asList(d.careNeeds);
+    const careNeeds = asList(canon.needs) || asList(d.careNeeds);
     if (careNeeds) facts.push(`care needs: ${careNeeds}`);
-    const conditions = asList(d.conditions);
+    const conditions = asList(canon.diagnoses) || asList(d.conditions);
     if (conditions) facts.push(`conditions mentioned: ${conditions}`);
     const days = asList(d.daysPerWeek);
     if (days) facts.push(`days per week: ${days}`);
@@ -119,7 +137,10 @@ export function describeSharedProfile(session: SessionLike): string {
     const budget = String(d.budget ?? "").trim();
     if (budget) facts.push(`budget: ${budget}`);
 
-    const whoIsWho = describeWhoIsWho(d);
+    // Canonical recipient name wins in the who's-who framing — a renamed/
+    // corrected senior_profiles.name must not be undercut by the signup answer.
+    const canonName = String(canon.name ?? "").trim();
+    const whoIsWho = describeWhoIsWho(canonName ? { ...d, seniorName: canonName } : d);
     if (!facts.length) return whoIsWho; // nothing shared yet — who's-who alone (may also be "")
     return `${whoIsWho ? `${whoIsWho} ` : ""}${INSTRUCTION}${facts.join("; ")}.`;
   }

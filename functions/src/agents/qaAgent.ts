@@ -38,6 +38,7 @@ import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
+import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
 import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
@@ -89,8 +90,11 @@ const db = admin.firestore();
 
 async function getSeniorProfile(seniorId: string) {
   if (!seniorId) return null;
-  const snap = await db.collection("seniors").doc(seniorId).get();
-  return snap.data() ?? null;
+  // U6 (R17): canonical-first via the shared repository — senior_profiles wins,
+  // legacy `seniors` is fallback only. This is the same order the Linq prefetch
+  // writer caches, so prefetch-HIT and prefetch-MISS turns see the same senior.
+  const { profile } = await getSeniorProfileWithSource(seniorId, db);
+  return profile;
 }
 
 async function getRecentJournalEntries(seniorId: string, limit = 3) {
@@ -3413,7 +3417,12 @@ export async function runQuickReply(params: {
   // Recall grounding — what they've already shared during signup. Without it a
   // quick-path "what zip did I give you?" turns into a grounded-sounding denial
   // even though the fact is sitting on the session (Hamse, 2026-07-17).
-  const sharedProfile = describeSharedProfile(session as { userType?: unknown; onboardingData?: Record<string, unknown> } | undefined);
+  // U6: the canonical profile (loaded canonical-first above) is passed so the
+  // signup snapshot fills gaps but can never contradict newer canonical fields.
+  const sharedProfile = describeSharedProfile(
+    session as { userType?: unknown; onboardingData?: Record<string, unknown> } | undefined,
+    seniorProfile as Record<string, unknown> | null,
+  );
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: sharedProfile ? `${persona}\n\n${sharedProfile}` : persona },

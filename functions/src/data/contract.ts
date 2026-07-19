@@ -325,7 +325,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: false,
     webReads: false,
-    notes: "Evia/QA-agent senior context records keyed by seniorId (functions qaAgent.ts, mcp/server.ts reads). NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
+    notes: "LEGACY senior context records keyed by seniorId — read fallback ONLY. New reads go through data/seniorProfileRepository.getSeniorProfileWithSource (canonical senior_profiles first; this collection consulted only when no canonical doc exists — U6/R17, memory-grounding plan 2026-07-17). No new writers. NOT the web senior store — that is senior_profiles. Server-only; no web reader. Distinct from the UI plural label 'seniors'.",
   },
   shifts: {
     path: "shifts",

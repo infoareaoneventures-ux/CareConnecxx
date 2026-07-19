@@ -243,6 +243,52 @@ async function findBlockingFactDoc(
   return null;
 }
 
+// ── Retired-text tombstone stamp (U4b — MCP edit/delete memory tools, R23) ───
+// When a memory-file edit removes/replaces fact content OUTSIDE the staged
+// learned-fact pipeline, the retired text still gets R23 resurrection
+// protection: a no-plaintext tombstone/superseded marker at the text's
+// deterministic doc key (+ HMAC fingerprint when the key is bound), so passive
+// extraction of the same normalized assertion is refused and routes through
+// the explicit re-remember confirmation. If an ACTIVE learned fact already
+// lives at that key, the merge marks it retired immediately (same shape as
+// staged suppression). The retired plaintext itself is NEVER written.
+
+export async function stampRetiredTextTombstone(params: {
+  userId: string;
+  retiredText: string;
+  mode: "forget" | "superseded";
+  category?: FactCategory;
+}): Promise<{ factDocId: string } | null> {
+  const norm = normalizeFact(params.retiredText);
+  if (!params.userId || norm.length < 3) return null;
+
+  const nowIso = new Date().toISOString();
+  const material = tryGetFingerprintKey();
+  const docId = deterministicFactDocId(params.retiredText);
+  const ref = factsCollection(params.userId).doc(docId);
+
+  const patch: Record<string, unknown> = {
+    userId: params.userId,
+    retiredVia: "mcp_memory_tool",
+    ...(material
+      ? { forgottenFingerprint: hmacFingerprint(norm, material), fingerprintKeyVersion: material.version }
+      : {}),
+    ...(params.mode === "forget" ? { forgottenAt: nowIso } : { supersededAt: nowIso }),
+  };
+
+  try {
+    const snap = await ref.get();
+    if (!snap.exists) {
+      patch.category = params.category ?? "preference";
+      patch.createdAt = nowIso;
+    }
+    await ref.set(patch, { merge: true });
+    return { factDocId: docId };
+  } catch {
+    return null; // best-effort — the Storage mutation already happened
+  }
+}
+
 // ── Passive extraction (KTD7 idempotency + R23 turn/tombstone guards) ────────
 
 /** Turn kind the CALLER judged for this text (detection outcome). Correction/

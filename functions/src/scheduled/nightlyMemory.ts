@@ -54,22 +54,38 @@ async function compressConversationForPhone(phone: string): Promise<PhoneCompres
   if (toCompress.length < 5) return { compressed: 0, pendingBlocked, agedPending };
 
   const existingSummary = summaryDocs[0]?.data()?.content as string | undefined;
-  const newMessages     = toCompress
+  // R23/KTD16 (U4b): rows the correction/forget worker marked as containing a
+  // corrected/forgotten fact are still deleted with the compressed window, but
+  // their content NEVER enters the summary prompt — a compression summary must
+  // not preserve a retired assertion in paraphrased form.
+  const summarizable = toCompress.filter(d => !d.data().excludeFromMemoryConsolidationAt);
+  const newMessages  = summarizable
     .map(d => `${d.data().role === "user" ? "User" : "Evia"}: ${d.data().content as string}`)
     .join("\n");
 
-  const promptParts = existingSummary
-    ? [`Existing summary:\n${existingSummary}\n\nNew messages to incorporate:\n${newMessages}`]
-    : [`Conversation:\n${newMessages}`];
+  let summaryText: string;
+  if (!newMessages && existingSummary) {
+    // Every compressible row was excluded — carry the prior summary forward
+    // verbatim; there is nothing new the summarizer is allowed to see.
+    summaryText = existingSummary;
+  } else if (!newMessages) {
+    // Nothing summarizable and no prior summary: leave the rows in place this
+    // run rather than deleting content without any summary continuity.
+    return { compressed: 0, pendingBlocked, agedPending };
+  } else {
+    const promptParts = existingSummary
+      ? [`Existing summary:\n${existingSummary}\n\nNew messages to incorporate:\n${newMessages}`]
+      : [`Conversation:\n${newMessages}`];
 
-  const response = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 400,
-    system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with \"<summary>\".",
-    messages:   [{ role: "user", content: promptParts[0] }],
-  });
+    const response = await getSharedClient().messages.create({
+      model:      "claude-haiku-4-5-20251001",
+      max_tokens: 400,
+      system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with \"<summary>\".",
+      messages:   [{ role: "user", content: promptParts[0] }],
+    });
 
-  const summaryText = (response.content[0] as Anthropic.TextBlock).text;
+    summaryText = (response.content[0] as Anthropic.TextBlock).text;
+  }
 
   // Delete old summary and compressed messages, write new summary. The summary
   // slots immediately before the first RETAINED row (which, when the pending

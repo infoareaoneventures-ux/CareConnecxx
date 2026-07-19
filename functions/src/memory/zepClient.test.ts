@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
   addMessages:        vi.fn(),
   graphSearch:        vi.fn(),
   graphAdd:           vi.fn(),
+  edgeUpdate:         vi.fn(),
+  edgeDelete:         vi.fn(),
+  episodeDelete:      vi.fn(),
   getContextTemplate: vi.fn(async () => ({})),
   // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
   reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
@@ -26,7 +29,12 @@ vi.mock("./memoryOperations", () => ({
 vi.mock("@getzep/zep-cloud", () => ({
   ZepClient: class {
     thread = { getUserContext: h.getUserContext, addMessages: h.addMessages };
-    graph = { search: h.graphSearch, add: h.graphAdd };
+    graph = {
+      search: h.graphSearch,
+      add: h.graphAdd,
+      edge: { update: h.edgeUpdate, delete: h.edgeDelete },
+      episode: { delete: h.episodeDelete },
+    };
     context = { getContextTemplate: h.getContextTemplate, createContextTemplate: vi.fn(async () => ({})) };
     user = { add: vi.fn(async () => ({})), update: vi.fn(async () => ({})) };
   },
@@ -55,6 +63,12 @@ import {
   addAssistantMessageToZepBestEffort,
   searchZepMemory,
   searchZepMemoryResult,
+  zepEdgeFactMatches,
+  findZepEdgesMatchingFact,
+  invalidateZepEdgeStrict,
+  deleteZepEdgeStrict,
+  deleteZepEpisodeStrict,
+  ZEP_EDGE_SEARCH_LIMIT,
 } from "./zepClient";
 
 const THREAD_ID = "thread-abc-123";
@@ -72,6 +86,9 @@ beforeEach(() => {
   h.getUserContext.mockReset();
   h.addMessages.mockReset();
   h.graphSearch.mockReset();
+  h.edgeUpdate.mockReset().mockResolvedValue({});
+  h.edgeDelete.mockReset().mockResolvedValue({});
+  h.episodeDelete.mockReset().mockResolvedValue({});
   h.reconciliation = { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] };
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   warnSpy  = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -345,5 +362,136 @@ describe("searchZepMemoryResult — reconciliation suppression (U4a)", () => {
     const result = await searchZepMemoryResult(ZEP_USER, "anything");
     expect(result.status).toBe("empty");
     expect(h.graphSearch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── U4b: graph edge/episode adapters for correction/forget propagation ───────
+// Strict tier: provider failure throws (the worker's lease/backoff owns
+// retries); already-deleted/not-found is SUCCESS; scope is single UUIDs — no
+// whole-graph/user/thread deletion exists in this surface.
+
+function notFound(message = "edge not found"): Error {
+  return Object.assign(new Error(message), { status: 404 });
+}
+
+describe("zepEdgeFactMatches (pure matcher)", () => {
+  const TARGET = "Mom is allergic to penicillin";
+
+  it("matches normalized containment in either direction", () => {
+    expect(zepEdgeFactMatches("mom is ALLERGIC to Penicillin.", TARGET)).toBe(true);
+    expect(zepEdgeFactMatches("allergic to penicillin", TARGET)).toBe(true);
+    expect(zepEdgeFactMatches(TARGET, "penicillin")).toBe(true);
+  });
+
+  it("matches a rephrased edge fact through content-word overlap", () => {
+    // Zep rephrases: same content words (mom, allergic, penicillin) survive.
+    expect(zepEdgeFactMatches("User's mom Margaret is allergic to penicillin", TARGET)).toBe(true);
+  });
+
+  it("does not match unrelated facts", () => {
+    expect(zepEdgeFactMatches("Mom prefers morning visits", TARGET)).toBe(false);
+    expect(zepEdgeFactMatches("Daughter Jane lives in Austin", TARGET)).toBe(false);
+  });
+
+  it("never matches empty inputs", () => {
+    expect(zepEdgeFactMatches("", TARGET)).toBe(false);
+    expect(zepEdgeFactMatches("anything", "")).toBe(false);
+  });
+});
+
+describe("findZepEdgesMatchingFact", () => {
+  const ZEP_USER = "14155551234";
+
+  it("searches the user's edges and returns ONLY matching uuids + episode refs", async () => {
+    h.graphSearch.mockResolvedValueOnce({
+      edges: [
+        { uuid: "edge-1", fact: "mom is allergic to penicillin", episodes: ["ep-1", "ep-2"] },
+        { uuid: "edge-2", fact: "mom prefers morning visits", episodes: ["ep-3"] },
+        { uuid: "edge-3", fact: "User's mom is allergic to penicillin medication" },
+      ],
+    });
+    const matches = await findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "Mom is allergic to penicillin" });
+    expect(matches).toEqual([
+      { uuid: "edge-1", episodes: ["ep-1", "ep-2"] },
+      { uuid: "edge-3", episodes: [] },
+    ]);
+    expect(h.graphSearch).toHaveBeenCalledWith({
+      userId: ZEP_USER,
+      query: "Mom is allergic to penicillin",
+      scope: "edges",
+      limit: ZEP_EDGE_SEARCH_LIMIT,
+    });
+  });
+
+  it("returns [] without calling Zep for empty inputs", async () => {
+    expect(await findZepEdgesMatchingFact({ zepUserId: "", factText: "x" })).toEqual([]);
+    expect(await findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "  " })).toEqual([]);
+    expect(h.graphSearch).not.toHaveBeenCalled();
+  });
+
+  it("THROWS on provider failure — the retry worker must see it", async () => {
+    h.graphSearch.mockRejectedValueOnce(badRequest("search down"));
+    await expect(findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "anything at all" }))
+      .rejects.toThrow("search down");
+  });
+});
+
+describe("edge invalidation / deletion adapters (R13/R14)", () => {
+  it("invalidateZepEdgeStrict updates the edge with invalidAt", async () => {
+    const result = await invalidateZepEdgeStrict({ edgeUuid: "edge-1", invalidAt: "2026-07-19T00:00:00.000Z" });
+    expect(result).toEqual({ alreadyGone: false });
+    expect(h.edgeUpdate).toHaveBeenCalledWith("edge-1", { invalidAt: "2026-07-19T00:00:00.000Z" });
+  });
+
+  it("deleteZepEdgeStrict deletes exactly the given edge", async () => {
+    const result = await deleteZepEdgeStrict("edge-1");
+    expect(result).toEqual({ alreadyGone: false });
+    expect(h.edgeDelete).toHaveBeenCalledWith("edge-1");
+    expect(h.edgeDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("deleteZepEpisodeStrict deletes exactly the given episode", async () => {
+    const result = await deleteZepEpisodeStrict("ep-1");
+    expect(result).toEqual({ alreadyGone: false });
+    expect(h.episodeDelete).toHaveBeenCalledWith("ep-1");
+  });
+
+  it("already-deleted / not-found targets are SUCCESS, not errors (404 status)", async () => {
+    h.edgeUpdate.mockRejectedValueOnce(notFound());
+    h.edgeDelete.mockRejectedValueOnce(notFound());
+    h.episodeDelete.mockRejectedValueOnce(notFound("episode not_found"));
+    await expect(invalidateZepEdgeStrict({ edgeUuid: "edge-x", invalidAt: "2026-01-01" }))
+      .resolves.toEqual({ alreadyGone: true });
+    await expect(deleteZepEdgeStrict("edge-x")).resolves.toEqual({ alreadyGone: true });
+    await expect(deleteZepEpisodeStrict("ep-x")).resolves.toEqual({ alreadyGone: true });
+    // Reconciled-as-success is not a failure: nothing logged as an error.
+    expect(loggedLines(errorSpy).join("")).toBe("");
+  });
+
+  it("non-404 failures THROW after retry — never swallowed", async () => {
+    h.edgeDelete.mockRejectedValue(badRequest("forbidden"));
+    await expect(deleteZepEdgeStrict("edge-x")).rejects.toThrow("forbidden");
+    h.episodeDelete.mockRejectedValue(badRequest("forbidden"));
+    await expect(deleteZepEpisodeStrict("ep-x")).rejects.toThrow("forbidden");
+  });
+
+  it("refuses an empty uuid — a blank target must never widen the call", async () => {
+    await expect(deleteZepEdgeStrict("")).rejects.toThrow();
+    await expect(deleteZepEpisodeStrict("")).rejects.toThrow();
+    await expect(invalidateZepEdgeStrict({ edgeUuid: "", invalidAt: "2026-01-01" })).rejects.toThrow();
+    expect(h.edgeDelete).not.toHaveBeenCalled();
+    expect(h.episodeDelete).not.toHaveBeenCalled();
+    expect(h.edgeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("failure logs carry operation + error class + correlation hash — never the raw UUID (R21)", async () => {
+    h.edgeDelete.mockRejectedValue(badRequest("boom"));
+    await deleteZepEdgeStrict("edge-secret-uuid").catch(() => {});
+    expect(errorSpy).toHaveBeenCalled();
+    const line = String(errorSpy.mock.calls[0][0]);
+    const entry = JSON.parse(line) as Record<string, unknown>;
+    expect(entry.operation).toBe("deleteZepEdge");
+    expect(entry.correlation).toMatch(/^[0-9a-f]{12}$/);
+    expect(line).not.toContain("edge-secret-uuid");
   });
 });

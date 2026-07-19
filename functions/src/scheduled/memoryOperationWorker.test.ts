@@ -8,6 +8,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // learned-fact extraction, memorySyncStatus clearing, deduplicated terminal
 // alerts, and aggregate-only logs.
 //
+// U4b (KTD9/KTD10/KTD16, R13/R14/R23): correction/forget propagation —
+// resumable per-target Storage/embeddings/Zep work, source-row consolidation
+// exclusion, no-plaintext tombstone finalization (fingerprint key REQUIRED),
+// durable audit entry before expiry eligibility, per-store unmasking, and
+// reconciliation-flag cleanup.
+//
 // Mock style mirrors nightlyMemory.test.ts: in-memory Firestore in vi.hoisted,
 // state mutated in beforeEach — never a mock returned from it.
 
@@ -42,6 +48,7 @@ const h = vi.hoisted(() => {
     return {
       exists: data !== undefined,
       id: path.split("/").pop()!,
+      ref: makeDocRef(path),
       data: () => (data === undefined ? undefined : JSON.parse(JSON.stringify(data))),
     };
   }
@@ -50,6 +57,7 @@ const h = vi.hoisted(() => {
     return {
       path,
       id: path.split("/").pop()!,
+      collection: (sub: string) => makeCollection(`${path}/${sub}`),
       get: async () => snapshotOf(path),
       set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
         docs.set(path, opts?.merge ? { ...(docs.get(path) ?? {}), ...data } : { ...data });
@@ -61,7 +69,23 @@ const h = vi.hoisted(() => {
     };
   }
 
-  function makeQuery(collectionName: string) {
+  function compare(val: unknown, value: unknown, op: string): boolean {
+    if (op === "==") return val === value;
+    if (op === "in") return Array.isArray(value) && value.includes(val);
+    if (typeof val === "number" && typeof value === "number") {
+      if (op === "<=") return val <= value;
+      if (op === ">=") return val >= value;
+      return false;
+    }
+    if (typeof val === "string" && typeof value === "string") {
+      if (op === "<=") return val <= value;
+      if (op === ">=") return val >= value;
+    }
+    return false;
+  }
+
+  function makeQuery(basePath: string) {
+    const depth = basePath.split("/").length + 1;
     const filters: Array<[string, string, unknown]> = [];
     let orderField: string | null = null;
     let lim = Infinity;
@@ -71,19 +95,19 @@ const h = vi.hoisted(() => {
       limit(n: number) { lim = n; return q; },
       async get() {
         let rows = [...docs.entries()]
-          .filter(([path]) => path.startsWith(`${collectionName}/`) && path.split("/").length === 2)
+          .filter(([path]) => path.startsWith(`${basePath}/`) && path.split("/").length === depth)
           .map(([path]) => snapshotOf(path));
         rows = rows.filter(snap =>
-          filters.every(([field, op, value]) => {
-            const val = (snap.data() as Record<string, unknown>)[field];
-            if (op === "==") return val === value;
-            if (op === "<=") return typeof val === "string" && typeof value === "string" && val <= value;
-            if (op === "in") return Array.isArray(value) && value.includes(val);
-            return true;
-          }),
+          filters.every(([field, op, value]) =>
+            compare((snap.data() as Record<string, unknown>)[field], value, op)),
         );
         if (orderField) {
-          rows.sort((a, b) => String((a.data() as any)[orderField!] ?? "").localeCompare(String((b.data() as any)[orderField!] ?? "")));
+          rows.sort((a, b) => {
+            const av = (a.data() as any)[orderField!];
+            const bv = (b.data() as any)[orderField!];
+            if (typeof av === "number" && typeof bv === "number") return av - bv;
+            return String(av ?? "").localeCompare(String(bv ?? ""));
+          });
         }
         rows = rows.slice(0, lim);
         return { empty: rows.length === 0, docs: rows };
@@ -92,11 +116,15 @@ const h = vi.hoisted(() => {
     return q;
   }
 
+  function makeCollection(basePath: string) {
+    return Object.assign(makeQuery(basePath), {
+      doc: (id: string) => makeDocRef(`${basePath}/${id}`),
+    });
+  }
+
   let txChain: Promise<unknown> = Promise.resolve();
   const dbObj = {
-    collection: (name: string) => Object.assign(makeQuery(name), {
-      doc: (id: string) => makeDocRef(`${name}/${id}`),
-    }),
+    collection: (name: string) => makeCollection(name),
     doc: (path: string) => makeDocRef(path),
     batch: () => {
       const ops: Array<() => void> = [];
@@ -128,6 +156,14 @@ const h = vi.hoisted(() => {
     zepUser: vi.fn(async (_params: { threadId: string; content: string; userName: string; sentAt?: Date; uuid?: string }) => ({ messageUuids: ["provider-uuid"] })),
     zepAssistant: vi.fn(async (_params: { threadId: string; content: string; sentAt?: Date; uuid?: string }) => ({ messageUuids: ["provider-uuid"] })),
     extractFacts: vi.fn(async (..._args: unknown[]) => {}),
+    // U4b adapters (zepClient / memoryFiles / auditLog)
+    findEdges: vi.fn(async (_p: { zepUserId: string; factText: string }) => [] as Array<{ uuid: string; episodes: string[] }>),
+    invalidateEdge: vi.fn(async (_p: { edgeUuid: string; invalidAt: string }) => ({ alreadyGone: false })),
+    deleteEdge: vi.fn(async (_uuid: string) => ({ alreadyGone: false })),
+    deleteEpisode: vi.fn(async (_uuid: string) => ({ alreadyGone: false })),
+    reconcileFiles: vi.fn(async (_userId: string, _old: string, _replacement: string) => ({ filesScanned: 1, filesRewritten: 1, occurrencesReplaced: 1 })),
+    deleteEmbeddings: vi.fn(async (_userId: string, _text: string) => 1),
+    logAudit: vi.fn(async (_e: unknown) => {}),
   };
 });
 
@@ -142,26 +178,55 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: stub, ...stub };
 });
 
-vi.mock("firebase-functions/v1", () => ({
-  pubsub: {
+vi.mock("firebase-functions/v1", () => {
+  const pubsub = {
     schedule: () => ({
       onRun: (fn: any) => fn,
       timeZone: () => ({ onRun: (fn: any) => fn }),
     }),
-  },
-}));
+  };
+  return {
+    pubsub,
+    // U4b: the worker binds the fingerprint secret via runWith (v1 params
+    // pattern) — the mock passes registration through unchanged.
+    runWith: (_opts: unknown) => ({ pubsub }),
+  };
+});
 
 vi.mock("../memory/zepClient", () => ({
   addUserMessageToZepStrict: h.zepUser,
   addAssistantMessageToZepStrict: h.zepAssistant,
+  findZepEdgesMatchingFact: h.findEdges,
+  invalidateZepEdgeStrict: h.invalidateEdge,
+  deleteZepEdgeStrict: h.deleteEdge,
+  deleteZepEpisodeStrict: h.deleteEpisode,
+  // Same containment semantics as the real matcher — enough for row-scan tests.
+  zepEdgeFactMatches: (edgeFact: string, target: string) =>
+    edgeFact.toLowerCase().includes(target.toLowerCase()),
+  getZepUserId: (phone: string) => phone.replace(/\D/g, ""),
 }));
 
 vi.mock("../memory/learnedFacts", () => ({
   extractAndStoreFacts: h.extractFacts,
+  normalizeFactForFingerprint: (fact: string) =>
+    (fact ?? "").toLowerCase().replace(/\s+/g, " ").trim(),
+}));
+
+vi.mock("../memory/memoryFiles", () => ({
+  reconcileFactAcrossMemoryFiles: h.reconcileFiles,
+  deleteEmbeddingRowsMatching: h.deleteEmbeddings,
+}));
+
+vi.mock("../observability/auditLog", () => ({
+  logAudit: h.logAudit,
 }));
 
 import { runMemoryOperationWorker, isZepDuplicateError } from "./memoryOperationWorker";
-import { MEMORY_OPERATION_MAX_ATTEMPTS } from "../memory/memoryOperations";
+import {
+  MEMORY_OPERATION_MAX_ATTEMPTS,
+  getMemoryReconciliationState,
+} from "../memory/memoryOperations";
+import { __setFingerprintKeyForTests } from "../memory/fingerprintKey";
 
 const PHONE = "+14085550001";
 const TURN_MS = Date.parse("2026-07-17T10:00:00Z");
@@ -213,7 +278,82 @@ function seedTurn(opId: string, overrides: Record<string, unknown> = {}, msgOver
 
 function seedSession(overrides: Record<string, unknown> = {}) {
   h.docs.set(`agent_sessions/${PHONE}`, {
-    zepThreadId: "thread-1", firstName: "Anahi", userType: "client", ...overrides,
+    zepThreadId: "thread-1", firstName: "Anahi", userType: "client", userId: "user-1", ...overrides,
+  });
+}
+
+// ── U4b fixtures ──────────────────────────────────────────────────────────────
+
+const FORGOTTEN_FACT = "Mom is allergic to penicillin";
+const CORRECTED_FACT = "Mom is allergic to amoxicillin";
+const FACT_PATH = "learned_facts/user-1/facts/nf_target";
+const REPLACEMENT_PATH = "learned_facts/user-1/facts/nf_replacement";
+
+function seedFactChange(
+  opId: string,
+  kind: "correction" | "forget",
+  overrides: Record<string, unknown> = {},
+  factOverrides: Record<string, unknown> | null = {},
+) {
+  if (factOverrides !== null) {
+    h.docs.set(FACT_PATH, {
+      userId: "user-1",
+      fact: FORGOTTEN_FACT,
+      _norm: FORGOTTEN_FACT.toLowerCase(),
+      weight: 3,
+      category: "medical",
+      createdAt: PAST,
+      lastMentionedAt: PAST,
+      embedding: [0.1, 0.2, 0.3],
+      embeddingModel: "text-embedding-3-small",
+      mentionTurnKeys: ["turnkey-1"],
+      sourceMessageRefs: [],
+      ...(kind === "forget"
+        ? { pendingForgetOperationId: opId }
+        : { pendingCorrectionOperationId: opId, supersededAt: PAST, supersededBy: "nf_replacement" }),
+      ...factOverrides,
+    });
+  }
+  if (kind === "correction") {
+    h.docs.set(REPLACEMENT_PATH, {
+      userId: "user-1", fact: CORRECTED_FACT, _norm: CORRECTED_FACT.toLowerCase(),
+      weight: 2, category: "medical", createdAt: PAST, lastMentionedAt: PAST, correctionOf: "nf_target",
+    });
+  }
+  h.docs.set(`memory_operations/${opId}`, {
+    kind,
+    userId: "user-1",
+    sessionRef: `agent_sessions/${PHONE}`,
+    sourceMessageRefs: [],
+    learnedFactRefs: [FACT_PATH, ...(kind === "correction" ? [REPLACEMENT_PATH] : [])],
+    status: "pending",
+    attempts: 0,
+    nextRetryAt: PAST,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    targets: {
+      firestore: { status: "skipped" },
+      zepTranscript: { status: "skipped" },
+      learnedFacts: { status: "pending" },
+      storage: { status: "pending" },
+      embeddings: { status: "pending" },
+      zepEdges: { status: "pending" },
+      zepEpisodes: { status: "pending" },
+    },
+    createdAt: PAST, updatedAt: PAST, completedAt: null, expiresAt: null,
+    ...overrides,
+  });
+  // Reconciliation flag — staged transactionally with the operation (U4a).
+  h.docs.set("memory_reconciliation/user-1", {
+    pendingOperations: { [opId]: { kind, createdAt: PAST } },
+    updatedAt: PAST,
+  });
+}
+
+function requeue(opId: string) {
+  h.docs.set(`memory_operations/${opId}`, {
+    ...h.docs.get(`memory_operations/${opId}`)!,
+    nextRetryAt: PAST,
   });
 }
 
@@ -225,6 +365,24 @@ beforeEach(() => {
   h.zepAssistant.mockImplementation(async () => ({ messageUuids: ["provider-uuid"] }));
   h.extractFacts.mockClear();
   h.extractFacts.mockImplementation(async () => {});
+  h.findEdges.mockClear();
+  h.findEdges.mockImplementation(async () => [
+    { uuid: "edge-1", episodes: ["ep-1", "ep-mixed"] },
+    { uuid: "edge-2", episodes: ["ep-mixed"] },
+  ]);
+  h.invalidateEdge.mockClear();
+  h.invalidateEdge.mockImplementation(async () => ({ alreadyGone: false }));
+  h.deleteEdge.mockClear();
+  h.deleteEdge.mockImplementation(async () => ({ alreadyGone: false }));
+  h.deleteEpisode.mockClear();
+  h.deleteEpisode.mockImplementation(async () => ({ alreadyGone: false }));
+  h.reconcileFiles.mockClear();
+  h.reconcileFiles.mockImplementation(async () => ({ filesScanned: 1, filesRewritten: 1, occurrencesReplaced: 1 }));
+  h.deleteEmbeddings.mockClear();
+  h.deleteEmbeddings.mockImplementation(async () => 1);
+  h.logAudit.mockClear();
+  h.logAudit.mockImplementation(async () => {});
+  __setFingerprintKeyForTests("test-fingerprint-key");
 });
 
 describe("runMemoryOperationWorker — happy path (KTD5/KTD6)", () => {
@@ -290,13 +448,13 @@ describe("runMemoryOperationWorker — happy path (KTD5/KTD6)", () => {
     expect(h.extractFacts).not.toHaveBeenCalled();
   });
 
-  it("non-turn_sync kinds are counted and left untouched (correction/forget arrive in a later unit)", async () => {
+  it("kinds the worker does not process are counted and left untouched", async () => {
     seedSession();
-    seedTurn("op1", { kind: "forget" });
+    seedTurn("op1", { kind: "bogus_future_kind" });
 
     const counts = await runMemoryOperationWorker();
 
-    expect(counts.nonTurnSync).toBe(1);
+    expect(counts.unsupportedKind).toBe(1);
     expect(counts.completed).toBe(0);
     expect(h.docs.get("memory_operations/op1")!.status).toBe("pending");
     expect(h.zepUser).not.toHaveBeenCalled();
@@ -333,7 +491,7 @@ describe("idempotency and reconciliation (R9/KTD5)", () => {
 
     // Attempt 2 (simulate the backoff having elapsed): provider answers
     // duplicate → success.
-    h.docs.set("memory_operations/op1", { ...h.docs.get("memory_operations/op1")!, nextRetryAt: PAST });
+    requeue("op1");
     h.zepUser.mockRejectedValueOnce(Object.assign(new Error("already exists"), { status: 409 }) as never);
     const second = await runMemoryOperationWorker();
     expect(second.completed).toBe(1);
@@ -509,5 +667,305 @@ describe("isZepDuplicateError", () => {
     expect(isZepDuplicateError(new Error("request timed out"))).toBe(false);
     expect(isZepDuplicateError(Object.assign(new Error("server error"), { status: 500 }))).toBe(false);
     expect(isZepDuplicateError(undefined)).toBe(false);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// U4b — correction/forget propagation (R13/R14/R23, KTD9/KTD16)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("forget propagation (R14/KTD16)", () => {
+  it("full pass: Storage reconcile, embedding purge, exact episode+edge deletion, tombstone strip, audit, flag cleanup, completion", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    expect(counts.factChangesCompleted).toBe(1);
+
+    // Storage: exact-match reconcile with REMOVAL (empty replacement).
+    expect(h.reconcileFiles).toHaveBeenCalledWith("user-1", FORGOTTEN_FACT, "");
+    // Embeddings purged by retired text.
+    expect(h.deleteEmbeddings).toHaveBeenCalledWith("user-1", FORGOTTEN_FACT);
+
+    // Zep: matched via the user's graph (phone-digits identity), episodes
+    // deleted FIRST (deduped — the shared episode once), then exact edges.
+    expect(h.findEdges).toHaveBeenCalledWith({ zepUserId: "14085550001", factText: FORGOTTEN_FACT });
+    expect(h.deleteEpisode.mock.calls.map(c => c[0]).sort()).toEqual(["ep-1", "ep-mixed"]);
+    expect(h.deleteEdge.mock.calls.map(c => c[0]).sort()).toEqual(["edge-1", "edge-2"]);
+    expect(h.invalidateEdge).not.toHaveBeenCalled();
+
+    // Tombstone: serialized doc holds NO plaintext — only fingerprint,
+    // category, provenance, forgottenAt (R14/KTD16).
+    const tombstone = h.docs.get(FACT_PATH)!;
+    const serialized = JSON.stringify(tombstone);
+    expect(serialized).not.toContain("penicillin");
+    expect(serialized).not.toContain(FORGOTTEN_FACT);
+    expect(tombstone.fact).toBeUndefined();
+    expect(tombstone._norm).toBeUndefined();
+    expect(tombstone.embedding).toBeUndefined();
+    expect(tombstone.embeddingModel).toBeUndefined();
+    expect(tombstone.pendingForgetOperationId).toBeUndefined();
+    expect(typeof tombstone.forgottenAt).toBe("string");
+    expect(String(tombstone.forgottenFingerprint)).toMatch(/^[0-9a-f]{64}$/);
+    expect(tombstone.fingerprintKeyVersion).toBe(1);
+    expect(tombstone.category).toBe("medical");
+
+    // Durable audit entry: written on completion, no fact text (R21).
+    expect(h.logAudit).toHaveBeenCalledTimes(1);
+    expect(h.logAudit).toHaveBeenCalledWith({
+      eventType: "memory_fact_forgotten",
+      userId: "user-1",
+      data: { source: "memory_operation_worker", category: "medical" },
+    });
+    expect(JSON.stringify(h.logAudit.mock.calls)).not.toContain("penicillin");
+
+    // Operation completed with retention expiry; flag entry removed.
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("completed");
+    expect(typeof op.expiresAt).toBe("string");
+    const flag = h.docs.get("memory_reconciliation/user-1")!;
+    expect((flag.pendingOperations as Record<string, unknown>)["op-forget"]).toBeUndefined();
+
+    // Post-completion reconciliation state: all clear.
+    const state = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(state.pending).toBe(false);
+  });
+
+  it("mixed episode is deleted (privacy wins) and NOTHING is re-ingested into Zep", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+    // ep-mixed is shared by both edges (i.e. it also carries unrelated facts).
+    await runMemoryOperationWorker();
+
+    expect(h.deleteEpisode.mock.calls.map(c => c[0])).toContain("ep-mixed");
+    // No Zep write of any kind happened — no re-ingestion path exists here.
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.zepAssistant).not.toHaveBeenCalled();
+  });
+
+  it("already-gone targets are success: missing fact doc + not-found Zep targets still complete", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget", {}, null); // no fact doc at all
+    h.deleteEdge.mockImplementation(async () => ({ alreadyGone: true }));
+    h.deleteEpisode.mockImplementation(async () => ({ alreadyGone: true }));
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    // No retired plaintext → nothing addressable; Storage/embeddings/Zep are
+    // trivially complete, not failures.
+    expect(h.reconcileFiles).not.toHaveBeenCalled();
+    expect(h.deleteEmbeddings).not.toHaveBeenCalled();
+    expect(h.findEdges).not.toHaveBeenCalled();
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("completed");
+    for (const key of ["storage", "embeddings", "zepEdges", "zepEpisodes", "learnedFacts"]) {
+      expect((op.targets as any)[key].status).toBe("completed");
+    }
+  });
+
+  it("an unbound fingerprint secret makes forget finalization a RETRYABLE failure — plaintext is never stripped without a tombstone fingerprint", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+    __setFingerprintKeyForTests(null);
+    const prevEnv = process.env.MEMORY_FINGERPRINT_KEY;
+    delete process.env.MEMORY_FINGERPRINT_KEY;
+    try {
+      const counts = await runMemoryOperationWorker();
+
+      expect(counts.retryable).toBe(1);
+      const op = h.docs.get("memory_operations/op-forget")!;
+      expect(op.status).toBe("retryable_failed");
+      expect((op.targets as any).learnedFacts.status).toBe("failed");
+      // Upstream stores were reconciled, but the fact doc keeps its plaintext
+      // and pending marker → still masked, never resurrectable.
+      const fact = h.docs.get(FACT_PATH)!;
+      expect(fact.fact).toBe(FORGOTTEN_FACT);
+      expect(fact.pendingForgetOperationId).toBe("op-forget");
+      expect(h.logAudit).not.toHaveBeenCalled(); // completion audit only on full completion
+    } finally {
+      if (prevEnv !== undefined) process.env.MEMORY_FINGERPRINT_KEY = prevEnv;
+    }
+  });
+});
+
+describe("correction propagation (R13)", () => {
+  it("exact edge invalidation: matched edges get invalidAt, no edge/episode deletion, corrected value written to Storage", async () => {
+    seedSession();
+    seedFactChange("op-corr", "correction");
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    // Storage rewrite carries the CORRECTED value.
+    expect(h.reconcileFiles).toHaveBeenCalledWith("user-1", FORGOTTEN_FACT, CORRECTED_FACT);
+    // Exact edge invalidation, never deletion (the correction keeps history).
+    expect(h.invalidateEdge.mock.calls.map(c => (c[0] as { edgeUuid: string }).edgeUuid).sort())
+      .toEqual(["edge-1", "edge-2"]);
+    for (const call of h.invalidateEdge.mock.calls) {
+      expect(typeof (call[0] as { invalidAt: string }).invalidAt).toBe("string");
+    }
+    expect(h.deleteEdge).not.toHaveBeenCalled();
+    expect(h.deleteEpisode).not.toHaveBeenCalled();
+
+    // Old doc: pending marker cleared, supersede finalized, plaintext retained
+    // (superseded docs keep text; the supersede state blocks reuse).
+    const oldDoc = h.docs.get(FACT_PATH)!;
+    expect(oldDoc.pendingCorrectionOperationId).toBeUndefined();
+    expect(oldDoc.supersededAt).toBeTruthy();
+    // Replacement fact untouched and current.
+    expect(h.docs.get(REPLACEMENT_PATH)!.fact).toBe(CORRECTED_FACT);
+
+    // Durable audit for the correction.
+    expect(h.logAudit).toHaveBeenCalledWith({
+      eventType: "memory_fact_corrected",
+      userId: "user-1",
+      data: { source: "memory_operation_worker", category: "medical" },
+    });
+  });
+});
+
+describe("resumable per-target retry (R13/R14 retry, KTD9 per-store unmask)", () => {
+  it("retry after a Storage failure resumes from Storage — downstream targets were never attempted early", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+    h.reconcileFiles.mockRejectedValueOnce(new Error("storage down") as never);
+
+    const first = await runMemoryOperationWorker();
+    expect(first.retryable).toBe(1);
+    let op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("retryable_failed");
+    expect((op.targets as any).storage.status).toBe("failed");
+    expect((op.targets as any).storage.errorClass).toBe("Error");
+    // Order guarantee: nothing downstream ran.
+    expect(h.findEdges).not.toHaveBeenCalled();
+    expect(h.deleteEmbeddings).not.toHaveBeenCalled();
+
+    requeue("op-forget");
+    const second = await runMemoryOperationWorker();
+    expect(second.completed).toBe(1);
+    // Storage was retried (2 total calls), then the rest ran exactly once.
+    expect(h.reconcileFiles).toHaveBeenCalledTimes(2);
+    expect(h.deleteEmbeddings).toHaveBeenCalledTimes(1);
+    expect(h.findEdges).toHaveBeenCalledTimes(1);
+    op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("completed");
+  });
+
+  it("retry after a Zep failure resumes ONLY the Zep targets; per-store unmask reflects worker progress", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+    h.findEdges.mockRejectedValueOnce(new Error("zep down") as never);
+
+    const first = await runMemoryOperationWorker();
+    expect(first.retryable).toBe(1);
+    const opAfterFail = h.docs.get("memory_operations/op-forget")!;
+    expect((opAfterFail.targets as any).storage.status).toBe("completed");
+    expect((opAfterFail.targets as any).embeddings.status).toBe("completed");
+    expect((opAfterFail.targets as any).zepEdges.status).toBe("failed");
+    expect((opAfterFail.targets as any).zepEpisodes.status).toBe("failed");
+
+    // KTD9 per-store: Storage confirmed → unmasked; Zep still masked; the
+    // fact stays pending → the user remains in reconciliation.
+    const midState = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(midState.pending).toBe(true);
+    expect(midState.storageMasked).toBe(false);
+    expect(midState.zepMasked).toBe(true);
+    // Pending fact is still staged (masked) — plaintext + marker intact.
+    expect(h.docs.get(FACT_PATH)!.pendingForgetOperationId).toBe("op-forget");
+
+    requeue("op-forget");
+    const second = await runMemoryOperationWorker();
+    expect(second.completed).toBe(1);
+    // Storage/embeddings were NOT re-run; Zep was.
+    expect(h.reconcileFiles).toHaveBeenCalledTimes(1);
+    expect(h.deleteEmbeddings).toHaveBeenCalledTimes(1);
+    expect(h.findEdges).toHaveBeenCalledTimes(2);
+
+    const endState = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(endState.pending).toBe(false);
+    expect(endState.zepMasked).toBe(false);
+  });
+
+  it("a failed operation never expires and stays masked (terminal alert, no expiresAt)", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget", { status: "retryable_failed", attempts: MEMORY_OPERATION_MAX_ATTEMPTS - 1 });
+    h.reconcileFiles.mockRejectedValue(new Error("storage permanently down") as never);
+
+    const counts = await runMemoryOperationWorker();
+    expect(counts.terminal).toBe(1);
+
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("terminal_failed");
+    expect(op.expiresAt ?? null).toBeNull();
+    expect(op.completedAt ?? null).toBeNull();
+    expect(h.docs.has("admin_alerts/memory-operation:op-forget")).toBe(true);
+    // Suppression persists: flag entry present, state still masked.
+    const state = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(state.pending).toBe(true);
+    expect(state.storageMasked).toBe(true);
+    // No completion audit for failed work.
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("the same request is idempotent: a completed operation is never re-processed", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+
+    const first = await runMemoryOperationWorker();
+    expect(first.completed).toBe(1);
+    const second = await runMemoryOperationWorker();
+    expect(second.due).toBe(0);
+    expect(second.completed).toBe(0);
+    expect(h.reconcileFiles).toHaveBeenCalledTimes(1);
+    expect(h.deleteEdge.mock.calls.length).toBe(2); // still just the first run's two edges
+    expect(h.logAudit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("source-row consolidation exclusion (KTD16/R23)", () => {
+  it("known sourceMessageRefs are marked excludeFromMemoryConsolidationAt(+reason)", async () => {
+    seedSession();
+    const rowPath = `agent_conversations/${PHONE}/messages/turn_x_user`;
+    h.docs.set(rowPath, { role: "user", content: "mom is allergic to penicillin btw", timestamp: TURN_MS });
+    seedFactChange("op-forget", "forget", { sourceMessageRefs: [rowPath] });
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    expect(counts.sourceRowsExcluded).toBe(1);
+    const row = h.docs.get(rowPath)!;
+    expect(typeof row.excludeFromMemoryConsolidationAt).toBe("string");
+    expect(row.excludeFromMemoryConsolidationReason).toBe("forget");
+  });
+
+  it("legacy facts without provenance get a bounded 7-day window scan that marks only matching rows", async () => {
+    seedSession();
+    const now = Date.now();
+    h.docs.set(`agent_conversations/${PHONE}/messages/m1`, {
+      role: "user", content: "I told you Mom is allergic to penicillin", timestamp: now - 1000,
+    });
+    h.docs.set(`agent_conversations/${PHONE}/messages/m2`, {
+      role: "assistant", content: "Noted — mom is allergic to penicillin.", timestamp: now - 900,
+    });
+    h.docs.set(`agent_conversations/${PHONE}/messages/m3`, {
+      role: "user", content: "Also she likes gardening", timestamp: now - 800,
+    });
+    h.docs.set(`agent_conversations/${PHONE}/messages/m-old`, {
+      role: "user", content: "mom is allergic to penicillin", timestamp: now - 8 * 24 * 60 * 60 * 1000,
+    });
+    seedFactChange("op-forget", "forget", { sourceMessageRefs: [] });
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    expect(counts.sourceRowsExcluded).toBe(2);
+    expect(h.docs.get(`agent_conversations/${PHONE}/messages/m1`)!.excludeFromMemoryConsolidationReason).toBe("forget_legacy_scan");
+    expect(h.docs.get(`agent_conversations/${PHONE}/messages/m2`)!.excludeFromMemoryConsolidationReason).toBe("forget_legacy_scan");
+    // Non-matching + out-of-window rows untouched.
+    expect(h.docs.get(`agent_conversations/${PHONE}/messages/m3`)!.excludeFromMemoryConsolidationAt).toBeUndefined();
+    expect(h.docs.get(`agent_conversations/${PHONE}/messages/m-old`)!.excludeFromMemoryConsolidationAt).toBeUndefined();
   });
 });

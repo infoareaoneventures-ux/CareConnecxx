@@ -308,6 +308,76 @@ export function buildFactChangeOperationDoc(
   };
 }
 
+// ── MCP memory-file change operations (U4b, R11/R23) ─────────────────────────
+// The legacy delete_memory_file / edit_memory_file MCP tools route through the
+// correction/forget pipeline SEMANTICS: identity-validated, recorded as a
+// memory operation (audit-by-reference), and tombstone-protected. The Storage
+// mutation itself runs inline in the tool (the user is waiting on the reply),
+// so these operations are recorded already-completed — they never enter the
+// retry sweep. `fileSlug` is a file NAME, never fact content; `changeKeyHash`
+// is an opaque hash of the edited text so distinct edits get distinct records.
+
+export function mcpMemoryFileOperationId(
+  kind: "correction" | "forget",
+  userId: string,
+  fileSlug: string,
+  changeKey = "",
+): string {
+  const hash = createHash("sha256")
+    .update(`evia-mcp-file-op:v1:${kind}:${userId}:${fileSlug}:${changeKey}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `mcpfile_${kind}_${hash}`;
+}
+
+export function buildMcpMemoryFileOperationDoc(input: {
+  kind: "correction" | "forget";
+  userId: string;
+  phone?: string;
+  fileSlug: string;
+  /** Opaque discriminator for edit operations (e.g. sha of the find text). */
+  changeKey?: string;
+  /** Path of the tombstone/superseded shell doc stamped for the retired text. */
+  tombstoneFactPath?: string;
+}): { operationId: string; doc: MemoryOperationDoc & { fileSlug: string; source: string } } {
+  const nowIso = new Date().toISOString();
+  const doc: MemoryOperationDoc & { fileSlug: string; source: string } = {
+    kind: input.kind,
+    userId: input.userId,
+    sessionRef: input.phone ? `agent_sessions/${input.phone}` : "",
+    sourceMessageRefs: [],
+    learnedFactRefs: input.tombstoneFactPath ? [input.tombstoneFactPath] : [],
+    fileSlug: input.fileSlug,
+    source: "mcp_memory_tool",
+    status: "completed",
+    attempts: 0,
+    nextRetryAt: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    targets: {
+      firestore: { status: "skipped" },
+      zepTranscript: { status: "skipped" },
+      // Tombstone shell stamped inline when the fingerprint path applies.
+      learnedFacts: { status: input.tombstoneFactPath ? "completed" : "skipped" },
+      // The tool performed the Storage rewrite/delete + embedding purge inline.
+      storage: { status: "completed" },
+      embeddings: { status: "completed" },
+      // File-scoped MCP changes do not resolve individual Zep edges — the
+      // learned-fact pipeline owns fact-level Zep propagation.
+      zepEdges: { status: "skipped" },
+      zepEpisodes: { status: "skipped" },
+    },
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    completedAt: nowIso,
+    expiresAt: new Date(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS).toISOString(),
+  };
+  return {
+    operationId: mcpMemoryFileOperationId(input.kind, input.userId, input.fileSlug, input.changeKey ?? ""),
+    doc,
+  };
+}
+
 /** Already-completed audit record for an explicit confirmed re-remember (KTD16). */
 export function buildReRememberOperationDoc(input: {
   userId: string;
@@ -383,6 +453,25 @@ export function reconciliationFlagAdd(
     pendingOperations: { [operationId]: { kind, createdAt: new Date().toISOString() } },
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Removes one resolved operation's entry from the user's reconciliation flag
+ * doc (worker completion path, U4b). Idempotent; a missing doc is a no-op.
+ * The reader also self-heals completed entries, so a crash between operation
+ * completion and this cleanup only costs one extra read.
+ */
+export async function clearReconciliationFlagEntry(
+  userId: string,
+  operationId: string,
+  dbArg?: admin.firestore.Firestore,
+): Promise<void> {
+  if (!userId || !operationId) return;
+  const store = dbArg ?? db();
+  await store.collection(MEMORY_RECONCILIATION_COLLECTION).doc(userId).update({
+    [`pendingOperations.${operationId}`]: admin.firestore.FieldValue.delete(),
+    updatedAt: new Date().toISOString(),
+  }).catch(() => {});
 }
 
 export interface MemoryReconciliationState {

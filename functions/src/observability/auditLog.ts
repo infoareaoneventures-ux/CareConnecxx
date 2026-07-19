@@ -98,7 +98,14 @@ export type AuditEventType =
   | "family_member_updated"
   | "interview_cancelled"
   | "memory_file_deleted"
-  | "cash_payment_confirmed";
+  | "cash_payment_confirmed"
+  // Memory-grounding U4b: durable completion records for cross-store fact
+  // changes (scheduled/memoryOperationWorker.ts + mcp memory tools). Written
+  // BEFORE the memory_operations record becomes expiry-eligible so the
+  // accountability trail outlives the 30-day ledger retention. Data carries
+  // event metadata (category, source) only — NEVER fact text.
+  | "memory_fact_corrected"
+  | "memory_fact_forgotten";
 
 export interface AuditEvent {
   eventType: AuditEventType;

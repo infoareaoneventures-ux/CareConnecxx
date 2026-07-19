@@ -466,6 +466,151 @@ export async function searchZepMemory(
   return result.status === "loaded" ? result.facts : "";
 }
 
+// ── Graph edge/episode adapters for correction/forget propagation (U4b) ──────
+// Strict tier ONLY — these exist for the memory-operation worker (R13/R14).
+// Contract:
+//   • provider/network failures THROW after retry exhaustion (the worker's
+//     lease/backoff owns retries; a swallowed failure would mark a forget
+//     complete that never reached Zep);
+//   • already-deleted / not-found targets are SUCCESS (`alreadyGone`) — a
+//     retried delete must reconcile, not fail forever;
+//   • scope is a single edge/episode UUID. Nothing here can delete a whole
+//     graph, user, or thread (Stop conditions / Scope Boundaries).
+// Logs carry operation + error class + correlation hash only (R21) — never an
+// edge UUID, fact text, or query text.
+
+function isZepNotFoundError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown });
+  if (status?.status === 404 || status?.statusCode === 404) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /not[\s_-]?found/i.test(msg);
+}
+
+function normalizeForEdgeMatch(text: string): string {
+  return (text ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const EDGE_MATCH_STOPWORDS = new Set([
+  "the", "a", "an", "is", "are", "was", "were", "be", "been", "to", "of", "and",
+  "or", "in", "on", "at", "for", "with", "has", "have", "had", "her", "his",
+  "their", "my", "that", "this", "it", "she", "he", "they",
+]);
+
+/**
+ * Pure matcher deciding whether a Zep edge's extracted fact refers to the
+ * target learned-fact text. Zep rephrases facts, so exact equality would find
+ * nothing: match on normalized containment (either direction) or on ≥80%
+ * content-word overlap of the target inside the edge fact. Deterministic and
+ * conservative — a non-match leaves the edge alone (higher-authority stores
+ * are already corrected; KTD9 masking covers the gap until then).
+ */
+export function zepEdgeFactMatches(edgeFact: string, targetFact: string): boolean {
+  const edge = normalizeForEdgeMatch(edgeFact);
+  const target = normalizeForEdgeMatch(targetFact);
+  if (!edge || !target) return false;
+  if (edge.includes(target) || target.includes(edge)) return true;
+  const targetWords = target.split(" ").filter((w) => w.length > 2 && !EDGE_MATCH_STOPWORDS.has(w));
+  if (targetWords.length === 0) return false;
+  const edgeWords = new Set(edge.split(" "));
+  const present = targetWords.filter((w) => edgeWords.has(w)).length;
+  return present / targetWords.length >= 0.8;
+}
+
+export interface ZepEdgeMatch {
+  uuid: string;
+  /** Source-episode UUIDs referencing this edge (forget deletes them). */
+  episodes: string[];
+}
+
+export const ZEP_EDGE_SEARCH_LIMIT = 20;
+
+/**
+ * Strict: search the user's graph for edges whose extracted fact matches the
+ * target fact text. Throws on provider failure. Returns matched UUIDs +
+ * episode refs only — never returned fact text.
+ */
+export async function findZepEdgesMatchingFact(params: {
+  zepUserId: string;
+  factText: string;
+}): Promise<ZepEdgeMatch[]> {
+  if (!params.zepUserId || !params.factText?.trim()) return [];
+  const results = await withZepRetry(
+    () => getZep().graph.search({
+      userId: params.zepUserId,
+      query: params.factText,
+      scope: "edges",
+      limit: ZEP_EDGE_SEARCH_LIMIT,
+    }),
+    "findZepEdgesMatchingFact",
+    params.zepUserId,
+  );
+  const edges = results?.edges ?? [];
+  return edges
+    .filter((e) => e?.uuid && zepEdgeFactMatches(String(e.fact ?? ""), params.factText))
+    .map((e) => ({ uuid: e.uuid, episodes: Array.isArray(e.episodes) ? e.episodes : [] }));
+}
+
+export interface ZepDeleteOutcome {
+  /** True when the target was already gone — treated as success (R14). */
+  alreadyGone: boolean;
+}
+
+/**
+ * Strict: mark one edge's fact as no longer true (correction, R13) by setting
+ * `invalidAt`. Not-found is success — the edge is already out of the graph.
+ */
+export async function invalidateZepEdgeStrict(params: {
+  edgeUuid: string;
+  invalidAt: string;
+}): Promise<ZepDeleteOutcome> {
+  if (!params.edgeUuid) throw new Error("invalidateZepEdgeStrict: edgeUuid required");
+  const outcome = await withZepRetry(async () => {
+    try {
+      await getZep().graph.edge.update(params.edgeUuid, { invalidAt: params.invalidAt });
+      return "updated" as const;
+    } catch (err) {
+      if (isZepNotFoundError(err)) return "already_gone" as const;
+      throw err;
+    }
+  }, "invalidateZepEdge", params.edgeUuid);
+  return { alreadyGone: outcome === "already_gone" };
+}
+
+/** Strict: delete ONE edge by UUID (forget, R14). Not-found is success. */
+export async function deleteZepEdgeStrict(edgeUuid: string): Promise<ZepDeleteOutcome> {
+  if (!edgeUuid) throw new Error("deleteZepEdgeStrict: edgeUuid required");
+  const outcome = await withZepRetry(async () => {
+    try {
+      await getZep().graph.edge.delete(edgeUuid);
+      return "deleted" as const;
+    } catch (err) {
+      if (isZepNotFoundError(err)) return "already_gone" as const;
+      throw err;
+    }
+  }, "deleteZepEdge", edgeUuid);
+  return { alreadyGone: outcome === "already_gone" };
+}
+
+/**
+ * Strict: delete ONE source episode by UUID (forget, R14). Not-found is
+ * success. Mixed episodes: privacy wins — the caller deletes the episode even
+ * when it carries unrelated facts; those remain retrievable through learned
+ * facts and Storage memory (higher-authority layers) and are NOT re-ingested.
+ */
+export async function deleteZepEpisodeStrict(episodeUuid: string): Promise<ZepDeleteOutcome> {
+  if (!episodeUuid) throw new Error("deleteZepEpisodeStrict: episodeUuid required");
+  const outcome = await withZepRetry(async () => {
+    try {
+      await getZep().graph.episode.delete(episodeUuid);
+      return "deleted" as const;
+    } catch (err) {
+      if (isZepNotFoundError(err)) return "already_gone" as const;
+      throw err;
+    }
+  }, "deleteZepEpisode", episodeUuid);
+  return { alreadyGone: outcome === "already_gone" };
+}
+
 // ── Push structured onboarding data to Zep graph ──────────────────────────────
 // Call at payment completion — thread already exists from first contact.
 // Zep uses this to build richer knowledge: senior name, conditions, care needs.

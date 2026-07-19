@@ -205,6 +205,83 @@ export async function deleteMemoryFile(userId: string, file: MemoryFile): Promis
   return existed;
 }
 
+// ── Cross-file fact reconciliation for the correction/forget worker (U4b) ────
+// Locates EXACT (case-insensitive) substring matches of the retired fact text
+// across every memory file the user has and rewrites them:
+//   • correction → the occurrence is replaced with the corrected text;
+//   • forget     → the occurrence is removed (leftover blank runs collapsed).
+// Known limitation (accepted by KTD9): PARAPHRASED copies are not matched here
+// — that is exactly why the whole Storage store is masked at the readers until
+// this store's targets confirm, and why consolidation's reconcile pass owns
+// long-term supersede. writeMemoryFile re-indexes the rewritten file's
+// embeddings; deleteEmbeddingRowsMatching below covers rows whose file was NOT
+// rewritten this run.
+
+export interface FactReconcileResult {
+  filesScanned: number;
+  filesRewritten: number;
+  occurrencesReplaced: number;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function reconcileFactAcrossMemoryFiles(
+  userId: string,
+  retiredText: string,
+  replacement: string,
+): Promise<FactReconcileResult> {
+  const result: FactReconcileResult = { filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0 };
+  const needle = (retiredText ?? "").trim();
+  if (!userId || !needle) return result;
+
+  const pattern = new RegExp(escapeRegExp(needle), "gi");
+  const files = await listMemoryFiles(userId);
+  for (const file of files) {
+    const content = await readMemoryFile(userId, file);
+    if (!content) continue;
+    result.filesScanned++;
+    pattern.lastIndex = 0;
+    const matches = content.match(pattern);
+    if (!matches || matches.length === 0) continue;
+    let updated = content.replace(pattern, replacement ?? "");
+    if (!replacement) {
+      // Forget: collapse the holes the removal left behind.
+      updated = updated
+        .split("\n")
+        .filter((line, i, arr) => !(line.trim() === "" && (arr[i - 1] ?? "").trim() === ""))
+        .filter((line) => !/^[-*•]\s*$/.test(line.trim()))
+        .join("\n")
+        .replace(/[ \t]+\n/g, "\n");
+    }
+    await writeMemoryFile(userId, file, updated);
+    result.filesRewritten++;
+    result.occurrencesReplaced += matches.length;
+  }
+  return result;
+}
+
+/**
+ * Deletes memory-embedding block rows whose text contains the retired fact
+ * (exact case-insensitive substring — same limitation/mitigation as above).
+ * Complements the per-file reindex `writeMemoryFile` fires: rows belonging to
+ * files that were not rewritten this run are still purged, so semantic search
+ * cannot resurface the retired assertion once the store unmasks.
+ */
+export async function deleteEmbeddingRowsMatching(userId: string, retiredText: string): Promise<number> {
+  const needle = (retiredText ?? "").trim().toLowerCase();
+  if (!userId || !needle) return 0;
+  const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
+  const snap = await col.get();
+  const doomed = snap.docs.filter((d) => String(d.data()?.block ?? "").toLowerCase().includes(needle));
+  if (doomed.length === 0) return 0;
+  const batch = db.batch();
+  doomed.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  return doomed.length;
+}
+
 export interface MemorySearchHit {
   file:    string;
   section: string; // the matching block (paragraph or heading section)
@@ -503,6 +580,10 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
 
   const events = msgSnap.docs
     .filter((d) => d.data().role === "user" || d.data().role === "assistant")
+    // R23/KTD16 (U4b): rows the correction/forget worker marked as containing a
+    // corrected/forgotten fact never enter the consolidation prompt — nightly
+    // consolidation must not recreate the retired fact from old conversation.
+    .filter((d) => !d.data().excludeFromMemoryConsolidationAt)
     .map((d) => {
       const label   = d.data().role === "user" ? "Family" : "Evia";
       const content = (d.data().content as string | undefined) ?? "";

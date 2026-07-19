@@ -1552,16 +1552,35 @@ export async function runQaAgent(params: {
   // mapped to prompt text + metrics by applyZepContextResult above.
 
   if (userType === "caregiver" && caregiverId) {
+    // U4b (KTD9): the caregiver branch applies the SAME reconciliation masking
+    // as the client branch — a caregiver with an unresolved correction/forget
+    // operation must not receive stale Zep context. This closes the U4a-noted
+    // bypass where only the client path gated getZepContextResult.
+    let cgReconciliationMask: ReconciliationMaskingDecision = { omitZep: false, omitStorage: false, instruction: "" };
+    if (userId) {
+      try {
+        const { getMemoryReconciliationState } = await import("../memory/memoryOperations");
+        cgReconciliationMask = applyReconciliationMasking(await getMemoryReconciliationState(userId), metrics);
+      } catch {
+        // Fail-open at orchestration — the shared readers enforce their own
+        // suppression (caregivers have no Storage memory-file prompt context).
+      }
+    }
     const [caregiver, todayAppt, hist, cgZepResult, cgSnapshot] = await Promise.all([
       getCaregiverProfile(caregiverId),
       getCaregiverTodayAppointment(caregiverId),
       getConversationHistory(phone),
-      zepThreadId ? getZepContextResult(zepThreadId) : Promise.resolve(null),
+      zepThreadId && !cgReconciliationMask.omitZep ? getZepContextResult(zepThreadId) : Promise.resolve(null),
       // Situation snapshot — the caregiver standing context was nearly bare;
       // this surfaces pending interviews/applications/offers so Evia can lead.
       buildCaregiverSnapshot(caregiverId, session),
     ]);
-    const cgZepContext = applyZepContextResult(cgZepResult, metrics, "caregiver");
+    let cgZepContext = applyZepContextResult(cgZepResult, metrics, "caregiver");
+    if (cgReconciliationMask.instruction) {
+      cgZepContext = cgZepContext
+        ? `${cgReconciliationMask.instruction}\n\n${cgZepContext}`
+        : cgReconciliationMask.instruction;
+    }
     const contextFlags = session ? {
       pendingPayoutNotificationAck: (session as any).pendingPayoutNotificationAck as string | undefined,
       pendingBgCheckAck:            (session as any).pendingBgCheckAck            as string | undefined,

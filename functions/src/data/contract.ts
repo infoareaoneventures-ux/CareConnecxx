@@ -191,7 +191,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Every consequential agent action (observability/auditLog.ts); AuditTrail admin surface reads.",
+    notes: "Every consequential agent action (observability/auditLog.ts); AuditTrail admin surface reads. Memory-grounding U4b: memory_fact_corrected / memory_fact_forgotten completion entries (worker + MCP memory tools) are the durable accountability trail for cross-store fact changes — written before the memory_operations record becomes expiry-eligible; data carries category/source metadata only, never fact text.",
   },
   agent_action_ledger: {
     path: "agent_action_ledger",
@@ -380,7 +380,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "composite",
     caraWrites: true,
     webReads: false,
-    notes: "Server-only durable retry ledger for cross-store memory writes (memory/memoryOperations.ts; drained by scheduled/memoryOperationWorker.ts via the shared leased-operation engine in operations/externalSideEffect.ts). Deterministic doc IDs from the source-turn key hash (turn_sync_{hash}); kinds: turn_sync (U3), correction/forget (U4a staging — {kind}_{sha(userId:factDocId:changeGeneration)}, per-target statuses pending for learnedFacts/storage/embeddings/zepEdges/zepEpisodes; worker propagation lands in U4b), and re_remember (already-completed audit record for a confirmed tombstone clear). Docs hold references/hashes/statuses/timestamps ONLY — never raw message text, fact text, phone scalars, or Zep user/thread IDs (reference paths may resolve to phone-keyed docs; never logged). Explicit deny block in firestore.rules. Completed ops expire after 30 days (expiresAt); failed/unresolved ops never auto-expire.",
+    notes: "Server-only durable retry ledger for cross-store memory writes (memory/memoryOperations.ts; drained by scheduled/memoryOperationWorker.ts via the shared leased-operation engine in operations/externalSideEffect.ts). Deterministic doc IDs from the source-turn key hash (turn_sync_{hash}); kinds: turn_sync (U3), correction/forget ({kind}_{sha(userId:factDocId:changeGeneration)} — staged in U4a, propagated by the U4b worker: Storage reconcile, embedding purge, Zep edge invalidAt/delete + source-episode delete, source-row consolidation exclusion, tombstone finalize; completion writes a durable agent_audit_log memory_fact_corrected/forgotten entry BEFORE the record becomes expiry-eligible and then clears the memory_reconciliation flag entry), re_remember (already-completed audit record for a confirmed tombstone clear), and mcpfile_{kind}_{hash} (already-completed records for identity-validated MCP delete/edit memory-file changes; carry fileSlug — a file NAME, never fact text). Docs hold references/hashes/statuses/timestamps ONLY — never raw message text, fact text, phone scalars, or Zep user/thread/edge/episode IDs (reference paths may resolve to phone-keyed docs; never logged). Explicit deny block in firestore.rules. Completed ops expire after 30 days (expiresAt); failed/unresolved ops never auto-expire.",
   },
   memory_reconciliation: {
     path: "memory_reconciliation",
@@ -408,7 +408,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "phone",
     caraWrites: true,
     webReads: false,
-    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only. Memory-grounding U3 (R9): shared-turn rows use deterministic IDs turn_{sourceTurnKeyHash}_{role} and carry sourceTurnKeyHash/sourceChannel/memorySyncStatus; rows with unresolved memorySyncStatus are excluded from nightly compression until the memory-operation worker confirms Zep/fact sync.",
+    notes: "Evia SMS conversation history (messages subcollection), keyed by E.164 phone. Consolidated into memory files nightly. Append-only by design — message edit/delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). Server/agent-only. Memory-grounding U3 (R9): shared-turn rows use deterministic IDs turn_{sourceTurnKeyHash}_{role} and carry sourceTurnKeyHash/sourceChannel/memorySyncStatus; rows with unresolved memorySyncStatus are excluded from nightly compression until the memory-operation worker confirms Zep/fact sync. Memory-grounding U4b (KTD16/R23): rows containing a corrected/forgotten fact are stamped excludeFromMemoryConsolidationAt + excludeFromMemoryConsolidationReason by the correction/forget worker (known sourceMessageRefs, plus a bounded 7-day legacy scan for facts without provenance); marked rows never enter the nightly consolidation prompt or compression summaries (they may still be deleted by compression — their content just never reaches a summary).",
   },
   user_preferences: {
     path: "user_preferences",

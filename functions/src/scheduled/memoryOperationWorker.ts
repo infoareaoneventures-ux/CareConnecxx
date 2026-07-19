@@ -1,10 +1,11 @@
 // Scheduled memory-operation retry worker (memory-grounding hardening plan
-// 2026-07-17-002, U3 / KTD5 / KTD6, R8/R9/R21).
+// 2026-07-17-002, U3/U4b, KTD5/KTD6/KTD9/KTD10/KTD16, R8/R9/R13/R14/R21/R23).
 //
-// Every minute this worker transactionally claims due turn_sync operations
-// from the server-only memory_operations ledger (shared leased-operation
-// engine — see operations/externalSideEffect.ts) and dispatches the durable
-// side effects the ingress turn deferred:
+// Every minute this worker transactionally claims due operations from the
+// server-only memory_operations ledger (shared leased-operation engine — see
+// operations/externalSideEffect.ts) and dispatches the durable side effects:
+//
+// turn_sync (U3):
 //   • strict Zep transcript writes with the PERSISTED deterministic per-role
 //     UUIDs (never re-derived) and the ORIGINAL source-turn timestamp as
 //     createdAt — never dispatch time (KTD5),
@@ -12,30 +13,79 @@
 //   • clearing memorySyncStatus on the source rows so nightly compression may
 //     eventually fold them (R9).
 //
+// correction / forget (U4b): resumable per-target propagation —
+//   1. storage      — exact-match reconcile of the retired fact across the
+//                     user's memory files (corrections write the corrected
+//                     value; forgets remove the assertion),
+//   2. embeddings   — purge embedding rows still carrying the retired text,
+//   3. zepEpisodes/zepEdges — search the user's graph for matching edges;
+//                     corrections stamp invalidAt, forgets delete matching
+//                     edges AND their source episodes (episodes first, so a
+//                     retry can still re-locate them through surviving edges).
+//                     A MIXED episode is deleted — privacy wins; its unrelated
+//                     facts remain in the higher-authority stores and are NOT
+//                     re-ingested into Zep,
+//   4. source rows  — known sourceMessageRefs are marked
+//                     excludeFromMemoryConsolidationAt(+reason); legacy facts
+//                     without provenance get a bounded scan of the 7-day
+//                     consolidation window (KTD16/R23),
+//   5. learnedFacts — finalize: corrections clear the pending marker on the
+//                     superseded doc; forgets strip plaintext/embedding into a
+//                     no-plaintext HMAC tombstone (fingerprint key REQUIRED to
+//                     finalize — an unbound secret is a retryable failure),
+//   6. completion   — durable agent_audit_log entry (memory_fact_corrected /
+//                     memory_fact_forgotten — no fact text) written BEFORE the
+//                     operation becomes expiry-eligible, then completedAt +
+//                     30-day expiresAt, then the user's reconciliation-flag
+//                     entry is cleared. Failed/unresolved operations never
+//                     expire and stay masked (KTD9).
+//
 // Ordering (KTD5): each user's turn_sync operations are processed in
 // SOURCE-TURN ORDER. An older unresolved turn blocks younger turns for that
-// user — younger due operations are simply left for a later sweep — so a
-// retried older turn can never land in Zep after its own correction.
+// user. Correction/forget operations are independent of that ordering.
 //
 // Telemetry (R21): aggregate counts and sanitized error classes only. No
-// operation IDs, no phones, no paths, no content.
+// operation IDs, no phones, no paths, no fact text, no Zep IDs.
 
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import {
   claimMemoryOperation,
+  clearReconciliationFlagEntry,
   completeMemoryOperation,
   failMemoryOperation,
   markMemoryOperationTarget,
   MEMORY_OPERATIONS_COLLECTION,
+  MemoryOperationTargetKey,
   UNRESOLVED_MEMORY_OPERATION_STATUSES,
 } from "../memory/memoryOperations";
-import { addUserMessageToZepStrict, addAssistantMessageToZepStrict } from "../memory/zepClient";
-import { extractAndStoreFacts } from "../memory/learnedFacts";
+import {
+  addUserMessageToZepStrict,
+  addAssistantMessageToZepStrict,
+  findZepEdgesMatchingFact,
+  invalidateZepEdgeStrict,
+  deleteZepEdgeStrict,
+  deleteZepEpisodeStrict,
+  zepEdgeFactMatches,
+  getZepUserId,
+} from "../memory/zepClient";
+import { extractAndStoreFacts, normalizeFactForFingerprint } from "../memory/learnedFacts";
+import { reconcileFactAcrossMemoryFiles, deleteEmbeddingRowsMatching } from "../memory/memoryFiles";
+import {
+  getFingerprintKey,
+  hmacFingerprint,
+  MEMORY_FINGERPRINT_KEY_NAME,
+  MEMORY_FINGERPRINT_KEY_SECRET,
+} from "../memory/fingerprintKey";
+import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
 
 export const MEMORY_WORKER_BATCH_LIMIT = 25;
+
+/** Bounded legacy-provenance scan window/size (KTD16) — mirrors consolidation's 7d/60-row read. */
+export const LEGACY_SOURCE_SCAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const LEGACY_SOURCE_SCAN_LIMIT = 60;
 
 /**
  * Provider duplicate/already-exists responses are SUCCESS (KTD5): a worker
@@ -52,17 +102,21 @@ export function isZepDuplicateError(err: unknown): boolean {
 export interface MemoryWorkerCounts {
   /** Distinct due operations found by the sweep queries. */
   due: number;
-  /** Due operations of a kind this worker does not process yet. */
-  nonTurnSync: number;
+  /** Due operations of a kind this worker does not process (e.g. malformed). */
+  unsupportedKind: number;
   /** Due operations another worker claimed first (or that terminal-failed at claim). */
   claimMissed: number;
-  /** Younger due operations left queued because an older turn for the same user is unresolved. */
+  /** Younger due turn_sync operations left queued behind an older unresolved turn. */
   blockedByOlder: number;
   completed: number;
   retryable: number;
   terminal: number;
   /** Zep writes reconciled as duplicate-success. */
   zepDuplicates: number;
+  /** Correction/forget operations fully completed this sweep. */
+  factChangesCompleted: number;
+  /** Source conversation rows newly excluded from consolidation (KTD16). */
+  sourceRowsExcluded: number;
 }
 
 interface DueOp {
@@ -72,8 +126,9 @@ interface DueOp {
 
 export async function runMemoryOperationWorker(nowMs: number = Date.now()): Promise<MemoryWorkerCounts> {
   const counts: MemoryWorkerCounts = {
-    due: 0, nonTurnSync: 0, claimMissed: 0, blockedByOlder: 0,
+    due: 0, unsupportedKind: 0, claimMissed: 0, blockedByOlder: 0,
     completed: 0, retryable: 0, terminal: 0, zepDuplicates: 0,
+    factChangesCompleted: 0, sourceRowsExcluded: 0,
   };
   const nowIso = new Date(nowMs).toISOString();
 
@@ -92,21 +147,42 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
   }
   counts.due = due.size;
 
-  // Group due turn_sync work by user for source-turn ordering.
+  // Split by kind: turn_sync work is grouped per user for source-turn
+  // ordering; correction/forget operations are independent of that ordering.
   const byUser = new Map<string, DueOp[]>();
+  const factChanges: DueOp[] = [];
   for (const op of due.values()) {
-    if (op.data.kind !== "turn_sync") {
-      counts.nonTurnSync++;
-      continue;
+    if (op.data.kind === "turn_sync") {
+      const userId = String(op.data.userId ?? "");
+      const list = byUser.get(userId) ?? [];
+      list.push(op);
+      byUser.set(userId, list);
+    } else if (op.data.kind === "correction" || op.data.kind === "forget") {
+      factChanges.push(op);
+    } else {
+      counts.unsupportedKind++;
     }
-    const userId = String(op.data.userId ?? "");
-    const list = byUser.get(userId) ?? [];
-    list.push(op);
-    byUser.set(userId, list);
   }
 
   for (const [userId, dueOps] of byUser) {
     await processUserOperations(userId, dueOps, counts);
+  }
+
+  for (const op of factChanges) {
+    const claim = await claimMemoryOperation(op.id);
+    if (!claim) {
+      counts.claimMissed++;
+      continue;
+    }
+    try {
+      await processFactChangeOperation(op.id, claim.leaseOwner, counts);
+      counts.completed++;
+      counts.factChangesCompleted++;
+    } catch (err) {
+      const failResult = await failMemoryOperation(op.id, claim.leaseOwner, err);
+      if (failResult === "terminal") counts.terminal++;
+      else counts.retryable++;
+    }
   }
 
   // Aggregate-only worker log (R21).
@@ -257,9 +333,262 @@ async function processTurnSyncOperation(
   return { zepDuplicates };
 }
 
+// ── Correction / forget propagation (U4b) ────────────────────────────────────
+
+function targetNeedsWork(targets: Record<string, { status?: string }>, key: string): boolean {
+  const s = targets?.[key]?.status;
+  return s === "pending" || s === "failed";
+}
+
+function errorClassOf(err: unknown): string {
+  return err instanceof Error ? err.constructor.name : typeof err;
+}
+
+/** Runs one target's work; marks completed on success, failed (+ sanitized error class, R21) then rethrows on error. */
+async function runTargetStep(
+  operationId: string,
+  target: MemoryOperationTargetKey,
+  fn: () => Promise<void>,
+): Promise<void> {
+  try {
+    await fn();
+    await markMemoryOperationTarget(operationId, target, "completed");
+  } catch (err) {
+    await markMemoryOperationTarget(operationId, target, "failed", errorClassOf(err)).catch(() => {});
+    throw err;
+  }
+}
+
+async function resolveOperationPhone(op: FirebaseFirestore.DocumentData): Promise<string> {
+  const sessionRef = String(op.sessionRef ?? "");
+  if (sessionRef.startsWith("agent_sessions/")) {
+    const phone = sessionRef.slice("agent_sessions/".length);
+    if (phone) return phone;
+  }
+  try {
+    const snap = await db.collection("agent_sessions")
+      .where("userId", "==", String(op.userId ?? ""))
+      .limit(1)
+      .get();
+    return snap.empty ? "" : snap.docs[0].id;
+  } catch {
+    return "";
+  }
+}
+
+async function processFactChangeOperation(
+  operationId: string,
+  leaseOwner: string,
+  counts: MemoryWorkerCounts,
+): Promise<void> {
+  // Re-read AFTER claiming so a prior attempt's per-target progress is honored
+  // — a retry resumes ONLY unfinished targets.
+  const opSnap = await db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId).get();
+  const op = opSnap.data();
+  if (!op) throw new Error("operation_missing");
+  const kind = op.kind as "correction" | "forget";
+  const userId = String(op.userId ?? "");
+  const targets = (op.targets ?? {}) as Record<string, { status?: string }>;
+  const nowIso = new Date().toISOString();
+
+  // Canonical content is read only while processing (KTD6). The retired
+  // plaintext lives on the staged fact doc until the learnedFacts finalize
+  // step — which is deliberately LAST, so a retry after a Storage/Zep failure
+  // can still locate exact matches.
+  const factRefs = (op.learnedFactRefs ?? []) as string[];
+  const targetFactPath = factRefs[0] ?? "";
+  const replacementPath = factRefs[1] ?? "";
+  const factSnap = targetFactPath ? await db.doc(targetFactPath).get() : null;
+  const fact = factSnap?.exists ? factSnap.data()! : null;
+  const retiredText = String(fact?.fact ?? "");
+  const category = String(fact?.category ?? "unknown");
+
+  let replacementText = "";
+  if (kind === "correction" && replacementPath) {
+    const repSnap = await db.doc(replacementPath).get();
+    replacementText = String(repSnap.exists ? repSnap.data()?.fact ?? "" : "");
+  }
+
+  // 1) Storage: exact-match reconcile across the user's memory files. An
+  //    already-gone fact doc (no retired plaintext) means nothing is
+  //    addressable — success (R14 already-deleted semantics).
+  if (targetNeedsWork(targets, "storage")) {
+    await runTargetStep(operationId, "storage", async () => {
+      if (retiredText) {
+        await reconcileFactAcrossMemoryFiles(
+          userId, retiredText, kind === "correction" ? replacementText : "",
+        );
+      }
+    });
+  }
+
+  // 2) Embeddings: purge rows still carrying the retired text (files rewritten
+  //    in step 1 also reindex through writeMemoryFile's per-file path).
+  if (targetNeedsWork(targets, "embeddings")) {
+    await runTargetStep(operationId, "embeddings", async () => {
+      if (retiredText) await deleteEmbeddingRowsMatching(userId, retiredText);
+    });
+  }
+
+  // 3) Zep edges/episodes: one graph search feeds both targets. Forget deletes
+  //    episodes BEFORE edges so a mid-run crash leaves the edges in place to
+  //    re-locate surviving episodes on retry (edge/episode UUIDs are never
+  //    persisted on the operation — R21/Data Changes). Never a whole graph/
+  //    user/thread.
+  const zepEdgesNeeded = targetNeedsWork(targets, "zepEdges");
+  const zepEpisodesNeeded = targetNeedsWork(targets, "zepEpisodes");
+  if (zepEdgesNeeded || zepEpisodesNeeded) {
+    const phone = await resolveOperationPhone(op);
+    const zepUserId = phone ? getZepUserId(phone) : "";
+    if (!zepUserId || !retiredText) {
+      // No Zep identity or no retired plaintext (already-gone) — nothing
+      // addressable in the Zep layer. Success.
+      if (zepEpisodesNeeded) await markMemoryOperationTarget(operationId, "zepEpisodes", "completed");
+      if (zepEdgesNeeded) await markMemoryOperationTarget(operationId, "zepEdges", "completed");
+    } else {
+      let matches: Awaited<ReturnType<typeof findZepEdgesMatchingFact>>;
+      try {
+        matches = await findZepEdgesMatchingFact({ zepUserId, factText: retiredText });
+      } catch (err) {
+        const cls = errorClassOf(err);
+        if (zepEdgesNeeded) await markMemoryOperationTarget(operationId, "zepEdges", "failed", cls).catch(() => {});
+        if (zepEpisodesNeeded) await markMemoryOperationTarget(operationId, "zepEpisodes", "failed", cls).catch(() => {});
+        throw err;
+      }
+      if (kind === "forget") {
+        if (zepEpisodesNeeded) {
+          await runTargetStep(operationId, "zepEpisodes", async () => {
+            // Mixed episodes included by design — privacy wins (U4 approach).
+            const episodeUuids = new Set(matches.flatMap((m) => m.episodes));
+            for (const uuid of episodeUuids) await deleteZepEpisodeStrict(uuid);
+          });
+        }
+        if (zepEdgesNeeded) {
+          await runTargetStep(operationId, "zepEdges", async () => {
+            for (const m of matches) await deleteZepEdgeStrict(m.uuid);
+          });
+        }
+      } else {
+        if (zepEdgesNeeded) {
+          await runTargetStep(operationId, "zepEdges", async () => {
+            for (const m of matches) {
+              await invalidateZepEdgeStrict({ edgeUuid: m.uuid, invalidAt: nowIso });
+            }
+          });
+        }
+        // Corrections keep source episodes — edge invalidation is what retires
+        // the fact; the old statement remains history.
+        if (zepEpisodesNeeded) await markMemoryOperationTarget(operationId, "zepEpisodes", "completed");
+      }
+    }
+  }
+
+  // 4) Source-row exclusion (KTD16/R23) — idempotent, so it simply runs on
+  //    every attempt that has not yet finalized learned facts.
+  if (targetNeedsWork(targets, "learnedFacts")) {
+    const exclusionPatch = {
+      excludeFromMemoryConsolidationAt: nowIso,
+      excludeFromMemoryConsolidationReason: kind,
+    };
+    const knownRefs = (op.sourceMessageRefs ?? []) as string[];
+    for (const path of knownRefs) {
+      // A row already folded by compression is gone — nothing left to protect.
+      await db.doc(path).update(exclusionPatch)
+        .then(() => { counts.sourceRowsExcluded++; })
+        .catch(() => {});
+    }
+    if (knownRefs.length === 0 && retiredText) {
+      // Legacy fact without provenance: bounded scan of the same 7-day window
+      // nightly consolidation reads, marking rows that restate the fact.
+      const phone = await resolveOperationPhone(op);
+      if (phone) {
+        const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
+          .where("timestamp", ">=", Date.now() - LEGACY_SOURCE_SCAN_WINDOW_MS)
+          .orderBy("timestamp", "asc")
+          .limit(LEGACY_SOURCE_SCAN_LIMIT)
+          .get()
+          .catch(() => null);
+        for (const d of snap?.docs ?? []) {
+          const row = d.data();
+          if (row.role !== "user" && row.role !== "assistant") continue;
+          if (row.excludeFromMemoryConsolidationAt) continue;
+          if (!zepEdgeFactMatches(String(row.content ?? ""), retiredText)) continue;
+          await d.ref.update({
+            ...exclusionPatch,
+            excludeFromMemoryConsolidationReason: `${kind}_legacy_scan`,
+          }).then(() => { counts.sourceRowsExcluded++; }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  // 5) Learned facts finalize — LAST, so the retired plaintext survived every
+  //    matching step above.
+  if (targetNeedsWork(targets, "learnedFacts")) {
+    await runTargetStep(operationId, "learnedFacts", async () => {
+      if (!fact) return; // already-gone doc → success
+      const del = admin.firestore.FieldValue.delete();
+      if (kind === "forget") {
+        // KTD16: completion REQUIRES the fingerprint key — staging fail-opened
+        // without it, but a tombstone without a fingerprint cannot block
+        // passive re-extraction, so an unbound secret is a retryable failure.
+        let fingerprintFields: Record<string, unknown> = {};
+        if (!fact.forgottenFingerprint) {
+          const material = getFingerprintKey();
+          const norm = String(fact._norm ?? "") || normalizeFactForFingerprint(retiredText);
+          if (norm) {
+            fingerprintFields = {
+              forgottenFingerprint: hmacFingerprint(norm, material),
+              fingerprintKeyVersion: material.version,
+            };
+          }
+        }
+        // Strip plaintext + embeddings into the no-plaintext tombstone. Keeps:
+        // forgottenFingerprint/fingerprintKeyVersion, category, provenance
+        // refs (sourceMessageRefs), forgottenAt, userId, createdAt.
+        await db.doc(targetFactPath).update({
+          ...fingerprintFields,
+          forgottenAt: nowIso,
+          fact: del,
+          _norm: del,
+          embedding: del,
+          embeddingModel: del,
+          weight: del,
+          mentionTurnKeys: del,
+          pendingForgetOperationId: del,
+        });
+      } else {
+        await db.doc(targetFactPath).update({
+          pendingCorrectionOperationId: del,
+          ...(fact.supersededAt ? {} : { supersededAt: nowIso }),
+        });
+      }
+    });
+  }
+
+  // 6) Completion. The durable audit entry is written BEFORE the operation
+  //    record becomes expiry-eligible (Implementation-Time Checks) — event
+  //    metadata only, never fact text (R21).
+  await logAudit({
+    eventType: kind === "forget" ? "memory_fact_forgotten" : "memory_fact_corrected",
+    userId,
+    data: { source: "memory_operation_worker", category },
+  });
+  await completeMemoryOperation(operationId, leaseOwner);
+  // The per-user suppression flag entry clears last; the reader also
+  // self-heals completed entries, so a crash here only costs one extra read.
+  await clearReconciliationFlagEntry(userId, operationId);
+}
+
 // Every minute — the sweep cadence is the shortest useful retry delay
-// (mirrors outboundQueueDrain's registration shape).
-export const memoryOperationWorker = functions.pubsub
+// (mirrors outboundQueueDrain's registration shape). The fingerprint secret is
+// bound here (functions v1 params pattern) because forget finalization
+// computes/stamps tombstone fingerprints (KTD16 / Implementation-Time Checks).
+export const memoryOperationWorker = functions
+  .runWith({
+    secrets: [(MEMORY_FINGERPRINT_KEY_SECRET?.name ?? MEMORY_FINGERPRINT_KEY_NAME)],
+  })
+  .pubsub
   .schedule("every 1 minutes")
   .onRun(async () => {
     await runMemoryOperationWorker();

@@ -10,6 +10,9 @@ const hoisted = vi.hoisted(() => ({
   nextEmbedId: 0,
   // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
   reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
+  // U4b: agent_conversations/{phone}/messages rows for the consolidation tests.
+  convMessages: [] as Array<Record<string, unknown>>,
+  claudeCreate: vi.fn(async () => ({ content: [{ type: "text", text: "[]" }] })),
 }));
 
 // U4a: the shared readers import the suppression check from memoryOperations —
@@ -71,12 +74,31 @@ vi.mock("firebase-admin", () => {
     return ref;
   };
 
+  // agent_conversations/{phone}/messages query chain used by
+  // consolidateMemoryForUser (where → orderBy → limit → get). Rows come from
+  // hoisted.convMessages; filters are not modeled (tests seed in-window rows).
+  const messagesCollection = () => {
+    const q: any = {
+      where: () => q,
+      orderBy: () => q,
+      limit: () => q,
+      get: async () => ({
+        empty: hoisted.convMessages.length === 0,
+        docs: hoisted.convMessages.map((m, i) => ({ id: `m${i}`, data: () => m })),
+      }),
+    };
+    return q;
+  };
+
   const firestore = () => ({
     collection: (name: string) => {
       if (name === "memory_embeddings") {
         return { doc: (_userId: string) => ({ collection: (_sub: string) => blocksCollection() }) };
       }
-      // Fallback for any other collection access (consolidateMemoryForUser etc).
+      if (name === "agent_conversations") {
+        return { doc: (_phone: string) => ({ collection: (_sub: string) => messagesCollection() }) };
+      }
+      // Fallback for any other collection access (agent_sessions lookup etc).
       return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
     },
     batch: () => {
@@ -92,8 +114,10 @@ vi.mock("firebase-admin", () => {
   return { __esModule: true, default: { storage, firestore }, storage, firestore };
 });
 
-// memoryFiles imports these for functions we don't exercise here.
-vi.mock("../utils/claudeClient", () => ({ getSharedClient: () => ({}) }));
+// U4b: consolidation-input tests inspect the prompt the model receives.
+vi.mock("../utils/claudeClient", () => ({
+  getSharedClient: () => ({ messages: { create: hoisted.claudeCreate } }),
+}));
 vi.mock("../utils/jsonUtils", () => ({ safeParseJson: () => [] }));
 
 // embeddings module — mock so memory file writes don't try to call OpenAI.
@@ -119,6 +143,8 @@ import {
   getMemoryContext,
   handleMemoryQuery,
   consolidateMemoryForUser,
+  reconcileFactAcrossMemoryFiles,
+  deleteEmbeddingRowsMatching,
   MEMORY_QUERY_RECONCILIATION_COPY,
 } from "./memoryFiles";
 import * as embeddingsMod from "./embeddings";
@@ -127,6 +153,9 @@ beforeEach(() => {
   hoisted.store.clear();
   hoisted.embeddings.clear();
   hoisted.nextEmbedId = 0;
+  hoisted.convMessages.length = 0;
+  hoisted.claudeCreate.mockClear();
+  hoisted.claudeCreate.mockImplementation(async () => ({ content: [{ type: "text", text: "[]" }] }));
   store.clear();
   hoisted.reconciliation = { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] };
   vi.mocked(embeddingsMod.embedText).mockReset().mockResolvedValue(null);
@@ -315,9 +344,10 @@ describe("reconciliation suppression (U4a)", () => {
 
   it("nightly consolidation SKIPS a user with unresolved reconciliation (no resurrection from old rows)", async () => {
     hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
-    // getSharedClient is mocked as an empty object — any model call would throw,
-    // so resolving cleanly proves the early skip.
+    // Rows exist — only the early reconciliation skip prevents the model call.
+    hoisted.convMessages.push({ role: "user", content: "Mom cannot take shellfish", timestamp: Date.now() - 1000 });
     await expect(consolidateMemoryForUser("u1", "+14085550001")).resolves.toBeUndefined();
+    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
     expect(await readMemoryFile("u1", "health")).toBe(STALE); // untouched
   });
 
@@ -325,5 +355,117 @@ describe("reconciliation suppression (U4a)", () => {
     const ctx = await getMemoryContext("u1");
     expect(ctx).toContain("Margaret");
     expect(await searchMemory("u1", "shellfish")).toHaveLength(1);
+  });
+});
+
+// ── U4b: cross-file fact reconciliation for the correction/forget worker ─────
+
+describe("reconcileFactAcrossMemoryFiles (U4b)", () => {
+  const RETIRED = "Mom is allergic to penicillin";
+
+  beforeEach(async () => {
+    await writeMemoryFile("u1", "health",
+      "# Health\n\n**Allergies:** Mom is allergic to penicillin\n\n**Meds:** metformin");
+    await writeMemoryFile("u1", "profile", "Senior: Margaret\nmom IS ALLERGIC TO penicillin (noted)");
+    await writeMemoryFile("u1", "family", "Daughter Jane lives in Austin");
+  });
+
+  it("correction rewrites every exact (case-insensitive) occurrence with the corrected value", async () => {
+    const result = await reconcileFactAcrossMemoryFiles("u1", RETIRED, "Mom is allergic to amoxicillin");
+    expect(result.filesRewritten).toBe(2);
+    expect(result.occurrencesReplaced).toBe(2);
+    expect(await readMemoryFile("u1", "health")).toContain("Mom is allergic to amoxicillin");
+    expect((await readMemoryFile("u1", "health")).toLowerCase()).not.toContain("penicillin");
+    expect((await readMemoryFile("u1", "profile")).toLowerCase()).not.toContain("penicillin");
+    // Untouched file left exactly as written.
+    expect(await readMemoryFile("u1", "family")).toBe("Daughter Jane lives in Austin");
+  });
+
+  it("forget removes the assertion and collapses the hole it left", async () => {
+    const result = await reconcileFactAcrossMemoryFiles("u1", RETIRED, "");
+    expect(result.filesRewritten).toBe(2);
+    const health = await readMemoryFile("u1", "health");
+    expect(health.toLowerCase()).not.toContain("penicillin");
+    expect(health).toContain("metformin"); // unrelated facts survive
+    expect(health).not.toMatch(/\n\s*\n\s*\n/); // no double blank runs
+  });
+
+  it("KNOWN LIMITATION (accepted by KTD9 masking): a paraphrased copy is NOT matched", async () => {
+    // Fresh user so only the paraphrase exists.
+    await writeMemoryFile("u2", "health", "**Allergies:** severe reaction to penicillin-class antibiotics");
+    const result = await reconcileFactAcrossMemoryFiles("u2", RETIRED, "");
+    expect(result.occurrencesReplaced).toBe(0);
+    // The paraphrase survives — which is exactly why the Storage store stays
+    // masked at the readers until reconciliation completes and why nightly
+    // reconcile owns long-term supersede.
+    expect(await readMemoryFile("u2", "health")).toContain("penicillin-class");
+  });
+
+  it("empty inputs are a safe no-op", async () => {
+    expect(await reconcileFactAcrossMemoryFiles("u1", "", "x")).toEqual({
+      filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0,
+    });
+    expect(await reconcileFactAcrossMemoryFiles("", "x", "y")).toEqual({
+      filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0,
+    });
+  });
+});
+
+describe("deleteEmbeddingRowsMatching (U4b)", () => {
+  it("deletes only the rows whose block text carries the retired assertion", async () => {
+    hoisted.embeddings.set("e1", { file: "health", block: "Mom is allergic to penicillin", embedding: [1] });
+    hoisted.embeddings.set("e2", { file: "health", block: "MOM IS ALLERGIC TO PENICILLIN (case)", embedding: [1] });
+    hoisted.embeddings.set("e3", { file: "family", block: "Daughter Jane lives in Austin", embedding: [1] });
+
+    const deleted = await deleteEmbeddingRowsMatching("u1", "Mom is allergic to penicillin");
+
+    expect(deleted).toBe(2);
+    expect(hoisted.embeddings.has("e1")).toBe(false);
+    expect(hoisted.embeddings.has("e2")).toBe(false);
+    expect(hoisted.embeddings.has("e3")).toBe(true);
+  });
+
+  it("no matches / empty needle are safe no-ops", async () => {
+    hoisted.embeddings.set("e1", { file: "health", block: "metformin", embedding: [1] });
+    expect(await deleteEmbeddingRowsMatching("u1", "penicillin")).toBe(0);
+    expect(await deleteEmbeddingRowsMatching("u1", "")).toBe(0);
+    expect(hoisted.embeddings.has("e1")).toBe(true);
+  });
+});
+
+// ── U4b: consolidation input excludes marked source rows (KTD16/R23) ─────────
+
+describe("consolidateMemoryForUser — excludeFromMemoryConsolidationAt rows (U4b)", () => {
+  it("marked rows never enter the consolidation prompt; unmarked rows do", async () => {
+    hoisted.convMessages.push(
+      { role: "user", content: "Mom loves gardening", timestamp: Date.now() - 2000 },
+      {
+        role: "user",
+        content: "Mom is allergic to penicillin",
+        timestamp: Date.now() - 1000,
+        excludeFromMemoryConsolidationAt: new Date().toISOString(),
+        excludeFromMemoryConsolidationReason: "forget",
+      },
+    );
+
+    await consolidateMemoryForUser("u1", "+14085550001");
+
+    expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
+    const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls[0]);
+    expect(prompt).toContain("Mom loves gardening");
+    expect(prompt).not.toContain("penicillin");
+  });
+
+  it("when EVERY row is marked, no model call happens at all", async () => {
+    hoisted.convMessages.push({
+      role: "user",
+      content: "Mom is allergic to penicillin",
+      timestamp: Date.now() - 1000,
+      excludeFromMemoryConsolidationAt: new Date().toISOString(),
+    });
+
+    await consolidateMemoryForUser("u1", "+14085550001");
+
+    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
   });
 });

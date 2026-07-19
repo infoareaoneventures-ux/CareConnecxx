@@ -11,6 +11,7 @@ import {
   getMemoryContext,
   listMemoryFiles,
   MemoryFile,
+  MEMORY_QUERY_RECONCILIATION_COPY,
 } from "../memory/memoryFiles";
 import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
@@ -2893,6 +2894,86 @@ async function assertSeniorAccess(seniorId: string, sessionClientId: unknown) {
   return null;
 }
 
+// R11 (memory-grounding U4b): memory MUTATION tools must never trust a
+// model-supplied userId. The dispatcher's caller (qaAgent) injects `phone`
+// authoritatively after the model input spread, and agent_sessions/{phone}
+// carries the verified account identity for that session — so the check is:
+// input.userId must equal the session doc's userId. Fail closed: no phone, no
+// session, no session userId, or a read error all refuse the mutation.
+async function verifyMemoryToolIdentity(input: Record<string, unknown>) {
+  const userId = stringInput(input, "userId");
+  const phone  = stringInput(input, "phone");
+  if (!userId) return toolError("INVALID_INPUT", "userId is required");
+  if (!phone) {
+    return toolError("PERMISSION_DENIED", "Memory changes require a verified session and cannot run without one.");
+  }
+  try {
+    const session = await db.collection("agent_sessions").doc(phone).get();
+    const sessionUserId = session.exists ? (session.data()?.userId as string | undefined) : undefined;
+    if (!sessionUserId || sessionUserId !== userId) {
+      return toolError("PERMISSION_DENIED", "Not authorized to change this user's memory.");
+    }
+  } catch {
+    return toolError("UNAVAILABLE", "Could not verify the session identity — memory change refused.");
+  }
+  return null;
+}
+
+// U4b: records an MCP memory-file change as an already-completed operation in
+// the memory_operations ledger (audit-by-reference — refs/slug only, never the
+// edited text) and writes the durable memory_fact_* audit entry. Best-effort:
+// the Storage mutation already happened; a ledger write failure must not fail
+// the tool result, but it is logged (sanitized) so it is not silent.
+async function recordMcpMemoryFileChange(params: {
+  kind: "correction" | "forget";
+  userId: string;
+  phone?: string;
+  fileSlug: string;
+  source: string;
+  /** Retired text for tombstone stamping (edit path). NEVER persisted raw. */
+  retiredText?: string;
+}): Promise<void> {
+  try {
+    let tombstoneFactPath: string | undefined;
+    if (params.retiredText) {
+      const { stampRetiredTextTombstone } = await import("../memory/learnedFacts");
+      const tombstone = await stampRetiredTextTombstone({
+        userId: params.userId,
+        retiredText: params.retiredText,
+        mode: params.kind === "forget" ? "forget" : "superseded",
+      });
+      if (tombstone) tombstoneFactPath = `learned_facts/${params.userId}/facts/${tombstone.factDocId}`;
+    }
+    const { buildMcpMemoryFileOperationDoc, MEMORY_OPERATIONS_COLLECTION } =
+      await import("../memory/memoryOperations");
+    const changeKey = params.retiredText
+      ? crypto.createHash("sha256").update(params.retiredText).digest("hex").slice(0, 16)
+      : "";
+    const { operationId, doc } = buildMcpMemoryFileOperationDoc({
+      kind: params.kind,
+      userId: params.userId,
+      phone: params.phone,
+      fileSlug: params.fileSlug,
+      changeKey,
+      tombstoneFactPath,
+    });
+    // Deterministic ID + full set → the same request is idempotent.
+    await db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId).set(doc);
+    logAudit({
+      eventType: params.kind === "forget" ? "memory_fact_forgotten" : "memory_fact_corrected",
+      userId: params.userId,
+      data: { source: params.source, file: params.fileSlug },
+    }).catch(() => {});
+  } catch (err) {
+    console.warn(JSON.stringify({
+      severity: "WARNING",
+      mcp_memory_operation_record_failed: true,
+      error_class: err instanceof Error ? err.constructor.name : typeof err,
+      timestamp: new Date().toISOString(),
+    }));
+  }
+}
+
 function shouldTrackMcpTool(name: string): boolean {
   if (/^(get|list|search|read)_/.test(name)) return false;
   if (name === "find_replacement_caregivers") return false;
@@ -3758,6 +3839,9 @@ async function executeToolCall(
 
       case "edit_memory_file": {
         if (!input.userId || !input.file || !input.find) return toolError("INVALID_INPUT", "userId, file, and find are required");
+        // R11 (U4b): never trust the model-supplied userId for a memory mutation.
+        const editIdentityError = await verifyMemoryToolIdentity(input);
+        if (editIdentityError) return editIdentityError;
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:edit_memory_file", file: input.file } }).catch(() => {});
         const replaced = await editMemoryFile(
           input.userId as string,
@@ -3765,6 +3849,21 @@ async function executeToolCall(
           input.find as string,
           (input.replace as string) ?? ""
         );
+        if (replaced > 0) {
+          // U4b (R23): an edit that removed/replaced fact content routes
+          // through the correction/forget pipeline semantics — a retired-text
+          // tombstone (blocks passive re-extraction; re-remember is the
+          // explicit path back) plus a completed memory operation and the
+          // durable memory_fact_* audit entry.
+          await recordMcpMemoryFileChange({
+            kind: String(input.replace ?? "").trim() ? "correction" : "forget",
+            userId: input.userId as string,
+            phone: stringInput(input, "phone"),
+            fileSlug: String(input.file),
+            source: "mcp:edit_memory_file",
+            retiredText: input.find as string,
+          });
+        }
         return { success: true, replaced, matched: replaced > 0 };
       }
 
@@ -3783,6 +3882,24 @@ async function executeToolCall(
         // sees in-prompt, but surfaced so they can verify or correct it.
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
         logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:cara_knows").catch(() => {});
+        // U4b (KTD9/KTD10): while a correction/forget is still reconciling this
+        // user's Storage memory, getMemoryContext returns "" by design — but
+        // the generic "no memory files yet" fallback would read as amnesia.
+        // Return the deterministic reconciliation-pending copy instead.
+        try {
+          const { getMemoryReconciliationState } = await import("../memory/memoryOperations");
+          const reconciliation = await getMemoryReconciliationState(input.userId as string);
+          if (reconciliation.storageMasked) {
+            return {
+              success: true,
+              reconciliationPending: true,
+              files: [],
+              context: MEMORY_QUERY_RECONCILIATION_COPY,
+            };
+          }
+        } catch {
+          // Fail-open — the shared reader still masks the content itself.
+        }
         const [context, files] = await Promise.all([
           getMemoryContext(input.userId as string),
           listMemoryFiles(input.userId as string),
@@ -8207,8 +8324,22 @@ async function executeToolCall(
     // ── delete_memory_file ──────────────────────────────────────────────────
     if (name === "delete_memory_file") {
       if (!input.userId || !input.file) return toolError("INVALID_INPUT", "userId and file are required");
+      // R11 (U4b): never trust the model-supplied userId for a memory mutation.
+      const deleteIdentityError = await verifyMemoryToolIdentity(input);
+      if (deleteIdentityError) return deleteIdentityError;
       logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file } }).catch(() => {});
       const existed = await deleteMemoryFile(input.userId as string, input.file as MemoryFile);
+      if (existed) {
+        // U4b (R23): a user-facing forget path never ends at a bare Storage
+        // mutation — record the completed forget operation + durable audit.
+        await recordMcpMemoryFileChange({
+          kind: "forget",
+          userId: input.userId as string,
+          phone: stringInput(input, "phone"),
+          fileSlug: String(input.file),
+          source: "mcp:delete_memory_file",
+        });
+      }
       logAudit({ eventType: "memory_file_deleted", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file, existed } }).catch(() => {});
       return { success: true, deleted: existed, existed };
     }

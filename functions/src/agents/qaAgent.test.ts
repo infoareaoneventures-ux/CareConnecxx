@@ -766,4 +766,26 @@ describe("runQaAgent U4a wiring (source scan)", () => {
     expect(src).toContain("pendingReRememberFactId");
     expect(src).toContain("RE_REMEMBER_QUESTION_COPY");
   });
+
+  // U4b: the CAREGIVER branch was the U4a-reported bypass — it fetched
+  // getZepContextResult without reconciliation masking. It now applies the
+  // SAME applyReconciliationMasking gating as the client branch: the Zep fetch
+  // is skipped while the caregiver's Zep targets are unresolved, and the
+  // non-outage reconciliation instruction is injected instead.
+  it("caregiver branch gates its Zep fetch behind reconciliation masking (U4b)", () => {
+    expect(src).toContain(
+      "cgReconciliationMask = applyReconciliationMasking(await getMemoryReconciliationState(userId), metrics)",
+    );
+    expect(src).toContain(
+      "zepThreadId && !cgReconciliationMask.omitZep ? getZepContextResult(zepThreadId)",
+    );
+    expect(src).toContain("cgReconciliationMask.instruction");
+    // No unmasked caregiver Zep fetch remains anywhere in the file: every
+    // getZepContextResult call site is gated by a reconciliation mask.
+    const unguarded = src
+      .split("\n")
+      .filter((line) => line.includes("getZepContextResult(zepThreadId)"))
+      .filter((line) => !line.includes("ReconciliationMask.omitZep") && !line.includes("reconciliationMask.omitZep"));
+    expect(unguarded).toEqual([]);
+  });
 });

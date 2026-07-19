@@ -453,3 +453,75 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
     }
   });
 });
+
+// ── U4b (KTD16/R23): rows marked by the correction/forget worker are excluded
+// from compression SUMMARIES — deleted with the window, but their content
+// never reaches the summarizer prompt.
+
+describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4b)", () => {
+  function seedWithExcluded(count: number, excludedIdx: number[]) {
+    const msgs = new Map<string, Record<string, unknown>>();
+    const base = Date.now() - count * 60_000;
+    for (let i = 0; i < count; i++) {
+      msgs.set(`m${String(i).padStart(3, "0")}`, {
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: `message ${i}`,
+        timestamp: base + i * 60_000,
+        ...(excludedIdx.includes(i)
+          ? {
+            excludeFromMemoryConsolidationAt: new Date().toISOString(),
+            excludeFromMemoryConsolidationReason: "forget",
+          }
+          : {}),
+      });
+    }
+    hoisted.conversations.set(CONV_PHONE, msgs);
+  }
+
+  it("a marked row is still compressed away but its content NEVER enters the summary prompt", async () => {
+    seedWithExcluded(20, [2]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.compressedMessages).toBe(10); // full window still folds
+      expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
+      const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+      expect(prompt).not.toContain("message 2"); // retired content withheld
+      expect(prompt).toContain("message 3");
+      // The marked row was deleted with the compressed window (not retained).
+      expect(hoisted.conversations.get(CONV_PHONE)!.has("m002")).toBe(false);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("when EVERY compressible row is marked and no prior summary exists, nothing is summarized or deleted", async () => {
+    seedWithExcluded(20, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const counts = await compressOldConversations();
+
+    expect(counts.compressedMessages).toBe(0);
+    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+    expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(20);
+  });
+
+  it("when every compressible row is marked but a prior summary exists, the prior summary carries forward WITHOUT a model call", async () => {
+    seedWithExcluded(20, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    hoisted.conversations.get(CONV_PHONE)!.set("summary-old", {
+      role: "summary", content: "<summary> earlier summary text", timestamp: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.compressedMessages).toBe(10);
+      expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+      const msgs = hoisted.conversations.get(CONV_PHONE)!;
+      const summaries = [...msgs.values()].filter(m => m.role === "summary");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0].content).toBe("<summary> earlier summary text");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

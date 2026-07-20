@@ -39,6 +39,16 @@ function db(): admin.firestore.Firestore {
 
 export const MEMORY_OPERATIONS_COLLECTION = "memory_operations";
 
+/**
+ * memorySyncStatus value the worker stamps on turn_sync source rows whose
+ * operation TERMINAL-failed: the worker has permanently given up on that
+ * turn's Zep/fact sync, so compression/rollup must treat the row as released
+ * (foldable) rather than worker-owned — otherwise one terminal failure wedges
+ * conversation compression for the phone forever (R9). Any OTHER string value
+ * in memorySyncStatus still means the retry worker owns the row.
+ */
+export const TERMINAL_MEMORY_SYNC_STATUS = "terminal";
+
 // turn_sync: U3 completed-turn Zep/fact sync.
 // correction/forget: U4 staged cross-store fact changes (worker propagation in U4b).
 // re_remember: U4 explicit confirmed tombstone clear — recorded already-completed

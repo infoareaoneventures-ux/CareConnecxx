@@ -633,7 +633,7 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
         conversations: 1,
         compressedMessages: 10,
         skippedPendingSync: 0,
-        skippedExcludedRows: 0,
+        excludedRowsDeleted: 0,
         agedPendingRows: 0,
         failed: 0,
       });
@@ -644,6 +644,58 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
       expect(
         [...msgs.values()].filter((m) => m.role === "summary"),
       ).toHaveLength(1);
+      // R21 (item g): no per-phone success log — nothing logged carries the
+      // conversation's phone.
+      expect(JSON.stringify(logSpy.mock.calls)).not.toContain(CONV_PHONE);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("a per-conversation failure logs only a sanitized errorClass — never the phone (R21)", async () => {
+    seedConversation(20);
+    hoisted.claudeCreate.mockRejectedValueOnce(
+      new Error(`summarizer exploded for ${CONV_PHONE} with secret content`),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.failed).toBe(1);
+      const failureLogs = errorSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("compression failure"),
+      );
+      expect(failureLogs).toHaveLength(1);
+      expect(failureLogs[0][1]).toEqual({ errorClass: "Error" });
+      const everything = JSON.stringify([
+        ...logSpy.mock.calls,
+        ...errorSpy.mock.calls,
+      ]);
+      expect(everything).not.toContain(CONV_PHONE);
+      expect(everything).not.toContain("secret content");
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("a row whose sync TERMINAL-failed (memorySyncStatus 'terminal') is released and compresses", async () => {
+    const msgs = seedConversation(20);
+    // The worker gave up on this turn permanently — compression must not stay
+    // wedged behind it (R9 repair).
+    msgs.get("m003")!.memorySyncStatus = "terminal";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.compressedMessages).toBe(10);
+      expect(counts.skippedPendingSync).toBe(0);
+      expect(hoisted.conversations.get(CONV_PHONE)!.has("m003")).toBe(false);
+      // Terminal rows ARE summarizable — the local summary is the only
+      // continuity the turn will ever get.
+      const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+      expect(prompt).toContain("message 3");
     } finally {
       logSpy.mockRestore();
     }
@@ -714,8 +766,9 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
 });
 
 // ── U4b (KTD16/R23): rows marked by the correction/forget worker are excluded
-// from compression SUMMARIES — deleted with the window, but their content
-// never reaches the summarizer prompt.
+// from compression SUMMARIES — deleted with the fold window, but their content
+// never reaches the summarizer prompt (deletable-but-not-summarizable per the
+// data contract). One forget must never wedge compression for the phone.
 
 describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4b)", () => {
   function seedWithExcluded(count: number, excludedIdx: number[]) {
@@ -737,25 +790,35 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
     hoisted.conversations.set(CONV_PHONE, msgs);
   }
 
-  it("a marked row stays verbatim and blocks compression when the safe prefix is too short", async () => {
+  it("an old excluded row is deleted with the fold, never enters the summarizer prompt, and newer history still compresses", async () => {
     seedWithExcluded(20, [2]);
     const counts = await compressOldConversations();
 
-    expect(counts.compressedMessages).toBe(0);
-    expect(counts.skippedExcludedRows).toBe(1);
-    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+    // The 9 safe rows of the fold window are summarized; the excluded row is
+    // deleted alongside them without ever reaching the prompt.
+    expect(counts.compressedMessages).toBe(9);
+    expect(counts.excludedRowsDeleted).toBe(1);
+    expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
+    const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+    expect(prompt).not.toContain("message 2");
+    expect(prompt).toContain("message 1");
+    expect(prompt).toContain("message 3");
     const messages = hoisted.conversations.get(CONV_PHONE)!;
-    expect(messages.has("m002")).toBe(true);
-    expect(messages.get("m002")!.content).toBe("message 2");
+    expect(messages.has("m002")).toBe(false);
+    // 10 retained + 1 new summary — the fold window is fully gone.
+    expect(messages.size).toBe(11);
   });
 
-  it("when EVERY compressible row is marked and no prior summary exists, nothing is summarized or deleted", async () => {
+  it("when EVERY compressible row is marked, the rows are deleted without any summarizer call", async () => {
     seedWithExcluded(20, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const counts = await compressOldConversations();
 
     expect(counts.compressedMessages).toBe(0);
+    expect(counts.excludedRowsDeleted).toBe(10);
     expect(hoisted.claudeCreate).not.toHaveBeenCalled();
-    expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(20);
+    // The retired rows are gone; only the retained 10 remain — the phone is
+    // not wedged and agent_conversations does not grow unbounded.
+    expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(10);
   });
 
   it("masks a prior summary when every compressible row is marked and no safe transcript can regenerate it", async () => {
@@ -770,17 +833,19 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
       const counts = await compressOldConversations();
 
       expect(counts.compressedMessages).toBe(0);
-      expect(counts.skippedExcludedRows).toBe(10);
+      expect(counts.excludedRowsDeleted).toBe(10);
       expect(hoisted.claudeCreate).not.toHaveBeenCalled();
       const msgs = hoisted.conversations.get(CONV_PHONE)!;
       const summaries = [...msgs.values()].filter((m) => m.role === "summary");
       expect(summaries).toHaveLength(0);
+      // Excluded rows deleted with the (unsummarizable) window.
+      expect(msgs.size).toBe(10);
     } finally {
       logSpy.mockRestore();
     }
   });
 
-  it("regenerates an existing summary from only the safe prefix before a protected row", async () => {
+  it("regenerates an existing summary from only the safe rows — the excluded row and old summary never reach the prompt", async () => {
     seedWithExcluded(20, [8]);
     hoisted.conversations.get(CONV_PHONE)!.set("summary-old", {
       role: "summary",
@@ -791,20 +856,46 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
     try {
       const counts = await compressOldConversations();
 
-      expect(counts.compressedMessages).toBe(8);
-      expect(counts.skippedExcludedRows).toBe(1);
+      // All 9 safe fold-window rows (0-7 and 9) are summarized; the excluded
+      // row 8 is deleted without being summarized.
+      expect(counts.compressedMessages).toBe(9);
+      expect(counts.excludedRowsDeleted).toBe(1);
       const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
       expect(prompt).not.toContain("penicillin");
       expect(prompt).not.toContain("message 8");
       expect(prompt).toContain("message 7");
-      const summaries = [
-        ...hoisted.conversations.get(CONV_PHONE)!.values(),
-      ].filter((m) => m.role === "summary");
+      expect(prompt).toContain("message 9");
+      const msgs = hoisted.conversations.get(CONV_PHONE)!;
+      expect(msgs.has("m008")).toBe(false);
+      const summaries = [...msgs.values()].filter((m) => m.role === "summary");
       expect(summaries).toHaveLength(1);
       expect(summaries[0].content).not.toContain("penicillin");
     } finally {
       logSpy.mockRestore();
     }
+  });
+
+  it("an unresolved memorySyncStatus row still hard-blocks the fold window at its position", async () => {
+    // Pending row at index 6 truncates the fold window to rows 0-5 even though
+    // an excluded row sits earlier at index 2: the excluded row (in the safe
+    // prefix) is deleted, rows 0-5 minus it are summarized, and everything
+    // from the pending row on survives verbatim.
+    seedWithExcluded(20, [2]);
+    hoisted.conversations.get(CONV_PHONE)!.get("m006")!.memorySyncStatus =
+      "pending";
+    const counts = await compressOldConversations();
+
+    expect(counts.skippedPendingSync).toBe(1);
+    expect(counts.compressedMessages).toBe(5); // rows 0,1,3,4,5
+    expect(counts.excludedRowsDeleted).toBe(1); // row 2
+    const msgs = hoisted.conversations.get(CONV_PHONE)!;
+    expect(msgs.get("m006")!.memorySyncStatus).toBe("pending");
+    expect(msgs.get("m006")!.content).toBe("message 6"); // verbatim
+    expect(msgs.has("m002")).toBe(false);
+    const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+    expect(prompt).not.toContain("message 2");
+    expect(prompt).not.toContain("message 6");
+    expect(prompt).toContain("message 5");
   });
 });
 

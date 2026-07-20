@@ -231,7 +231,11 @@ The secret takes effect on the NEXT deploy of the bound function(s)
 3. **Never destroy/disable a secret version while live tombstones reference
    it.** Before pruning any version N, confirm zero references: a
    `learned_facts` collection-group query on `fingerprintKeyVersion == N`
-   must return empty.
+   must return empty. That query needs the `facts` collection-group
+   `fingerprintKeyVersion` field override in `firestore.indexes.json` — verify
+   the index shows READY in the Firebase console BEFORE running the
+   zero-references check (a missing/ building index fails the query, not the
+   pruning safety).
 4. Redeploy the bound function(s) so the new version is picked up.
 
 ## 5. Activity backfill (Backfill Gate — Deployment Gate step 4)

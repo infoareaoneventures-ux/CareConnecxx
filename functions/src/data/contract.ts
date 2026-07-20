@@ -459,6 +459,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: false,
     notes: "Daily ops counters (e.g. llm_fallback_{date}) for fallback-rate and spend observability. Server/agent-only.",
   },
+  cara_ops_zep_outage_buckets: {
+    path: "cara_ops_zep_outage_buckets",
+    docId: "composite",
+    caraWrites: true,
+    webReads: false,
+    notes: "Aggregate-only per-minute Zep-outage sample buckets (observability/caraOpsAlerts.ts) — deterministic zep-context:{minuteStartMs} doc IDs; sample/failure counts and expiresAt only, never thread IDs, Zep user IDs, query text, or phones (R21). Feeds the sustained-outage alert's rolling window. Server-only.",
+  },
   user_triggers: {
     path: "user_triggers",
     docId: "auto",

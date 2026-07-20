@@ -615,33 +615,55 @@ export async function findZepEdgesMatchingFact(params: {
 }
 
 /**
- * Confirms a forget has cleared both the complete user edge inventory and the
- * thread's rendered context. A failed confirmation throws so the worker keeps
- * the reconciliation record pending instead of finalizing a partial deletion.
+ * Confirms a forget has cleared the complete user edge inventory and — when a
+ * thread exists — the thread's rendered context. A failed confirmation throws
+ * so the worker keeps the reconciliation record pending instead of finalizing
+ * a partial deletion.
+ *
+ * `threadId` is optional: a session that never acquired a Zep thread has no
+ * rendered context to inspect, so the paginated edge inventory (the
+ * authoritative graph check) stands alone — the caller counts the skip.
  */
 export async function verifyZepForgottenFactAbsent(params: {
   zepUserId: string;
   factText: string;
-  threadId: string;
+  threadId?: string;
 }): Promise<void> {
-  if (!params.zepUserId || !params.factText?.trim() || !params.threadId) {
+  if (!params.zepUserId || !params.factText?.trim()) {
     throw new Error("verifyZepForgottenFactAbsent: identifiers required");
   }
-  const remainingEdges = await findZepEdgesMatchingFact(params);
+  const remainingEdges = await findZepEdgesMatchingFact({
+    zepUserId: params.zepUserId,
+    factText: params.factText,
+  });
   if (remainingEdges.length) throw new Error("zep_fact_still_present_in_graph");
+
+  const threadId = params.threadId;
+  if (!threadId) return; // threadless session: edge-inventory half only
 
   await ensureCaraContextTemplate();
   const response = await withZepRetry(
     () => getZep().thread.getUserContext(
-      params.threadId,
+      threadId,
       { templateId: CARA_TEMPLATE_ID },
     ),
     "verifyZepForgetContext",
-    params.threadId,
+    threadId,
   );
-  const context = normalizeForEdgeMatch(String(response?.context ?? ""));
+  // The rendered context is a MULTI-FACT blob. Running the ≥80% word-overlap
+  // matcher against the WHOLE blob let unrelated facts pool their words into a
+  // false positive — the forget then terminal-failed and the user's memory
+  // stayed masked forever. Instead: normalized containment of the exact target
+  // anywhere in the blob, plus the per-edge matcher applied PER LINE, so a
+  // single rendered fact must account for the match on its own.
+  const rawContext = String(response?.context ?? "");
+  const context = normalizeForEdgeMatch(rawContext);
   const target = normalizeForEdgeMatch(params.factText);
-  if (context && target && (context.includes(target) || zepEdgeFactMatches(context, params.factText))) {
+  if (!context || !target) return;
+  const lineMatch = rawContext
+    .split(/\r?\n/)
+    .some((line) => zepEdgeFactMatches(line, params.factText));
+  if (context.includes(target) || lineMatch) {
     throw new Error("zep_fact_still_present_in_context");
   }
 }

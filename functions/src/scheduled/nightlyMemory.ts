@@ -6,7 +6,10 @@ import {
   consolidateMemoryForUser,
   cleanupExpiredTransientToolFiles,
 } from "../memory/memoryFiles";
-import { MEMORY_OPERATIONS_COLLECTION } from "../memory/memoryOperations";
+import {
+  MEMORY_OPERATIONS_COLLECTION,
+  TERMINAL_MEMORY_SYNC_STATUS,
+} from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
 
 const db = admin.firestore();
@@ -24,8 +27,11 @@ interface PhoneCompressionResult {
   compressed: number;
   /** Compress-eligible rows left in place because their memory sync is unresolved. */
   pendingBlocked: number;
-  /** Compress-eligible rows left in place by correction/forget reconciliation. */
-  excludedBlocked: number;
+  /**
+   * Correction/forget-marked rows deleted WITH the fold window but withheld
+   * from the summarizer prompt (data contract: deletable-but-not-summarizable).
+   */
+  excludedDeleted: number;
   /** Unresolved rows older than AGED_PENDING_SYNC_MS (worker health signal). */
   agedPending: number;
 }
@@ -42,11 +48,20 @@ async function compressConversationForPhone(
   const summaryDocs = allSnap.docs.filter((d) => d.data().role === "summary");
   const realDocs = allSnap.docs.filter((d) => d.data().role !== "summary");
 
-  // R9 guard: compression stops at the FIRST protected row. An unresolved sync
-  // row is still owned by the retry worker; a correction/forget row can contain
-  // retired content. That row and everything younger stay verbatim.
-  const hasPendingSync = (d: (typeof realDocs)[number]) =>
-    typeof d.data().memorySyncStatus === "string";
+  // R9 guard: compression stops at the FIRST unresolved-sync row. Such a row
+  // is still owned by the retry worker — it and everything younger stay
+  // verbatim. A row whose sync TERMINAL-failed (memorySyncStatus ===
+  // "terminal") is released: the worker has permanently given up, so the local
+  // summary is the only continuity that turn will ever get.
+  const hasPendingSync = (d: (typeof realDocs)[number]) => {
+    const s = d.data().memorySyncStatus;
+    return typeof s === "string" && s !== TERMINAL_MEMORY_SYNC_STATUS;
+  };
+  // U4b (KTD16/R23, data contract): correction/forget-marked rows are
+  // deletable-but-not-summarizable — they are deleted WITH the fold window,
+  // but their content never enters the summarizer prompt. They must NOT block
+  // compression: one forget would otherwise wedge compression for the phone
+  // forever and agent_conversations would grow unbounded.
   const isExcluded = (d: (typeof realDocs)[number]) =>
     Boolean(d.data().excludeFromMemoryConsolidationAt);
   const agedCutoff = Date.now() - AGED_PENDING_SYNC_MS;
@@ -63,34 +78,38 @@ async function compressConversationForPhone(
     return {
       compressed: 0,
       pendingBlocked: 0,
-      excludedBlocked: 0,
+      excludedDeleted: 0,
       agedPending,
     };
 
-  let toCompress = realDocs.slice(0, realDocs.length - 10);
-  const firstProtectedIdx = toCompress.findIndex(
-    (d) => hasPendingSync(d) || isExcluded(d),
-  );
+  // The fold window truncates at the first unresolved-sync row ONLY (scoped
+  // hard block); excluded rows within the window are split out below.
+  let foldWindow = realDocs.slice(0, realDocs.length - 10);
+  const firstPendingIdx = foldWindow.findIndex(hasPendingSync);
   let pendingBlocked = 0;
-  let excludedBlocked = 0;
-  let hasExcludedInWindow = false;
-  if (firstProtectedIdx >= 0) {
-    const protectedTail = toCompress.slice(firstProtectedIdx);
-    pendingBlocked = protectedTail.filter(hasPendingSync).length;
-    excludedBlocked = protectedTail.filter(isExcluded).length;
-    hasExcludedInWindow = excludedBlocked > 0;
-    toCompress = toCompress.slice(0, firstProtectedIdx);
+  if (firstPendingIdx >= 0) {
+    pendingBlocked = foldWindow.slice(firstPendingIdx).filter(hasPendingSync).length;
+    foldWindow = foldWindow.slice(0, firstPendingIdx);
   }
+  const excludedDocs = foldWindow.filter(isExcluded);
+  const toCompress = foldWindow.filter((d) => !isExcluded(d));
+  const excludedDeleted = excludedDocs.length;
+  const hasExcludedInWindow = excludedDocs.length > 0;
+
   if (toCompress.length < 5) {
-    // There is not enough safe transcript to rebuild a useful summary. If this
-    // window contains a correction/forget row, remove the old trusted summary
-    // rather than leave a possible paraphrase of retired content available.
-    if (hasExcludedInWindow && summaryDocs.length > 0) {
-      const batch = db.batch();
-      summaryDocs.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
+    // There is not enough safe transcript to rebuild a useful summary this
+    // run. Excluded rows are still deleted (their content is retired — losing
+    // it is the point), and any prior summary that could paraphrase retired
+    // content goes with them.
+    if (hasExcludedInWindow) {
+      const toDrop = [...summaryDocs, ...excludedDocs];
+      for (let i = 0; i < toDrop.length; i += 400) {
+        const batch = db.batch();
+        for (const doc of toDrop.slice(i, i + 400)) batch.delete(doc.ref);
+        await batch.commit();
+      }
     }
-    return { compressed: 0, pendingBlocked, excludedBlocked, agedPending };
+    return { compressed: 0, pendingBlocked, excludedDeleted, agedPending };
   }
 
   const existingSummary = summaryDocs[0]?.data()?.content as string | undefined;
@@ -111,7 +130,7 @@ async function compressConversationForPhone(
   } else if (!newMessages) {
     // Nothing summarizable and no prior summary: leave the rows in place this
     // run rather than deleting content without any summary continuity.
-    return { compressed: 0, pendingBlocked, excludedBlocked, agedPending };
+    return { compressed: 0, pendingBlocked, excludedDeleted, agedPending };
   } else {
     const promptParts = safeExistingSummary
       ? [
@@ -130,14 +149,15 @@ async function compressConversationForPhone(
     summaryText = (response.content[0] as Anthropic.TextBlock).text;
   }
 
-  // Delete old summary and compressed messages, write new summary. The summary
-  // slots immediately before the first RETAINED row (which, when the pending
-  // guard truncated the window, is the first still-unsynced row).
-  const firstRetained = realDocs[toCompress.length];
+  // Delete old summary and the whole fold window (summarized rows AND excluded
+  // rows — the latter deleted-but-never-summarized), write new summary. The
+  // summary slots immediately before the first RETAINED row (which, when the
+  // pending guard truncated the window, is the first still-unsynced row).
+  const firstRetained = realDocs[foldWindow.length];
   const summaryTimestamp = (firstRetained.data().timestamp as number) - 1;
 
   // Firebase batches are capped at 500 ops — chunk deletes if needed
-  const toDelete = [...summaryDocs, ...toCompress];
+  const toDelete = [...summaryDocs, ...toCompress, ...excludedDocs];
   for (let i = 0; i < toDelete.length; i += 400) {
     const batch = db.batch();
     for (const doc of toDelete.slice(i, i + 400)) batch.delete(doc.ref);
@@ -150,13 +170,11 @@ async function compressConversationForPhone(
     await batch.commit();
   }
 
-  console.log(
-    `[compressConversation] Compressed ${toCompress.length} messages for ${phone}`,
-  );
+  // R21: no per-phone success log — aggregate counts in the job log suffice.
   return {
     compressed: toCompress.length,
     pendingBlocked,
-    excludedBlocked,
+    excludedDeleted,
     agedPending,
   };
 }
@@ -165,7 +183,8 @@ export interface CompressionCounts {
   conversations: number;
   compressedMessages: number;
   skippedPendingSync: number;
-  skippedExcludedRows: number;
+  /** Excluded rows deleted with a fold window, never summarized (U4b). */
+  excludedRowsDeleted: number;
   agedPendingRows: number;
   failed: number;
 }
@@ -175,7 +194,7 @@ export async function compressOldConversations(): Promise<CompressionCounts> {
     conversations: 0,
     compressedMessages: 0,
     skippedPendingSync: 0,
-    skippedExcludedRows: 0,
+    excludedRowsDeleted: 0,
     agedPendingRows: 0,
     failed: 0,
   };
@@ -186,11 +205,15 @@ export async function compressOldConversations(): Promise<CompressionCounts> {
       const r = await compressConversationForPhone(docRef.id);
       counts.compressedMessages += r.compressed;
       counts.skippedPendingSync += r.pendingBlocked;
-      counts.skippedExcludedRows += r.excludedBlocked;
+      counts.excludedRowsDeleted += r.excludedDeleted;
       counts.agedPendingRows += r.agedPending;
     } catch (err) {
       counts.failed++;
-      console.error(`[compressOldConversations] ${docRef.id}:`, err);
+      // R21: sanitized error class only — the doc ID is a phone; provider
+      // errors can echo prompt content. Neither may reach the logs.
+      console.error("[compressOldConversations] compression failure", {
+        errorClass: (err as Error)?.name ?? "Error",
+      });
     }
   }
   return counts;

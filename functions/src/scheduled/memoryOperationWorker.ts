@@ -55,8 +55,10 @@ import {
   completeMemoryOperation,
   failMemoryOperation,
   markMemoryOperationTarget,
+  MEMORY_OPERATION_MAX_ATTEMPTS,
   MEMORY_OPERATIONS_COLLECTION,
   MemoryOperationTargetKey,
+  TERMINAL_MEMORY_SYNC_STATUS,
   UNRESOLVED_MEMORY_OPERATION_STATUSES,
 } from "../memory/memoryOperations";
 import {
@@ -96,6 +98,11 @@ export const LEGACY_SOURCE_SCAN_LIMIT = 60;
 /** Maximum unresolved turn_sync rows inspected per user before failing closed. */
 export const TURN_SYNC_ORDERING_SCAN_LIMIT = LEGACY_SOURCE_SCAN_LIMIT;
 
+/** Terminal-failed forget repair sweep: operations inspected per run. */
+export const TERMINAL_FORGET_REVERIFY_LIMIT = 5;
+/** Terminal-failed forget repair sweep: bounded re-verify budget per operation. */
+export const TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS = 3;
+
 /**
  * Provider duplicate/already-exists responses are SUCCESS (KTD5): a worker
  * crash or timeout after Zep stored the message must reconcile as
@@ -124,6 +131,12 @@ export interface MemoryWorkerCounts {
   terminal: number;
   /** Zep writes reconciled as duplicate-success. */
   zepDuplicates: number;
+  /** turn_sync zepTranscript targets skipped: the session has no Zep thread. */
+  zepTranscriptSkips: number;
+  /** Forget verifications run edge-inventory-only (no Zep thread to render). */
+  forgetContextChecksSkipped: number;
+  /** terminal_failed forgets re-opened after a clean Zep re-verify (repair path). */
+  terminalForgetsReopened: number;
   /** Correction/forget operations fully completed this sweep. */
   factChangesCompleted: number;
   /** Source conversation rows newly excluded from consolidation (KTD16). */
@@ -143,6 +156,7 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
   const counts: MemoryWorkerCounts = {
     due: 0, unsupportedKind: 0, claimMissed: 0, blockedByOlder: 0, orderingBacklogOverflows: 0,
     completed: 0, retryable: 0, terminal: 0, zepDuplicates: 0,
+    zepTranscriptSkips: 0, forgetContextChecksSkipped: 0, terminalForgetsReopened: 0,
     factChangesCompleted: 0, sourceRowsExcluded: 0,
     agedPending: 0, oldestDueAgeMs: 0,
   };
@@ -224,6 +238,10 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
     }
   }
 
+  // Repair sweep: terminal_failed forgets whose Zep layer is verifiably clean
+  // must not mask the user's memory forever (audit P1).
+  await sweepTerminalFailedForgets(counts);
+
   // Aggregate-only worker log (R21).
   console.log(JSON.stringify({
     memory_operation_worker: true,
@@ -288,22 +306,44 @@ async function processUserOperations(
     try {
       const result = await processTurnSyncOperation(op.id, claim.leaseOwner);
       counts.zepDuplicates += result.zepDuplicates;
+      counts.zepTranscriptSkips += result.zepTranscriptSkipped;
       counts.completed++;
     } catch (err) {
       const failResult = await failMemoryOperation(op.id, claim.leaseOwner, err);
-      if (failResult === "terminal") counts.terminal++;
-      else counts.retryable++;
+      if (failResult === "terminal") {
+        counts.terminal++;
+        // R9 repair: a terminal turn_sync is never retried, so its source
+        // rows' memorySyncStatus must not protect them from compression
+        // forever. Stamp the terminal marker (visible on the row) so
+        // compression/rollup treat the rows as released.
+        await releaseTerminalTurnSyncSourceRows(op.data);
+      } else {
+        counts.retryable++;
+      }
       break; // this user's younger turns stay blocked behind the failure
     }
   }
   counts.blockedByOlder += [...dueIds].filter(id => !handled.has(id)).length;
 }
 
+/** Best-effort release of a TERMINAL turn_sync operation's source rows (R9). */
+async function releaseTerminalTurnSyncSourceRows(
+  op: FirebaseFirestore.DocumentData,
+): Promise<void> {
+  const refs = (op.sourceMessageRefs ?? []) as string[];
+  for (const path of refs) {
+    await db.doc(path)
+      .update({ memorySyncStatus: TERMINAL_MEMORY_SYNC_STATUS })
+      .catch(() => {}); // already folded / missing row — nothing to release
+  }
+}
+
 async function processTurnSyncOperation(
   operationId: string,
   leaseOwner: string,
-): Promise<{ zepDuplicates: number }> {
+): Promise<{ zepDuplicates: number; zepTranscriptSkipped: number }> {
   let zepDuplicates = 0;
+  let zepTranscriptSkipped = 0;
 
   // Re-read the operation AFTER claiming: per-target statuses from a prior
   // partially-successful attempt must be honored (a Zep write that already
@@ -327,41 +367,49 @@ async function processTurnSyncOperation(
     const sessionSnap = await db.doc(String(op.sessionRef)).get();
     const session = sessionSnap.exists ? sessionSnap.data()! : {};
     const zepThreadId = session.zepThreadId as string | undefined;
-    if (!zepThreadId) throw new Error("missing_zep_thread");
-    const userName = (session.firstName as string | undefined) ?? "Family";
+    if (!zepThreadId) {
+      // No-Zep-identity SUCCESS semantics (mirrors the fact-change path): a
+      // session that never acquired a Zep thread has no transcript target.
+      // Throwing here minted a doomed retry cycle EVERY turn (terminal-alert
+      // spam). The skip is durable on the target and counted in aggregates.
+      await markMemoryOperationTarget(operationId, "zepTranscript", "skipped");
+      zepTranscriptSkipped = 1;
+    } else {
+      const userName = (session.firstName as string | undefined) ?? "Family";
 
-    const uuids = (op.zepMessageUuids ?? {}) as { user?: string; assistant?: string };
-    const turnMs = Number(op.sourceTurnTimestamp ?? Date.now());
+      const uuids = (op.zepMessageUuids ?? {}) as { user?: string; assistant?: string };
+      const turnMs = Number(op.sourceTurnTimestamp ?? Date.now());
 
-    // KTD5: persisted deterministic UUIDs (never re-derived) + the ORIGINAL
-    // source-turn timestamps — a retry must be byte-identical to the first
-    // attempt so the provider can deduplicate it.
-    try {
-      const result = await addUserMessageToZepStrict({
-        threadId: zepThreadId,
-        content: String(userRow.content ?? ""),
-        userName,
-        sentAt: new Date(turnMs),
-        uuid: uuids.user,
-      });
-      if (result.deduplicated) zepDuplicates++;
-    } catch (err) {
-      if (!isZepDuplicateError(err)) throw err;
-      zepDuplicates++;
+      // KTD5: persisted deterministic UUIDs (never re-derived) + the ORIGINAL
+      // source-turn timestamps — a retry must be byte-identical to the first
+      // attempt so the provider can deduplicate it.
+      try {
+        const result = await addUserMessageToZepStrict({
+          threadId: zepThreadId,
+          content: String(userRow.content ?? ""),
+          userName,
+          sentAt: new Date(turnMs),
+          uuid: uuids.user,
+        });
+        if (result.deduplicated) zepDuplicates++;
+      } catch (err) {
+        if (!isZepDuplicateError(err)) throw err;
+        zepDuplicates++;
+      }
+      try {
+        const result = await addAssistantMessageToZepStrict({
+          threadId: zepThreadId,
+          content: String(assistantRow.content ?? ""),
+          sentAt: new Date(turnMs + 1),
+          uuid: uuids.assistant,
+        });
+        if (result.deduplicated) zepDuplicates++;
+      } catch (err) {
+        if (!isZepDuplicateError(err)) throw err;
+        zepDuplicates++;
+      }
+      await markMemoryOperationTarget(operationId, "zepTranscript", "completed");
     }
-    try {
-      const result = await addAssistantMessageToZepStrict({
-        threadId: zepThreadId,
-        content: String(assistantRow.content ?? ""),
-        sentAt: new Date(turnMs + 1),
-        uuid: uuids.assistant,
-      });
-      if (result.deduplicated) zepDuplicates++;
-    } catch (err) {
-      if (!isZepDuplicateError(err)) throw err;
-      zepDuplicates++;
-    }
-    await markMemoryOperationTarget(operationId, "zepTranscript", "completed");
   }
 
   if (targets.learnedFacts?.status === "pending" || targets.learnedFacts?.status === "failed") {
@@ -385,7 +433,7 @@ async function processTurnSyncOperation(
   // …then finalize (sets completedAt + 30-day expiresAt). A crash between the
   // two is safe: the retry re-runs already-completed targets as no-ops.
   await completeMemoryOperation(operationId, leaseOwner);
-  return { zepDuplicates };
+  return { zepDuplicates, zepTranscriptSkipped };
 }
 
 // ── Correction / forget propagation (U4b) ────────────────────────────────────
@@ -510,14 +558,26 @@ async function processFactChangeOperation(
         // Re-run both delete passes whenever either target remains unresolved.
         // A prior edge delete can have raced a source episode or provider
         // eventual consistency; verification below is the completion boundary.
-        const sessionSnap = await db.doc(String(op.sessionRef)).get();
-        const zepThreadId = String(sessionSnap.exists ? sessionSnap.data()?.zepThreadId ?? "" : "");
+        // Thread resolution is failure-tolerant: a session without a
+        // zepThreadId (or without a resolvable sessionRef) has no rendered
+        // context to inspect — verification runs its edge-inventory half only
+        // and the skip is counted, instead of terminal-failing the forget.
+        let zepThreadId = "";
+        try {
+          const sessionSnap = await db.doc(String(op.sessionRef)).get();
+          zepThreadId = String(sessionSnap.exists ? sessionSnap.data()?.zepThreadId ?? "" : "");
+        } catch { /* no resolvable session — edge-inventory-only verification */ }
+        if (!zepThreadId) counts.forgetContextChecksSkipped++;
         try {
           // Mixed episodes included by design: privacy wins (U4 approach).
           const episodeUuids = new Set(matches.flatMap((m) => m.episodes));
           for (const uuid of episodeUuids) await deleteZepEpisodeStrict(uuid);
           for (const match of matches) await deleteZepEdgeStrict(match.uuid);
-          await verifyZepForgottenFactAbsent({ zepUserId, factText: retiredText, threadId: zepThreadId });
+          await verifyZepForgottenFactAbsent({
+            zepUserId,
+            factText: retiredText,
+            threadId: zepThreadId || undefined,
+          });
           if (zepEpisodesNeeded) await markMemoryOperationTarget(operationId, "zepEpisodes", "completed");
           if (zepEdgesNeeded) await markMemoryOperationTarget(operationId, "zepEdges", "completed");
         } catch (err) {
@@ -640,6 +700,90 @@ async function processFactChangeOperation(
   // The per-user suppression flag entry clears last; the reader also
   // self-heals completed entries, so a crash here only costs one extra read.
   await clearReconciliationFlagEntry(userId, operationId);
+}
+
+// ── Terminal-failed forget repair sweep (audit P1) ────────────────────────────
+//
+// A forget that terminal-fails leaves the user's memory masked FOREVER (failed
+// operations never expire, KTD9) — even when its Zep data is verifiably absent
+// (e.g. the old whole-context verification false positive). This bounded sweep
+// re-inspects terminal_failed forgets:
+//   • Zep layer confirmed clean — per-target zepEdges/zepEpisodes statuses
+//     already completed, or a fresh edge-inventory scan finds ZERO matching
+//     edges (marked completed on success) — the operation is RE-OPENED as
+//     retryable with a one-attempt budget, so the normal resumable pipeline
+//     finishes the remaining targets and unmasks through the standard
+//     completion path (audit entry, expiresAt, reconciliation-flag clear).
+//   • Zep still holds matching edges — the operation stays terminal (masked);
+//     the re-verify budget is spent either way, so a genuinely dirty graph is
+//     probed at most TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS times.
+// Deletes nothing itself; never touches a whole graph/user/thread. Aggregate
+// counts only (R21).
+async function sweepTerminalFailedForgets(counts: MemoryWorkerCounts): Promise<void> {
+  let snap: FirebaseFirestore.QuerySnapshot;
+  try {
+    // Equality-only pair — served by merged single-field indexes.
+    snap = await db.collection(MEMORY_OPERATIONS_COLLECTION)
+      .where("status", "==", "terminal_failed")
+      .where("kind", "==", "forget")
+      .limit(TERMINAL_FORGET_REVERIFY_LIMIT)
+      .get();
+  } catch {
+    return; // a read failure just defers the repair sweep to the next minute
+  }
+  for (const doc of snap.docs) {
+    const op = doc.data();
+    const reverifies = Number(op.terminalReverifyAttempts ?? 0);
+    if (reverifies >= TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS) continue;
+    try {
+      const targets = (op.targets ?? {}) as Record<string, { status?: string }>;
+      let zepClean = !targetNeedsWork(targets, "zepEdges") && !targetNeedsWork(targets, "zepEpisodes");
+      if (!zepClean) {
+        // Re-verify the authoritative half only (edge inventory); terminal
+        // forgets frequently belong to sessions with no rendered context.
+        const factRefs = (op.learnedFactRefs ?? []) as string[];
+        const factSnap = factRefs[0] ? await db.doc(factRefs[0]).get() : null;
+        const retiredText = String(factSnap?.exists ? factSnap.data()?.fact ?? "" : "");
+        const phone = await resolveOperationPhone(op);
+        const zepUserId = phone ? getZepUserId(phone) : "";
+        if (!retiredText || !zepUserId) {
+          // Nothing addressable in Zep (same semantics as the main
+          // processor's no-identity branch) — trivially clean.
+          zepClean = true;
+        } else {
+          const matches = await findZepEdgesMatchingFact({ zepUserId, factText: retiredText });
+          zepClean = matches.length === 0;
+        }
+        if (zepClean) {
+          await markMemoryOperationTarget(doc.id, "zepEdges", "completed");
+          await markMemoryOperationTarget(doc.id, "zepEpisodes", "completed");
+        }
+      }
+      if (!zepClean) {
+        await doc.ref.update({
+          terminalReverifyAttempts: reverifies + 1,
+          updatedAt: new Date().toISOString(),
+        });
+        continue;
+      }
+      // Re-open with exactly one attempt of budget: the claim path refuses
+      // attempts beyond the max, so each re-open buys one resumable pass —
+      // bounded overall by terminalReverifyAttempts.
+      await doc.ref.update({
+        status: "retryable_failed",
+        attempts: MEMORY_OPERATION_MAX_ATTEMPTS - 1,
+        nextRetryAt: new Date().toISOString(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        terminalReverifyAttempts: reverifies + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      counts.terminalForgetsReopened++;
+    } catch {
+      // Best-effort repair (R21: nothing logged) — the operation stays
+      // terminal and the next sweep may try again within the budget.
+    }
+  }
 }
 
 // Every minute — the sweep cadence is the shortest useful retry delay

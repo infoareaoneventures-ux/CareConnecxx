@@ -20,6 +20,7 @@ import {
   TRANSIENT_TOOL_MEMORY_CLASS,
   TRANSIENT_TOOL_TTL_MS,
 } from "../memory/memoryFiles";
+import { TERMINAL_MEMORY_SYNC_STATUS } from "../memory/memoryOperations";
 
 const db = admin.firestore();
 
@@ -114,20 +115,28 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
       string | undefined;
 
     // A pending turn is the source of truth for the retry worker, and a row
-    // marked by correction/forget reconciliation may carry retired PHI. Do not
-    // fold around either state: the summary is trusted context, so preserving
-    // ordering is less important than keeping unresolved or retired content out.
+    // marked by correction/forget reconciliation may carry retired PHI.
+    // Neither may enter the summarizer prompt or be deleted here — but they
+    // must not abort the whole rollup either (one forget would permanently
+    // disable rollup for the phone): protected rows are simply SKIPPED — left
+    // in place verbatim while the rest of the old window folds. Excluded rows
+    // are eventually deleted by nightly compression (deletable-but-not-
+    // summarizable per the data contract); a memorySyncStatus of "terminal"
+    // means the worker permanently gave up on the row, which releases it.
     const isProtected = (d: (typeof nonSummary)[number]) => {
       const data = d.data();
+      const sync = data.memorySyncStatus;
       return (
-        typeof data.memorySyncStatus === "string" ||
+        (typeof sync === "string" && sync !== TERMINAL_MEMORY_SYNC_STATUS) ||
         Boolean(data.excludeFromMemoryConsolidationAt)
       );
     };
-    if (nonSummary.some(isProtected)) return false;
 
-    // Fold everything except the most recent HISTORY_WINDOW messages.
-    const toFold = nonSummary.slice(0, nonSummary.length - HISTORY_WINDOW);
+    // Fold everything except the most recent HISTORY_WINDOW messages,
+    // skipping protected rows (they survive verbatim, unsummarized).
+    const toFold = nonSummary
+      .slice(0, nonSummary.length - HISTORY_WINDOW)
+      .filter((d) => !isProtected(d));
     if (toFold.length === 0) return false;
 
     const transcript = toFold

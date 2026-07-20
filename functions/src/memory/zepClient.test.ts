@@ -517,6 +517,84 @@ describe("verifyZepForgottenFactAbsent", () => {
     await expect(verifyZepForgottenFactAbsent({ zepUserId: ZEP_USER, factText: FACT, threadId: THREAD_ID }))
       .rejects.toThrow("zep_fact_still_present_in_context");
   });
+
+  it("OTHER facts covering ≥80% of the target's content words across the blob do NOT fail verification (bag-of-words false positive)", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+    // No single line matches the target ("Mom is allergic to penicillin"),
+    // but the blob's pooled words (mom + allergic + penicillin) previously
+    // tripped the whole-context ≥80% overlap and terminal-failed the forget,
+    // masking the user's memory forever.
+    h.getUserContext.mockResolvedValueOnce({
+      context: [
+        "## CARE CONTEXT",
+        "Mom prefers morning visits.",
+        "Dad is allergic to shellfish.",
+        "The pharmacy mentioned a penicillin shortage in the area.",
+      ].join("\n"),
+    });
+
+    await expect(verifyZepForgottenFactAbsent({
+      zepUserId: ZEP_USER,
+      factText: FACT,
+      threadId: THREAD_ID,
+    })).resolves.toBeUndefined();
+  });
+
+  it("a genuine leftover rendered on a single line still fails verification", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+    h.getUserContext.mockResolvedValueOnce({
+      context: [
+        "## CARE CONTEXT",
+        "Dad is allergic to shellfish.",
+        "User's mom Margaret is allergic to penicillin.", // one line accounts for the match
+      ].join("\n"),
+    });
+
+    await expect(verifyZepForgottenFactAbsent({
+      zepUserId: ZEP_USER,
+      factText: FACT,
+      threadId: THREAD_ID,
+    })).rejects.toThrow("zep_fact_still_present_in_context");
+  });
+
+  it("exact normalized containment anywhere in the blob still fails verification", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+    h.getUserContext.mockResolvedValueOnce({
+      context: "Notes: MOM IS ALLERGIC TO PENICILLIN, plus unrelated details.",
+    });
+    await expect(verifyZepForgottenFactAbsent({
+      zepUserId: ZEP_USER,
+      factText: FACT,
+      threadId: THREAD_ID,
+    })).rejects.toThrow("zep_fact_still_present_in_context");
+  });
+
+  it("a threadless session verifies via the edge inventory ONLY — no context read, no throw (U-threadless)", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+
+    await expect(verifyZepForgottenFactAbsent({
+      zepUserId: ZEP_USER,
+      factText: FACT,
+      // no threadId: the session never acquired a Zep thread
+    })).resolves.toBeUndefined();
+    expect(h.edgeGetByUserId).toHaveBeenCalledTimes(1);
+    expect(h.getUserContext).not.toHaveBeenCalled();
+  });
+
+  it("a threadless session still fails when the edge inventory holds the fact", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([{ uuid: "edge-stale", fact: FACT, episodes: [] }]);
+    await expect(verifyZepForgottenFactAbsent({ zepUserId: ZEP_USER, factText: FACT }))
+      .rejects.toThrow("zep_fact_still_present_in_graph");
+    expect(h.getUserContext).not.toHaveBeenCalled();
+  });
+
+  it("still requires the zepUserId and fact text", async () => {
+    await expect(verifyZepForgottenFactAbsent({ zepUserId: "", factText: FACT }))
+      .rejects.toThrow("identifiers required");
+    await expect(verifyZepForgottenFactAbsent({ zepUserId: ZEP_USER, factText: "  " }))
+      .rejects.toThrow("identifiers required");
+    expect(h.edgeGetByUserId).not.toHaveBeenCalled();
+  });
 });
 
 describe("edge invalidation / deletion adapters (R13/R14)", () => {

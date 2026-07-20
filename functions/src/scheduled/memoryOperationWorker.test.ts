@@ -227,6 +227,7 @@ import {
   runMemoryOperationWorker,
   isZepDuplicateError,
   TURN_SYNC_ORDERING_SCAN_LIMIT,
+  TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS,
 } from "./memoryOperationWorker";
 import {
   MEMORY_OPERATION_MAX_ATTEMPTS,
@@ -638,15 +639,50 @@ describe("per-user source-turn ordering (KTD5/R9)", () => {
 });
 
 describe("failure handling and telemetry (R8/R21)", () => {
-  it("a missing Zep thread is a retryable failure — source rows stay protected", async () => {
+  it("a session with NO Zep thread completes with zepTranscript skipped — no retry loop, no terminal alert", async () => {
     seedSession({ zepThreadId: undefined });
-    const { userPath } = seedTurn("op1");
+    const { userPath, assistantPath } = seedTurn("op1");
 
     const counts = await runMemoryOperationWorker();
 
-    expect(counts.retryable).toBe(1);
-    expect(h.docs.get("memory_operations/op1")!.status).toBe("retryable_failed");
-    expect(h.docs.get(userPath)!.memorySyncStatus).toBe("pending");
+    // Threadless sessions used to throw → retry → terminal-fail EVERY turn.
+    // Now the transcript target is durably skipped (counted) and the rest of
+    // the operation (fact extraction) proceeds to completion.
+    expect(counts.completed).toBe(1);
+    expect(counts.zepTranscriptSkips).toBe(1);
+    expect(counts.retryable).toBe(0);
+    expect(counts.terminal).toBe(0);
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.zepAssistant).not.toHaveBeenCalled();
+    expect(h.extractFacts).toHaveBeenCalledTimes(1);
+
+    const op = h.docs.get("memory_operations/op1")!;
+    expect(op.status).toBe("completed");
+    expect((op.targets as any).zepTranscript.status).toBe("skipped");
+    expect((op.targets as any).learnedFacts.status).toBe("completed");
+    // Source rows released to compression; no alert spam.
+    expect(h.docs.get(userPath)!.memorySyncStatus).toBeUndefined();
+    expect(h.docs.get(assistantPath)!.memorySyncStatus).toBeUndefined();
+    expect([...h.docs.keys()].filter(k => k.startsWith("admin_alerts/"))).toHaveLength(0);
+  });
+
+  it("a TERMINAL turn_sync failure releases its source rows with the 'terminal' marker (R9 repair)", async () => {
+    seedSession();
+    const { userPath, assistantPath } = seedTurn("op1", {
+      status: "retryable_failed",
+      attempts: MEMORY_OPERATION_MAX_ATTEMPTS - 1,
+      nextRetryAt: PAST,
+    });
+    h.zepUser.mockRejectedValue(new Error("zep permanently down") as never);
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.terminal).toBe(1);
+    expect(h.docs.get("memory_operations/op1")!.status).toBe("terminal_failed");
+    // The worker permanently gave up — the rows must not wedge compression
+    // forever. The marker (not a delete) keeps the giving-up visible.
+    expect(h.docs.get(userPath)!.memorySyncStatus).toBe("terminal");
+    expect(h.docs.get(assistantPath)!.memorySyncStatus).toBe("terminal");
   });
 
   it("the terminal attempt alerts exactly once (deduplicated) and later sweeps ignore the operation", async () => {
@@ -807,6 +843,29 @@ describe("forget propagation (R14/KTD16)", () => {
     for (const key of ["storage", "embeddings", "zepEdges", "zepEpisodes", "learnedFacts"]) {
       expect((op.targets as any)[key].status).toBe("completed");
     }
+  });
+
+  it("a forget for a THREADLESS session completes via edge-inventory-only verification (skip counted)", async () => {
+    seedSession({ zepThreadId: undefined });
+    seedFactChange("op-forget", "forget");
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    expect(counts.factChangesCompleted).toBe(1);
+    expect(counts.forgetContextChecksSkipped).toBe(1);
+    // Verification ran with NO threadId — zepClient's edge-inventory half
+    // stands alone (behavior pinned in zepClient.test.ts).
+    expect(h.verifyForgottenFactAbsent).toHaveBeenCalledWith({
+      zepUserId: "14085550001",
+      factText: FORGOTTEN_FACT,
+      threadId: undefined,
+    });
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("completed");
+    // Deletion + tombstone still ran in full.
+    expect(h.deleteEdge).toHaveBeenCalled();
+    expect(h.docs.get(FACT_PATH)!.fact).toBeUndefined();
   });
 
   it("an unbound fingerprint secret makes forget finalization a RETRYABLE failure — plaintext is never stripped without a tombstone fingerprint", async () => {
@@ -1010,6 +1069,135 @@ describe("source-row consolidation exclusion (KTD16/R23)", () => {
     // Non-matching + out-of-window rows untouched.
     expect(h.docs.get(`agent_conversations/${PHONE}/messages/m3`)!.excludeFromMemoryConsolidationAt).toBeUndefined();
     expect(h.docs.get(`agent_conversations/${PHONE}/messages/m-old`)!.excludeFromMemoryConsolidationAt).toBeUndefined();
+  });
+});
+
+// ── Terminal-failed forget repair sweep (audit P1) ────────────────────────────
+// A forget that terminal-failed used to mask the user's memory FOREVER, even
+// when its Zep data was verifiably absent. The sweep re-opens such operations
+// (bounded) so the normal pipeline finishes and unmasks; a genuinely dirty
+// graph keeps the mask.
+describe("terminal-failed forget repair sweep", () => {
+  const TERMINAL_TARGETS_BASE = {
+    firestore: { status: "skipped" },
+    zepTranscript: { status: "skipped" },
+  };
+
+  it("re-opens a terminal forget whose Zep targets already completed; the next sweep finalizes and unmasks", async () => {
+    seedSession();
+    // Terminal failure happened AFTER Zep confirmed clean (e.g. fingerprint
+    // key unbound during learnedFacts finalize).
+    seedFactChange("op-forget", "forget", {
+      status: "terminal_failed",
+      attempts: MEMORY_OPERATION_MAX_ATTEMPTS,
+      nextRetryAt: null,
+      targets: {
+        ...TERMINAL_TARGETS_BASE,
+        storage: { status: "completed" },
+        embeddings: { status: "completed" },
+        zepEdges: { status: "completed" },
+        zepEpisodes: { status: "completed" },
+        learnedFacts: { status: "failed" },
+      },
+    });
+
+    const first = await runMemoryOperationWorker();
+    expect(first.terminalForgetsReopened).toBe(1);
+    // Per-target statuses were authoritative — no fresh Zep probe needed.
+    expect(h.findEdges).not.toHaveBeenCalled();
+    let op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("retryable_failed");
+    expect(op.terminalReverifyAttempts).toBe(1);
+
+    const second = await runMemoryOperationWorker();
+    expect(second.completed).toBe(1);
+    expect(second.factChangesCompleted).toBe(1);
+    op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("completed");
+    expect(typeof op.expiresAt).toBe("string");
+    // Standard completion path ran in full: tombstone, audit, flag clear.
+    expect(h.docs.get(FACT_PATH)!.fact).toBeUndefined();
+    expect(h.logAudit).toHaveBeenCalledTimes(1);
+    const state = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(state.pending).toBe(false);
+    expect(state.storageMasked).toBe(false);
+    expect(state.zepMasked).toBe(false);
+  });
+
+  it("re-verifies a terminal forget with unresolved Zep targets and re-opens when the edge inventory is clean", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget", {
+      status: "terminal_failed",
+      attempts: MEMORY_OPERATION_MAX_ATTEMPTS,
+      nextRetryAt: null,
+      targets: {
+        ...TERMINAL_TARGETS_BASE,
+        storage: { status: "completed" },
+        embeddings: { status: "completed" },
+        zepEdges: { status: "failed" },
+        zepEpisodes: { status: "failed" },
+        learnedFacts: { status: "pending" },
+      },
+    });
+    h.findEdges.mockResolvedValue([]); // the graph is verifiably clean now
+
+    const first = await runMemoryOperationWorker();
+    expect(first.terminalForgetsReopened).toBe(1);
+    expect(h.findEdges).toHaveBeenCalledTimes(1);
+    expect(h.findEdges).toHaveBeenCalledWith({ zepUserId: "14085550001", factText: FORGOTTEN_FACT });
+    const reopened = h.docs.get("memory_operations/op-forget")!;
+    expect(reopened.status).toBe("retryable_failed");
+    expect((reopened.targets as any).zepEdges.status).toBe("completed");
+    expect((reopened.targets as any).zepEpisodes.status).toBe("completed");
+
+    const second = await runMemoryOperationWorker();
+    expect(second.completed).toBe(1);
+    // The confirmed-clean Zep layer was NOT re-touched: no deletes, no
+    // verification, no second inventory scan.
+    expect(h.findEdges).toHaveBeenCalledTimes(1);
+    expect(h.deleteEdge).not.toHaveBeenCalled();
+    expect(h.deleteEpisode).not.toHaveBeenCalled();
+    expect(h.verifyForgottenFactAbsent).not.toHaveBeenCalled();
+    expect(h.docs.get("memory_operations/op-forget")!.status).toBe("completed");
+    const state = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(state.pending).toBe(false);
+  });
+
+  it("keeps a genuinely dirty forget terminal (masked) and stops probing after the bounded re-verify budget", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget", {
+      status: "terminal_failed",
+      attempts: MEMORY_OPERATION_MAX_ATTEMPTS,
+      nextRetryAt: null,
+      targets: {
+        ...TERMINAL_TARGETS_BASE,
+        storage: { status: "completed" },
+        embeddings: { status: "completed" },
+        zepEdges: { status: "failed" },
+        zepEpisodes: { status: "failed" },
+        learnedFacts: { status: "pending" },
+      },
+    });
+    // Default findEdges mock still returns matching edges — genuinely dirty.
+
+    for (let i = 0; i < TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS; i++) {
+      const counts = await runMemoryOperationWorker();
+      expect(counts.terminalForgetsReopened).toBe(0);
+    }
+    expect(h.findEdges).toHaveBeenCalledTimes(TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS);
+
+    // Budget exhausted: later sweeps leave the operation alone entirely.
+    const extra = await runMemoryOperationWorker();
+    expect(extra.terminalForgetsReopened).toBe(0);
+    expect(h.findEdges).toHaveBeenCalledTimes(TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS);
+
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("terminal_failed");
+    expect(op.terminalReverifyAttempts).toBe(TERMINAL_FORGET_REVERIFY_MAX_ATTEMPTS);
+    // Privacy suppression persists — a dirty graph must stay masked.
+    const state = await getMemoryReconciliationState("user-1", h.dbObj as never);
+    expect(state.pending).toBe(true);
+    expect(state.zepMasked).toBe(true);
   });
 });
 

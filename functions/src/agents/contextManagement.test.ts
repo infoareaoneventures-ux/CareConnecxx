@@ -210,17 +210,32 @@ describe("maybeRollUpHistory", () => {
     );
   });
 
-  it("never summarizes or deletes unresolved and correction/forget-protected rows", async () => {
+  it("skips protected rows (unresolved sync / correction-forget) instead of aborting the rollup", async () => {
+    // 36 messages → fold candidates are indices 0-11; index 2 is protected by
+    // an unresolved memorySyncStatus. The rollup must still proceed: 11 rows
+    // fold, the protected row survives verbatim and never enters the prompt.
     const pending = makeMsgs(ROLLUP_TRIGGER + 6);
     (
       pending[2] as (typeof pending)[number] & { memorySyncStatus?: string }
     ).memorySyncStatus = "pending";
     hoisted.seed(pending);
 
-    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
-    expect(quickCompleteMock).not.toHaveBeenCalled();
-    expect(hoisted.snapshot()).toHaveLength(ROLLUP_TRIGGER + 6);
-    expect(hoisted.snapshot()[2].memorySyncStatus).toBe("pending");
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(true);
+    expect(quickCompleteMock).toHaveBeenCalledTimes(1);
+    let prompt = JSON.stringify(quickCompleteMock.mock.calls);
+    // Only rows 0-11 can enter the prompt, so "message 2" uniquely matches
+    // the protected row.
+    expect(prompt).not.toContain("message 2"); // protected row absent…
+    expect(prompt).toContain("message 1");
+    expect(prompt).toContain("message 3");
+    let after = hoisted.snapshot();
+    const survivor = after.find((d) => d.memorySyncStatus === "pending");
+    expect(survivor).toBeDefined();
+    expect(survivor!.content).toBe("message 2"); // …and survives verbatim
+    // HISTORY_WINDOW recent + 1 protected + 1 summary.
+    expect(after.filter((d) => d.role !== "summary")).toHaveLength(
+      HISTORY_WINDOW + 1,
+    );
 
     quickCompleteMock.mockClear();
     const excluded = makeMsgs(ROLLUP_TRIGGER + 6);
@@ -231,12 +246,36 @@ describe("maybeRollUpHistory", () => {
     ).excludeFromMemoryConsolidationAt = new Date().toISOString();
     hoisted.seed(excluded);
 
-    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
-    expect(quickCompleteMock).not.toHaveBeenCalled();
-    expect(hoisted.snapshot()).toHaveLength(ROLLUP_TRIGGER + 6);
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(true);
+    expect(quickCompleteMock).toHaveBeenCalledTimes(1);
+    prompt = JSON.stringify(quickCompleteMock.mock.calls);
+    expect(prompt).not.toContain("message 3"); // retired content never summarized
+    expect(prompt).toContain("message 2");
+    expect(prompt).toContain("message 4");
+    after = hoisted.snapshot();
+    const excludedSurvivor = after.find(
+      (d) => d.excludeFromMemoryConsolidationAt,
+    );
+    expect(excludedSurvivor).toBeDefined();
+    expect(excludedSurvivor!.content).toBe("message 3"); // left for nightly compression to delete
+    expect(after.filter((d) => d.role !== "summary")).toHaveLength(
+      HISTORY_WINDOW + 1,
+    );
+  });
+
+  it("a row whose sync TERMINAL-failed is released and folds normally", async () => {
+    const msgs = makeMsgs(ROLLUP_TRIGGER + 6);
+    (
+      msgs[2] as (typeof msgs)[number] & { memorySyncStatus?: string }
+    ).memorySyncStatus = "terminal"; // worker permanently gave up (R9 repair)
+    hoisted.seed(msgs);
+
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(true);
+    const prompt = JSON.stringify(quickCompleteMock.mock.calls);
+    expect(prompt).toContain("message 2");
     expect(
-      hoisted.snapshot()[3].excludeFromMemoryConsolidationAt,
-    ).toBeDefined();
+      hoisted.snapshot().filter((d) => d.role !== "summary"),
+    ).toHaveLength(HISTORY_WINDOW);
   });
 
   it("still sanitizes/folds a conversation containing an empty-content message (2026-06-29 regression)", async () => {

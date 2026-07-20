@@ -38,6 +38,9 @@ const qaHarness = vi.hoisted(() => {
     confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
     quickComplete: vi.fn(async () => "SUPPORTED"),
     runAgentModelTurn: vi.fn(),
+    getMemoryContext: vi.fn(async () => ""),
+    initializeMemoryFiles: vi.fn(async () => undefined),
+    getMemoryReconciliationState: vi.fn(async () => ({ pending: false, zepMasked: false, storageMasked: false })),
   };
 });
 
@@ -64,7 +67,8 @@ vi.mock("../safety/supervisor",    () => ({ supervise: (msg: string) => Promise.
 vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(async () => null), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
-vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn(async () => ""), initializeMemoryFiles: vi.fn(async () => undefined) }));
+vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: (...args: unknown[]) => qaHarness.getMemoryContext(...args), initializeMemoryFiles: (...args: unknown[]) => qaHarness.initializeMemoryFiles(...args) }));
+vi.mock("../memory/memoryOperations", () => ({ getMemoryReconciliationState: (...args: unknown[]) => qaHarness.getMemoryReconciliationState(...args) }));
 vi.mock("../memory/learnedFacts",  () => ({
   getRelevantFacts: vi.fn(async () => []),
   detectAndStageFactChange: (...args: unknown[]) => qaHarness.detectAndStageFactChange(...args),
@@ -898,6 +902,101 @@ describe("runQaAgent re-remember and grounding behavior", () => {
       if (previous === undefined) delete process.env.GROUNDING_RISK_TIERS_ENABLED;
       else process.env.GROUNDING_RISK_TIERS_ENABLED = previous;
     }
+  });
+});
+
+// P1 data-loss guard: the lazy memory-file bootstrap must fire ONLY when a
+// successful Storage read came back genuinely empty for a user with real
+// onboarding data. Reconciliation-masked turns and failed reads both present
+// as "no memory context" but must never overwrite accumulated files with the
+// onboarding skeleton — and the ?? [] defaults must not make the content guard
+// vacuously true.
+describe("runQaAgent lazy memory-file bootstrap guard", () => {
+  const baseParams = {
+    phone: "+15555550123",
+    chatId: "chat-bootstrap",
+    userId: "client-123",
+    seniorId: "senior-123",
+    userType: "client" as const,
+    skipSend: true,
+    text: "How is Mom doing?",
+  };
+
+  const realOnboardingData = {
+    seniorName: "Margaret",
+    age: "82",
+    conditions: ["dementia"],
+    careNeeds: ["meal prep"],
+    city: "San Jose",
+    firstName: "Anahi",
+    relationship: "daughter",
+  };
+
+  beforeEach(() => {
+    qaHarness.writes.length = 0;
+    for (const key of Object.keys(qaHarness.sessionData)) delete qaHarness.sessionData[key];
+    qaHarness.detectAndStageFactChange.mockReset().mockResolvedValue({ kind: "not_correction" });
+    qaHarness.factChangeAckCopy.mockReset().mockReturnValue(null);
+    qaHarness.findTombstonedRestatement.mockReset().mockResolvedValue(null);
+    qaHarness.quickComplete.mockReset().mockResolvedValue("SUPPORTED");
+    qaHarness.runAgentModelTurn.mockReset().mockResolvedValue({
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: "I can help with that." }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    qaHarness.getMemoryContext.mockReset().mockResolvedValue("");
+    qaHarness.initializeMemoryFiles.mockReset().mockResolvedValue(undefined);
+    qaHarness.getMemoryReconciliationState.mockReset().mockResolvedValue({
+      pending: false, zepMasked: false, storageMasked: false,
+    });
+  });
+
+  it("a reconciliation-masked turn (omitStorage) never bootstraps, even with empty memoryContext and real onboarding data", async () => {
+    qaHarness.getMemoryReconciliationState.mockResolvedValue({
+      pending: true, zepMasked: false, storageMasked: true,
+    });
+
+    await runQaAgent({ ...baseParams, session: { onboardingData: realOnboardingData } });
+
+    // The masked fetch is omitted entirely AND the bootstrap must not fire.
+    expect(qaHarness.getMemoryContext).not.toHaveBeenCalled();
+    expect(qaHarness.initializeMemoryFiles).not.toHaveBeenCalled();
+  });
+
+  it("a failed memory read (transient error) never bootstraps — read failure is not 'no files yet'", async () => {
+    qaHarness.getMemoryContext.mockRejectedValue(new Error("storage unavailable"));
+
+    const reply = await runQaAgent({ ...baseParams, session: { onboardingData: realOnboardingData } });
+
+    expect(reply).toBe("I can help with that."); // turn still completes (fail-soft)
+    expect(qaHarness.getMemoryContext).toHaveBeenCalled();
+    expect(qaHarness.initializeMemoryFiles).not.toHaveBeenCalled();
+  });
+
+  it("empty-array conditions/careNeeds with no seniorName does not bootstrap (the guard checks content, not truthiness)", async () => {
+    await runQaAgent({ ...baseParams, session: { onboardingData: {} } });
+
+    expect(qaHarness.getMemoryContext).toHaveBeenCalled();
+    expect(qaHarness.initializeMemoryFiles).not.toHaveBeenCalled();
+  });
+
+  it("a genuinely-empty unmasked read with real onboarding data still bootstraps (feature preserved)", async () => {
+    await runQaAgent({ ...baseParams, session: { onboardingData: realOnboardingData } });
+
+    expect(qaHarness.initializeMemoryFiles).toHaveBeenCalledTimes(1);
+    expect(qaHarness.initializeMemoryFiles).toHaveBeenCalledWith("client-123", expect.objectContaining({
+      seniorName: "Margaret",
+      conditions: ["dementia"],
+      careNeeds:  ["meal prep"],
+    }));
+  });
+
+  it("non-empty memory context never bootstraps", async () => {
+    qaHarness.getMemoryContext.mockResolvedValue("## profile\nSenior: Margaret");
+
+    await runQaAgent({ ...baseParams, session: { onboardingData: realOnboardingData } });
+
+    expect(qaHarness.initializeMemoryFiles).not.toHaveBeenCalled();
   });
 });
 

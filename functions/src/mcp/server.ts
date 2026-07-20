@@ -3819,6 +3819,22 @@ async function executeToolCall(
         if (!input.userId || !input.file || !input.content) return toolError("INVALID_INPUT", "userId, file, and content are required");
         const VALID_FILES = new Set(["profile", "health", "family", "recent_episodes", "procedural"]);
         if (!VALID_FILES.has(input.file as string)) return toolError("INVALID_INPUT", `file must be one of: ${[...VALID_FILES].join(", ")}`);
+        // R11 (U4b): never trust the model-supplied userId for a memory mutation.
+        const updateIdentityError = await verifyMemoryToolIdentity(input);
+        if (updateIdentityError) return updateIdentityError;
+        // R23: appended content that restates a forgotten/superseded fact is a
+        // typed refusal, never a silent re-store — same fingerprint check the
+        // fact-extraction write guard uses (fail-open inside on lookup errors).
+        // The explicit re-remember confirmation is the only path back in.
+        const { findTombstonedRestatement } = await import("../memory/learnedFacts");
+        const tombstonedHit = await findTombstonedRestatement(input.userId as string, input.content as string);
+        if (tombstonedHit) {
+          return toolError(
+            "CONFLICT",
+            "This content restates a fact the family previously asked Evia to forget or correct, so it was NOT saved. " +
+            "Do not re-add it. If the user is explicitly asking to remember it again, ask them to confirm and it will be restored through the re-remember confirmation flow.",
+          );
+        }
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:update_memory_file", file: input.file } }).catch(() => {});
         const existing = await readMemoryFile(input.userId as string, input.file as MemoryFile);
         const updated  = existing

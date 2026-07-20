@@ -126,6 +126,12 @@ vi.mock("../../memory/memoryOperations", () => ({
   }),
 }));
 
+// update_memory_file's R23 tombstone guard dynamically imports learnedFacts —
+// mocked so this smoke suite never loads the real embeddings/OpenAI graph.
+vi.mock("../../memory/learnedFacts", () => ({
+  findTombstonedRestatement: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../../memory/preferences", () => ({
   getPreferences: vi.fn().mockResolvedValue({ dndEnabled: false }),
 }));
@@ -432,7 +438,10 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("update_memory_file happy path", async () => {
-    const r = await handleToolCall("update_memory_file", { userId: "u1", file: "profile", content: "loves jazz" }) as any;
+    // R11: memory mutations require the verified session identity (phone →
+    // agent_sessions.userId must match the model-supplied userId).
+    hoisted.docState.set("agent_sessions/+15555550777", { userId: "u1" });
+    const r = await handleToolCall("update_memory_file", { userId: "u1", file: "profile", content: "loves jazz", phone: "+15555550777" }) as any;
     expect(r.success).toBe(true);
   });
 

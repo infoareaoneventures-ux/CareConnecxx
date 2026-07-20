@@ -64,6 +64,8 @@ const hoisted = vi.hoisted(() => {
     reset: () => { docState.clear(); collState.clear(); sets.length = 0; updates.length = 0; },
     deleteMemoryFile: vi.fn(async (_u: string, _f: string) => true),
     editMemoryFile: vi.fn(async (_u: string, _f: string, _find: string, _rep: string) => 1),
+    writeMemoryFile: vi.fn(async (_u: string, _f: string, _content: string) => undefined),
+    findTombstonedRestatement: vi.fn(async (_u: string, _text: string) => null as unknown),
     getMemoryContext: vi.fn(async (_u: string) => "## profile\nSenior: Margaret"),
     listMemoryFiles: vi.fn(async (_u: string) => ["profile"]),
     readMemoryFile: vi.fn(async (_u: string, _f: string) => "Mom is allergic to penicillin"),
@@ -95,7 +97,7 @@ vi.mock("../../observability/auditLog", () => ({
 
 vi.mock("../../memory/memoryFiles", () => ({
   readMemoryFile:  hoisted.readMemoryFile,
-  writeMemoryFile: vi.fn().mockResolvedValue(undefined),
+  writeMemoryFile: hoisted.writeMemoryFile,
   editMemoryFile:  hoisted.editMemoryFile,
   deleteMemoryFile: hoisted.deleteMemoryFile,
   searchMemoryHybrid: vi.fn().mockResolvedValue([]),
@@ -109,6 +111,7 @@ vi.mock("../../memory/memoryFiles", () => ({
 // Dynamic import inside the tools — mocked so no OpenAI/embeddings graph loads.
 vi.mock("../../memory/learnedFacts", () => ({
   stageMcpMemoryFileChange: hoisted.stageMemoryChange,
+  findTombstonedRestatement: hoisted.findTombstonedRestatement,
 }));
 
 vi.mock("../../memory/preferences", () => ({
@@ -155,6 +158,8 @@ beforeEach(() => {
   hoisted.getMemoryContext.mockClear().mockResolvedValue("## profile\nSenior: Margaret");
   hoisted.listMemoryFiles.mockClear().mockResolvedValue(["profile"]);
   hoisted.readMemoryFile.mockClear().mockResolvedValue(FIND);
+  hoisted.writeMemoryFile.mockClear().mockResolvedValue(undefined);
+  hoisted.findTombstonedRestatement.mockClear().mockResolvedValue(null);
   hoisted.stageMemoryChange.mockClear().mockResolvedValue({ ok: true, operationId: "mcpfile_forget_test", factDocId: "nf_tombstone" });
   // Verified session identity for the phone qaAgent injects (R11 anchor).
   hoisted.docState.set(`agent_sessions/${PHONE}`, { userId: USER, userType: "client" });
@@ -278,6 +283,62 @@ describe("edit_memory_file — identity validation + pipeline routing (R11/R23)"
     expect(r._toolError).toBe(true);
     expect(hoisted.stageMemoryChange).toHaveBeenCalledTimes(1);
     expect(hoisted.editMemoryFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("update_memory_file — identity validation + tombstone guard (R11/R23)", () => {
+  const CONTENT = "Mom prefers chamomile tea in the evening";
+
+  it("REJECTS a model-supplied userId that does not match the verified session identity", async () => {
+    const r = await handleToolCall("update_memory_file", {
+      userId: "victim-user", file: "health", content: CONTENT, phone: PHONE,
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(hoisted.writeMemoryFile).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS a call without a verified session phone (fail closed)", async () => {
+    const r = await handleToolCall("update_memory_file", {
+      userId: USER, file: "health", content: CONTENT,
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(hoisted.writeMemoryFile).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS when the session has no bound userId yet (unconfirmed identity)", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { userType: "client" });
+    const r = await handleToolCall("update_memory_file", {
+      userId: USER, file: "health", content: CONTENT, phone: PHONE,
+    }) as any;
+    expect(r.code).toBe("PERMISSION_DENIED");
+    expect(hoisted.writeMemoryFile).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES appending content that restates a tombstoned/superseded fact (R23) — no write", async () => {
+    hoisted.findTombstonedRestatement.mockResolvedValueOnce({
+      factDocId: "nf_tombstone", fact: FIND, category: "medical",
+    });
+    const r = await handleToolCall("update_memory_file", {
+      userId: USER, file: "health", content: FIND, phone: PHONE,
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("CONFLICT");
+    expect(r.message).toMatch(/forget|forgot/i);
+    expect(r.message).toMatch(/confirm/i);
+    expect(hoisted.findTombstonedRestatement).toHaveBeenCalledWith(USER, FIND);
+    expect(hoisted.writeMemoryFile).not.toHaveBeenCalled();
+  });
+
+  it("a normal append still works: identity verified, no tombstone hit, content appended", async () => {
+    const r = await handleToolCall("update_memory_file", {
+      userId: USER, file: "health", content: CONTENT, phone: PHONE,
+    }) as any;
+    expect(r).toMatchObject({ success: true, updated: true });
+    expect(hoisted.findTombstonedRestatement).toHaveBeenCalledWith(USER, CONTENT);
+    // Appends to the existing file content rather than replacing it.
+    expect(hoisted.writeMemoryFile).toHaveBeenCalledWith(USER, "health", `${FIND}\n\n${CONTENT}`);
   });
 });
 

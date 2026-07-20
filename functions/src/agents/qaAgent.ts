@@ -1803,7 +1803,10 @@ export async function runQaAgent(params: {
       ? [null as ZepContextResult | null, "", [] as Array<{ fact: string; category: string }>, null, ""]
       : await Promise.all([
         zepThreadId && !reconciliationMask.omitZep ? getZepContextResult(zepThreadId) : Promise.resolve(null),
-        reconciliationMask.omitStorage ? Promise.resolve("") : getMemoryContext(userId).catch(() => ""),
+        // A failed read resolves to null (NOT "") so downstream can tell
+        // "read failed" apart from "user genuinely has no memory files" —
+        // only the latter may trigger the lazy bootstrap below.
+        reconciliationMask.omitStorage ? Promise.resolve("") : getMemoryContext(userId).catch(() => null),
         // U5 (R16/KTD11): pass the current message so the EXISTING topic
         // reranker in getRelevantFacts ranks by relevance; it falls back to
         // weight ordering when embeddings are unavailable. Blank/reaction
@@ -1823,7 +1826,12 @@ export async function runQaAgent(params: {
     // memory-files code shipped, or whose initial write silently failed. Runs
     // once per user (idempotent — initializeMemoryFiles overwrites if needed
     // but next turn memoryContext will be non-empty and this branch is skipped).
-    if (!memoryContext && userId) {
+    // Guarded (P1 data-loss fix): only a SUCCESSFUL read that came back truly
+    // empty may bootstrap. A reconciliation-masked turn (omitStorage) and a
+    // failed read (null from the .catch above) both look "empty" but are not —
+    // bootstrapping on either overwrites accumulated profile/health files with
+    // the onboarding skeleton.
+    if (memoryContext === "" && userId && !reconciliationMask.omitStorage) {
       const sd = (session as any)?.onboardingData ?? {};
       const seniorDoc = senior as Record<string, unknown> | null;
       const initData = {
@@ -1835,7 +1843,13 @@ export async function runQaAgent(params: {
         clientName:   (sd.firstName ?? "")   as string,
         relationship: (sd.relationship ?? "") as string,
       };
-      if (initData.seniorName || initData.conditions || initData.careNeeds) {
+      // Content check, not truthiness: the ?? [] defaults above make the
+      // arrays ALWAYS truthy, which used to void this guard entirely.
+      const hasRealOnboardingData =
+        Boolean(initData.seniorName) ||
+        (initData.conditions?.length ?? 0) > 0 ||
+        (initData.careNeeds?.length ?? 0) > 0;
+      if (hasRealOnboardingData) {
         // Fire-and-forget — next conversation turn will read populated files.
         // Loud on failure: a silent miss here means memoryContext keeps coming
         // back empty every turn (this branch keeps retrying) with nobody paged.

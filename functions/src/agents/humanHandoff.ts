@@ -193,15 +193,18 @@ export function isRiskTierGroundingEnabled(env: Record<string, string | undefine
 // the gate can't loop on its own output.
 export type NeutralCopyCategory = "medical" | "identity" | "action" | "payment";
 
+// Commitment-tracker rule: this copy must never promise a proactive follow-up
+// (nothing records one and nobody is paged) — it invites the user to ask again
+// instead.
 export const GROUNDING_NEUTRAL_COPY: Record<NeutralCopyCategory, string> = {
   medical:
-    "I want to be extra careful with health details, so let me double-check that before I say anything for certain. I'll follow up with you shortly. 💙",
+    "I want to be extra careful with health details, so let me double-check that before I say anything for certain. Ask me again in a little bit and I should have a solid answer for you. 💙",
   identity:
-    "I want to make sure I have the right person and details before I confirm that — let me double-check and follow up with you shortly.",
+    "I want to make sure I have the right person and details before I confirm that — let me double-check. Ask me again in a little bit and I should have it sorted out.",
   action:
-    "I don't want to tell you something's done unless I'm completely sure — let me verify it and follow up with you shortly.",
+    "I don't want to tell you something's done unless I'm completely sure — let me verify it first. Check back with me in a little bit and I should know for certain.",
   payment:
-    "Money details need to be exact, so let me double-check that before I confirm anything. I'll follow up with you shortly.",
+    "Money details need to be exact, so let me double-check that before I confirm anything. Ask me again in a little bit and I'll make sure it's right.",
 };
 
 // Claim category → neutral-copy family. Medical outranks payment outranks

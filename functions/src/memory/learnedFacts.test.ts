@@ -175,6 +175,7 @@ import {
   getActiveFactCandidates,
   findTombstonedRestatement,
   confirmReRemember,
+  stageMcpMemoryFileChange,
   computeFactFingerprint,
   normalizeFactForFingerprint,
   deterministicFactDocId,
@@ -807,6 +808,62 @@ describe("tombstone restatement + confirmed re-remember", () => {
     const result = await confirmReRemember({ userId: USER, factDocId: "fact-1" });
     expect(result).toEqual({ ok: false, reason: "reconciliation_pending" });
     expect(getFact("fact-1")!.pendingForgetOperationId).toBe("forget_x");
+  });
+
+  it("does not reactivate a superseded fact while its replacement is still active", async () => {
+    setFact("old-fact", {
+      fact: FACT,
+      _norm: normalizeFactForFingerprint(FACT),
+      category: "medical",
+      weight: 6,
+      supersededAt: "2026-07-10T00:00:00.000Z",
+      supersededBy: "replacement-fact",
+    });
+    setFact("replacement-fact", {
+      fact: "Mom is allergic to amoxicillin",
+      _norm: "mom is allergic to amoxicillin",
+      category: "medical",
+      weight: 6,
+    });
+
+    const result = await confirmReRemember({
+      userId: USER,
+      factDocId: "old-fact",
+      restatedFact: { fact: FACT, category: "medical" },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "replacement_active" });
+    expect(isActiveLearnedFact(getFact("old-fact"))).toBe(false);
+    expect(isActiveLearnedFact(getFact("replacement-fact"))).toBe(true);
+  });
+});
+
+describe("MCP memory-file staging", () => {
+  it("creates the tombstone shell, pending all-target operation, and reconciliation flag before Storage mutation", async () => {
+    const retiredText = "Mom is allergic to penicillin";
+    const result = await stageMcpMemoryFileChange({
+      kind: "forget",
+      userId: USER,
+      phone: "+14085550001",
+      fileSlug: "health",
+      retiredText,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const fact = getFact(result.factDocId)!;
+    expect(fact).toMatchObject({
+      fact: retiredText,
+      pendingForgetOperationId: result.operationId,
+      retiredVia: "mcp_memory_tool",
+    });
+    const op = h.docs.get(`memory_operations/${result.operationId}`)!;
+    expect(op).toMatchObject({ kind: "forget", status: "pending", fileSlug: "health" });
+    for (const target of ["learnedFacts", "storage", "embeddings", "zepEdges", "zepEpisodes"]) {
+      expect((op.targets as Record<string, { status: string }>)[target].status).toBe("pending");
+    }
+    expect(JSON.stringify(op)).not.toContain(retiredText);
+    expect((flagDoc()!.pendingOperations as Record<string, unknown>)[result.operationId]).toMatchObject({ kind: "forget" });
   });
 });
 

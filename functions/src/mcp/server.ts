@@ -10,6 +10,7 @@ import {
   searchMemoryHybrid,
   getMemoryContext,
   listMemoryFiles,
+  isTransientToolFile,
   MemoryFile,
   MEMORY_QUERY_RECONCILIATION_COPY,
 } from "../memory/memoryFiles";
@@ -2923,59 +2924,36 @@ async function verifyMemoryToolIdentity(input: Record<string, unknown>) {
   return null;
 }
 
-// U4b: records an MCP memory-file change as an already-completed operation in
-// the memory_operations ledger (audit-by-reference — refs/slug only, never the
-// edited text) and writes the durable memory_fact_* audit entry. Best-effort:
-// the Storage mutation already happened; a ledger write failure must not fail
-// the tool result, but it is logged (sanitized) so it is not silent.
-async function recordMcpMemoryFileChange(params: {
+// MCP file mutations stage a pending fact-change operation before touching
+// Storage. The worker owns cross-store cleanup and completion; a stage or audit
+// failure leaves Storage untouched and the already-created operation retryable.
+async function stageMcpMemoryFileChange(params: {
   kind: "correction" | "forget";
   userId: string;
   phone?: string;
   fileSlug: string;
   source: string;
   /** Retired text for tombstone stamping (edit path). NEVER persisted raw. */
-  retiredText?: string;
+  retiredText: string;
 }): Promise<void> {
-  try {
-    let tombstoneFactPath: string | undefined;
-    if (params.retiredText) {
-      const { stampRetiredTextTombstone } = await import("../memory/learnedFacts");
-      const tombstone = await stampRetiredTextTombstone({
-        userId: params.userId,
-        retiredText: params.retiredText,
-        mode: params.kind === "forget" ? "forget" : "superseded",
-      });
-      if (tombstone) tombstoneFactPath = `learned_facts/${params.userId}/facts/${tombstone.factDocId}`;
-    }
-    const { buildMcpMemoryFileOperationDoc, MEMORY_OPERATIONS_COLLECTION } =
-      await import("../memory/memoryOperations");
-    const changeKey = params.retiredText
-      ? crypto.createHash("sha256").update(params.retiredText).digest("hex").slice(0, 16)
-      : "";
-    const { operationId, doc } = buildMcpMemoryFileOperationDoc({
-      kind: params.kind,
-      userId: params.userId,
-      phone: params.phone,
-      fileSlug: params.fileSlug,
-      changeKey,
-      tombstoneFactPath,
-    });
-    // Deterministic ID + full set → the same request is idempotent.
-    await db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId).set(doc);
-    logAudit({
-      eventType: params.kind === "forget" ? "memory_fact_forgotten" : "memory_fact_corrected",
-      userId: params.userId,
-      data: { source: params.source, file: params.fileSlug },
-    }).catch(() => {});
-  } catch (err) {
-    console.warn(JSON.stringify({
-      severity: "WARNING",
-      mcp_memory_operation_record_failed: true,
-      error_class: err instanceof Error ? err.constructor.name : typeof err,
-      timestamp: new Date().toISOString(),
-    }));
-  }
+  const { stageMcpMemoryFileChange: stage } = await import("../memory/learnedFacts");
+  const staged = await stage({
+    kind: params.kind,
+    userId: params.userId,
+    phone: params.phone,
+    fileSlug: params.fileSlug,
+    retiredText: params.retiredText,
+  });
+  if (!staged.ok) throw new Error(`mcp_memory_change_stage_${staged.reason}`);
+
+  // This is deliberately awaited. A missing audit write must not be hidden by
+  // a successful Storage mutation; the staged operation remains pending for
+  // worker reconciliation and the caller gets a retryable tool failure.
+  await logAudit({
+    eventType: params.kind === "forget" ? "memory_fact_forgotten" : "memory_fact_corrected",
+    userId: params.userId,
+    data: { source: params.source, file: params.fileSlug },
+  });
 }
 
 function shouldTrackMcpTool(name: string): boolean {
@@ -3818,6 +3796,18 @@ async function executeToolCall(
 
       case "read_memory_file": {
         if (!input.userId || !input.file) return toolError("INVALID_INPUT", "userId and file are required");
+        const requestedFile = String(input.file);
+        // Transient tool_* pointers are per-turn working data and may be read
+        // exactly while durable memory reconciliation is in progress. Every
+        // durable file is masked so an MCP direct read cannot bypass the shared
+        // Storage-memory suppression used by prompt assembly and cara_knows.
+        if (!isTransientToolFile(requestedFile)) {
+          const { getMemoryReconciliationState } = await import("../memory/memoryOperations");
+          const reconciliation = await getMemoryReconciliationState(input.userId as string);
+          if (reconciliation.storageMasked) {
+            return { success: true, content: "", empty: true, reconciliationPending: true };
+          }
+        }
         // Reads accept any slug (canonical or ad-hoc offloaded files); the storage
         // layer sanitizes the name so it can never escape the user's prefix.
         logHealthDataAccessed(input.userId as string, input.userId as string, "mcp:read_memory_file").catch(() => {});
@@ -3844,27 +3834,24 @@ async function executeToolCall(
         const editIdentityError = await verifyMemoryToolIdentity(input);
         if (editIdentityError) return editIdentityError;
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:edit_memory_file", file: input.file } }).catch(() => {});
+        const existing = await readMemoryFile(input.userId as string, input.file as MemoryFile);
+        if (!existing || !existing.includes(input.find as string)) {
+          return { success: true, replaced: 0, matched: false };
+        }
+        await stageMcpMemoryFileChange({
+          kind: String(input.replace ?? "").trim() ? "correction" : "forget",
+          userId: input.userId as string,
+          phone: stringInput(input, "phone"),
+          fileSlug: String(input.file),
+          source: "mcp:edit_memory_file",
+          retiredText: input.find as string,
+        });
         const replaced = await editMemoryFile(
           input.userId as string,
           input.file as MemoryFile,
           input.find as string,
           (input.replace as string) ?? ""
         );
-        if (replaced > 0) {
-          // U4b (R23): an edit that removed/replaced fact content routes
-          // through the correction/forget pipeline semantics — a retired-text
-          // tombstone (blocks passive re-extraction; re-remember is the
-          // explicit path back) plus a completed memory operation and the
-          // durable memory_fact_* audit entry.
-          await recordMcpMemoryFileChange({
-            kind: String(input.replace ?? "").trim() ? "correction" : "forget",
-            userId: input.userId as string,
-            phone: stringInput(input, "phone"),
-            fileSlug: String(input.file),
-            source: "mcp:edit_memory_file",
-            retiredText: input.find as string,
-          });
-        }
         return { success: true, replaced, matched: replaced > 0 };
       }
 
@@ -8329,17 +8316,22 @@ async function executeToolCall(
       const deleteIdentityError = await verifyMemoryToolIdentity(input);
       if (deleteIdentityError) return deleteIdentityError;
       logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file } }).catch(() => {});
-      const existed = await deleteMemoryFile(input.userId as string, input.file as MemoryFile);
-      if (existed) {
-        // U4b (R23): a user-facing forget path never ends at a bare Storage
-        // mutation — record the completed forget operation + durable audit.
-        await recordMcpMemoryFileChange({
+      const retiredText = await readMemoryFile(input.userId as string, input.file as MemoryFile);
+      if (retiredText.trim()) {
+        await stageMcpMemoryFileChange({
           kind: "forget",
           userId: input.userId as string,
           phone: stringInput(input, "phone"),
           fileSlug: String(input.file),
           source: "mcp:delete_memory_file",
+          retiredText,
         });
+      }
+      const existed = await deleteMemoryFile(input.userId as string, input.file as MemoryFile);
+      if (existed) {
+        // The pending worker operation was staged before deleteMemoryFile.
+        // It now re-runs Storage/embedding cleanup idempotently and reconciles
+        // learned facts plus Zep before it can complete.
       }
       logAudit({ eventType: "memory_file_deleted", userId: input.userId as string, data: { source: "mcp:delete_memory_file", file: input.file, existed } }).catch(() => {});
       return { success: true, deleted: existed, existed };

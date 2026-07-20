@@ -19,6 +19,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
+import type { TurnPersistenceOutcome } from "../../memory/conversationMemory";
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
@@ -152,7 +153,7 @@ vi.mock("../../agents/qaAgent", () => ({
 // U3b — the ONE completed-turn memory boundary (dynamically imported by the
 // default QA/quick tail) plus the legacy learnedFacts module (only the
 // FACT_CORRECTION branch may still import it — never the default tail).
-const persistCompletedTurn = vi.fn(async (..._a: any[]) =>
+const persistCompletedTurn = vi.fn(async (..._a: any[]): Promise<TurnPersistenceOutcome> =>
   ({ ok: true as const, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false }));
 vi.mock("../../memory/conversationMemory", () => ({
   persistCompletedTurn: (...a: any[]) => (persistCompletedTurn as Function).apply(null, a),

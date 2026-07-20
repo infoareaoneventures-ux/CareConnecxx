@@ -25,8 +25,8 @@ const db = admin.firestore();
 
 // getConversationHistory loads only the most recent HISTORY_WINDOW messages, so
 // anything older is lost unless folded into the summary row it reads back.
-export const HISTORY_WINDOW = 24;  // recent messages kept verbatim
-export const ROLLUP_TRIGGER = 30;  // start folding once live messages exceed this
+export const HISTORY_WINDOW = 24; // recent messages kept verbatim
+export const ROLLUP_TRIGGER = 30; // start folding once live messages exceed this
 
 // Window guardrail (hallucination hardening U3): transport-recorded outbound
 // rows (scheduled nudges, gate messages — source: "outbound_transport") now
@@ -38,7 +38,7 @@ export const HISTORY_OVERFETCH_LIMIT = 60;
 export const MIN_USER_ROWS_KEPT = 6;
 
 export interface HistoryRow {
-  role:    "user" | "assistant";
+  role: "user" | "assistant";
   content: string;
   /** "outbound_transport" for transport-recorded rows; undefined = regular. */
   source?: string;
@@ -56,19 +56,28 @@ export function composeHistoryWindow(rows: HistoryRow[]): HistoryRow[] {
   if (rows.length <= HISTORY_WINDOW) return rows;
 
   const selected = new Set<number>();
-  for (let i = rows.length - HISTORY_WINDOW; i < rows.length; i++) selected.add(i);
+  for (let i = rows.length - HISTORY_WINDOW; i < rows.length; i++)
+    selected.add(i);
 
   // The last MIN_USER_ROWS_KEPT user rows, newest first — newest are the most
   // valuable, so they claim swap slots before older ones if droppables run out.
   const requiredUsers: number[] = [];
-  for (let i = rows.length - 1; i >= 0 && requiredUsers.length < MIN_USER_ROWS_KEPT; i--) {
+  for (
+    let i = rows.length - 1;
+    i >= 0 && requiredUsers.length < MIN_USER_ROWS_KEPT;
+    i--
+  ) {
     if (rows[i].role === "user") requiredUsers.push(i);
   }
 
   for (const userIdx of requiredUsers) {
     if (selected.has(userIdx)) continue;
     const droppable = [...selected]
-      .filter((i) => rows[i].role === "assistant" && rows[i].source === "outbound_transport")
+      .filter(
+        (i) =>
+          rows[i].role === "assistant" &&
+          rows[i].source === "outbound_transport",
+      )
       .sort((a, b) => a - b)[0];
     if (droppable === undefined) break; // nothing safe to shed — keep the window as-is
     selected.delete(droppable);
@@ -87,25 +96,45 @@ export function composeHistoryWindow(rows: HistoryRow[]): HistoryRow[] {
 // every early-return (below trigger, nothing to fold, empty/failed summary).
 export async function maybeRollUpHistory(phone: string): Promise<boolean> {
   try {
-    const col = db.collection("agent_conversations").doc(phone).collection("messages");
+    const col = db
+      .collection("agent_conversations")
+      .doc(phone)
+      .collection("messages");
 
     // Cheap aggregation gate — avoids reading every message on turns that don't need a rollup.
     const countSnap = await col.count().get();
     if (countSnap.data().count <= ROLLUP_TRIGGER) return false;
 
-    const snap       = await col.orderBy("timestamp", "asc").get();
+    const snap = await col.orderBy("timestamp", "asc").get();
     const nonSummary = snap.docs.filter((d) => d.data().role !== "summary");
     if (nonSummary.length <= HISTORY_WINDOW) return false;
 
-    const summaryDocs     = snap.docs.filter((d) => d.data().role === "summary");
-    const existingSummary = summaryDocs[0]?.data().content as string | undefined;
+    const summaryDocs = snap.docs.filter((d) => d.data().role === "summary");
+    const existingSummary = summaryDocs[0]?.data().content as
+      string | undefined;
+
+    // A pending turn is the source of truth for the retry worker, and a row
+    // marked by correction/forget reconciliation may carry retired PHI. Do not
+    // fold around either state: the summary is trusted context, so preserving
+    // ordering is less important than keeping unresolved or retired content out.
+    const isProtected = (d: (typeof nonSummary)[number]) => {
+      const data = d.data();
+      return (
+        typeof data.memorySyncStatus === "string" ||
+        Boolean(data.excludeFromMemoryConsolidationAt)
+      );
+    };
+    if (nonSummary.some(isProtected)) return false;
 
     // Fold everything except the most recent HISTORY_WINDOW messages.
     const toFold = nonSummary.slice(0, nonSummary.length - HISTORY_WINDOW);
     if (toFold.length === 0) return false;
 
     const transcript = toFold
-      .map((d) => `${d.data().role === "user" ? "Family" : "Evia"}: ${String(d.data().content ?? "").slice(0, 500)}`)
+      .map(
+        (d) =>
+          `${d.data().role === "user" ? "Family" : "Evia"}: ${String(d.data().content ?? "").slice(0, 500)}`,
+      )
       .join("\n");
 
     const newSummary = await quickComplete(
@@ -127,9 +156,13 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
 
     // Upsert the single summary row and delete the folded messages so they are
     // neither double-counted nor re-summarized next time.
-    const batch      = db.batch();
+    const batch = db.batch();
     const summaryRef = summaryDocs[0]?.ref ?? col.doc();
-    batch.set(summaryRef, { role: "summary", content: newSummary.trim(), timestamp: Date.now() });
+    batch.set(summaryRef, {
+      role: "summary",
+      content: newSummary.trim(),
+      timestamp: Date.now(),
+    });
     for (const d of toFold) batch.delete(d.ref);
     await batch.commit();
     return true;
@@ -153,7 +186,9 @@ export async function buildToolResultContent(
 ): Promise<string> {
   const full = JSON.stringify(result);
   if (full.length <= TOOL_RESULT_OFFLOAD_THRESHOLD || !userId) {
-    return full.length > TOOL_RESULT_OFFLOAD_THRESHOLD ? full.slice(0, TOOL_RESULT_OFFLOAD_THRESHOLD) : full;
+    return full.length > TOOL_RESULT_OFFLOAD_THRESHOLD
+      ? full.slice(0, TOOL_RESULT_OFFLOAD_THRESHOLD)
+      : full;
   }
 
   const slug = `tool_${toolName}_${Date.now()}`.toLowerCase();
@@ -166,13 +201,14 @@ export async function buildToolResultContent(
     // working for the active loop throughout that lifetime.
     await writeMemoryFile(userId, slug, full, {
       memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
-      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+      expiresAt: new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
     });
     return JSON.stringify({
       _offloaded: true,
-      file:    slug,
-      note:    `Full result (${full.length} chars) saved to temporary memory file "${slug}" (kept ~24h). ` +
-               `Use read_memory_file with file="${slug}" to retrieve specific details.`,
+      file: slug,
+      note:
+        `Full result (${full.length} chars) saved to temporary memory file "${slug}" (kept ~24h). ` +
+        `Use read_memory_file with file="${slug}" to retrieve specific details.`,
       preview: full.slice(0, 1200),
     });
   } catch {
@@ -204,7 +240,7 @@ export function truncateOldToolCallArgs(
   maxArgLen = 500,
 ): number {
   let truncated = 0;
-  const cutoff  = Math.max(0, messages.length - keepLast);
+  const cutoff = Math.max(0, messages.length - keepLast);
 
   for (let i = 0; i < cutoff; i++) {
     const msg = messages[i];
@@ -222,7 +258,7 @@ export function truncateOldToolCallArgs(
 
       block.input = {
         _truncated: true,
-        preview:    argsStr.slice(0, maxArgLen) + "...",
+        preview: argsStr.slice(0, maxArgLen) + "...",
       };
       truncated++;
     }
@@ -250,7 +286,9 @@ export function truncateOldToolCallArgs(
 // produced them.
 //
 // Pattern source: third_party/deepagents/libs/deepagents/deepagents/middleware/patch_tool_calls.py
-export function patchDanglingToolCalls(messages: Anthropic.MessageParam[]): number {
+export function patchDanglingToolCalls(
+  messages: Anthropic.MessageParam[],
+): number {
   let patches = 0;
   let i = 0;
   while (i < messages.length) {
@@ -288,14 +326,16 @@ export function patchDanglingToolCalls(messages: Anthropic.MessageParam[]): numb
       continue;
     }
 
-    const placeholders: Anthropic.ToolResultBlockParam[] = orphans.map(({ id, name }) => ({
-      type: "tool_result",
-      tool_use_id: id,
-      content:
-        `Tool call ${name} did not complete — likely a response-size or timeout cutoff. ` +
-        "Tell the user briefly that you couldn't finish that step and offer to try again.",
-      is_error: true,
-    }));
+    const placeholders: Anthropic.ToolResultBlockParam[] = orphans.map(
+      ({ id, name }) => ({
+        type: "tool_result",
+        tool_use_id: id,
+        content:
+          `Tool call ${name} did not complete — likely a response-size or timeout cutoff. ` +
+          "Tell the user briefly that you couldn't finish that step and offer to try again.",
+        is_error: true,
+      }),
+    );
 
     if (next && next.role === "user" && Array.isArray(next.content)) {
       next.content = [...next.content, ...placeholders];

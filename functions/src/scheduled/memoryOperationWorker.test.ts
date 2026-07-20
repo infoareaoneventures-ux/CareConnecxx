@@ -158,6 +158,7 @@ const h = vi.hoisted(() => {
     extractFacts: vi.fn(async (..._args: unknown[]) => {}),
     // U4b adapters (zepClient / memoryFiles / auditLog)
     findEdges: vi.fn(async (_p: { zepUserId: string; factText: string }) => [] as Array<{ uuid: string; episodes: string[] }>),
+    verifyForgottenFactAbsent: vi.fn(async (_p: { zepUserId: string; factText: string; threadId: string }) => {}),
     invalidateEdge: vi.fn(async (_p: { edgeUuid: string; invalidAt: string }) => ({ alreadyGone: false })),
     deleteEdge: vi.fn(async (_uuid: string) => ({ alreadyGone: false })),
     deleteEpisode: vi.fn(async (_uuid: string) => ({ alreadyGone: false })),
@@ -200,6 +201,7 @@ vi.mock("../memory/zepClient", () => ({
   invalidateZepEdgeStrict: h.invalidateEdge,
   deleteZepEdgeStrict: h.deleteEdge,
   deleteZepEpisodeStrict: h.deleteEpisode,
+  verifyZepForgottenFactAbsent: h.verifyForgottenFactAbsent,
   // Same containment semantics as the real matcher — enough for row-scan tests.
   zepEdgeFactMatches: (edgeFact: string, target: string) =>
     edgeFact.toLowerCase().includes(target.toLowerCase()),
@@ -221,7 +223,11 @@ vi.mock("../observability/auditLog", () => ({
   logAudit: h.logAudit,
 }));
 
-import { runMemoryOperationWorker, isZepDuplicateError } from "./memoryOperationWorker";
+import {
+  runMemoryOperationWorker,
+  isZepDuplicateError,
+  TURN_SYNC_ORDERING_SCAN_LIMIT,
+} from "./memoryOperationWorker";
 import {
   MEMORY_OPERATION_MAX_ATTEMPTS,
   getMemoryReconciliationState,
@@ -371,6 +377,8 @@ beforeEach(() => {
     { uuid: "edge-2", episodes: ["ep-mixed"] },
   ]);
   h.invalidateEdge.mockClear();
+  h.verifyForgottenFactAbsent.mockClear();
+  h.verifyForgottenFactAbsent.mockImplementation(async () => {});
   h.invalidateEdge.mockImplementation(async () => ({ alreadyGone: false }));
   h.deleteEdge.mockClear();
   h.deleteEdge.mockImplementation(async () => ({ alreadyGone: false }));
@@ -553,6 +561,25 @@ describe("idempotency and reconciliation (R9/KTD5)", () => {
 });
 
 describe("per-user source-turn ordering (KTD5/R9)", () => {
+  it("defers an oversized unresolved backlog rather than risking out-of-order transcript writes", async () => {
+    seedSession();
+    for (let i = 0; i <= TURN_SYNC_ORDERING_SCAN_LIMIT; i++) {
+      seedTurn(`op-backlog-${i}`, { sourceTurnTimestamp: TURN_MS + i });
+    }
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.orderingBacklogOverflows).toBe(1);
+    expect(counts.completed).toBe(0);
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.docs.get("memory_operations/op-backlog-0")!.status).toBe("pending");
+    const alerts = [...h.docs.entries()].filter(([path]) =>
+      path.startsWith("admin_alerts/memory-turn-sync-backlog:"),
+    );
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify(alerts[0][1])).not.toMatch(/user-1|op-backlog|\+14085550001/i);
+  });
+
   it("an older unresolved-but-not-due turn BLOCKS a younger due turn for the same user", async () => {
     seedSession();
     // Older turn: failed, backing off into the future.
@@ -743,6 +770,22 @@ describe("forget propagation (R14/KTD16)", () => {
     // No Zep write of any kind happened — no re-ingestion path exists here.
     expect(h.zepUser).not.toHaveBeenCalled();
     expect(h.zepAssistant).not.toHaveBeenCalled();
+  });
+
+  it("keeps the operation pending when post-delete Zep verification still finds the retired fact", async () => {
+    seedSession();
+    seedFactChange("op-forget", "forget");
+    h.verifyForgottenFactAbsent.mockRejectedValueOnce(new Error("zep fact still present") as never);
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.retryable).toBe(1);
+    const op = h.docs.get("memory_operations/op-forget")!;
+    expect(op.status).toBe("retryable_failed");
+    expect((op.targets as any).zepEdges.status).toBe("failed");
+    expect((op.targets as any).zepEpisodes.status).toBe("failed");
+    expect(h.docs.get(FACT_PATH)!.pendingForgetOperationId).toBe("op-forget");
+    expect(h.logAudit).not.toHaveBeenCalled();
   });
 
   it("already-gone targets are success: missing fact doc + not-found Zep targets still complete", async () => {

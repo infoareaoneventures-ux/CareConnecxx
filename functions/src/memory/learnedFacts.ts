@@ -1,9 +1,11 @@
 import * as admin from "firebase-admin";
 import { createHash } from "crypto";
 import { quickComplete } from "../utils/openaiClient";
+import { unwrapJson } from "../utils/jsonUtils";
 import { embedText, rankBySimilarity, EMBED_MODEL } from "./embeddings";
 import {
   buildFactChangeOperationDoc,
+  buildMcpMemoryFileOperationDoc,
   buildReRememberOperationDoc,
   factChangeOperationId,
   MEMORY_OPERATIONS_COLLECTION,
@@ -137,20 +139,6 @@ function effectiveWeight(weight: number, lastMentionedAt?: string): number {
   return weight * decay;
 }
 
-// Strip common LLM JSON wrappers (markdown code fences, leading prose).
-// gpt-4o-mini and Claude both occasionally return JSON wrapped in ```json ... ```
-// or with a stray sentence before the array; we extract the JSON substring.
-function unwrapJson(raw: string): string {
-  let s = (raw ?? "").trim();
-  // Strip leading/trailing markdown code fences
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  // If extra prose precedes the array, find the first '[' and last ']'
-  const start = s.indexOf("[");
-  const end   = s.lastIndexOf("]");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  return s;
-}
-
 // Shared extraction model call — used by extractAndStoreFacts and by the live
 // turn's tombstone-restatement check so both see the same candidate facts.
 async function runFactExtractionModel(
@@ -167,7 +155,7 @@ async function runFactExtractionModel(
     text,
     { maxTokens: 300 },
   );
-  const cleaned = unwrapJson(raw);
+  const cleaned = unwrapJson(raw, "array");
   if (!cleaned) return [];
   const parsed = JSON.parse(cleaned);
   return Array.isArray(parsed) ? parsed : [];
@@ -200,32 +188,35 @@ async function findBlockingFactDoc(
   const candidates: Array<{ id: string; data: Record<string, unknown> }> = [];
 
   const detId = deterministicFactDocId(factText);
-  const detSnap = await factsCol.doc(detId).get().catch(() => null);
+  const material = tryGetFingerprintKey();
+  const fp = material ? hmacFingerprint(norm, material) : null;
+  const [detSnap, legacySnap, fpSnap] = await Promise.all([
+    factsCol.doc(detId).get().catch(() => null),
+    factsCol
+      .where("_norm", "==", norm)
+      .limit(5)
+      .get()
+      .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] })),
+    fp
+      ? factsCol
+        .where("forgottenFingerprint", "==", fp)
+        .limit(3)
+        .get()
+        .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }))
+      : Promise.resolve({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }),
+  ]);
+
   if (detSnap?.exists) candidates.push({ id: detId, data: (detSnap.data() ?? {}) as Record<string, unknown> });
 
-  const legacySnap = await factsCol
-    .where("_norm", "==", norm)
-    .limit(5)
-    .get()
-    .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
   for (const d of legacySnap.docs) {
     if (!candidates.some((c) => c.id === d.id)) {
       candidates.push({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> });
     }
   }
 
-  const material = tryGetFingerprintKey();
-  if (material) {
-    const fp = hmacFingerprint(norm, material);
-    const fpSnap = await factsCol
-      .where("forgottenFingerprint", "==", fp)
-      .limit(3)
-      .get()
-      .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
-    for (const d of fpSnap.docs) {
-      if (!candidates.some((c) => c.id === d.id)) {
-        candidates.push({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> });
-      }
+  for (const d of fpSnap.docs) {
+    if (!candidates.some((c) => c.id === d.id)) {
+      candidates.push({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> });
     }
   }
 
@@ -287,6 +278,96 @@ export async function stampRetiredTextTombstone(params: {
   } catch {
     return null; // best-effort — the Storage mutation already happened
   }
+}
+
+export type McpMemoryFileChangeStageResult =
+  | { ok: true; operationId: string; factDocId: string }
+  | { ok: false; reason: "invalid" | "reconciliation_pending" | "failed" };
+
+/**
+ * Stages an MCP memory-file correction/forget BEFORE its Storage mutation. The
+ * staged fact retains the retired plaintext only until the worker has removed
+ * it from Storage, embeddings, and Zep. The operation ledger itself remains
+ * reference-only, and the reconciliation flag hides durable memory meanwhile.
+ */
+export async function stageMcpMemoryFileChange(params: {
+  kind: "correction" | "forget";
+  userId: string;
+  phone?: string;
+  fileSlug: string;
+  retiredText: string;
+}): Promise<McpMemoryFileChangeStageResult> {
+  const retiredText = params.retiredText.trim();
+  const norm = normalizeFact(retiredText);
+  if (!params.userId || !params.fileSlug || norm.length < 3) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const factDocId = deterministicFactDocId(retiredText);
+  const factPath = factDocPath(params.userId, factDocId);
+  const changeKey = createHash("sha256").update(retiredText).digest("hex").slice(0, 16);
+  const { operationId, doc } = buildMcpMemoryFileOperationDoc({
+    kind: params.kind,
+    userId: params.userId,
+    phone: params.phone,
+    fileSlug: params.fileSlug,
+    changeKey,
+    tombstoneFactPath: factPath,
+  });
+  const factsCol = factsCollection(params.userId);
+  const factRef = factsCol.doc(factDocId);
+  const opRef = db.collection(MEMORY_OPERATIONS_COLLECTION).doc(operationId);
+  const material = tryGetFingerprintKey();
+  let result: McpMemoryFileChangeStageResult = { ok: false, reason: "failed" };
+
+  try {
+    await db.runTransaction(async (t) => {
+      const [opSnap, factSnap] = await Promise.all([t.get(opRef), t.get(factRef)]);
+      if (opSnap.exists) {
+        result = { ok: true, operationId, factDocId };
+        return;
+      }
+
+      const existing = factSnap.exists ? (factSnap.data() ?? {}) as Record<string, unknown> : {};
+      if (existing.pendingForgetOperationId || existing.pendingCorrectionOperationId) {
+        result = { ok: false, reason: "reconciliation_pending" };
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const pendingField = params.kind === "forget"
+        ? "pendingForgetOperationId"
+        : "pendingCorrectionOperationId";
+      const patch: Record<string, unknown> = {
+        userId: params.userId,
+        fact: String(existing.fact ?? retiredText),
+        _norm: String(existing._norm ?? norm),
+        category: existing.category ?? "preference",
+        weight: Math.max(1, Number(existing.weight ?? 1)),
+        createdAt: existing.createdAt ?? nowIso,
+        lastMentionedAt: existing.lastMentionedAt ?? nowIso,
+        retiredVia: "mcp_memory_tool",
+        [pendingField]: operationId,
+        ...(material
+          ? { forgottenFingerprint: hmacFingerprint(norm, material), fingerprintKeyVersion: material.version }
+          : {}),
+        ...(params.kind === "correction" ? { supersededAt: nowIso } : {}),
+      };
+
+      t.set(factRef, patch, { merge: true });
+      t.set(opRef, doc);
+      t.set(
+        db.collection(MEMORY_RECONCILIATION_COLLECTION).doc(params.userId),
+        reconciliationFlagAdd(operationId, params.kind),
+        { merge: true },
+      );
+      result = { ok: true, operationId, factDocId };
+    });
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+
+  return result;
 }
 
 // ── Passive extraction (KTD7 idempotency + R23 turn/tombstone guards) ────────
@@ -862,7 +943,10 @@ export async function findTombstonedRestatement(
 
 export type ReRememberResult =
   | { ok: true; operationId: string }
-  | { ok: false; reason: "not_found" | "reconciliation_pending" | "no_plaintext" | "failed" };
+  | {
+    ok: false;
+    reason: "not_found" | "reconciliation_pending" | "no_plaintext" | "replacement_active" | "failed";
+  };
 
 /**
  * Explicit CONFIRMED re-remember (R23): clears the tombstone/superseded state,
@@ -894,6 +978,19 @@ export async function confirmReRemember(params: {
       if (data.pendingForgetOperationId || data.pendingCorrectionOperationId) {
         result = { ok: false, reason: "reconciliation_pending" };
         return;
+      }
+      // A corrected fact points at its active replacement. Restoring the old
+      // value without first retiring that replacement would leave two
+      // contradictory facts active. The current confirmation UI has no
+      // reverse-correction flow, so refuse and let the normal correction path
+      // collect an explicit replacement instead.
+      const replacementDocId = typeof data.supersededBy === "string" ? data.supersededBy : "";
+      if (replacementDocId) {
+        const replacementSnap = await t.get(factsCol.doc(replacementDocId));
+        if (replacementSnap.exists && isActiveLearnedFact(replacementSnap.data() ?? {})) {
+          result = { ok: false, reason: "replacement_active" };
+          return;
+        }
       }
       const factText = String(data.fact ?? "") || params.restatedFact?.fact || "";
       if (!factText) {

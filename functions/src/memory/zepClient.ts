@@ -11,6 +11,7 @@ import { ZepClient } from "@getzep/zep-cloud";
 import type { Zep } from "@getzep/zep-cloud";
 import * as admin from "firebase-admin";
 import { createHash, randomUUID } from "crypto";
+import { errorClassOf } from "../utils/errorClass";
 
 const db = admin.firestore();
 
@@ -28,10 +29,6 @@ const db = admin.firestore();
 function correlationHash(source?: string): string | undefined {
   if (!source) return undefined;
   return createHash("sha256").update(source).digest("hex").slice(0, 12);
-}
-
-function errorClassOf(err: unknown): string {
-  return err instanceof Error ? err.constructor.name : typeof err;
 }
 
 function logZepFailure(operation: string, err: unknown, correlationSource?: string): void {
@@ -150,14 +147,8 @@ export function getZepUserId(phone: string): string {
 const CARA_TEMPLATE_ID = "cara-eldercare";
 const CARA_TEMPLATE_BODY = `# CARE CONTEXT
 
-## About This Family
-%{user_summary}
-
 ## Current Facts (with date ranges)
-%{edges limit=15}
-
-## Key People & Relationships
-%{entities limit=8}`;
+%{edges limit=15}`;
 
 // Called once during deploy/setup — kept for backwards-compat.
 export async function createCaraContextTemplate(): Promise<void> {
@@ -176,7 +167,12 @@ export async function ensureCaraContextTemplate(): Promise<void> {
   if (_templateEnsured) return;
   try {
     // Attempt to fetch the template — Zep returns 404 if it doesn't exist.
-    await (getZep().context as any).getContextTemplate?.({ templateId: CARA_TEMPLATE_ID });
+    const existing = await getZep().context.getContextTemplate(CARA_TEMPLATE_ID);
+    if (existing.template !== CARA_TEMPLATE_BODY) {
+      await getZep().context.updateContextTemplate(CARA_TEMPLATE_ID, {
+        template: CARA_TEMPLATE_BODY,
+      });
+    }
     _templateEnsured = true;
   } catch (err) {
     const status = (err as any)?.status ?? (err as any)?.statusCode;
@@ -191,10 +187,12 @@ export async function ensureCaraContextTemplate(): Promise<void> {
         _templateEnsured = true;
       } catch (createErr) {
         logZepFailure("ensureCaraContextTemplate.create", createErr);
+        throw createErr;
       }
     } else {
-      // Non-404 — log but don't crash; getContextTemplate may not exist on all SDK versions
+      // Any non-404 read/update failure makes this turn unavailable.
       logZepFailure("ensureCaraContextTemplate.check", err);
+      throw err;
     }
   }
 }
@@ -246,6 +244,28 @@ export async function initializeZepOnFirstContact(phone: string): Promise<void> 
 
 export interface ZepMessageWriteResult {
   messageUuids: string[];
+  deduplicated?: boolean;
+}
+
+const CARECONNECXX_MESSAGE_KEY = "careconnecxxMessageKey";
+
+async function findExistingZepMessage(
+  threadId: string,
+  idempotencyKey: string | undefined,
+): Promise<string[] | null> {
+  if (!idempotencyKey) return null;
+
+  const thread = await withZepRetry(
+    () => getZep().thread.get(threadId),
+    "getThreadForMessageReconciliation",
+    threadId,
+  );
+  const existing = (thread.messages ?? []).find((message) =>
+    message.uuid === idempotencyKey ||
+    message.metadata?.[CARECONNECXX_MESSAGE_KEY] === idempotencyKey
+  );
+  if (!existing) return null;
+  return existing.uuid ? [existing.uuid] : [];
 }
 
 export async function addUserMessageToZepStrict(params: {
@@ -255,8 +275,18 @@ export async function addUserMessageToZepStrict(params: {
   sentAt?: Date;
   uuid?: string;
 }): Promise<ZepMessageWriteResult> {
+  const existingMessageUuids = await findExistingZepMessage(
+    params.threadId,
+    params.uuid,
+  );
+  if (existingMessageUuids) {
+    return { messageUuids: existingMessageUuids, deduplicated: true };
+  }
   const message: Zep.Message = {
     uuid: params.uuid,
+    metadata: params.uuid
+      ? { [CARECONNECXX_MESSAGE_KEY]: params.uuid }
+      : undefined,
     createdAt: (params.sentAt ?? new Date()).toISOString(),
     name: params.userName,
     role: "user",
@@ -276,8 +306,18 @@ export async function addAssistantMessageToZepStrict(params: {
   sentAt?: Date;
   uuid?: string;
 }): Promise<ZepMessageWriteResult> {
+  const existingMessageUuids = await findExistingZepMessage(
+    params.threadId,
+    params.uuid,
+  );
+  if (existingMessageUuids) {
+    return { messageUuids: existingMessageUuids, deduplicated: true };
+  }
   const message: Zep.Message = {
     uuid: params.uuid,
+    metadata: params.uuid
+      ? { [CARECONNECXX_MESSAGE_KEY]: params.uuid }
+      : undefined,
     createdAt: (params.sentAt ?? new Date()).toISOString(),
     name: "Evia",
     role: "assistant",
@@ -312,6 +352,10 @@ export async function addAssistantMessageToZepBestEffort(params: {
 // Legacy aliases — existing call sites keep working; U3 migrates them to the
 // explicit *BestEffort names (or to the worker's strict tier).
 export const addUserMessageToZep = addUserMessageToZepBestEffort;
+/**
+ * @deprecated Retained for older callers that intentionally want best-effort
+ * transcript writes. New durable turn_sync code must use the strict adapter.
+ */
 export const addAssistantMessageToZep = addAssistantMessageToZepBestEffort;
 
 // ── Add business data to Zep knowledge graph ──────────────────────────────────
@@ -366,18 +410,11 @@ export async function getZepContextResult(
 
   const outcome = await raceZepTimeout(async (requestOptions) => {
     // Template self-heal shares the cap — it is a Zep call and can hang too.
-    await ensureCaraContextTemplate().catch(() => {});
-    try {
-      const userContext = await getZep().thread.getUserContext(
-        threadId, { templateId: CARA_TEMPLATE_ID }, requestOptions,
-      );
-      return userContext.context ?? "";
-    } catch {
-      // Template lookup failed (e.g. template missing on this project) —
-      // fall back to the default context assembly before declaring an outage.
-      const userContext = await getZep().thread.getUserContext(threadId, undefined, requestOptions);
-      return userContext.context ?? "";
-    }
+    await ensureCaraContextTemplate();
+    const userContext = await getZep().thread.getUserContext(
+      threadId, { templateId: CARA_TEMPLATE_ID }, requestOptions,
+    );
+    return userContext.context ?? "";
   }, timeoutMs);
 
   const latencyMs = Date.now() - startedAt;
@@ -522,7 +559,41 @@ export interface ZepEdgeMatch {
   episodes: string[];
 }
 
-export const ZEP_EDGE_SEARCH_LIMIT = 20;
+/** Maximum page size accepted by Zep graph search/list endpoints. */
+export const ZEP_EDGE_PAGE_SIZE = 50;
+/** @deprecated Use ZEP_EDGE_PAGE_SIZE; retained for existing operational scripts. */
+export const ZEP_EDGE_SEARCH_LIMIT = ZEP_EDGE_PAGE_SIZE;
+
+async function listZepUserEdges(zepUserId: string): Promise<Array<{ uuid: string; fact?: string; episodes?: string[] }>> {
+  const edges: Array<{ uuid: string; fact?: string; episodes?: string[] }> = [];
+  const seenCursors = new Set<string>();
+  let uuidCursor: string | undefined;
+
+  // The installed SDK exposes uuidCursor pagination on graph.edge.getByUserId
+  // (unlike graph.search, whose results have no continuation). Walk every page
+  // so a forgotten fact cannot survive beyond a relevance-limited search page.
+  for (;;) {
+    const page = await withZepRetry(
+      () => getZep().graph.edge.getByUserId(
+        zepUserId,
+        uuidCursor ? { limit: ZEP_EDGE_PAGE_SIZE, uuidCursor } : { limit: ZEP_EDGE_PAGE_SIZE },
+      ),
+      "listZepUserEdges",
+      zepUserId,
+    );
+    edges.push(...page);
+    if (page.length < ZEP_EDGE_PAGE_SIZE) return edges;
+
+    const nextCursor = page[page.length - 1]?.uuid;
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      // An incomplete pagination walk is never a successful forget. The worker
+      // leaves reconciliation pending and retries instead of finalizing stale data.
+      throw new Error("zep_edge_pagination_incomplete");
+    }
+    seenCursors.add(nextCursor);
+    uuidCursor = nextCursor;
+  }
+}
 
 /**
  * Strict: search the user's graph for edges whose extracted fact matches the
@@ -534,20 +605,45 @@ export async function findZepEdgesMatchingFact(params: {
   factText: string;
 }): Promise<ZepEdgeMatch[]> {
   if (!params.zepUserId || !params.factText?.trim()) return [];
-  const results = await withZepRetry(
-    () => getZep().graph.search({
-      userId: params.zepUserId,
-      query: params.factText,
-      scope: "edges",
-      limit: ZEP_EDGE_SEARCH_LIMIT,
-    }),
-    "findZepEdgesMatchingFact",
-    params.zepUserId,
-  );
-  const edges = results?.edges ?? [];
-  return edges
+  const edges = await listZepUserEdges(params.zepUserId);
+  const matches = edges
     .filter((e) => e?.uuid && zepEdgeFactMatches(String(e.fact ?? ""), params.factText))
     .map((e) => ({ uuid: e.uuid, episodes: Array.isArray(e.episodes) ? e.episodes : [] }));
+  // Defensive dedupe protects a provider cursor retry from issuing duplicate
+  // delete calls; it never broadens the fact-match predicate.
+  return [...new Map(matches.map((match) => [match.uuid, match])).values()];
+}
+
+/**
+ * Confirms a forget has cleared both the complete user edge inventory and the
+ * thread's rendered context. A failed confirmation throws so the worker keeps
+ * the reconciliation record pending instead of finalizing a partial deletion.
+ */
+export async function verifyZepForgottenFactAbsent(params: {
+  zepUserId: string;
+  factText: string;
+  threadId: string;
+}): Promise<void> {
+  if (!params.zepUserId || !params.factText?.trim() || !params.threadId) {
+    throw new Error("verifyZepForgottenFactAbsent: identifiers required");
+  }
+  const remainingEdges = await findZepEdgesMatchingFact(params);
+  if (remainingEdges.length) throw new Error("zep_fact_still_present_in_graph");
+
+  await ensureCaraContextTemplate();
+  const response = await withZepRetry(
+    () => getZep().thread.getUserContext(
+      params.threadId,
+      { templateId: CARA_TEMPLATE_ID },
+    ),
+    "verifyZepForgetContext",
+    params.threadId,
+  );
+  const context = normalizeForEdgeMatch(String(response?.context ?? ""));
+  const target = normalizeForEdgeMatch(params.factText);
+  if (context && target && (context.includes(target) || zepEdgeFactMatches(context, params.factText))) {
+    throw new Error("zep_fact_still_present_in_context");
+  }
 }
 
 export interface ZepDeleteOutcome {

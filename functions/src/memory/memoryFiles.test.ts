@@ -6,22 +6,37 @@ const store = new Map<string, string>();
 const hoisted = vi.hoisted(() => ({
   store: new Map<string, string>(),
   // U8: per-object Storage metadata — { timeCreated?, metadata? (custom map) }.
-  fileMeta: new Map<string, { timeCreated?: string; metadata?: Record<string, string> }>(),
+  fileMeta: new Map<
+    string,
+    { timeCreated?: string; metadata?: Record<string, string> }
+  >(),
   // memory_embeddings subcollection mock: docId -> { file, block, embedding, ... }
   embeddings: new Map<string, any>(),
   nextEmbedId: 0,
   // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
-  reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
+  reconciliation: {
+    pending: false,
+    storageMasked: false,
+    zepMasked: false,
+    pendingOperationIds: [] as string[],
+  },
+  sessions: new Map<string, string>(), // userId -> phone, for conversation-summary reconciliation
   // U4b: agent_conversations/{phone}/messages rows for the consolidation tests.
   convMessages: [] as Array<Record<string, unknown>>,
-  claudeCreate: vi.fn(async () => ({ content: [{ type: "text", text: "[]" }] })),
+  claudeCreate: vi.fn(async () => ({
+    content: [{ type: "text", text: "[]" }],
+  })),
 }));
 
 // U4a: the shared readers import the suppression check from memoryOperations —
 // mock it with a controllable state so suppression is tested at the READER.
 vi.mock("./memoryOperations", () => ({
-  getMemoryReconciliationState: vi.fn(async () => ({ ...hoisted.reconciliation })),
-  hasUnresolvedReconciliation: vi.fn(async () => hoisted.reconciliation.pending),
+  getMemoryReconciliationState: vi.fn(async () => ({
+    ...hoisted.reconciliation,
+  })),
+  hasUnresolvedReconciliation: vi.fn(
+    async () => hoisted.reconciliation.pending,
+  ),
 }));
 
 vi.mock("firebase-admin", () => {
@@ -34,14 +49,19 @@ vi.mock("firebase-admin", () => {
       if (!hoisted.store.has(name)) throw new Error("404");
       return [Buffer.from(hoisted.store.get(name)!, "utf-8")];
     }),
-    save: vi.fn(async (content: string, opts?: { metadata?: { metadata?: Record<string, string> } }) => {
-      hoisted.store.set(name, content);
-      const existing = hoisted.fileMeta.get(name) ?? {};
-      hoisted.fileMeta.set(name, {
-        timeCreated: existing.timeCreated ?? new Date().toISOString(),
-        metadata:    opts?.metadata?.metadata,
-      });
-    }),
+    save: vi.fn(
+      async (
+        content: string,
+        opts?: { metadata?: { metadata?: Record<string, string> } },
+      ) => {
+        hoisted.store.set(name, content);
+        const existing = hoisted.fileMeta.get(name) ?? {};
+        hoisted.fileMeta.set(name, {
+          timeCreated: existing.timeCreated ?? new Date().toISOString(),
+          metadata: opts?.metadata?.metadata,
+        });
+      },
+    ),
     exists: vi.fn(async () => [hoisted.store.has(name)]),
     delete: vi.fn(async () => {
       hoisted.store.delete(name);
@@ -50,12 +70,30 @@ vi.mock("firebase-admin", () => {
   });
   const bucket = {
     file: (name: string) => makeFile(name),
-    getFiles: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const files = [...hoisted.store.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => makeFile(name));
-      return [files];
-    }),
+    getFiles: vi.fn(
+      async ({
+        prefix,
+        maxResults = Infinity,
+        pageToken,
+      }: {
+        prefix: string;
+        maxResults?: number;
+        pageToken?: string;
+      }) => {
+        const files = [...hoisted.store.keys()]
+          .filter((k) => k.startsWith(prefix))
+          .map((name) => makeFile(name));
+        const remaining = pageToken
+          ? files.filter((file) => file.name > pageToken)
+          : files;
+        const page = remaining.slice(0, maxResults);
+        const nextPage =
+          remaining.length > page.length
+            ? { pageToken: page[page.length - 1].name }
+            : null;
+        return [page, nextPage];
+      },
+    ),
   };
   const storage = () => ({ bucket: () => bucket });
 
@@ -63,7 +101,9 @@ vi.mock("firebase-admin", () => {
   // pattern used by reindexMemoryFileEmbeddings + searchMemoryHybrid.
   const docRef = (id: string) => ({
     id,
-    delete: vi.fn(async () => { hoisted.embeddings.delete(id); }),
+    delete: vi.fn(async () => {
+      hoisted.embeddings.delete(id);
+    }),
   });
 
   const blocksCollection = () => {
@@ -78,14 +118,21 @@ vi.mock("firebase-admin", () => {
       filtered.get = vi.fn(async () => {
         const docs = [...hoisted.embeddings.entries()]
           .filter(([, v]) => v[field] === value)
-          .map(([docId, v]) => ({ id: docId, ref: docRef(docId), data: () => v }));
+          .map(([docId, v]) => ({
+            id: docId,
+            ref: docRef(docId),
+            data: () => v,
+          }));
         return { empty: docs.length === 0, docs };
       });
       return filtered;
     };
     ref.get = vi.fn(async () => {
-      const docs = [...hoisted.embeddings.entries()]
-        .map(([docId, v]) => ({ id: docId, ref: docRef(docId), data: () => v }));
+      const docs = [...hoisted.embeddings.entries()].map(([docId, v]) => ({
+        id: docId,
+        ref: docRef(docId),
+        data: () => v,
+      }));
       return { empty: docs.length === 0, docs };
     });
     return ref;
@@ -95,13 +142,28 @@ vi.mock("firebase-admin", () => {
   // consolidateMemoryForUser (where → orderBy → limit → get). Rows come from
   // hoisted.convMessages; filters are not modeled (tests seed in-window rows).
   const messagesCollection = () => {
+    const filters: Array<[string, unknown]> = [];
     const q: any = {
-      where: () => q,
+      where: (field: string, op: string, value: unknown) => {
+        if (op === "==") filters.push([field, value]);
+        return q;
+      },
       orderBy: () => q,
       limit: () => q,
       get: async () => ({
         empty: hoisted.convMessages.length === 0,
-        docs: hoisted.convMessages.map((m, i) => ({ id: `m${i}`, data: () => m })),
+        docs: hoisted.convMessages
+          .filter((m) => filters.every(([field, value]) => m[field] === value))
+          .map((m, i) => ({
+            id: `m${i}`,
+            data: () => m,
+            ref: {
+              delete: async () => {
+                const index = hoisted.convMessages.indexOf(m);
+                if (index >= 0) hoisted.convMessages.splice(index, 1);
+              },
+            },
+          })),
       }),
     };
     return q;
@@ -110,25 +172,70 @@ vi.mock("firebase-admin", () => {
   const firestore = () => ({
     collection: (name: string) => {
       if (name === "memory_embeddings") {
-        return { doc: (_userId: string) => ({ collection: (_sub: string) => blocksCollection() }) };
+        return {
+          doc: (_userId: string) => ({
+            collection: (_sub: string) => blocksCollection(),
+          }),
+        };
       }
       if (name === "agent_conversations") {
-        return { doc: (_phone: string) => ({ collection: (_sub: string) => messagesCollection() }) };
+        return {
+          doc: (_phone: string) => ({
+            collection: (_sub: string) => messagesCollection(),
+          }),
+        };
       }
-      // Fallback for any other collection access (agent_sessions lookup etc).
-      return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
+      if (name === "agent_sessions") {
+        return {
+          where: (field: string, _op: string, value: string) => ({
+            get: async () => {
+              const docs =
+                field === "userId"
+                  ? [...hoisted.sessions.entries()]
+                      .filter(([userId]) => userId === value)
+                      .map(([, phone]) => ({
+                        id: phone,
+                        data: () => ({ userId: value }),
+                      }))
+                  : [];
+              return { empty: docs.length === 0, docs };
+            },
+          }),
+        };
+      }
+      // Fallback for any other collection access.
+      return {
+        where: () => ({
+          limit: () => ({ get: async () => ({ empty: true, docs: [] }) }),
+        }),
+      };
     },
     batch: () => {
       const ops: Array<() => void> = [];
       return {
-        set:    (ref: any, data: any) => { ops.push(() => { hoisted.embeddings.set(ref.id, data); }); },
-        delete: (ref: any)            => { ops.push(() => { hoisted.embeddings.delete(ref.id); }); },
-        commit: vi.fn(async () => { ops.forEach((op) => op()); }),
+        set: (ref: any, data: any) => {
+          ops.push(() => {
+            hoisted.embeddings.set(ref.id, data);
+          });
+        },
+        delete: (ref: any) => {
+          ops.push(() => {
+            hoisted.embeddings.delete(ref.id);
+          });
+        },
+        commit: vi.fn(async () => {
+          ops.forEach((op) => op());
+        }),
       };
     },
   });
 
-  return { __esModule: true, default: { storage, firestore }, storage, firestore };
+  return {
+    __esModule: true,
+    default: { storage, firestore },
+    storage,
+    firestore,
+  };
 });
 
 // U4b: consolidation-input tests inspect the prompt the model receives.
@@ -141,7 +248,8 @@ vi.mock("../utils/jsonUtils", () => ({ safeParseJson: () => [] }));
 // Two regimes: default (returns nulls — fail-open path) and "with-embeddings"
 // (specific tests opt in by mocking embedText / embedMany).
 vi.mock("./embeddings", async () => {
-  const actual = await vi.importActual<typeof import("./embeddings")>("./embeddings");
+  const actual =
+    await vi.importActual<typeof import("./embeddings")>("./embeddings");
   return {
     ...actual,
     embedText: vi.fn(async () => null),
@@ -167,6 +275,7 @@ import {
   cleanupExpiredTransientToolFiles,
   TRANSIENT_TOOL_MEMORY_CLASS,
   TRANSIENT_TOOL_TTL_MS,
+  TRANSIENT_CLEANUP_PAGE_SIZE,
 } from "./memoryFiles";
 import * as embeddingsMod from "./embeddings";
 
@@ -174,14 +283,24 @@ beforeEach(() => {
   hoisted.store.clear();
   hoisted.fileMeta.clear();
   hoisted.embeddings.clear();
+  hoisted.sessions.clear();
   hoisted.nextEmbedId = 0;
   hoisted.convMessages.length = 0;
   hoisted.claudeCreate.mockClear();
-  hoisted.claudeCreate.mockImplementation(async () => ({ content: [{ type: "text", text: "[]" }] }));
+  hoisted.claudeCreate.mockImplementation(async () => ({
+    content: [{ type: "text", text: "[]" }],
+  }));
   store.clear();
-  hoisted.reconciliation = { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] };
+  hoisted.reconciliation = {
+    pending: false,
+    storageMasked: false,
+    zepMasked: false,
+    pendingOperationIds: [],
+  };
   vi.mocked(embeddingsMod.embedText).mockReset().mockResolvedValue(null);
-  vi.mocked(embeddingsMod.embedMany).mockReset().mockImplementation(async (texts: string[]) => texts.map(() => null));
+  vi.mocked(embeddingsMod.embedMany)
+    .mockReset()
+    .mockImplementation(async (texts: string[]) => texts.map(() => null));
 });
 
 describe("editMemoryFile", () => {
@@ -189,7 +308,9 @@ describe("editMemoryFile", () => {
     await writeMemoryFile("u1", "profile", "Senior: Margaret, age 78");
     const n = await editMemoryFile("u1", "profile", "age 78", "age 82");
     expect(n).toBe(1);
-    expect(await readMemoryFile("u1", "profile")).toBe("Senior: Margaret, age 82");
+    expect(await readMemoryFile("u1", "profile")).toBe(
+      "Senior: Margaret, age 82",
+    );
   });
 
   it("is a no-op when the text is not found", async () => {
@@ -209,7 +330,11 @@ describe("editMemoryFile", () => {
 
 describe("searchMemory", () => {
   it("returns matching sections across files", async () => {
-    await writeMemoryFile("u1", "health", "## meds\nMetformin 500mg\n\n## allergies\nPenicillin");
+    await writeMemoryFile(
+      "u1",
+      "health",
+      "## meds\nMetformin 500mg\n\n## allergies\nPenicillin",
+    );
     await writeMemoryFile("u1", "family", "Son: John\n\nDaughter: Jane");
     const hits = await searchMemory("u1", "penicillin");
     expect(hits).toHaveLength(1);
@@ -227,7 +352,9 @@ describe("searchMemory", () => {
 describe("arbitrary keys", () => {
   it("reads and writes ad-hoc file slugs and lists them", async () => {
     await writeMemoryFile("u1", "adhoc_output_123", "offloaded payload");
-    expect(await readMemoryFile("u1", "adhoc_output_123")).toBe("offloaded payload");
+    expect(await readMemoryFile("u1", "adhoc_output_123")).toBe(
+      "offloaded payload",
+    );
     expect(await listMemoryFiles("u1")).toContain("adhoc_output_123");
   });
 
@@ -251,13 +378,21 @@ describe("searchMemoryHybrid", () => {
 
   it("merges substring + semantic hits and dedups", async () => {
     // First, write a file. embedMany returns null so no embeddings get written.
-    await writeMemoryFile("u1", "health", "Type 2 diabetes managed with metformin");
+    await writeMemoryFile(
+      "u1",
+      "health",
+      "Type 2 diabetes managed with metformin",
+    );
 
     // Now backfill an embedding manually into the hoisted store, simulating a
     // prior successful indexing pass.
     const vec = new Array(1536).fill(0);
     vec[0] = 1;
-    hoisted.embeddings.set("emb1", { file: "health", block: "Type 2 diabetes managed with metformin", embedding: vec });
+    hoisted.embeddings.set("emb1", {
+      file: "health",
+      block: "Type 2 diabetes managed with metformin",
+      embedding: vec,
+    });
 
     // Query embedding mock — return a vector that's similar to the stored one.
     vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(vec);
@@ -281,7 +416,11 @@ describe("writeMemoryFile reindexing", () => {
     vec[0] = 1;
     vi.mocked(embeddingsMod.embedMany).mockResolvedValueOnce([vec, vec]);
 
-    await writeMemoryFile("u1", "health", "## meds\nMetformin 500mg\n\n## allergies\nPenicillin");
+    await writeMemoryFile(
+      "u1",
+      "health",
+      "## meds\nMetformin 500mg\n\n## allergies\nPenicillin",
+    );
     // Wait a microtask — the reindex is fire-and-forget.
     await new Promise((r) => setTimeout(r, 5));
 
@@ -292,7 +431,9 @@ describe("writeMemoryFile reindexing", () => {
 
   it("does not throw when embedMany fails (graceful)", async () => {
     vi.mocked(embeddingsMod.embedMany).mockRejectedValueOnce(new Error("oops"));
-    await expect(writeMemoryFile("u1", "health", "data")).resolves.toBeUndefined();
+    await expect(
+      writeMemoryFile("u1", "health", "data"),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -310,7 +451,9 @@ describe("getMemoryContext", () => {
     await appendToMemoryFile("u1", "recent_episodes", "- fall, no injury");
     await appendToMemoryFile("u1", "recent_episodes", "- doctor visit");
     expect(await readMemoryFile("u1", "recent_episodes")).toContain("fall");
-    expect(await readMemoryFile("u1", "recent_episodes")).toContain("doctor visit");
+    expect(await readMemoryFile("u1", "recent_episodes")).toContain(
+      "doctor visit",
+    );
   });
 });
 
@@ -328,47 +471,98 @@ describe("reconciliation suppression (U4a)", () => {
     await writeMemoryFile("u1", "health", STALE);
     await writeMemoryFile("u1", "profile", "Senior: Margaret");
     // Semantic candidate for the paraphrase path.
-    const vec = new Array(8).fill(0); vec[0] = 1;
-    hoisted.embeddings.set("emb1", { file: "health", block: "Mom cannot take shellfish", embedding: vec });
+    const vec = new Array(8).fill(0);
+    vec[0] = 1;
+    hoisted.embeddings.set("emb1", {
+      file: "health",
+      block: "Mom cannot take shellfish",
+      embedding: vec,
+    });
   });
 
   it("getMemoryContext returns EMPTY while Storage reconciliation is pending", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: true,
+      zepMasked: true,
+      pendingOperationIds: ["forget_x"],
+    };
     expect(await getMemoryContext("u1")).toBe("");
   });
 
   it("substring search returns nothing for the masked user (paraphrased stale fixture)", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: false, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: true,
+      zepMasked: false,
+      pendingOperationIds: ["forget_x"],
+    };
     expect(await searchMemory("u1", "shellfish")).toEqual([]);
   });
 
   it("hybrid (semantic) search returns nothing for the masked user — no embedding call is even made", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: false, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: true,
+      zepMasked: false,
+      pendingOperationIds: ["forget_x"],
+    };
     expect(await searchMemoryHybrid("u1", "seafood allergy")).toEqual([]);
     expect(vi.mocked(embeddingsMod.embedText)).not.toHaveBeenCalled();
   });
 
   it("per-store unmask: once Storage targets confirm, files return even while Zep is still masked", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: false, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: false,
+      zepMasked: true,
+      pendingOperationIds: ["forget_x"],
+    };
     const ctx = await getMemoryContext("u1");
     expect(ctx).toContain("Margaret");
     expect(await searchMemory("u1", "shellfish")).toHaveLength(1);
   });
 
   it("handleMemoryQuery answers with the deterministic 'updating my memory' copy — not stale recall, not an outage claim", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: true,
+      zepMasked: true,
+      pendingOperationIds: ["forget_x"],
+    };
     const send = vi.fn(async () => ({}));
-    await handleMemoryQuery("u1", "chat-1", send, "what do you know about mom?");
-    expect(send).toHaveBeenCalledWith("chat-1", MEMORY_QUERY_RECONCILIATION_COPY);
+    await handleMemoryQuery(
+      "u1",
+      "chat-1",
+      send,
+      "what do you know about mom?",
+    );
+    expect(send).toHaveBeenCalledWith(
+      "chat-1",
+      MEMORY_QUERY_RECONCILIATION_COPY,
+    );
     expect(MEMORY_QUERY_RECONCILIATION_COPY).toContain("updating my memory");
-    expect(MEMORY_QUERY_RECONCILIATION_COPY).not.toMatch(/unavailable|down|outage/i);
+    expect(MEMORY_QUERY_RECONCILIATION_COPY).not.toMatch(
+      /unavailable|down|outage/i,
+    );
   });
 
   it("nightly consolidation SKIPS a user with unresolved reconciliation (no resurrection from old rows)", async () => {
-    hoisted.reconciliation = { pending: true, storageMasked: true, zepMasked: true, pendingOperationIds: ["forget_x"] };
+    hoisted.reconciliation = {
+      pending: true,
+      storageMasked: true,
+      zepMasked: true,
+      pendingOperationIds: ["forget_x"],
+    };
     // Rows exist — only the early reconciliation skip prevents the model call.
-    hoisted.convMessages.push({ role: "user", content: "Mom cannot take shellfish", timestamp: Date.now() - 1000 });
-    await expect(consolidateMemoryForUser("u1", "+14085550001")).resolves.toBeUndefined();
+    hoisted.convMessages.push({
+      role: "user",
+      content: "Mom cannot take shellfish",
+      timestamp: Date.now() - 1000,
+    });
+    await expect(
+      consolidateMemoryForUser("u1", "+14085550001"),
+    ).resolves.toBeUndefined();
     expect(hoisted.claudeCreate).not.toHaveBeenCalled();
     expect(await readMemoryFile("u1", "health")).toBe(STALE); // untouched
   });
@@ -386,21 +580,40 @@ describe("reconcileFactAcrossMemoryFiles (U4b)", () => {
   const RETIRED = "Mom is allergic to penicillin";
 
   beforeEach(async () => {
-    await writeMemoryFile("u1", "health",
-      "# Health\n\n**Allergies:** Mom is allergic to penicillin\n\n**Meds:** metformin");
-    await writeMemoryFile("u1", "profile", "Senior: Margaret\nmom IS ALLERGIC TO penicillin (noted)");
+    await writeMemoryFile(
+      "u1",
+      "health",
+      "# Health\n\n**Allergies:** Mom is allergic to penicillin\n\n**Meds:** metformin",
+    );
+    await writeMemoryFile(
+      "u1",
+      "profile",
+      "Senior: Margaret\nmom IS ALLERGIC TO penicillin (noted)",
+    );
     await writeMemoryFile("u1", "family", "Daughter Jane lives in Austin");
   });
 
   it("correction rewrites every exact (case-insensitive) occurrence with the corrected value", async () => {
-    const result = await reconcileFactAcrossMemoryFiles("u1", RETIRED, "Mom is allergic to amoxicillin");
+    const result = await reconcileFactAcrossMemoryFiles(
+      "u1",
+      RETIRED,
+      "Mom is allergic to amoxicillin",
+    );
     expect(result.filesRewritten).toBe(2);
     expect(result.occurrencesReplaced).toBe(2);
-    expect(await readMemoryFile("u1", "health")).toContain("Mom is allergic to amoxicillin");
-    expect((await readMemoryFile("u1", "health")).toLowerCase()).not.toContain("penicillin");
-    expect((await readMemoryFile("u1", "profile")).toLowerCase()).not.toContain("penicillin");
+    expect(await readMemoryFile("u1", "health")).toContain(
+      "Mom is allergic to amoxicillin",
+    );
+    expect((await readMemoryFile("u1", "health")).toLowerCase()).not.toContain(
+      "penicillin",
+    );
+    expect((await readMemoryFile("u1", "profile")).toLowerCase()).not.toContain(
+      "penicillin",
+    );
     // Untouched file left exactly as written.
-    expect(await readMemoryFile("u1", "family")).toBe("Daughter Jane lives in Austin");
+    expect(await readMemoryFile("u1", "family")).toBe(
+      "Daughter Jane lives in Austin",
+    );
   });
 
   it("forget removes the assertion and collapses the hole it left", async () => {
@@ -414,7 +627,11 @@ describe("reconcileFactAcrossMemoryFiles (U4b)", () => {
 
   it("KNOWN LIMITATION (accepted by KTD9 masking): a paraphrased copy is NOT matched", async () => {
     // Fresh user so only the paraphrase exists.
-    await writeMemoryFile("u2", "health", "**Allergies:** severe reaction to penicillin-class antibiotics");
+    await writeMemoryFile(
+      "u2",
+      "health",
+      "**Allergies:** severe reaction to penicillin-class antibiotics",
+    );
     const result = await reconcileFactAcrossMemoryFiles("u2", RETIRED, "");
     expect(result.occurrencesReplaced).toBe(0);
     // The paraphrase survives — which is exactly why the Storage store stays
@@ -425,21 +642,61 @@ describe("reconcileFactAcrossMemoryFiles (U4b)", () => {
 
   it("empty inputs are a safe no-op", async () => {
     expect(await reconcileFactAcrossMemoryFiles("u1", "", "x")).toEqual({
-      filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0,
+      filesScanned: 0,
+      filesRewritten: 0,
+      occurrencesReplaced: 0,
     });
     expect(await reconcileFactAcrossMemoryFiles("", "x", "y")).toEqual({
-      filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0,
+      filesScanned: 0,
+      filesRewritten: 0,
+      occurrencesReplaced: 0,
     });
+  });
+
+  it("removes conversation summaries before reconciliation can unmask the user", async () => {
+    hoisted.sessions.set("u1", "+14085550001");
+    hoisted.convMessages.push(
+      {
+        role: "summary",
+        content: "<summary> Mom is allergic to penicillin.",
+        timestamp: 1,
+      },
+      { role: "user", content: "Recent unrelated update", timestamp: 2 },
+    );
+
+    await reconcileFactAcrossMemoryFiles("u1", RETIRED, "");
+
+    expect(hoisted.convMessages.some((row) => row.role === "summary")).toBe(
+      false,
+    );
+    expect(hoisted.convMessages).toEqual([
+      { role: "user", content: "Recent unrelated update", timestamp: 2 },
+    ]);
   });
 });
 
 describe("deleteEmbeddingRowsMatching (U4b)", () => {
   it("deletes only the rows whose block text carries the retired assertion", async () => {
-    hoisted.embeddings.set("e1", { file: "health", block: "Mom is allergic to penicillin", embedding: [1] });
-    hoisted.embeddings.set("e2", { file: "health", block: "MOM IS ALLERGIC TO PENICILLIN (case)", embedding: [1] });
-    hoisted.embeddings.set("e3", { file: "family", block: "Daughter Jane lives in Austin", embedding: [1] });
+    hoisted.embeddings.set("e1", {
+      file: "health",
+      block: "Mom is allergic to penicillin",
+      embedding: [1],
+    });
+    hoisted.embeddings.set("e2", {
+      file: "health",
+      block: "MOM IS ALLERGIC TO PENICILLIN (case)",
+      embedding: [1],
+    });
+    hoisted.embeddings.set("e3", {
+      file: "family",
+      block: "Daughter Jane lives in Austin",
+      embedding: [1],
+    });
 
-    const deleted = await deleteEmbeddingRowsMatching("u1", "Mom is allergic to penicillin");
+    const deleted = await deleteEmbeddingRowsMatching(
+      "u1",
+      "Mom is allergic to penicillin",
+    );
 
     expect(deleted).toBe(2);
     expect(hoisted.embeddings.has("e1")).toBe(false);
@@ -448,7 +705,11 @@ describe("deleteEmbeddingRowsMatching (U4b)", () => {
   });
 
   it("no matches / empty needle are safe no-ops", async () => {
-    hoisted.embeddings.set("e1", { file: "health", block: "metformin", embedding: [1] });
+    hoisted.embeddings.set("e1", {
+      file: "health",
+      block: "metformin",
+      embedding: [1],
+    });
     expect(await deleteEmbeddingRowsMatching("u1", "penicillin")).toBe(0);
     expect(await deleteEmbeddingRowsMatching("u1", "")).toBe(0);
     expect(hoisted.embeddings.has("e1")).toBe(true);
@@ -460,7 +721,11 @@ describe("deleteEmbeddingRowsMatching (U4b)", () => {
 describe("consolidateMemoryForUser — excludeFromMemoryConsolidationAt rows (U4b)", () => {
   it("marked rows never enter the consolidation prompt; unmarked rows do", async () => {
     hoisted.convMessages.push(
-      { role: "user", content: "Mom loves gardening", timestamp: Date.now() - 2000 },
+      {
+        role: "user",
+        content: "Mom loves gardening",
+        timestamp: Date.now() - 2000,
+      },
       {
         role: "user",
         content: "Mom is allergic to penicillin",
@@ -503,27 +768,42 @@ describe("transient tool-file isolation (U8, R20)", () => {
 
   beforeEach(async () => {
     await writeMemoryFile("u1", "profile", "Senior: Margaret");
-    await writeMemoryFile("u1", "durable_notes", "Family prefers morning visits");
+    await writeMemoryFile(
+      "u1",
+      "durable_notes",
+      "Family prefers morning visits",
+    );
     await writeMemoryFile("u1", TOOL_SLUG, "invoice INV-9932 total $412.50", {
       memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
-      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+      expiresAt: new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
     });
   });
 
   it("isTransientToolFile classifies by metadata OR legacy tool_ prefix", () => {
     expect(isTransientToolFile(TOOL_SLUG)).toBe(true); // prefix
-    expect(isTransientToolFile({ name: "opaque_snapshot", memoryClass: "transient_tool" })).toBe(true); // metadata
+    expect(
+      isTransientToolFile({
+        name: "opaque_snapshot",
+        memoryClass: "transient_tool",
+      }),
+    ).toBe(true); // metadata
     expect(isTransientToolFile("durable_notes")).toBe(false);
     expect(isTransientToolFile("profile")).toBe(false);
-    expect(isTransientToolFile({ name: "health", memoryClass: undefined })).toBe(false);
+    expect(
+      isTransientToolFile({ name: "health", memoryClass: undefined }),
+    ).toBe(false);
   });
 
   it("writeMemoryFile stamps memoryClass/expiresAt onto the Storage object", () => {
     const meta = hoisted.fileMeta.get(`memory/u1/${TOOL_SLUG}.md`);
     expect(meta?.metadata?.memoryClass).toBe("transient_tool");
-    expect(Date.parse(meta?.metadata?.expiresAt ?? "")).toBeGreaterThan(Date.now());
+    expect(Date.parse(meta?.metadata?.expiresAt ?? "")).toBeGreaterThan(
+      Date.now(),
+    );
     // Durable writes carry no memory class.
-    expect(hoisted.fileMeta.get("memory/u1/profile.md")?.metadata).toBeUndefined();
+    expect(
+      hoisted.fileMeta.get("memory/u1/profile.md")?.metadata,
+    ).toBeUndefined();
   });
 
   it("listMemoryFiles excludes transient files by default; includeTransient opts in (cleanup/maintenance only)", async () => {
@@ -531,7 +811,9 @@ describe("transient tool-file isolation (U8, R20)", () => {
     expect(listed).toContain("profile");
     expect(listed).toContain("durable_notes");
     expect(listed).not.toContain(TOOL_SLUG);
-    expect(await listMemoryFiles("u1", { includeTransient: true })).toContain(TOOL_SLUG);
+    expect(await listMemoryFiles("u1", { includeTransient: true })).toContain(
+      TOOL_SLUG,
+    );
   });
 
   it("getMemoryContext (prompt/cara_knows context) excludes transient content but keeps canonical + durable ad-hoc files", async () => {
@@ -561,11 +843,20 @@ describe("transient tool-file isolation (U8, R20)", () => {
   });
 
   it("semantic search filters LEGACY tool_ embedding rows out of the candidate set", async () => {
-    const vec = new Array(8).fill(0); vec[0] = 1;
+    const vec = new Array(8).fill(0);
+    vec[0] = 1;
     // A row left behind by an old (pre-U8) tool offload.
-    hoisted.embeddings.set("legacy1", { file: "tool_old_offload_123", block: "invoice INV-9932 total $412.50", embedding: vec });
+    hoisted.embeddings.set("legacy1", {
+      file: "tool_old_offload_123",
+      block: "invoice INV-9932 total $412.50",
+      embedding: vec,
+    });
     // A durable row that must still rank.
-    hoisted.embeddings.set("durable1", { file: "health", block: "Type 2 diabetes managed with metformin", embedding: vec });
+    hoisted.embeddings.set("durable1", {
+      file: "health",
+      block: "Type 2 diabetes managed with metformin",
+      embedding: vec,
+    });
     vi.mocked(embeddingsMod.embedText).mockResolvedValueOnce(vec);
 
     const hits = await searchMemoryHybrid("u1", "diabetes management");
@@ -575,11 +866,17 @@ describe("transient tool-file isolation (U8, R20)", () => {
   });
 
   it("exact pointer read keeps working during the transient lifetime (active-loop read path)", async () => {
-    expect(await readMemoryFile("u1", TOOL_SLUG)).toBe("invoice INV-9932 total $412.50");
+    expect(await readMemoryFile("u1", TOOL_SLUG)).toBe(
+      "invoice INV-9932 total $412.50",
+    );
   });
 
   it("consolidation context excludes transient files (they never become durable memory)", async () => {
-    hoisted.convMessages.push({ role: "user", content: "Mom loves gardening", timestamp: Date.now() - 1000 });
+    hoisted.convMessages.push({
+      role: "user",
+      content: "Mom loves gardening",
+      timestamp: Date.now() - 1000,
+    });
 
     await consolidateMemoryForUser("u1", "+14085550001");
 
@@ -608,50 +905,92 @@ describe("cleanupExpiredTransientToolFiles (U8, KTD14)", () => {
   it("never deletes a file younger than 24h — even when its expiresAt claims otherwise (hard guard)", async () => {
     seedObject("memory/u1/tool_fresh_1.md", "x", {
       timeCreated: iso(Date.now() - 60_000),
-      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - 1) }, // lying expiry
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: iso(Date.now() - 1),
+      }, // lying expiry
     });
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 1, retained: 1, deleted: 0, malformed: 0, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 1,
+      retained: 1,
+      deleted: 0,
+      malformed: 0,
+      failed: 0,
+    });
     expect(hoisted.store.has("memory/u1/tool_fresh_1.md")).toBe(true);
   });
 
   it("deletes an expired transient file AND its embedding rows; unrelated rows survive", async () => {
     seedObject("memory/u1/tool_expired_2.md", "invoice data", {
       timeCreated: iso(Date.now() - DAY - 3_600_000),
-      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - 3_600_000) },
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: iso(Date.now() - 3_600_000),
+      },
     });
-    hoisted.embeddings.set("e1", { file: "tool_expired_2", block: "invoice data", embedding: [1] });
-    hoisted.embeddings.set("e2", { file: "health", block: "unrelated durable block", embedding: [1] });
+    hoisted.embeddings.set("e1", {
+      file: "tool_expired_2",
+      block: "invoice data",
+      embedding: [1],
+    });
+    hoisted.embeddings.set("e2", {
+      file: "health",
+      block: "unrelated durable block",
+      embedding: [1],
+    });
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 1,
+      retained: 0,
+      deleted: 1,
+      malformed: 0,
+      failed: 0,
+    });
     expect(hoisted.store.has("memory/u1/tool_expired_2.md")).toBe(false);
     expect(hoisted.embeddings.has("e1")).toBe(false);
     expect(hoisted.embeddings.has("e2")).toBe(true);
   });
 
   it("never scans canonical or durable ad-hoc files, however old they are", async () => {
-    seedObject("memory/u1/profile.md", "Senior: Margaret", { timeCreated: iso(Date.now() - 40 * DAY) });
-    seedObject("memory/u1/durable_notes.md", "notes", { timeCreated: iso(Date.now() - 40 * DAY) });
+    seedObject("memory/u1/profile.md", "Senior: Margaret", {
+      timeCreated: iso(Date.now() - 40 * DAY),
+    });
+    seedObject("memory/u1/durable_notes.md", "notes", {
+      timeCreated: iso(Date.now() - 40 * DAY),
+    });
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 0,
+      retained: 0,
+      deleted: 0,
+      malformed: 0,
+      failed: 0,
+    });
     expect(hoisted.store.size).toBe(2);
   });
 
   it("legacy tool_ slug with no metadata at all: the slug epoch-ms timestamp decides (fallback)", async () => {
-    const oldTs   = Date.now() - 2 * DAY;
+    const oldTs = Date.now() - 2 * DAY;
     const freshTs = Date.now() - 60_000;
     seedObject(`memory/u1/tool_legacy_${oldTs}.md`, "old offload");
     seedObject(`memory/u1/tool_legacy_${freshTs}.md`, "fresh offload");
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 2, retained: 1, deleted: 1, malformed: 0, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 2,
+      retained: 1,
+      deleted: 1,
+      malformed: 0,
+      failed: 0,
+    });
     expect(hoisted.store.has(`memory/u1/tool_legacy_${oldTs}.md`)).toBe(false);
     expect(hoisted.store.has(`memory/u1/tool_legacy_${freshTs}.md`)).toBe(true);
   });
@@ -661,54 +1000,124 @@ describe("cleanupExpiredTransientToolFiles (U8, KTD14)", () => {
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 0, malformed: 1, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 1,
+      retained: 0,
+      deleted: 0,
+      malformed: 1,
+      failed: 0,
+    });
     expect(hoisted.store.has("memory/u1/tool_no_timestamp.md")).toBe(true);
   });
 
   it("a metadata-classified transient file with a non-tool slug is still cleaned by class", async () => {
     seedObject("memory/u1/opaque_snapshot.md", "x", {
       timeCreated: iso(Date.now() - 2 * DAY),
-      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - DAY) },
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: iso(Date.now() - DAY),
+      },
     });
 
     const counts = await cleanupExpiredTransientToolFiles();
 
-    expect(counts).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(counts).toEqual({
+      scanned: 1,
+      retained: 0,
+      deleted: 1,
+      malformed: 0,
+      failed: 0,
+    });
     expect(hoisted.store.has("memory/u1/opaque_snapshot.md")).toBe(false);
   });
 
   it("repeated runs are idempotent — the second pass deletes nothing and fails nothing", async () => {
     seedObject("memory/u1/tool_expired_3.md", "x", {
       timeCreated: iso(Date.now() - 2 * DAY),
-      metadata: { memoryClass: "transient_tool", expiresAt: iso(Date.now() - DAY) },
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: iso(Date.now() - DAY),
+      },
     });
 
     const first = await cleanupExpiredTransientToolFiles();
     expect(first.deleted).toBe(1);
 
     const second = await cleanupExpiredTransientToolFiles();
-    expect(second).toEqual({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 });
+    expect(second).toEqual({
+      scanned: 0,
+      retained: 0,
+      deleted: 0,
+      malformed: 0,
+      failed: 0,
+    });
   });
 
   it("cleanup respects the freshly written offload end-to-end: written now → retained; expiry passed → deleted", async () => {
     // Written through the real writer (metadata path), not seeded by hand.
     await writeMemoryFile("u1", "tool_roundtrip_1", "payload", {
       memoryClass: TRANSIENT_TOOL_MEMORY_CLASS,
-      expiresAt:   new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
+      expiresAt: new Date(Date.now() + TRANSIENT_TOOL_TTL_MS).toISOString(),
     });
 
     const fresh = await cleanupExpiredTransientToolFiles();
-    expect(fresh).toEqual({ scanned: 1, retained: 1, deleted: 0, malformed: 0, failed: 0 });
+    expect(fresh).toEqual({
+      scanned: 1,
+      retained: 1,
+      deleted: 0,
+      malformed: 0,
+      failed: 0,
+    });
     expect(await readMemoryFile("u1", "tool_roundtrip_1")).toBe("payload"); // exact read still works
 
     // Age the object past its lifetime.
     hoisted.fileMeta.set("memory/u1/tool_roundtrip_1.md", {
-      timeCreated: new Date(Date.now() - 2 * TRANSIENT_TOOL_TTL_MS).toISOString(),
-      metadata: { memoryClass: "transient_tool", expiresAt: new Date(Date.now() - 1000).toISOString() },
+      timeCreated: new Date(
+        Date.now() - 2 * TRANSIENT_TOOL_TTL_MS,
+      ).toISOString(),
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      },
     });
 
     const later = await cleanupExpiredTransientToolFiles();
-    expect(later).toEqual({ scanned: 1, retained: 0, deleted: 1, malformed: 0, failed: 0 });
+    expect(later).toEqual({
+      scanned: 1,
+      retained: 0,
+      deleted: 1,
+      malformed: 0,
+      failed: 0,
+    });
     expect(await readMemoryFile("u1", "tool_roundtrip_1")).toBe("");
+  });
+
+  it("paginates Storage listings while preserving aggregate counts and the 24h guard", async () => {
+    for (let i = 0; i < TRANSIENT_CLEANUP_PAGE_SIZE; i++) {
+      seedObject(`memory/u1/tool_expired_${i}.md`, "x", {
+        timeCreated: iso(Date.now() - 2 * DAY),
+        metadata: {
+          memoryClass: "transient_tool",
+          expiresAt: iso(Date.now() - DAY),
+        },
+      });
+    }
+    seedObject("memory/u1/tool_fresh_last.md", "x", {
+      timeCreated: iso(Date.now() - 60_000),
+      metadata: {
+        memoryClass: "transient_tool",
+        expiresAt: iso(Date.now() - DAY),
+      },
+    });
+
+    const counts = await cleanupExpiredTransientToolFiles();
+
+    expect(counts).toEqual({
+      scanned: TRANSIENT_CLEANUP_PAGE_SIZE + 1,
+      retained: 1,
+      deleted: TRANSIENT_CLEANUP_PAGE_SIZE,
+      malformed: 0,
+      failed: 0,
+    });
   });
 });

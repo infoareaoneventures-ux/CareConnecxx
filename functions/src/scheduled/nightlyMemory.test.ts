@@ -12,8 +12,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const hoisted = vi.hoisted(() => {
   class FakeTimestamp {
     constructor(public readonly ms: number) {}
-    toMillis() { return this.ms; }
-    static fromMillis(ms: number) { return new FakeTimestamp(ms); }
+    toMillis() {
+      return this.ms;
+    }
+    static fromMillis(ms: number) {
+      return new FakeTimestamp(ms);
+    }
   }
 
   const sessions = new Map<string, any>(); // phone -> agent_sessions data
@@ -31,12 +35,25 @@ const hoisted = vi.hoisted(() => {
         whereCalls.push([field, op, value]);
         return ref;
       },
-      orderBy(field: string, _dir?: string) { orderField = field; return ref; },
-      limit(n: number) { lim = n; return ref; },
-      startAfter(doc: { id: string }) { cursorId = doc.id; return ref; },
+      orderBy(field: string, _dir?: string) {
+        orderField = field;
+        return ref;
+      },
+      limit(n: number) {
+        lim = n;
+        return ref;
+      },
+      startAfter(doc: { id: string }) {
+        cursorId = doc.id;
+        return ref;
+      },
       async get() {
-        if (state.failSessionsQuery) throw new Error("simulated agent_sessions query failure");
-        let rows = [...sessions.entries()].map(([id, data]) => ({ id, data: () => data }));
+        if (state.failSessionsQuery)
+          throw new Error("simulated agent_sessions query failure");
+        let rows = [...sessions.entries()].map(([id, data]) => ({
+          id,
+          data: () => data,
+        }));
         rows = rows.filter(({ data }) =>
           filters.every(([field, op, value]) => {
             const val = data()[field];
@@ -56,7 +73,9 @@ const hoisted = vi.hoisted(() => {
         );
         if (orderField) {
           rows.sort(
-            (a, b) => (b.data()[orderField!]?.toMillis?.() ?? 0) - (a.data()[orderField!]?.toMillis?.() ?? 0),
+            (a, b) =>
+              (b.data()[orderField!]?.toMillis?.() ?? 0) -
+              (a.data()[orderField!]?.toMillis?.() ?? 0),
           );
         }
         if (cursorId !== null) {
@@ -89,7 +108,10 @@ const hoisted = vi.hoisted(() => {
         return { docs };
       },
     }),
-    doc: (id?: string) => ({ __phone: phone, __id: id ?? `summary-${++summarySeq}` }),
+    doc: (id?: string) => ({
+      __phone: phone,
+      __id: id ?? `summary-${++summarySeq}`,
+    }),
   });
 
   const batch = () => {
@@ -97,12 +119,18 @@ const hoisted = vi.hoisted(() => {
     return {
       delete: (ref: { __phone: string; __id: string }) =>
         ops.push(() => conversations.get(ref.__phone)?.delete(ref.__id)),
-      set: (ref: { __phone: string; __id: string }, data: Record<string, unknown>) =>
+      set: (
+        ref: { __phone: string; __id: string },
+        data: Record<string, unknown>,
+      ) =>
         ops.push(() => {
-          if (!conversations.has(ref.__phone)) conversations.set(ref.__phone, new Map());
+          if (!conversations.has(ref.__phone))
+            conversations.set(ref.__phone, new Map());
           conversations.get(ref.__phone)!.set(ref.__id, data);
         }),
-      commit: async () => { for (const op of ops) op(); },
+      commit: async () => {
+        for (const op of ops) op();
+      },
     };
   };
 
@@ -113,16 +141,29 @@ const hoisted = vi.hoisted(() => {
     const filters: Array<[string, string, unknown]> = [];
     let lim = Infinity;
     const ref: any = {
-      where(field: string, op: string, value: unknown) { filters.push([field, op, value]); return ref; },
-      orderBy() { return ref; },
-      limit(n: number) { lim = n; return ref; },
+      where(field: string, op: string, value: unknown) {
+        filters.push([field, op, value]);
+        return ref;
+      },
+      orderBy() {
+        return ref;
+      },
+      limit(n: number) {
+        lim = n;
+        return ref;
+      },
       async get() {
         const rows = [...memoryOps.entries()]
           .filter(([, data]) =>
             filters.every(([field, op, value]) => {
               const val = (data as Record<string, unknown>)[field];
               if (op === "==") return val === value;
-              if (op === "<=") return typeof val === "string" && typeof value === "string" && val <= value;
+              if (op === "<=")
+                return (
+                  typeof val === "string" &&
+                  typeof value === "string" &&
+                  val <= value
+                );
               return true;
             }),
           )
@@ -132,7 +173,8 @@ const hoisted = vi.hoisted(() => {
             data: () => data,
             ref: {
               delete: async () => {
-                if (opsState.failDelete) throw new Error("simulated delete failure");
+                if (opsState.failDelete)
+                  throw new Error("simulated delete failure");
                 memoryOps.delete(id);
               },
             },
@@ -148,8 +190,11 @@ const hoisted = vi.hoisted(() => {
     if (name === "memory_operations") return makeMemoryOpsQuery();
     if (name === "agent_conversations") {
       return {
-        listDocuments: async () => [...conversations.keys()].map(id => ({ id })),
-        doc: (phone: string) => ({ collection: (_sub: string) => makeMessagesCol(phone) }),
+        listDocuments: async () =>
+          [...conversations.keys()].map((id) => ({ id })),
+        doc: (phone: string) => ({
+          collection: (_sub: string) => makeMessagesCol(phone),
+        }),
       };
     }
     // appointments (booking-pattern housekeeping): empty result short-circuits.
@@ -175,16 +220,29 @@ const hoisted = vi.hoisted(() => {
     // U8 (R20/KTD14): expired transient tool-file cleanup, mocked at the
     // memoryFiles boundary — behavior is tested in memoryFiles.test.ts; here
     // we pin scheduling, aggregate-only logging, and failure isolation.
-    transientCleanupMock: vi.fn(async () => ({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 })),
-    claudeCreate: vi.fn(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] })),
+    transientCleanupMock: vi.fn(async () => ({
+      scanned: 0,
+      retained: 0,
+      deleted: 0,
+      malformed: 0,
+      failed: 0,
+    })),
+    claudeCreate: vi.fn(async () => ({
+      content: [
+        { type: "text", text: "<summary> compressed conversation summary" },
+      ],
+    })),
   };
 });
 
 vi.mock("firebase-admin", () => {
-  const firestore = Object.assign(() => ({ collection: hoisted.collection, batch: hoisted.batch }), {
-    Timestamp: hoisted.FakeTimestamp,
-    FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }) },
-  });
+  const firestore = Object.assign(
+    () => ({ collection: hoisted.collection, batch: hoisted.batch }),
+    {
+      Timestamp: hoisted.FakeTimestamp,
+      FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }) },
+    },
+  );
   const stub = { apps: [], initializeApp: () => ({}), firestore };
   return { __esModule: true, default: stub, ...stub };
 });
@@ -222,7 +280,8 @@ import {
 } from "./nightlyMemory";
 
 const DAY = 24 * 60 * 60 * 1000;
-const ts = (daysBack: number) => hoisted.FakeTimestamp.fromMillis(Date.now() - daysBack * DAY);
+const ts = (daysBack: number) =>
+  hoisted.FakeTimestamp.fromMillis(Date.now() - daysBack * DAY);
 
 function seedSession(phone: string, extra: Record<string, unknown> = {}) {
   hoisted.sessions.set(phone, {
@@ -246,11 +305,19 @@ beforeEach(() => {
   hoisted.consolidateMock.mockImplementation(async () => {});
   hoisted.cleanupMock.mockClear();
   hoisted.transientCleanupMock.mockClear();
-  hoisted.transientCleanupMock.mockImplementation(
-    async () => ({ scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 }),
-  );
+  hoisted.transientCleanupMock.mockImplementation(async () => ({
+    scanned: 0,
+    retained: 0,
+    deleted: 0,
+    malformed: 0,
+    failed: 0,
+  }));
   hoisted.claudeCreate.mockClear();
-  hoisted.claudeCreate.mockImplementation(async () => ({ content: [{ type: "text", text: "<summary> compressed conversation summary" }] }));
+  hoisted.claudeCreate.mockImplementation(async () => ({
+    content: [
+      { type: "text", text: "<summary> compressed conversation summary" },
+    ],
+  }));
 });
 
 describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
@@ -260,8 +327,17 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     const counts = await runNightlyMemoryConsolidation();
 
     expect(hoisted.consolidateMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.consolidateMock).toHaveBeenCalledWith("user-+14085550001", "+14085550001");
-    expect(counts).toEqual({ eligible: 1, attempted: 1, succeeded: 1, failed: 0, skipped: 0 });
+    expect(hoisted.consolidateMock).toHaveBeenCalledWith(
+      "user-+14085550001",
+      "+14085550001",
+    );
+    expect(counts).toEqual({
+      eligible: 1,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
   });
 
   it("caregiver sessions never enter the family-memory batch", async () => {
@@ -274,12 +350,12 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
   });
 
   it("excludes stale (>7d), incomplete, opted-out, roleless, and activity-less sessions", async () => {
-    seedSession("+1000", { lastMessageAt: ts(8) });                    // stale
-    seedSession("+2000", { onboardingStep: "care_needs" });            // mid-onboarding
-    seedSession("+3000", { optedOut: true });                          // opted out
-    seedSession("+4000", { userType: undefined });                     // no role — never selectable
-    seedSession("+5000", { lastMessageAt: undefined });                // no runtime activity yet
-    seedSession("+6000");                                              // the one eligible client
+    seedSession("+1000", { lastMessageAt: ts(8) }); // stale
+    seedSession("+2000", { onboardingStep: "care_needs" }); // mid-onboarding
+    seedSession("+3000", { optedOut: true }); // opted out
+    seedSession("+4000", { userType: undefined }); // no role — never selectable
+    seedSession("+5000", { lastMessageAt: undefined }); // no runtime activity yet
+    seedSession("+6000"); // the one eligible client
 
     const counts = await runNightlyMemoryConsolidation();
 
@@ -292,19 +368,28 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     seedSession("+14085550003", { lastMessageAt: ts(6) });
     // A legacy ISO-string value is not comparable to a Timestamp cutoff and
     // must not be selected.
-    seedSession("+14085550004", { lastMessageAt: new Date(Date.now() - DAY).toISOString() });
+    seedSession("+14085550004", {
+      lastMessageAt: new Date(Date.now() - DAY).toISOString(),
+    });
 
     await runNightlyMemoryConsolidation();
 
-    const rangeFilter = hoisted.whereCalls.find(([field, op]) => field === "lastMessageAt" && op === ">=");
+    const rangeFilter = hoisted.whereCalls.find(
+      ([field, op]) => field === "lastMessageAt" && op === ">=",
+    );
     expect(rangeFilter).toBeDefined();
     const cutoff = rangeFilter![2];
     expect(cutoff).toBeInstanceOf(hoisted.FakeTimestamp);
     expect(typeof cutoff).not.toBe("string");
-    expect(Math.abs(cutoff.toMillis() - (Date.now() - NIGHTLY_MEMORY_WINDOW_MS))).toBeLessThan(10_000);
+    expect(
+      Math.abs(cutoff.toMillis() - (Date.now() - NIGHTLY_MEMORY_WINDOW_MS)),
+    ).toBeLessThan(10_000);
 
     expect(hoisted.consolidateMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.consolidateMock).toHaveBeenCalledWith("user-+14085550003", "+14085550003");
+    expect(hoisted.consolidateMock).toHaveBeenCalledWith(
+      "user-+14085550003",
+      "+14085550003",
+    );
   });
 
   it("uses equality filters for onboardingStep/optedOut/userType server-side", async () => {
@@ -323,7 +408,9 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     for (let i = 0; i < 250; i++) {
       // Distinct timestamps so DESC ordering + cursor paging is deterministic.
       seedSession(`+1408555${String(i).padStart(4, "0")}`, {
-        lastMessageAt: hoisted.FakeTimestamp.fromMillis(Date.now() - i * 60_000),
+        lastMessageAt: hoisted.FakeTimestamp.fromMillis(
+          Date.now() - i * 60_000,
+        ),
       });
     }
 
@@ -332,26 +419,43 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     expect(hoisted.consolidateMock).toHaveBeenCalledTimes(250);
     const phones = hoisted.consolidateMock.mock.calls.map((c) => c[1]);
     expect(new Set(phones).size).toBe(250);
-    expect(counts).toEqual({ eligible: 250, attempted: 250, succeeded: 250, failed: 0, skipped: 0 });
+    expect(counts).toEqual({
+      eligible: 250,
+      attempted: 250,
+      succeeded: 250,
+      failed: 0,
+      skipped: 0,
+    });
   });
 
   it("one client failure does not abort the batch (R4) and is counted, not identified", async () => {
     seedSession("+7001", { lastMessageAt: ts(1) });
     seedSession("+7002", { lastMessageAt: ts(2) });
     seedSession("+7003", { lastMessageAt: ts(3) });
-    hoisted.consolidateMock.mockImplementation(async (_userId: string, phone?: string) => {
-      if (phone === "+7002") throw new Error("zep exploded for +7002 secret content");
-    });
+    hoisted.consolidateMock.mockImplementation(
+      async (_userId: string, phone?: string) => {
+        if (phone === "+7002")
+          throw new Error("zep exploded for +7002 secret content");
+      },
+    );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       const counts = await runNightlyMemoryConsolidation();
 
-      expect(counts).toEqual({ eligible: 3, attempted: 3, succeeded: 2, failed: 1, skipped: 0 });
+      expect(counts).toEqual({
+        eligible: 3,
+        attempted: 3,
+        succeeded: 2,
+        failed: 1,
+        skipped: 0,
+      });
       expect(hoisted.consolidateMock).toHaveBeenCalledTimes(3);
       // R21: the failure log carries a sanitized error class — no phone, no
       // userId, no error message text.
-      const failureLogs = errorSpy.mock.calls.filter((c) => String(c[0]).includes("consolidation failure"));
+      const failureLogs = errorSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("consolidation failure"),
+      );
       expect(failureLogs).toHaveLength(1);
       const serialized = JSON.stringify(failureLogs[0]);
       expect(serialized).not.toContain("+7002");
@@ -368,18 +472,28 @@ describe("runNightlyMemoryJob — housekeeping isolation (R4)", () => {
   it("logs aggregate counts only (no IDs) and runs downstream tasks after a client failure", async () => {
     seedSession("+8001");
     seedSession("+8002");
-    hoisted.consolidateMock.mockImplementation(async (_u: string, phone?: string) => {
-      if (phone === "+8001") throw new Error("boom");
-    });
+    hoisted.consolidateMock.mockImplementation(
+      async (_u: string, phone?: string) => {
+        if (phone === "+8001") throw new Error("boom");
+      },
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       await runNightlyMemoryJob();
 
-      const batchLog = logSpy.mock.calls.find((c) => String(c[0]).includes("memory batch"));
+      const batchLog = logSpy.mock.calls.find((c) =>
+        String(c[0]).includes("memory batch"),
+      );
       expect(batchLog).toBeDefined();
-      expect(batchLog![1]).toEqual({ eligible: 2, attempted: 2, succeeded: 1, failed: 1, skipped: 0 });
+      expect(batchLog![1]).toEqual({
+        eligible: 2,
+        attempted: 2,
+        succeeded: 1,
+        failed: 1,
+        skipped: 0,
+      });
       expect(JSON.stringify(batchLog)).not.toContain("+800");
       // Existing nightly housekeeping still ran.
       expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
@@ -398,7 +512,9 @@ describe("runNightlyMemoryJob — housekeeping isolation (R4)", () => {
 
       expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
       expect(hoisted.transientCleanupMock).toHaveBeenCalledTimes(1);
-      const abortLog = errorSpy.mock.calls.find((c) => String(c[0]).includes("memory batch aborted"));
+      const abortLog = errorSpy.mock.calls.find((c) =>
+        String(c[0]).includes("memory batch aborted"),
+      );
       expect(abortLog).toBeDefined();
       expect(abortLog![1]).toEqual({ errorClass: "Error" });
     } finally {
@@ -412,7 +528,11 @@ describe("runNightlyMemoryJob — housekeeping isolation (R4)", () => {
 describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
   it("runs the cleanup once per job and logs aggregate counts only (R21)", async () => {
     hoisted.transientCleanupMock.mockResolvedValueOnce({
-      scanned: 7, retained: 3, deleted: 3, malformed: 1, failed: 0,
+      scanned: 7,
+      retained: 3,
+      deleted: 3,
+      malformed: 1,
+      failed: 0,
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -421,9 +541,17 @@ describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
       await runNightlyMemoryJob();
 
       expect(hoisted.transientCleanupMock).toHaveBeenCalledTimes(1);
-      const cleanupLog = logSpy.mock.calls.find((c) => String(c[0]).includes("transient tool-file cleanup"));
+      const cleanupLog = logSpy.mock.calls.find((c) =>
+        String(c[0]).includes("transient tool-file cleanup"),
+      );
       expect(cleanupLog).toBeDefined();
-      expect(cleanupLog![1]).toEqual({ scanned: 7, retained: 3, deleted: 3, malformed: 1, failed: 0 });
+      expect(cleanupLog![1]).toEqual({
+        scanned: 7,
+        retained: 3,
+        deleted: 3,
+        malformed: 1,
+        failed: 0,
+      });
       // Aggregate only — no user IDs, phones, or slugs.
       expect(JSON.stringify(cleanupLog)).not.toMatch(/\+\d{7,}|tool_|memory\//);
     } finally {
@@ -433,7 +561,9 @@ describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
   });
 
   it("a cleanup failure is isolated: sanitized error log, remaining housekeeping still runs", async () => {
-    hoisted.transientCleanupMock.mockRejectedValueOnce(new Error("bucket listing exploded for u123"));
+    hoisted.transientCleanupMock.mockRejectedValueOnce(
+      new Error("bucket listing exploded for u123"),
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -443,12 +573,17 @@ describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
       // Execution-agent cleanup (the step after) still ran.
       expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
       const errLog = errorSpy.mock.calls.find((c) =>
-        String(c[0]).includes("cleanupExpiredTransientToolFiles error"));
+        String(c[0]).includes("cleanupExpiredTransientToolFiles error"),
+      );
       expect(errLog).toBeDefined();
       expect(errLog![1]).toEqual({ errorClass: "Error" }); // R21: no raw message text
       expect(JSON.stringify(errLog)).not.toContain("u123");
       // No cleanup counts log was emitted for the failed run.
-      expect(logSpy.mock.calls.some((c) => String(c[0]).includes("transient tool-file cleanup"))).toBe(false);
+      expect(
+        logSpy.mock.calls.some((c) =>
+          String(c[0]).includes("transient tool-file cleanup"),
+        ),
+      ).toBe(false);
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();
@@ -465,16 +600,21 @@ describe("runNightlyMemoryJob — transient tool-file cleanup (U8)", () => {
 
 const CONV_PHONE = "+14085559999";
 
-function seedConversation(count: number, pendingIdx: number[] = [], opts: { pendingAgeMs?: number } = {}) {
+function seedConversation(
+  count: number,
+  pendingIdx: number[] = [],
+  opts: { pendingAgeMs?: number } = {},
+) {
   const msgs = new Map<string, Record<string, unknown>>();
   const base = Date.now() - count * 60_000;
   for (let i = 0; i < count; i++) {
     msgs.set(`m${String(i).padStart(3, "0")}`, {
       role: i % 2 === 0 ? "user" : "assistant",
       content: `message ${i}`,
-      timestamp: pendingIdx.includes(i) && opts.pendingAgeMs
-        ? Date.now() - opts.pendingAgeMs
-        : base + i * 60_000,
+      timestamp:
+        pendingIdx.includes(i) && opts.pendingAgeMs
+          ? Date.now() - opts.pendingAgeMs
+          : base + i * 60_000,
       ...(pendingIdx.includes(i) ? { memorySyncStatus: "pending" } : {}),
     });
   }
@@ -490,13 +630,20 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
       const counts = await compressOldConversations();
 
       expect(counts).toEqual({
-        conversations: 1, compressedMessages: 10, skippedPendingSync: 0, agedPendingRows: 0, failed: 0,
+        conversations: 1,
+        compressedMessages: 10,
+        skippedPendingSync: 0,
+        skippedExcludedRows: 0,
+        agedPendingRows: 0,
+        failed: 0,
       });
       expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
       const msgs = hoisted.conversations.get(CONV_PHONE)!;
       // 10 retained + 1 new summary.
       expect(msgs.size).toBe(11);
-      expect([...msgs.values()].filter(m => m.role === "summary")).toHaveLength(1);
+      expect(
+        [...msgs.values()].filter((m) => m.role === "summary"),
+      ).toHaveLength(1);
     } finally {
       logSpy.mockRestore();
     }
@@ -509,10 +656,12 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
     // toCompress would be rows 0-9; the pending row at 3 truncates it to 0-2
     // (< 5) → nothing is summarized or deleted this run.
     expect(counts.compressedMessages).toBe(0);
-    expect(counts.skippedPendingSync).toBe(7);
+    expect(counts.skippedPendingSync).toBe(1);
     expect(hoisted.claudeCreate).not.toHaveBeenCalled();
     expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(20);
-    expect(hoisted.conversations.get(CONV_PHONE)!.get("m003")!.memorySyncStatus).toBe("pending");
+    expect(
+      hoisted.conversations.get(CONV_PHONE)!.get("m003")!.memorySyncStatus,
+    ).toBe("pending");
   });
 
   it("rows OLDER than the first pending row still compress; the pending row and younger rows survive verbatim", async () => {
@@ -522,7 +671,7 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
       const counts = await compressOldConversations();
 
       expect(counts.compressedMessages).toBe(8); // rows 0-7 only
-      expect(counts.skippedPendingSync).toBe(2); // rows 8-9 were compress-eligible but protected
+      expect(counts.skippedPendingSync).toBe(1); // the pending row was protected
       const msgs = hoisted.conversations.get(CONV_PHONE)!;
       // 20 - 8 compressed + 1 summary = 13.
       expect(msgs.size).toBe(13);
@@ -530,7 +679,7 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
       expect(pendingRow.memorySyncStatus).toBe("pending");
       expect(pendingRow.content).toBe("message 8"); // verbatim, not summarized
       // The summary slots immediately before the first retained (pending) row.
-      const summary = [...msgs.values()].find(m => m.role === "summary")!;
+      const summary = [...msgs.values()].find((m) => m.role === "summary")!;
       expect(summary.timestamp).toBe(Number(pendingRow.timestamp) - 1);
       // The summarizer never saw the pending row's content.
       const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
@@ -542,14 +691,21 @@ describe("compressOldConversations — unresolved memorySyncStatus rows are neve
   });
 
   it("aged pending rows surface in the job's aggregate counts without identifying the conversation (R21)", async () => {
-    seedConversation(20, [2], { pendingAgeMs: AGED_PENDING_SYNC_MS + 60 * 60 * 1000 });
+    seedConversation(20, [2], {
+      pendingAgeMs: AGED_PENDING_SYNC_MS + 60 * 60 * 1000,
+    });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await runNightlyMemoryJob();
 
-      const compressionLog = logSpy.mock.calls.find(c => String(c[0]).includes("compression"));
+      const compressionLog = logSpy.mock.calls.find((c) =>
+        String(c[0]).includes("compression"),
+      );
       expect(compressionLog).toBeDefined();
-      expect(compressionLog![1]).toMatchObject({ agedPendingRows: 1, conversations: 1 });
+      expect(compressionLog![1]).toMatchObject({
+        agedPendingRows: 1,
+        conversations: 1,
+      });
       expect(JSON.stringify(compressionLog)).not.toContain(CONV_PHONE);
     } finally {
       logSpy.mockRestore();
@@ -572,31 +728,25 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
         timestamp: base + i * 60_000,
         ...(excludedIdx.includes(i)
           ? {
-            excludeFromMemoryConsolidationAt: new Date().toISOString(),
-            excludeFromMemoryConsolidationReason: "forget",
-          }
+              excludeFromMemoryConsolidationAt: new Date().toISOString(),
+              excludeFromMemoryConsolidationReason: "forget",
+            }
           : {}),
       });
     }
     hoisted.conversations.set(CONV_PHONE, msgs);
   }
 
-  it("a marked row is still compressed away but its content NEVER enters the summary prompt", async () => {
+  it("a marked row stays verbatim and blocks compression when the safe prefix is too short", async () => {
     seedWithExcluded(20, [2]);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const counts = await compressOldConversations();
+    const counts = await compressOldConversations();
 
-      expect(counts.compressedMessages).toBe(10); // full window still folds
-      expect(hoisted.claudeCreate).toHaveBeenCalledTimes(1);
-      const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
-      expect(prompt).not.toContain("message 2"); // retired content withheld
-      expect(prompt).toContain("message 3");
-      // The marked row was deleted with the compressed window (not retained).
-      expect(hoisted.conversations.get(CONV_PHONE)!.has("m002")).toBe(false);
-    } finally {
-      logSpy.mockRestore();
-    }
+    expect(counts.compressedMessages).toBe(0);
+    expect(counts.skippedExcludedRows).toBe(1);
+    expect(hoisted.claudeCreate).not.toHaveBeenCalled();
+    const messages = hoisted.conversations.get(CONV_PHONE)!;
+    expect(messages.has("m002")).toBe(true);
+    expect(messages.get("m002")!.content).toBe("message 2");
   });
 
   it("when EVERY compressible row is marked and no prior summary exists, nothing is summarized or deleted", async () => {
@@ -608,21 +758,50 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
     expect(hoisted.conversations.get(CONV_PHONE)!.size).toBe(20);
   });
 
-  it("when every compressible row is marked but a prior summary exists, the prior summary carries forward WITHOUT a model call", async () => {
+  it("masks a prior summary when every compressible row is marked and no safe transcript can regenerate it", async () => {
     seedWithExcluded(20, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     hoisted.conversations.get(CONV_PHONE)!.set("summary-old", {
-      role: "summary", content: "<summary> earlier summary text", timestamp: 0,
+      role: "summary",
+      content: "<summary> earlier summary text",
+      timestamp: 0,
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const counts = await compressOldConversations();
 
-      expect(counts.compressedMessages).toBe(10);
+      expect(counts.compressedMessages).toBe(0);
+      expect(counts.skippedExcludedRows).toBe(10);
       expect(hoisted.claudeCreate).not.toHaveBeenCalled();
       const msgs = hoisted.conversations.get(CONV_PHONE)!;
-      const summaries = [...msgs.values()].filter(m => m.role === "summary");
+      const summaries = [...msgs.values()].filter((m) => m.role === "summary");
+      expect(summaries).toHaveLength(0);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("regenerates an existing summary from only the safe prefix before a protected row", async () => {
+    seedWithExcluded(20, [8]);
+    hoisted.conversations.get(CONV_PHONE)!.set("summary-old", {
+      role: "summary",
+      content: "<summary> Mom is allergic to penicillin.",
+      timestamp: 0,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const counts = await compressOldConversations();
+
+      expect(counts.compressedMessages).toBe(8);
+      expect(counts.skippedExcludedRows).toBe(1);
+      const prompt = JSON.stringify(hoisted.claudeCreate.mock.calls);
+      expect(prompt).not.toContain("penicillin");
+      expect(prompt).not.toContain("message 8");
+      expect(prompt).toContain("message 7");
+      const summaries = [
+        ...hoisted.conversations.get(CONV_PHONE)!.values(),
+      ].filter((m) => m.role === "summary");
       expect(summaries).toHaveLength(1);
-      expect(summaries[0].content).toBe("<summary> earlier summary text");
+      expect(summaries[0].content).not.toContain("penicillin");
     } finally {
       logSpy.mockRestore();
     }
@@ -632,15 +811,28 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
 // ── U9: completed memory-operation cleanup (expiresAt + status/expiresAt index) ─
 describe("cleanupExpiredMemoryOperations (U9)", () => {
   const HOUR = 60 * 60 * 1000;
-  const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString();
+  const iso = (msFromNow: number) =>
+    new Date(Date.now() + msFromNow).toISOString();
 
   it("deletes only COMPLETED operations past expiresAt; everything else survives", async () => {
-    hoisted.memoryOps.set("op-expired", { status: "completed", expiresAt: iso(-HOUR) });
-    hoisted.memoryOps.set("op-live", { status: "completed", expiresAt: iso(HOUR) });
+    hoisted.memoryOps.set("op-expired", {
+      status: "completed",
+      expiresAt: iso(-HOUR),
+    });
+    hoisted.memoryOps.set("op-live", {
+      status: "completed",
+      expiresAt: iso(HOUR),
+    });
     // Failed/unresolved operations never expire (privacy suppression must not
     // be cleaned away) — even a bogus stale expiresAt cannot make them eligible.
-    hoisted.memoryOps.set("op-terminal", { status: "terminal_failed", expiresAt: null });
-    hoisted.memoryOps.set("op-retryable", { status: "retryable_failed", expiresAt: iso(-HOUR) });
+    hoisted.memoryOps.set("op-terminal", {
+      status: "terminal_failed",
+      expiresAt: null,
+    });
+    hoisted.memoryOps.set("op-retryable", {
+      status: "retryable_failed",
+      expiresAt: iso(-HOUR),
+    });
     hoisted.memoryOps.set("op-pending", { status: "pending", expiresAt: null });
 
     const counts = await cleanupExpiredMemoryOperations();
@@ -655,7 +847,10 @@ describe("cleanupExpiredMemoryOperations (U9)", () => {
 
   it("is bounded per run and idempotent across repeated runs", async () => {
     for (let i = 0; i < MEMORY_OPERATION_CLEANUP_LIMIT + 5; i++) {
-      hoisted.memoryOps.set(`op-${i}`, { status: "completed", expiresAt: iso(-HOUR) });
+      hoisted.memoryOps.set(`op-${i}`, {
+        status: "completed",
+        expiresAt: iso(-HOUR),
+      });
     }
 
     const first = await cleanupExpiredMemoryOperations();
@@ -669,7 +864,10 @@ describe("cleanupExpiredMemoryOperations (U9)", () => {
   });
 
   it("counts per-doc delete failures without aborting the sweep", async () => {
-    hoisted.memoryOps.set("op-a", { status: "completed", expiresAt: iso(-HOUR) });
+    hoisted.memoryOps.set("op-a", {
+      status: "completed",
+      expiresAt: iso(-HOUR),
+    });
     hoisted.opsState.failDelete = true;
 
     const counts = await cleanupExpiredMemoryOperations();
@@ -679,11 +877,16 @@ describe("cleanupExpiredMemoryOperations (U9)", () => {
   });
 
   it("runNightlyMemoryJob runs the cleanup with an aggregate-only log and isolates its failure", async () => {
-    hoisted.memoryOps.set("op-expired", { status: "completed", expiresAt: iso(-HOUR) });
+    hoisted.memoryOps.set("op-expired", {
+      status: "completed",
+      expiresAt: iso(-HOUR),
+    });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await runNightlyMemoryJob();
-      const cleanupLogs = logSpy.mock.calls.filter(c => String(c[0]).includes("memory-operation cleanup"));
+      const cleanupLogs = logSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("memory-operation cleanup"),
+      );
       expect(cleanupLogs).toHaveLength(1);
       expect(cleanupLogs[0][1]).toEqual({ scanned: 1, deleted: 1, failed: 0 });
       // R21: no operation IDs in the log line.

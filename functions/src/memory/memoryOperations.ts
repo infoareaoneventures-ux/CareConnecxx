@@ -26,6 +26,7 @@ import {
   LeasedOperationClaim,
   LeasedOperationFailResult,
 } from "../operations/externalSideEffect";
+import { errorClassOf } from "../utils/errorClass";
 
 // Lazy handle: this module is imported (via conversationMemory.ts) by the
 // activity-backfill script BEFORE admin.initializeApp() runs — module load
@@ -312,10 +313,11 @@ export function buildFactChangeOperationDoc(
 // The legacy delete_memory_file / edit_memory_file MCP tools route through the
 // correction/forget pipeline SEMANTICS: identity-validated, recorded as a
 // memory operation (audit-by-reference), and tombstone-protected. The Storage
-// mutation itself runs inline in the tool (the user is waiting on the reply),
-// so these operations are recorded already-completed — they never enter the
-// retry sweep. `fileSlug` is a file NAME, never fact content; `changeKeyHash`
-// is an opaque hash of the edited text so distinct edits get distinct records.
+// mutation itself runs inline only after the operation, tombstone, and
+// reconciliation flag have been staged. The worker then reconciles every
+// provider target and owns completion/retry. `fileSlug` is a file NAME, never
+// fact content; `changeKeyHash` is an opaque hash of the retired text so
+// distinct edits get distinct records.
 
 export function mcpMemoryFileOperationId(
   kind: "correction" | "forget",
@@ -349,28 +351,26 @@ export function buildMcpMemoryFileOperationDoc(input: {
     learnedFactRefs: input.tombstoneFactPath ? [input.tombstoneFactPath] : [],
     fileSlug: input.fileSlug,
     source: "mcp_memory_tool",
-    status: "completed",
+    status: "pending",
     attempts: 0,
-    nextRetryAt: null,
+    nextRetryAt: nowIso,
     leaseOwner: null,
     leaseExpiresAt: null,
     targets: {
       firestore: { status: "skipped" },
       zepTranscript: { status: "skipped" },
-      // Tombstone shell stamped inline when the fingerprint path applies.
-      learnedFacts: { status: input.tombstoneFactPath ? "completed" : "skipped" },
-      // The tool performed the Storage rewrite/delete + embedding purge inline.
-      storage: { status: "completed" },
-      embeddings: { status: "completed" },
-      // File-scoped MCP changes do not resolve individual Zep edges — the
-      // learned-fact pipeline owns fact-level Zep propagation.
-      zepEdges: { status: "skipped" },
-      zepEpisodes: { status: "skipped" },
+      // The staged learned-fact shell supplies the worker with the exact
+      // retired assertion without copying it onto this ledger record.
+      learnedFacts: { status: "pending" },
+      storage: { status: "pending" },
+      embeddings: { status: "pending" },
+      zepEdges: { status: "pending" },
+      zepEpisodes: { status: "pending" },
     },
     createdAt: nowIso,
     updatedAt: nowIso,
-    completedAt: nowIso,
-    expiresAt: new Date(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS).toISOString(),
+    completedAt: null,
+    expiresAt: null,
   };
   return {
     operationId: mcpMemoryFileOperationId(input.kind, input.userId, input.fileSlug, input.changeKey ?? ""),
@@ -506,9 +506,10 @@ function targetUnresolved(targets: Record<string, { status?: string } | undefine
  * across all unresolved operations, that store's context returns while the
  * still-unconfirmed store stays omitted.
  *
- * Fail-open on read error (matching every shared memory reader's posture) with
- * a sanitized aggregate log — the flag doc lives in the same Firestore as the
- * memory it guards, so a read outage here implies the guarded reads fail too.
+ * Read failures retain the historical fail-open posture because the guarded
+ * store reads fail too. A flag larger than the inspection cap is different:
+ * it is known unresolved state that cannot be fully inspected, so it masks
+ * both stores until the worker reduces it below the cap.
  */
 export async function getMemoryReconciliationState(
   userId: string,
@@ -523,7 +524,22 @@ export async function getMemoryReconciliationState(
       | Record<string, ReconciliationFlagEntry>
       | null
       | undefined;
-    const opIds = pendingMap ? Object.keys(pendingMap).slice(0, RECONCILIATION_MAX_TRACKED_OPS) : [];
+    const allOpIds = pendingMap ? Object.keys(pendingMap) : [];
+    if (allOpIds.length > RECONCILIATION_MAX_TRACKED_OPS) {
+      console.warn(JSON.stringify({
+        severity: "WARNING",
+        memory_reconciliation_overflow: true,
+        pending_operation_count: allOpIds.length,
+        timestamp: new Date().toISOString(),
+      }));
+      return {
+        pending: true,
+        storageMasked: true,
+        zepMasked: true,
+        pendingOperationIds: allOpIds.slice(0, RECONCILIATION_MAX_TRACKED_OPS),
+      };
+    }
+    const opIds = allOpIds;
     if (opIds.length === 0) return RECONCILIATION_ALL_CLEAR;
 
     const opSnaps = await Promise.all(
@@ -591,10 +607,6 @@ export async function hasUnresolvedReconciliation(
 }
 
 // ── Claim / complete / fail (shared engine, KTD6) ────────────────────────────
-
-function errorClassOf(err: unknown): string {
-  return err instanceof Error ? err.constructor.name : typeof err;
-}
 
 /**
  * Deduplicated terminal alert (one admin_alerts doc per operation, set+merge).

@@ -66,6 +66,7 @@ import {
   invalidateZepEdgeStrict,
   deleteZepEdgeStrict,
   deleteZepEpisodeStrict,
+  verifyZepForgottenFactAbsent,
   zepEdgeFactMatches,
   getZepUserId,
 } from "../memory/zepClient";
@@ -78,9 +79,11 @@ import {
   MEMORY_FINGERPRINT_KEY_SECRET,
 } from "../memory/fingerprintKey";
 import { logAudit } from "../observability/auditLog";
+import { errorClassOf } from "../utils/errorClass";
 import {
   AGED_MEMORY_OPERATION_ALERT_MS,
   raiseAgedMemoryOperationAlert,
+  raiseTurnSyncOrderingBacklogAlert,
 } from "../observability/caraOpsAlerts";
 
 const db = admin.firestore();
@@ -90,6 +93,8 @@ export const MEMORY_WORKER_BATCH_LIMIT = 25;
 /** Bounded legacy-provenance scan window/size (KTD16) — mirrors consolidation's 7d/60-row read. */
 export const LEGACY_SOURCE_SCAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const LEGACY_SOURCE_SCAN_LIMIT = 60;
+/** Maximum unresolved turn_sync rows inspected per user before failing closed. */
+export const TURN_SYNC_ORDERING_SCAN_LIMIT = LEGACY_SOURCE_SCAN_LIMIT;
 
 /**
  * Provider duplicate/already-exists responses are SUCCESS (KTD5): a worker
@@ -112,6 +117,8 @@ export interface MemoryWorkerCounts {
   claimMissed: number;
   /** Younger due turn_sync operations left queued behind an older unresolved turn. */
   blockedByOlder: number;
+  /** Users deferred because their unresolved turn_sync queue exceeded the ordering cap. */
+  orderingBacklogOverflows: number;
   completed: number;
   retryable: number;
   terminal: number;
@@ -134,7 +141,7 @@ interface DueOp {
 
 export async function runMemoryOperationWorker(nowMs: number = Date.now()): Promise<MemoryWorkerCounts> {
   const counts: MemoryWorkerCounts = {
-    due: 0, unsupportedKind: 0, claimMissed: 0, blockedByOlder: 0,
+    due: 0, unsupportedKind: 0, claimMissed: 0, blockedByOlder: 0, orderingBacklogOverflows: 0,
     completed: 0, retryable: 0, terminal: 0, zepDuplicates: 0,
     factChangesCompleted: 0, sourceRowsExcluded: 0,
     agedPending: 0, oldestDueAgeMs: 0,
@@ -197,7 +204,7 @@ export async function runMemoryOperationWorker(nowMs: number = Date.now()): Prom
   }
 
   for (const [userId, dueOps] of byUser) {
-    await processUserOperations(userId, dueOps, counts);
+    await processUserOperations(userId, dueOps, counts, nowMs);
   }
 
   for (const op of factChanges) {
@@ -230,8 +237,9 @@ async function processUserOperations(
   userId: string,
   dueOps: DueOp[],
   counts: MemoryWorkerCounts,
+  nowMs: number,
 ): Promise<void> {
-  // Fetch ALL unresolved turn_sync operations for this user (equality-only
+  // Fetch a capped unresolved turn_sync set for this user (equality-only
   // query — served by Firestore's merged single-field indexes, no composite
   // needed) and walk them oldest-first. The due batch alone is not enough: an
   // older turn can be unresolved-but-not-due (future backoff), and a younger
@@ -242,7 +250,20 @@ async function processUserOperations(
       .where("userId", "==", userId)
       .where("kind", "==", "turn_sync")
       .where("status", "in", UNRESOLVED_MEMORY_OPERATION_STATUSES)
+      .limit(TURN_SYNC_ORDERING_SCAN_LIMIT + 1)
       .get();
+    if (snap.docs.length > TURN_SYNC_ORDERING_SCAN_LIMIT) {
+      // Do not sort a partial set: an unseen older source turn could otherwise
+      // be overtaken. The aggregate-only alert contains no user or operation ID.
+      counts.orderingBacklogOverflows++;
+      counts.blockedByOlder += dueOps.length;
+      await raiseTurnSyncOrderingBacklogAlert({
+        cap: TURN_SYNC_ORDERING_SCAN_LIMIT,
+        observedAtLeast: snap.docs.length,
+        nowMs,
+      });
+      return;
+    }
     orderedUnresolved = snap.docs
       .map(d => ({ id: d.id, data: d.data() }))
       .sort((a, b) => Number(a.data.sourceTurnTimestamp ?? 0) - Number(b.data.sourceTurnTimestamp ?? 0));
@@ -316,24 +337,26 @@ async function processTurnSyncOperation(
     // source-turn timestamps — a retry must be byte-identical to the first
     // attempt so the provider can deduplicate it.
     try {
-      await addUserMessageToZepStrict({
+      const result = await addUserMessageToZepStrict({
         threadId: zepThreadId,
         content: String(userRow.content ?? ""),
         userName,
         sentAt: new Date(turnMs),
         uuid: uuids.user,
       });
+      if (result.deduplicated) zepDuplicates++;
     } catch (err) {
       if (!isZepDuplicateError(err)) throw err;
       zepDuplicates++;
     }
     try {
-      await addAssistantMessageToZepStrict({
+      const result = await addAssistantMessageToZepStrict({
         threadId: zepThreadId,
         content: String(assistantRow.content ?? ""),
         sentAt: new Date(turnMs + 1),
         uuid: uuids.assistant,
       });
+      if (result.deduplicated) zepDuplicates++;
     } catch (err) {
       if (!isZepDuplicateError(err)) throw err;
       zepDuplicates++;
@@ -370,10 +393,6 @@ async function processTurnSyncOperation(
 function targetNeedsWork(targets: Record<string, { status?: string }>, key: string): boolean {
   const s = targets?.[key]?.status;
   return s === "pending" || s === "failed";
-}
-
-function errorClassOf(err: unknown): string {
-  return err instanceof Error ? err.constructor.name : typeof err;
 }
 
 /** Runs one target's work; marks completed on success, failed (+ sanitized error class, R21) then rethrows on error. */
@@ -488,17 +507,28 @@ async function processFactChangeOperation(
         throw err;
       }
       if (kind === "forget") {
-        if (zepEpisodesNeeded) {
-          await runTargetStep(operationId, "zepEpisodes", async () => {
-            // Mixed episodes included by design — privacy wins (U4 approach).
-            const episodeUuids = new Set(matches.flatMap((m) => m.episodes));
-            for (const uuid of episodeUuids) await deleteZepEpisodeStrict(uuid);
-          });
-        }
-        if (zepEdgesNeeded) {
-          await runTargetStep(operationId, "zepEdges", async () => {
-            for (const m of matches) await deleteZepEdgeStrict(m.uuid);
-          });
+        // Re-run both delete passes whenever either target remains unresolved.
+        // A prior edge delete can have raced a source episode or provider
+        // eventual consistency; verification below is the completion boundary.
+        const sessionSnap = await db.doc(String(op.sessionRef)).get();
+        const zepThreadId = String(sessionSnap.exists ? sessionSnap.data()?.zepThreadId ?? "" : "");
+        try {
+          // Mixed episodes included by design: privacy wins (U4 approach).
+          const episodeUuids = new Set(matches.flatMap((m) => m.episodes));
+          for (const uuid of episodeUuids) await deleteZepEpisodeStrict(uuid);
+          for (const match of matches) await deleteZepEdgeStrict(match.uuid);
+          await verifyZepForgottenFactAbsent({ zepUserId, factText: retiredText, threadId: zepThreadId });
+          if (zepEpisodesNeeded) await markMemoryOperationTarget(operationId, "zepEpisodes", "completed");
+          if (zepEdgesNeeded) await markMemoryOperationTarget(operationId, "zepEdges", "completed");
+        } catch (err) {
+          const cls = errorClassOf(err);
+          if (zepEpisodesNeeded) {
+            await markMemoryOperationTarget(operationId, "zepEpisodes", "failed", cls).catch(() => {});
+          }
+          if (zepEdgesNeeded) {
+            await markMemoryOperationTarget(operationId, "zepEdges", "failed", cls).catch(() => {});
+          }
+          throw err;
         }
       } else {
         if (zepEdgesNeeded) {

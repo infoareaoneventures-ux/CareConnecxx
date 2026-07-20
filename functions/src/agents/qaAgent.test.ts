@@ -1,4 +1,45 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+
+const qaHarness = vi.hoisted(() => {
+  const writes: Array<{ collection: string; id?: string; data: Record<string, unknown> }> = [];
+  const sessionData: Record<string, unknown> = {};
+
+  const makeChain = (collection = "", id?: string): any => ({
+    collection: (name: string) => makeChain(name),
+    doc: (docId?: string) => makeChain(collection, docId),
+    where: () => makeChain(collection, id),
+    orderBy: () => makeChain(collection, id),
+    limit: () => makeChain(collection, id),
+    get: async () => ({
+      exists: collection === "agent_sessions" && Boolean(id),
+      data: () => collection === "agent_sessions" ? sessionData : {},
+      empty: true,
+      docs: [],
+      ref: makeChain(collection, id),
+    }),
+    set: async (data: Record<string, unknown>) => { writes.push({ collection, id, data }); },
+    update: async (data: Record<string, unknown>) => { writes.push({ collection, id, data }); },
+    add: async (data: Record<string, unknown>) => { writes.push({ collection, data }); return { id: "mock-id" }; },
+    delete: async () => {},
+  });
+  const firestore: any = () => firestore;
+  firestore.collection = (name: string) => makeChain(name);
+  firestore.batch = () => ({ set: () => {}, update: () => {}, commit: async () => {} });
+  firestore.FieldValue = { delete: () => "__delete__", serverTimestamp: () => "__timestamp__" };
+
+  return {
+    firestore,
+    writes,
+    sessionData,
+    detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
+    factChangeAckCopy: vi.fn(() => null),
+    findTombstonedRestatement: vi.fn(async () => null),
+    classifyReRememberReply: vi.fn(async () => "other"),
+    confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+    quickComplete: vi.fn(async () => "SUPPORTED"),
+    runAgentModelTurn: vi.fn(),
+  };
+});
 
 // qaAgent imports a wide graph (firebase-admin, MCP, Zep, Claude). The
 // helper we want to test is pure, but vitest will still load the module
@@ -10,36 +51,48 @@ vi.mock("firebase-admin", () => ({
     // which is now in qaAgent's import graph via caraAgent → bookingExecutor.
     apps: [],
     initializeApp: () => ({}),
-    firestore: () => ({ collection: () => ({}) }),
+    firestore: qaHarness.firestore,
   },
   apps: [],
   initializeApp: () => ({}),
-  firestore: () => ({ collection: () => ({}) }),
+  firestore: qaHarness.firestore,
 }));
 vi.mock("../utils/claudeClient",   () => ({ getSharedClient: () => ({}) }));
-vi.mock("../utils/openaiClient",   () => ({ quickComplete: vi.fn(), getOpenAIClient: () => ({}) }));
+vi.mock("../utils/openaiClient",   () => ({ quickComplete: (...args: unknown[]) => qaHarness.quickComplete(...args), getOpenAIClient: () => ({}), openAiTokenLimitParam: () => ({}) }));
 vi.mock("../utils/claudeRetry",    () => ({ callClaudeWithRetry: vi.fn() }));
 vi.mock("../safety/supervisor",    () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg }));
 vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
-vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
-vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn() }));
+vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(async () => null), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
+vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: vi.fn(async () => ""), initializeMemoryFiles: vi.fn(async () => undefined) }));
 vi.mock("../memory/learnedFacts",  () => ({
-  getRelevantFacts: vi.fn(),
-  detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
-  factChangeAckCopy: vi.fn(() => null),
-  findTombstonedRestatement: vi.fn(async () => null),
-  classifyReRememberReply: vi.fn(async () => "other"),
-  confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
+  getRelevantFacts: vi.fn(async () => []),
+  detectAndStageFactChange: (...args: unknown[]) => qaHarness.detectAndStageFactChange(...args),
+  factChangeAckCopy: (...args: unknown[]) => qaHarness.factChangeAckCopy(...args),
+  findTombstonedRestatement: (...args: unknown[]) => qaHarness.findTombstonedRestatement(...args),
+  classifyReRememberReply: (...args: unknown[]) => qaHarness.classifyReRememberReply(...args),
+  confirmReRemember: (...args: unknown[]) => qaHarness.confirmReRemember(...args),
   RE_REMEMBER_QUESTION_COPY: "re-remember-question",
   RE_REMEMBER_CONFIRMED_COPY: "re-remember-confirmed",
   RE_REMEMBER_BLOCKED_COPY: "re-remember-blocked",
   FACT_CHANGE_NO_MATCH_COPY: "no-match",
 }));
-vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(), isInDND: () => false }));
-vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(), startTyping: vi.fn(), stopTyping: vi.fn() }));
-vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn() }));
-vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(), buildToolResultContent: vi.fn(), HISTORY_WINDOW: 24, HISTORY_OVERFETCH_LIMIT: 60, composeHistoryWindow: (rows: unknown[]) => rows }));
+vi.mock("../memory/preferences",   () => ({ getPreferences: vi.fn(async () => null), isInDND: () => false }));
+vi.mock("../linq/client",          () => ({ sendMessage: vi.fn(async () => undefined), startTyping: vi.fn(async () => undefined), stopTyping: vi.fn(async () => undefined) }));
+vi.mock("./caraAgent",             () => ({ buildClickableMessage: (message: string) => message }));
+vi.mock("./executionAgent",        () => ({ getActiveAgentForUser: vi.fn(async () => null) }));
+vi.mock("./agentModelTurn",        () => ({ runAgentModelTurn: (...args: unknown[]) => qaHarness.runAgentModelTurn(...args) }));
+vi.mock("./contextManagement",     () => ({ maybeRollUpHistory: vi.fn(async () => false), buildToolResultContent: vi.fn(async () => ""), patchDanglingToolCalls: () => 0, truncateOldToolCallArgs: () => 0, HISTORY_WINDOW: 24, HISTORY_OVERFETCH_LIMIT: 60, MIN_USER_ROWS_KEPT: 6, composeHistoryWindow: (rows: unknown[]) => rows }));
+vi.mock("./operationalContext",    () => ({ loadCaraOperationalContext: vi.fn(async () => null), formatCaraOperationalContext: () => "", buildOperationalRecipeLead: () => "" }));
+vi.mock("./situationSnapshot",     () => ({ buildCaregiverSnapshot: vi.fn(async () => ""), buildClientSnapshot: vi.fn(async () => "") }));
+vi.mock("../data/seniorProfileRepository", () => ({ getSeniorProfileWithSource: vi.fn(async () => ({ profile: null, source: null })) }));
+vi.mock("./turnCheckpoint",        () => ({ loadCheckpoint: vi.fn(async () => null), writeCheckpoint: vi.fn(async () => undefined), clearCheckpoint: vi.fn(async () => undefined), hashText: (value: string) => `hash:${value}` }));
+vi.mock("./emotionalContext",      () => ({ classifyEmotionalContext: vi.fn(async () => "calm"), classifyEmotionalTopic: () => "general", blendEmotionalContext: () => ({ value: "calm", persist: null }), buildEmotionalContextDirective: () => "" }));
+vi.mock("./skillPicker",           () => ({ pickSkill: vi.fn(async () => ({ skill: null })) }));
+vi.mock("./skills",                () => ({ findSkill: () => null, buildSkillDirective: () => "" }));
+vi.mock("./promptAugmenters",      () => ({ runAugmenters: vi.fn(async (systemPrompt: string) => ({ systemPrompt, applied: [] })) }));
+vi.mock("./defaultPromptAugmenters", () => ({ DEFAULT_AUGMENTERS: [], buildCurrentTimeBlock: () => "" }));
+vi.mock("./pendingActions",        () => ({ getLatestPending: vi.fn(async () => null) }));
 
 import {
   hasListShape,
@@ -65,6 +118,7 @@ import {
   applyReconciliationMasking,
   ZEP_UNAVAILABLE_MARKER,
   MEMORY_RECONCILIATION_PENDING_MARKER,
+  runQaAgent,
 } from "./qaAgent";
 import { createTurnMetrics, type TurnMetrics } from "./turnMetrics";
 import type { ZepContextResult } from "../memory/zepClient";
@@ -704,6 +758,149 @@ describe("U7 full-path grounding gate wiring (source characterization)", () => {
 // U1: typed Zep context → prompt/metrics mapping. One shared function serves
 // both the client and caregiver branches, so parity is structural — these
 // tests pin the semantics per status and prove the two roles cannot diverge.
+describe("runQaAgent re-remember and grounding behavior", () => {
+  const baseParams = {
+    phone: "+15555550123",
+    chatId: "chat-re-remember",
+    userId: "client-123",
+    seniorId: "senior-123",
+    userType: "client" as const,
+    skipSend: true,
+  };
+
+  const agentText = (text: string) => ({
+    stop_reason: "end_turn",
+    content: [{ type: "text", text }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+
+  const normalReply = "I can help with that.";
+
+  beforeEach(() => {
+    qaHarness.writes.length = 0;
+    for (const key of Object.keys(qaHarness.sessionData)) delete qaHarness.sessionData[key];
+    qaHarness.detectAndStageFactChange.mockReset();
+    qaHarness.detectAndStageFactChange.mockResolvedValue({ kind: "not_correction" });
+    qaHarness.factChangeAckCopy.mockReset();
+    qaHarness.factChangeAckCopy.mockReturnValue(null);
+    qaHarness.findTombstonedRestatement.mockReset();
+    qaHarness.findTombstonedRestatement.mockResolvedValue(null);
+    qaHarness.classifyReRememberReply.mockReset();
+    qaHarness.classifyReRememberReply.mockResolvedValue("other");
+    qaHarness.confirmReRemember.mockReset();
+    qaHarness.confirmReRemember.mockResolvedValue({ ok: false, reason: "not_found" });
+    qaHarness.quickComplete.mockReset();
+    qaHarness.quickComplete.mockResolvedValue("SUPPORTED");
+    qaHarness.runAgentModelTurn.mockReset();
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText(normalReply));
+  });
+
+  it("returns the confirmed copy when a pending re-remember is confirmed", async () => {
+    qaHarness.classifyReRememberReply.mockResolvedValue("confirm");
+    qaHarness.confirmReRemember.mockResolvedValue({ ok: true });
+
+    const reply = await runQaAgent({
+      ...baseParams,
+      text: "yes, remember that again",
+      session: {
+        pendingReRememberFactId: "fact-1",
+        pendingReRememberFact: "Mom prefers tea.",
+        pendingReRememberCategory: "preference",
+        pendingReRememberExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+
+    expect(reply).toBe("re-remember-confirmed");
+    expect(qaHarness.classifyReRememberReply).toHaveBeenCalledWith("yes, remember that again");
+    expect(qaHarness.confirmReRemember).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "client-123",
+      factDocId: "fact-1",
+      phone: "+15555550123",
+      restatedFact: { fact: "Mom prefers tea.", category: "preference" },
+    }));
+    expect(qaHarness.runAgentModelTurn).not.toHaveBeenCalled();
+  });
+
+  it("returns the blocked copy when pending reconciliation prevents re-remembering", async () => {
+    qaHarness.classifyReRememberReply.mockResolvedValue("confirm");
+    qaHarness.confirmReRemember.mockResolvedValue({ ok: false, reason: "reconciliation_pending" });
+
+    const reply = await runQaAgent({
+      ...baseParams,
+      text: "yes",
+      session: {
+        pendingReRememberFactId: "fact-2",
+        pendingReRememberExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+
+    expect(reply).toBe("re-remember-blocked");
+    expect(qaHarness.confirmReRemember).toHaveBeenCalledTimes(1);
+    expect(qaHarness.runAgentModelTurn).not.toHaveBeenCalled();
+  });
+
+  it("continues the normal turn when a pending re-remember is declined", async () => {
+    qaHarness.classifyReRememberReply.mockResolvedValue("decline");
+
+    const reply = await runQaAgent({
+      ...baseParams,
+      text: "no, leave it forgotten",
+      session: {
+        pendingReRememberFactId: "fact-3",
+        pendingReRememberExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+
+    expect(reply).toBe(normalReply);
+    expect(qaHarness.classifyReRememberReply).toHaveBeenCalledTimes(1);
+    expect(qaHarness.confirmReRemember).not.toHaveBeenCalled();
+    expect(qaHarness.detectAndStageFactChange).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "client-123",
+      text: "no, leave it forgotten",
+    }));
+    expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not classify an expired re-remember confirmation and continues the normal turn", async () => {
+    const reply = await runQaAgent({
+      ...baseParams,
+      text: "yes",
+      session: {
+        pendingReRememberFactId: "fact-4",
+        pendingReRememberExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+
+    expect(reply).toBe(normalReply);
+    expect(qaHarness.classifyReRememberReply).not.toHaveBeenCalled();
+    expect(qaHarness.confirmReRemember).not.toHaveBeenCalled();
+    expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the legacy full-path grounding behavior when risk tiers are disabled", async () => {
+    const previous = process.env.GROUNDING_RISK_TIERS_ENABLED;
+    process.env.GROUNDING_RISK_TIERS_ENABLED = "false";
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("She was diagnosed with Parkinson's."));
+    // The legacy parser treats an ambiguous verifier response as supported. The
+    // typed U7 path would neutralize this high-risk claim instead.
+    qaHarness.quickComplete.mockResolvedValue("not enough information");
+
+    try {
+      const reply = await runQaAgent({ ...baseParams, text: "How is Mom doing?", session: {} });
+
+      expect(reply).toBe("She was diagnosed with Parkinson's.");
+      expect(qaHarness.quickComplete).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining("DRAFT:\nShe was diagnosed with Parkinson's."),
+        expect.objectContaining({ maxTokens: 8 }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.GROUNDING_RISK_TIERS_ENABLED;
+      else process.env.GROUNDING_RISK_TIERS_ENABLED = previous;
+    }
+  });
+});
+
 describe("applyZepContextResult", () => {
   const roles = ["client", "caregiver"] as const;
 

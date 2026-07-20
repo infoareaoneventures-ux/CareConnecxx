@@ -2,7 +2,10 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getSharedClient } from "../utils/claudeClient";
-import { consolidateMemoryForUser, cleanupExpiredTransientToolFiles } from "../memory/memoryFiles";
+import {
+  consolidateMemoryForUser,
+  cleanupExpiredTransientToolFiles,
+} from "../memory/memoryFiles";
 import { MEMORY_OPERATIONS_COLLECTION } from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
 
@@ -21,68 +24,107 @@ interface PhoneCompressionResult {
   compressed: number;
   /** Compress-eligible rows left in place because their memory sync is unresolved. */
   pendingBlocked: number;
+  /** Compress-eligible rows left in place by correction/forget reconciliation. */
+  excludedBlocked: number;
   /** Unresolved rows older than AGED_PENDING_SYNC_MS (worker health signal). */
   agedPending: number;
 }
 
-async function compressConversationForPhone(phone: string): Promise<PhoneCompressionResult> {
-  const col = db.collection("agent_conversations").doc(phone).collection("messages");
+async function compressConversationForPhone(
+  phone: string,
+): Promise<PhoneCompressionResult> {
+  const col = db
+    .collection("agent_conversations")
+    .doc(phone)
+    .collection("messages");
   const allSnap = await col.orderBy("timestamp", "asc").get();
 
-  const summaryDocs = allSnap.docs.filter(d => d.data().role === "summary");
-  const realDocs    = allSnap.docs.filter(d => d.data().role !== "summary");
+  const summaryDocs = allSnap.docs.filter((d) => d.data().role === "summary");
+  const realDocs = allSnap.docs.filter((d) => d.data().role !== "summary");
 
-  // R9 guard: compression stops at the FIRST row with unresolved sync — that
-  // row and everything younger stay verbatim until the worker clears it.
-  const hasPendingSync = (d: (typeof realDocs)[number]) => typeof d.data().memorySyncStatus === "string";
-  const firstPendingIdx = realDocs.findIndex(hasPendingSync);
+  // R9 guard: compression stops at the FIRST protected row. An unresolved sync
+  // row is still owned by the retry worker; a correction/forget row can contain
+  // retired content. That row and everything younger stay verbatim.
+  const hasPendingSync = (d: (typeof realDocs)[number]) =>
+    typeof d.data().memorySyncStatus === "string";
+  const isExcluded = (d: (typeof realDocs)[number]) =>
+    Boolean(d.data().excludeFromMemoryConsolidationAt);
   const agedCutoff = Date.now() - AGED_PENDING_SYNC_MS;
   const agedPending = realDocs.filter(
-    d => hasPendingSync(d) && Number(d.data().timestamp ?? Date.now()) < agedCutoff,
+    (d) =>
+      hasPendingSync(d) &&
+      Number(d.data().timestamp ?? Date.now()) < agedCutoff,
   ).length;
 
   // Compress earlier than the previous threshold (was 30) — qaAgent only loads
   // the 10 most-recent + 1 summary, so turns 11-30 had no fallback. Triggering
   // at 15 means active users get summary continuity within a couple of days.
-  if (realDocs.length <= 15) return { compressed: 0, pendingBlocked: 0, agedPending };
+  if (realDocs.length <= 15)
+    return {
+      compressed: 0,
+      pendingBlocked: 0,
+      excludedBlocked: 0,
+      agedPending,
+    };
 
   let toCompress = realDocs.slice(0, realDocs.length - 10);
+  const firstProtectedIdx = toCompress.findIndex(
+    (d) => hasPendingSync(d) || isExcluded(d),
+  );
   let pendingBlocked = 0;
-  if (firstPendingIdx >= 0 && firstPendingIdx < toCompress.length) {
-    pendingBlocked = toCompress.length - firstPendingIdx;
-    toCompress = toCompress.slice(0, firstPendingIdx);
+  let excludedBlocked = 0;
+  let hasExcludedInWindow = false;
+  if (firstProtectedIdx >= 0) {
+    const protectedTail = toCompress.slice(firstProtectedIdx);
+    pendingBlocked = protectedTail.filter(hasPendingSync).length;
+    excludedBlocked = protectedTail.filter(isExcluded).length;
+    hasExcludedInWindow = excludedBlocked > 0;
+    toCompress = toCompress.slice(0, firstProtectedIdx);
   }
-  if (toCompress.length < 5) return { compressed: 0, pendingBlocked, agedPending };
+  if (toCompress.length < 5) {
+    // There is not enough safe transcript to rebuild a useful summary. If this
+    // window contains a correction/forget row, remove the old trusted summary
+    // rather than leave a possible paraphrase of retired content available.
+    if (hasExcludedInWindow && summaryDocs.length > 0) {
+      const batch = db.batch();
+      summaryDocs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    }
+    return { compressed: 0, pendingBlocked, excludedBlocked, agedPending };
+  }
 
   const existingSummary = summaryDocs[0]?.data()?.content as string | undefined;
-  // R23/KTD16 (U4b): rows the correction/forget worker marked as containing a
-  // corrected/forgotten fact are still deleted with the compressed window, but
-  // their content NEVER enters the summary prompt — a compression summary must
-  // not preserve a retired assertion in paraphrased form.
-  const summarizable = toCompress.filter(d => !d.data().excludeFromMemoryConsolidationAt);
-  const newMessages  = summarizable
-    .map(d => `${d.data().role === "user" ? "User" : "Evia"}: ${d.data().content as string}`)
+  // An existing summary may have paraphrased an excluded fact. Never feed that
+  // summary back to the model when a correction/forget boundary is present;
+  // replacing it from the safe prefix is the only safe regeneration path.
+  const safeExistingSummary = hasExcludedInWindow ? undefined : existingSummary;
+  const newMessages = toCompress
+    .map(
+      (d) =>
+        `${d.data().role === "user" ? "User" : "Evia"}: ${d.data().content as string}`,
+    )
     .join("\n");
 
   let summaryText: string;
-  if (!newMessages && existingSummary) {
-    // Every compressible row was excluded — carry the prior summary forward
-    // verbatim; there is nothing new the summarizer is allowed to see.
-    summaryText = existingSummary;
+  if (!newMessages && safeExistingSummary) {
+    summaryText = safeExistingSummary;
   } else if (!newMessages) {
     // Nothing summarizable and no prior summary: leave the rows in place this
     // run rather than deleting content without any summary continuity.
-    return { compressed: 0, pendingBlocked, agedPending };
+    return { compressed: 0, pendingBlocked, excludedBlocked, agedPending };
   } else {
-    const promptParts = existingSummary
-      ? [`Existing summary:\n${existingSummary}\n\nNew messages to incorporate:\n${newMessages}`]
+    const promptParts = safeExistingSummary
+      ? [
+          `Existing summary:\n${safeExistingSummary}\n\nNew messages to incorporate:\n${newMessages}`,
+        ]
       : [`Conversation:\n${newMessages}`];
 
     const response = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
-      system:     "You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with \"<summary>\".",
-      messages:   [{ role: "user", content: promptParts[0] }],
+      system:
+        `You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with "<summary>".`,
+      messages: [{ role: "user", content: promptParts[0] }],
     });
 
     summaryText = (response.content[0] as Anthropic.TextBlock).text;
@@ -91,7 +133,7 @@ async function compressConversationForPhone(phone: string): Promise<PhoneCompres
   // Delete old summary and compressed messages, write new summary. The summary
   // slots immediately before the first RETAINED row (which, when the pending
   // guard truncated the window, is the first still-unsynced row).
-  const firstRetained  = realDocs[toCompress.length];
+  const firstRetained = realDocs[toCompress.length];
   const summaryTimestamp = (firstRetained.data().timestamp as number) - 1;
 
   // Firebase batches are capped at 500 ops — chunk deletes if needed
@@ -99,25 +141,43 @@ async function compressConversationForPhone(phone: string): Promise<PhoneCompres
   for (let i = 0; i < toDelete.length; i += 400) {
     const batch = db.batch();
     for (const doc of toDelete.slice(i, i + 400)) batch.delete(doc.ref);
-    if (i === 0) batch.set(col.doc(), { role: "summary", content: summaryText, timestamp: summaryTimestamp });
+    if (i === 0)
+      batch.set(col.doc(), {
+        role: "summary",
+        content: summaryText,
+        timestamp: summaryTimestamp,
+      });
     await batch.commit();
   }
 
-  console.log(`[compressConversation] Compressed ${toCompress.length} messages for ${phone}`);
-  return { compressed: toCompress.length, pendingBlocked, agedPending };
+  console.log(
+    `[compressConversation] Compressed ${toCompress.length} messages for ${phone}`,
+  );
+  return {
+    compressed: toCompress.length,
+    pendingBlocked,
+    excludedBlocked,
+    agedPending,
+  };
 }
 
 export interface CompressionCounts {
   conversations: number;
   compressedMessages: number;
   skippedPendingSync: number;
+  skippedExcludedRows: number;
   agedPendingRows: number;
   failed: number;
 }
 
 export async function compressOldConversations(): Promise<CompressionCounts> {
   const counts: CompressionCounts = {
-    conversations: 0, compressedMessages: 0, skippedPendingSync: 0, agedPendingRows: 0, failed: 0,
+    conversations: 0,
+    compressedMessages: 0,
+    skippedPendingSync: 0,
+    skippedExcludedRows: 0,
+    agedPendingRows: 0,
+    failed: 0,
   };
   const convDocs = await db.collection("agent_conversations").listDocuments();
   for (const docRef of convDocs) {
@@ -126,6 +186,7 @@ export async function compressOldConversations(): Promise<CompressionCounts> {
       const r = await compressConversationForPhone(docRef.id);
       counts.compressedMessages += r.compressed;
       counts.skippedPendingSync += r.pendingBlocked;
+      counts.skippedExcludedRows += r.excludedBlocked;
       counts.agedPendingRows += r.agedPending;
     } catch (err) {
       counts.failed++;
@@ -138,12 +199,15 @@ export async function compressOldConversations(): Promise<CompressionCounts> {
 // ── Booking pattern analysis ──────────────────────────────────────────────────
 
 export async function analyzeBookingPatterns(): Promise<void> {
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
 
   // Get all clients with completed appointments in the last 30 days
-  const apptSnap = await db.collection("appointments")
+  const apptSnap = await db
+    .collection("appointments")
     .where("status", "==", "completed")
-    .where("date",   ">=", thirtyDaysAgo)
+    .where("date", ">=", thirtyDaysAgo)
     .get();
 
   if (apptSnap.empty) return;
@@ -160,9 +224,10 @@ export async function analyzeBookingPatterns(): Promise<void> {
   }
 
   // Also get cancelled appointments in the same window
-  const cancelSnap = await db.collection("appointments")
+  const cancelSnap = await db
+    .collection("appointments")
     .where("status", "in", ["cancelled_by_client", "cancelled"])
-    .where("date",   ">=", thirtyDaysAgo)
+    .where("date", ">=", thirtyDaysAgo)
     .get();
 
   for (const doc of cancelSnap.docs) {
@@ -179,7 +244,8 @@ export async function analyzeBookingPatterns(): Promise<void> {
 
   for (const [clientId, events] of Object.entries(byClient)) {
     // Count by day
-    const dayStats: Record<number, { completed: number; cancelled: number }> = {};
+    const dayStats: Record<number, { completed: number; cancelled: number }> =
+      {};
     for (const e of events) {
       if (!dayStats[e.day]) dayStats[e.day] = { completed: 0, cancelled: 0 };
       if (e.status === "completed") dayStats[e.day].completed++;
@@ -190,13 +256,33 @@ export async function analyzeBookingPatterns(): Promise<void> {
       const day = parseInt(dayStr);
       const total = stats.completed + stats.cancelled;
       const cancelRate = total > 0 ? stats.cancelled / total : 0;
-      const ref = db2.collection("booking_patterns").doc(clientId).collection("day_patterns").doc(String(day));
-      batch.set(ref, { day, completedCount: stats.completed, cancelledCount: stats.cancelled, cancelRate, updatedAt: new Date().toISOString() }, { merge: true });
+      const ref = db2
+        .collection("booking_patterns")
+        .doc(clientId)
+        .collection("day_patterns")
+        .doc(String(day));
+      batch.set(
+        ref,
+        {
+          day,
+          completedCount: stats.completed,
+          cancelledCount: stats.cancelled,
+          cancelRate,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
     }
   }
 
-  await batch.commit().catch(err => console.error("[analyzeBookingPatterns] batch error:", err));
-  console.log(`[analyzeBookingPatterns] Updated patterns for ${Object.keys(byClient).length} clients`);
+  await batch
+    .commit()
+    .catch((err) =>
+      console.error("[analyzeBookingPatterns] batch error:", err),
+    );
+  console.log(
+    `[analyzeBookingPatterns] Updated patterns for ${Object.keys(byClient).length} clients`,
+  );
 }
 
 // ── Nightly family-memory consolidation (memory-grounding U2, R2/R4/KTD3) ────
@@ -228,8 +314,16 @@ export interface NightlyMemoryCounts {
  * (R21).
  */
 export async function runNightlyMemoryConsolidation(): Promise<NightlyMemoryCounts> {
-  const counts: NightlyMemoryCounts = { eligible: 0, attempted: 0, succeeded: 0, failed: 0, skipped: 0 };
-  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - NIGHTLY_MEMORY_WINDOW_MS);
+  const counts: NightlyMemoryCounts = {
+    eligible: 0,
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  };
+  const cutoff = admin.firestore.Timestamp.fromMillis(
+    Date.now() - NIGHTLY_MEMORY_WINDOW_MS,
+  );
   const processed = new Set<string>(); // paging-duplicate guard: one attempt per session doc
 
   let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
@@ -309,9 +403,14 @@ export interface MemoryOperationCleanupCounts {
 export async function cleanupExpiredMemoryOperations(
   nowMs: number = Date.now(),
 ): Promise<MemoryOperationCleanupCounts> {
-  const counts: MemoryOperationCleanupCounts = { scanned: 0, deleted: 0, failed: 0 };
+  const counts: MemoryOperationCleanupCounts = {
+    scanned: 0,
+    deleted: 0,
+    failed: 0,
+  };
   const nowIso = new Date(nowMs).toISOString();
-  const snap = await db.collection(MEMORY_OPERATIONS_COLLECTION)
+  const snap = await db
+    .collection(MEMORY_OPERATIONS_COLLECTION)
     .where("status", "==", "completed")
     .where("expiresAt", "<=", nowIso)
     .orderBy("expiresAt", "asc")
@@ -346,14 +445,14 @@ export async function runNightlyMemoryJob(): Promise<void> {
   }
 
   // Analyze booking patterns for proactive suggestions
-  await analyzeBookingPatterns().catch(err =>
-    console.error("[nightlyMemory] analyzeBookingPatterns error:", err)
+  await analyzeBookingPatterns().catch((err) =>
+    console.error("[nightlyMemory] analyzeBookingPatterns error:", err),
   );
 
   // Compress conversations longer than 15 messages. Aggregate-only log (R21):
   // counts, no phones — agedPendingRows > 0 means the memory-operation worker
   // is leaving source rows unresolved past its expected horizon (R9).
-  const compression = await compressOldConversations().catch(err => {
+  const compression = await compressOldConversations().catch((err) => {
     console.error("[nightlyMemory] compressOldConversations error:", err);
     return null;
   });
@@ -363,28 +462,37 @@ export async function runNightlyMemoryJob(): Promise<void> {
   // embeddings. Aggregate-only log (R21): scanned/retained/deleted/malformed/
   // failed counts — no user IDs, no slugs. Isolated so a Storage failure never
   // blocks the remaining housekeeping.
-  const transientCleanup = await cleanupExpiredTransientToolFiles().catch(err => {
-    console.error("[nightlyMemory] cleanupExpiredTransientToolFiles error:", {
-      errorClass: (err as Error)?.name ?? "Error",
-    });
-    return null;
-  });
-  if (transientCleanup) console.log("[nightlyMemory] transient tool-file cleanup", transientCleanup);
+  const transientCleanup = await cleanupExpiredTransientToolFiles().catch(
+    (err) => {
+      console.error("[nightlyMemory] cleanupExpiredTransientToolFiles error:", {
+        errorClass: (err as Error)?.name ?? "Error",
+      });
+      return null;
+    },
+  );
+  if (transientCleanup)
+    console.log(
+      "[nightlyMemory] transient tool-file cleanup",
+      transientCleanup,
+    );
 
   // U9: delete completed memory operations past their 30-day expiresAt.
   // Aggregate-only log (R21): counts, no operation IDs, no refs. Isolated so a
   // ledger failure never blocks the remaining housekeeping.
-  const operationCleanup = await cleanupExpiredMemoryOperations().catch(err => {
-    console.error("[nightlyMemory] cleanupExpiredMemoryOperations error:", {
-      errorClass: (err as Error)?.name ?? "Error",
-    });
-    return null;
-  });
-  if (operationCleanup) console.log("[nightlyMemory] memory-operation cleanup", operationCleanup);
+  const operationCleanup = await cleanupExpiredMemoryOperations().catch(
+    (err) => {
+      console.error("[nightlyMemory] cleanupExpiredMemoryOperations error:", {
+        errorClass: (err as Error)?.name ?? "Error",
+      });
+      return null;
+    },
+  );
+  if (operationCleanup)
+    console.log("[nightlyMemory] memory-operation cleanup", operationCleanup);
 
   // Auto-complete execution agents idle for >24 hours
-  await cleanupStaleExecutionAgents().catch(err =>
-    console.error("[nightlyMemory] cleanupStaleExecutionAgents error:", err)
+  await cleanupStaleExecutionAgents().catch((err) =>
+    console.error("[nightlyMemory] cleanupStaleExecutionAgents error:", err),
   );
 }
 

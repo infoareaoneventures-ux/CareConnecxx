@@ -113,7 +113,17 @@ vi.mock("../../observability/auditLog", () => ({
 vi.mock("../../memory/memoryFiles", () => ({
   readMemoryFile:  vi.fn().mockResolvedValue("some memory content"),
   writeMemoryFile: vi.fn().mockResolvedValue(undefined),
+  isTransientToolFile: vi.fn().mockReturnValue(false),
   MemoryFile: {},
+}));
+
+vi.mock("../../memory/memoryOperations", () => ({
+  getMemoryReconciliationState: vi.fn().mockResolvedValue({
+    pending: false,
+    storageMasked: false,
+    zepMasked: false,
+    pendingOperationIds: [],
+  }),
 }));
 
 vi.mock("../../memory/preferences", () => ({

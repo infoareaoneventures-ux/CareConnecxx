@@ -2,10 +2,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ── Firestore stand-in for one conversation's messages subcollection ────────────
 const hoisted = vi.hoisted(() => {
-  // Each message: { id, role, content, timestamp }
-  let docs: Array<{ id: string; role: string; content: string; timestamp: number }> = [];
+  // Each message: { id, role, content, timestamp, optional sync/reconciliation state }
+  let docs: Array<{
+    id: string;
+    role: string;
+    content: string;
+    timestamp: number;
+    memorySyncStatus?: string;
+    excludeFromMemoryConsolidationAt?: string;
+  }> = [];
   let autoId = 0;
-  const committed: Array<{ type: "set" | "delete"; id: string; data?: any }> = [];
+  const committed: Array<{ type: "set" | "delete"; id: string; data?: any }> =
+    [];
 
   const makeDocRef = (id: string) => ({
     id,
@@ -15,7 +23,9 @@ const hoisted = vi.hoisted(() => {
 
   const col = {
     doc: vi.fn(() => makeDocRef(`auto-${autoId++}`)),
-    count: vi.fn(() => ({ get: async () => ({ data: () => ({ count: docs.length }) }) })),
+    count: vi.fn(() => ({
+      get: async () => ({ data: () => ({ count: docs.length }) }),
+    })),
     orderBy: vi.fn(() => ({
       get: async () => ({
         docs: [...docs]
@@ -23,14 +33,16 @@ const hoisted = vi.hoisted(() => {
           .map((d) => ({
             id: d.id,
             ref: makeDocRef(d.id),
-            data: () => ({ role: d.role, content: d.content, timestamp: d.timestamp }),
+            data: () => ({ ...d }),
           })),
       }),
     })),
   };
 
   const batch = {
-    set: vi.fn((ref: any, data: any) => committed.push({ type: "set", id: ref.id, data })),
+    set: vi.fn((ref: any, data: any) =>
+      committed.push({ type: "set", id: ref.id, data }),
+    ),
     delete: vi.fn((ref: any) => committed.push({ type: "delete", id: ref.id })),
     commit: vi.fn(async () => {
       // Apply deletes + summary upsert to the in-memory store so assertions can inspect state.
@@ -49,7 +61,10 @@ const hoisted = vi.hoisted(() => {
     batch: () => batch,
   });
 
-  const quickCompleteMock = vi.fn(async () => "Family discussed Mom's medication schedule and prefers morning visits.");
+  const quickCompleteMock = vi.fn(
+    async () =>
+      "Family discussed Mom's medication schedule and prefers morning visits.",
+  );
   const writeMemoryFileMock = vi.fn(async () => {});
 
   return {
@@ -57,7 +72,15 @@ const hoisted = vi.hoisted(() => {
     committed,
     quickCompleteMock,
     writeMemoryFileMock,
-    seed: (msgs: Array<{ role: string; content: string; timestamp: number }>) => {
+    seed: (
+      msgs: Array<{
+        role: string;
+        content: string;
+        timestamp: number;
+        memorySyncStatus?: string;
+        excludeFromMemoryConsolidationAt?: string;
+      }>,
+    ) => {
       docs = msgs.map((m, i) => ({ id: `m${i}`, ...m }));
       autoId = 0;
       committed.length = 0;
@@ -72,11 +95,13 @@ vi.mock("firebase-admin", () => ({
   firestore: hoisted.firestore,
 }));
 
-vi.mock("../utils/openaiClient", () => ({ quickComplete: hoisted.quickCompleteMock }));
+vi.mock("../utils/openaiClient", () => ({
+  quickComplete: hoisted.quickCompleteMock,
+}));
 vi.mock("../memory/memoryFiles", () => ({
-  writeMemoryFile:             hoisted.writeMemoryFileMock,
+  writeMemoryFile: hoisted.writeMemoryFileMock,
   TRANSIENT_TOOL_MEMORY_CLASS: "transient_tool",
-  TRANSIENT_TOOL_TTL_MS:       24 * 60 * 60 * 1000,
+  TRANSIENT_TOOL_TTL_MS: 24 * 60 * 60 * 1000,
 }));
 
 const quickCompleteMock = hoisted.quickCompleteMock;
@@ -129,13 +154,19 @@ describe("maybeRollUpHistory", () => {
 
   it("merges an existing summary instead of creating a second one", async () => {
     const msgs = makeMsgs(ROLLUP_TRIGGER + 4);
-    msgs.unshift({ role: "summary", content: "Earlier: family onboarded.", timestamp: 1 });
+    msgs.unshift({
+      role: "summary",
+      content: "Earlier: family onboarded.",
+      timestamp: 1,
+    });
     hoisted.seed(msgs);
     await maybeRollUpHistory("+15550001111");
 
     const call = quickCompleteMock.mock.calls[0] as unknown as [string, string];
     expect(call[1]).toContain("Earlier: family onboarded."); // existing summary passed in
-    expect(hoisted.snapshot().filter((d) => d.role === "summary")).toHaveLength(1);
+    expect(hoisted.snapshot().filter((d) => d.role === "summary")).toHaveLength(
+      1,
+    );
   });
 
   // U3 (memory expansion): pins the widened window/trigger explicitly, on top
@@ -174,7 +205,38 @@ describe("maybeRollUpHistory", () => {
     hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6));
     await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
     // Nothing was folded — original messages remain untouched.
-    expect(hoisted.snapshot().filter((d) => d.role !== "summary")).toHaveLength(ROLLUP_TRIGGER + 6);
+    expect(hoisted.snapshot().filter((d) => d.role !== "summary")).toHaveLength(
+      ROLLUP_TRIGGER + 6,
+    );
+  });
+
+  it("never summarizes or deletes unresolved and correction/forget-protected rows", async () => {
+    const pending = makeMsgs(ROLLUP_TRIGGER + 6);
+    (
+      pending[2] as (typeof pending)[number] & { memorySyncStatus?: string }
+    ).memorySyncStatus = "pending";
+    hoisted.seed(pending);
+
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
+    expect(quickCompleteMock).not.toHaveBeenCalled();
+    expect(hoisted.snapshot()).toHaveLength(ROLLUP_TRIGGER + 6);
+    expect(hoisted.snapshot()[2].memorySyncStatus).toBe("pending");
+
+    quickCompleteMock.mockClear();
+    const excluded = makeMsgs(ROLLUP_TRIGGER + 6);
+    (
+      excluded[3] as (typeof excluded)[number] & {
+        excludeFromMemoryConsolidationAt?: string;
+      }
+    ).excludeFromMemoryConsolidationAt = new Date().toISOString();
+    hoisted.seed(excluded);
+
+    await expect(maybeRollUpHistory("+15550001111")).resolves.toBe(false);
+    expect(quickCompleteMock).not.toHaveBeenCalled();
+    expect(hoisted.snapshot()).toHaveLength(ROLLUP_TRIGGER + 6);
+    expect(
+      hoisted.snapshot()[3].excludeFromMemoryConsolidationAt,
+    ).toBeDefined();
   });
 
   it("still sanitizes/folds a conversation containing an empty-content message (2026-06-29 regression)", async () => {
@@ -197,7 +259,9 @@ describe("maybeRollUpHistory", () => {
     // sanitizePromptContext read-back clamp, raised 1200→3000) — this pins that
     // a long summarizer response survives the rollup write path untruncated,
     // so the larger downstream clamp actually has something to preserve.
-    const longSummary = "Family discussed Mom's care plan in detail. ".repeat(60); // ~2700 chars
+    const longSummary = "Family discussed Mom's care plan in detail. ".repeat(
+      60,
+    ); // ~2700 chars
     expect(longSummary.length).toBeGreaterThan(1200);
     expect(longSummary.length).toBeLessThanOrEqual(3000);
     quickCompleteMock.mockResolvedValueOnce(longSummary);
@@ -228,21 +292,21 @@ describe("rollup summary prompt grounding (U11, R6)", () => {
   it("instructs recording only transcript facts — never infer or invent", async () => {
     const system = await capturedSystemPrompt();
     expect(system).toContain(
-      "Record ONLY facts present in the existing summary or the new messages — never infer or invent."
+      "Record ONLY facts present in the existing summary or the new messages — never infer or invent.",
     );
   });
 
   it("instructs verbatim preservation of names, amounts, and commitments", async () => {
     const system = await capturedSystemPrompt();
     expect(system).toContain(
-      "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made."
+      "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made.",
     );
   });
 
   it("still drops pleasantries, but only with the entity exemption attached", async () => {
     const system = await capturedSystemPrompt();
     expect(system).toContain(
-      "Drop pleasantries, but never at the cost of a name, amount, or commitment."
+      "Drop pleasantries, but never at the cost of a name, amount, or commitment.",
     );
     // The old unconditional phrasing ("…open threads; drop pleasantries.")
     // licensed discarding named entities — it must be gone.
@@ -260,7 +324,11 @@ describe("buildToolResultContent", () => {
 
   it("offloads large results to the VFS and returns a preview + pointer", async () => {
     const big = { rows: "x".repeat(TOOL_RESULT_OFFLOAD_THRESHOLD + 100) };
-    const out = await buildToolResultContent("user1", "get_invoice_history", big);
+    const out = await buildToolResultContent(
+      "user1",
+      "get_invoice_history",
+      big,
+    );
     const parsed = JSON.parse(out);
 
     expect(writeMemoryFileMock).toHaveBeenCalledTimes(1);
@@ -278,8 +346,13 @@ describe("buildToolResultContent", () => {
     const after = Date.now();
 
     expect(writeMemoryFileMock).toHaveBeenCalledTimes(1);
-    const [userId, slug, , options] = (writeMemoryFileMock.mock.calls[0] ?? []) as unknown as
-      [string, string, string, { memoryClass?: string; expiresAt?: string }];
+    const [userId, slug, , options] = (writeMemoryFileMock.mock.calls[0] ??
+      []) as unknown as [
+      string,
+      string,
+      string,
+      { memoryClass?: string; expiresAt?: string },
+    ];
     expect(userId).toBe("user1");
     expect(slug).toMatch(/^tool_get_invoice_history_\d+$/);
     expect(options).toBeDefined();
@@ -292,7 +365,11 @@ describe("buildToolResultContent", () => {
 
   it("the pointer note directs to the exact read path only — transient files are excluded from search (U8)", async () => {
     const big = { rows: "x".repeat(TOOL_RESULT_OFFLOAD_THRESHOLD + 100) };
-    const out = await buildToolResultContent("user1", "get_invoice_history", big);
+    const out = await buildToolResultContent(
+      "user1",
+      "get_invoice_history",
+      big,
+    );
     const parsed = JSON.parse(out);
     expect(parsed.note).toContain("read_memory_file");
     expect(parsed.note).not.toContain("search_memory");
@@ -324,17 +401,26 @@ describe("patchDanglingToolCalls", () => {
     name,
     input: {},
   });
-  const toolResult = (id: string, content = "ok"): Anthropic.ToolResultBlockParam => ({
+  const toolResult = (
+    id: string,
+    content = "ok",
+  ): Anthropic.ToolResultBlockParam => ({
     type: "tool_result",
     tool_use_id: id,
     content,
   });
-  const text = (s: string): Anthropic.TextBlockParam => ({ type: "text", text: s });
+  const text = (s: string): Anthropic.TextBlockParam => ({
+    type: "text",
+    text: s,
+  });
 
   it("is a no-op when every tool_use is answered", () => {
     const messages: Anthropic.MessageParam[] = [
       { role: "user", content: "hello" },
-      { role: "assistant", content: [text("looking"), toolUse("call_1", "get_x")] },
+      {
+        role: "assistant",
+        content: [text("looking"), toolUse("call_1", "get_x")],
+      },
       { role: "user", content: [toolResult("call_1", "found it")] },
       { role: "assistant", content: "done" },
     ];
@@ -356,7 +442,10 @@ describe("patchDanglingToolCalls", () => {
   it("inserts a placeholder when the assistant tool_use has no following user message", () => {
     const messages: Anthropic.MessageParam[] = [
       { role: "user", content: "find caregivers" },
-      { role: "assistant", content: [toolUse("call_1", "find_replacement_caregivers")] },
+      {
+        role: "assistant",
+        content: [toolUse("call_1", "find_replacement_caregivers")],
+      },
     ];
     const patches = patchDanglingToolCalls(messages);
     expect(patches).toBe(1);
@@ -375,7 +464,10 @@ describe("patchDanglingToolCalls", () => {
     // cutoff. The unanswered one needs a placeholder; the answered one is left alone.
     const messages: Anthropic.MessageParam[] = [
       { role: "user", content: "do two things" },
-      { role: "assistant", content: [toolUse("call_1", "get_x"), toolUse("call_2", "get_y")] },
+      {
+        role: "assistant",
+        content: [toolUse("call_1", "get_x"), toolUse("call_2", "get_y")],
+      },
       { role: "user", content: [toolResult("call_1", "x done")] },
     ];
     const patches = patchDanglingToolCalls(messages);
@@ -434,12 +526,18 @@ describe("patchDanglingToolCalls", () => {
 
 describe("truncateOldToolCallArgs", () => {
   const bigInput = (tag: string) => ({
-    note:    `${tag}-` + "x".repeat(400),
-    payload: { rows: Array.from({ length: 30 }, (_, i) => ({ i, v: `row-${tag}-${i}` })) },
+    note: `${tag}-` + "x".repeat(400),
+    payload: {
+      rows: Array.from({ length: 30 }, (_, i) => ({ i, v: `row-${tag}-${i}` })),
+    },
   });
   const smallInput = (tag: string) => ({ tag });
 
-  const tu = (id: string, name: string, input: unknown): Anthropic.ToolUseBlockParam => ({
+  const tu = (
+    id: string,
+    name: string,
+    input: unknown,
+  ): Anthropic.ToolUseBlockParam => ({
     type: "tool_use",
     id,
     name,
@@ -458,7 +556,7 @@ describe("truncateOldToolCallArgs", () => {
       { role: "user", content: [tr("c1")] },
     ];
     const before = JSON.stringify(messages);
-    const count  = truncateOldToolCallArgs(messages);
+    const count = truncateOldToolCallArgs(messages);
     expect(count).toBe(0);
     expect(JSON.stringify(messages)).toBe(before);
   });
@@ -467,10 +565,16 @@ describe("truncateOldToolCallArgs", () => {
     // 16 messages — keepLast default 8 — so the first 8 are clip candidates.
     const messages: Anthropic.MessageParam[] = [];
     for (let i = 0; i < 8; i++) {
-      messages.push({ role: "assistant", content: [tu(`old-${i}`, "get_x", bigInput(`old${i}`))] });
+      messages.push({
+        role: "assistant",
+        content: [tu(`old-${i}`, "get_x", bigInput(`old${i}`))],
+      });
     }
     for (let i = 0; i < 8; i++) {
-      messages.push({ role: "assistant", content: [tu(`new-${i}`, "get_y", bigInput(`new${i}`))] });
+      messages.push({
+        role: "assistant",
+        content: [tu(`new-${i}`, "get_y", bigInput(`new${i}`))],
+      });
     }
 
     const count = truncateOldToolCallArgs(messages);
@@ -496,14 +600,19 @@ describe("truncateOldToolCallArgs", () => {
     // Mix of tool_use + tool_result + text in older messages. Only tool_use input gets clipped.
     // keepLast default is 8, so 8 padding messages after this one keep it out of the protected window.
     const messages: Anthropic.MessageParam[] = [
-      { role: "assistant", content: [
-        { type: "text", text: "looking that up — " + "y".repeat(400) },
-        tu("c1", "get_x", bigInput("c1")),
-      ] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "looking that up — " + "y".repeat(400) },
+          tu("c1", "get_x", bigInput("c1")),
+        ],
+      },
       { role: "user", content: [tr("c1", "z".repeat(500))] },
-      ...Array.from({ length: 8 }, (_, i) => (
-        { role: "user", content: `pad ${i}` } as Anthropic.MessageParam
-      )),
+      ...Array.from(
+        { length: 8 },
+        (_, i) =>
+          ({ role: "user", content: `pad ${i}` }) as Anthropic.MessageParam,
+      ),
     ];
 
     const count = truncateOldToolCallArgs(messages);
@@ -523,12 +632,14 @@ describe("truncateOldToolCallArgs", () => {
     // keepLast default is 8, so 8 padding messages after this one keep it out of the protected window.
     const messages: Anthropic.MessageParam[] = [
       { role: "assistant", content: [tu("c1", "get_x", bigInput("a"))] },
-      ...Array.from({ length: 8 }, (_, i) => (
-        { role: "user", content: `pad ${i}` } as Anthropic.MessageParam
-      )),
+      ...Array.from(
+        { length: 8 },
+        (_, i) =>
+          ({ role: "user", content: `pad ${i}` }) as Anthropic.MessageParam,
+      ),
     ];
 
-    const first  = truncateOldToolCallArgs(messages);
+    const first = truncateOldToolCallArgs(messages);
     const second = truncateOldToolCallArgs(messages);
     expect(first).toBe(1);
     expect(second).toBe(0);
@@ -541,18 +652,25 @@ describe("truncateOldToolCallArgs", () => {
     ];
     const count = truncateOldToolCallArgs(messages, 1, 10);
     expect(count).toBe(1);
-    const clipped = (messages[0].content as Anthropic.ToolUseBlockParam[])[0].input as any;
+    const clipped = (messages[0].content as Anthropic.ToolUseBlockParam[])[0]
+      .input as any;
     expect(clipped._truncated).toBe(true);
-    const untouched = (messages[1].content as Anthropic.ToolUseBlockParam[])[0].input as any;
+    const untouched = (messages[1].content as Anthropic.ToolUseBlockParam[])[0]
+      .input as any;
     expect(untouched.note).toBe("short");
   });
 
   it("ignores string-content assistant messages (no blocks to inspect)", () => {
     const messages: Anthropic.MessageParam[] = [
-      { role: "assistant", content: "plain text reply — nothing to clip here" + "x".repeat(400) },
-      ...Array.from({ length: 5 }, (_, i) => (
-        { role: "user", content: `pad ${i}` } as Anthropic.MessageParam
-      )),
+      {
+        role: "assistant",
+        content: "plain text reply — nothing to clip here" + "x".repeat(400),
+      },
+      ...Array.from(
+        { length: 5 },
+        (_, i) =>
+          ({ role: "user", content: `pad ${i}` }) as Anthropic.MessageParam,
+      ),
     ];
     expect(truncateOldToolCallArgs(messages)).toBe(0);
   });

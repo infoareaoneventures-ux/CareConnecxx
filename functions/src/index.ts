@@ -1,5 +1,9 @@
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions/v1";
+import {
+  MEMORY_FINGERPRINT_KEY_NAME,
+  MEMORY_FINGERPRINT_KEY_SECRET,
+} from "./memory/fingerprintKey";
 
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -513,7 +517,10 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
 // skipSend returns the reply and we mirror it manually. Rejections before the
 // mirror never leave an unanswered user bubble in the web thread.
 export const chatWithCara = functions
-  .runWith({ timeoutSeconds: 180 })
+  .runWith({
+    timeoutSeconds: 180,
+    secrets: [MEMORY_FINGERPRINT_KEY_SECRET?.name ?? MEMORY_FINGERPRINT_KEY_NAME],
+  })
   .https.onCall(async (data, context) => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");

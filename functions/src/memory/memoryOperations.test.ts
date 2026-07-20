@@ -105,6 +105,7 @@ import {
   deriveZepMessageUuid,
   buildTurnSyncOperationDoc,
   buildFactChangeOperationDoc,
+  buildMcpMemoryFileOperationDoc,
   buildReRememberOperationDoc,
   factChangeOperationId,
   reRememberOperationId,
@@ -439,6 +440,27 @@ describe("fact-change operations (U4a)", () => {
     }
   });
 
+  it("MCP file changes begin pending across every stale-memory target", () => {
+    const { operationId, doc } = buildMcpMemoryFileOperationDoc({
+      kind: "forget",
+      userId: "user-1",
+      phone: PHONE,
+      fileSlug: "health",
+      changeKey: "opaque-change-key",
+      tombstoneFactPath: "learned_facts/user-1/facts/nf_retired",
+    });
+    expect(operationId).toMatch(/^mcpfile_forget_[0-9a-f]{32}$/);
+    expect(doc.status).toBe("pending");
+    expect(doc.nextRetryAt).toEqual(expect.any(String));
+    expect(doc.completedAt).toBeNull();
+    expect(doc.expiresAt).toBeNull();
+    expect(doc.learnedFactRefs).toEqual(["learned_facts/user-1/facts/nf_retired"]);
+    for (const target of ["learnedFacts", "storage", "embeddings", "zepEdges", "zepEpisodes"] as const) {
+      expect(doc.targets[target].status).toBe("pending");
+    }
+    expect(JSON.stringify(doc)).not.toContain("retired assertion");
+  });
+
   it("buildReRememberOperationDoc is born completed with a retention expiry — pure audit-by-reference", () => {
     const { operationId, doc } = buildReRememberOperationDoc({
       userId: "user-1",
@@ -523,6 +545,14 @@ describe("getMemoryReconciliationState (U4a suppression check)", () => {
     const state = await getMemoryReconciliationState(UID);
     expect(state.storageMasked).toBe(true);
     expect(state.zepMasked).toBe(false);
+  });
+
+  it("fails closed when the flag exceeds the bounded operation inspection cap", async () => {
+    const entries = Array.from({ length: 21 }, (_, i) => [`forget_${i}`, "forget"] as [string, "forget"]);
+    seedFlag(...entries);
+    const state = await getMemoryReconciliationState(UID);
+    expect(state).toMatchObject({ pending: true, storageMasked: true, zepMasked: true });
+    expect(state.pendingOperationIds).toHaveLength(20);
   });
 
   it("completed and expired (missing) operations self-heal out of the flag → all clear again", async () => {

@@ -118,16 +118,28 @@ export const ZEP_OUTAGE_MIN_SAMPLES = 5;
 export const ZEP_OUTAGE_FAILURE_RATE = 0.5;
 /** One alert doc per this time bucket (deterministic-ID dedupe). */
 export const ZEP_OUTAGE_ALERT_DEDUPE_MS = 30 * 60 * 1000;
+/** Aggregation granularity; the bounded window reads at most eleven documents. */
+export const ZEP_OUTAGE_BUCKET_MS = 60 * 1000;
+/** Aggregate-only bucket collection. `expiresAt` permits TTL cleanup where enabled. */
+export const ZEP_OUTAGE_BUCKET_COLLECTION = "cara_ops_zep_outage_buckets";
+const ZEP_OUTAGE_BUCKET_READ_LIMIT = Math.ceil(ZEP_OUTAGE_WINDOW_MS / ZEP_OUTAGE_BUCKET_MS) + 1;
+const ZEP_OUTAGE_BUCKET_RETENTION_MS = 2 * 60 * 60 * 1000;
 
 export type ZepContextOutcome = "loaded" | "empty" | "unavailable" | "timeout";
 
-let zepOutcomeSamples: Array<{ at: number; failed: boolean }> = [];
-let lastZepOutageAlertBucket = -1;
-
-/** Test seam: clears the rolling window and the per-bucket dedupe latch. */
+/** Test seam retained for callers that simulate a cold instance. Buckets persist. */
 export function __resetZepOutageWindowForTests(): void {
-  zepOutcomeSamples = [];
-  lastZepOutageAlertBucket = -1;
+  // Deliberately empty: aggregation state is durable rather than process-local.
+}
+
+function isAlreadyExistsError(err: unknown): boolean {
+  const code = (err as { code?: unknown; status?: unknown })?.code
+    ?? (err as { status?: unknown })?.status;
+  return code === 6 || code === "already-exists" || code === "ALREADY_EXISTS";
+}
+
+function safeErrorClass(err: unknown): string {
+  return err instanceof Error ? err.constructor.name : typeof err;
 }
 
 /**
@@ -142,20 +154,37 @@ export async function recordZepContextOutcome(
   // "empty" and "loaded" are SUCCESSFUL provider responses — they count as
   // healthy samples that dilute the failure rate; they can never trigger.
   const failed = status === "unavailable" || status === "timeout";
-  zepOutcomeSamples.push({ at: nowMs, failed });
-  zepOutcomeSamples = zepOutcomeSamples.filter((s) => s.at > nowMs - ZEP_OUTAGE_WINDOW_MS);
-
-  const samples = zepOutcomeSamples.length;
-  const failures = zepOutcomeSamples.reduce((n, s) => n + (s.failed ? 1 : 0), 0);
-  if (samples < ZEP_OUTAGE_MIN_SAMPLES) return false;
-  const failureRate = failures / samples;
-  if (failureRate < ZEP_OUTAGE_FAILURE_RATE) return false;
-
-  const bucket = Math.floor(nowMs / ZEP_OUTAGE_ALERT_DEDUPE_MS);
-  if (bucket === lastZepOutageAlertBucket) return false;
-
   try {
-    await db.collection("admin_alerts").doc(`zep-sustained-outage:${bucket}`).set({
+    const minuteStartMs = Math.floor(nowMs / ZEP_OUTAGE_BUCKET_MS) * ZEP_OUTAGE_BUCKET_MS;
+    await db.collection(ZEP_OUTAGE_BUCKET_COLLECTION).doc(`zep-context:${minuteStartMs}`).set({
+      minuteStartMs,
+      samples: admin.firestore.FieldValue.increment(1),
+      failures: admin.firestore.FieldValue.increment(failed ? 1 : 0),
+      updatedAt: new Date(nowMs).toISOString(),
+      expiresAt: new Date(minuteStartMs + ZEP_OUTAGE_BUCKET_RETENTION_MS).toISOString(),
+    }, { merge: true });
+
+    const firstMinuteMs = Math.floor((nowMs - ZEP_OUTAGE_WINDOW_MS) / ZEP_OUTAGE_BUCKET_MS)
+      * ZEP_OUTAGE_BUCKET_MS;
+    const bucketSnapshot = await db.collection(ZEP_OUTAGE_BUCKET_COLLECTION)
+      .where("minuteStartMs", ">=", firstMinuteMs)
+      .where("minuteStartMs", "<=", minuteStartMs)
+      .orderBy("minuteStartMs", "asc")
+      .limit(ZEP_OUTAGE_BUCKET_READ_LIMIT)
+      .get();
+    const { samples, failures } = bucketSnapshot.docs.reduce(
+      (totals, doc) => ({
+        samples: totals.samples + Math.max(0, Number(doc.data().samples ?? 0)),
+        failures: totals.failures + Math.max(0, Number(doc.data().failures ?? 0)),
+      }),
+      { samples: 0, failures: 0 },
+    );
+    if (samples < ZEP_OUTAGE_MIN_SAMPLES) return false;
+    const failureRate = failures / samples;
+    if (failureRate < ZEP_OUTAGE_FAILURE_RATE) return false;
+
+    const bucket = Math.floor(nowMs / ZEP_OUTAGE_ALERT_DEDUPE_MS);
+    await db.collection("admin_alerts").doc(`zep-sustained-outage:${bucket}`).create({
       type: "zep_sustained_outage",
       severity: "high",
       source: "turn_metrics",
@@ -168,11 +197,11 @@ export async function recordZepContextOutcome(
         failureRate: Math.round(failureRate * 100) / 100,
         windowMs: ZEP_OUTAGE_WINDOW_MS,
       },
-    }, { merge: true });
-    lastZepOutageAlertBucket = bucket;
+    });
     return true;
   } catch (err) {
-    console.error("caraOpsAlert zep outage write error:", err);
+    if (isAlreadyExistsError(err)) return false;
+    console.error("caraOpsAlert zep outage aggregation error:", safeErrorClass(err));
     return false;
   }
 }
@@ -189,6 +218,41 @@ export async function recordZepContextOutcome(
 
 /** Unresolved-operation age that pages (evaluated by memoryOperationWorker). */
 export const AGED_MEMORY_OPERATION_ALERT_MS = 60 * 60 * 1000;
+
+/** One aggregate-only alert per half-hour while a turn-sync ordering queue is capped. */
+export const TURN_SYNC_ORDERING_BACKLOG_ALERT_DEDUPE_MS = 30 * 60 * 1000;
+
+/**
+ * Emits a privacy-safe health signal when the worker cannot inspect every
+ * unresolved turn for a user inside its ordering cap. The worker deliberately
+ * defers that user rather than risk reordering transcript writes. No user,
+ * operation, phone, path, or message identifier reaches this alert.
+ */
+export async function raiseTurnSyncOrderingBacklogAlert(input: {
+  cap: number;
+  observedAtLeast: number;
+  nowMs?: number;
+}): Promise<boolean> {
+  const nowMs = input.nowMs ?? Date.now();
+  const bucket = Math.floor(nowMs / TURN_SYNC_ORDERING_BACKLOG_ALERT_DEDUPE_MS);
+  try {
+    await db.collection("admin_alerts").doc(`memory-turn-sync-backlog:${bucket}`).set({
+      type: "memory_turn_sync_backlog_capped",
+      severity: "high",
+      source: "memory_operation_worker",
+      resolved: false,
+      createdAt: new Date(nowMs).toISOString(),
+      context: {
+        cap: Math.max(0, Math.floor(input.cap)),
+        observedAtLeast: Math.max(0, Math.floor(input.observedAtLeast)),
+      },
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.error("caraOpsAlert turn-sync backlog write error:", safeErrorClass(err));
+    return false;
+  }
+}
 
 const MEMORY_OPERATION_KINDS = new Set(["turn_sync", "correction", "forget", "re_remember"]);
 const MEMORY_OPERATION_STATUSES = new Set(["pending", "processing", "retryable_failed"]);

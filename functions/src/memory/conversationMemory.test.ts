@@ -98,14 +98,13 @@ describe("markSessionActivity", () => {
 const here = __dirname;
 
 describe("verified-ingress wiring", () => {
-  it("Linq webhook spreads sessionActivityFields() into the lastInboundAt session update", () => {
+  it("Linq webhook stamps activity only after the rate-limit rejection guard", () => {
     const src = readFileSync(join(here, "../linq/webhooks.ts"), "utf8");
     expect(src).toContain('import { sessionActivityFields } from "../memory/conversationMemory"');
-    // The activity fields ride in the SAME update object as lastInboundAt so the
-    // SMS seam cannot accept a turn without marking activity.
-    expect(src).toMatch(
-      /lastInboundAt: new Date\(\)\.toISOString\(\),\s*\n\s*\.\.\.sessionActivityFields\(\),/,
-    );
+    const rateLimitGuard = src.indexOf("if (await isRateLimited(phone))");
+    const activityStamp = src.indexOf("update(sessionActivityFields())");
+    expect(rateLimitGuard).toBeGreaterThan(-1);
+    expect(activityStamp).toBeGreaterThan(rateLimitGuard);
   });
 
   it("web chat marks activity after the onboarding guard and before the agent import", () => {

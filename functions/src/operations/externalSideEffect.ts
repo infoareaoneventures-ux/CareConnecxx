@@ -233,6 +233,9 @@ export function externalOperationDocId(operationKey: string): string {
 
 const externalStore = createLeasedOperationStore({
   collection: "externalSideEffectOperations",
+  // Unlike memory operations, external effects have no preceding transaction
+  // that can create their ledger row. The first claimant owns that creation.
+  createOnClaim: true,
 });
 
 export async function claimExternalSideEffectOperation(input: {

@@ -8,13 +8,16 @@ process.env.ZEP_API_KEY = "test-key";
 
 const h = vi.hoisted(() => ({
   getUserContext:     vi.fn(),
+  getThread:          vi.fn(),
   addMessages:        vi.fn(),
   graphSearch:        vi.fn(),
   graphAdd:           vi.fn(),
+  edgeGetByUserId:    vi.fn(),
   edgeUpdate:         vi.fn(),
   edgeDelete:         vi.fn(),
   episodeDelete:      vi.fn(),
   getContextTemplate: vi.fn(async () => ({})),
+  updateContextTemplate: vi.fn(async () => ({})),
   // U4a: controllable per-user reconciliation state (KTD9 reader suppression).
   reconciliation: { pending: false, storageMasked: false, zepMasked: false, pendingOperationIds: [] as string[] },
 }));
@@ -28,14 +31,18 @@ vi.mock("./memoryOperations", () => ({
 
 vi.mock("@getzep/zep-cloud", () => ({
   ZepClient: class {
-    thread = { getUserContext: h.getUserContext, addMessages: h.addMessages };
+    thread = { get: h.getThread, getUserContext: h.getUserContext, addMessages: h.addMessages };
     graph = {
       search: h.graphSearch,
       add: h.graphAdd,
-      edge: { update: h.edgeUpdate, delete: h.edgeDelete },
+      edge: { getByUserId: h.edgeGetByUserId, update: h.edgeUpdate, delete: h.edgeDelete },
       episode: { delete: h.episodeDelete },
     };
-    context = { getContextTemplate: h.getContextTemplate, createContextTemplate: vi.fn(async () => ({})) };
+    context = {
+      getContextTemplate: h.getContextTemplate,
+      createContextTemplate: vi.fn(async () => ({})),
+      updateContextTemplate: h.updateContextTemplate,
+    };
     user = { add: vi.fn(async () => ({})), update: vi.fn(async () => ({})) };
   },
 }));
@@ -65,10 +72,11 @@ import {
   searchZepMemoryResult,
   zepEdgeFactMatches,
   findZepEdgesMatchingFact,
+  verifyZepForgottenFactAbsent,
   invalidateZepEdgeStrict,
   deleteZepEdgeStrict,
   deleteZepEpisodeStrict,
-  ZEP_EDGE_SEARCH_LIMIT,
+  ZEP_EDGE_PAGE_SIZE,
 } from "./zepClient";
 
 const THREAD_ID = "thread-abc-123";
@@ -84,8 +92,10 @@ let warnSpy:  ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   h.getUserContext.mockReset();
+  h.getThread.mockReset().mockResolvedValue({ messages: [] });
   h.addMessages.mockReset();
   h.graphSearch.mockReset();
+  h.edgeGetByUserId.mockReset();
   h.edgeUpdate.mockReset().mockResolvedValue({});
   h.edgeDelete.mockReset().mockResolvedValue({});
   h.episodeDelete.mockReset().mockResolvedValue({});
@@ -131,21 +141,14 @@ describe("getZepContextResult", () => {
     expect((await getZepContextResult(THREAD_ID)).status).toBe("empty");
   });
 
-  it("falls back to the default context assembly when the template lookup fails", async () => {
-    h.getUserContext
-      .mockRejectedValueOnce(badRequest("template not found"))
-      .mockResolvedValueOnce({ context: "fallback context" });
+  it("fails closed when the facts-only template lookup fails", async () => {
+    h.getUserContext.mockRejectedValueOnce(badRequest("template not found"));
     const result = await getZepContextResult(THREAD_ID);
-    expect(result.status).toBe("loaded");
-    expect(result.context).toBe("fallback context");
-    expect(h.getUserContext).toHaveBeenCalledTimes(2);
-    // First call requests the template; the fallback call does not.
+    expect(result.status).toBe("unavailable");
+    expect(result.context).toBe("");
+    expect(h.getUserContext).toHaveBeenCalledTimes(1);
     expect(h.getUserContext.mock.calls[0][1]).toEqual({ templateId: "cara-eldercare" });
-    expect(h.getUserContext.mock.calls[1][1]).toBeUndefined();
-    // Both calls carry the SDK RequestOptions abortSignal so a timeout can
-    // actually cancel the in-flight request.
     expect(h.getUserContext.mock.calls[0][2]?.abortSignal).toBeInstanceOf(AbortSignal);
-    expect(h.getUserContext.mock.calls[1][2]?.abortSignal).toBeInstanceOf(AbortSignal);
   });
 
   it("returns unavailable with a sanitized error class when both lookups fail", async () => {
@@ -232,6 +235,7 @@ describe("strict write adapters", () => {
         name:      "Anahi",
         content:   "Mom prefers morning visits",
         createdAt: "2026-07-17T10:00:00.000Z",
+        metadata: { careconnecxxMessageKey: "det-uuid-user-1" },
       })],
     });
   });
@@ -250,7 +254,41 @@ describe("strict write adapters", () => {
       role:      "assistant",
       name:      "Evia",
       createdAt: "2026-07-17T10:00:05.000Z",
+      metadata: { careconnecxxMessageKey: "det-uuid-assistant-1" },
     });
+  });
+
+  it("reconciles a provider-assigned UUID by the durable metadata key before retrying", async () => {
+    h.getThread.mockResolvedValueOnce({
+      messages: [{
+        uuid: "provider-assigned-uuid",
+        role: "user",
+        content: "stored",
+        metadata: { careconnecxxMessageKey: "det-uuid-user-1" },
+      }],
+    });
+
+    await expect(addUserMessageToZepStrict({
+      threadId: THREAD_ID,
+      content: "Mom prefers morning visits",
+      userName: "Anahi",
+      uuid: "det-uuid-user-1",
+    })).resolves.toEqual({
+      messageUuids: ["provider-assigned-uuid"],
+      deduplicated: true,
+    });
+    expect(h.addMessages).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the reconciliation read fails instead of risking a duplicate", async () => {
+    h.getThread.mockRejectedValueOnce(badRequest("thread read failed"));
+
+    await expect(addAssistantMessageToZepStrict({
+      threadId: THREAD_ID,
+      content: "Stored reply",
+      uuid: "det-uuid-assistant-1",
+    })).rejects.toThrow("thread read failed");
+    expect(h.addMessages).not.toHaveBeenCalled();
   });
 
   it("throws to the caller when the write fails — the retry worker must see the failure", async () => {
@@ -403,36 +441,81 @@ describe("findZepEdgesMatchingFact", () => {
   const ZEP_USER = "14155551234";
 
   it("searches the user's edges and returns ONLY matching uuids + episode refs", async () => {
-    h.graphSearch.mockResolvedValueOnce({
-      edges: [
+    h.edgeGetByUserId.mockResolvedValueOnce([
         { uuid: "edge-1", fact: "mom is allergic to penicillin", episodes: ["ep-1", "ep-2"] },
         { uuid: "edge-2", fact: "mom prefers morning visits", episodes: ["ep-3"] },
         { uuid: "edge-3", fact: "User's mom is allergic to penicillin medication" },
-      ],
-    });
+    ]);
     const matches = await findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "Mom is allergic to penicillin" });
     expect(matches).toEqual([
       { uuid: "edge-1", episodes: ["ep-1", "ep-2"] },
       { uuid: "edge-3", episodes: [] },
     ]);
-    expect(h.graphSearch).toHaveBeenCalledWith({
-      userId: ZEP_USER,
-      query: "Mom is allergic to penicillin",
-      scope: "edges",
-      limit: ZEP_EDGE_SEARCH_LIMIT,
+    expect(h.edgeGetByUserId).toHaveBeenCalledWith(ZEP_USER, { limit: ZEP_EDGE_PAGE_SIZE });
+    expect(h.graphSearch).not.toHaveBeenCalled();
+  });
+
+  it("paginates the provider edge cursor so a matching fact after the first page is not skipped", async () => {
+    const firstPage = Array.from({ length: ZEP_EDGE_PAGE_SIZE }, (_, index) => ({
+      uuid: `edge-${index}`,
+      fact: "unrelated preference",
+      episodes: [],
+    }));
+    h.edgeGetByUserId
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce([{ uuid: "edge-later", fact: "mom is allergic to penicillin", episodes: ["ep-later"] }]);
+
+    await expect(findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "Mom is allergic to penicillin" }))
+      .resolves.toEqual([{ uuid: "edge-later", episodes: ["ep-later"] }]);
+
+    expect(h.edgeGetByUserId).toHaveBeenNthCalledWith(1, ZEP_USER, { limit: ZEP_EDGE_PAGE_SIZE });
+    expect(h.edgeGetByUserId).toHaveBeenNthCalledWith(2, ZEP_USER, {
+      limit: ZEP_EDGE_PAGE_SIZE,
+      uuidCursor: `edge-${ZEP_EDGE_PAGE_SIZE - 1}`,
     });
   });
 
   it("returns [] without calling Zep for empty inputs", async () => {
     expect(await findZepEdgesMatchingFact({ zepUserId: "", factText: "x" })).toEqual([]);
     expect(await findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "  " })).toEqual([]);
-    expect(h.graphSearch).not.toHaveBeenCalled();
+    expect(h.edgeGetByUserId).not.toHaveBeenCalled();
   });
 
   it("THROWS on provider failure — the retry worker must see it", async () => {
-    h.graphSearch.mockRejectedValueOnce(badRequest("search down"));
+    h.edgeGetByUserId.mockRejectedValueOnce(badRequest("search down"));
     await expect(findZepEdgesMatchingFact({ zepUserId: ZEP_USER, factText: "anything at all" }))
       .rejects.toThrow("search down");
+  });
+});
+
+describe("verifyZepForgottenFactAbsent", () => {
+  const ZEP_USER = "14155551234";
+  const FACT = "Mom is allergic to penicillin";
+
+  it("requires both the paginated graph scan and the rendered thread context to be clear", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+    h.getUserContext.mockResolvedValueOnce({ context: "No matching memory remains." });
+
+    await expect(verifyZepForgottenFactAbsent({
+      zepUserId: ZEP_USER,
+      factText: FACT,
+      threadId: THREAD_ID,
+    })).resolves.toBeUndefined();
+    expect(h.getUserContext).toHaveBeenCalledWith(
+      THREAD_ID,
+      { templateId: "cara-eldercare" },
+    );
+  });
+
+  it("throws when the post-delete graph scan or rendered context still exposes the retired fact", async () => {
+    h.edgeGetByUserId.mockResolvedValueOnce([{ uuid: "edge-stale", fact: FACT, episodes: [] }]);
+    await expect(verifyZepForgottenFactAbsent({ zepUserId: ZEP_USER, factText: FACT, threadId: THREAD_ID }))
+      .rejects.toThrow("zep_fact_still_present_in_graph");
+
+    h.edgeGetByUserId.mockResolvedValueOnce([]);
+    h.getUserContext.mockResolvedValueOnce({ context: "Care context: Mom has an allergic reaction to penicillin." });
+    await expect(verifyZepForgottenFactAbsent({ zepUserId: ZEP_USER, factText: FACT, threadId: THREAD_ID }))
+      .rejects.toThrow("zep_fact_still_present_in_context");
   });
 });
 

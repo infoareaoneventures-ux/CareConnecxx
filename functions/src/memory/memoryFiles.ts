@@ -1,10 +1,16 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { safeParseJson } from "../utils/jsonUtils";
-import { embedText, embedMany, splitIntoBlocks, rankBySimilarity, EMBED_MODEL } from "./embeddings";
+import {
+  embedText,
+  embedMany,
+  splitIntoBlocks,
+  rankBySimilarity,
+  EMBED_MODEL,
+} from "./embeddings";
 
 const storage = admin.storage();
-const db      = admin.firestore();
+const db = admin.firestore();
 
 // ── Reconciliation suppression (memory-grounding U4a, KTD9) ──────────────────
 // While a correction/forget operation is unresolved for a user AND its Storage/
@@ -38,10 +44,17 @@ export const MEMORY_QUERY_RECONCILIATION_COPY =
 // The five canonical files Evia initializes and consolidates into. Callers may also
 // read/write arbitrary slugs (the `(string & {})` keeps autocomplete for the canonical
 // names while still accepting any other string — e.g. offloaded tool results).
-export type CanonicalMemoryFile = "profile" | "health" | "family" | "recent_episodes" | "procedural";
+export type CanonicalMemoryFile =
+  "profile" | "health" | "family" | "recent_episodes" | "procedural";
 export type MemoryFile = CanonicalMemoryFile | (string & {});
 
-const ALL_FILES: CanonicalMemoryFile[] = ["profile", "health", "family", "recent_episodes", "procedural"];
+const ALL_FILES: CanonicalMemoryFile[] = [
+  "profile",
+  "health",
+  "family",
+  "recent_episodes",
+  "procedural",
+];
 
 // ── Transient tool-result files (memory-grounding U8, R20/KTD14) ─────────────
 // Large tool results the agent loop offloads (contextManagement.ts) are
@@ -65,7 +78,7 @@ export const TRANSIENT_TOOL_TTL_MS = 24 * 60 * 60 * 1000;
 export function isTransientToolFile(
   file: string | { name: string; memoryClass?: string | null },
 ): boolean {
-  const name        = typeof file === "string" ? file : file.name;
+  const name = typeof file === "string" ? file : file.name;
   const memoryClass = typeof file === "string" ? undefined : file.memoryClass;
   if (memoryClass === TRANSIENT_TOOL_MEMORY_CLASS) return true;
   return sanitizeFileName(name).startsWith("tool_");
@@ -73,7 +86,11 @@ export function isTransientToolFile(
 
 // Restrict slugs to a safe charset so a file name can never escape the user's prefix.
 function sanitizeFileName(file: string): string {
-  const slug = String(file).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
+  const slug = String(file)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .slice(0, 64);
   return slug || "untitled";
 }
 
@@ -96,18 +113,24 @@ export async function listMemoryFiles(
     return files
       .map((f) => ({
         name: f.name.slice(`memory/${userId}/`.length).replace(/\.md$/, ""),
-        memoryClass: (f.metadata?.metadata as Record<string, string> | null | undefined)
-          ?.memoryClass as string | undefined,
+        memoryClass: (
+          f.metadata?.metadata as Record<string, string> | null | undefined
+        )?.memoryClass as string | undefined,
       }))
       .filter((f) => f.name)
-      .filter((f) => options?.includeTransient === true || !isTransientToolFile(f))
+      .filter(
+        (f) => options?.includeTransient === true || !isTransientToolFile(f),
+      )
       .map((f) => f.name);
   } catch {
     return [];
   }
 }
 
-export async function readMemoryFile(userId: string, file: MemoryFile): Promise<string> {
+export async function readMemoryFile(
+  userId: string,
+  file: MemoryFile,
+): Promise<string> {
   try {
     const bucket = storage.bucket();
     const [contents] = await bucket.file(filePath(userId, file)).download();
@@ -133,7 +156,7 @@ export async function writeMemoryFile(
   const bucket = storage.bucket();
   const custom: Record<string, string> = {};
   if (options?.memoryClass) custom.memoryClass = options.memoryClass;
-  if (options?.expiresAt)   custom.expiresAt   = options.expiresAt;
+  if (options?.expiresAt) custom.expiresAt = options.expiresAt;
   await bucket.file(filePath(userId, file)).save(content, {
     contentType: "text/markdown",
     metadata: {
@@ -145,24 +168,41 @@ export async function writeMemoryFile(
   // R20 (U8): transient tool offloads never get embedding rows — semantic
   // search must not be able to surface them. Prior rows for a reused slug are
   // still purged, defensively (the existing per-file delete path).
-  if (options?.memoryClass === TRANSIENT_TOOL_MEMORY_CLASS || isTransientToolFile(String(file))) {
-    deleteEmbeddingRowsForFile(userId, sanitizeFileName(String(file))).catch((err) => {
-      console.warn("[memoryFiles] transient embedding purge failed:", err instanceof Error ? err.message : err);
-    });
+  if (
+    options?.memoryClass === TRANSIENT_TOOL_MEMORY_CLASS ||
+    isTransientToolFile(String(file))
+  ) {
+    deleteEmbeddingRowsForFile(userId, sanitizeFileName(String(file))).catch(
+      (err) => {
+        console.warn(
+          "[memoryFiles] transient embedding purge failed:",
+          err instanceof Error ? err.message : err,
+        );
+      },
+    );
     return;
   }
 
   // Refresh block embeddings for this file. Failure is non-fatal — substring
   // search still works; we just lose semantic recall until the next write.
   reindexMemoryFileEmbeddings(userId, file, content).catch((err) => {
-    console.warn("[memoryFiles] reindex failed:", err instanceof Error ? err.message : err);
+    console.warn(
+      "[memoryFiles] reindex failed:",
+      err instanceof Error ? err.message : err,
+    );
   });
 }
 
 // Delete every embedding row belonging to one file slug. Shared by the
 // transient-write purge, the reindex pre-pass, and deleteMemoryFile.
-async function deleteEmbeddingRowsForFile(userId: string, slug: string): Promise<void> {
-  const col   = db.collection("memory_embeddings").doc(userId).collection("blocks");
+async function deleteEmbeddingRowsForFile(
+  userId: string,
+  slug: string,
+): Promise<void> {
+  const col = db
+    .collection("memory_embeddings")
+    .doc(userId)
+    .collection("blocks");
   const prior = await col.where("file", "==", slug).get();
   if (prior.empty) return;
   const batch = db.batch();
@@ -175,13 +215,16 @@ async function deleteEmbeddingRowsForFile(userId: string, slug: string): Promise
 // returns nulls, which we filter out).
 async function reindexMemoryFileEmbeddings(
   userId: string,
-  file:   MemoryFile,
-  content:string,
+  file: MemoryFile,
+  content: string,
 ): Promise<void> {
-  const slug   = sanitizeFileName(file);
+  const slug = sanitizeFileName(file);
   const blocks = splitIntoBlocks(content);
 
-  const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
+  const col = db
+    .collection("memory_embeddings")
+    .doc(userId)
+    .collection("blocks");
 
   // Delete prior embeddings for this file (whole-file rewrite, so no diffing).
   await deleteEmbeddingRowsForFile(userId, slug);
@@ -189,20 +232,20 @@ async function reindexMemoryFileEmbeddings(
   if (blocks.length === 0) return;
 
   const vectors = await embedMany(blocks);
-  const batch   = db.batch();
-  const nowIso  = new Date().toISOString();
-  let wrote     = 0;
+  const batch = db.batch();
+  const nowIso = new Date().toISOString();
+  let wrote = 0;
 
   for (let i = 0; i < blocks.length; i++) {
     const vec = vectors[i];
     if (!vec) continue; // embedding API failed for this block — skip
     const ref = col.doc();
     batch.set(ref, {
-      file:        slug,
-      block:       blocks[i].slice(0, 800),
-      embedding:   vec,
-      model:       EMBED_MODEL,
-      updatedAt:   nowIso,
+      file: slug,
+      block: blocks[i].slice(0, 800),
+      embedding: vec,
+      model: EMBED_MODEL,
+      updatedAt: nowIso,
     });
     wrote++;
   }
@@ -212,12 +255,10 @@ async function reindexMemoryFileEmbeddings(
 export async function appendToMemoryFile(
   userId: string,
   file: MemoryFile,
-  entry: string
+  entry: string,
 ): Promise<void> {
   const existing = await readMemoryFile(userId, file);
-  const updated  = existing
-    ? `${existing.trimEnd()}\n\n${entry}`
-    : entry;
+  const updated = existing ? `${existing.trimEnd()}\n\n${entry}` : entry;
   await writeMemoryFile(userId, file, updated);
 }
 
@@ -228,12 +269,12 @@ export async function editMemoryFile(
   userId: string,
   file: MemoryFile,
   find: string,
-  replace: string
+  replace: string,
 ): Promise<number> {
   if (!find) return 0;
   const existing = await readMemoryFile(userId, file);
   if (!existing || !existing.includes(find)) return 0;
-  const count   = existing.split(find).length - 1;
+  const count = existing.split(find).length - 1;
   const updated = existing.split(find).join(replace);
   await writeMemoryFile(userId, file, updated);
   return count;
@@ -244,10 +285,13 @@ export async function editMemoryFile(
 // file or when an ad-hoc offloaded tool-result file is no longer needed.
 // Returns true when a file existed and was deleted, false when nothing was there
 // (idempotent — a second call is a safe no-op).
-export async function deleteMemoryFile(userId: string, file: MemoryFile): Promise<boolean> {
-  const slug   = sanitizeFileName(file);
+export async function deleteMemoryFile(
+  userId: string,
+  file: MemoryFile,
+): Promise<boolean> {
+  const slug = sanitizeFileName(file);
   const bucket = storage.bucket();
-  const ref    = bucket.file(filePath(userId, file));
+  const ref = bucket.file(filePath(userId, file));
 
   let existed = false;
   try {
@@ -255,7 +299,10 @@ export async function deleteMemoryFile(userId: string, file: MemoryFile): Promis
     existed = exists;
     if (exists) await ref.delete();
   } catch (err) {
-    console.warn("[memoryFiles] delete failed:", err instanceof Error ? err.message : err);
+    console.warn(
+      "[memoryFiles] delete failed:",
+      err instanceof Error ? err.message : err,
+    );
     return false;
   }
 
@@ -264,7 +311,10 @@ export async function deleteMemoryFile(userId: string, file: MemoryFile): Promis
   try {
     await deleteEmbeddingRowsForFile(userId, slug);
   } catch (err) {
-    console.warn("[memoryFiles] embedding cleanup on delete failed:", err instanceof Error ? err.message : err);
+    console.warn(
+      "[memoryFiles] embedding cleanup on delete failed:",
+      err instanceof Error ? err.message : err,
+    );
   }
 
   return existed;
@@ -291,75 +341,106 @@ export interface TransientCleanupCounts {
   failed: number;
 }
 
-const MEMORY_OBJECT_RE  = /^memory\/([^/]+)\/([^/]+)\.md$/;
+const MEMORY_OBJECT_RE = /^memory\/([^/]+)\/([^/]+)\.md$/;
 const LEGACY_SLUG_TS_RE = /_(\d{10,})$/;
+export const TRANSIENT_CLEANUP_PAGE_SIZE = 200;
 
 export async function cleanupExpiredTransientToolFiles(
   now: number = Date.now(),
 ): Promise<TransientCleanupCounts> {
-  const counts: TransientCleanupCounts = { scanned: 0, retained: 0, deleted: 0, malformed: 0, failed: 0 };
+  const counts: TransientCleanupCounts = {
+    scanned: 0,
+    retained: 0,
+    deleted: 0,
+    malformed: 0,
+    failed: 0,
+  };
 
-  let files: Array<{
+  type StorageFile = {
     name: string;
-    metadata?: { timeCreated?: string; metadata?: Record<string, string> | null };
-  }>;
-  try {
-    const bucket = storage.bucket();
-    [files] = (await bucket.getFiles({ prefix: "memory/" })) as unknown as [typeof files];
-  } catch (err) {
-    counts.failed++;
-    console.warn("[memoryFiles] transient cleanup listing failed:", {
-      errorClass: err instanceof Error ? err.name : "Error",
-    });
-    return counts;
-  }
+    metadata?: {
+      timeCreated?: string;
+      metadata?: Record<string, string> | null;
+    };
+  };
+  type NextPage = { pageToken?: string } | null | undefined;
 
-  for (const f of files) {
-    const match = MEMORY_OBJECT_RE.exec(f.name);
-    if (!match) continue;
-    const [, userId, slug] = match;
-    const custom = (f.metadata?.metadata ?? undefined) as Record<string, string> | undefined;
-    if (!isTransientToolFile({ name: slug, memoryClass: custom?.memoryClass })) continue;
-
-    counts.scanned++;
-
-    const timeCreatedMs = Date.parse(String(f.metadata?.timeCreated ?? ""));
-    // Hard guard: never delete an object younger than the 24h lifetime.
-    if (Number.isFinite(timeCreatedMs) && now - timeCreatedMs < TRANSIENT_TOOL_TTL_MS) {
-      counts.retained++;
-      continue;
+  const bucket = storage.bucket();
+  let pageToken: string | undefined;
+  do {
+    let files: StorageFile[];
+    let nextPage: NextPage;
+    try {
+      [files, nextPage] = (await bucket.getFiles({
+        prefix: "memory/",
+        maxResults: TRANSIENT_CLEANUP_PAGE_SIZE,
+        pageToken,
+        autoPaginate: false,
+      })) as unknown as [StorageFile[], NextPage];
+    } catch (err) {
+      counts.failed++;
+      console.warn("[memoryFiles] transient cleanup listing failed:", {
+        errorClass: err instanceof Error ? err.name : "Error",
+      });
+      return counts;
     }
 
-    const expiresAtMs = Date.parse(String(custom?.expiresAt ?? ""));
-    let expired: boolean;
-    if (Number.isFinite(expiresAtMs)) {
-      expired = now >= expiresAtMs;
-    } else if (Number.isFinite(timeCreatedMs)) {
-      expired = now - timeCreatedMs >= TRANSIENT_TOOL_TTL_MS;
-    } else {
-      // Legacy fallback: parse the epoch-ms suffix out of the slug.
-      const legacy = LEGACY_SLUG_TS_RE.exec(slug);
-      if (!legacy) {
-        counts.malformed++; // retained — no trustworthy age signal at all
+    for (const f of files) {
+      const match = MEMORY_OBJECT_RE.exec(f.name);
+      if (!match) continue;
+      const [, userId, slug] = match;
+      const custom = (f.metadata?.metadata ?? undefined) as
+        Record<string, string> | undefined;
+      if (
+        !isTransientToolFile({ name: slug, memoryClass: custom?.memoryClass })
+      )
+        continue;
+
+      counts.scanned++;
+
+      const timeCreatedMs = Date.parse(String(f.metadata?.timeCreated ?? ""));
+      // Hard guard: never delete an object younger than the 24h lifetime.
+      if (
+        Number.isFinite(timeCreatedMs) &&
+        now - timeCreatedMs < TRANSIENT_TOOL_TTL_MS
+      ) {
+        counts.retained++;
         continue;
       }
-      expired = now - Number(legacy[1]) >= TRANSIENT_TOOL_TTL_MS;
+
+      const expiresAtMs = Date.parse(String(custom?.expiresAt ?? ""));
+      let expired: boolean;
+      if (Number.isFinite(expiresAtMs)) {
+        expired = now >= expiresAtMs;
+      } else if (Number.isFinite(timeCreatedMs)) {
+        expired = now - timeCreatedMs >= TRANSIENT_TOOL_TTL_MS;
+      } else {
+        // Legacy fallback: parse the epoch-ms suffix out of the slug.
+        const legacy = LEGACY_SLUG_TS_RE.exec(slug);
+        if (!legacy) {
+          counts.malformed++; // retained — no trustworthy age signal at all
+          continue;
+        }
+        expired = now - Number(legacy[1]) >= TRANSIENT_TOOL_TTL_MS;
+      }
+
+      if (!expired) {
+        counts.retained++;
+        continue;
+      }
+
+      try {
+        // Existing per-file delete path: removes the object AND its embedding rows.
+        const removed = await deleteMemoryFile(userId, slug);
+        if (removed) counts.deleted++;
+        else counts.failed++;
+      } catch {
+        counts.failed++;
+      }
     }
 
-    if (!expired) {
-      counts.retained++;
-      continue;
-    }
-
-    try {
-      // Existing per-file delete path: removes the object AND its embedding rows.
-      const removed = await deleteMemoryFile(userId, slug);
-      if (removed) counts.deleted++;
-      else counts.failed++;
-    } catch {
-      counts.failed++;
-    }
-  }
+    pageToken = nextPage?.pageToken;
+  } while (pageToken);
 
   return counts;
 }
@@ -391,7 +472,11 @@ export async function reconcileFactAcrossMemoryFiles(
   retiredText: string,
   replacement: string,
 ): Promise<FactReconcileResult> {
-  const result: FactReconcileResult = { filesScanned: 0, filesRewritten: 0, occurrencesReplaced: 0 };
+  const result: FactReconcileResult = {
+    filesScanned: 0,
+    filesRewritten: 0,
+    occurrencesReplaced: 0,
+  };
   const needle = (retiredText ?? "").trim();
   if (!userId || !needle) return result;
 
@@ -409,7 +494,10 @@ export async function reconcileFactAcrossMemoryFiles(
       // Forget: collapse the holes the removal left behind.
       updated = updated
         .split("\n")
-        .filter((line, i, arr) => !(line.trim() === "" && (arr[i - 1] ?? "").trim() === ""))
+        .filter(
+          (line, i, arr) =>
+            !(line.trim() === "" && (arr[i - 1] ?? "").trim() === ""),
+        )
         .filter((line) => !/^[-*•]\s*$/.test(line.trim()))
         .join("\n")
         .replace(/[ \t]+\n/g, "\n");
@@ -418,6 +506,25 @@ export async function reconcileFactAcrossMemoryFiles(
     result.filesRewritten++;
     result.occurrencesReplaced += matches.length;
   }
+
+  // Conversation summaries are trusted context but have no fact-level source
+  // index. Once a correction/forget starts, any existing summary could contain
+  // a paraphrase of the retired fact. Remove it before the worker can clear the
+  // reconciliation flag; the next safe rollup rebuilds it from live rows.
+  const sessions = await db
+    .collection("agent_sessions")
+    .where("userId", "==", userId)
+    .get();
+  for (const session of sessions.docs) {
+    const summaries = await db
+      .collection("agent_conversations")
+      .doc(session.id)
+      .collection("messages")
+      .where("role", "==", "summary")
+      .get();
+    await Promise.all(summaries.docs.map((summary) => summary.ref.delete()));
+  }
+
   return result;
 }
 
@@ -428,12 +535,22 @@ export async function reconcileFactAcrossMemoryFiles(
  * files that were not rewritten this run are still purged, so semantic search
  * cannot resurface the retired assertion once the store unmasks.
  */
-export async function deleteEmbeddingRowsMatching(userId: string, retiredText: string): Promise<number> {
+export async function deleteEmbeddingRowsMatching(
+  userId: string,
+  retiredText: string,
+): Promise<number> {
   const needle = (retiredText ?? "").trim().toLowerCase();
   if (!userId || !needle) return 0;
-  const col = db.collection("memory_embeddings").doc(userId).collection("blocks");
+  const col = db
+    .collection("memory_embeddings")
+    .doc(userId)
+    .collection("blocks");
   const snap = await col.get();
-  const doomed = snap.docs.filter((d) => String(d.data()?.block ?? "").toLowerCase().includes(needle));
+  const doomed = snap.docs.filter((d) =>
+    String(d.data()?.block ?? "")
+      .toLowerCase()
+      .includes(needle),
+  );
   if (doomed.length === 0) return 0;
   const batch = db.batch();
   doomed.forEach((d) => batch.delete(d.ref));
@@ -442,22 +559,28 @@ export async function deleteEmbeddingRowsMatching(userId: string, retiredText: s
 }
 
 export interface MemorySearchHit {
-  file:    string;
+  file: string;
   section: string; // the matching block (paragraph or heading section)
   source?: "substring" | "semantic";
-  score?:  number; // cosine similarity for semantic hits, 1.0 for substring
+  score?: number; // cosine similarity for semantic hits, 1.0 for substring
 }
 
 // Substring search across all of a user's memory files. Returns the matching
 // sections so the QA agent can retrieve a fact without injecting all ~12K chars.
-export async function searchMemory(userId: string, query: string): Promise<MemorySearchHit[]> {
+export async function searchMemory(
+  userId: string,
+  query: string,
+): Promise<MemorySearchHit[]> {
   if (await storageMemoryMasked(userId)) return []; // U4a: reconciliation pending
   return searchMemoryUnguarded(userId, query);
 }
 
 // Internal body — searchMemoryHybrid runs its own single mask check and then
 // calls this, so one hybrid search never pays the point read twice.
-async function searchMemoryUnguarded(userId: string, query: string): Promise<MemorySearchHit[]> {
+async function searchMemoryUnguarded(
+  userId: string,
+  query: string,
+): Promise<MemorySearchHit[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
 
@@ -470,7 +593,12 @@ async function searchMemoryUnguarded(userId: string, query: string): Promise<Mem
     // Split into blocks on blank lines so a hit returns a coherent chunk of context.
     for (const block of content.split(/\n\s*\n/)) {
       if (block.toLowerCase().includes(q)) {
-        hits.push({ file, section: block.trim().slice(0, 800), source: "substring", score: 1 });
+        hits.push({
+          file,
+          section: block.trim().slice(0, 800),
+          source: "substring",
+          score: 1,
+        });
       }
     }
   }
@@ -487,7 +615,7 @@ async function searchMemoryUnguarded(userId: string, query: string): Promise<Mem
  */
 export async function searchMemoryHybrid(
   userId: string,
-  query:  string,
+  query: string,
   topK = 8,
 ): Promise<MemorySearchHit[]> {
   const q = (query ?? "").trim();
@@ -510,21 +638,42 @@ export async function searchMemoryHybrid(
         .collection("blocks")
         .get();
       const candidates = snap.docs
-        .map((d) => d.data() as { file: string; block: string; embedding: number[]; memoryClass?: string })
+        .map(
+          (d) =>
+            d.data() as {
+              file: string;
+              block: string;
+              embedding: number[];
+              memoryClass?: string;
+            },
+        )
         // R20 (U8): transient tool-file rows (legacy `tool_` slugs — new
         // transient writes create no rows at all) never become semantic
         // candidates.
-        .filter((data) => !isTransientToolFile({ name: data.file, memoryClass: data.memoryClass }))
-        .map((data) => ({ file: data.file, block: data.block, embedding: data.embedding }));
+        .filter(
+          (data) =>
+            !isTransientToolFile({
+              name: data.file,
+              memoryClass: data.memoryClass,
+            }),
+        )
+        .map((data) => ({
+          file: data.file,
+          block: data.block,
+          embedding: data.embedding,
+        }));
       const ranked = rankBySimilarity(candidates, queryEmbed, topK);
       semanticHits = ranked.map((r) => ({
-        file:    r.file,
+        file: r.file,
         section: r.block,
-        source:  "semantic" as const,
-        score:   r._sim,
+        source: "semantic" as const,
+        score: r._sim,
       }));
     } catch (err) {
-      console.warn("[memoryFiles] semantic search failed:", err instanceof Error ? err.message : err);
+      console.warn(
+        "[memoryFiles] semantic search failed:",
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 
@@ -553,14 +702,16 @@ export async function getMemoryContext(userId: string): Promise<string> {
   const present = await listMemoryFiles(userId);
   const ordered = [
     ...ALL_FILES.filter((f) => present.includes(f)),
-    ...present.filter((f) => !ALL_FILES.includes(f as CanonicalMemoryFile)).sort(),
+    ...present
+      .filter((f) => !ALL_FILES.includes(f as CanonicalMemoryFile))
+      .sort(),
   ];
 
   const parts = await Promise.all(
     ordered.map(async (file) => {
       const content = await readMemoryFile(userId, file);
       return content ? `## ${file}\n${content}` : "";
-    })
+    }),
   );
 
   const combined = parts.filter(Boolean).join("\n\n");
@@ -569,23 +720,23 @@ export async function getMemoryContext(userId: string): Promise<string> {
 }
 
 export interface InitialMemoryData {
-  seniorName?:   string;
-  seniorAge?:    string | number;
-  conditions?:   string | string[];
-  careNeeds?:    string | string[];
-  city?:         string;
-  clientName?:   string;
+  seniorName?: string;
+  seniorAge?: string | number;
+  conditions?: string | string[];
+  careNeeds?: string | string[];
+  city?: string;
+  clientName?: string;
   relationship?: string;
 }
 
 export async function initializeMemoryFiles(
   userId: string,
-  data:   InitialMemoryData
+  data: InitialMemoryData,
 ): Promise<void> {
-  const seniorName   = data.seniorName   ?? "your loved one";
-  const clientName   = data.clientName   ?? "";
+  const seniorName = data.seniorName ?? "your loved one";
+  const clientName = data.clientName ?? "";
   const relationship = data.relationship ?? "family member";
-  const conditions   = Array.isArray(data.conditions)
+  const conditions = Array.isArray(data.conditions)
     ? data.conditions.join(", ")
     : (data.conditions ?? "none noted");
   const careNeeds = Array.isArray(data.careNeeds)
@@ -622,7 +773,7 @@ export async function handleMemoryQuery(
   chatId: string,
   sendMessage: (id: string, msg: string) => Promise<unknown>,
   question: string,
-  zepContext?: string
+  zepContext?: string,
 ): Promise<void> {
   // U4a/KTD10: a memory query while reconciliation is pending gets the honest
   // deterministic "updating my memory" copy — never a stale recall and never
@@ -632,31 +783,45 @@ export async function handleMemoryQuery(
     return;
   }
   const fileContext = await getMemoryContext(userId);
-  const combined    = [fileContext, zepContext ? `## Recent context\n${zepContext}` : ""]
+  const combined = [
+    fileContext,
+    zepContext ? `## Recent context\n${zepContext}` : "",
+  ]
     .filter(Boolean)
     .join("\n\n");
 
   if (!combined) {
-    await sendMessage(chatId, "I'm still building up my picture of your situation. The more we talk, the more I'll know.");
+    await sendMessage(
+      chatId,
+      "I'm still building up my picture of your situation. The more we talk, the more I'll know.",
+    );
     return;
   }
 
   const result = await getSharedClient().messages.create({
-    model:      "claude-haiku-4-5-20251001",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
       "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
       "their care situation. Answer THEIR QUESTION directly and specifically using that context. " +
       "If they ask for one fact (a name, an age, a city), lead with that fact in one short sentence — " +
-      "do NOT recap the whole profile. If the question is open-ended (e.g. \"what do you know about my mom\"), " +
+      'do NOT recap the whole profile. If the question is open-ended (e.g. "what do you know about my mom"), ' +
       "give a warm 2–3 sentence summary. Use ONLY facts present in what you know below — never infer or invent. " +
       "If the answer isn't in what you know, say so briefly and offer to " +
       "note it. Plain conversational text — no bullet points, no headers.",
-    messages: [{ role: "user", content: `What I know:\n${combined}\n\nTheir question: ${question}` }],
+    messages: [
+      {
+        role: "user",
+        content: `What I know:\n${combined}\n\nTheir question: ${question}`,
+      },
+    ],
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();
-  await sendMessage(chatId, summary || "I remember quite a bit — just ask me something specific.");
+  await sendMessage(
+    chatId,
+    summary || "I remember quite a bit — just ask me something specific.",
+  );
 }
 
 // Consolidate last 7 days of actual conversation messages into memory files.
@@ -678,7 +843,7 @@ export async function reconcileMemoryFile(
   if (content.trim().length < RECONCILE_MIN_CHARS) return false;
   try {
     const result = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 700,
       system:
         `You are reconciling a memory file of type "${file}" for one care recipient. ` +
@@ -706,9 +871,16 @@ export async function reconcileMemoryFile(
 
 // Files worth reconciling — the long-lived fact stores. recent_episodes has its
 // own time-based trim; procedural rarely accumulates contradictions.
-const RECONCILABLE_FILES: CanonicalMemoryFile[] = ["profile", "health", "family"];
+const RECONCILABLE_FILES: CanonicalMemoryFile[] = [
+  "profile",
+  "health",
+  "family",
+];
 
-export async function consolidateMemoryForUser(userId: string, phone?: string): Promise<void> {
+export async function consolidateMemoryForUser(
+  userId: string,
+  phone?: string,
+): Promise<void> {
   // U4a/R23: never consolidate while a correction/forget is reconciling — a
   // nightly pass over old conversation rows could re-write the very fact being
   // removed. The user is simply skipped this run; the worker (U4b) marks source
@@ -723,7 +895,8 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   // Resolve phone → agent_conversations doc key
   let conversationKey = phone ?? userId;
   if (!phone) {
-    const sessionSnap = await db.collection("agent_sessions")
+    const sessionSnap = await db
+      .collection("agent_sessions")
       .where("userId", "==", userId)
       .limit(1)
       .get();
@@ -750,7 +923,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     // consolidation must not recreate the retired fact from old conversation.
     .filter((d) => !d.data().excludeFromMemoryConsolidationAt)
     .map((d) => {
-      const label   = d.data().role === "user" ? "Family" : "Evia";
+      const label = d.data().role === "user" ? "Family" : "Evia";
       const content = (d.data().content as string | undefined) ?? "";
       return `[${label}]: ${content.slice(0, 600)}`;
     })
@@ -761,7 +934,7 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   const existingContext = await getMemoryContext(userId);
 
   const result = await getSharedClient().messages.create({
-    model:      "claude-sonnet-4-6",
+    model: "claude-sonnet-4-6",
     max_tokens: 600,
     system:
       "You maintain memory files for a caregiving AI assistant named Evia. " +
@@ -770,18 +943,24 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
       "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
       "Memory files: profile (identity/contact prefs), health (diagnoses/meds/allergies), " +
       "family (relationships/dynamics), recent_episodes (last 30 days events), procedural (routines). " +
-      "Reply with JSON: [{\"file\": \"<type>\", \"append\": \"<markdown to append>\"}]. " +
+      'Reply with JSON: [{"file": "<type>", "append": "<markdown to append>"}]. ' +
       "Only include files that need updating. Keep appended content concise (1–3 lines each).",
-    messages: [{
-      role: "user",
-      content: `Existing memory:\n${existingContext}\n\nRecent events:\n${events}`,
-    }],
+    messages: [
+      {
+        role: "user",
+        content: `Existing memory:\n${existingContext}\n\nRecent events:\n${events}`,
+      },
+    ],
   });
 
   const raw = ((result.content[0] as { text: string }).text ?? "").trim();
-  const updates = safeParseJson<Array<{ file: MemoryFile; append: string }>>(
-    raw, "memoryFiles.consolidate", [], "array",
-  ) ?? [];
+  const updates =
+    safeParseJson<Array<{ file: MemoryFile; append: string }>>(
+      raw,
+      "memoryFiles.consolidate",
+      [],
+      "array",
+    ) ?? [];
   if (updates.length === 0) return;
 
   const appliedUpdates: Array<{ file: MemoryFile; append: string }> = [];
@@ -799,9 +978,12 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
     addBusinessDataToZep({
       userId: zepUserId,
       data: {
-        event_type:  "memory_files_consolidated",
-        updates:     appliedUpdates.map((u) => ({ file: u.file, content: u.append.slice(0, 400) })),
-        timestamp:   new Date().toISOString(),
+        event_type: "memory_files_consolidated",
+        updates: appliedUpdates.map((u) => ({
+          file: u.file,
+          content: u.append.slice(0, 400),
+        })),
+        timestamp: new Date().toISOString(),
         data_source: "cara_memory_consolidation",
       },
     }).catch(() => {});
@@ -811,14 +993,15 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
   // append above can't leave a stale fact sitting next to its replacement.
   const touched = new Set(appliedUpdates.map((u) => String(u.file)));
   for (const file of RECONCILABLE_FILES) {
-    if (touched.has(file)) await reconcileMemoryFile(userId, file).catch(() => {});
+    if (touched.has(file))
+      await reconcileMemoryFile(userId, file).catch(() => {});
   }
 
   // Trim recent_episodes.md if it exceeds 8000 chars
   const episodes = await readMemoryFile(userId, "recent_episodes");
   if (episodes.length > 8000) {
     const trimResult = await getSharedClient().messages.create({
-      model:      "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
       system:
         "Summarize the oldest entries in this care episode log into a brief paragraph. " +
@@ -827,7 +1010,9 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
         "Reply with only the revised markdown content.",
       messages: [{ role: "user", content: episodes }],
     });
-    const trimmed = ((trimResult.content[0] as { text: string }).text ?? "").trim();
+    const trimmed = (
+      (trimResult.content[0] as { text: string }).text ?? ""
+    ).trim();
     if (trimmed) {
       await writeMemoryFile(userId, "recent_episodes", trimmed);
 
@@ -838,10 +1023,10 @@ export async function consolidateMemoryForUser(userId: string, phone?: string): 
         addBusinessDataToZep({
           userId: zepUserId,
           data: {
-            event_type:   "recent_episodes_trimmed",
-            content:      trimmed.slice(0, 800),
-            timestamp:    new Date().toISOString(),
-            data_source:  "cara_memory_trim",
+            event_type: "recent_episodes_trimmed",
+            content: trimmed.slice(0, 800),
+            timestamp: new Date().toISOString(),
+            data_source: "cara_memory_trim",
           },
         }).catch(() => {});
       }

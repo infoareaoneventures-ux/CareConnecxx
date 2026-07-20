@@ -59,6 +59,7 @@ import {
   getZepUserId,
 } from "../memory/zepClient";
 import { sessionActivityFields } from "../memory/conversationMemory";
+import { MEMORY_FINGERPRINT_KEY_NAME, MEMORY_FINGERPRINT_KEY_SECRET } from "../memory/fingerprintKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { quickComplete } from "../utils/openaiClient";
 import { extractVoiceMemoPart, transcribeVoiceMemo } from "../utils/voiceTranscription";
@@ -967,13 +968,8 @@ const handleInboundInner = traceable(
   // chatId we created — replying to a stale chatId returns 400).
   if (sessionSnap.exists) {
     const stored = sessionSnap.data() as AgentSession & { chatId?: string };
-    // R1 (memory-grounding U2): lastMessageAt (server Timestamp) rides in the
-    // same update as lastInboundAt — signature is verified and the session is
-    // resolved by this point, and it lands BEFORE model execution so a model
-    // failure still leaves the turn counted for nightly memory selection.
     const update: Record<string, unknown> = {
       lastInboundAt: new Date().toISOString(),
-      ...sessionActivityFields(),
     };
     // Remember the Linq message id so react_to_message can tapback this message.
     // Tolerant field chain — same shapes the other event handlers accept.
@@ -2495,6 +2491,14 @@ const handleInboundInner = traceable(
     return;
   }
 
+  // The webhook signature has been verified by the public handler, and the
+  // accepted-session path has passed its rejection guards. Stamp activity
+  // before model work so an agent failure cannot make a real inbound turn look
+  // inactive to the nightly memory selector.
+  if (sessionSnap.exists) {
+    await db.collection("agent_sessions").doc(phone).update(sessionActivityFields()).catch(() => {});
+  }
+
   // ── Shared location (anytime / completed session) ──────────────────────────
   // A pin arrived but we're past onboarding. Persist the raw coords so MCP tools
   // can read them, then synthesize a text line so the QA agent reasons about it
@@ -3089,7 +3093,12 @@ export const linqWebhook = functions
   .runWith({
     memory: "1GB",
     timeoutSeconds: 180,
-    secrets: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "CREDENTIAL_VAULT_KEY"],
+    secrets: [
+      "BROWSERBASE_API_KEY",
+      "BROWSERBASE_PROJECT_ID",
+      "CREDENTIAL_VAULT_KEY",
+      MEMORY_FINGERPRINT_KEY_SECRET?.name ?? MEMORY_FINGERPRINT_KEY_NAME,
+    ],
   })
   .https.onRequest(async (req, res) => {
   // IMPORTANT: do NOT call res.send before the work — Cloud Functions Gen 1

@@ -8,28 +8,77 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // before this file's const initializers — plain consts would hit the TDZ.
 // U9: the sustained-outage and aged-operation alerts dedupe via deterministic
 // doc IDs (doc(id).set(..., { merge: true })) — capture (id, data, opts).
-const { addMock, setMock, makeCollection } = vi.hoisted(() => {
+const { addMock, setMock, createMock, bucketDocs, alertDocs, makeCollection } = vi.hoisted(() => {
   const addMock = vi.fn(async () => undefined);
   const setMock = vi.fn(async (..._args: unknown[]) => undefined);
-  const makeCollection = () => ({
-    add: addMock,
-    doc: (id: string) => ({
-      id,
-      set: (data: unknown, opts?: unknown) => setMock(id, data, opts),
-    }),
-  });
-  return { addMock, setMock, makeCollection };
+  const createMock = vi.fn(async (..._args: unknown[]) => undefined);
+  const bucketDocs = new Map<string, Record<string, unknown>>();
+  const alertDocs = new Map<string, Record<string, unknown>>();
+  const makeCollection = (collection: string) => {
+    const filters: Array<[string, string, unknown]> = [];
+    let max = Infinity;
+    const query: any = {
+      where: (field: string, operator: string, value: unknown) => {
+        filters.push([field, operator, value]);
+        return query;
+      },
+      orderBy: () => query,
+      limit: (limit: number) => { max = limit; return query; },
+      get: async () => {
+        const docs = [...bucketDocs.entries()]
+          .map(([id, data]) => ({ id, data: () => ({ ...data }) }))
+          .filter((doc) => filters.every(([field, operator, value]) => {
+            const actual = doc.data()[field];
+            return (operator === ">=" && typeof actual === "number" && actual >= value)
+              || (operator === "<=" && typeof actual === "number" && actual <= value);
+          }))
+          .sort((a, b) => Number(a.data().minuteStartMs) - Number(b.data().minuteStartMs))
+          .slice(0, max);
+        return { docs };
+      },
+      add: addMock,
+      doc: (id: string) => ({
+        id,
+        set: async (data: Record<string, unknown>, opts?: unknown) => {
+          await setMock(id, data, opts);
+          if (collection === "cara_ops_zep_outage_buckets") {
+            const existing = bucketDocs.get(id) ?? {};
+            const merged = { ...existing };
+            for (const [key, value] of Object.entries(data)) {
+              if (typeof value === "object" && value && "__increment" in value) {
+                merged[key] = Number(merged[key] ?? 0) + Number((value as { __increment: number }).__increment);
+              } else {
+                merged[key] = value;
+              }
+            }
+            bucketDocs.set(id, merged);
+          }
+        },
+        create: async (data: Record<string, unknown>) => {
+          if (alertDocs.has(id)) throw Object.assign(new Error("already exists"), { code: 6 });
+          await createMock(id, data);
+          alertDocs.set(id, { ...data });
+        },
+      }),
+    };
+    return query;
+  };
+  return { addMock, setMock, createMock, bucketDocs, alertDocs, makeCollection };
 });
 vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: {
     apps: [],
     initializeApp: () => ({}),
-    firestore: () => ({ collection: makeCollection }),
+    firestore: Object.assign(() => ({ collection: makeCollection }), {
+      FieldValue: { increment: (by: number) => ({ __increment: by }) },
+    }),
   },
   apps: [],
   initializeApp: () => ({}),
-  firestore: () => ({ collection: makeCollection }),
+  firestore: Object.assign(() => ({ collection: makeCollection }), {
+    FieldValue: { increment: (by: number) => ({ __increment: by }) },
+  }),
 }));
 
 const sendToPhoneMock = vi.fn().mockResolvedValue(undefined);
@@ -286,6 +335,10 @@ describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
   beforeEach(() => {
     setMock.mockClear();
     setMock.mockResolvedValue(undefined);
+    createMock.mockClear();
+    createMock.mockResolvedValue(undefined);
+    bucketDocs.clear();
+    alertDocs.clear();
     __resetZepOutageWindowForTests();
   });
 
@@ -293,12 +346,12 @@ describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
     for (let i = 0; i < 25; i++) {
       expect(await recordZepContextOutcome("empty", T0 + i * 1000)).toBe(false);
     }
-    expect(setMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("a single unavailable event never alerts (below the minimum sample count)", async () => {
     expect(await recordZepContextOutcome("unavailable", T0)).toBe(false);
-    expect(setMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("a sustained outage alerts once per dedupe bucket with counts-only content", async () => {
@@ -314,11 +367,10 @@ describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
     );
     expect(results[ZEP_OUTAGE_MIN_SAMPLES - 1]).toBe(true);
     expect(results.slice(ZEP_OUTAGE_MIN_SAMPLES)).toEqual([false, false, false]);
-    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
 
-    const [docId, doc, opts] = setMock.mock.calls[0];
+    const [docId, doc] = createMock.mock.calls[0];
     expect(docId).toBe(`zep-sustained-outage:${Math.floor(base / ZEP_OUTAGE_ALERT_DEDUPE_MS)}`);
-    expect(opts).toEqual({ merge: true });
     expect(doc.type).toBe("zep_sustained_outage");
     expect(doc.severity).toBe("high");
     // R21: aggregate counts only — no thread/user IDs, no query text, no phone.
@@ -333,7 +385,7 @@ describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
     for (let i = 0; i < 8; i++) await recordZepContextOutcome("loaded", T0 + i * 1000);
     for (let i = 0; i < 4; i++) await recordZepContextOutcome("unavailable", T0 + 9000 + i * 1000);
     // 4 failures / 12 samples = 0.33 < 0.5
-    expect(setMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("failures older than the rolling window no longer count", async () => {
@@ -345,16 +397,29 @@ describe("recordZepContextOutcome sustained-outage alert (U9)", () => {
     // that remains — far below the minimum sample count.
     const later = T0 + ZEP_OUTAGE_WINDOW_MS + 60_000;
     expect(await recordZepContextOutcome("loaded", later)).toBe(false);
-    expect(setMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("never throws and reports false when the alert write fails", async () => {
-    setMock.mockRejectedValue(new Error("firestore down"));
+    createMock.mockRejectedValue(new Error("firestore down"));
     let last = false;
     for (let i = 0; i < ZEP_OUTAGE_MIN_SAMPLES; i++) {
       last = await recordZepContextOutcome("timeout", T0 + i * 1000);
     }
     expect(last).toBe(false);
+  });
+
+  it("aggregates through a simulated cold start and lets only one instance create the alert", async () => {
+    const base = Math.floor(T0 / ZEP_OUTAGE_ALERT_DEDUPE_MS) * ZEP_OUTAGE_ALERT_DEDUPE_MS;
+    for (let i = 0; i < ZEP_OUTAGE_MIN_SAMPLES - 1; i++) {
+      await recordZepContextOutcome("unavailable", base + i * 1000);
+    }
+    __resetZepOutageWindowForTests();
+
+    expect(await recordZepContextOutcome("timeout", base + ZEP_OUTAGE_MIN_SAMPLES * 1000)).toBe(true);
+    __resetZepOutageWindowForTests();
+    expect(await recordZepContextOutcome("unavailable", base + (ZEP_OUTAGE_MIN_SAMPLES + 1) * 1000)).toBe(false);
+    expect(createMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -728,6 +728,15 @@ describe("onboarding + rate limit", () => {
     await handleInbound(makeEvent("hello"));
     expect(sendMessage).not.toHaveBeenCalled();
     expect(runQaAgent).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).lastMessageAt).toBeUndefined();
+  });
+
+  it("accepted verified SMS stamps lastMessageAt after the rate-limit guard", async () => {
+    seedSession();
+
+    await handleInbound(makeEvent("hello"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).lastMessageAt).toEqual({ __serverTimestamp: true });
   });
 });
 

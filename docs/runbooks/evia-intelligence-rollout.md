@@ -10,7 +10,7 @@ Owner: founder (imran@angelicare.com). Status: **U0 in progress, U1 implemented 
 | Frozen source baseline | `9f4adf8` (post-Firestore-hardening; plan frontmatter updated) |
 | U1 implemented at | `42c7b70` — tri-state care signals + future-safe next appointment |
 | Prerequisites | Memory hardening DEPLOYED 07-20 (completion report); Firestore hardening DEPLOYED 07-21 (143 composites READY, planner 26/26, 7 TTLs ACTIVE) |
-| Functions semantic typecheck | `npm --prefix functions run typecheck` — **GREEN on all shipped code** (repaired 07-21: all 38 production-source errors fixed; gate = zero errors via `tsconfig.typecheck.json`, which excludes test files). `npm run typecheck:all` includes tests and carries 128 legacy mock-idiom errors as tracked burn-down debt — those files execute under vitest/esbuild and never ship. |
+| Functions semantic typecheck | **FULLY GREEN 07-21** (from 166 errors at baseline): `npm --prefix functions run typecheck` (shipped code, `tsconfig.typecheck.json`) = 0 errors AND `typecheck:all` (including all test files) = 0 errors. Both are per-commit gates now — run `typecheck:all` before every functions commit. |
 | Test gate | Vitest; broad suite must run as two shards (`--shard=1/2`, `--shard=2/2`, `--pool=forks --no-file-parallelism`) — full single-run OOMs. |
 
 ## Control Plane (U0 — implemented)

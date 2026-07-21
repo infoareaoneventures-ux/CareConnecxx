@@ -111,7 +111,7 @@ afterEach(() => {
 });
 
 function loggedLines(spy: ReturnType<typeof vi.spyOn>): string[] {
-  return spy.mock.calls.map((c) => c.map(String).join(" "));
+  return spy.mock.calls.map((c: unknown[]) => c.map(String).join(" "));
 }
 
 describe("getZepContextResult", () => {

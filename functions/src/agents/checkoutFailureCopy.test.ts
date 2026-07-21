@@ -9,14 +9,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const hoisted = vi.hoisted(() => {
   const sendMessage = vi.fn(async (..._args: unknown[]) => ({ message_id: "m1" }));
-  const signalThinking = vi.fn(async () => {});
+  const signalThinking = vi.fn(async (..._args: unknown[]) => {});
   const updateMock = vi.fn(async () => {});
   const addMock = vi.fn(async (_name: string, _doc: unknown) => ({ id: "x" }));
-  const recordCommitment = vi.fn(async () => "commit-1");
-  const resolveCommitment = vi.fn(async () => {});
-  const generateCaraMessage = vi.fn(async (_opts: any) => "msg");
+  const recordCommitment = vi.fn(async (..._args: unknown[]) => "commit-1");
+  const resolveCommitment = vi.fn(async (..._args: unknown[]) => {});
+  const generateCaraMessage = vi.fn(async (..._args: unknown[]) => "msg");
   // checkout.sessions.create — swap the implementation per test (succeed / throw).
-  const checkoutCreate = vi.fn(async () => ({ url: "https://pay.stripe/xyz" }));
+  const checkoutCreate = vi.fn(async (..._args: unknown[]) => ({ url: "https://pay.stripe/xyz" }));
   const createBrandedLink = vi.fn(async (_kind: string, url: string) => url);
 
   const sessionData: Record<string, unknown> = {

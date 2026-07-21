@@ -4,10 +4,10 @@ const sendOnboardingLink = vi.fn(async (_phone: string, linkType: string) => ({
   success: true,
   linkType,
 }));
-const logAgentAction = vi.fn(async () => undefined);
+const logAgentAction = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock("../onboardingConversation", () => ({
-  sendOnboardingLink: (...args: unknown[]) => sendOnboardingLink(...args),
+  sendOnboardingLink: (...args: unknown[]) => sendOnboardingLink(...(args as [string, string])),
 }));
 
 vi.mock("../../observability/actionLedger", () => ({

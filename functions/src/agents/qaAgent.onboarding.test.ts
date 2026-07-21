@@ -98,8 +98,8 @@ vi.mock("../mcp/server", () => ({
 }));
 
 vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
-const getMemoryContext      = vi.fn(async () => "");
-const initializeMemoryFiles = vi.fn(async () => undefined);
+const getMemoryContext      = vi.fn(async (..._args: unknown[]) => "");
+const initializeMemoryFiles = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock("../memory/memoryFiles",   () => ({
   getMemoryContext:      (...a: any[]) => getMemoryContext(...a),
   initializeMemoryFiles: (...a: any[]) => initializeMemoryFiles(...a),

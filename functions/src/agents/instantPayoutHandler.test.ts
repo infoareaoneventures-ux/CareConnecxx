@@ -70,7 +70,7 @@ vi.mock("../utils/openaiClient", () => ({
 }));
 
 vi.mock("../utils/caraMessage", () => ({
-  generateCaraMessage: (...args: unknown[]) => hoisted.generateCaraMessage(...args),
+  generateCaraMessage: (...args: unknown[]) => hoisted.generateCaraMessage(...(args as [unknown])),
 }));
 
 vi.mock("stripe", () => ({
@@ -130,7 +130,7 @@ describe("instantPayoutHandler", () => {
       await startInstantPayout(CG_ID, PHONE, CHAT);
 
       // Confirmation message — free, no fee language
-      expect(sendMessage.mock.calls[0][1]).toMatch(/\$50\.00.*YES.*NO/is);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\$50\.00[\s\S]*YES[\s\S]*NO/i);
       expect(sendMessage.mock.calls[0][1]).toMatch(/free/i);
       expect(sendMessage.mock.calls[0][1]).not.toMatch(/fee/i);
       // State persisted with confirm flag + amount

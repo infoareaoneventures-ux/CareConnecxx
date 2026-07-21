@@ -90,7 +90,7 @@ describe("openaiToolLoop", () => {
   });
 
   it("uses max_completion_tokens for GPT-5-family agent models", async () => {
-    const create = vi.fn(async () => ({
+    const create = vi.fn(async (..._args: unknown[]) => ({
       choices: [{
         finish_reason: "stop",
         message: { content: "Done.", tool_calls: [] },
@@ -142,7 +142,7 @@ describe("openaiToolLoop", () => {
   });
 
   it("omits OpenAI tools fields when no active tools are available", async () => {
-    const create = vi.fn(async () => ({
+    const create = vi.fn(async (..._args: unknown[]) => ({
       choices: [{
         finish_reason: "stop",
         message: { content: "I can help with that.", tool_calls: [] },

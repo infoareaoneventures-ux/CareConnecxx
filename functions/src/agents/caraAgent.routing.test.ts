@@ -37,7 +37,7 @@ const hoisted = vi.hoisted(() => {
   };
 });
 
-const sendMessage = vi.fn(async () => ({ message_id: "m1" }));
+const sendMessage = vi.fn(async (..._args: any[]) => ({ message_id: "m1" }));
 
 vi.mock("firebase-admin", () => ({
   __esModule: true,

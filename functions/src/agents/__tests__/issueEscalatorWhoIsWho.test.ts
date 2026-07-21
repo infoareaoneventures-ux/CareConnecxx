@@ -29,7 +29,7 @@ vi.mock("firebase-admin", () => {
 vi.mock("../../utils/claudeClient", () => ({ getSharedClient: () => ({ messages: { create: vi.fn() } }) }));
 vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn(async () => {}) }));
 
-const sendSpy = vi.fn(async () => {});
+const sendSpy = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("../caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
 
 const genCalls: Array<{ audience: string; context: string; fallback: string }> = [];

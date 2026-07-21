@@ -64,7 +64,7 @@ vi.mock("../linq/client", () => ({
 }));
 
 vi.mock("../checkrApi", () => ({
-  createCheckrInvitation: (...a: unknown[]) => hoisted.checkrInvite(...a),
+  createCheckrInvitation: (...a: unknown[]) => hoisted.checkrInvite(...(a as [unknown])),
   cancelCheckrInvitationsForCandidate: (...a: unknown[]) => hoisted.cancelInvite(...(a as [string])),
   checkrPost: vi.fn(),
   CheckrApiError: class CheckrApiError extends Error {},

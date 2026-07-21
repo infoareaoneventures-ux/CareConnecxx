@@ -28,7 +28,6 @@ import {
   TOOL_CAPABILITIES,
   INTENT_CAPABILITIES,
   findUntaggedTools,
-  CORE_TOOL_NAMES,
 } from "./toolCapabilities";
 import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS, handleToolCall } from "../mcp/server";
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";

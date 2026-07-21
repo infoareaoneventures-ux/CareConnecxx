@@ -31,7 +31,7 @@ const axiosPost = vi.hoisted(() =>
   vi.fn(async () => ({ data: { invitation_url: "https://checkr.local/invite", candidate_id: "cand_live", id: "cand_live" } })),
 );
 const checkrInvite = vi.hoisted(() =>
-  vi.fn(async () => ({ invitationUrl: "https://checkr.local/invite", candidateId: "cand_live" })),
+  vi.fn(async (..._a: unknown[]) => ({ invitationUrl: "https://checkr.local/invite", candidateId: "cand_live" })),
 );
 vi.mock("../../checkrApi", () => ({
   createCheckrInvitation: (...a: unknown[]) => checkrInvite(...a),

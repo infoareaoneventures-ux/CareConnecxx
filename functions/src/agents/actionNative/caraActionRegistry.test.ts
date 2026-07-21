@@ -4,7 +4,6 @@ import { defineCaraAction } from "./defineCaraAction";
 import { CaraActionRegistry } from "./caraActionRegistry";
 import {
   CaraActionAccessError,
-  CaraActionApprovalRequiredError,
   CaraActionInProgressError,
   CaraActionValidationError,
   createApprovalKey,
@@ -12,7 +11,7 @@ import {
 } from "./runCaraAction";
 import { setCaraActionExecutionStoreForTest } from "./actionExecutionLedger";
 
-const logAgentAction = vi.fn(async () => undefined);
+const logAgentAction = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock("../../observability/actionLedger", () => ({
   logAgentAction: (...args: unknown[]) => logAgentAction(...args),
@@ -243,9 +242,10 @@ describe("runCaraAction", () => {
     await expect(first).resolves.toEqual({ sent: true, messageId: "msg-running" });
 
     expect(run).toHaveBeenCalledTimes(1);
-    expect(logAgentAction.mock.calls.some(call =>
-      call[0].status === "duplicate_blocked" &&
-      call[0].metadata?.reason === "in_progress",
-    )).toBe(true);
+    expect(logAgentAction.mock.calls.some(call => {
+      const entry = call[0] as { status?: string; metadata?: { reason?: string } };
+      return entry.status === "duplicate_blocked" &&
+        entry.metadata?.reason === "in_progress";
+    })).toBe(true);
   });
 });

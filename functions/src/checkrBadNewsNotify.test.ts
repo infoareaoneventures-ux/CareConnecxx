@@ -7,9 +7,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // and asserts the send carries those flags.
 
 const hoisted = vi.hoisted(() => {
-  const sendViaInteractionAgent = vi.fn(async () => {});
-  const sendToPhone = vi.fn(async () => "sent");
-  const adminAlertAdd = vi.fn(async () => {});
+  const sendViaInteractionAgent = vi.fn(async (..._args: unknown[]) => {});
+  const sendToPhone = vi.fn(async (..._args: unknown[]) => "sent");
+  const adminAlertAdd = vi.fn(async (..._args: unknown[]) => {});
   const caregiverData = { phone: "+15551112222", name: "Jane Doe" };
   // Toggle whether the caregiver has an agent_sessions doc. Session present →
   // interaction agent; absent → sendToPhone fallback.
@@ -40,8 +40,8 @@ const hoisted = vi.hoisted(() => {
     return { add: vi.fn(async () => {}), doc: genericDoc, where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }), get: async () => ({ empty: true, docs: [] }) }) };
   });
 
-  const claimWebhookEvent = vi.fn(async () => "claimed");
-  const settleWebhookEvent = vi.fn(async () => {});
+  const claimWebhookEvent = vi.fn(async (..._args: unknown[]) => "claimed");
+  const settleWebhookEvent = vi.fn(async (..._args: unknown[]) => {});
 
   return { sendViaInteractionAgent, sendToPhone, adminAlertAdd, collectionMock, claimWebhookEvent, settleWebhookEvent, state };
 });

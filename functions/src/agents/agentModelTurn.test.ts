@@ -26,7 +26,7 @@ vi.mock("../utils/openaiClient", () => ({
   getOpenAIClient: () => ({ __client: "openai" }),
   getGeminiOpenAIClient: () => ({ __client: "gemini" }),
 }));
-const raiseProviderFailureAlert = vi.fn(async () => undefined);
+const raiseProviderFailureAlert = vi.fn(async (..._a: unknown[]) => undefined);
 vi.mock("../observability/providerFailureAlert", () => ({
   raiseProviderFailureAlert: (...a: unknown[]) => raiseProviderFailureAlert(...a),
   classifyProviderError: () => "other",

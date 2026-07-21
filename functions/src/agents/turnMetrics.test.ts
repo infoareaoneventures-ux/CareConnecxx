@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createTurnMetrics, emitTurnMetrics, setTurnMetricMirrorForTest, setZepOutcomeRecorderForTest } from "./turnMetrics";
 
 const firestoreMock = vi.hoisted(() => ({
-  add: vi.fn(async () => ({ id: "metric-1" })),
+  add: vi.fn(async (_record: unknown) => ({ id: "metric-1" })),
 }));
 
 let infoSpy: ReturnType<typeof vi.spyOn>;

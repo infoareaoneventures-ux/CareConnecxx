@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setCaraActionExecutionStoreForTest } from "../actionNative/actionExecutionLedger";
 import { CaraActionValidationError } from "../actionNative/runCaraAction";
 
-const logAgentAction = vi.fn(async () => undefined);
+const logAgentAction = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock("../../observability/actionLedger", () => ({
   logAgentAction: (...args: unknown[]) => logAgentAction(...args),

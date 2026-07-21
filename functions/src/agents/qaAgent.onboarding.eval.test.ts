@@ -243,7 +243,9 @@ vi.mock("../mcp/server", () => {
 // wrapAnthropic (LangSmith) is skipped — fine for an eval.
 vi.mock("../utils/claudeClient", async () => {
   const { createRequire } = await import("node:module");
-  const req = createRequire(import.meta.url);
+  // __filename (provided by vite-node's CJS shims) instead of import.meta.url:
+  // equivalent base for createRequire, and it typechecks under the commonjs tsconfig.
+  const req = createRequire(__filename);
   const mod: any = req("@anthropic-ai/sdk");
   const Anthropic = typeof mod === "function" ? mod : (mod.Anthropic ?? mod.default);
   let client: any = null;
@@ -271,7 +273,8 @@ vi.mock("../utils/claudeClient", async () => {
 // token-limit param) so quick-tier calls inside the loop also hit the real model.
 vi.mock("../utils/openaiClient", async () => {
   const { createRequire } = await import("node:module");
-  const req = createRequire(import.meta.url);
+  // Same __filename-for-import.meta.url swap as the claudeClient mock above.
+  const req = createRequire(__filename);
   const mod: any = req("openai");
   const OpenAI = typeof mod === "function" ? mod : (mod.OpenAI ?? mod.default);
   const { resolveCaraModelConfig } = await import("../config/caraModels");

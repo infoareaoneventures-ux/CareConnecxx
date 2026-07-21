@@ -31,16 +31,16 @@ const qaHarness = vi.hoisted(() => {
     firestore,
     writes,
     sessionData,
-    detectAndStageFactChange: vi.fn(async () => ({ kind: "not_correction" })),
-    factChangeAckCopy: vi.fn(() => null),
-    findTombstonedRestatement: vi.fn(async () => null),
-    classifyReRememberReply: vi.fn(async () => "other"),
-    confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
-    quickComplete: vi.fn(async () => "SUPPORTED"),
+    detectAndStageFactChange: vi.fn(async (..._args: unknown[]) => ({ kind: "not_correction" })),
+    factChangeAckCopy: vi.fn((..._args: unknown[]) => null),
+    findTombstonedRestatement: vi.fn(async (..._args: unknown[]) => null),
+    classifyReRememberReply: vi.fn(async (..._args: unknown[]) => "other"),
+    confirmReRemember: vi.fn(async (..._args: unknown[]) => ({ ok: false, reason: "not_found" })),
+    quickComplete: vi.fn(async (..._args: unknown[]) => "SUPPORTED"),
     runAgentModelTurn: vi.fn(),
-    getMemoryContext: vi.fn(async () => ""),
-    initializeMemoryFiles: vi.fn(async () => undefined),
-    getMemoryReconciliationState: vi.fn(async () => ({ pending: false, zepMasked: false, storageMasked: false })),
+    getMemoryContext: vi.fn(async (..._args: unknown[]) => ""),
+    initializeMemoryFiles: vi.fn(async (..._args: unknown[]) => undefined),
+    getMemoryReconciliationState: vi.fn(async (..._args: unknown[]) => ({ pending: false, zepMasked: false, storageMasked: false })),
   };
 });
 
@@ -801,7 +801,7 @@ describe("runQaAgent re-remember and grounding behavior", () => {
 
   it("returns the confirmed copy when a pending re-remember is confirmed", async () => {
     qaHarness.classifyReRememberReply.mockResolvedValue("confirm");
-    qaHarness.confirmReRemember.mockResolvedValue({ ok: true });
+    qaHarness.confirmReRemember.mockResolvedValue({ ok: true, reason: "" });
 
     const reply = await runQaAgent({
       ...baseParams,

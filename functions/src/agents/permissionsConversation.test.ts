@@ -30,7 +30,7 @@ vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
 vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test", appLink: (path: string) => `https://app.test${path}` }));
 vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
-const notifyNewCaregiverOfJobs = vi.fn(async () => {});
+const notifyNewCaregiverOfJobs = vi.fn(async (..._a: any[]) => {});
 vi.mock("../triggers/caregiverJobMatch", () => ({ notifyNewCaregiverOfJobs: (...a: any[]) => notifyNewCaregiverOfJobs(...a) }));
 
 import { classifyPermissionReply, handleClientPermissionsReply, handleCaregiverPermissionsReply } from "./permissionsConversation";

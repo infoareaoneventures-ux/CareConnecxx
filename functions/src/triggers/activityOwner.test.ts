@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { resolveFamilyOwnerUid, isNotFound } from "./activityOwner";
 
 // Fake Firestore: users/{uid}.userType drives the family-only gate.

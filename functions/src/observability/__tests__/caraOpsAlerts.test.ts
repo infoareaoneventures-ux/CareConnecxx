@@ -9,9 +9,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // U9: the sustained-outage and aged-operation alerts dedupe via deterministic
 // doc IDs (doc(id).set(..., { merge: true })) — capture (id, data, opts).
 const { addMock, setMock, createMock, bucketDocs, alertDocs, makeCollection } = vi.hoisted(() => {
-  const addMock = vi.fn(async () => undefined);
+  const addMock = vi.fn(async (_doc: any) => undefined);
   const setMock = vi.fn(async (..._args: unknown[]) => undefined);
-  const createMock = vi.fn(async (..._args: unknown[]) => undefined);
+  const createMock = vi.fn(async (_id: string, _data: any) => undefined);
   const bucketDocs = new Map<string, Record<string, unknown>>();
   const alertDocs = new Map<string, Record<string, unknown>>();
   const makeCollection = (collection: string) => {
@@ -29,8 +29,8 @@ const { addMock, setMock, createMock, bucketDocs, alertDocs, makeCollection } = 
           .map(([id, data]) => ({ id, data: () => ({ ...data }) }))
           .filter((doc) => filters.every(([field, operator, value]) => {
             const actual = doc.data()[field];
-            return (operator === ">=" && typeof actual === "number" && actual >= value)
-              || (operator === "<=" && typeof actual === "number" && actual <= value);
+            return (operator === ">=" && typeof actual === "number" && actual >= (value as number))
+              || (operator === "<=" && typeof actual === "number" && actual <= (value as number));
           }))
           .sort((a, b) => Number(a.data().minuteStartMs) - Number(b.data().minuteStartMs))
           .slice(0, max);
@@ -101,14 +101,14 @@ describe("classifyProviderError (U5)", () => {
     [{ status: 402 }, "billing status 402"],
     [new Error("insufficient_quota: your account has run out of credit"), "billing message keywords"],
     [{ message: "Your billing details are past due" }, "billing keyword in message field"],
-  ])("classifies %j as billing (%s)", (err) => {
+  ])("classifies %j as billing (%s)", (err, _desc) => {
     expect(classifyProviderError(err)).toBe("billing");
   });
 
   it.each([
     [{ status: 401 }, "auth status 401"],
     [new Error("Invalid API Key provided"), "invalid api key message"],
-  ])("classifies %j as auth (%s)", (err) => {
+  ])("classifies %j as auth (%s)", (err, _desc) => {
     expect(classifyProviderError(err)).toBe("auth");
   });
 

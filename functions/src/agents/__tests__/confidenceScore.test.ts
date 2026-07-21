@@ -72,7 +72,8 @@ describe("computeConfidenceScoreFromFields (U2)", () => {
   it("ignores any legacy references data (references are not a signal)", () => {
     const withRefs = computeConfidenceScoreFromFields({
       backgroundCheckStatus: "clear",
-      // @ts-expect-error — references is intentionally not part of ConfidenceInput
+      // references is intentionally not part of ConfidenceInput (the `as any`
+      // cast below already admits it, so no @ts-expect-error is needed)
       references: [{ name: "X" }, { name: "Y" }, { name: "Z" }],
     } as any);
     const withoutRefs = computeConfidenceScoreFromFields({ backgroundCheckStatus: "clear" });

@@ -59,7 +59,7 @@ vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async (opts: any) => { genCalls.push(opts); return opts.fallback; }),
 }));
 
-const sendSpy = vi.fn(async () => {});
+const sendSpy = vi.fn(async (..._a: unknown[]) => {});
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
 
 import { familySilenceCheckinJob } from "../familySilenceCheckin";

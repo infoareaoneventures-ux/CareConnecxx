@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // the ledger's exactly-once guard drops a duplicate redelivery.
 
 const hoisted = vi.hoisted(() => {
-  const advanceOnboardingStep = vi.fn(async () => {});
+  const advanceOnboardingStep = vi.fn(async (..._a: unknown[]) => {});
   const docUpdate = vi.fn(async () => {});
   const privateSet = vi.fn(async () => {});
   const caregiverDoc = {
@@ -46,8 +46,8 @@ const hoisted = vi.hoisted(() => {
   });
 
   const constructEvent = vi.fn();
-  const claimWebhookEvent = vi.fn(async () => "claimed");
-  const settleWebhookEvent = vi.fn(async () => {});
+  const claimWebhookEvent = vi.fn(async (..._a: unknown[]) => "claimed");
+  const settleWebhookEvent = vi.fn(async (..._a: unknown[]) => {});
 
   return { advanceOnboardingStep, docUpdate, collectionMock, caregiverWhereArgs, constructEvent, claimWebhookEvent, settleWebhookEvent };
 });

@@ -38,7 +38,7 @@ const axiosPost = vi.hoisted(() =>
 // The shared candidate-first Checkr helper (checkrApi.ts) — the bg-check gate
 // now goes through this instead of a raw axios invitation POST.
 const checkrInvite = vi.hoisted(() =>
-  vi.fn(async () => ({ invitationUrl: "https://checkr.local/invite", candidateId: "cand_live" })),
+  vi.fn(async (..._a: unknown[]) => ({ invitationUrl: "https://checkr.local/invite", candidateId: "cand_live" })),
 );
 vi.mock("../../checkrApi", () => ({
   createCheckrInvitation: (...a: unknown[]) => checkrInvite(...a),

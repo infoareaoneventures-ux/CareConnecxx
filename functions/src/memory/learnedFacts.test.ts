@@ -479,7 +479,7 @@ describe("getRelevantFacts — pending facts invisible on BOTH ranking paths", (
 
     const facts = await getRelevantFacts(USER, "what medication does mom take");
     expect(facts.map((f) => f.fact)).toEqual(["Mom takes metformin"]);
-    const rerankerInput = vi.mocked(embeddingsMod.rankBySimilarity).mock.calls[0][0] as Array<{ fact: string }>;
+    const rerankerInput = vi.mocked(embeddingsMod.rankBySimilarity).mock.calls[0][0] as unknown as Array<{ fact: string }>;
     expect(rerankerInput.some((c) => c.fact === SHELLFISH)).toBe(false);
   });
 

@@ -186,7 +186,7 @@ describe("buildCarePlanInterviewDirective", () => {
     expect(d).toMatch(/ask ONCE whether they'd like the caregiver to give medication reminders/i);
     expect(d).toMatch(/NEVER ask about specific medications/i);
     expect(d).toMatch(/NEVER a drug name/i);
-    expect(d).toMatch(/ask ONCE.*daily routine/is);
+    expect(d).toMatch(/ask ONCE[\s\S]*daily routine/i);
     expect(d).toMatch(/NEVER ask about routine a second time/i);
     expect(d).toMatch(/Dietary notes: save only if they volunteer/i);
   });

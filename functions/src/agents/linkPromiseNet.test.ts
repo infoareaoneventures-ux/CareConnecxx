@@ -7,9 +7,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const hoisted = vi.hoisted(() => {
   const sessionData: Record<string, unknown> = { onboardingStep: "caregiver_send_photo" };
-  const quickComplete = vi.fn(async () => "YES");
-  const sendOnboardingLink = vi.fn(async () => ({ success: true, linkType: "caregiver_photo" }));
-  const recordCommitment = vi.fn(async () => "id-1");
+  const quickComplete = vi.fn(async (..._a: unknown[]) => "YES");
+  const sendOnboardingLink = vi.fn(async (..._a: unknown[]) => ({ success: true, linkType: "caregiver_photo" }));
+  const recordCommitment = vi.fn(async (..._a: unknown[]) => "id-1");
   return { sessionData, quickComplete, sendOnboardingLink, recordCommitment };
 });
 

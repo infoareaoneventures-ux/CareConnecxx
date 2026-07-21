@@ -69,7 +69,9 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
   },
   care_plans: {
     path: "care_plans",
-    docId: "clientUid",
+    // Keyed by the client's Firebase Auth uid (care_plans/{clientId}) — the
+    // canonical "uid" scheme; "clientUid" was never a DocIdScheme member.
+    docId: "uid",
     caraWrites: true,
     webReads: true,
     notes: "Canonical live care plan (2026-07-06 decision; web cut over 2026-07-12). Evia's get/update_care_plan tools and the web Care Plan tab share this doc; versions subcollection is server-only history. Legacy senior_profiles/{uid}/care_plans/default is read-fallback only.",

@@ -12,11 +12,12 @@ import { raiseProviderFailureAlert } from "../observability/providerFailureAlert
 
 const ANTHROPIC_AGENT_MODEL = "claude-sonnet-4-6";
 
+// Structural subset of turnMetrics.TurnMetrics that this module writes. No
+// index signature — it would make TurnMetrics (which has none) unassignable.
 export interface AgentTurnMetrics {
   modelProvider?: string;
   modelUsed?: string;
   modelFallbackUsed?: boolean;
-  [key: string]: unknown;
 }
 
 export interface RunAgentModelTurnParams {

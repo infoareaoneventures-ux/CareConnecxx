@@ -58,10 +58,6 @@ const KEYWORD_BLOCKS: Array<{ re: RegExp; block: BlockId }> = [
   { re: /overnight|over night|graveyard/i, block: "overnight" },
 ];
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
 // "9am" → 540, "5:30pm" → 1050, "17" → 1020. Returns null when not a time.
 function parseClockToMin(raw: string): number | null {
   const m = raw.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i);

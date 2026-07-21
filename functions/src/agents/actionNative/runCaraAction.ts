@@ -118,7 +118,7 @@ export async function runCaraAction<TInput, TOutput>(
       throw new CaraActionInProgressError(action.name);
     }
 
-    if (claim.cached) {
+    if ("cached" in claim && claim.cached) {
       const cached = action.outputSchema.safeParse(claim.result);
       if (!cached.success) {
         // Reachable when a prior run settled raw output after its own

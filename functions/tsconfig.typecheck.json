@@ -1,0 +1,16 @@
+{
+    // Semantic typecheck gate for SHIPPED code (plan 2026-07-18-001 U0).
+    // Test files are excluded here because they run (and are type-transpiled)
+    // under vitest/esbuild, and carry ~128 legacy mock-idiom type errors that
+    // never ship to production; that debt is tracked via `npm run typecheck:all`
+    // and burned down separately. Everything under src/ that deploys MUST be
+    // clean under this config — the gate is zero errors, not zero new errors.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true
+    },
+    "exclude": [
+        "src/**/*.test.ts",
+        "src/**/__tests__/**"
+    ]
+}

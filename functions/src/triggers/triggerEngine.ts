@@ -5,7 +5,6 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
-import { parseScheduledTimeMs } from "../utils/scheduledTime";
 import { decideArrivalCapture } from "./noShowPolicy";
 import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
 

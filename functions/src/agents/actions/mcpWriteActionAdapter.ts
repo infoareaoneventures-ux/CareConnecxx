@@ -196,7 +196,10 @@ export async function runMcpWriteCaraAction(
   const action = defineCaraAction({
     name,
     description: `Execute the ${name} MCP write through Evia's action contract.`,
-    inputSchema: config.inputSchema,
+    // The 15 per-action ZodObjects are a union TS can't unify into one TInput;
+    // the adapter already treats parsed input as Record<string, unknown> and
+    // the runtime schema (which does the real validation) is unchanged.
+    inputSchema: config.inputSchema as z.ZodType<Record<string, unknown>>,
     outputSchema: anyObjectOutput,
     readOnly: false,
     modelVisible: true,

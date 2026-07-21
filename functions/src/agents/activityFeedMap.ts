@@ -115,6 +115,56 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   invoice_rejected:           { included: false },
   invoice_auto_approved:      { included: false },
   invoice_deleted:            { included: false },
+
+  // ── excluded: codified 2026-07-21 (U0 typecheck-baseline repair) ──────────
+  // These event types existed in (or were added to) AuditEventType without an
+  // entry here; at runtime an unmapped event was already treated as excluded
+  // (describeForFeed returned null), so every entry below preserves current
+  // behavior exactly. Upgrading any of them to included is a product decision
+  // that must add a static, PII-free description.
+  care_journal_updated:               { included: false },
+  caregiver_exception_reviewed:       { included: false },
+  caregiver_document_reviewed:        { included: false },
+  user_suspended:                     { included: false },
+  user_restored:                      { included: false },
+  support_ticket_responded:           { included: false },
+  dispute_resolved:                   { included: false },
+  invoice_exception_reviewed:         { included: false },
+  agent_action_retry_attempted:       { included: false },
+  linq_delivery_retry_attempted:      { included: false },
+  pending_action_replay_attempted:    { included: false },
+  pending_action_cancelled:           { included: false },
+  recovery_owner_assigned:            { included: false },
+  recovery_marked_complete:           { included: false },
+  job_application_withdrawn:          { included: false },
+  booking_request_responded:          { included: false },
+  shift_started:                      { included: false },
+  shift_completed:                    { included: false },
+  shift_task_updated:                 { included: false },
+  media_update_submitted:             { included: false },
+  shift_hour_correction_responded:    { included: false },
+  standard_payout_requested:          { included: false },
+  senior_profile_archived:            { included: false },
+  family_member_updated:              { included: false },
+  interview_cancelled:                { included: false },
+  memory_file_deleted:                { included: false },
+  cash_payment_confirmed:             { included: false },
+  memory_fact_corrected:              { included: false },
+  memory_fact_forgotten:              { included: false },
+  emergency_alert_raised:             { included: false },
+  callout_backup_selected:            { included: false },
+  callout_refund_requested:           { included: false },
+  referral_sent:                      { included: false },
+  senior_profile_created:             { included: false },
+  review_deleted:                     { included: false },
+  care_journal_hidden:                { included: false },
+  support_ticket_updated:             { included: false },
+  match_feedback_logged:              { included: false },
+  job_post_created:                   { included: false },
+  proactive_draft_cancelled:          { included: false },
+  shift_payment_retried:              { included: false },
+  booking_payment_method_updated:     { included: false },
+  journal_comment_edited:             { included: false },
 };
 
 /** The static, PII-free description for an included event, or null if excluded. */

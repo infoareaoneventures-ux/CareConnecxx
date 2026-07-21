@@ -105,7 +105,24 @@ export type AuditEventType =
   // accountability trail outlives the 30-day ledger retention. Data carries
   // event metadata (category, source) only — NEVER fact text.
   | "memory_fact_corrected"
-  | "memory_fact_forgotten";
+  | "memory_fact_forgotten"
+  // Codified 2026-07-21 (plan 2026-07-18-001 U0 typecheck-baseline repair):
+  // these event names were already being written by mcp/server.ts at runtime
+  // but were never declared here — the transpile-only build masked it.
+  | "emergency_alert_raised"
+  | "callout_backup_selected"
+  | "callout_refund_requested"
+  | "referral_sent"
+  | "senior_profile_created"
+  | "review_deleted"
+  | "care_journal_hidden"
+  | "support_ticket_updated"
+  | "match_feedback_logged"
+  | "job_post_created"
+  | "proactive_draft_cancelled"
+  | "shift_payment_retried"
+  | "booking_payment_method_updated"
+  | "journal_comment_edited";
 
 export interface AuditEvent {
   eventType: AuditEventType;

@@ -13,12 +13,14 @@ export async function sendIfNotDND(
 ): Promise<void> {
   // critical always bypasses DND (crisis, 911, emergency)
   if (urgency === "critical") {
-    return sendViaInteractionAgent(phone, output);
+    await sendViaInteractionAgent(phone, output);
+    return;
   }
 
   const prefs = await getPreferences(phone).catch(() => null);
   if (!prefs || !isInDND(prefs)) {
-    return sendViaInteractionAgent(phone, output);
+    await sendViaInteractionAgent(phone, output);
+    return;
   }
 
   // In DND — compute when DND window ends and queue

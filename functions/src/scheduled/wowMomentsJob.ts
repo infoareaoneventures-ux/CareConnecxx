@@ -107,9 +107,11 @@ export const wowMomentsDaily = functions.pubsub
         const fired = await maybeSendWowMoment({
           ctx,
           recentFires,
-          send: (message) => sendViaInteractionAgent(phone, {
-            content: message, urgency: "low", sourceAgent: "wow_moment", canDrop: true,
-          }),
+          send: async (message) => {
+            await sendViaInteractionAgent(phone, {
+              content: message, urgency: "low", sourceAgent: "wow_moment", canDrop: true,
+            });
+          },
           record: (name, firedAt) => recordWowFire(userId, name, firedAt),
         });
         if (fired) sent++;

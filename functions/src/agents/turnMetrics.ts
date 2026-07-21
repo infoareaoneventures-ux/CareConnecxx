@@ -34,7 +34,9 @@ export interface TurnMetrics {
   startedAt:      number;     // ms epoch — used by emitTurnMetrics to compute durationMs
   durationMs?:    number;     // filled by emit
   contextLoadMs?: number;     // wall-clock for the parallel context fetch
-  modelProvider?: "openai" | "anthropic";
+  // "gemini" is the tier-2 fallback provider (agentModelTurn.ts, founder
+  // decision 2026-07-03) — it was always written at runtime; the type lagged.
+  modelProvider?: "openai" | "anthropic" | "gemini";
   modelUsed?:     string;
   modelFallbackUsed?: boolean;
 

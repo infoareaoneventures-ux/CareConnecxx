@@ -18,7 +18,7 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
-import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from "../billing/paymentMethods";
+import { normalizePaymentMethod, isOfflinePaymentMethod } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
@@ -66,8 +66,11 @@ const db = admin.firestore();
 // — instead of one opaque all-or-nothing tool. This helper is pure (one Firestore
 // READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
 // `quote_booking`, and reusable by the committing `request_booking` path.
+// Shared literal union for structured tool failures (see toolError below).
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN";
+
 type BookingQuoteResult =
-  | { ok: false; code: string; message: string }
+  | { ok: false; code: ToolErrorCode; message: string }
   | {
       ok: true;
       caregiverId:   string;
@@ -119,7 +122,7 @@ function coerceHourlyRate(raw: unknown): number | null {
 // and flow exactly like numeric rates — quote and booking agree either way.
 async function resolveCaregiverRate(
   caregiverId: string,
-): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: string; message: string }> {
+): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: ToolErrorCode; message: string }> {
   if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId is required" };
   const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
   if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
@@ -2869,7 +2872,7 @@ export function handlePromptGet(name: string, args: Record<string, string>): str
 }
 
 // Structured error response so Claude can reason about failures rather than hallucinating
-function toolError(code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN", message: string) {
+function toolError(code: ToolErrorCode, message: string) {
   return { _toolError: true, success: false, code, message };
 }
 
@@ -3541,7 +3544,7 @@ async function executeToolCall(
 
       case "request_booking": {
         return runActionNativeMcpWrite(name, input, async () => {
-        const { clientId, caregiverId, dates, startTime, endTime, phone, recipientFirstName } = input;
+        const { clientId, caregiverId, startTime, endTime, phone, recipientFirstName } = input;
         // Session-injected ownership fields are checked here; the booking shape
         // (caregiverId/dates/times) + caregiver lookup are validated by the shared
         // quote primitive below, so the two paths can never diverge.
@@ -7939,14 +7942,17 @@ async function executeToolCall(
       if (!userId || !entryId || !commentId || !comment) return toolError("INVALID_INPUT", "userId, entryId, commentId, and comment are required");
       const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
       // Verify existence + author ownership in a transaction, then update the text.
-      let abort: { code: string; message: string } | null = null;
+      let abort: { code: ToolErrorCode; message: string } | null = null;
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(commentRef);
         if (!snap.exists) { abort = { code: "NOT_FOUND", message: "Comment not found." }; return; }
         if (snap.data()?.userId !== userId) { abort = { code: "PERMISSION_DENIED", message: "You can only edit your own comments." }; return; }
         tx.update(commentRef, { comment: (comment as string).slice(0, 2000), editedAt: nowIso });
       });
-      if (abort) return toolError(abort.code, abort.message);
+      // Read through a cast: TS control-flow analysis can't see assignments made
+      // inside the transaction closure and would narrow `abort` to never here.
+      const abortResult = abort as { code: ToolErrorCode; message: string } | null;
+      if (abortResult) return toolError(abortResult.code, abortResult.message);
       logAudit({ eventType: "journal_comment_edited", userId: userId as string, data: { source: "mcp:edit_comment", entryId, commentId } }).catch(() => {});
       return { success: true, edited: true };
     }

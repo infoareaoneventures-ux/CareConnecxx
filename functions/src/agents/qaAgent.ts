@@ -2369,7 +2369,10 @@ export async function runQaAgent(params: {
         metrics.patchedOrphans = (metrics.patchedOrphans ?? 0) + patched;
       }
       metrics.iterations = (metrics.iterations ?? 0) + 1;
-      const response = await runAgentModelTurn({
+      // Both provider paths normalize to the Anthropic Message shape
+      // (content blocks, stop_reason, usage) — typed here so downstream
+      // block-filtering callbacks aren't implicit any.
+      const response: Anthropic.Message = await runAgentModelTurn({
         system: cachedSystem,
         tools: cachedTools,
         forceTextReply,

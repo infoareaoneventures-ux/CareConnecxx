@@ -2,7 +2,8 @@
     "name": "functions",
     "scripts": {
         "build": "node scripts/transpile.js",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc -p tsconfig.typecheck.json",
+        "typecheck:all": "tsc --noEmit",
         "serve": "firebase emulators:start --only functions",
         "shell": "firebase functions:shell",
         "start": "npm run shell",

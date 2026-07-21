@@ -42,6 +42,13 @@ import { parseWellness, describeWellness, selectNextAppointment } from "./careEv
 import { buildCareSituation, situationHealth, CARE_SITUATION_CAPABILITY } from "./careSituation";
 import { projectCareSituation } from "./careSituationProjection";
 import { getRolloutDecision } from "../config/rolloutPolicy";
+import {
+  loadOpenObjectives,
+  selectForegroundObjective,
+  OBJECTIVE_LEDGER_CAPABILITY,
+  type AgentObjective,
+} from "./objectiveLedger";
+import { projectActiveGoal, isLegacyGoalStale, isProjection, type LegacyActiveGoal } from "./objectiveAdapters";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
@@ -1732,6 +1739,41 @@ export async function runQaAgent(params: {
         }
       } catch (err) {
         console.warn("careSituation.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+      }
+
+      // ── U3 shadow (plan 2026-07-18-001, dark) ─────────────────────────────
+      // Compare legacy activeGoal against the (still-empty) objective ledger:
+      // project the goal, run deterministic foreground selection over the
+      // union, and log which source would win. Log-only; content-free; the
+      // legacy goal remains fully authoritative (KTD5).
+      try {
+        const ledgerRollout = await getRolloutDecision(OBJECTIVE_LEDGER_CAPABILITY, phone);
+        if (ledgerRollout.shadow || ledgerRollout.enabled) {
+          const legacyGoal = (session as any)?.activeGoal as LegacyActiveGoal | null | undefined;
+          const candidates: AgentObjective[] = [];
+          if (legacyGoal) {
+            candidates.push(projectActiveGoal(legacyGoal, {
+              phone,
+              userId,
+              seniorId,
+              role: params.userType ?? "client",
+              channel: params.skipSend ? "web" : "linq",
+            }));
+          }
+          const ledgerObjectives = await loadOpenObjectives(userId, { limit: 5 });
+          candidates.push(...ledgerObjectives);
+          const foreground = selectForegroundObjective(candidates);
+          console.info("objectiveLedger.shadow", {
+            legacyGoalPresent: !!legacyGoal,
+            legacyGoalStale: legacyGoal ? isLegacyGoalStale(legacyGoal) : null,
+            ledgerCount: ledgerObjectives.length,
+            foregroundSource: foreground ? (isProjection(foreground) ? "legacy" : "ledger") : "none",
+            mode: ledgerRollout.mode,
+            policyVersion: ledgerRollout.policyVersion,
+          });
+        }
+      } catch (err) {
+        console.warn("objectiveLedger.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
       }
     }
 

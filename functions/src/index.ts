@@ -130,6 +130,7 @@ export { runNoVisitCheck } from './scheduled/noVisitCheck';
 
 // Sprint 4 — proactive reflection (hourly, drafts only, admin-review-first)
 export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
+export { sweepExpiredObjectives } from './scheduled/objectiveExpirySweeper';
 
 // Proactive draft sender — every 5 min; consumes status="approved" drafts the admin reviewed.
 export { runProactiveDraftSender, triggerProactiveDraftSendNow, sendApprovedDraftNow } from './scheduled/proactiveDraftSender';

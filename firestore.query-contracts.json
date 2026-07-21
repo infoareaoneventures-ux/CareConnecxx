@@ -367,6 +367,18 @@
       "disposition": "composite",
       "status": "new",
       "callers": ["functions/src/agents/objectiveLedger.ts"]
+    },
+    {
+      "id": "Q29",
+      "collectionGroup": "agent_objectives",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/scheduled/objectiveExpirySweeper.ts"]
     }
   ],
   "forbidden": [

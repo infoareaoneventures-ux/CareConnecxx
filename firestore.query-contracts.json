@@ -354,6 +354,19 @@
         "functions/src/agents/qaAgent.ts",
         "functions/src/agents/operationalContext.ts"
       ]
+    },
+    {
+      "id": "Q28",
+      "collectionGroup": "agent_objectives",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/agents/objectiveLedger.ts"]
     }
   ],
   "forbidden": [

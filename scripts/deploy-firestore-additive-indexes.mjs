@@ -76,11 +76,21 @@ const signature = (d) =>
 // satisfy) an ORDER-field contract.
 function liveSignature(idx) {
   const scope = idx.queryScope || 'COLLECTION';
+  // gcloud's JSON has no top-level collectionGroup property — the collection
+  // is embedded in the resource name (projects/.../collectionGroups/{cg}/
+  // indexes/{id}). Falling back to undefined made every live signature
+  // unmatchable, so the diff reported ALL contracts missing (found 2026-07-21
+  // during U3's Q28 deploy; fail closed if neither source yields a name).
+  const collectionGroup = idx.collectionGroup
+    ?? idx.name?.match(/collectionGroups\/([^/]+)\/indexes\//)?.[1];
+  if (!collectionGroup) {
+    throw new Error(`Cannot determine collectionGroup for live index: ${idx.name ?? JSON.stringify(idx).slice(0, 200)}`);
+  }
   const fields = (idx.fields || [])
     .filter((f) => f.fieldPath !== '__name__')
     .map((f) => `${f.fieldPath}:${(f.order || f.arrayConfig || 'ASCENDING').toUpperCase()}`)
     .join(',');
-  return `${idx.collectionGroup}|${scope}|${fields}`;
+  return `${collectionGroup}|${scope}|${fields}`;
 }
 
 function listLive() {

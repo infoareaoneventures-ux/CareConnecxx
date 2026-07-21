@@ -67,6 +67,13 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: true,
     notes: "Web signup creates it; Evia onboarding mirrors senior name/age/needs/diagnoses.",
   },
+  agent_objectives: {
+    path: "agent_objectives",
+    docId: "auto",
+    caraWrites: true,
+    webReads: false,
+    notes: "Canonical objective ledger (plan 2026-07-18-001 U3, dark in Wave 1). Server-only: clients denied by the rules catch-all; no chain-of-thought or transcript text is ever stored (R14). Query contract Q28.",
+  },
   care_plans: {
     path: "care_plans",
     // Keyed by the client's Firebase Auth uid (care_plans/{clientId}) — the

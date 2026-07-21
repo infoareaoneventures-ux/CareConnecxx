@@ -39,6 +39,9 @@ import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
 import { parseWellness, describeWellness, selectNextAppointment } from "./careEvidence";
+import { buildCareSituation, situationHealth, CARE_SITUATION_CAPABILITY } from "./careSituation";
+import { projectCareSituation } from "./careSituationProjection";
+import { getRolloutDecision } from "../config/rolloutPolicy";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
@@ -1677,6 +1680,59 @@ export async function runQaAgent(params: {
         getAgentPermissions(userId),
         getConversationHistory(phone),
       ]);
+    }
+
+    // ── U2 shadow (plan 2026-07-18-001, dark) ────────────────────────────────
+    // Build the typed CareSituation from values THIS turn already loaded (zero
+    // additional reads) and emit content-free health metrics. Gated by the
+    // fail-closed `care_situation` rollout policy (missing doc = off), and
+    // fail-open here: shadow can never affect the user-facing turn.
+    if (!unconfirmedIdentity) {
+      try {
+        const rollout = await getRolloutDecision(CARE_SITUATION_CAPABILITY, phone);
+        if (rollout.shadow || rollout.enabled) {
+          const sourceType = prefetched ? ("prefetch" as const) : ("firestore" as const);
+          const situation = await buildCareSituation(
+            {
+              phone,
+              userId,
+              seniorId,
+              role: params.userType ?? "client",
+              channel: params.skipSend ? "web" : "linq",
+            },
+            {
+              seniorProfile: {
+                load: () => (senior ?? null) as Record<string, unknown> | null,
+                source: { type: sourceType, ref: "senior_profiles" },
+                authority: "canonical",
+                untrusted: true,
+              },
+              nextAppointment: {
+                load: () => (nextAppt ?? null) as Record<string, unknown> | null,
+                source: { type: sourceType, ref: "appointments" },
+                authority: "canonical",
+              },
+              recentJournal: {
+                load: () => (journal ?? []) as Array<Record<string, unknown>>,
+                source: { type: sourceType, ref: "care_journal" },
+                authority: "canonical",
+                untrusted: true,
+              },
+            },
+          );
+          const projection = projectCareSituation(situation);
+          console.info("careSituation.shadow", {
+            statuses: situationHealth(situation),
+            buildMs: situation.totalLatencyMs,
+            projectionChars: projection.chars,
+            droppedLines: projection.droppedLines,
+            mode: rollout.mode,
+            policyVersion: rollout.policyVersion,
+          });
+        }
+      } catch (err) {
+        console.warn("careSituation.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+      }
     }
 
     // ── U4a: one-shot re-remember confirmation resolution (R23/KTD16) ────────

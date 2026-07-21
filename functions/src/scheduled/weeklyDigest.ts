@@ -10,6 +10,7 @@ import { getRelevantFacts } from "../memory/learnedFacts";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
+import { parseWellness, describeWellness } from "../agents/careEvidence";
 
 const db = admin.firestore();
 
@@ -57,6 +58,16 @@ async function getWeekData(seniorId: string, userId: string) {
 
 // ── Claude digest generation ──────────────────────────────────────────────────
 
+// Journal lines for the digest prompt, tri-state (U1/R2/AE1): an entry that
+// omitted ateWell/tookMeds says "not recorded" — it is never rendered as
+// "appetite concerns" or "meds missed". Exported for tests.
+export function buildJournalContext(journal: Array<Record<string, unknown>>): string {
+  return journal.map(e => {
+    const line = describeWellness(parseWellness(e));
+    return `- ${(e.timestamp as string)?.slice(0, 10)}: ${line}. Notes: ${(e.notes as string)?.slice(0, 150) ?? "none"}`;
+  }).join("\n");
+}
+
 // Exported for tests (U2 — anti-invention clause + output guard).
 export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, userId: string): Promise<string> {
   const { journal, pastAppts, upcoming, seniorName, clientName } = data;
@@ -75,12 +86,7 @@ export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData
     return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
   }
 
-  const journalContext = journal.map(e => {
-    const mood    = e.wellness?.mood ?? "unknown";
-    const ateWell = e.wellness?.ateWell ? "ate well" : "appetite concerns";
-    const meds    = e.wellness?.tookMeds ? "meds taken" : "meds missed";
-    return `- ${(e.timestamp as string)?.slice(0, 10)}: mood ${mood}, ${ateWell}, ${meds}. Notes: ${(e.notes as string)?.slice(0, 150) ?? "none"}`;
-  }).join("\n");
+  const journalContext = buildJournalContext(journal);
 
   const apptContext = upcoming.map(a =>
     `- ${a.date} at ${a.time} with ${a.caregiverName}`

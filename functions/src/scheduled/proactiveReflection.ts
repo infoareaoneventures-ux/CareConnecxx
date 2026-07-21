@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
+import { parseWellness, describeWellness } from "../agents/careEvidence";
 
 // Proactive Reflection — v1 (admin-review-first)
 //
@@ -20,9 +21,13 @@ import { quickComplete } from "../utils/openaiClient";
 // Design choices:
 //   - gpt-4o-mini only (single-shot, cheap; ~$0.15/1M input). Hourly across a
 //     few hundred families is well under $1/day.
-//   - Per-family lookback is fixed at 24h. Reflection runs hourly so a signal
-//     that develops over 6h has 24 chances to be surfaced — we don't need a
-//     longer window in the prompt.
+//   - Visits/billing lookback is 24h (reflection runs hourly, so a signal that
+//     develops over 6h has 24 chances to be surfaced). The JOURNAL lookback is
+//     72h because the system prompt asks for multi-day patterns (3+ days of
+//     explicit negatives) — asking for a 3-day pattern over a 24h dataset made
+//     the model invent the missing days (U1/AE2). The loaded window and the
+//     window claimed in the prompt must stay identical; both are recorded in
+//     the draft's inputs metadata.
 //   - Strict NOOP / JSON output. Anything that doesn't parse is dropped
 //     silently (no draft); we'd rather miss a turn than write garbage to the
 //     review queue.
@@ -32,7 +37,10 @@ import { quickComplete } from "../utils/openaiClient";
 
 const db = admin.firestore();
 
-const LOOKBACK_MS    = 24 * 60 * 60 * 1000;
+export const ACTIVITY_LOOKBACK_HOURS = 24; // completed visits + billing
+export const JOURNAL_LOOKBACK_HOURS  = 72; // must cover the 3-day pattern ask
+const ACTIVITY_LOOKBACK_MS = ACTIVITY_LOOKBACK_HOURS * 60 * 60 * 1000;
+const JOURNAL_LOOKBACK_MS  = JOURNAL_LOOKBACK_HOURS * 60 * 60 * 1000;
 const DEDUPE_TTL_MS  =  6 * 60 * 60 * 1000;
 const MAX_FAMILIES_PER_RUN = 250;
 
@@ -52,6 +60,10 @@ export interface ReflectionDraft {
     pastApptCount: number;
     upcomingCount: number;
     billingCount:  number;
+    // Evidence-window metadata (AE2): the windows actually loaded, which must
+    // match the windows the prompt claims.
+    journalWindowHours:  number;
+    activityWindowHours: number;
   };
 }
 
@@ -131,14 +143,15 @@ async function loadBillingSignals(
 }
 
 async function loadFamilySnapshot(userId: string, seniorId: string): Promise<FamilySnapshot> {
-  const now      = new Date();
-  const since    = new Date(now.getTime() - LOOKBACK_MS).toISOString();
-  const ahead    = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const now          = new Date();
+  const since        = new Date(now.getTime() - ACTIVITY_LOOKBACK_MS).toISOString();
+  const journalSince = new Date(now.getTime() - JOURNAL_LOOKBACK_MS).toISOString();
+  const ahead        = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const [journalSnap, pastSnap, upcomingSnap, billing, seniorSnap, userSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
-      .where("timestamp", ">=", since)
+      .where("timestamp", ">=", journalSince)
       .orderBy("timestamp", "desc")
       .limit(20).get(),
     db.collection("appointments")
@@ -174,13 +187,11 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
 // Compact textual rollup the LLM reads. Kept short to keep token cost low and
 // to force the model to attend to specific signals rather than scan noise.
 export function buildReflectionPrompt(snap: FamilySnapshot): string {
-  const journalLines = snap.journal.slice(0, 8).map(e => {
-    const ts   = (e.timestamp as string | undefined)?.slice(0, 10) ?? "?";
-    const mood = (e.wellness as Record<string, unknown> | undefined)?.mood ?? "?";
-    const ate  = (e.wellness as Record<string, unknown> | undefined)?.ateWell ? "ate well" : "appetite low";
-    const meds = (e.wellness as Record<string, unknown> | undefined)?.tookMeds ? "meds taken" : "meds missed";
+  const journalLines = snap.journal.slice(0, 12).map(e => {
+    const ts    = (e.timestamp as string | undefined)?.slice(0, 10) ?? "?";
+    const line  = describeWellness(parseWellness(e));
     const notes = ((e.notes as string | undefined) ?? "").slice(0, 120);
-    return `  - ${ts} mood=${mood} ${ate} ${meds}${notes ? ` :: ${notes}` : ""}`;
+    return `  - ${ts} ${line}${notes ? ` :: ${notes}` : ""}`;
   }).join("\n");
 
   const pastLines = snap.past.slice(0, 6).map(a =>
@@ -204,10 +215,10 @@ export function buildReflectionPrompt(snap: FamilySnapshot): string {
   return [
     `Family: ${snap.clientName} (client), caring for ${snap.seniorName}.`,
     "",
-    "RECENT CARE JOURNAL (last 24h):",
+    `RECENT CARE JOURNAL (last ${JOURNAL_LOOKBACK_HOURS / 24} days):`,
     journalLines || "  (no entries)",
     "",
-    "COMPLETED VISITS (last 24h):",
+    `COMPLETED VISITS (last ${ACTIVITY_LOOKBACK_HOURS}h):`,
     pastLines || "  (none)",
     "",
     "UPCOMING VISITS (next 7 days):",
@@ -218,10 +229,15 @@ export function buildReflectionPrompt(snap: FamilySnapshot): string {
   ].join("\n");
 }
 
-const REFLECTION_SYSTEM = `You are Evia's quiet observer. Read the family's last 24h of care data and decide whether there is something worth Evia proactively reaching out about RIGHT NOW that the family hasn't already asked.
+const REFLECTION_SYSTEM = `You are Evia's quiet observer. Read the family's recent care data (journal covers the last 3 days; visits and billing cover the last 24h) and decide whether there is something worth Evia proactively reaching out about RIGHT NOW that the family hasn't already asked.
+
+DATA RULES (non-negotiable):
+  • "not recorded" means UNKNOWN. It is never evidence of missed meds, poor appetite, low activity, or any concern. Only lines marked "(recorded)" are actual negative observations.
+  • A health pattern claim requires explicit recorded negatives on at least 3 distinct days within the journal window. Fewer explicit observations = no pattern, regardless of how the notes read.
+  • Never extrapolate beyond the stated windows. You cannot see anything older than the journal window.
 
 Strong reasons to surface:
-  • Pattern across multiple journal entries (3+ days of missed meds, appetite dropping, mood declining).
+  • Pattern across multiple journal entries (3+ distinct days of RECORDED missed meds, recorded appetite decline, mood declining).
   • Caregiver no-show or repeated lateness.
   • An upcoming visit at risk (caregiver hasn't confirmed, gap on a day the family relies on).
   • A billing anomaly the family will see on a credit card before Evia explains it.
@@ -230,6 +246,7 @@ Strong reasons to surface:
 
 Reasons NOT to surface:
   • A single normal entry. One bad day is not a pattern.
+  • Unrecorded wellness fields — missing data is not a signal.
   • A scheduled visit that's fine.
   • A routine billing event with no surprise.
   • Anything the family was clearly already aware of (mentioned by name in journal).
@@ -335,6 +352,8 @@ async function reflectForFamily(opts: {
         pastApptCount: snap.past.length,
         upcomingCount: snap.upcoming.length,
         billingCount:  snap.billing.length,
+        journalWindowHours:  JOURNAL_LOOKBACK_HOURS,
+        activityWindowHours: ACTIVITY_LOOKBACK_HOURS,
       },
     };
 

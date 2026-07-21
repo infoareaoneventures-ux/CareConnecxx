@@ -1,5 +1,7 @@
 import * as admin from "firebase-admin";
 import { sanitizePromptContext, sanitizePromptContextValue } from "./promptContext";
+import { selectNextAppointment, NEXT_APPOINTMENT_STATUSES } from "./careEvidence";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -159,11 +161,17 @@ export async function loadCaraOperationalContext(params: {
         .limit(2)
         .get())
       : Promise.resolve([]),
+    // Next-visit candidates (U1/AE3): query from business-today FORWARD in
+    // ascending order (contract Q27; same shape as qaAgent.getNextAppointment).
+    // The old desc-ordered query fed a recent PAST visit into "Client next
+    // visit" whenever no future one landed in the window.
     userId
       ? safeDocs(db.collection("appointments")
         .where("clientId", "==", userId)
-        .orderBy("date", "desc")
-        .limit(3)
+        .where("status", "in", [...NEXT_APPOINTMENT_STATUSES])
+        .where("date", ">=", businessTodayStr())
+        .orderBy("date", "asc")
+        .limit(10)
         .get())
       : Promise.resolve([]),
     userId
@@ -221,9 +229,12 @@ export async function loadCaraOperationalContext(params: {
     ].includes(String(shift.status ?? "")));
   const lastPayout = caregiverPayoutDocs[0]?.data();
 
-  const nextClientAppointment = clientAppointmentDocs
-    .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))
-    .find((appt) => ["confirmed", "pending", "pending_caregiver_confirmation", "in-progress"].includes(String(appt.status ?? "")));
+  // Earliest strictly-future start wins; same-day visits that already started
+  // are excluded (U1/AE3). In-progress visits are active-visit context, not
+  // "next visit", and are surfaced by their own loaders.
+  const nextClientAppointment = selectNextAppointment(
+    clientAppointmentDocs.map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> })),
+  );
   const latestCare = clientCareDocs[0]?.data();
   const pendingInvoice = invoiceDocs
     .map((doc): Record<string, unknown> & { id: string } => ({ id: doc.id, ...doc.data() as Record<string, unknown> }))

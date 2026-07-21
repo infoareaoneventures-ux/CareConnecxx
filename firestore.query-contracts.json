@@ -338,6 +338,22 @@
       "disposition": "composite",
       "status": "existing",
       "callers": ["functions/src/scheduled/memoryOperationWorker.ts"]
+    },
+    {
+      "id": "Q27",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "existing",
+      "callers": [
+        "functions/src/agents/qaAgent.ts",
+        "functions/src/agents/operationalContext.ts"
+      ]
     }
   ],
   "forbidden": [

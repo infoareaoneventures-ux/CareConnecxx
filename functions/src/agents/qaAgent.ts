@@ -38,6 +38,7 @@ import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
+import { parseWellness, describeWellness, selectNextAppointment } from "./careEvidence";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
@@ -121,6 +122,8 @@ async function getRecentJournalEntries(seniorId: string, limit = 3) {
 async function getNextAppointment(userId: string) {
   // Business-timezone today — UTC date is already tomorrow during Pacific
   // evenings, which dropped today's remaining visit from "next appointment".
+  // Fetch a few candidates and pick by actual start instant (U1/AE3): a
+  // same-day visit whose start already passed is NOT the next visit.
   const today = businessTodayStr();
   const snap = await db
     .collection("appointments")
@@ -128,9 +131,9 @@ async function getNextAppointment(userId: string) {
     .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
     .where("date", ">=", today)
     .orderBy("date", "asc")
-    .limit(1)
+    .limit(5)
     .get();
-  return snap.empty ? null : snap.docs[0].data();
+  return selectNextAppointment(snap.docs.map((d) => d.data()));
 }
 
 async function getActiveVisit(userId: string) {
@@ -492,14 +495,14 @@ export function buildClientSystemPrompt(
   const seniorName = senior?.name ?? "your loved one";
   const needs: string[] = senior?.needs ?? [];
 
+  // Tri-state wellness rendering (U1/R2/AE1): omitted fields are "not
+  // recorded", never "appetite concerns" / "medications missed".
   const journalSummary = journal.length
     ? journal
         .map((e) => {
-          const mood    = e.wellness?.mood ?? "unknown";
-          const ateWell = e.wellness?.ateWell ? "ate well" : "appetite concerns";
-          const meds    = e.wellness?.tookMeds ? "medications taken" : "medications missed";
-          const note    = e.notes ? `Notes: ${e.notes.slice(0, 200)}` : "";
-          return `- Visit on ${e.timestamp?.slice(0, 10)}: mood ${mood}, ${ateWell}, ${meds}. ${note}`;
+          const line = describeWellness(parseWellness(e));
+          const note = e.notes ? `Notes: ${e.notes.slice(0, 200)}` : "";
+          return `- Visit on ${e.timestamp?.slice(0, 10)}: ${line}. ${note}`;
         })
         .join("\n")
     : "No recent journal entries.";
@@ -1652,7 +1655,12 @@ export async function runQaAgent(params: {
     if (prefetched) {
       senior      = prefetched.seniorProfile;
       journal     = prefetched.recentJournal;
-      nextAppt    = prefetched.nextAppointment;
+      // The prefetch query filters by calendar date only, so a same-day visit
+      // that already started can arrive here. Re-apply the future-start guard
+      // (U1/AE3) rather than presenting it as upcoming.
+      nextAppt    = prefetched.nextAppointment
+        ? selectNextAppointment([prefetched.nextAppointment])
+        : null;
       history     = prefetched.conversationHistory;
       permissions = null;
     } else if (unconfirmedIdentity) {

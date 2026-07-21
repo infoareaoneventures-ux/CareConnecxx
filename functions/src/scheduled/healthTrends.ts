@@ -4,6 +4,7 @@ import * as crypto from "crypto";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
 import { getAppUrl } from "../config/appUrl";
+import { rollupCareSignals, describeSignalRate } from "../agents/careEvidence";
 
 const db = admin.firestore();
 
@@ -51,6 +52,24 @@ async function load90Days(seniorId: string, userId: string) {
 
 // ── Claude trend analysis ─────────────────────────────────────────────────────
 
+// Wellness stat lines with known-only denominators and explicit coverage
+// (U1/R2/AE1): a journal entry that omitted a field is reported as unrecorded,
+// never counted as a miss. Below MIN_KNOWN_FOR_RATE known observations the
+// line says so instead of stating a rate. Exported for tests.
+export function buildWellnessStatLines(journal: Array<Record<string, unknown>>): string[] {
+  const fields = [
+    { field: "ateWell" as const,   label: "Ate well" },
+    { field: "tookMeds" as const,  label: "Medications taken" },
+    { field: "wasActive" as const, label: "Physically active" },
+  ];
+  return fields.map(({ field, label }) => {
+    const rate = describeSignalRate(rollupCareSignals(journal, field));
+    return rate
+      ? `- ${label}: ${rate}`
+      : `- ${label}: not recorded often enough to report a rate (do not treat this as a concern)`;
+  });
+}
+
 async function analyzeTrends(
   data: Awaited<ReturnType<typeof load90Days>>
 ): Promise<{ trends: string[]; flags: string[]; highlights: string }> {
@@ -59,19 +78,12 @@ async function analyzeTrends(
   const completedAppts  = appts.filter(a => a.status === "completed").length;
   const cancelledAppts  = appts.filter(a => a.status === "cancelled").length;
 
-  // Aggregate wellness data
   const moodCounts: Record<string, number> = {};
-  let ateWellCount = 0, tookMedsCount = 0, wasActiveCount = 0;
-
   for (const e of journal) {
     const mood = e.wellness?.mood;
     if (mood) moodCounts[mood] = (moodCounts[mood] ?? 0) + 1;
-    if (e.wellness?.ateWell)   ateWellCount++;
-    if (e.wellness?.tookMeds)  tookMedsCount++;
-    if (e.wellness?.wasActive) wasActiveCount++;
   }
 
-  const total = journal.length || 1;
   const allNotes = journal
     .map(e => e.notes)
     .filter(Boolean)
@@ -84,10 +96,10 @@ async function analyzeTrends(
     `Stats:`,
     `- ${journal.length} journal entries recorded`,
     `- ${completedAppts} of ${completedAppts + cancelledAppts} appointments completed`,
-    `- Ate well: ${Math.round(ateWellCount / total * 100)}% of visits`,
-    `- Medications taken: ${Math.round(tookMedsCount / total * 100)}% of visits`,
-    `- Physically active: ${Math.round(wasActiveCount / total * 100)}% of visits`,
-    `- Mood distribution: ${JSON.stringify(moodCounts)}`,
+    ...buildWellnessStatLines(journal),
+    `- Mood distribution (from entries that recorded mood): ${JSON.stringify(moodCounts)}`,
+    ``,
+    `Rules: rates above cover only visits where the field was recorded. Unrecorded fields are UNKNOWN — never describe them as missed medications, poor appetite, or inactivity, and never flag a concern from missing data alone.`,
     ``,
     `Caregiver notes (last 90 days):`,
     allNotes || "No notes recorded",

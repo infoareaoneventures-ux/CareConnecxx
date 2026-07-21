@@ -36,6 +36,7 @@ import {
   buildReflectionPrompt,
   parseReflectionOutput,
   hashContext,
+  JOURNAL_LOOKBACK_HOURS,
 } from "./proactiveReflection";
 
 const emptySnap = () => ({
@@ -91,10 +92,29 @@ describe("buildReflectionPrompt", () => {
         },
       ],
     });
-    expect(p).toMatch(/2026-05-27 mood=low/);
-    expect(p).toMatch(/appetite low/);
+    expect(p).toMatch(/2026-05-27 mood low/);
+    expect(p).toMatch(/appetite low \(recorded\)/);
     expect(p).toMatch(/meds taken/);
     expect(p).toMatch(/barely touched breakfast/);
+  });
+
+  it("renders omitted wellness fields as not recorded — never as negatives (U1/AE1)", () => {
+    const p = buildReflectionPrompt({
+      ...emptySnap(),
+      journal: [{ timestamp: "2026-05-27T08:00:00Z", wellness: { mood: "good" } }],
+    });
+    expect(p).toMatch(/appetite not recorded/);
+    expect(p).toMatch(/med status not recorded/);
+    expect(p).not.toMatch(/appetite low/);
+    expect(p).not.toMatch(/meds missed/);
+  });
+
+  it("claims a journal window that matches the loaded window (U1/AE2)", () => {
+    const p = buildReflectionPrompt(emptySnap());
+    expect(JOURNAL_LOOKBACK_HOURS).toBe(72);
+    expect(p).toMatch(/RECENT CARE JOURNAL \(last 3 days\)/);
+    expect(p).toMatch(/COMPLETED VISITS \(last 24h\)/);
+    expect(p).not.toMatch(/JOURNAL \(last 24h\)/);
   });
 
   it("clips journal notes to 120 chars", () => {
@@ -106,16 +126,16 @@ describe("buildReflectionPrompt", () => {
     expect(p).not.toMatch(/a{121}/);
   });
 
-  it("caps journal at 8 entries even if more are present", () => {
+  it("caps journal at 12 entries even if more are present", () => {
     const journal = Array.from({ length: 20 }, (_, i) => ({
       timestamp: `2026-05-${String(i + 1).padStart(2, "0")}`,
       wellness:  {},
       notes:     `entry ${i}`,
     }));
     const p = buildReflectionPrompt({ ...emptySnap(), journal });
-    expect(p).toMatch(/entry 0/);
-    expect(p).toMatch(/entry 7/);
-    expect(p).not.toMatch(/entry 8/);
+    expect(p).toMatch(/entry 0\b/);
+    expect(p).toMatch(/entry 11\b/);
+    expect(p).not.toMatch(/entry 12\b/);
   });
 });
 

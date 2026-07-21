@@ -262,56 +262,12 @@ export const onMessageSent = functions.firestore
         }
     });
 
-/**
- * Trigger when a video interview is scheduled
- * Notifies both the client and caregiver via in-app + SMS
- */
-export const onInterviewScheduled = functions.firestore
-    .document('videoInterviews/{interviewId}')
-    .onCreate(async (snap, context) => {
-        const interview = snap.data();
-
-        try {
-            const scheduledDate = new Date(interview.scheduledTime).toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-
-            // Notify client
-            if (interview.clientId) {
-                await createNotification(interview.clientId, {
-                    title: '📹 Interview Scheduled',
-                    body: `Interview with ${interview.caregiverName} on ${scheduledDate}`,
-                    type: 'system'
-                });
-
-                await sendSMSToUser(
-                    interview.clientId,
-                    SMS_TEMPLATES.interviewScheduled(interview.caregiverName, scheduledDate)
-                );
-            }
-
-            // Notify caregiver
-            if (interview.caregiverId) {
-                await createNotification(interview.caregiverId, {
-                    title: '📹 Interview Request',
-                    body: `${interview.clientName} wants to interview you on ${scheduledDate}`,
-                    type: 'system'
-                });
-
-                await sendSMSToUser(
-                    interview.caregiverId,
-                    SMS_TEMPLATES.interviewScheduled(interview.clientName, scheduledDate)
-                );
-            }
-        } catch (error) {
-            console.error('Error in onInterviewScheduled:', error);
-        }
-    });
+// U4 (2026-07-20): the obsolete onInterviewScheduled trigger on the camelCase
+// `videoInterviews` collection was removed. The canonical collection is
+// `video_interviews` (snake_case), owned by onVideoInterviewWrite in
+// functions/src/triggers/notificationTriggers.ts, which notifies on new
+// request / accept / decline / cancel. No writer targets `videoInterviews`
+// (zero production documents), so this trigger could never fire.
 
 /**
  * Trigger when appointment status changes to 'cancelled'
@@ -325,9 +281,36 @@ export const onAppointmentCancelled = functions.firestore
 
         // Check if status changed to cancelled
         if (before && after && before.status !== 'cancelled' && after.status === 'cancelled') {
-            // appointmentUpdated owns caregiver cancellations and its coherent
-            // replacement message. This sibling only handles client/admin
-            // cancellation notifications.
+            // U3 fix: caregiver cancellations previously produced NO in-app client
+            // notification anywhere — appointmentUpdated (the SMS owner below) only
+            // sends the REPLACE/SKIP text, and this trigger early-returned. Write
+            // the in-app note here, keyed by recurringGroupId when present so a
+            // batch decline of an N-appointment group collapses to ONE notification
+            // (deterministic id + create-if-absent). Wording distinguishes a
+            // declined request (never accepted) from a cancelled confirmed booking.
+            if (after.cancelledBy === 'caregiver' && after.clientId) {
+                try {
+                    const { writeUserNotification } = await import('./notifications/userNotification');
+                    const groupKey = after.recurringGroupId || after.recurringScheduleId;
+                    const declinedRequest = before.status === 'pending_caregiver_confirmation';
+                    await writeUserNotification({
+                        sourcePath: groupKey ? `recurring_groups/${groupKey}` : `appointments/${context.params.appointmentId}`,
+                        eventId: groupKey ? '' : context.eventId, // group-stable id dedupes the batch
+                        recipientId: after.clientId,
+                        transitionType: declinedRequest ? 'booking_declined' : 'shift_cancelled_by_caregiver',
+                        type: 'alert',
+                        title: declinedRequest ? 'Booking Declined' : 'Appointment Cancelled',
+                        body: declinedRequest
+                            ? `${after.caregiverName || 'The caregiver'} is unable to accept your booking request. You can search for another caregiver.`
+                            : `${after.caregiverName || 'Your caregiver'} cancelled the appointment on ${after.date}.`,
+                        data: groupKey ? { recurringGroupId: groupKey } : { appointmentId: context.params.appointmentId },
+                    });
+                } catch (err) {
+                    console.error('[onAppointmentCancelled] caregiver-cancel client notification failed:', (err as Error)?.name ?? 'Error');
+                }
+            }
+            // appointmentUpdated owns the caregiver-cancellation SMS/replacement
+            // flow. This sibling handles the remaining client/admin notifications.
             if (after.cancelledBy === 'caregiver') return;
             try {
                 const cancelledBy = after.cancelledBy;
@@ -347,18 +330,10 @@ export const onAppointmentCancelled = functions.firestore
                         caregiverId,
                         SMS_TEMPLATES.bookingCancelled(after.clientName, after.date, reason)
                     );
-                } else if (cancelledBy === 'caregiver' && after.clientId) {
-                    await createNotification(after.clientId, {
-                        title: '❌ Appointment Cancelled',
-                        body: `${after.caregiverName} cancelled the appointment on ${after.date}. Reason: ${reason}`,
-                        type: 'alert'
-                    });
-
-                    await sendSMSToUser(
-                        after.clientId,
-                        SMS_TEMPLATES.bookingCancelled(after.caregiverName, after.date, reason)
-                    );
                 }
+                // (No caregiver branch here — the early-return above routes
+                // caregiver cancellations to the in-app note + appointmentUpdated's
+                // SMS/replacement flow. The old branch was unreachable dead code.)
             } catch (error) {
                 console.error('Error in onAppointmentCancelled:', error);
             }

@@ -265,7 +265,8 @@ describe("recordOutboundHistory (direct)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     hoisted.state.sessions = [{ __id: "+15551230012", chatId: "roh-throw", userId: "u" }];
     hoisted.state.convAddThrows = true;
-    await expect(recordOutboundHistory({ chatId: "roh-throw", text: "hello" })).resolves.toBeUndefined();
+    // U2: returns [] (no canonical refs) on failure instead of throwing.
+    await expect(recordOutboundHistory({ chatId: "roh-throw", text: "hello" })).resolves.toEqual([]);
     // Warn log carries keys only, never the message text.
     const warned = warnSpy.mock.calls.map((c) => JSON.stringify(c)).join(" ");
     expect(warned).not.toContain("hello");

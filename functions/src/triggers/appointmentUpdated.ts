@@ -86,6 +86,33 @@ export const onAppointmentUpdated = functions.firestore
       const statusChanged = before.status !== after.status;
       if (!statusChanged) return;
 
+      // U3: in-app booking-confirmed notification runs BEFORE the phone guard —
+      // it needs only clientId, and a phone-less web client must still get it.
+      // Keyed by the recurring group so N per-appointment firings dedupe to one
+      // notification (create-if-absent; eventId '' makes the id group-stable).
+      // Replaces the removed confirmRecurringGroup browser peer-write.
+      if (after.status === "confirmed" && before.status !== "confirmed") {
+        try {
+          const { writeUserNotification } = await import("../notifications/userNotification");
+          const groupKey = after.recurringGroupId || after.recurringScheduleId;
+          await writeUserNotification({
+            sourcePath: groupKey ? `recurring_groups/${groupKey}` : `appointments/${change.after.id}`,
+            // Groups: '' makes the id group-stable so N per-appointment firings
+            // dedupe to one notification. Singles: the trigger eventId bounds
+            // dedup to this confirmation episode (a later re-confirm notifies).
+            eventId: groupKey ? "" : context.eventId,
+            recipientId: after.clientId,
+            transitionType: "booking_confirmed",
+            type: "booking",
+            title: "Booking Confirmed!",
+            body: `${after.caregiverName || "Your caregiver"} accepted your booking request.`,
+            data: groupKey ? { recurringGroupId: groupKey } : { appointmentId: change.after.id },
+          });
+        } catch (err) {
+          console.error("[appointmentUpdated] client confirm notification failed:", (err as Error)?.name ?? "Error");
+        }
+      }
+
       const phone = await getClientPhone(after.clientId);
       if (!phone) return;
 
@@ -131,6 +158,8 @@ export const onAppointmentUpdated = functions.firestore
       }
 
       // ── Booking confirmed → ensure chat room exists + notify caregiver ──────
+      // (The client's in-app confirm notification is written above the phone
+      // guard so phone-less clients still receive it.)
       if (after.status === "confirmed" && before.status !== "confirmed" && after.caregiverId) {
         await ensureChatRoom(
           after.clientId,

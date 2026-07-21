@@ -493,3 +493,44 @@ All rows must distinguish an empty successful snapshot from a failed or disconne
 - Re-run the active query planner inventory after removing dead paths and before finalizing the index JSON.
 - Verify the current Linq webhook payload shapes from sanitized key-only logs before changing provider event parsing.
 - Verify the current deployment branch, `origin/main`, Firebase project alias, environment values, and live Hosting target before any production command.
+
+---
+
+## Post-Review Amendments (2026-07-20, verified against `fix/memory-wave-hotfixes` @ `4f3aa35`)
+
+An independent verification of every factual claim in this plan was run against current HEAD (`4f3aa35`, three commits past `reviewed_against_commit` `636221a`). All 24 new composite rows (Q1-Q24), Q25/Q26, all 12 dead/wrong-schema dispositions, the notification-rules premise, the browser peer-write inventory, the TTL writer types, and the embedding non-query claims were CONFIRMED. The following corrections are binding on the implementation and override the conflicting statements above.
+
+### A1 (BLOCKING). `memory_operations(status, expiresAt)` composite is load-bearing — the "no cleanup query exists" claim is false
+
+`cleanupExpiredMemoryOperations` in `functions/src/scheduled/nightlyMemory.ts:435-441` (added in `2a351be`, deployed live 2026-07-20) queries `status == "completed"`, `expiresAt <= nowIso`, `orderBy expiresAt asc` and depends on the exact composite at `firestore.indexes.json:1883-1896` that this plan removes. Removing the composite while the function is deployed breaks nightly memory. Additionally, converting `expiresAt` writes to `Timestamp` (U6) while this query compares against an ISO string silently empties its result set. **Amendment:** U6 must add `functions/src/scheduled/nightlyMemory.ts` to its file list, remove `cleanupExpiredMemoryOperations` (and its export/schedule wiring) in the same slice that enables the `memory_operations` TTL policy, and only then may the final-manifest deployment drop the composite. Ordering: TTL policy live → cleanup function removed from deployed Functions → composite removed. Update `nightlyMemory.test.ts` accordingly.
+
+### A2 (BLOCKING). Preserve the `facts.fingerprintKeyVersion` field override
+
+`firestore.indexes.json:1909-1922` (added in `6a6dc0b`, after this plan's review) declares COLLECTION + COLLECTION_GROUP single-field indexes on `facts.fingerprintKeyVersion`. It is load-bearing for the HMAC key-rotation safety query documented in `docs/runbooks/evia-memory-rollout.md:231-238` (must confirm zero tombstones reference a secret version before pruning it). It is absent from the Field Override Contract table. **Amendment:** add it to the Field Override Contract as PRESERVE, and U7's final-manifest diff rule becomes: the four embedding exemptions, passed TTL policies, approved stale removals, **and the retained `facts.fingerprintKeyVersion` override**. `tests/firestoreFieldOverrides.test.ts` must assert its presence.
+
+### A3 (BLOCKING). Baseline moved; implement from `fix/memory-wave-hotfixes` @ `4f3aa35` or later
+
+Commits `2a351be`-`4f3aa35` changed ~6,600 lines in files this plan edits (`functions/src/linq/webhooks.ts`, `functions/src/mcp/server.ts`, `functions/src/memory/memoryOperations.ts`, `functions/src/scheduled/memoryOperationWorker.ts`, `functions/src/scheduled/nightlyMemory.ts`, `functions/src/memory/learnedFacts.ts`). Deployed production Functions correspond to `6a6dc0b` (135 functions, verified 2026-07-20); `origin/main` is behind pending the founder's push. Branch from current HEAD, never from `origin/main`, and re-run the Appendix reverification list before each unit.
+
+### A4. Citation and fact corrections (non-blocking)
+
+- **Q8 second citation is wrong:** `functions/src/scheduled/proactiveReflection.ts:90` currently queries `billing_events`, not `payments`. The `payments(userId, createdAt DESC)` composite is justified today by `functions/src/mcp/server.ts:3397-3400` and becomes a proactiveReflection dependency only after U2 lands. The plan statement that proactiveReflection reads payments describes post-U2 state, not current state.
+- **Q23 queryScope must be COLLECTION, not COLLECTION_GROUP:** `hooks/useCaregiverCallout.ts:50-55` builds the query via `collection(db, 'users', userId, 'notifications')`; no `collectionGroup` call exists. Encode Q23 with `queryScope: COLLECTION` (matching the existing notifications composite pattern at `firestore.indexes.json:384-395`).
+- **Q11 naming caveat:** the existing composite at `firestore.indexes.json:1303` is on collection group `dnd_queue`, while the live caller `functions/src/scheduled/dndQueueProcessor.ts:12-14` queries `agent_dnd_queue`. Q11 is correct as specified; classify the old `dnd_queue` composite during U1 (likely stale — candidate for the evidence-gated removal list, not assumed).
+- **`linq_outbound_queue` TTL is not a flat seven days:** `functions/src/linq/outboundQueue.ts:91` writes `now + ttlMs + DOC_RETENTION_MS` (message-expiry window, default 15 min, plus 7 days). U6's retention-constant test must assert this expression, not "7 days". Note the collection also carries a separate ISO-string `expiresAt` field (line 88) that is message-expiry logic, not the TTL field — do not conflate.
+- **`memory_operations.expiresAt` write sites changed post-review:** hotfix `6a6dc0b` set at least one completion path to `expiresAt: null`. Re-inventory all write sites in `memoryOperations.ts` (:231, :312, :383, :423, :658-662) before the U6 type conversion.
+
+### A5. Additions surfaced by verification (fold into U3)
+
+- **Extra-visit decline currently notifies the wrong party:** `components/caregiver/CaregiverBookingsPage.tsx:960-963` sets `status: 'cancelled'` without `cancelledBy`, so `onShiftStatusChanged` (`functions/src/triggers/notificationTriggers.ts:302-310`) notifies the **caregiver** ("A client cancelled the shift") instead of the client. Extra-visit accept (`pending → scheduled`) matches no handled status and produces no notification at all. U3's extra-visit work must set/derive the acting party and handle the `pending → scheduled` transition; add both as explicit test scenarios.
+- **JobBoard misleading failure toast:** `components/caregiver/JobBoard.tsx:357/:381` peer-writes fail rules and the catch at `:366/:390` shows "Failed to accept interview" even though the interview update succeeded — a live R34 violation; removing the peer write must also fix the toast semantics.
+- **Two top-level `notifications` browser writers need a disposition:** `services/api.ts:1970` (`sendNotification`) and `services/api.ts:3179` (`notifyFamilyOfMediaUpdate`, no try/catch — unhandled permission error for caregiver callers; part of the dead media block removed in U4). U3 must classify both; top-level self-writes are rules-legal today but must not become a cross-user side channel.
+- **Retry mechanism named:** all triggers are `firebase-functions/v1`; no `failurePolicy` exists anywhere in `functions/src`. R14's "retry-enabled trigger policy" concretely means `.runWith({ failurePolicy: true })` on the v1 background functions that own notifications, and is safe only after the deterministic-ID transaction semantics are in place. Note `functions/src/notifications.ts:56` already routes through `externalOperationDocId` when an ID is supplied, while `notificationTriggers.ts:6-16 addNotification` uses `.add()` — the latter is the primary idempotency gap.
+
+### A6. Deployment environment constraints (fold into U8, from operational memory)
+
+- Deploy Functions with `FUNCTIONS_DISCOVERY_TIMEOUT` set as plain seconds (no "s" suffix) or discovery silently fails.
+- Deploy only from the `CareConnecxx-main` folder; diff live env VALUES against local `.env` before any full Functions deploy (a partial `.env` full deploy wipes secrets).
+- Frontend production build requires `NODE_OPTIONS=--max-old-space-size=8192`.
+- Full vitest suite OOMs — run focused files (as this plan already does) or split the suite in two halves.
+- After any deploy that CREATES a new callable, verify the `allUsers` invoker with curl (gateway 403 with zero logs otherwise). U3's new exports are background triggers (no invoker needed), but any incidental new callable inherits this check.

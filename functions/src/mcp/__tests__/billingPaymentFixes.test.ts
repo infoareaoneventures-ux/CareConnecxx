@@ -19,20 +19,23 @@ const hoisted = vi.hoisted(() => {
     set: vi.fn(async (data: any, opts?: any) => { docState.set(path, opts?.merge ? { ...(docState.get(path) ?? {}), ...data } : data); }),
   });
 
+  const wheres: Array<{ path: string; field: string; op: string; value: any }> = [];
+
   const makeCollRef = (path: string): any => {
     const ref: any = {};
     ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`);
     ref.add = vi.fn(async () => makeDocRef(`${path}/auto`));
-    ref.where = (..._a: any[]) => ref;
+    ref.where = (field: string, op: string, value: any) => { wheres.push({ path, field, op, value }); return ref; };
+    ref.orderBy = (..._a: any[]) => ref;
     ref.limit = (..._a: any[]) => ref;
     ref.get = vi.fn(async () => ({ empty: true, size: 0, docs: [] }));
     return ref;
   };
 
   return {
-    docState, updates,
+    docState, updates, wheres,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
-    reset: () => { docState.clear(); updates.length = 0; },
+    reset: () => { docState.clear(); updates.length = 0; wheres.length = 0; },
   };
 });
 
@@ -118,6 +121,23 @@ describe("retry_shift_payment tool", () => {
       leaseOwner: null,
       leaseExpiresAt: null,
     });
+  });
+});
+
+describe("get_billing_summary tool (canonical field split, R7)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("queries invoices by clientId and payments by userId", async () => {
+    const r = await handleToolCall("get_billing_summary", { userId: CLIENT }) as any;
+    expect(r.success).toBe(true);
+    const invoiceWhere = hoisted.wheres.find(w => w.path === "invoices");
+    const paymentWhere = hoisted.wheres.find(w => w.path === "payments");
+    // Invoices are keyed by clientId (= the client uid) per invoicing.ts.
+    expect(invoiceWhere).toMatchObject({ field: "clientId", op: "==", value: CLIENT });
+    // Payments keep userId, matching the Stripe writer.
+    expect(paymentWhere).toMatchObject({ field: "userId", op: "==", value: CLIENT });
+    // The old bug: invoices filtered by userId. Guard against regression.
+    expect(hoisted.wheres.some(w => w.path === "invoices" && w.field === "userId")).toBe(false);
   });
 });
 

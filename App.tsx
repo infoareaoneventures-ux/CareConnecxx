@@ -145,7 +145,8 @@ const AppContent: React.FC = () => {
   } = useCareConnex();
 
   // Caregiver Callout Handling
-  const { activeCallout, dismissCallout } = useCaregiverCallout(currentUser?.uid || null);
+  const { activeCallout, dismissCallout, error: calloutError, retry: retryCallout } =
+    useCaregiverCallout(currentUser?.uid || null);
   const { appointment: calloutAppointment } = useAppointmentForCallout(
     activeCallout?.data?.appointmentId || null
   );
@@ -455,6 +456,25 @@ const AppContent: React.FC = () => {
           onCaregiverSelected={handleBackupCaregiverSelected}
           onRefundRequested={handleRefundRequested}
         />
+      )}
+
+      {/* Callout listener unavailable (R33): a failed notifications query must
+          not read as "no callout". Non-blocking banner with a retry. */}
+      {calloutError && currentUser && (
+        <div
+          role="alert"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 shadow-lg"
+        >
+          <span className="text-sm text-amber-800">
+            Notification updates are temporarily unavailable — urgent care alerts may not appear.
+          </span>
+          <button
+            onClick={retryCallout}
+            className="text-sm font-semibold text-amber-800 underline hover:no-underline whitespace-nowrap"
+          >
+            Retry
+          </button>
+        </div>
       )}
 
     </div>

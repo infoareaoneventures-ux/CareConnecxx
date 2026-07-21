@@ -16,7 +16,10 @@
     "test": "vitest",
     "icons": "node scripts/generate-icons.cjs",
     "migrate:predictive": "node scripts/run-migration.mjs",
-    "migrate:predictive:dry": "node --env-file=.env scripts/run-migration.mjs"
+    "migrate:predictive:dry": "node --env-file=.env scripts/run-migration.mjs",
+    "audit:indexes": "node scripts/audit-firestore-query-contracts.mjs",
+    "audit:indexes:live": "node scripts/audit-firestore-query-contracts.mjs --live",
+    "deploy:indexes:additive": "node scripts/deploy-firestore-additive-indexes.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.50.0",

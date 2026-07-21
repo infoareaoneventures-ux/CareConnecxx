@@ -257,22 +257,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
         roomExists ? undefined : pendingRoomState
       );
 
-      // Notify the other participant via their notifications subcollection
-      const contact = activeRoom ? getContact(activeRoom) : null;
-      const fdb = db;
-      if (contact?.id && fdb) {
-        fdb.collection('users').doc(contact.id).collection('notifications').add({
-          userId: contact.id,
-          type: 'new_message',
-          title: `New message from ${currentName}`,
-          message: text.length > 80 ? text.slice(0, 80) + '…' : text,
-          data: { chatRoomId: selectedRoomId, senderId: currentUid },
-          read: false,
-          isRead: false,
-          timestamp: new Date().toISOString(),
-          createdAt: new Date().toISOString()
-        }).catch(() => {}); // fire-and-forget
-      }
+      // U3: no peer notification write here (rules deny browser cross-user
+      // creates, and this one was already silently failing). Web-inbox messages
+      // (chatRooms/*/messages) notify the recipient via the sendPushNotification
+      // FCM trigger + the inbox unread badge BY DESIGN — the in-app bell filters
+      // out type 'message' anyway (useNotifications), so a bell doc would be
+      // invisible. (onMessageSent covers the separate threads/* SMS-mirror path.)
     } catch {
       setInputText(text);
       onShowToast?.('Failed to send message. Please try again.', 'error');

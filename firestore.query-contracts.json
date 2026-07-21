@@ -1,0 +1,411 @@
+{
+  "$comment": "Machine-readable contract of every active compound Firestore query that requires a composite index, plus explicit no-index dispositions for wrong-schema/dead signatures. Source of truth for tests/firestoreIndexCoverage.test.ts and scripts/audit-firestore-query-contracts.mjs. See docs/plans/2026-07-19-001-fix-firestore-index-data-integrity-hardening-plan.md. Equality fields are ASCENDING; the final range/order field uses the direction shown. queryScope COLLECTION unless a callsite uses collectionGroup().",
+  "version": 1,
+  "contracts": [
+    {
+      "id": "Q1",
+      "collectionGroup": "execution_agents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "lastActiveAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/agents/executionAgent.ts"]
+    },
+    {
+      "id": "Q2",
+      "collectionGroup": "clientIntakes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phone", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/agents/permissionsConversation.ts"]
+    },
+    {
+      "id": "Q3",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "isoDate", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/agents/refundHandler.ts"]
+    },
+    {
+      "id": "Q4",
+      "collectionGroup": "interview_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Equality and 'in' variants of status share this one definition.",
+      "callers": [
+        "functions/src/agents/interviewAgent.ts",
+        "functions/src/linq/routeCaregiver.ts"
+      ]
+    },
+    {
+      "id": "Q5",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recurringScheduleId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Align-only: modifyScheduleFlow cancellation and both mcp/server.ts recurring-cancel paths get 'date DESC' added; each already has an inequality on date.",
+      "callers": [
+        "functions/src/agents/modifyScheduleFlow.ts",
+        "functions/src/scheduled/recurringScheduler.ts",
+        "functions/src/mcp/server.ts"
+      ]
+    },
+    {
+      "id": "Q6",
+      "collectionGroup": "replacement_candidates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phone", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "contactedAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/linq/routeCaregiver.ts"]
+    },
+    {
+      "id": "Q7",
+      "collectionGroup": "health_signals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/mcp/server.ts"]
+    },
+    {
+      "id": "Q8",
+      "collectionGroup": "payments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Justified today by mcp/server.ts; becomes a proactiveReflection dependency after U2.",
+      "callers": ["functions/src/mcp/server.ts"]
+    },
+    {
+      "id": "Q9",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/mcp/server.ts"]
+    },
+    {
+      "id": "Q10",
+      "collectionGroup": "job_applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "appliedAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/scheduled/staleApplicantNudge.ts"]
+    },
+    {
+      "id": "Q11",
+      "collectionGroup": "agent_dnd_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sentAt", "order": "ASCENDING" },
+        { "fieldPath": "sendAfter", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Distinct from the existing 'dnd_queue' composite (different collection name); classify dnd_queue as stale in U1 census.",
+      "callers": ["functions/src/scheduled/dndQueueProcessor.ts"]
+    },
+    {
+      "id": "Q12",
+      "collectionGroup": "admin_alerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/scheduled/opsAnomalyWatch.ts"]
+    },
+    {
+      "id": "Q13",
+      "collectionGroup": "proactive_drafts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "contextHash", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/scheduled/proactiveReflection.ts"]
+    },
+    {
+      "id": "Q14",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "isoDate", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Oldest-first bounded analysis; limit(100) makes ASC semantic. Distinct from Q24 (DESC).",
+      "callers": ["functions/src/scheduled/healthTrends.ts"]
+    },
+    {
+      "id": "Q15",
+      "collectionGroup": "agent_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userType", "order": "ASCENDING" },
+        { "fieldPath": "onboardingStep", "order": "ASCENDING" },
+        { "fieldPath": "lastInboundAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/scheduled/familySilenceCheckin.ts"]
+    },
+    {
+      "id": "Q16",
+      "collectionGroup": "disputes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "slaDeadline", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/triggers/disputeResolution.ts"]
+    },
+    {
+      "id": "Q17",
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/invoicing.ts"]
+    },
+    {
+      "id": "Q18",
+      "collectionGroup": "clientIntakes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/aiMatching.ts"]
+    },
+    {
+      "id": "Q19",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "isoDate", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["services/api.ts"]
+    },
+    {
+      "id": "Q20",
+      "collectionGroup": "agent_audit_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "eventType", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["components/admin/AuditDashboard.tsx"]
+    },
+    {
+      "id": "Q21",
+      "collectionGroup": "interview_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["components/caregiver/CaregiverCareRequestsCard.tsx"]
+    },
+    {
+      "id": "Q22",
+      "collectionGroup": "clientIntakes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "callers": ["functions/src/triggers/aiMatchTriggers.ts"]
+    },
+    {
+      "id": "Q23",
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "isRead", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Subcollection query via collection(db,'users',uid,'notifications') = COLLECTION scope on group 'notifications', NOT collectionGroup.",
+      "callers": ["hooks/useCaregiverCallout.ts"]
+    },
+    {
+      "id": "Q24",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "isoDate", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Newest-first admin client detail. Distinct from Q14 (ASC).",
+      "callers": ["services/api.ts"]
+    },
+    {
+      "id": "Q25",
+      "collectionGroup": "agent_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "onboardingStep", "order": "ASCENDING" },
+        { "fieldPath": "optedOut", "order": "ASCENDING" },
+        { "fieldPath": "userType", "order": "ASCENDING" },
+        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "existing",
+      "callers": ["functions/src/scheduled/nightlyMemory.ts"]
+    },
+    {
+      "id": "Q26",
+      "collectionGroup": "memory_operations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nextRetryAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "existing",
+      "callers": ["functions/src/scheduled/memoryOperationWorker.ts"]
+    }
+  ],
+  "forbidden": [
+    {
+      "signature": "agent_conversations root: messageId; chatId + direction + createdAt",
+      "reason": "Root docs carry no message rows; production root count is zero.",
+      "correction": "Direct linq_message_index lookup (U2). Never add root agent_conversations composites."
+    },
+    {
+      "signature": "invoices: userId + createdAt",
+      "reason": "Canonical invoices use clientId.",
+      "correction": "Reader changes to clientId; reuse existing clientId+createdAt DESC invoice index."
+    },
+    {
+      "signature": "billing_events: userId + createdAt",
+      "reason": "No writer; zero production documents.",
+      "correction": "Read canonical invoices/payments (U2)."
+    },
+    {
+      "signature": "referrals: ordered web queries",
+      "reason": "Web referral methods have zero callers; referrals are SMS/server-owned.",
+      "correction": "Remove dead web methods (U4)."
+    },
+    {
+      "signature": "media_updates: clientId + timestamp",
+      "reason": "Zero production documents and no callers.",
+      "correction": "Remove dead Phase 2 service block (U4)."
+    },
+    {
+      "signature": "caregiver_of_month: year + month",
+      "reason": "Zero production documents and no caller/writer.",
+      "correction": "Remove dead service method (U4)."
+    },
+    {
+      "signature": "peer_recognitions: toCaregiverId + createdAt",
+      "reason": "Zero production documents and no writer/caller.",
+      "correction": "Remove dead service method (U4)."
+    },
+    {
+      "signature": "interview_requests: caregiverId + clientPhone + createdAt",
+      "reason": "Service method has no callers.",
+      "correction": "Remove dead method (U4); preserve canonical interview flows."
+    },
+    {
+      "signature": "shifts: caregiverId + clientId + timestamp",
+      "reason": "Method has no callers; timestamp is not the canonical shift ordering field.",
+      "correction": "Remove dead method (U4)."
+    },
+    {
+      "signature": "timesheets: client/caregiver ordered queries",
+      "reason": "Canonical payroll uses shiftHours; production count is zero.",
+      "correction": "Remove API methods, component fetch, and permissive rule (U4)."
+    },
+    {
+      "signature": "memory_operations: status + expiresAt",
+      "reason": "TTL is the intended cleanup policy; the cleanupExpiredMemoryOperations query is removed alongside TTL enablement.",
+      "correction": "Remove composite only AFTER TTL policy is live and cleanupExpiredMemoryOperations is removed from deployed Functions (Amendment A1)."
+    },
+    {
+      "signature": "videoInterviews (camelCase): caregiverId+scheduledTime; clientId+scheduledTime",
+      "reason": "Canonical collection is video_interviews; production camel-case count is zero.",
+      "correction": "Remove stale onInterviewScheduled trigger and both composites after preflight (U4)."
+    }
+  ],
+  "preserve": [
+    {
+      "signature": "facts.fingerprintKeyVersion field override (COLLECTION + COLLECTION_GROUP)",
+      "reason": "Load-bearing for the HMAC key-rotation safety query in docs/runbooks/evia-memory-rollout.md (Amendment A2). Not a query composite; a single-field override that must survive fieldOverrides rewrites."
+    }
+  ]
+}

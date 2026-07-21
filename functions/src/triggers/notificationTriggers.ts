@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import { writeUserNotification } from '../notifications/userNotification';
 
 const db = admin.firestore();
 
@@ -267,10 +268,40 @@ export const onShiftStatusChanged = functions.firestore
 
     if (before.status === after.status) return;
 
+    const shiftId = context.params.shiftId;
+    const fmtDate = after.date
+      ? ` on ${new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`
+      : '';
+
     // ── 1. In-app notifications on status change ────────────────────────────
     try {
+      // Extra visit = a client-requested pending shift. The caregiver's response
+      // (accept → scheduled, decline → cancelled) must notify the CLIENT.
+      // Previously decline set status:'cancelled' with no cancelledBy and fell
+      // through to the generic branch below, notifying the caregiver (wrong
+      // party). Keyed on observable doc state — NOT createdBy, which no shift
+      // writer sets: the only actor on a pending shift is the caregiver
+      // (CaregiverBookingsPage Accept/Decline), so pending → scheduled, and
+      // pending → cancelled without a cancelledBy attribution, are both
+      // caregiver responses. Idempotent via the trigger eventId.
+      if (before.status === 'pending' && after.clientId &&
+          (after.status === 'scheduled' ||
+           (after.status === 'cancelled' && !after.cancelledBy && !after.bulkCancelled))) {
+        const accepted = after.status === 'scheduled';
+        await writeUserNotification({
+          sourcePath: `shifts/${shiftId}`,
+          eventId: context.eventId,
+          recipientId: after.clientId,
+          transitionType: accepted ? 'extra_visit_accepted' : 'extra_visit_declined',
+          type: accepted ? 'shift_accepted' : 'shift_declined',
+          title: accepted ? 'Extra Visit Confirmed' : 'Extra Visit Declined',
+          body: accepted
+            ? `${after.caregiverName || 'Your caregiver'} confirmed your extra visit${fmtDate}.`
+            : `${after.caregiverName || 'Your caregiver'} can't make the extra visit${fmtDate}.`,
+          data: { shiftId },
+        });
       // Caregiver started shift → notify client
-      if (after.status === 'in-progress' && after.clientId) {
+      } else if (after.status === 'in-progress' && after.clientId) {
         await addNotification(after.clientId, {
           type: 'shift_started',
           title: 'Shift Started',
@@ -286,17 +317,16 @@ export const onShiftStatusChanged = functions.firestore
           data: { shiftId: context.params.shiftId },
         });
       } else if (after.status === 'cancelled' && !after.bulkCancelled) {
-        // Cancelled — direction depends on who cancelled
-        const fmtDate = after.date
-          ? new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-          : 'an upcoming date';
+        // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
+        // above and already includes the " on <date>" prefix, or '' if no date.)
+        const whenText = fmtDate || ' for an upcoming date';
 
         if (after.cancelledBy === 'caregiver' && after.clientId) {
           // Caregiver cancelled → notify client
           await addNotification(after.clientId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
-            body: `${after.caregiverName || 'Your caregiver'} cancelled the shift on ${fmtDate}.`,
+            body: `${after.caregiverName || 'Your caregiver'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
           });
         } else if (after.caregiverId) {
@@ -304,7 +334,7 @@ export const onShiftStatusChanged = functions.firestore
           await addNotification(after.caregiverId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
-            body: `${after.clientName || 'A client'} cancelled the shift on ${fmtDate}.`,
+            body: `${after.clientName || 'A client'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
           });
         }

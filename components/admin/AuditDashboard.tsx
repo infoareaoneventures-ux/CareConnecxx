@@ -34,6 +34,11 @@ export const AuditDashboard: React.FC = () => {
   const [sessionCount, setSessionCount] = useState<number>(0);
   const [pendingTasks, setPendingTasks] = useState<number>(0);
   const [loading,      setLoading]      = useState(true);
+  // State matrix (R33): an unavailable load (e.g. missing index) must not read
+  // as "no audit events". Show an explicit error + retry instead of empty tables.
+  const [error,        setError]        = useState(false);
+  const [reloadKey,    setReloadKey]    = useState(0);
+  const retry = () => { setError(false); setLoading(true); setReloadKey(k => k + 1); };
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +81,7 @@ export const AuditDashboard: React.FC = () => {
         setPendingTasks(tasksSnap.size);
       } catch (err) {
         console.error("AuditDashboard load error:", err);
+        if (!cancelled) setError(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -83,7 +89,7 @@ export const AuditDashboard: React.FC = () => {
 
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   const formatTs = (ts: string) => {
     try { return new Date(ts).toLocaleString(); } catch { return ts; }
@@ -111,6 +117,16 @@ export const AuditDashboard: React.FC = () => {
         <h1 className="text-2xl font-bold text-slate-900">Audit Dashboard</h1>
         <p className="text-sm text-slate-500 mt-1">HIPAA audit log · Safety violations · Crisis events</p>
       </div>
+
+      {error && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <span className="text-sm text-amber-800">
+            <AlertTriangle className="inline w-4 h-4 mr-1.5 align-text-bottom" aria-hidden="true" />
+            Audit data is currently unavailable — this does not mean there are no events.
+          </span>
+          <button onClick={retry} className="text-sm font-semibold text-amber-800 underline hover:no-underline whitespace-nowrap">Retry</button>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

@@ -865,21 +865,9 @@ export const dbService = {
                 return cleanedAppt as unknown as Appointment;
             });
 
-            // Notify caregiver of new booking request (fire-and-forget, don't fail booking)
-            try {
-                await db.collection('users').doc(appointment.caregiverId).collection('notifications').add({
-                    userId: appointment.caregiverId,
-                    type: 'new_booking',
-                    title: 'New Booking Request',
-                    body: `${appointment.clientName} booked you for ${appointment.date} at ${appointment.time}.`,
-                    message: `${appointment.clientName} booked you for ${appointment.date} at ${appointment.time}.`,
-                    data: { appointmentId: appointment.id },
-                    read: false,
-                    isRead: false,
-                    timestamp: new Date().toISOString(),
-                    createdAt: new Date().toISOString()
-                });
-            } catch (_) { /* non-critical */ }
+            // U3: the caregiver notification is owned by the onAppointmentCreated
+            // server trigger. Browser peer-writes into another user's
+            // notifications subcollection are denied by rules; removed.
 
             return appointment;
             } catch (error: any) {
@@ -977,26 +965,9 @@ export const dbService = {
 
             await db.collection('appointments').doc(appointmentId).update(updateData);
 
-            // Notify the other party about the cancellation
-            const notifyUserId = cancelledBy === 'client' ? data?.caregiverId : data?.clientId;
-            const notifyName = cancelledBy === 'client' ? data?.clientName : data?.caregiverName;
-            if (notifyUserId) {
-                try {
-                    const reasonLabel = reason || 'No reason given';
-                    await db.collection('users').doc(notifyUserId).collection('notifications').add({
-                        userId: notifyUserId,
-                        type: 'appointment_cancelled',
-                        title: 'Appointment Cancelled',
-                        body: `${notifyName || 'The other party'} cancelled the appointment on ${data?.date} at ${data?.time}. Reason: ${reasonLabel}.`,
-                        message: `${notifyName || 'The other party'} cancelled the appointment on ${data?.date} at ${data?.time}. Reason: ${reasonLabel}.`,
-                        data: { appointmentId, cancelledBy, reason },
-                        read: false,
-                        isRead: false,
-                        timestamp: new Date().toISOString(),
-                        createdAt: new Date().toISOString()
-                    });
-                } catch (_) { /* non-critical */ }
-            }
+            // U3: the other-party cancellation notification is owned by the
+            // onAppointmentCancelled server trigger (which reads the canonical
+            // appointment to derive the recipient). Browser peer-write removed.
 
             return true;
         }
@@ -1126,19 +1097,10 @@ export const dbService = {
         });
         await batch.commit();
 
-        // Notify client
-        try {
-            await db.collection('users').doc(clientId).collection('notifications').add({
-                type: 'booking',
-                title: 'Booking Confirmed!',
-                message: `${caregiverName} accepted your booking request. Your care schedule is confirmed.`,
-                read: false,
-                isRead: false,
-                timestamp: now,
-                createdAt: now,
-                data: { recurringGroupId },
-            });
-        } catch { /* non-fatal */ }
+        // U3: the client "booking confirmed" notification is owned by the
+        // onAppointmentUpdated server trigger, keyed by recurringGroupId so the
+        // whole group produces exactly one notification. Browser peer-write
+        // (rules-blocked) removed.
     },
 
     // Decline an entire recurring booking group
@@ -1164,19 +1126,9 @@ export const dbService = {
         });
         await batch.commit();
 
-        // Notify client
-        try {
-            await db.collection('users').doc(clientId).collection('notifications').add({
-                type: 'alert',
-                title: 'Booking Declined',
-                message: `${caregiverName} is unable to accept your booking request. You can search for another caregiver.`,
-                read: false,
-                isRead: false,
-                timestamp: now,
-                createdAt: now,
-                data: { recurringGroupId },
-            });
-        } catch { /* non-fatal */ }
+        // U3: the client "booking declined" notification is owned by the
+        // onAppointmentCancelled server trigger (fires on cancelledBy:'caregiver').
+        // Browser peer-write (rules-blocked) removed.
     },
 
     // Create notification
@@ -2079,23 +2031,9 @@ export const dbService = {
                     ...applicationData
                 });
 
-                // Notify the client that someone applied
-                if (jobData.clientId) {
-                    try {
-                        await db.collection('users').doc(jobData.clientId).collection('notifications').add({
-                            userId: jobData.clientId,
-                            type: 'job_application',
-                            title: 'New Job Application',
-                            body: `${applicationData.caregiverName} applied to your post: "${jobData.title}".`,
-                            message: `${applicationData.caregiverName} applied to your post: "${jobData.title}".`,
-                            data: { jobId, caregiverId },
-                            read: false,
-                            isRead: false,
-                            timestamp: new Date().toISOString(),
-                            createdAt: new Date().toISOString()
-                        });
-                    } catch (_) { /* non-critical */ }
-                }
+                // U3: the client "new application" notification is owned by the
+                // onJobApplicationCreate server trigger (fires on this
+                // job_applications write). Browser peer-write removed.
 
                 return true;
             }
@@ -2923,88 +2861,10 @@ export const dbService = {
     },
 
     // ==================== REFERRAL SYSTEM ====================
-
-    /**
-     * Get referral stats for user
-     */
-    getReferralStats: async (userId: string) => {
-        if (!isConfigured || !db) {
-            return {
-                totalReferrals: 0,
-                successfulReferrals: 0,
-                pendingReferrals: 0,
-                totalEarnings: 0,
-                referralCode: ''
-            };
-        }
-
-        try {
-            // Get user's referral code
-            const userDoc = await db.collection('users').doc(userId).get();
-            const userData = userDoc.data();
-            const referralCode = userData?.referralCode || generateReferralCode();
-
-            // If no code exists, create one
-            if (!userData?.referralCode) {
-                await db.collection('users').doc(userId).update({ referralCode });
-            }
-
-            const [legacySnapshot, caraSnapshot] = await Promise.all([
-                db.collection('referrals').where('referrerId', '==', userId).get(),
-                db.collection('referrals').where('referrerUserId', '==', userId).get(),
-            ]);
-            const referralMap = new Map<string, any>();
-            [...legacySnapshot.docs, ...caraSnapshot.docs].forEach(doc => referralMap.set(doc.id, doc.data()));
-            const referrals = [...referralMap.values()];
-            const successfulStatuses = new Set(['successful', 'approved', 'first_booking_completed']);
-            const pendingStatuses = new Set(['pending', 'invited', 'started']);
-            const successful = referrals.filter(r => successfulStatuses.has(r.status));
-
-            return {
-                totalReferrals: referrals.length,
-                successfulReferrals: successful.length,
-                pendingReferrals: referrals.filter(r => pendingStatuses.has(r.status)).length,
-                totalEarnings: successful.reduce((sum, r) => sum + (r.reward || 0), 0),
-                referralCode
-            };
-        } catch (error) {
-            console.error('Failed to get referral stats:', error);
-            return {
-                totalReferrals: 0,
-                successfulReferrals: 0,
-                pendingReferrals: 0,
-                totalEarnings: 0,
-                referralCode: ''
-            };
-        }
-    },
-
-    /**
-     * Get user's referrals list
-     */
-    getReferrals: async (userId: string) => {
-        if (!isConfigured || !db) {
-            return [];
-        }
-
-        try {
-            const [legacySnapshot, caraSnapshot] = await Promise.all([
-                db.collection('referrals').where('referrerId', '==', userId).orderBy('createdAt', 'desc').get(),
-                db.collection('referrals').where('referrerUserId', '==', userId).orderBy('createdAt', 'desc').get(),
-            ]);
-            const referralMap = new Map<string, any>();
-            [...legacySnapshot.docs, ...caraSnapshot.docs].forEach(doc => referralMap.set(doc.id, {
-                id: doc.id,
-                ...doc.data()
-            }));
-            return [...referralMap.values()].sort((a, b) =>
-                String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
-            );
-        } catch (error) {
-            console.error('Failed to get referrals:', error);
-            return [];
-        }
-    },
+    // U4 (2026-07-20): dead web referral readers getReferralStats/getReferrals
+    // removed — zero callers; referrals are SMS/server-owned by product decision.
+    // The backend referral flow (processReferral + v1-resolveReferrerByCode) and
+    // sendReferralInvite are preserved.
 
     /**
      * Send referral invite via email
@@ -3112,105 +2972,10 @@ export const dbService = {
     // ==================== PHASE 2 FEATURES ====================
 
     // --- VIDEO UPDATES / MEDIA GALLERY ---
-
-    createMediaUpdate: async (data: {
-        appointmentId: string;
-        clientId: string;
-        caregiverId: string;
-        caregiverName: string;
-        media: { url: string; path: string; type: string }[];
-        caption: string;
-        timestamp: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const docRef = await db.collection('media_updates').add({
-            ...data,
-            createdAt: new Date().toISOString()
-        });
-        return docRef.id;
-    },
-
-    getMediaForClient: async (clientId: string): Promise<any[]> => {
-        if (!isConfigured || !db) return [];
-        
-        try {
-            const snap = await db.collection('media_updates')
-                .where('clientId', '==', clientId)
-                .orderBy('timestamp', 'desc')
-                .limit(100)
-                .get();
-            
-            return snap.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-        } catch (e) {
-            console.error('Failed to fetch media:', e);
-            return [];
-        }
-    },
-
-    subscribeToMediaUpdates: (clientId: string, onUpdate: (item: any) => void) => {
-        if (!isConfigured || !db) return () => {};
-        
-        return db.collection('media_updates')
-            .where('clientId', '==', clientId)
-            .orderBy('timestamp', 'desc')
-            .limit(1)
-            .onSnapshot(snap => {
-                snap.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        onUpdate({ id: change.doc.id, ...change.doc.data() });
-                    }
-                });
-            });
-    },
-
-    notifyFamilyOfMediaUpdate: async (data: {
-        clientId: string;
-        caregiverName: string;
-        mediaCount: number;
-        appointmentId: string;
-    }) => {
-        if (!isConfigured || !db) return;
-
-        // Create notification
-        await db.collection('notifications').add({
-            userId: data.clientId,
-            type: 'media_update',
-            title: 'New Care Update!',
-            message: `${data.caregiverName} shared ${data.mediaCount} new photo${data.mediaCount > 1 ? 's' : ''} from today's visit.`,
-            appointmentId: data.appointmentId,
-            timestamp: new Date().toISOString(),
-            read: false
-        });
-    },
-
-    likeMedia: async (mediaId: string) => {
-        if (!isConfigured || !db) return;
-        await db.collection('media_updates').doc(mediaId).update({
-            likes: firebase.firestore.FieldValue.increment(1)
-        });
-    },
-
-    addComment: async (data: { mediaId: string; text: string; timestamp: string }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const user = auth?.currentUser;
-        const comment = {
-            id: Date.now().toString(),
-            authorName: user?.displayName || 'Family Member',
-            text: data.text,
-            timestamp: data.timestamp
-        };
-        
-        await db.collection('media_updates').doc(data.mediaId).update({
-            comments: firebase.firestore.FieldValue.arrayUnion(comment)
-        });
-        
-        return comment;
-    },
+    // U4 (2026-07-20): the media_updates Phase-2 block (createMediaUpdate,
+    // getMediaForClient, subscribeToMediaUpdates, notifyFamilyOfMediaUpdate,
+    // likeMedia, addComment) was removed — zero callers and zero production
+    // documents. No web reader or writer of media_updates remains.
 
     // --- SMART CARE PLAN V2 ---
 
@@ -3261,38 +3026,9 @@ export const dbService = {
         }
     },
 
-    getCaregiverOfMonth: async (): Promise<any | null> => {
-        if (!isConfigured || !db) return null;
-        
-        try {
-            const snap = await db.collection('caregiver_of_month')
-                .orderBy('year', 'desc')
-                .orderBy('month', 'desc')
-                .limit(1)
-                .get();
-            
-            if (!snap.empty) return snap.docs[0].data();
-            return null;
-        } catch (e) {
-            return null;
-        }
-    },
-
-    getPeerRecognitions: async (caregiverId: string): Promise<any[]> => {
-        if (!isConfigured || !db) return [];
-        
-        try {
-            const snap = await db.collection('peer_recognitions')
-                .where('toCaregiverId', '==', caregiverId)
-                .orderBy('createdAt', 'desc')
-                .limit(20)
-                .get();
-            
-            return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        } catch (e) {
-            return [];
-        }
-    },
+    // U4 (2026-07-20): getCaregiverOfMonth (caregiver_of_month) and
+    // getPeerRecognitions (peer_recognitions) removed — zero callers and zero
+    // production documents.
 
     /**
      * Check if an email is already registered in the system
@@ -3508,17 +3244,8 @@ export const dbService = {
         await db.collection('interview_requests').doc(requestId).update(updates);
     },
 
-    getMatchScoreForCaregiver: async (caregiverId: string, clientPhone: string): Promise<any | null> => {
-        if (!isConfigured || !db) return null;
-        const snap = await db.collection('interview_requests')
-            .where('caregiverId', '==', caregiverId)
-            .where('clientPhone', '==', clientPhone)
-            .orderBy('createdAt', 'desc')
-            .limit(1)
-            .get();
-        if (snap.empty) return null;
-        return snap.docs[0].data().matchScore ?? null;
-    },
+    // U4 (2026-07-20): getMatchScoreForCaregiver (interview_requests
+    // caregiverId+clientPhone+createdAt) removed — zero callers.
 
     submitInterviewFeedback: async (requestId: string, feedback: {
         fit: 'strong' | 'maybe' | 'no_match';
@@ -3616,112 +3343,11 @@ export const dbService = {
     },
 
 
-    getShiftHistory: async (caregiverId: string, clientId: string, limit: number = 30) => {
-        if (!isConfigured || !db) return [];
-        
-        const snapshot = await db.collection('shifts')
-            .where('caregiverId', '==', caregiverId)
-            .where('clientId', '==', clientId)
-            .orderBy('timestamp', 'desc')
-            .limit(limit)
-            .get();
-        
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    },
-
-    // ==========================================
-    // TIMESHEET / HOURS APPROVAL
-    // ==========================================
-
-    submitTimesheet: async (data: {
-        caregiverId: string;
-        clientId: string;
-        weekStart: string;
-        weekEnd: string;
-        dailyHours: any[];
-        totalHours: number;
-        hourlyRate: number;
-        totalPay: number;
-        notes?: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const timesheetRef = db.collection('timesheets').doc();
-        
-        // Calculate auto-approve time (2 days from now)
-        const autoApproveAt = new Date();
-        autoApproveAt.setDate(autoApproveAt.getDate() + 2);
-        
-        await timesheetRef.set({
-            ...data,
-            id: timesheetRef.id,
-            status: 'pending',
-            submittedAt: new Date().toISOString(),
-            autoApproveAt: autoApproveAt.toISOString(),
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        return timesheetRef.id;
-    },
-
-    getClientTimesheets: async (clientId: string) => {
-        if (!isConfigured || !db) return [];
-        
-        const snapshot = await db.collection('timesheets')
-            .where('clientId', '==', clientId)
-            .orderBy('submittedAt', 'desc')
-            .get();
-        
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    },
-
-    getCaregiverTimesheets: async (caregiverId: string) => {
-        if (!isConfigured || !db) return [];
-        
-        const snapshot = await db.collection('timesheets')
-            .where('caregiverId', '==', caregiverId)
-            .orderBy('submittedAt', 'desc')
-            .get();
-        
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    },
-
-    approveTimesheet: async (timesheetId: string, approvalData: {
-        approvedAt: string;
-        approvedBy: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        await db.collection('timesheets').doc(timesheetId).update({
-            status: 'approved',
-            ...approvalData,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    },
-
-    disputeTimesheet: async (timesheetId: string, disputeData: {
-        disputedAt: string;
-        disputeReason: string;
-        disputedDays: string[];
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        await db.collection('timesheets').doc(timesheetId).update({
-            status: 'disputed',
-            ...disputeData,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    },
-
-    autoApproveTimesheet: async (timesheetId: string) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-
-        await db.collection('timesheets').doc(timesheetId).update({
-            status: 'auto_approved',
-            autoApprovedAt: new Date().toISOString(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    },
+    // U4 (2026-07-20): getShiftHistory (shifts caregiverId+clientId+timestamp)
+    // and the legacy timesheets CRUD block (submitTimesheet, getClientTimesheets,
+    // getCaregiverTimesheets, approveTimesheet, disputeTimesheet,
+    // autoApproveTimesheet) removed — zero callers and zero production documents.
+    // Canonical payroll is shiftHours (see shiftHoursService).
 
     getMatchOutcomes: async (since?: string): Promise<any[]> => {
         if (!isConfigured || !db) return [];
@@ -3803,9 +3429,6 @@ export { storageService };
 
 // authService is an alias for dbService
 export { dbService as authService };
-
-// Explicit export to prevent tree-shaking
-export const subscribeToMediaUpdates = dbService.subscribeToMediaUpdates;
 
 /**
  * Generate a unique referral code

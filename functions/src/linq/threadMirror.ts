@@ -225,21 +225,24 @@ export async function pruneTransportRows(phone: string): Promise<number> {
 export async function recordOutboundHistory(params: {
   chatId: string;
   text:   string;
-}): Promise<void> {
+}): Promise<string[]> {
+  // Returns the canonical message doc paths written (U2): the send path
+  // registers each provider message id against these refs so delivery/edit
+  // webhooks can resolve to the right row. Empty on any skip/failure.
   try {
-    if (!outboundHistoryRecordEnabled()) return;
+    if (!outboundHistoryRecordEnabled()) return [];
 
     const text = neutralizeUrlsForHistory((params.text ?? "").trim());
-    if (!text) return;
+    if (!text) return [];
     // Attachment-only sends carry no conversational content worth recording —
     // extractMirrorText renders media parts as "[attachment]".
-    if (!text.replace(/\[attachment\]/g, "").trim()) return;
+    if (!text.replace(/\[attachment\]/g, "").trim()) return [];
 
     const phones = await resolvePhones(params.chatId);
-    if (phones.length === 0) return; // pre-session send: nothing to key by
+    if (phones.length === 0) return []; // pre-session send: nothing to key by
 
     const timestamp = Date.now();
-    await Promise.all(phones.map((phone) =>
+    const refs = await Promise.all(phones.map((phone) =>
       db.collection("agent_conversations").doc(phone).collection("messages").add({
         role:      "assistant",
         content:   text,
@@ -256,12 +259,14 @@ export async function recordOutboundHistory(params: {
     if (transportWriteCounter % TRANSPORT_PRUNE_EVERY_N === 0) {
       await Promise.all(phones.map((phone) => pruneTransportRows(phone)));
     }
+    return refs.map((r) => r.path);
   } catch (err) {
     // Counts/keys only — never log message text.
     console.warn("threadMirror: outbound history record failed (non-blocking)", {
       chatId: params.chatId,
       err: err instanceof Error ? err.message : String(err),
     });
+    return [];
   }
 }
 

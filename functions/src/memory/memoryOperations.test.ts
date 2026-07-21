@@ -94,6 +94,11 @@ vi.mock("firebase-admin", () => {
       serverTimestamp: () => ({ __serverTimestamp: true }),
       delete: () => h.DELETE_SENTINEL,
     },
+    // Minimal Timestamp for the U6 TTL field (expiresAt). Real Firestore
+    // Timestamps expose toMillis()/toDate(); the TTL policy requires this type.
+    Timestamp: {
+      fromMillis: (ms: number) => ({ __timestamp: true, toMillis: () => ms, toDate: () => new Date(ms) }),
+    },
   });
   const stub = { apps: [], initializeApp: () => ({}), firestore };
   return { __esModule: true, default: stub, ...stub };
@@ -294,7 +299,7 @@ describe("claim/complete/fail (shared leased-operation engine)", () => {
     expect(await claimMemoryOperation(opId)).toBeNull();
   });
 
-  it("complete finalizes with completedAt and a 30-day retention expiresAt; wrong lease owner is rejected", async () => {
+  it("complete finalizes with completedAt and a 30-day retention expiresAt Timestamp; wrong lease owner is rejected", async () => {
     const opId = seedOperation();
     const claim = await claimMemoryOperation(opId);
     expect(await completeMemoryOperation(opId, "someone-else")).toBe(false);
@@ -302,7 +307,9 @@ describe("claim/complete/fail (shared leased-operation engine)", () => {
     const doc = h.docs.get(`memory_operations/${opId}`)!;
     expect(doc.status).toBe("completed");
     expect(typeof doc.completedAt).toBe("string");
-    const ttl = Date.parse(String(doc.expiresAt)) - Date.now();
+    // expiresAt is a Firestore Timestamp (TTL field), not an ISO string (U6).
+    expect((doc.expiresAt as any)?.__timestamp).toBe(true);
+    const ttl = (doc.expiresAt as any).toMillis() - Date.now();
     expect(Math.abs(ttl - COMPLETED_MEMORY_OPERATION_TTL_MS)).toBeLessThan(10_000);
     // A completed operation can never be re-claimed.
     expect(await claimMemoryOperation(opId)).toBeNull();
@@ -472,7 +479,7 @@ describe("fact-change operations (U4a)", () => {
     expect(doc.kind).toBe("re_remember");
     expect(doc.status).toBe("completed");
     expect(doc.completedAt).toEqual(expect.any(String));
-    expect(doc.expiresAt).toEqual(expect.any(String));
+    expect((doc.expiresAt as any)?.__timestamp).toBe(true); // TTL Timestamp (U6)
     expect(doc.targets.learnedFacts.status).toBe("completed");
     expect(doc.targets.storage.status).toBe("skipped");
   });

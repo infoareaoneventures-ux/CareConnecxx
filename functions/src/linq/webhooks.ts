@@ -5,6 +5,7 @@ import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
 import { appLink } from "../config/appUrl";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
+import { applyProviderReceipt, applyProviderEdit } from "./providerMessageIndex";
 import { routeCaregiverMessage } from "./routeCaregiver";
 import { routeClientStateMachines } from "./routeClient";
 import { routeIntentAndRespond } from "./routeIntent";
@@ -3234,15 +3235,10 @@ export const linqWebhook = functions
     case "message.delivered": {
       const delivMsgId = event.data?.message_id ?? event.data?.id ?? event.data?.message?.id;
       if (!delivMsgId) break;
-      await db.collection("agent_conversations")
-        .where("messageId", "==", delivMsgId)
-        .limit(1)
-        .get()
-        .then(async (snap) => {
-          if (!snap.empty) {
-            await snap.docs[0].ref.update({ deliveredAt: event.data?.delivered_at ?? new Date().toISOString() });
-          }
-        })
+      // U2: resolve the provider id through the hashed provider-message map
+      // (direct O(1) lookup) instead of the old root agent_conversations query,
+      // which never matched (canonical rows live in the messages subcollection).
+      await applyProviderReceipt(delivMsgId, "delivered", event.data?.delivered_at ?? new Date().toISOString())
         .catch(() => {/* non-critical */});
       // Delivered = the forced-iMessage send succeeded; drop its retry record.
       // (Stragglers without a delivered/failed event auto-expire via TTL.)
@@ -3252,11 +3248,19 @@ export const linqWebhook = functions
       break;
     }
 
-    case "message.failed":
+    case "message.failed": {
+      // U2: stamp failedAt on the referenced canonical row via the map, so a
+      // sent-looking row doesn't stay sent-looking after a carrier failure.
+      const failedMsgId = event.data?.message_id ?? event.data?.id ?? event.data?.message?.id;
+      if (failedMsgId) {
+        await applyProviderReceipt(failedMsgId, "failed", event.data?.failed_at ?? new Date().toISOString())
+          .catch(() => {/* non-critical */});
+      }
       await handleMessageFailed(event).catch((err) =>
         console.error("linqWebhook handleMessageFailed:", err)
       );
       break;
+    }
 
     case "phone_number.status_updated":
       await handlePhoneNumberStatusUpdated(event).catch((err) =>
@@ -3265,46 +3269,21 @@ export const linqWebhook = functions
       break;
 
     case "message.sent": {
-      // Linq message.sent event shape can vary — log it once so we know the structure
-      const sentChatId = event.data?.chat?.id ?? event.data?.chat_id ?? event.data?.message?.chat_id;
       const sentMsgId  = event.data?.id ?? event.data?.message_id ?? event.data?.message?.id;
-      console.info("linqWebhook message.sent data keys:", Object.keys(event.data ?? {}), "chatId:", sentChatId, "msgId:", sentMsgId);
-      if (!sentChatId) break;
-      await db.collection("agent_conversations")
-        .where("chatId",    "==", sentChatId)
-        .where("direction", "==", "outbound")
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get()
-        .then(async (snap) => {
-          if (!snap.empty) {
-            await snap.docs[0].ref.update({
-              messageId: sentMsgId,
-              service:   event.data?.service,
-              sentAt:    event.data?.sent_at ?? new Date().toISOString(),
-            });
-          }
-        })
+      if (!sentMsgId) break;
+      // U2: mark the referenced canonical row sent via the hashed map. The old
+      // "latest outbound row by chatId" query is gone — send.sent no longer
+      // guesses which row it belongs to; the provider id resolves it directly.
+      await applyProviderReceipt(sentMsgId, "sent", event.data?.sent_at ?? new Date().toISOString())
         .catch(() => {/* non-critical */});
       break;
     }
 
     case "message.edited": {
-      // Store latest text for the edited part
       const editMsgId = event.data?.id ?? event.data?.message_id ?? event.data?.message?.id;
       if (!editMsgId) break;
-      await db.collection("agent_conversations")
-        .where("messageId", "==", editMsgId)
-        .limit(1)
-        .get()
-        .then(async (snap) => {
-          if (!snap.empty) {
-            await snap.docs[0].ref.update({
-              editedText: event.data?.part?.text,
-              editedAt:   event.data?.edited_at ?? new Date().toISOString(),
-            });
-          }
-        })
+      // U2: apply the edit to the referenced canonical row via the hashed map.
+      await applyProviderEdit(editMsgId, event.data?.part?.text, event.data?.edited_at ?? new Date().toISOString())
         .catch(() => {/* non-critical */});
       break;
     }

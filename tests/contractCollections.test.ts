@@ -66,6 +66,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'agent_sessions', 'agent_turn_checkpoints',
     'agent_prefetch', 'agent_dnd_queue', 'agent_permissions', 'agent_reactions',
     'agent_read_receipts', 'agent_group_events', 'agent_imessage_retry',
+    // U2 (2026-07-20): scoped hashed provider-message → canonical-message map.
+    // Server-only (Admin SDK); rules deny clients. Reference-only receipt/edit
+    // metadata, never message text/phone/chat/user/raw provider id.
+    'linq_message_index',
     // Observability / log streams (admin dashboards read some via direct
     // collection() in AuditDashboard, but they are not part of the contract
     // registry; they have their own rules and are server-write-only)

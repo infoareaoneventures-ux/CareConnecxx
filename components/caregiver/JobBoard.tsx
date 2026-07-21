@@ -350,17 +350,13 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         if (!db || !profile) return;
         setSubmittingInterview(iv.id);
         try {
+            // U3: the client notification is owned by the onVideoInterviewWrite
+            // server trigger (accept → client). The old browser peer-write here
+            // always failed the notification rule and made this catch show a
+            // false "Failed to accept" toast even though the update succeeded.
             await db.collection('video_interviews').doc(iv.id).update({
                 status: 'accepted',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            });
-            await db.collection('users').doc(iv.clientId).collection('notifications').add({
-                type: 'interview_accepted',
-                title: 'Interview Accepted',
-                message: `${profile.name} accepted your interview request${iv.jobTitle ? ` for ${iv.jobTitle}` : ''}.`,
-                read: false, isRead: false,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
             });
             onShowToast('Interview accepted', 'success');
         } catch {
@@ -374,17 +370,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         if (!db || !profile) return;
         setSubmittingInterview(iv.id);
         try {
+            // U3: onVideoInterviewWrite owns the client notification (decline →
+            // other party). Browser writes only the canonical status.
             await db.collection('video_interviews').doc(iv.id).update({
                 status: 'declined',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            });
-            await db.collection('users').doc(iv.clientId).collection('notifications').add({
-                type: 'interview_declined',
-                title: 'Interview Declined',
-                message: `${profile.name} declined your interview request${iv.jobTitle ? ` for ${iv.jobTitle}` : ''}.`,
-                read: false, isRead: false,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
             });
             onShowToast('Interview declined', 'info');
         } catch {

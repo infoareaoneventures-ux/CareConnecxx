@@ -153,6 +153,10 @@ vi.mock("firebase-admin", () => {
     FieldPath: {
       documentId: () => "__name__",
     },
+    // U6: buildReRememberOperationDoc stamps expiresAt as a Firestore Timestamp.
+    Timestamp: {
+      fromMillis: (ms: number) => ({ __timestamp: true, toMillis: () => ms, toDate: () => new Date(ms) }),
+    },
   });
   const stub = { apps: [], initializeApp: () => ({}), firestore };
   return { __esModule: true, default: stub, ...stub };

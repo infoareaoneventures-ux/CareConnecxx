@@ -125,6 +125,8 @@ service cloud.firestore {
       // Subcollection: notifications
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);
+        // Cross-user notifications are server-owned side effects (U3): only the
+        // Admin SDK creates them. Browsers never peer-write here.
         allow create: if isAdmin();
         // Owner may mark read (isRead/read + readAt stamp) or soft-delete
         // (isDeleted + deletedAt) — the exact fields useNotifications writes.
@@ -133,7 +135,10 @@ service cloud.firestore {
         allow update: if isOwner(userId) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['isRead', 'read', 'readAt', 'isDeleted', 'deletedAt']);
-        allow delete: if isOwner(userId) || isAdmin();
+        // U3: owner hard-delete denied so the deterministic notification id can
+        // dedupe retries/replays (a hard delete would let a replay re-create it).
+        // The UI soft-deletes via isDeleted; admin retains hard-delete.
+        allow delete: if isAdmin();
       }
 
       // Subcollection: match_history (AI feedback loop signals)
@@ -868,36 +873,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     
-    // ==========================================
-    // TIMESHEETS (Hours Approval)
-    // ==========================================
-    match /timesheets/{timesheetId} {
-      // Caregiver can create (submit their timesheet)
-      allow create: if isAuthenticated() && 
-        request.resource.data.caregiverId == request.auth.uid;
-      
-      // Client can read timesheets for their caregivers
-      // Caregiver can read their own timesheets
-      // Admin can read all
-      allow read: if isAuthenticated() && (
-        resource.data.caregiverId == request.auth.uid ||
-        resource.data.clientId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Client can approve/dispute
-      // Admin can update any
-      allow update: if isAuthenticated() && (
-        (resource.data.clientId == request.auth.uid && 
-         (request.resource.data.status == 'approved' || 
-          request.resource.data.status == 'disputed' ||
-          request.resource.data.status == 'auto_approved')) ||
-        isAdmin()
-      );
-      
-      allow delete: if isAdmin();
-    }
-    
+    // U4 (2026-07-20): the legacy `timesheets` collection rule was removed.
+    // Canonical payroll is `shiftHours`; `timesheets` had zero production
+    // documents and its web CRUD was deleted. Removing the rule prevents the
+    // legacy path from being restarted from the client.
+
     // ==========================================
     // STRIPE CUSTOMERS & SUBSCRIPTIONS
     // ==========================================
@@ -1285,6 +1265,14 @@ service cloud.firestore {
     // drained by the drainLinqOutboundQueue scheduled function. Docs carry
     // raw message text + phone numbers; never client-readable.
     match /linq_outbound_queue/{queueId} {
+      allow read, write: if false;
+    }
+
+    // Scoped, hashed provider-message → canonical-message map (U2, KTD5). Doc IDs
+    // are sha256(providerAccountScope + ":" + providerMessageId); values are
+    // reference-only receipt/edit metadata (never message text, phone, chat, or
+    // user id). Server-only — written by the Linq webhook/send path (Admin SDK).
+    match /linq_message_index/{scopedHash} {
       allow read, write: if false;
     }
 

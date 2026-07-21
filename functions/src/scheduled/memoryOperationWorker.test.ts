@@ -174,6 +174,10 @@ vi.mock("firebase-admin", () => {
       serverTimestamp: () => ({ __serverTimestamp: true }),
       delete: () => h.DELETE_SENTINEL,
     },
+    // U6: completeMemoryOperation stamps expiresAt as a Firestore Timestamp.
+    Timestamp: {
+      fromMillis: (ms: number) => ({ __timestamp: true, toMillis: () => ms, toDate: () => new Date(ms) }),
+    },
   });
   const stub = { apps: [], initializeApp: () => ({}), firestore };
   return { __esModule: true, default: stub, ...stub };
@@ -436,7 +440,7 @@ describe("runMemoryOperationWorker — happy path (KTD5/KTD6)", () => {
     // Operation finalized with retention expiry.
     const op = h.docs.get("memory_operations/op1")!;
     expect(op.status).toBe("completed");
-    expect(typeof op.expiresAt).toBe("string");
+    expect((op.expiresAt as any)?.__timestamp).toBe(true); // U6: TTL Timestamp
     expect((op.targets as any).zepTranscript.status).toBe("completed");
     expect((op.targets as any).learnedFacts.status).toBe("completed");
   });
@@ -787,7 +791,7 @@ describe("forget propagation (R14/KTD16)", () => {
     // Operation completed with retention expiry; flag entry removed.
     const op = h.docs.get("memory_operations/op-forget")!;
     expect(op.status).toBe("completed");
-    expect(typeof op.expiresAt).toBe("string");
+    expect((op.expiresAt as any)?.__timestamp).toBe(true); // U6: TTL Timestamp
     const flag = h.docs.get("memory_reconciliation/user-1")!;
     expect((flag.pendingOperations as Record<string, unknown>)["op-forget"]).toBeUndefined();
 
@@ -1114,7 +1118,7 @@ describe("terminal-failed forget repair sweep", () => {
     expect(second.factChangesCompleted).toBe(1);
     op = h.docs.get("memory_operations/op-forget")!;
     expect(op.status).toBe("completed");
-    expect(typeof op.expiresAt).toBe("string");
+    expect((op.expiresAt as any)?.__timestamp).toBe(true); // U6: TTL Timestamp
     // Standard completion path ran in full: tombstone, audit, flag clear.
     expect(h.docs.get(FACT_PATH)!.fact).toBeUndefined();
     expect(h.logAudit).toHaveBeenCalledTimes(1);

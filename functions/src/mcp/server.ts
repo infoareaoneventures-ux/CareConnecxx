@@ -3389,8 +3389,12 @@ async function executeToolCall(
         const userId = input.userId as string;
         const [subSnap, invoiceSnap, paymentsSnap, userSnap] = await Promise.all([
           db.collection("subscriptions").doc(userId).get(),
+          // Invoices are keyed by clientId (= the client's uid) per the canonical
+          // invoicing.ts writer; querying userId returned nothing. Payments keep
+          // userId, matching the Stripe writer (R7). Reuses the existing
+          // invoices (clientId, createdAt DESC) composite.
           db.collection("invoices")
-            .where("userId", "==", userId)
+            .where("clientId", "==", userId)
             .orderBy("createdAt", "desc")
             .limit(3)
             .get(),
@@ -5170,7 +5174,11 @@ async function executeToolCall(
       }
       if (action === "cancel") {
         if (sched.status === "cancelled") return toolError("INVALID_INPUT", "Schedule is already cancelled");
-        const futureSnap = await db.collection("appointments").where("recurringScheduleId", "==", scheduleId).where("date", ">", today).where("status", "in", ["confirmed"]).get();
+        // orderBy(date desc) shares the Q5 composite (recurringScheduleId,
+        // status, date DESC) with modifyScheduleFlow/recurringScheduler; the
+        // date> inequality already excludes missing dates and every match is
+        // cancelled, so ordering does not change the batch.
+        const futureSnap = await db.collection("appointments").where("recurringScheduleId", "==", scheduleId).where("date", ">", today).where("status", "in", ["confirmed"]).orderBy("date", "desc").get();
         const batch = db.batch();
         batch.update(schedSnap.ref, { status: "cancelled", cancelledAt: nowIso });
         for (const doc of futureSnap.docs) batch.update(doc.ref, { status: "cancelled_by_client", cancelledAt: nowIso });
@@ -7071,11 +7079,14 @@ async function executeToolCall(
 
       const today = nowIso.slice(0, 10);
 
-      // Cancel all future confirmed appointments from the old schedule
+      // Cancel all future confirmed appointments from the old schedule.
+      // orderBy(date desc) shares the Q5 composite; membership unchanged (see
+      // the identical query in modifyScheduleFlow.ts).
       const futureSnap = await db.collection("appointments")
         .where("recurringScheduleId", "==", scheduleId)
         .where("date", ">", today)
         .where("status", "in", ["confirmed"])
+        .orderBy("date", "desc")
         .get();
 
       const { generateRecurringDates } = await import("../scheduled/recurringScheduler");

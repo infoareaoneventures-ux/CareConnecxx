@@ -201,11 +201,16 @@ export async function escalateIssue(issueLogId: string): Promise<void> {
   if (issue.escalationLevel >= 2) return;
 
   // Check if family replied after familyNotifiedAt
+  // orderBy(timestamp desc) reuses the existing messages (role, timestamp DESC)
+  // composite. The timestamp>= inequality already excludes older/missing
+  // messages, so ordering does not change whether a reply exists (limit(1)
+  // existence check only).
   const replied = await db.collection("agent_conversations")
     .doc(issue.clientPhone ?? "")
     .collection("messages")
     .where("role",      "==", "user")
     .where("timestamp", ">=", new Date(issue.familyNotifiedAt).getTime())
+    .orderBy("timestamp", "desc")
     .limit(1)
     .get();
 

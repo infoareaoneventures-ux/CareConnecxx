@@ -371,10 +371,15 @@ async function handleMsConfirm(
   const now   = new Date().toISOString();
 
   // Cancel all future confirmed appointments from the old schedule
+  // orderBy(date desc) added so this shares the Q5 composite
+  // (recurringScheduleId, status, date DESC) with recurringScheduler. The
+  // date>today inequality already excludes missing/null dates, so ordering does
+  // not change the cancelled set (we cancel every match regardless of order).
   const futureSnap = await db.collection("appointments")
     .where("recurringScheduleId", "==", scheduleId)
     .where("date",   ">",  today)
     .where("status", "in", ["confirmed"])
+    .orderBy("date", "desc")
     .get();
 
   const { generateRecurringDates } = await import("../scheduled/recurringScheduler");

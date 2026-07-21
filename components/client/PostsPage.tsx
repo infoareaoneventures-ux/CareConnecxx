@@ -822,20 +822,10 @@ export const PostsPage: React.FC = () => {
     try {
       const bookingSnap = await db.collection('booking_requests').doc(bookingId).get();
       const bookingData = bookingSnap.data();
+      // U3: the caregiver notification is owned by the onBookingRequestWrite
+      // server trigger (booking_requests → cancelled). The browser writes only
+      // the canonical status; no peer-write into the caregiver's notifications.
       await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
-      if (bookingData?.caregiverId) {
-        try {
-          const clientName = auth?.currentUser?.displayName || 'A family';
-          await db.collection('users').doc(bookingData.caregiverId).collection('notifications').add({
-            userId: bookingData.caregiverId,
-            type: 'booking_cancelled',
-            title: 'Booking Request Cancelled',
-            body: `${clientName} cancelled their booking request.`,
-            isRead: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          });
-        } catch { /* non-critical */ }
-      }
       addToast('Booking request cancelled.', 'success');
     } catch (err) {
       console.error('handleCancelBooking error:', err);

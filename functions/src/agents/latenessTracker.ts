@@ -25,9 +25,13 @@ export async function getCaregiver30dLatenessCount(caregiverId: string): Promise
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     .toISOString().slice(0, 10);
 
+  // orderBy(date desc) reuses the existing caregiver_lateness_log
+  // (caregiverId, date DESC) composite. The date>= inequality already excludes
+  // older/missing entries, so ordering does not change the 30-day count.
   const snap = await db.collection("caregiver_lateness_log")
     .where("caregiverId", "==", caregiverId)
     .where("date", ">=", thirtyDaysAgo)
+    .orderBy("date", "desc")
     .get();
 
   return snap.size;

@@ -55,13 +55,79 @@ export interface ReflectionDraft {
   };
 }
 
+// Data-minimized billing signal exposed to the reflection model (R8/KTD9):
+// normalized source + status + coarse date only. Never amounts, descriptions,
+// payment instruments, names, or record/provider IDs.
+export interface BillingSignal {
+  source: "invoice" | "payment";
+  status: string;
+  date:   string; // YYYY-MM-DD
+}
+
 interface FamilySnapshot {
   journal:  Array<Record<string, unknown>>;
   past:     Array<Record<string, unknown>>;
   upcoming: Array<Record<string, unknown>>;
-  billing:  Array<Record<string, unknown>>;
+  billing:  BillingSignal[];
+  billingUnavailable: boolean;
   seniorName: string;
   clientName: string;
+}
+
+// Coarse date (YYYY-MM-DD) from a Firestore Timestamp | Date | ISO string.
+function coarseDate(v: unknown): string {
+  const d = (v as { toDate?: () => Date } | null)?.toDate?.()
+    ?? (typeof v === "string" || typeof v === "number" ? new Date(v) : v instanceof Date ? v : null);
+  if (!d || isNaN(d.getTime())) return "?";
+  return d.toISOString().slice(0, 10);
+}
+
+const INVOICE_STATUSES = new Set(["draft", "pending", "paid", "overdue", "void", "refunded"]);
+const PAYMENT_STATUSES = new Set(["succeeded", "pending", "failed", "refunded", "disputed"]);
+function normalizeStatus(raw: unknown, allow: Set<string>): string {
+  const s = String(raw ?? "").toLowerCase();
+  return allow.has(s) ? s : "other";
+}
+
+// Canonical billing signal built from invoices (keyed by clientId) and payments
+// (keyed by userId) independently. Each source is fail-soft on its own; a source
+// that errors is reported as unavailable rather than disguised as empty (R8).
+//
+// Operand types are per-writer: invoicing.ts stamps createdAt as an ISO STRING,
+// while stripe.ts stamps serverTimestamp() (a Firestore Timestamp). Firestore
+// inequality filters are type-strict — a string operand against a Timestamp
+// field silently matches nothing — so each query uses its writer's type.
+async function loadBillingSignals(
+  userId: string, since: string,
+): Promise<{ signals: BillingSignal[]; unavailable: boolean }> {
+  const sinceTs = admin.firestore.Timestamp.fromDate(new Date(since));
+  const [invoices, payments] = await Promise.all([
+    db.collection("invoices")
+      .where("clientId", "==", userId)
+      .where("createdAt", ">=", since)
+      .orderBy("createdAt", "desc").limit(10).get()
+      .then(s => ({ ok: true as const, docs: s.docs })).catch(() => ({ ok: false as const, docs: [] })),
+    db.collection("payments")
+      .where("userId", "==", userId)
+      .where("createdAt", ">=", sinceTs)
+      .orderBy("createdAt", "desc").limit(10).get()
+      .then(s => ({ ok: true as const, docs: s.docs })).catch(() => ({ ok: false as const, docs: [] })),
+  ]);
+
+  const signals: BillingSignal[] = [
+    ...invoices.docs.map(d => ({
+      source: "invoice" as const,
+      status: normalizeStatus(d.data().status, INVOICE_STATUSES),
+      date:   coarseDate(d.data().createdAt),
+    })),
+    ...payments.docs.map(d => ({
+      source: "payment" as const,
+      status: normalizeStatus(d.data().status, PAYMENT_STATUSES),
+      date:   coarseDate(d.data().createdAt),
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+
+  return { signals, unavailable: !invoices.ok || !payments.ok };
 }
 
 async function loadFamilySnapshot(userId: string, seniorId: string): Promise<FamilySnapshot> {
@@ -69,7 +135,7 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
   const since    = new Date(now.getTime() - LOOKBACK_MS).toISOString();
   const ahead    = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [journalSnap, pastSnap, upcomingSnap, billingSnap, seniorSnap, userSnap] = await Promise.all([
+  const [journalSnap, pastSnap, upcomingSnap, billing, seniorSnap, userSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .where("timestamp", ">=", since)
@@ -87,10 +153,7 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
       .where("isoDate", "<=", ahead)
       .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
       .orderBy("isoDate", "asc").limit(10).get(),
-    db.collection("billing_events")
-      .where("userId", "==", userId)
-      .where("createdAt", ">=", since)
-      .orderBy("createdAt", "desc").limit(10).get().catch(() => null),
+    loadBillingSignals(userId, since),
     db.collection("senior_profiles").doc(seniorId).get(),
     db.collection("users").doc(userId).get(),
   ]);
@@ -99,7 +162,8 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
     journal:    journalSnap.docs.map(d => d.data()),
     past:       pastSnap.docs.map(d => d.data()),
     upcoming:   upcomingSnap.docs.map(d => d.data()),
-    billing:    billingSnap ? billingSnap.docs.map(d => d.data()) : [],
+    billing:    billing.signals,
+    billingUnavailable: billing.unavailable,
     seniorName: (seniorSnap.data()?.name as string | undefined) ?? "your loved one",
     clientName: (userSnap.data()?.firstName as string | undefined)
               ?? (userSnap.data()?.name as string | undefined)?.split(" ")[0]
@@ -127,9 +191,15 @@ export function buildReflectionPrompt(snap: FamilySnapshot): string {
     `  - ${a.date ?? a.isoDate ?? "?"} at ${a.time ?? "?"} with ${a.caregiverName ?? "caregiver"} (${a.status ?? "?"})`,
   ).join("\n");
 
+  // Source + status + coarse date only — no amounts or free text (R8/KTD9).
   const billingLines = snap.billing.slice(0, 5).map(b =>
-    `  - ${b.type ?? "event"} ${b.amount ? `$${b.amount}` : ""} ${b.status ?? ""}`,
+    `  - ${b.date} ${b.source} ${b.status}`,
   ).join("\n");
+  const billingBlock = snap.billing.length
+    ? billingLines
+    : snap.billingUnavailable
+      ? "  (billing data unavailable)"
+      : "  (none)";
 
   return [
     `Family: ${snap.clientName} (client), caring for ${snap.seniorName}.`,
@@ -143,8 +213,8 @@ export function buildReflectionPrompt(snap: FamilySnapshot): string {
     "UPCOMING VISITS (next 7 days):",
     upcomingLines || "  (none scheduled)",
     "",
-    "RECENT BILLING EVENTS:",
-    billingLines || "  (none)",
+    "RECENT BILLING (source/status/date only):",
+    billingBlock,
   ].join("\n");
 }
 

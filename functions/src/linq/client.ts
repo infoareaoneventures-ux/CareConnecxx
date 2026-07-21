@@ -638,13 +638,26 @@ async function sendMessageDeliver(
   // runs only after transport succeeded and is internally fail-soft, so
   // awaiting costs one Firestore write of latency and can never fail the send.
   let historyRecorded = false;
+  // Canonical message refs from the recorded history row(s). U2: every provider
+  // part id is registered against these so delivery/sent/edited webhooks resolve
+  // to the right canonical row via the hashed provider-message map.
+  let historyRefs: string[] = [];
   const recordHistoryOnce = async (): Promise<void> => {
     if (historyRecorded || opts.skipHistoryRecord || !mirrorText) return;
     historyRecorded = true;
     try {
       const { recordOutboundHistory } = await import("./threadMirror");
-      await recordOutboundHistory({ chatId, text: mirrorText });
+      historyRefs = await recordOutboundHistory({ chatId, text: mirrorText });
     } catch { /* non-critical — recorder is itself fail-soft */ }
+  };
+  // Register one provider part id → canonical refs. Fail-soft: provider-map
+  // bookkeeping must never delay or fail an actual send.
+  const registerProviderPart = async (providerMessageId: string): Promise<void> => {
+    if (!providerMessageId || historyRefs.length === 0) return;
+    try {
+      const { registerSentProviderMessage } = await import("./providerMessageIndex");
+      await registerSentProviderMessage(providerMessageId, historyRefs);
+    } catch { /* non-critical */ }
   };
 
   try {
@@ -659,6 +672,7 @@ async function sendMessageDeliver(
       const r = await sendOneMessage(chatId, merged);
       await recordHistoryOnce();
       await trackForcedIMessage(r.message_id, chatId, merged);
+      await registerProviderPart(r.message_id);
       return r;
     }
 
@@ -669,6 +683,7 @@ async function sendMessageDeliver(
       const r = await sendOneMessage(chatId, msg);
       await recordHistoryOnce();
       await trackForcedIMessage(r.message_id, chatId, msg);
+      await registerProviderPart(r.message_id);
       return r;
     }
 
@@ -683,6 +698,7 @@ async function sendMessageDeliver(
       await recordHistoryOnce();
       firstId = r.message_id;
       await trackForcedIMessage(r.message_id, chatId, msg);
+      await registerProviderPart(r.message_id);
       // Small delay so the link cards arrive AFTER the text bubble, not raced
       // ahead of it by Linq's pipeline.
       await new Promise<void>((res) => setTimeout(res, 600));
@@ -698,6 +714,7 @@ async function sendMessageDeliver(
       const r = await sendOneMessage(chatId, msg);
       await recordHistoryOnce(); // no-op if the textOnly part already recorded
       await trackForcedIMessage(r.message_id, chatId, msg);
+      await registerProviderPart(r.message_id);
       if (!firstId) firstId = r.message_id;
     }
 

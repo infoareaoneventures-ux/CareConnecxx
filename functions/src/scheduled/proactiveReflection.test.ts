@@ -43,6 +43,7 @@ const emptySnap = () => ({
   past:       [],
   upcoming:   [],
   billing:    [],
+  billingUnavailable: false,
   seniorName: "Mom",
   clientName: "Alice",
 });
@@ -53,9 +54,30 @@ describe("buildReflectionPrompt", () => {
     expect(p).toMatch(/RECENT CARE JOURNAL/);
     expect(p).toMatch(/COMPLETED VISITS/);
     expect(p).toMatch(/UPCOMING VISITS/);
-    expect(p).toMatch(/RECENT BILLING EVENTS/);
+    expect(p).toMatch(/RECENT BILLING/);
     expect(p).toMatch(/Alice/);
     expect(p).toMatch(/Mom/);
+  });
+
+  it("renders canonical billing signals as source/status/date only — no amounts (R8/KTD9)", () => {
+    const p = buildReflectionPrompt({
+      ...emptySnap(),
+      billing: [
+        { source: "invoice", status: "pending", date: "2026-05-27" },
+        { source: "payment", status: "succeeded", date: "2026-05-26" },
+      ],
+    });
+    expect(p).toMatch(/2026-05-27 invoice pending/);
+    expect(p).toMatch(/2026-05-26 payment succeeded/);
+    // Never leak amounts or currency into the model prompt.
+    expect(p).not.toMatch(/\$/);
+  });
+
+  it("distinguishes billing-unavailable from a true-empty billing set", () => {
+    const empty = buildReflectionPrompt(emptySnap());
+    expect(empty).toMatch(/RECENT BILLING[^\n]*\n\s*\(none\)/);
+    const unavailable = buildReflectionPrompt({ ...emptySnap(), billingUnavailable: true });
+    expect(unavailable).toMatch(/billing data unavailable/);
   });
 
   it("renders journal entries with mood/ate/meds + notes", () => {

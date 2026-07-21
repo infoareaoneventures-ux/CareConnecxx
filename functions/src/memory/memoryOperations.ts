@@ -113,8 +113,12 @@ export interface MemoryOperationDoc {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  /** Set only at completion (30-day retention). Failed/unresolved ops never expire. */
-  expiresAt: string | null;
+  /**
+   * TTL field (U6). Set as a Firestore Timestamp only at completion (30-day
+   * retention); Firestore TTL deletes the document after it. Failed/unresolved
+   * ops keep null, which Firestore TTL treats as "not eligible for expiry".
+   */
+  expiresAt: admin.firestore.Timestamp | null;
 }
 
 // ── Retry policy (Implementation-Time Checks defaults — tune from Wave A) ────
@@ -420,7 +424,7 @@ export function buildReRememberOperationDoc(input: {
     createdAt: nowIso,
     updatedAt: nowIso,
     completedAt: nowIso,
-    expiresAt: new Date(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS).toISOString(),
+    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS),
   };
   return {
     operationId: reRememberOperationId(
@@ -657,7 +661,8 @@ export async function claimMemoryOperation(operationId: string): Promise<LeasedO
 
 export async function completeMemoryOperation(operationId: string, leaseOwner: string): Promise<boolean> {
   return memoryStore.complete(operationId, leaseOwner, {
-    expiresAt: new Date(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS).toISOString(),
+    // TTL field as a Firestore Timestamp (U6); Firestore TTL deletes 30 days out.
+    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + COMPLETED_MEMORY_OPERATION_TTL_MS),
   });
 }
 

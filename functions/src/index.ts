@@ -682,11 +682,33 @@ export const onShiftWritten = functions.firestore
 
 export const onReviewWritten = functions.firestore
   .document('reviews/{reviewId}')
-  .onWrite(async (change) => {
+  .onWrite(async (change, context) => {
     const after  = change.after.exists  ? change.after.data()  : null;
     const before = change.before.exists ? change.before.data() : null;
     const caregiverId = (after ?? before)?.caregiverId;
     if (!caregiverId) return;
+
+    // U3: new review → notify the caregiver (server-owned; the browser no longer
+    // peer-writes this). Idempotent + create-if-absent so a trigger retry
+    // converges to one notification. Only on true creation (before absent).
+    if (!before && after && after.caregiverId) {
+      try {
+        const { writeUserNotification } = await import('./notifications/userNotification');
+        const stars = typeof after.rating === 'number' ? `${after.rating}-star ` : '';
+        await writeUserNotification({
+          sourcePath: `reviews/${context.params.reviewId}`,
+          eventId: context.eventId,
+          recipientId: after.caregiverId,
+          transitionType: 'review_created',
+          type: 'review_received',
+          title: 'New Review',
+          body: `${after.clientName || 'A client'} left you a ${stars}review.`,
+          data: { reviewId: context.params.reviewId },
+        });
+      } catch (err) {
+        console.error('[onReviewWritten] notification error:', (err as Error)?.name ?? 'Error');
+      }
+    }
 
     const db = admin.firestore();
     const snap = await db.collection('reviews')

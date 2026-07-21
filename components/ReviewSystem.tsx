@@ -106,23 +106,9 @@ export default function ReviewSystem() {
           ratingSum: firebase.firestore.FieldValue.increment(review.rating)
         });
 
-        // Notify caregiver of the new review with rating and feedback text
-        try {
-          const stars = '★'.repeat(review.rating) + '☆'.repeat(5 - review.rating);
-          await fdb.collection('users').doc(caregiverId).collection('notifications').add({
-            userId: caregiverId,
-            type: 'new_review',
-            title: `New Review ${stars}`,
-            message: review.feedback
-              ? `You received a ${review.rating}-star review: "${review.feedback}"`
-              : `You received a ${review.rating}-star review.`,
-            data: { visitId, rating: review.rating },
-            read: false,
-            isRead: false,
-            timestamp: new Date().toISOString(),
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-        } catch (_) { /* non-critical */ }
+        // U3: the caregiver "new review" notification is owned by the
+        // onReviewWritten server trigger (review created → caregiver). The
+        // browser peer-write here always failed the notification rule; removed.
       }
 
       setSubmitted(true);

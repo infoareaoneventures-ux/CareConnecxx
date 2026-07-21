@@ -935,20 +935,13 @@ const BookingGroupCard: React.FC<{
               <button
                 onClick={async () => {
                   if (!db) return;
+                  // U3: the client notification is owned by the onShiftStatusChanged
+                  // server trigger (pending → scheduled = extra_visit_accepted). The
+                  // browser only writes the canonical status; no peer notification.
                   await db.collection('shifts').doc(shift.id).update({
                     status: 'scheduled',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                   }).catch(() => {});
-                  if (shift.clientId) {
-                    await db.collection('users').doc(shift.clientId).collection('notifications').add({
-                      userId: shift.clientId,
-                      type: 'extra_visit_accepted',
-                      title: 'Visit Accepted',
-                      body: `${shift.caregiverName || 'Your caregiver'} confirmed your extra visit on ${fmtDate(shift.date)}.`,
-                      isRead: false,
-                      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    }).catch(() => {});
-                  }
                 }}
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1"
               >
@@ -957,20 +950,13 @@ const BookingGroupCard: React.FC<{
               <button
                 onClick={async () => {
                   if (!db) return;
+                  // U3: onShiftStatusChanged owns the client notification
+                  // (pending → cancelled = extra_visit_declined). Browser writes
+                  // only the canonical status.
                   await db.collection('shifts').doc(shift.id).update({
                     status: 'cancelled',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                   }).catch(() => {});
-                  if (shift.clientId) {
-                    await db.collection('users').doc(shift.clientId).collection('notifications').add({
-                      userId: shift.clientId,
-                      type: 'extra_visit_declined',
-                      title: 'Visit Declined',
-                      body: `${shift.caregiverName || 'Your caregiver'} is unavailable for the extra visit on ${fmtDate(shift.date)}.`,
-                      isRead: false,
-                      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    }).catch(() => {});
-                  }
                 }}
                 className="px-3 py-1.5 border border-red-200 hover:bg-red-50 text-red-500 text-xs font-semibold rounded-xl"
               >

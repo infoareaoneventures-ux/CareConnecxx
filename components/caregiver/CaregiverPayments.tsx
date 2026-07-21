@@ -3,14 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   FileText,
   CreditCard,
-  Clock,
-  CheckCircle,
-  AlertCircle,
   Lightbulb,
   Calendar,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { dbService, shiftHoursService } from '../../services/api';
+import { shiftHoursService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import { AddToastFunction, Appointment, isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 import { SubmitShiftHoursModal, CompletedShift } from '../payroll/SubmitShiftHoursModal';
@@ -21,16 +18,10 @@ interface CaregiverPaymentsProps {
   onShowToast?: AddToastFunction;
 }
 
-interface Timesheet {
-  id: string;
-  weekStart: string;
-  weekEnd: string;
-  totalHours: number;
-  totalPay: number;
-  status: 'pending' | 'approved' | 'paid' | 'disputed';
-  submittedAt: string;
-  clientName?: string;
-}
+// U4 (2026-07-20): the legacy Timesheet interface + timesheets state/fetch and
+// their unused status helpers were removed. This page renders canonical
+// shiftHours data (shiftRows/pendingRows/historyRows). The "Timesheets" tab
+// label is kept intentionally — it is the familiar caregiver-facing wording.
 
 export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
   caregiverId,
@@ -39,8 +30,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
 }) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'timesheets' | 'payment-method'>('timesheets');
-  const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
-  const [loading, setLoading] = useState(true);
 
   // Payment preferences state
   const [payVenmo, setPayVenmo] = useState('');
@@ -81,7 +70,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
   const historyRows = shiftRows.filter(r => !['pending_client_review', 'correction_proposed'].includes(r.status));
 
   useEffect(() => {
-    loadTimesheets();
     // Load existing payment preferences
     if (caregiverId && db) {
       db.collection('caregivers').doc(caregiverId).get()
@@ -116,55 +104,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
     } finally {
       setPayPrefSaving(false);
     }
-  };
-
-  const loadTimesheets = async () => {
-    setLoading(true);
-    try {
-      // @ts-ignore - API method may not be fully typed yet
-      const data = await dbService.getCaregiverTimesheets?.(caregiverId) || [];
-      setTimesheets(data as any);
-    } catch (error) {
-      console.error('Failed to load timesheets:', error);
-      // Set empty state - no mock data to match the "You have no pending timesheets" message
-      setTimesheets([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusIcon = (status: Timesheet['status']) => {
-    switch (status) {
-      case 'approved':
-      case 'paid':
-        return <CheckCircle className="w-4 h-4 text-[var(--color-success-600)]" />;
-      case 'pending':
-        return <Clock className="w-4 h-4 text-[var(--color-warning-600)]" />;
-      case 'disputed':
-        return <AlertCircle className="w-4 h-4 text-[var(--color-error-600)]" />;
-      default:
-        return null;
-    }
-  };
-
-  const getStatusColor = (status: Timesheet['status']) => {
-    switch (status) {
-      case 'approved':
-      case 'paid':
-        return 'bg-[var(--color-success-50)] text-[var(--color-success-700)] border-[var(--color-success-200)]';
-      case 'pending':
-        return 'bg-[var(--color-warning-50)] text-[var(--color-warning-700)] border-[var(--color-warning-200)]';
-      case 'disputed':
-        return 'bg-[var(--color-error-50)] text-[var(--color-error-700)] border-[var(--color-error-200)]';
-      default:
-        return 'bg-[var(--color-neutral-50)] text-[var(--color-neutral-700)] border-[var(--color-neutral-200)]';
-    }
-  };
-
-  const formatDateRange = (start: string, end: string) => {
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
   };
 
   return (

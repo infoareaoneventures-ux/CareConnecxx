@@ -14,6 +14,15 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
   const [myInterviews, setMyInterviews] = useState<any[]>([]);
   const [careRequestsTab, setCareRequestsTab] = useState<'applications' | 'interviews'>('applications');
   const [ivDashTab, setIvDashTab] = useState<'pending' | 'scheduled'>('pending');
+  // State matrix (R33): distinguish a failed/unavailable query from a genuine
+  // empty result so the empty copy ("No pending applications") is never shown on
+  // an error (e.g. a missing composite index). retry re-subscribes.
+  // Deliberately STICKY: three sources feed this card (two listeners + one get);
+  // auto-clearing on any one source's success would flap while another stays
+  // broken, so only the manual Retry (full re-subscribe) clears it.
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const retry = () => { setError(false); setReloadKey(k => k + 1); };
 
   useEffect(() => {
     if (!caregiverId || !db) return;
@@ -28,8 +37,9 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
       });
       setMyInterviews(combined);
     };
-    unsubs.push(db.collection('interview_requests').where('caregiverId', '==', caregiverId).orderBy('createdAt', 'desc').onSnapshot(snap => { irList = snap.docs.map(d => ({ id: d.id, _src: 'ir', ...d.data() })); merge(); }, () => {}));
-    unsubs.push(db.collection('video_interviews').where('caregiverId', '==', caregiverId).orderBy('scheduledTime', 'desc').onSnapshot(snap => { viList = snap.docs.map(d => ({ id: d.id, _src: 'vi', ...d.data() })); merge(); }, () => {}));
+    const onErr = () => setError(true); // keep prior rows visible as stale
+    unsubs.push(db.collection('interview_requests').where('caregiverId', '==', caregiverId).orderBy('createdAt', 'desc').onSnapshot(snap => { irList = snap.docs.map(d => ({ id: d.id, _src: 'ir', ...d.data() })); merge(); }, onErr));
+    unsubs.push(db.collection('video_interviews').where('caregiverId', '==', caregiverId).orderBy('scheduledTime', 'desc').onSnapshot(snap => { viList = snap.docs.map(d => ({ id: d.id, _src: 'vi', ...d.data() })); merge(); }, onErr));
 
     db.collection('job_applications')
       .where('caregiverId', '==', caregiverId)
@@ -37,10 +47,10 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
       .limit(20)
       .get()
       .then(snap => setMyApplications(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-      .catch(() => {});
+      .catch(onErr);
 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
-  }, [caregiverId]);
+  }, [caregiverId, reloadKey]);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
@@ -48,6 +58,13 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
         <Briefcase className="w-4 h-4 text-primary-500" />
         <h2 className="font-semibold text-slate-900">Care Requests</h2>
       </div>
+
+      {error && (
+        <div role="alert" className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+          <span className="text-xs text-amber-800">Care requests are temporarily unavailable.</span>
+          <button onClick={retry} className="text-xs font-semibold text-amber-800 underline hover:no-underline">Retry</button>
+        </div>
+      )}
 
       <div className="flex bg-slate-100 rounded-lg p-0.5 mb-4">
         <button

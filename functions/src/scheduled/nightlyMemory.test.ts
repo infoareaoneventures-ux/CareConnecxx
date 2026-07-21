@@ -273,8 +273,6 @@ import {
   runNightlyMemoryConsolidation,
   runNightlyMemoryJob,
   compressOldConversations,
-  cleanupExpiredMemoryOperations,
-  MEMORY_OPERATION_CLEANUP_LIMIT,
   NIGHTLY_MEMORY_WINDOW_MS,
   AGED_PENDING_SYNC_MS,
 } from "./nightlyMemory";
@@ -899,93 +897,8 @@ describe("compressOldConversations — excludeFromMemoryConsolidationAt rows (U4
   });
 });
 
-// ── U9: completed memory-operation cleanup (expiresAt + status/expiresAt index) ─
-describe("cleanupExpiredMemoryOperations (U9)", () => {
-  const HOUR = 60 * 60 * 1000;
-  const iso = (msFromNow: number) =>
-    new Date(Date.now() + msFromNow).toISOString();
-
-  it("deletes only COMPLETED operations past expiresAt; everything else survives", async () => {
-    hoisted.memoryOps.set("op-expired", {
-      status: "completed",
-      expiresAt: iso(-HOUR),
-    });
-    hoisted.memoryOps.set("op-live", {
-      status: "completed",
-      expiresAt: iso(HOUR),
-    });
-    // Failed/unresolved operations never expire (privacy suppression must not
-    // be cleaned away) — even a bogus stale expiresAt cannot make them eligible.
-    hoisted.memoryOps.set("op-terminal", {
-      status: "terminal_failed",
-      expiresAt: null,
-    });
-    hoisted.memoryOps.set("op-retryable", {
-      status: "retryable_failed",
-      expiresAt: iso(-HOUR),
-    });
-    hoisted.memoryOps.set("op-pending", { status: "pending", expiresAt: null });
-
-    const counts = await cleanupExpiredMemoryOperations();
-
-    expect(counts).toEqual({ scanned: 1, deleted: 1, failed: 0 });
-    expect(hoisted.memoryOps.has("op-expired")).toBe(false);
-    expect(hoisted.memoryOps.has("op-live")).toBe(true);
-    expect(hoisted.memoryOps.has("op-terminal")).toBe(true);
-    expect(hoisted.memoryOps.has("op-retryable")).toBe(true);
-    expect(hoisted.memoryOps.has("op-pending")).toBe(true);
-  });
-
-  it("is bounded per run and idempotent across repeated runs", async () => {
-    for (let i = 0; i < MEMORY_OPERATION_CLEANUP_LIMIT + 5; i++) {
-      hoisted.memoryOps.set(`op-${i}`, {
-        status: "completed",
-        expiresAt: iso(-HOUR),
-      });
-    }
-
-    const first = await cleanupExpiredMemoryOperations();
-    expect(first.deleted).toBe(MEMORY_OPERATION_CLEANUP_LIMIT);
-
-    const second = await cleanupExpiredMemoryOperations();
-    expect(second.deleted).toBe(5);
-
-    const third = await cleanupExpiredMemoryOperations();
-    expect(third).toEqual({ scanned: 0, deleted: 0, failed: 0 });
-  });
-
-  it("counts per-doc delete failures without aborting the sweep", async () => {
-    hoisted.memoryOps.set("op-a", {
-      status: "completed",
-      expiresAt: iso(-HOUR),
-    });
-    hoisted.opsState.failDelete = true;
-
-    const counts = await cleanupExpiredMemoryOperations();
-
-    expect(counts).toEqual({ scanned: 1, deleted: 0, failed: 1 });
-    expect(hoisted.memoryOps.has("op-a")).toBe(true);
-  });
-
-  it("runNightlyMemoryJob runs the cleanup with an aggregate-only log and isolates its failure", async () => {
-    hoisted.memoryOps.set("op-expired", {
-      status: "completed",
-      expiresAt: iso(-HOUR),
-    });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      await runNightlyMemoryJob();
-      const cleanupLogs = logSpy.mock.calls.filter((c) =>
-        String(c[0]).includes("memory-operation cleanup"),
-      );
-      expect(cleanupLogs).toHaveLength(1);
-      expect(cleanupLogs[0][1]).toEqual({ scanned: 1, deleted: 1, failed: 0 });
-      // R21: no operation IDs in the log line.
-      expect(JSON.stringify(cleanupLogs[0])).not.toContain("op-expired");
-    } finally {
-      logSpy.mockRestore();
-    }
-    // Housekeeping after the cleanup still ran.
-    expect(hoisted.cleanupMock).toHaveBeenCalledTimes(1);
-  });
-});
+// U6 (2026-07-20): the cleanupExpiredMemoryOperations sweep and its tests were
+// removed. Completed memory_operations are now expired by a Firestore TTL policy
+// on the Timestamp expiresAt field (see functions/src/memory/memoryOperations.ts
+// and tests/firestoreTtlContract.test.ts). Failed/unresolved ops keep null
+// expiresAt and are never TTL-eligible.

@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { pickWowCandidate, type WowContext, type FireRecord } from "../agents/wowMoments";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { gateOptionalSend } from "./engineGate";
 
 // Wires the wowMoments registry (delightful proactive messages) into a daily
 // scheduled send. The registry was fully built but had ZERO production callers
@@ -29,9 +30,12 @@ export async function maybeSendWowMoment(params: {
   recentFires: FireRecord[];
   send:        (message: string) => Promise<void>;
   record:      (name: string, firedAt: string) => Promise<void>;
+  /** U8 engine gate (KTD15) — resolves per picked moment; false = skip pass. */
+  gate?:       (candidateName: string) => Promise<boolean>;
 }): Promise<string | null> {
   const candidate = pickWowCandidate(params.ctx, params.recentFires);
   if (!candidate) return null;
+  if (params.gate && !(await params.gate(candidate.name))) return null;
   await params.send(candidate.message);
   await params.record(candidate.name, params.ctx.now.toISOString());
   return candidate.name;
@@ -107,6 +111,24 @@ export const wowMomentsDaily = functions.pubsub
         const fired = await maybeSendWowMoment({
           ctx,
           recentFires,
+          // U8 (KTD15): optional discretionary source — the picked moment is a
+          // PolicyCandidate; the engine decides per recipient per pass. A lost
+          // pass re-enters naturally on tomorrow's run.
+          gate: async (candidateName) => {
+            const day = now.toISOString().slice(0, 10);
+            const g = await gateOptionalSend({
+              phone,
+              candidate: {
+                source: "wowMomentsJob",
+                category: "warmth",
+                urgency: 0,
+                evidenceCount: 1, // deterministic: fired off real visit/booking records
+                dedupeKey: `wow:${userId}:${candidateName}:${day}`,
+              },
+            });
+            if (!g.allowed) console.info("wowMomentsJob.policy", { userId, disposition: g.disposition, reason: g.reason });
+            return g.allowed;
+          },
           send: async (message) => {
             await sendViaInteractionAgent(phone, {
               content: message, urgency: "low", sourceAgent: "wow_moment", canDrop: true,

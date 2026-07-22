@@ -46,7 +46,7 @@ issueEscalator (reply half)|caregiverReferral (reply half)`.
 | Source | Today | Engine status |
 |---|---|---|
 | `scheduled/proactiveReflection.ts` | review-first drafts | **submits candidates (slice 2)** |
-| `scheduled/wowMomentsJob.ts` | daily warmth sends | pending |
+| `scheduled/wowMomentsJob.ts` | daily warmth sends | **gated (engineGate.ts)** |
 | `scheduled/morningBriefing.ts` | briefing sends | pending |
 | `scheduled/familySilenceCheckin.ts` | re-engagement | pending |
 | `scheduled/familySatisfactionCheckin.ts` | satisfaction ask | pending |
@@ -70,3 +70,11 @@ sending; the engine ranks per recipient per pass; losers get explicit
 dispositions (`deferred` re-enters after `nextEligibleAt`); winners flow
 through sendViaInteractionAgent as today. Health-pattern candidates require
 `concerningInsights` evidence (U7) — an LLM hunch is not evidence (R42).
+
+Shared seam: `scheduled/engineGate.ts` `gateOptionalSend()` — loads recipient
+state (daily tally, muted categories), runs the pure policy, persists an
+explicit disposition to `proactive_decisions/{sha256(intent)}` (enums/counts
+only, doc-id-keyed so cross-source dedupe needs no composite index), fails
+OPEN on infra errors, honors policy decisions strictly. DND/opt-out/global
+cap/supervisor stay owned by the delivery layer — the gate never
+double-blocks them.

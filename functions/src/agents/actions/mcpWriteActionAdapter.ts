@@ -212,6 +212,24 @@ export async function runMcpWriteCaraAction(
       targetCollection: config.targetCollection,
       targetDocId: (_input, output) => targetDocIdFromResult(output),
     },
+    // U5 (R23-R24): generic fresh-read postcondition for adapter-wrapped
+    // writes — the written target document must actually exist afterward.
+    // Outputs without a recognizable doc id THROW (→ unverifiable/
+    // unconfirmed, same claim strength as before), never a false mismatch.
+    postcondition: {
+      kind: "fresh_read",
+      description: `${config.targetCollection}/{id} exists after write`,
+      targetRef: (_input, output) => {
+        const id = targetDocIdFromResult(output);
+        return id ? `${config.targetCollection}/${id}` : undefined;
+      },
+      verify: async (_input, output, { db }) => {
+        const id = targetDocIdFromResult(output);
+        if (!id) throw new Error("no target doc id in output — cannot verify");
+        const snap = await db.collection(config.targetCollection).doc(id).get();
+        return { ok: snap.exists, observed: { exists: snap.exists } };
+      },
+    },
     idempotencyKey: "idempotencyKey" in config
       ? parsed => config.idempotencyKey(parsed as Record<string, unknown>)
       : undefined,

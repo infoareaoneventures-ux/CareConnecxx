@@ -1689,11 +1689,15 @@ export async function runQaAgent(params: {
       ]);
     }
 
-    // ── U2 shadow (plan 2026-07-18-001, dark) ────────────────────────────────
+    // ── U2 shadow + gated prompt block (plan 2026-07-18-001) ─────────────────
     // Build the typed CareSituation from values THIS turn already loaded (zero
     // additional reads) and emit content-free health metrics. Gated by the
     // fail-closed `care_situation` rollout policy (missing doc = off), and
     // fail-open here: shadow can never affect the user-facing turn.
+    // When the policy admits this subject to an ENABLED cohort (canary/partial/
+    // full — never shadow), the sanitized projection is captured for the client
+    // system prompt below; enabling is a policy-doc flip, not a deploy.
+    let careSituationPromptBlock = "";
     if (!unconfirmedIdentity) {
       try {
         const rollout = await getRolloutDecision(CARE_SITUATION_CAPABILITY, phone);
@@ -1736,6 +1740,7 @@ export async function runQaAgent(params: {
             mode: rollout.mode,
             policyVersion: rollout.policyVersion,
           });
+          if (rollout.enabled) careSituationPromptBlock = projection.text;
         }
       } catch (err) {
         console.warn("careSituation.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
@@ -2009,6 +2014,11 @@ export async function runQaAgent(params: {
 
     const clientSnapshot = await clientSnapshotPromise.catch(() => "");
     if (clientSnapshot) systemPrompt += `\n\n${clientSnapshot}`;
+
+    // U2 enabled path: the provenance-checked, sanitized situation projection.
+    // Empty unless the care_situation policy admitted this subject to an
+    // enabled cohort (Wave 1 gate: shadow parity evidence first).
+    if (careSituationPromptBlock) systemPrompt += `\n\n${careSituationPromptBlock}`;
   }
 
   // Voice mirror — derive style stats from the family's own inbound history

@@ -165,6 +165,8 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   shift_payment_retried:              { included: false },
   booking_payment_method_updated:     { included: false },
   journal_comment_edited:             { included: false },
+  proactive_draft_approved:           { included: false },
+  proactive_draft_rejected:           { included: false },
 };
 
 /** The static, PII-free description for an included event, or null if excluded. */

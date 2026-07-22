@@ -122,7 +122,10 @@ export type AuditEventType =
   | "proactive_draft_cancelled"
   | "shift_payment_retried"
   | "booking_payment_method_updated"
-  | "journal_comment_edited";
+  | "journal_comment_edited"
+  // U8 review callable (plan 2026-07-18-001)
+  | "proactive_draft_approved"
+  | "proactive_draft_rejected";
 
 export interface AuditEvent {
   eventType: AuditEventType;

@@ -135,6 +135,7 @@ export { intelligenceCanaryWatch } from './agents/intelligenceCanaryWatch';
 
 // Proactive draft sender — every 5 min; consumes status="approved" drafts the admin reviewed.
 export { runProactiveDraftSender, triggerProactiveDraftSendNow, sendApprovedDraftNow } from './scheduled/proactiveDraftSender';
+export { reviewProactiveDraft } from './admin/reviewProactiveDraft';
 
 // Transportation badge evaluation (daily) + on-demand refresh
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';

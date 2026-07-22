@@ -1,6 +1,8 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendSMS } from "../sms";
+import { reviewedContentHash } from "../admin/reviewProactiveDraft";
+import { requireAdmin } from "../admin/requireAdmin";
 
 // Proactive draft sender — v1
 //
@@ -37,6 +39,7 @@ export type ProactiveDraftStatus =
   | "rejected"
   | "sent"
   | "send_failed"
+  | "failed_hash_mismatch"
   | "expired";
 
 interface SendStats {
@@ -95,6 +98,25 @@ export async function runProactiveDraftSenderPass(): Promise<SendStats> {
     const claimed = await db.runTransaction(async (tx) => {
       const fresh = await tx.get(doc.ref);
       if (!fresh.exists || fresh.data()?.status !== "approved") return false;
+      // U8 (AE23): drafts approved through reviewProactiveDraft carry an
+      // immutable reviewed-content hash. Re-verify it transactionally at
+      // claim time — content changed after review can never reach a family.
+      // Legacy drafts approved via the old direct-write path have no hash;
+      // tolerated (and logged) until services/api.ts migrates.
+      const data = fresh.data() as { draftText?: string; reviewedContentHash?: string };
+      if (data.reviewedContentHash) {
+        const currentHash = reviewedContentHash(data.draftText ?? "");
+        if (currentHash !== data.reviewedContentHash) {
+          tx.update(doc.ref, {
+            status: "failed_hash_mismatch",
+            lastAttemptAt: new Date().toISOString(),
+          });
+          console.warn("proactiveDraftSender: reviewed-content hash mismatch — send blocked (AE23)", { draftId: doc.id });
+          return false;
+        }
+      } else {
+        console.info("proactiveDraftSender: legacy approved draft without reviewed hash", { draftId: doc.id });
+      }
       tx.update(doc.ref, { status: "sent", sentAt: new Date().toISOString() });
       return true;
     }).catch(() => false);
@@ -139,18 +161,17 @@ export const runProactiveDraftSender = functions.pubsub
 
 // Admin-only manual trigger — flushes the queue on demand.
 export const triggerProactiveDraftSendNow = functions.https.onCall(async (_, context) => {
-  if (!context.auth?.token.admin) {
-    throw new functions.https.HttpsError("permission-denied", "Admin only");
-  }
+  // U8 (AE23): live Firestore-role admin check — a custom claim alone never
+  // grants send authority.
+  await requireAdmin(context);
   return runProactiveDraftSenderPass();
 });
 
 // Admin-only callable to send a single approved draft immediately, skipping
 // the cron wait. Updates the same status field the cron sender would.
 export const sendApprovedDraftNow = functions.https.onCall(async (data: { draftId?: string }, context) => {
-  if (!context.auth?.token.admin) {
-    throw new functions.https.HttpsError("permission-denied", "Admin only");
-  }
+  // U8 (AE23): live Firestore-role admin check, not custom-claim-only.
+  await requireAdmin(context);
   const draftId = data?.draftId;
   if (!draftId || typeof draftId !== "string") {
     throw new functions.https.HttpsError("invalid-argument", "draftId required");
@@ -165,12 +186,17 @@ export const sendApprovedDraftNow = functions.https.onCall(async (data: { draftI
     if (!fresh.exists) {
       throw new functions.https.HttpsError("not-found", `draft ${draftId} not found`);
     }
-    const data = fresh.data() as { status?: string; phone?: string; draftText?: string };
+    const data = fresh.data() as { status?: string; phone?: string; draftText?: string; reviewedContentHash?: string };
     if (data.status !== "approved") {
       throw new functions.https.HttpsError("failed-precondition", `draft status is "${data.status}", must be "approved"`);
     }
     if (!data.phone || !data.draftText) {
       throw new functions.https.HttpsError("failed-precondition", "draft missing phone or draftText");
+    }
+    // U8 (AE23): manual send verifies the immutable reviewed hash too.
+    if (data.reviewedContentHash && reviewedContentHash(data.draftText) !== data.reviewedContentHash) {
+      tx.update(ref, { status: "failed_hash_mismatch", lastAttemptAt: new Date().toISOString() });
+      throw new functions.https.HttpsError("failed-precondition", "reviewed-content hash mismatch — content changed after review");
     }
     tx.update(ref, { status: "sent", sentAt: new Date().toISOString() });
     return data;

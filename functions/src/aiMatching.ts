@@ -9,7 +9,8 @@ import {
   computeSkillsCoverage,
   CandidateSignals,
 } from "./ai/claudeMatching";
-import { getOutcomePatternSummary } from "./ai/outcomeAnalytics";
+// U7 (R36/KTD14): outcomeAnalytics is deliberately NOT imported here — hired/
+// rejected labels are funnel/offline evidence only and cannot touch ranking.
 import { isCaregiverBookable } from "./utils/caregiverEligibility";
 import { canAccessMatchAssignment } from "./auth/matchAssignmentAccess";
 
@@ -62,18 +63,24 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
     const intakeData = intakeDoc ? intakeDoc.data() : assignment;
     const intakeId = intakeDoc ? intakeDoc.id : matchAssignmentId;
 
-    // Load embeddings, caregivers, feedback, and outcome patterns in parallel
-    const [intakeEmbedding, caregiversSnap, feedback, outcomePatterns] = await Promise.all([
+    // Load embeddings, caregivers, and feedback in parallel.
+    // U7 (plan 2026-07-18-001, R36/KTD14): hired|rejected outcome patterns are
+    // RESTRICTED to funnel/offline analytics — they may never alter user-facing
+    // ranking. Hire selection is not evidence of care quality; injecting
+    // platform hire rates into the ranking prompt taught the ranker the
+    // platform's own selection bias. The summary remains available to offline
+    // diagnostics via getOutcomePatternSummary("offline_funnel", db).
+    const [intakeEmbedding, caregiversSnap, feedback] = await Promise.all([
       ensureIntakeEmbedding(intakeId, intakeData),
       db.collection("caregivers").where("verified", "==", true).limit(100).get(),
       readClientFeedback(clientId),
-      getOutcomePatternSummary(db),
     ]);
+    const outcomePatterns = ""; // never injected into ranking (R36)
 
     // Canonical bookability post-filter (the where() above is index pre-filtering only)
     const bookableDocs = caregiversSnap.docs.filter(doc => isCaregiverBookable(doc.data()));
 
-    console.log(`[runAiMatching] Scoring ${bookableDocs.length} bookable caregivers (of ${caregiversSnap.size} verified), outcome patterns: ${outcomePatterns ? "loaded" : "none yet"}`);
+    console.log(`[runAiMatching] Scoring ${bookableDocs.length} bookable caregivers (of ${caregiversSnap.size} verified)`);
 
     const clientGenderPref: string | undefined = intakeData.genderPreference;
     const clientLanguage:   string | undefined = intakeData.languagePreference;

@@ -224,15 +224,15 @@ export * from './triggers/carePlanHistory';
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
 
-// MATCH PATTERNS — returns aggregated hire/reject outcome data for frontend Claude prompts
+// MATCH PATTERNS — U7 (plan 2026-07-18-001, R36/KTD14): hired/rejected
+// aggregates are restricted to funnel/offline analytics and may not feed
+// frontend ranking prompts. The callable keeps its shape (frontend is
+// fail-soft on empty patterns) but intentionally returns no outcome data.
 export const getMatchPatterns = functions.https.onCall(async (_data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Must be signed in.");
   }
-  const db = admin.firestore();
-  const { getOutcomePatternSummary } = await import("./ai/outcomeAnalytics");
-  const patterns = await getOutcomePatternSummary(db);
-  return { patterns };
+  return { patterns: "" };
 });
 
 // JOB MATCH NOTIFICATIONS (daily 10am — texts caregivers about high-match new jobs)

@@ -68,9 +68,18 @@ function fmt(label: string, hired: number, total: number): string {
   return `${label}: ${pct(hired, total)}% hired (${total} matches)`;
 }
 
+/**
+ * U7 (plan 2026-07-18-001, R36/KTD14): hired|rejected outcome patterns are
+ * restricted to funnel diagnostics and offline hypothesis generation. The
+ * mandatory literal `purpose` argument makes any future user-facing caller
+ * visible at the call site and in review — user-facing ranking, suitability,
+ * or care-quality claims may NOT consume this summary.
+ */
 export async function getOutcomePatternSummary(
+  purpose: "offline_funnel",
   db: FirebaseFirestore.Firestore
 ): Promise<string> {
+  void purpose;
   if (_cache && Date.now() - _cache.generatedAt < CACHE_TTL_MS) {
     return _cache.summary;
   }

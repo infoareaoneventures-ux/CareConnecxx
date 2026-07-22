@@ -16,7 +16,8 @@ import {
   CandidateSignals,
   ClaudeScoredMatch,
 } from "../ai/claudeMatching";
-import { getOutcomePatternSummary } from "../ai/outcomeAnalytics";
+// U7 (R36/KTD14): outcomeAnalytics deliberately not imported — hired/rejected
+// aggregates are funnel/offline evidence only, never ranking input.
 import { getReputationBoosts } from "../ai/caregiverReputation";
 import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
@@ -332,17 +333,16 @@ export async function runMatchingForClient(
       .sort((a, b) => b.ruleScore - a.ruleScore)
       .slice(0, 15);
 
-    // Step 3: Claude Sonnet scores all top candidates holistically.
-    // Platform-wide hire patterns PLUS this family's own history — a family
-    // that has passed on two caregivers is telling us something the global
-    // reputation signal can't; the scorer should weigh what those passes have
-    // in common instead of re-offering the same shape of mismatch.
-    const outcomePatterns = await getOutcomePatternSummary(db).catch(() => "");
+    // Step 3: Claude Sonnet scores all top candidates holistically using THIS
+    // family's own history — a family that has passed on two caregivers is
+    // telling us something; the scorer weighs what those passes have in common.
+    // U7 (R36/KTD14): platform-wide hired/rejected aggregates are NO LONGER
+    // injected — hire selection is not care-quality evidence, and feeding the
+    // platform's own selection bias back into ranking amplifies it. The
+    // family's own feedback is authority-safe (R37) and stays.
     const familyHistory   = await buildFamilyMatchHistory(phone, (session as any)?.userId as string | undefined)
       .catch(() => "");
-    const systemPrompt = buildMatchingSystemPrompt(
-      familyHistory ? `${outcomePatterns}\n\n${familyHistory}` : outcomePatterns
-    );
+    const systemPrompt = buildMatchingSystemPrompt(familyHistory);
 
     const needs = (intake.careNeeds ?? []) as string[];
     const senior = {

@@ -11,6 +11,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -180,6 +181,24 @@ export const sendMorningBriefings = functions.pubsub
           content = fallbackLines.join("\n\n");
         }
 
+        // U8 engine gate (KTD15): optional discretionary source — this file has
+        // THREE heterogeneous sends, each gated with its own dedupeKey prefix.
+        // A lost pass re-enters naturally on the next scheduled (daily) run.
+        const g = await gateOptionalSend({
+          phone: caregiver.phone as string,
+          candidate: {
+            source: "morningBriefing",
+            category: "re_engagement",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `mbrief-cg:${caregiverId}:${today}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("morningBriefing.policy", { caregiverId, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
+
         await sendViaInteractionAgent(caregiver.phone as string, {
           content,
           urgency:     "standard",
@@ -268,6 +287,24 @@ export async function checkCaregiverWorkloads(): Promise<void> {
           `Make sure you're taking care of yourself too. Reply SCHEDULE to see your week.`,
         maxTokens: 80,
       });
+
+      // U8 engine gate (KTD15): weekly workload wellness message — keyed to the
+      // week (matches its own lastWorkloadAlertWeek dedupe); a lost pass
+      // re-enters on the next Monday run.
+      const g = await gateOptionalSend({
+        phone: cgPhone,
+        candidate: {
+          source: "morningBriefing",
+          category: "re_engagement",
+          urgency: 1,
+          evidenceCount: 1,
+          dedupeKey: `mbrief-workload:${cgId}:${weekStartStr}`,
+        },
+      });
+      if (!g.allowed) {
+        console.info("morningBriefing.policy", { caregiverId: cgId, disposition: g.disposition, reason: g.reason });
+        continue;
+      }
 
       await sendViaInteractionAgent(cgPhone, {
         content:     workloadMsg,
@@ -389,6 +426,23 @@ async function sendFamilyMorningBriefings(
           fallback: `Good morning! ${caregiverName} is scheduled to arrive ${schedule} for ${seniorName}.${noteLine}`,
           maxTokens: 80,
         });
+      }
+
+      // U8 engine gate (KTD15): family half of the briefing — distinct dedupe
+      // prefix from the caregiver half. A lost pass re-enters on tomorrow's run.
+      const g = await gateOptionalSend({
+        phone,
+        candidate: {
+          source: "morningBriefing",
+          category: "re_engagement",
+          urgency: 1,
+          evidenceCount: 1,
+          dedupeKey: `mbrief-fam:${clientId}:${today}`,
+        },
+      });
+      if (!g.allowed) {
+        console.info("morningBriefing.policy", { clientId, disposition: g.disposition, reason: g.reason });
+        continue;
       }
 
       await sendViaInteractionAgent(phone, {

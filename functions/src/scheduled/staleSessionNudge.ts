@@ -7,6 +7,7 @@ import { caregiverAnnualDisplay, clientMonthlyDisplay } from "../config/pricing"
 import { LIVE_GATE_FACT_BUILDERS } from "../agents/liveGateFacts";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { AgentSession } from "../linq/client";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -139,6 +140,26 @@ export const sendStaleSessionNudges = functions.pubsub
       if (!session.chatId) continue;
 
       try {
+        // U8 engine gate (KTD15): this 48h stale nudge is an OPTIONAL
+        // discretionary send — the engine decides per recipient per pass. A
+        // lost pass re-enters naturally on the next daily run. (The stuck-step
+        // resend and permissions auto-complete loops above are transactional
+        // and stay ungated per the manifest.)
+        const g = await gateOptionalSend({
+          phone: doc.id,
+          candidate: {
+            source: "staleSessionNudge",
+            category: "re_engagement",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `stale:${doc.id}:${new Date(now).toISOString().slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("staleSessionNudge.policy", { phone: doc.id, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
+
         const step      = session.onboardingStep ?? "ask_role";
         const firstName = (session.onboardingData?.firstName ?? session.onboardingData?.name ?? "") as string;
         const greeting  = firstName ? `Hey ${firstName}!` : "Hey there!";

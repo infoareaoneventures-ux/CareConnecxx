@@ -4,6 +4,14 @@ import { getJobRecommendationsForCaregiver } from "../agents/jobMatchRecommender
 import { sendMessage } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { gateOptionalSend } from "./engineGate";
+
+// One decision record per (caregiver, job) held for 7 days — the U8 gate's
+// cross-source dedupe is the ONLY dedupe this source has ever had (audit
+// 2026-07-22 found no sent-marker anywhere), so before the gate a caregiver
+// with a standing high match could be re-texted about the SAME job every day
+// a new unrelated job posted.
+const JOB_MATCH_DEDUPE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const db = admin.firestore();
 
@@ -53,6 +61,26 @@ export const sendJobMatchNotifications = functions.pubsub
 
         const chatId = cg.chatId ?? cg.phone;
         const top = highMatch[0];
+
+        // U8 engine gate (KTD15): discretionary marketplace outreach. Keyed
+        // per (caregiver, job) so the same job never re-notifies within the
+        // dedupe window; a deferred pass re-enters on tomorrow's run.
+        const g = await gateOptionalSend({
+          phone: (cg.phone ?? cgDoc.id) as string,
+          candidate: {
+            source: "jobMatchNotifications",
+            category: "re_engagement",
+            urgency: 2,
+            evidenceCount: 1, // deterministic: live job post + computed match score
+            dedupeKey: `jobmatch:${cgDoc.id}:${top.jobId}`,
+            ttlMs: JOB_MATCH_DEDUPE_TTL_MS,
+          },
+        });
+        if (!g.allowed) {
+          console.info("jobMatchNotifications.policy", { caregiverId: cgDoc.id, jobId: top.jobId, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
+
         const msg = await generateCaraMessage({
           audience: "caregiver",
           context:

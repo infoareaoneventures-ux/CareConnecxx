@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -55,6 +56,26 @@ export const sendLocationRequestNudges = functions.pubsub
       if (Number.isNaN(sentAtMs) || now - sentAtMs < NUDGE_AFTER_MS) continue;
 
       try {
+        // U8 engine gate (KTD15): optional nudge — submit as a PolicyCandidate
+        // instead of sending directly. A lost pass re-enters on the next 15-min
+        // run: nudgeSent is only flipped below, after an allowed pass.
+        const day = new Date(now).toISOString().slice(0, 10);
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "locationRequestNudge",
+            category: "re_engagement",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `locnudge:${phone}:${day}`,
+          },
+        });
+        if (!g.allowed) {
+          // File policy: never log the raw phone number (doc id) — last 4 only.
+          console.info("locationRequestNudge.policy", { phone: `…${phone.slice(-4)}`, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
+
         const lang = (data as { preferredLanguage?: string }).preferredLanguage === "es" ? "es" : "en";
         const message = await generateCaraMessage({
           audience: "family",

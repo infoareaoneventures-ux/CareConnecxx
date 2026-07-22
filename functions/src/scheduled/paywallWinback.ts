@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -73,6 +74,25 @@ export const sendPaywallWinback = functions.pubsub
           .get();
         if (sessionSnap.empty) { skipped++; continue; }
         const phone = sessionSnap.docs[0].id;
+
+        // U8 engine gate (KTD15): optional discretionary win-back — the
+        // engine decides per recipient per pass. A lost pass re-enters on the
+        // next daily run (lastPaywallWinbackAt is only stamped on send).
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "paywallWinback",
+            category: "re_engagement",
+            urgency: 0,
+            evidenceCount: 1,
+            dedupeKey: `winback:${uid}:${new Date(now).toISOString().slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("paywallWinback.policy", { uid, disposition: g.disposition, reason: g.reason });
+          skipped++;
+          continue;
+        }
 
         const ctx = (user.paywallContext ?? {}) as { caregiverName?: string | null };
         const caregiverName = ctx.caregiverName || "";

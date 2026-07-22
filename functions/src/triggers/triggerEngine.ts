@@ -7,6 +7,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
 import { decideArrivalCapture } from "./noShowPolicy";
 import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
+import { gateOptionalSend } from "../scheduled/engineGate";
 
 const db = admin.firestore();
 
@@ -220,6 +221,16 @@ export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): bo
   return REPLY_EXEMPT_MESSAGE_PREFIXES.some((p) => t.message?.startsWith(p));
 }
 
+// U8 engine gate (KTD15): classify a DISCRETIONARY trigger's content into a
+// policy category. Visit-related content outranks money, which outranks the
+// generic re-engagement default. Exported for tests.
+export function discretionaryCategory(text: string): "re_engagement" | "visit_risk" | "billing_heads_up" {
+  const t = (text ?? "").toLowerCase();
+  if (/\b(visit|appointment|shift|booking|caregiver)\b/.test(t)) return "visit_risk";
+  if (/\b(payment|invoice|bill|billing|charge|subscription|refund|dispute|payout)\b/.test(t)) return "billing_heads_up";
+  return "re_engagement";
+}
+
 // Cancels every pending trigger stamped with this refId (see ProactiveTrigger.refId).
 // Fired/already-cancelled triggers are left untouched; safe to call repeatedly.
 export async function cancelTriggersByRef(refId: string): Promise<number> {
@@ -345,6 +356,28 @@ export async function checkIgnoredTriggers(): Promise<void> {
       };
       const friendlyName = triggerFriendlyNames[trigger.type] ?? "these messages";
 
+      // U8 engine gate (KTD15): the pause itself already happened above — only
+      // this courtesy notice is discretionary, so only the notice is gated. A
+      // disallowed pass drops the notice (the pause stands quietly).
+      const day = new Date().toISOString().slice(0, 10);
+      const g = await gateOptionalSend({
+        phone: trigger.phone,
+        candidate: {
+          source: "triggerEngine",
+          category: "re_engagement",
+          urgency: 1,
+          evidenceCount: 1,
+          dedupeKey: `trig:pause_notice_${trigger.type}:${trigger.phone}:${day}`,
+        },
+      });
+      if (!g.allowed) {
+        console.info("triggerEngine.policy", {
+          context: "pause_notice", phone: trigger.phone, type: trigger.type,
+          disposition: g.disposition, reason: g.reason,
+        });
+        continue;
+      }
+
       await sendViaInteractionAgent(trigger.phone, {
         content:
           `I've paused the ${friendlyName} since you haven't been using them lately.\n\n` +
@@ -425,6 +458,52 @@ export const runTriggerEngine = functions.pubsub
       const isDirective = isSystemDirectiveMessage(trigger.message);
       if (!isDirective && degraded && (trigger.source === "claude" || !isHealthTrigger)) {
         continue;
+      }
+
+      // U8 engine gate (KTD15): non-safety DISCRETIONARY trigger sends
+      // (weekly check-ins, custom nudges, Claude-scheduled follow-ups) submit
+      // a PolicyCandidate before claiming. Directives, health triggers, and
+      // transactional reminder types keep their direct path untouched. The
+      // gate runs BEFORE claimProactiveTrigger — the claim consumes the
+      // trigger (sets firedAt), so a deferred candidate must stay unclaimed to
+      // re-enter naturally on a later 5-min pass. A suppressed disposition is
+      // final for this intent, so the trigger is cancelled (stamped like the
+      // context-resolved suppression below) rather than left to clog the
+      // bounded queue retrying forever.
+      const isDiscretionary =
+        !isDirective && !isHealthTrigger && !REPLY_EXEMPT_TYPES.has(trigger.type) &&
+        (trigger.source === "claude" || trigger.type === "weekly_checkin" || trigger.type === "custom");
+      if (isDiscretionary) {
+        const category = discretionaryCategory(`${trigger.intent ?? ""} ${trigger.message ?? ""}`);
+        const intentName = trigger.source === "claude" && trigger.intent ? trigger.intent : trigger.type;
+        const g = await gateOptionalSend({
+          phone: trigger.phone,
+          candidate: {
+            source: "triggerEngine",
+            category,
+            urgency: category === "visit_risk" ? 2 : 1,
+            evidenceCount: 1,
+            dedupeKey: `trig:${intentName}:${trigger.phone}:${now.slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("triggerEngine.policy", {
+            triggerId: doc.id,
+            type: trigger.type,
+            source: trigger.source ?? "system",
+            disposition: g.disposition,
+            reason: g.reason,
+          });
+          if (g.disposition === "suppressed") {
+            await doc.ref.update({
+              cancelledAt: now,
+              suppressionReason: `engine_${g.reason}`,
+              deliveryState: "suppressed",
+              deliveryCompletedAt: now,
+            }).catch(() => {});
+          }
+          continue;
+        }
       }
 
       const claimed = await claimProactiveTrigger(db, doc.ref, now);
@@ -1015,6 +1094,27 @@ async function clearExpiredSessionStates(): Promise<void> {
       await clearAllStateFlags(doc.id, db);
       console.log(`[clearExpiredSessionStates] Cleared flags for ${doc.id}`, { interrupted });
       if (interrupted && !session.optedOut) {
+        // U8 engine gate (KTD15): the resume nudge is discretionary outreach —
+        // the flag clearing above already happened either way. An interrupted
+        // booking classifies as visit_risk via the shared content heuristic.
+        const category = discretionaryCategory(interrupted);
+        const g = await gateOptionalSend({
+          phone: doc.id,
+          candidate: {
+            source: "triggerEngine",
+            category,
+            urgency: category === "visit_risk" ? 2 : 1,
+            evidenceCount: 1,
+            dedupeKey: `trig:state_expiry_nudge:${doc.id}:${now.slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("triggerEngine.policy", {
+            context: "state_expiry_nudge", phone: doc.id,
+            disposition: g.disposition, reason: g.reason,
+          });
+          continue;
+        }
         await sendViaInteractionAgent(doc.id, {
           content:
             `Looks like we got interrupted while we were ${interrupted} — ` +

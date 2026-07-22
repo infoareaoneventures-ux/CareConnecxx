@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -12,6 +13,8 @@ export const wellbeingCheckinJob = functions.pubsub
     // Only run on even ISO weeks (bi-weekly cadence)
     const weekNumber = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
     if (weekNumber % 2 !== 0) return;
+
+    const day = new Date().toISOString().slice(0, 10);
 
     const sessionsSnap = await db
       .collection("agent_sessions")
@@ -39,6 +42,24 @@ export const wellbeingCheckinJob = functions.pubsub
           `3️⃣ Job satisfaction (1=unhappy, 5=love it)\n\n` +
           `Example reply: "4 3 5"`,
       });
+
+      // U8 engine gate (KTD15): optional discretionary source — on a lost pass
+      // we skip WITHOUT setting pendingWellbeingCheckin, so the check-in
+      // re-enters naturally on the next bi-weekly run.
+      const g = await gateOptionalSend({
+        phone,
+        candidate: {
+          source: "wellbeingCheckin",
+          category: "satisfaction",
+          urgency: 1,
+          evidenceCount: 1,
+          dedupeKey: `wellbeing:${phone}:${day}`,
+        },
+      });
+      if (!g.allowed) {
+        console.info("wellbeingCheckin.policy", { phone, disposition: g.disposition, reason: g.reason });
+        continue;
+      }
 
       await sendViaInteractionAgent(phone, {
         content:     checkinMsg,

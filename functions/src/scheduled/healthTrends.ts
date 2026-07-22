@@ -5,6 +5,7 @@ import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, sendToPhone, AgentSession } from "../linq/client";
 import { getAppUrl } from "../config/appUrl";
 import { rollupCareSignals, describeSignalRate } from "../agents/careEvidence";
+import { getPermissions } from "../agents/permissionsConversation";
 
 const db = admin.firestore();
 
@@ -149,13 +150,27 @@ async function runMonthlyHealthTrends(): Promise<number> {
     try {
       const phone    = sessionDoc.id;
       const seniorId = session.seniorId ?? session.userId;
-      const data     = await load90Days(seniorId, session.userId);
+
+      // U8 manifest audit 2026-07-22: this health report is permission-gated
+      // like the weekly digest — the flag is user-controllable in natural
+      // language ("health alerts") and this check was MISSING here.
+      const perms = await getPermissions(session.userId).catch(() => null);
+      if (perms !== null && perms.canSendHealthAlerts === false) continue;
+
+      const period = new Date().toISOString().slice(0, 7);
+
+      // Send-dedupe (same audit): the deterministic doc id was written but
+      // never READ, so a double-run (cron overlap or manual trigger after the
+      // cron) double-sent the report. One report per senior per month.
+      const existing = await db.collection("health_trends").doc(`${seniorId}_${period}`).get();
+      if (existing.exists) continue;
+
+      const data = await load90Days(seniorId, session.userId);
 
       if (data.journal.length < 3) continue;
 
       const analysis   = await analyzeTrends(data);
       const shareToken = crypto.randomBytes(16).toString("base64url");
-      const period     = new Date().toISOString().slice(0, 7);
 
       const now        = new Date();
       const expiresAt  = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();

@@ -76,6 +76,7 @@ vi.mock("firebase-functions", () => ({
   __esModule: true,
   pubsub: { schedule: () => ({ timeZone: () => ({ onRun: (fn: unknown) => fn }) }) },
   https:  { onCall: (fn: unknown) => fn, HttpsError: class {} },
+  runWith: () => ({ https: { onCall: (fn: unknown) => fn } }),
 }));
 vi.mock("../sms", () => ({
   sendSMS: (...args: unknown[]) => hoisted.sendSMS(...(args as [{ to: string; message: string }])),

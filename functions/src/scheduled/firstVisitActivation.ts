@@ -4,6 +4,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { toMillis } from "./pendingTimesheetNudge";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -87,6 +88,26 @@ export const sendFirstVisitActivation = functions.pubsub
         })) continue;
 
         const phone      = (s.phone ?? sessionDoc.id) as string;
+
+        // U8 engine gate (KTD15): optional activation nudge — submit as a
+        // PolicyCandidate instead of sending directly. A lost pass re-enters on
+        // the next daily run (firstVisitNudgedAt is only stamped after a send).
+        const day = new Date(nowMs).toISOString().slice(0, 10);
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "firstVisitActivation",
+            category: "re_engagement",
+            urgency: 2,
+            evidenceCount: 1,
+            dedupeKey: `fva:${clientId}:${day}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("firstVisitActivation.policy", { userId: clientId, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
+
         const seniorName = (s.seniorName ?? s.onboardingData?.seniorName ?? "your loved one") as string;
         // R11 (hallucination hardening 2026-07-17): the reader is the ACCOUNT
         // HOLDER; the visit is for the care recipient — ground who's who so the

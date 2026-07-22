@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { jobTitle } from "../agents/situationSnapshot";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -100,6 +101,24 @@ export const sendStaleApplicantNudges = functions.pubsub
         if (sessionData.optedOut) continue;
         if (sessionData.onboardingStep !== "complete") continue;
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
+
+        // U8 engine gate (KTD15): optional discretionary follow-up — the
+        // engine decides per recipient per pass. A lost pass re-enters on the
+        // next daily run (no cooldown marker is stamped when the gate skips).
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "staleApplicantNudge",
+            category: "visit_risk",
+            urgency: 2,
+            evidenceCount: 1,
+            dedupeKey: `staleapp:${clientId}:${new Date(nowMs).toISOString().slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("staleApplicantNudge.policy", { phone, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
 
         const count = pending.length;
         const label = jobTitle(job);

@@ -21,6 +21,7 @@ import {
   evaluateWeeklyFamilyBudget,
   type WeeklyBudgetTally,
 } from "./proactiveBudget";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -76,6 +77,24 @@ export const sendFamilySatisfactionCheckins = functions.pubsub
           fallback: `Hi! Just checking in — how have things been going${seniorPart} lately? Anything I can do better for you?`,
           maxTokens: 80,
         });
+
+        // U8 engine gate (KTD15): optional discretionary source — on a lost
+        // pass we skip WITHOUT stamping satisfactionCheckinAt or the weekly
+        // tally, so the ask re-enters naturally on the next daily run.
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "familySatisfactionCheckin",
+            category: "satisfaction",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `satis:${phone}:${nowIso.slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("familySatisfactionCheckin.policy", { phone, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
 
         await sendViaInteractionAgent(phone, {
           content: message,

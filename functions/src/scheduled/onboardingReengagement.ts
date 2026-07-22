@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -59,6 +60,25 @@ export const sendOnboardingReengagement = functions.pubsub
         // Throttle: one nudge per 72h
         const lastNudge = session.lastReengagementNudgeAt as string | undefined;
         if (lastNudge && lastNudge > seventyTwoHrAgo) { skipped++; continue; }
+
+        // U8 engine gate (KTD15): optional discretionary re-engagement — the
+        // engine decides per recipient per pass. A lost pass re-enters on the
+        // next daily run (the 72h throttle marker is only stamped on send).
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "onboardingReengagement",
+            category: "re_engagement",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `onbre:${phone}:${new Date(now).toISOString().slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("onboardingReengagement.policy", { phone, disposition: g.disposition, reason: g.reason });
+          skipped++;
+          continue;
+        }
 
         const onboardingData = (session.onboardingData ?? {}) as Record<string, unknown>;
         const firstName = (onboardingData.name ?? onboardingData.firstName ?? "there") as string;

@@ -47,23 +47,23 @@ issueEscalator (reply half)|caregiverReferral (reply half)`.
 |---|---|---|
 | `scheduled/proactiveReflection.ts` | review-first drafts | **submits candidates (slice 2)** |
 | `scheduled/wowMomentsJob.ts` | daily warmth sends | **gated (engineGate.ts)** |
-| `scheduled/morningBriefing.ts` | briefing sends | pending |
-| `scheduled/familySilenceCheckin.ts` | re-engagement | pending |
-| `scheduled/familySatisfactionCheckin.ts` | satisfaction ask | pending |
-| `scheduled/wellbeingCheckin.ts` | wellbeing ask | pending |
-| `scheduled/staleSessionNudge.ts` | stale-session nudge | pending |
-| `scheduled/staleApplicantNudge.ts` | family nudge on applicants | pending |
-| `scheduled/onboardingReengagement.ts` | signup re-engagement | pending |
-| `scheduled/paywallWinback.ts` | winback | pending |
-| `scheduled/caregiverInactivityCheck.ts` | caregiver re-engagement | pending |
-| `scheduled/firstVisitActivation.ts` | activation nudge | pending |
-| `scheduled/locationRequestNudge.ts` | location ask | pending |
-| `scheduled/inShiftUpdate.ts` | in-shift family updates | pending (kill switch IN_SHIFT_UPDATES_ENABLED) |
-| `scheduled/weeklyDigest.ts` | weekly digest (perm-gated) | pending |
-| `scheduled/healthTrends.ts` | monthly summary | pending |
-| `scheduled/jobMatchNotifications.ts` | caregiver job matches | pending |
-| `agents/caregiverReferral.ts` (outreach half) | referral invites | pending |
-| `triggers/triggerEngine.ts` (non-safety triggers) | trigger sends | pending |
+| `scheduled/morningBriefing.ts` | briefing sends | **gated (engineGate.ts)** |
+| `scheduled/familySilenceCheckin.ts` | re-engagement | **gated (engineGate.ts)** |
+| `scheduled/familySatisfactionCheckin.ts` | satisfaction ask | **gated (engineGate.ts)** |
+| `scheduled/wellbeingCheckin.ts` | wellbeing ask | **gated (engineGate.ts)** |
+| `scheduled/staleSessionNudge.ts` | stale-session nudge | **gated (engineGate.ts)** |
+| `scheduled/staleApplicantNudge.ts` | family nudge on applicants | **gated (engineGate.ts)** |
+| `scheduled/onboardingReengagement.ts` | signup re-engagement | **gated (engineGate.ts)** |
+| `scheduled/paywallWinback.ts` | winback | **gated (engineGate.ts)** |
+| `scheduled/caregiverInactivityCheck.ts` | caregiver re-engagement | **gated (engineGate.ts)** — both sends (caregiver nudge + family warn, distinct dedupe keys) |
+| `scheduled/firstVisitActivation.ts` | activation nudge | **gated (engineGate.ts)** |
+| `scheduled/locationRequestNudge.ts` | location ask | **gated (engineGate.ts)** |
+| `scheduled/inShiftUpdate.ts` | in-shift family updates | RECLASSIFIED mandatory-transactional (audited 2026-07-22: active in-progress shift only, per-family pause + cadence override, kill switch IN_SHIFT_UPDATES_ENABLED, bypassDailyCap by design — ≤1/day budget would break multiple-updates-per-shift) |
+| `scheduled/weeklyDigest.ts` | weekly digest (perm-gated) | RECLASSIFIED mandatory (opted-in report: per-send `canSendWeeklyDigest` check, user-controllable unsubscribe, delivery-layer send; caveat: flag is default-granted, and the `weekly_digests` marker is written but never read — cron cadence is the only run-dedupe) |
+| `scheduled/healthTrends.ts` | monthly summary | RECLASSIFIED mandatory (opted-in report) after 2026-07-22 repair: added missing per-send `canSendHealthAlerts` check + one-report-per-senior-per-month dedupe read (both were absent); still sends via raw transport (no DND/cap) — acceptable for a monthly opted-in report |
+| `scheduled/jobMatchNotifications.ts` | caregiver job matches | **gated (engineGate.ts)** — per (caregiver, job) key, 7-day TTL; the gate is this source's ONLY dedupe (audit found none) |
+| `agents/caregiverReferral.ts` (outreach half) | referral invites | reply-triggered only — engine-exempt (audited 2026-07-22: sole callers are `linq/routeCaregiver.ts` REFER flow + `mcp/server.ts create_caregiver_referral`, both inbound-turn paths; no scheduled/trigger caller) |
+| `triggers/triggerEngine.ts` (non-safety triggers) | trigger sends | **gated (engineGate.ts)** |
 
 Migration contract per source (KTD15): submit a PolicyCandidate instead of
 sending; the engine ranks per recipient per pass; losers get explicit

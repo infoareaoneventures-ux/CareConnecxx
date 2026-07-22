@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -56,30 +57,48 @@ export const checkCaregiverInactivity = functions.pubsub
             if (!cgSessionSnap.empty) {
               const cgPhone = cgSessionSnap.docs[0].id;
 
-              const inactivityMsg = await generateCaraMessage({
-                audience: "caregiver",
-                context:
-                  `Caregiver first name: ${firstName}. ` +
-                  "They haven't had any visits in the last 14 days. Send a warm, low-pressure check-in. " +
-                  "Ask if everything's okay and let them know they can reply if they want to pick up more shifts or if anything's come up. " +
-                  "Don't be pushy — just genuinely caring.",
-                fallback: `Hey ${firstName} — we haven't seen you for any visits lately. All good? Reply if you want to pick up more shifts or if anything's come up.`,
-                maxTokens: 80,
+              // U8 engine gate (KTD15): optional re-engagement source — submit as a
+              // PolicyCandidate instead of sending directly. A lost pass re-enters on
+              // the next daily run (the 7-day nudge marker is only set after a send).
+              const day = new Date(now).toISOString().slice(0, 10);
+              const g = await gateOptionalSend({
+                phone: cgPhone,
+                candidate: {
+                  source: "caregiverInactivityCheck",
+                  category: "re_engagement",
+                  urgency: 1,
+                  evidenceCount: 1,
+                  dedupeKey: `cginact:${cgId}:${day}`,
+                },
               });
+              if (!g.allowed) {
+                console.info("caregiverInactivityCheck.policy", { userId: cgId, disposition: g.disposition, reason: g.reason });
+              } else {
+                const inactivityMsg = await generateCaraMessage({
+                  audience: "caregiver",
+                  context:
+                    `Caregiver first name: ${firstName}. ` +
+                    "They haven't had any visits in the last 14 days. Send a warm, low-pressure check-in. " +
+                    "Ask if everything's okay and let them know they can reply if they want to pick up more shifts or if anything's come up. " +
+                    "Don't be pushy — just genuinely caring.",
+                  fallback: `Hey ${firstName} — we haven't seen you for any visits lately. All good? Reply if you want to pick up more shifts or if anything's come up.`,
+                  maxTokens: 80,
+                });
 
-              await sendViaInteractionAgent(cgPhone, {
-                content:     inactivityMsg,
-                urgency:     "low",
-                sourceAgent: "inactivity_check",
-                canDrop:     true,
-              });
+                await sendViaInteractionAgent(cgPhone, {
+                  content:     inactivityMsg,
+                  urgency:     "low",
+                  sourceAgent: "inactivity_check",
+                  canDrop:     true,
+                });
 
-              await cgDoc.ref.update({
-                lastInactivityNudgeSentAt: new Date().toISOString(),
-              });
+                await cgDoc.ref.update({
+                  lastInactivityNudgeSentAt: new Date().toISOString(),
+                });
 
-              nudgesSent++;
-              console.log(`[caregiverInactivityCheck] Sent 14-day nudge to caregiver ${cgId}`);
+                nudgesSent++;
+                console.log(`[caregiverInactivityCheck] Sent 14-day nudge to caregiver ${cgId}`);
+              }
             }
           }
 
@@ -95,6 +114,24 @@ export const checkCaregiverInactivity = functions.pubsub
               const clientPhone   = sched.clientPhone as string | undefined;
               const lastWarnedAt  = sched.inactivityWarnedAt as string | undefined;
               if (clientPhone && (!lastWarnedAt || lastWarnedAt < sevenDaysAgo)) {
+                // U8 engine gate (KTD15): family-warn half of this source — a distinct
+                // intent from the caregiver nudge, so it carries its own dedupe suffix.
+                // A lost pass re-enters next daily run (inactivityWarnedAt stays unset).
+                const famDay = new Date(now).toISOString().slice(0, 10);
+                const famGate = await gateOptionalSend({
+                  phone: clientPhone,
+                  candidate: {
+                    source: "caregiverInactivityCheck",
+                    category: "re_engagement",
+                    urgency: 1,
+                    evidenceCount: 1,
+                    dedupeKey: `cginact-fam:${cgId}:${clientPhone}:${famDay}`,
+                  },
+                });
+                if (!famGate.allowed) {
+                  console.info("caregiverInactivityCheck.policy", { phone: clientPhone, disposition: famGate.disposition, reason: famGate.reason });
+                  continue;
+                }
                 const familyInactivityMsg = await generateCaraMessage({
                   audience: "family",
                   context:

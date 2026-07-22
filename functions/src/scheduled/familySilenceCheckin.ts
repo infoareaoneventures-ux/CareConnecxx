@@ -15,6 +15,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
+import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
@@ -82,6 +83,24 @@ export const familySilenceCheckinJob = functions.pubsub
           fallback: `Hey — it's been a few days. How's everything going${seniorPart}? I'm here whenever you need anything. 💙`,
           maxTokens: 80,
         });
+
+        // U8 engine gate (KTD15): optional discretionary source — the nudge is a
+        // PolicyCandidate; on a lost pass we skip WITHOUT stamping
+        // silenceNudgeSentAt, so it re-enters naturally on tomorrow's run.
+        const g = await gateOptionalSend({
+          phone,
+          candidate: {
+            source: "familySilenceCheckin",
+            category: "re_engagement",
+            urgency: 1,
+            evidenceCount: 1,
+            dedupeKey: `silence:${phone}:${new Date(now).toISOString().slice(0, 10)}`,
+          },
+        });
+        if (!g.allowed) {
+          console.info("familySilenceCheckin.policy", { phone, disposition: g.disposition, reason: g.reason });
+          continue;
+        }
 
         await sendViaInteractionAgent(phone, {
           content:     message,

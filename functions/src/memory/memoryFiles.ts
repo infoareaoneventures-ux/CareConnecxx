@@ -774,39 +774,60 @@ export async function handleMemoryQuery(
   sendMessage: (id: string, msg: string) => Promise<unknown>,
   question: string,
   zepContext?: string,
-): Promise<void> {
+  // 2026-07-22 incident: recall answers for CAREGIVERS were framed as family
+  // members and grounded on memory alone — a cleared background check was
+  // described as "awaiting" from a two-week-old Zep fact, and a saved name was
+  // denied. Callers now pass the role; caregiver queries get the live account
+  // briefing (source of truth) prepended and role-correct framing.
+  opts?: { userType?: string; caregiverId?: string },
+): Promise<string | null> {
   // U4a/KTD10: a memory query while reconciliation is pending gets the honest
   // deterministic "updating my memory" copy — never a stale recall and never
   // an outage claim. Deliberately checked BEFORE reading files/Zep context.
   if (await storageMemoryMasked(userId)) {
     await sendMessage(chatId, MEMORY_QUERY_RECONCILIATION_COPY);
-    return;
+    return MEMORY_QUERY_RECONCILIATION_COPY;
   }
-  const fileContext = await getMemoryContext(userId);
+  const isCaregiver = opts?.userType === "caregiver";
+  const [fileContext, liveFacts] = await Promise.all([
+    getMemoryContext(userId),
+    isCaregiver
+      ? import("../agents/caregiverBriefing").then((m) =>
+          m.describeCaregiverAccountStatus(opts?.caregiverId ?? userId))
+      : Promise.resolve(""),
+  ]);
   const combined = [
+    liveFacts,
     fileContext,
-    zepContext ? `## Recent context\n${zepContext}` : "",
+    zepContext ? `## Recent context (may be stale — live account facts above win on any conflict)\n${zepContext}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
   if (!combined) {
-    await sendMessage(
-      chatId,
-      "I'm still building up my picture of your situation. The more we talk, the more I'll know.",
-    );
-    return;
+    const fallback = "I'm still building up my picture of your situation. The more we talk, the more I'll know.";
+    await sendMessage(chatId, fallback);
+    return fallback;
   }
+
+  const persona = isCaregiver
+    ? "You are Evia, a warm care-team coordinator texting a professional CAREGIVER who works on your platform. " +
+      "They are NOT a family member and have no \"loved one\" receiving care — never use family framing. "
+    : "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
+      "their care situation. ";
 
   const result = await getSharedClient().messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 220,
     system:
-      "You are Evia, a warm care assistant texting a family member. Below is what you know about " +
-      "their care situation. Answer THEIR QUESTION directly and specifically using that context. " +
+      persona +
+      "Answer THEIR QUESTION directly and specifically using that context. " +
       "If they ask for one fact (a name, an age, a city), lead with that fact in one short sentence — " +
       'do NOT recap the whole profile. If the question is open-ended (e.g. "what do you know about my mom"), ' +
       "give a warm 2–3 sentence summary. Use ONLY facts present in what you know below — never infer or invent. " +
+      "When a LIVE ACCOUNT FACTS section is present, those facts are the current truth and OVERRIDE anything " +
+      "older memory says on the same topic (e.g. a background check listed as CLEARED is cleared, even if an " +
+      "old conversation said it was processing). " +
       "If the answer isn't in what you know, say so briefly and offer to " +
       "note it. Plain conversational text — no bullet points, no headers.",
     messages: [
@@ -818,10 +839,9 @@ export async function handleMemoryQuery(
   });
 
   const summary = ((result.content[0] as { text: string }).text ?? "").trim();
-  await sendMessage(
-    chatId,
-    summary || "I remember quite a bit — just ask me something specific.",
-  );
+  const reply = summary || "I remember quite a bit — just ask me something specific.";
+  await sendMessage(chatId, reply);
+  return reply;
 }
 
 // Consolidate last 7 days of actual conversation messages into memory files.

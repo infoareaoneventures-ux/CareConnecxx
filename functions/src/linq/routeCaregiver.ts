@@ -2195,7 +2195,9 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
           "ARRIVED = caregiver arrived at or is entering a care visit. " +
           "DONE = caregiver has finished a care visit. " +
           "LATE = caregiver is running late to a visit. " +
-          "ISSUE = caregiver is reporting a problem or concern during a visit. " +
+          "ISSUE = caregiver is reporting a problem happening during a care visit (with the senior, the home, safety, or the tasks). " +
+          "NOT an ISSUE: correcting something Evia said, disagreeing with a status (background check, payment, application, profile), " +
+          "or asking about their own account — those are NONE. " +
           "CONFIRM = caregiver is confirming an upcoming appointment. " +
           "RESCHEDULE = caregiver wants to change the time of an appointment. " +
           "NONE = does not fit any of the above. " +
@@ -2204,9 +2206,31 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         { maxTokens: 15 },
       ).catch(() => "");
       const nluAction = nluRaw.trim().toUpperCase();
-      if (nluAction in KEYWORDS) {
+      // 2026-07-22 incident: "No my background check is cleared already" (a
+      // correction) classified as ISSUE and parked the session asking "what
+      // happened during the visit?" — the caregiver had never had a visit.
+      // Deterministic guard: an NLU-inferred ISSUE requires a visit TODAY
+      // (in-progress or confirmed) to be plausible; otherwise fall through to
+      // normal routing so the QA agent answers. The explicit "ISSUE" keyword
+      // (typed deliberately) keeps its direct path above.
+      let nluDispatch = nluAction;
+      if (nluAction === "ISSUE") {
+        const today = businessTodayStr();
+        const todayVisit = await db.collection("appointments")
+          .where("caregiverId", "==", session.caregiverId ?? "")
+          .where("date", ">=", today)
+          .where("date", "<=", today)
+          .where("status", "in", ["in-progress", "confirmed"])
+          .orderBy("date", "asc")
+          .limit(1).get().catch(() => null);
+        if (!todayVisit || todayVisit.empty) {
+          console.info("[routeCaregiverMessage] NLU ISSUE suppressed — no visit today", { phone });
+          nluDispatch = "NONE";
+        }
+      }
+      if (nluDispatch in KEYWORDS) {
         if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try { await KEYWORDS[nluAction](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
+        try { await KEYWORDS[nluDispatch](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
         return "handled";
       }
     }

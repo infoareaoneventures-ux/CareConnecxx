@@ -516,7 +516,20 @@ describe("buildCaregiverCoreContext", () => {
     expect(out).toContain("WEEKLY AVAILABILITY");
     expect(out).toContain("Mon 06:00-12:00");
     expect(out).toContain("Fri 12:00-18:00, 18:00-23:00");
-    expect(out).toContain("ACCOUNT STATUS: account active, verification approved, background check clear, onboarding profile_complete.");
+    // 2026-07-22 incident: status line is now explicitly live/authoritative and
+    // a "clear" check is spelled out so stale memory can never override it.
+    expect(out).toContain("ACCOUNT STATUS (live, read just now");
+    expect(out).toContain("account active, verification approved, background check CLEARED (done — never say pending or processing), onboarding profile_complete.");
+  });
+
+  it("reads the LIVE backgroundCheckStatus field, not just legacy backgroundCheckData", () => {
+    const out = buildCaregiverCoreContext({
+      name: "Imran", backgroundCheckStatus: "clear", membershipPaid: true, stripeAccountId: "acct_1",
+    });
+    expect(out).toContain("CAREGIVER NAME: Imran.");
+    expect(out).toContain("background check CLEARED");
+    expect(out).toContain("caregiver membership PAID and active");
+    expect(out).toContain("payout account connected");
   });
 
   it("tells Evia the availability snapshot may be stale and which tools to use", () => {
@@ -535,7 +548,7 @@ describe("buildCaregiverCoreContext", () => {
   it("omits sections whose inputs are missing instead of emitting empty labels", () => {
     const out = buildCaregiverCoreContext({ city: "Gilroy", status: "paused" });
     expect(out).toContain("SERVICE AREA: Gilroy.");
-    expect(out).toContain("ACCOUNT STATUS: account paused.");
+    expect(out).toContain("account paused.");
     expect(out).not.toContain("SKILLS AND EXPERIENCE");
     expect(out).not.toContain("WEEKLY AVAILABILITY");
   });

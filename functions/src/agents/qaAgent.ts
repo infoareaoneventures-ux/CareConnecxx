@@ -279,6 +279,18 @@ export async function getConversationHistory(
   return messages;
 }
 
+// 2026-07-22 incident: side-channel answer paths (memory query, flow
+// absorbers) replied without saving the USER turn, so rolling history went
+// stale and later turns grounded on days-old context. Exported so those paths
+// record the pair exactly once (their send must pass skipHistoryRecord).
+export async function recordSideChannelTurn(
+  phone: string,
+  userText: string,
+  assistantReply: string,
+): Promise<void> {
+  return saveConversationTurn(phone, userText, assistantReply);
+}
+
 async function saveConversationTurn(
   phone: string,
   userText: string,
@@ -457,6 +469,13 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   if (!caregiver) return "";
   const parts: string[] = [];
 
+  // 2026-07-22 incident: identity + account truth lead the context. Evia told
+  // a caregiver with a saved name and a CLEARED check "I don't have your name
+  // saved" / "you're awaiting your background check" — the name was never in
+  // context and the check read a nonexistent field (backgroundCheckData.status
+  // instead of backgroundCheckStatus), so stale memory went uncorrected.
+  if (caregiver.name) parts.push(`CAREGIVER NAME: ${caregiver.name}.`);
+
   const area = [caregiver.city, caregiver.zipCode].filter(Boolean).join(", ");
   if (area) parts.push(`SERVICE AREA: ${area}.`);
 
@@ -485,10 +504,25 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   const accountBits: string[] = [];
   if (caregiver.status) accountBits.push(`account ${caregiver.status}`);
   if (caregiver.verificationStatus) accountBits.push(`verification ${caregiver.verificationStatus}`);
-  const bgStatus = caregiver.backgroundCheckData?.status;
-  if (bgStatus) accountBits.push(`background check ${bgStatus}`);
+  // Live field is backgroundCheckStatus (top-level); backgroundCheckData.status
+  // kept only as a legacy fallback. "clear" is spelled out so the model never
+  // reads it as "in progress".
+  const bgStatus = caregiver.backgroundCheckStatus ?? caregiver.backgroundCheckData?.status;
+  if (bgStatus) {
+    accountBits.push(
+      String(bgStatus).toLowerCase() === "clear"
+        ? "background check CLEARED (done — never say pending or processing)"
+        : `background check ${bgStatus}`,
+    );
+  }
+  if (caregiver.membershipPaid === true) accountBits.push("caregiver membership PAID and active");
+  if (caregiver.stripeAccountId) accountBits.push("payout account connected");
   if (caregiver.onboardingStatus) accountBits.push(`onboarding ${caregiver.onboardingStatus}`);
-  if (accountBits.length) parts.push(`ACCOUNT STATUS: ${accountBits.join(", ")}.`);
+  if (accountBits.length) {
+    parts.push(
+      `ACCOUNT STATUS (live, read just now — the source of truth; OVERRIDES anything older memory or past conversation claims): ${accountBits.join(", ")}.`,
+    );
+  }
 
   return parts.length ? parts.join("\n") : "";
 }
@@ -3713,7 +3747,7 @@ export async function runQuickReply(params: {
 
   // Pre-fetch lightweight context in parallel — used to make greetings smart.
   // Each loader is wrapped so a single failure doesn't break the reply.
-  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot] = await Promise.all([
+  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts] = await Promise.all([
     getConversationHistory(phone).catch(() => []),
     userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
     userType === "client"
@@ -3742,6 +3776,12 @@ export async function runQuickReply(params: {
     // one-word "hi" opens with what's waiting (interview, application, shift).
     userType === "caregiver" && caregiverId
       ? buildCaregiverSnapshot(caregiverId, session).catch(() => "")
+      : Promise.resolve(""),
+    // 2026-07-22 incident: caregiver quick replies had work items but no live
+    // ACCOUNT facts (name, membership, background check, payouts) — stale
+    // memory claims went uncorrected. Live doc read, fail-soft.
+    userType === "caregiver" && caregiverId
+      ? import("./caregiverBriefing").then((m) => m.describeCaregiverAccountStatus(caregiverId)).catch(() => "")
       : Promise.resolve(""),
   ]);
 
@@ -3777,13 +3817,18 @@ export async function runQuickReply(params: {
 
   // Caregiver greeting context — surface what's waiting so "hi" gets a proactive
   // lead instead of a generic hello, mirroring the client contextSection below.
-  const cgContextSection = cgSnapshot
-    ? `\n\nWhen the caregiver sends a pure greeting ("hi", "hey"), open with ONE relevant item below if there is one — naturally, like a coordinator who's on top of things. Don't list them all; don't fake details. If they want to act on it, say you're pulling it up.\n${cgSnapshot}`
+  // 2026-07-22: the old copy told the model to SAY "I'm pulling it up" — an
+  // action claim this path can never fulfill (quick replies take no actions).
+  // "Thanks, Imran. I'm pulling up the pending application now." went out and
+  // nothing happened. Action claims are now banned outright.
+  const cgLiveBlocks = [cgAccountFacts, cgSnapshot].filter(Boolean).join("\n\n");
+  const cgContextSection = cgLiveBlocks
+    ? `\n\nWhen the caregiver sends a pure greeting ("hi", "hey"), open with ONE relevant item below if there is one — naturally, like a coordinator who's on top of things. Don't list them all; don't fake details.\n${cgLiveBlocks}`
     : "";
 
   const persona =
     userType === "caregiver"
-      ? `You ARE Evia. Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. You are texting a caregiver as their care-team coordinator. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. If they ask for something you can't handle in this quick reply (booking, schedule changes, payments), say you're pulling that up — don't fake an answer.${cgContextSection}`
+      ? `You ARE Evia. Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. You are texting a professional CAREGIVER on your platform as their care-team coordinator — they are not a family member and have no "loved one" receiving care. Keep replies short (under 200 chars), conversational, no bullet points, no emoji unless they used one first. Acknowledge briefly and move forward. NEVER claim you are doing, starting, or "pulling up" anything — this reply takes no actions; if they ask for something that needs action (booking, schedule changes, payments), tell them to send the specific request and it will be handled. Status questions (membership, background check, payouts) are answered ONLY from the live account facts below — never from older conversation.${cgContextSection}`
       : `${(seniorProfile as any)?.relationship === "self"
           ? `You ARE Evia — a care coordinator texting with ${seniorName}, who receives care themselves. Speak to them directly ("you") — never refer to them in the third person and never say "your loved one".`
           : `You ARE Evia — a care coordinator texting with a family caring for ${seniorName}.`} Speak in first person. Never refer to yourself as "Evia" in the third person, and never tell the user to "reach out to Evia" or that "an Evia team member will help" — you are Evia. Keep replies short (under 200 chars), conversational, warm. No bullet points, no headers, no markdown.\n\nWhen the family sends a pure greeting ("hi", "hey", "thanks"), DO NOT reply with "what can I help you with?" or any open-ended ask. Instead, open with the most relevant context item below if there is one — naturally, like a friend would. If there's no context to lead with, give a warm short hello like "Hey! How's everything?" — never a generic "what do you need?".\n\nExamples of good context-led greetings:\n- (after "hi" with NEXT VISIT context) "Hey! Maria's coming Thursday at 3 — anything you want me to pass along?"\n- (after "hi" with PENDING APPROVAL context) "Hey! Quick heads up — you still have that booking waiting for your yes/no. Want me to pull it up?"\n- (after "thanks" with no special context) "Anytime. 💙"${contextSection}`;
@@ -3860,7 +3905,7 @@ export async function runQuickReply(params: {
   // the deterministic fallback goes out instead of an unverified model reply.
   {
     const groundingContext = userType === "caregiver"
-      ? (cgSnapshot ? `Caregiver snapshot:\n${cgSnapshot}` : "")
+      ? (cgLiveBlocks ? `Caregiver live facts and snapshot:\n${cgLiveBlocks}` : "")
       : `Care recipient: ${seniorName}${contextSection}`;
     const gate = await gateQuickReplyGrounding({
       reply,

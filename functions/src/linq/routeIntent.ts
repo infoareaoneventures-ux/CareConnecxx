@@ -1029,7 +1029,23 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       // the memory-query answer.
       const zepFacts  = await searchZepMemory(zepUserId, text, memUserId).catch(() => "");
       const { handleMemoryQuery } = await import("../memory/memoryFiles");
-      await handleMemoryQuery(memUserId, chatId, sendMessage, text, zepFacts || undefined);
+      // 2026-07-22 incident: pass the role so caregiver recall answers ground
+      // on live account facts with caregiver framing, and RECORD the full turn
+      // pair — this path used to skip the user turn entirely, so the next turn
+      // had amnesia about it. Send skips the transport recorder and the pair
+      // is saved once here (same record-exactly-once pattern as runQuickReply).
+      const reply = await handleMemoryQuery(
+        memUserId,
+        chatId,
+        (id, msg) => sendMessage(id, msg, { skipHistoryRecord: true }),
+        text,
+        zepFacts || undefined,
+        { userType: session.userType, caregiverId: session.caregiverId ?? undefined },
+      );
+      if (reply) {
+        const { recordSideChannelTurn } = await import("../agents/qaAgent");
+        await recordSideChannelTurn(phone, text, reply);
+      }
       return;
     }
 

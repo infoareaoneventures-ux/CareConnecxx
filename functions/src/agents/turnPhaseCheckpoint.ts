@@ -104,3 +104,20 @@ export async function loadPhaseCheckpoint(
   if (!validateSourceTurn(identity, { key, bindings: doc.bindings })) return null;
   return doc;
 }
+
+/**
+ * Model-facing directive for a RETRIED turn whose checkpoint shows committed
+ * side effects (R21: post-write resume goes to VERIFY, never act). Empty when
+ * the checkpoint carries nothing actionable. Action keys are deterministic
+ * name+input hashes — safe for the prompt, no payload content.
+ */
+export function buildResumeDirective(cp: PhaseCheckpointDoc | null): string {
+  if (!cp) return "";
+  if (cp.phase !== "acted" && cp.phase !== "verified" && cp.phase !== "responded") return "";
+  if (cp.completedActionKeys.length === 0) return "";
+  return [
+    "RETRY NOTICE: this exact inbound message was already partially processed on a previous attempt.",
+    `State-changing actions that ALREADY COMPLETED (do NOT run these tools again for the same purpose): ${cp.completedActionKeys.join(", ")}.`,
+    "Use read tools to verify the current state if needed, then respond to the user from verified state. If the work is already done, confirm it — never repeat a completed side effect.",
+  ].join(" ");
+}

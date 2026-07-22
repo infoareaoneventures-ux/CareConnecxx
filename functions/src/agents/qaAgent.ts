@@ -49,7 +49,7 @@ import {
   type AgentObjective,
 } from "./objectiveLedger";
 import { projectActiveGoal, isLegacyGoalStale, isProjection, type LegacyActiveGoal } from "./objectiveAdapters";
-import { writePhaseCheckpoint, TURN_LIFECYCLE_CAPABILITY } from "./turnPhaseCheckpoint";
+import { writePhaseCheckpoint, loadPhaseCheckpoint, buildResumeDirective, TURN_LIFECYCLE_CAPABILITY } from "./turnPhaseCheckpoint";
 import type { SourceTurnIdentity } from "./turnSourceKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
@@ -1705,6 +1705,10 @@ export async function runQaAgent(params: {
     // full — never shadow), the sanitized projection is captured for the client
     // system prompt below; enabling is a policy-doc flip, not a deploy.
     let careSituationPromptBlock = "";
+    // U4 slice 3b: verify-don't-act directive for retried turns (R21) and the
+    // deterministic keys of mutations committed THIS turn (checkpointed after
+    // each state-changing tool call so a crash mid-loop is replay-safe).
+    let resumeDirective = "";
     if (!unconfirmedIdentity) {
       try {
         const rollout = await getRolloutDecision(CARE_SITUATION_CAPABILITY, phone);
@@ -1803,14 +1807,31 @@ export async function runQaAgent(params: {
             messageId: params.sourceTurn.messageId,
             objectiveVersion: 0, // no ledger objective bound yet (U3 bridge pending)
           };
-          writePhaseCheckpoint(turnIdentity, "hydrated")
-            .then(({ key }) => console.info("turnLifecycle.shadow", {
-              phase: "hydrated",
-              keyPrefix: key.slice(0, 8),
-              channel: turnIdentity.channel,
-              mode: lifecycleRollout.mode,
-            }))
-            .catch((err) => console.warn("turnLifecycle.shadow write failed (non-fatal)", err instanceof Error ? err.message : err));
+          // U4 slice 3b — resume-at-verify (R21): a RETRY of an identity whose
+          // checkpoint shows committed side effects gets a verify-don't-act
+          // directive; the checkpoint is preserved (no hydrated overwrite).
+          let existingCheckpoint = null;
+          if (params.isRetry && lifecycleRollout.enabled) {
+            existingCheckpoint = await loadPhaseCheckpoint(turnIdentity).catch(() => null);
+            resumeDirective = buildResumeDirective(existingCheckpoint);
+            if (resumeDirective) {
+              metrics.resumedFromCheckpoint = true;
+              console.info("turnLifecycle.resume", {
+                phase: existingCheckpoint!.phase,
+                completedActions: existingCheckpoint!.completedActionKeys.length,
+              });
+            }
+          }
+          if (!existingCheckpoint) {
+            writePhaseCheckpoint(turnIdentity, "hydrated")
+              .then(({ key }) => console.info("turnLifecycle.shadow", {
+                phase: "hydrated",
+                keyPrefix: key.slice(0, 8),
+                channel: turnIdentity.channel,
+                mode: lifecycleRollout.mode,
+              }))
+              .catch((err) => console.warn("turnLifecycle.shadow write failed (non-fatal)", err instanceof Error ? err.message : err));
+          }
         } else if (lifecycleRollout.shadow || lifecycleRollout.enabled) {
           // Coverage gap: this ingress didn't thread a sourceTurn yet.
           console.info("turnLifecycle.shadow", { phase: "no_source_turn", channel: params.skipSend ? "web" : "linq", mode: lifecycleRollout.mode });
@@ -2057,6 +2078,8 @@ export async function runQaAgent(params: {
     // Empty unless the care_situation policy admitted this subject to an
     // enabled cohort (Wave 1 gate: shadow parity evidence first).
     if (careSituationPromptBlock) systemPrompt += `\n\n${careSituationPromptBlock}`;
+    // U4 slice 3b: retried turn with committed side effects — verify, don't act.
+    if (resumeDirective) systemPrompt += `\n\n${resumeDirective}`;
   }
 
   // Voice mirror — derive style stats from the family's own inbound history
@@ -2701,7 +2724,24 @@ export async function runQaAgent(params: {
                   preview: JSON.stringify(result).slice(0, 200),
                 });
               }
-            } else if ((result as { sent?: boolean })?.sent === true) {
+            } else if (!errored && isHighStakesMutation(block.name) && params.sourceTurn) {
+              // U4 slice 3b: record the committed mutation under a
+              // deterministic name+input key and checkpoint "acted" so a
+              // crash-then-retry resumes at verify instead of re-acting (R21).
+              (metrics.completedActionKeys ??= []).push(`${block.name}:${hashText(JSON.stringify(block.input ?? {}))}`);
+              writePhaseCheckpoint(
+                {
+                  channel: params.skipSend ? "web" : "linq",
+                  principal: phone,
+                  conversationId: params.sourceTurn.conversationId,
+                  messageId: params.sourceTurn.messageId,
+                  objectiveVersion: 0,
+                },
+                "acted",
+                { completedActionKeys: [...(metrics.completedActionKeys ?? [])] },
+              ).catch(() => {});
+            }
+            if (!errored && (result as { sent?: boolean })?.sent === true) {
               // A self-delivering tool (send_onboarding_link, the matched-path
               // find_replacement_caregivers gallery, a blocked request_booking
               // explanation) already pushed its message to this chat. Remember it
@@ -3085,6 +3125,7 @@ export async function runQaAgent(params: {
           objectiveVersion: 0,
         },
         "responded",
+        { completedActionKeys: [...(metrics.completedActionKeys ?? [])] },
       ).catch(() => {});
     }
 

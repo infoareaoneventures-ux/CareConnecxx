@@ -27,7 +27,9 @@ vi.mock("firebase-admin", () => ({
 import {
   writePhaseCheckpoint,
   loadPhaseCheckpoint,
+  buildResumeDirective,
   PHASE_CHECKPOINT_COLLECTION,
+  type PhaseCheckpointDoc,
 } from "./turnPhaseCheckpoint";
 import type { SourceTurnIdentity } from "./turnSourceKey";
 
@@ -98,6 +100,33 @@ describe("phase checkpoints (U4/R21)", () => {
       phase: "loop_complete", reply: "…", expiresAt: now.getTime() + 60_000,
     });
     expect(await loadPhaseCheckpoint(identity(), { now })).toBeNull();
+  });
+
+  it("replay: retry loads the acted checkpoint and the directive forbids re-acting (R21)", async () => {
+    hoisted.docs.clear();
+    await writePhaseCheckpoint(identity(), "acted", {
+      completedActionKeys: ["request_booking:abc123", "send_caregiver_message:def456"],
+      now,
+    });
+    const cp = await loadPhaseCheckpoint(identity(), { now });
+    const directive = buildResumeDirective(cp);
+    expect(directive).toContain("ALREADY COMPLETED");
+    expect(directive).toContain("request_booking:abc123");
+    expect(directive).toContain("send_caregiver_message:def456");
+    expect(directive).toMatch(/never repeat a completed side effect/);
+  });
+
+  it("no directive for hydrated-only or action-free checkpoints (fresh turns act normally)", () => {
+    const base: PhaseCheckpointDoc = {
+      schema: "phase-v1", phase: "hydrated",
+      bindings: { principalHash: "x", channelBindingHash: "y" },
+      objectiveVersion: 0, completedActionKeys: [],
+      updatedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 1000).toISOString(),
+    };
+    expect(buildResumeDirective(null)).toBe("");
+    expect(buildResumeDirective(base)).toBe("");
+    expect(buildResumeDirective({ ...base, phase: "acted" })).toBe(""); // no committed actions
+    expect(buildResumeDirective({ ...base, phase: "responded", completedActionKeys: ["k"] })).toContain("k");
   });
 
   it("stores no raw identifiers in the checkpoint document", async () => {

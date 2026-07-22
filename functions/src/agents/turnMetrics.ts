@@ -163,6 +163,9 @@ export interface TurnMetrics {
   // Sprint 8: turn checkpoint resume. resumedFromCheckpoint is true when this
   // turn skipped the tool loop and resumed a prior crashed turn's reply.
   resumedFromCheckpoint?: boolean;
+  /** U4: deterministic name+input-hash keys of mutations committed this turn
+   *  (content-free — feeds the acted/responded phase checkpoints). */
+  completedActionKeys?: string[];
   checkpointPhase?:       string;
 
   // Prompt-augmentation pipeline (Sprint 7).

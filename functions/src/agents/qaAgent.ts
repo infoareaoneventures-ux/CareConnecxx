@@ -35,6 +35,7 @@ import { runAgentModelTurn } from "./agentModelTurn";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
+import { selectToolPack, TOOL_PACKS_CAPABILITY } from "./toolPackSelector";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
@@ -2419,6 +2420,31 @@ export async function runQaAgent(params: {
     let activeTools = (onboardingMode || userType === "caregiver")
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
+    // U6 (plan 2026-07-18-001, R28-R29): on BROAD client turns, the foreground
+    // objective's intent narrows the surface the legacy filter leaves at full
+    // catalog. Fail-open: selector null or rollout off → legacy list unchanged.
+    if (!onboardingMode && userType !== "caregiver" && activeTools.length === baseTools.length) {
+      try {
+        const packRollout = await getRolloutDecision(TOOL_PACKS_CAPABILITY, phone);
+        if (packRollout.enabled) {
+          const goalType = ((session as any)?.activeGoal as { type?: string } | undefined)?.type;
+          const pack = selectToolPack(activeTools, {
+            intent: intent ?? null,
+            foregroundIntent: goalType ? `legacy.${goalType}` : null,
+          });
+          if (pack) {
+            console.info("toolPacks.applied", {
+              packName: pack.packName,
+              packSize: pack.tools.length,
+              baseSize: baseTools.length,
+            });
+            activeTools = pack.tools;
+          }
+        }
+      } catch (err) {
+        console.warn("toolPacks selection failed (non-fatal, legacy surface kept)", err instanceof Error ? err.message : err);
+      }
+    }
     // Care-plan interview: the save tools must survive the per-intent filter —
     // a family answering "she takes lisinopril" mid-match-question would
     // otherwise land on a turn whose intent filtered update_care_plan out,

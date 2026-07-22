@@ -1418,6 +1418,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           caregiverId: session.caregiverId,
           session:     session as unknown as Record<string, unknown>,
           intent,
+          ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
         });
         return;
       }
@@ -1463,6 +1464,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
+        ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
       return;
     }
@@ -1636,6 +1638,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
+        ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
       return;
     }
@@ -1707,6 +1710,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
+        ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
       return;
     }
@@ -1726,6 +1730,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
         session:     session as unknown as Record<string, unknown>,
         intent,
+        ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
       return;
     }

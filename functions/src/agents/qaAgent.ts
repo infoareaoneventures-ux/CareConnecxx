@@ -3072,6 +3072,21 @@ export async function runQaAgent(params: {
     if (loopProducedReply && !skipSend) {
       writeCheckpoint(phone, "loop_complete", turnTextHash, reply).catch(() => {});
     }
+    // U4 slice 3: identity-bound "responded" phase checkpoint alongside the
+    // legacy rescue. Fire-and-forget, fail-open; written for genuine loop
+    // replies on any channel (web included — the derived key is channel-bound).
+    if (loopProducedReply && params.sourceTurn) {
+      writePhaseCheckpoint(
+        {
+          channel: params.skipSend ? "web" : "linq",
+          principal: phone,
+          conversationId: params.sourceTurn.conversationId,
+          messageId: params.sourceTurn.messageId,
+          objectiveVersion: 0,
+        },
+        "responded",
+      ).catch(() => {});
+    }
 
     // Conversational-quality detectors. Run after repair and before supervise
     // so metrics record any issues that remain in the draft supervisor sees.

@@ -65,7 +65,17 @@ at deploy: additive dry-run → `--apply` → poll READY → `--live` planner PA
 Full `firestore:indexes` replacement is prohibited outside a founder-reviewed preflight.
 U1 registered Q27 (appointments clientId+status+date ASC — composite already live).
 
-## Behavioral Rubric v0.1 — ADOPTED AS DRAFTED 2026-07-21 (founder-directed "continue"; amendable to v0.2 at any time BEFORE any capability advances past dark/shadow mode — no wave may enable user-facing behavior against a rubric version the founder has not explicitly reviewed)
+## Behavioral Rubric v0.2 — FOUNDER AMENDMENT 2026-07-22: LIVE-AT-SHIP
+
+Founder directive (2026-07-22): intelligence capabilities go LIVE at ship time
+(policy mode `full` when the code deploys) instead of shadow-first staging.
+Retained, non-negotiable: per-capability kill switches (`evia_rollout_policies`
+mode flip + `EVIA_INTELLIGENCE_EMERGENCY_OFF`), fail-open wrappers on every new
+path (an erroring intelligence path falls back to legacy behavior, never
+breaks a user turn), fail-closed identity/authority/eval-environment guards,
+and honest scorecard accounting (quality remains UNMEASURED until real usage —
+live-at-ship changes when behavior activates, not what has been proven).
+The v0.1 weights/floors below remain the measurement rubric.
 
 Rubric changes after ratification require a new version and cannot retroactively approve a wave.
 

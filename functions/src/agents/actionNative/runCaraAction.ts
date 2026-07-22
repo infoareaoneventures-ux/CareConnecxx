@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { logAgentAction } from "../../observability/actionLedger";
 import { claimCaraActionExecution, settleCaraActionExecution } from "./actionExecutionLedger";
 import { safePreview } from "./redaction";
+import { verifyPostcondition, handlerOutputReceipt } from "../actionEvidence";
 import type { CaraActionContext, CaraActionDefinition } from "./caraActionTypes";
 
 export class CaraActionValidationError extends Error {
@@ -224,6 +225,25 @@ export async function runCaraAction<TInput, TOutput>(
 
   if (!action.readOnly) {
     if (idempotencyKey) await settleCaraActionExecution(idempotencyKey, { ok: true, result: outputParsed.data });
+
+    // U5 (R23-R24): verify the declared postcondition against AUTHORITATIVE
+    // state (fresh read / provider receipt). Fail-open on verifier errors
+    // (receipt says unconfirmed); a real mismatch is logged loudly — the
+    // response layer must not claim completion from it (AE6). Actions without
+    // a postcondition get an explicit handler_output "unconfirmed" receipt so
+    // migration coverage is observable.
+    const receipt = action.postcondition
+      ? await verifyPostcondition(action.name, action.postcondition, input, outputParsed.data, {
+          idempotencyKey: idempotencyKey ?? undefined,
+        })
+      : handlerOutputReceipt(action.name, idempotencyKey ?? undefined);
+    if (receipt.status === "mismatch") {
+      console.warn("caraAction: postcondition MISMATCH — completion must not be claimed", {
+        actionName: action.name,
+        targetRef: receipt.targetRef,
+      });
+    }
+
     await logAgentAction({
       actionType: action.audit?.actionType ?? action.name,
       status: "executed",
@@ -238,6 +258,12 @@ export async function runCaraAction<TInput, TOutput>(
         caller: ctx.caller,
         idempotencyKey: idempotencyKey ?? null,
         outputPreview: safePreview(outputParsed.data),
+        evidence: {
+          kind: receipt.kind,
+          status: receipt.status,
+          safeClaimCode: receipt.safeClaimCode,
+          targetRef: receipt.targetRef ?? null,
+        },
       },
     });
   }

@@ -16,7 +16,10 @@ const SRC_ROOT = path.resolve(__dirname, "..");
 // deployed functions. Each entry must name the deployed consumer(s) that
 // carry the secret binding on its behalf. Keep this list SHORT and reviewed.
 const LIBRARY_ALLOWLIST: Record<string, string[]> = {
-  // "agents/turnMetrics.ts": ["index.ts exports binding via qaAgent ingress"],
+  // U9 intake library — not yet called from any deployed function. When the
+  // first deployed consumer wires submitEvalCandidate, THAT function must
+  // bind INTELLIGENCE_TELEMETRY_KEY_SECRET and be named here.
+  "evals/evalCandidateQueue.ts": ["no deployed consumer yet — intake drops candidates while key unbound"],
 };
 
 function walk(dir: string): string[] {

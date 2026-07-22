@@ -49,6 +49,8 @@ import {
   type AgentObjective,
 } from "./objectiveLedger";
 import { projectActiveGoal, isLegacyGoalStale, isProjection, type LegacyActiveGoal } from "./objectiveAdapters";
+import { writePhaseCheckpoint, TURN_LIFECYCLE_CAPABILITY } from "./turnPhaseCheckpoint";
+import type { SourceTurnIdentity } from "./turnSourceKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
@@ -1458,6 +1460,11 @@ export async function runQaAgent(params: {
   // [AGENT: source] = report from an execution agent (health signal, journal, etc.)
   // [SYSTEM: reason] = internal system event (retry, escalation)
   sourceChannel?: string;
+  // U4 (plan 2026-07-18-001): provider identity of THIS inbound turn, used to
+  // derive the server-side source-turn key for lifecycle checkpoints. Optional
+  // during migration — ingresses that don't pass it simply write no phase
+  // checkpoint (observable in shadow logs as coverage).
+  sourceTurn?: { conversationId: string; messageId: string };
   // Classified intent from the webhook — used to filter the tool list to a
   // capability-relevant subset. Optional: when absent (web callable, agent
   // callers), the full tool list is bound.
@@ -1779,6 +1786,37 @@ export async function runQaAgent(params: {
         }
       } catch (err) {
         console.warn("objectiveLedger.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+      }
+
+      // ── U4 shadow (plan 2026-07-18-001, dark) ─────────────────────────────
+      // Write a "hydrated" phase checkpoint keyed by the server-derived
+      // source-turn key. Shadow-only: checkpoints are written and validated
+      // but NEVER resumed from (resume lands with U4's replay-test slice).
+      // Fire-and-forget + fail-open; content-free logging.
+      try {
+        const lifecycleRollout = await getRolloutDecision(TURN_LIFECYCLE_CAPABILITY, phone);
+        if ((lifecycleRollout.shadow || lifecycleRollout.enabled) && params.sourceTurn) {
+          const turnIdentity: SourceTurnIdentity = {
+            channel: params.skipSend ? "web" : "linq",
+            principal: phone,
+            conversationId: params.sourceTurn.conversationId,
+            messageId: params.sourceTurn.messageId,
+            objectiveVersion: 0, // no ledger objective bound yet (U3 bridge pending)
+          };
+          writePhaseCheckpoint(turnIdentity, "hydrated")
+            .then(({ key }) => console.info("turnLifecycle.shadow", {
+              phase: "hydrated",
+              keyPrefix: key.slice(0, 8),
+              channel: turnIdentity.channel,
+              mode: lifecycleRollout.mode,
+            }))
+            .catch((err) => console.warn("turnLifecycle.shadow write failed (non-fatal)", err instanceof Error ? err.message : err));
+        } else if (lifecycleRollout.shadow || lifecycleRollout.enabled) {
+          // Coverage gap: this ingress didn't thread a sourceTurn yet.
+          console.info("turnLifecycle.shadow", { phase: "no_source_turn", channel: params.skipSend ? "web" : "linq", mode: lifecycleRollout.mode });
+        }
+      } catch (err) {
+        console.warn("turnLifecycle.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
       }
     }
 

@@ -336,6 +336,11 @@ export async function handleWebChatTurn(args: {
         skipSend:      !deliverViaLinq,
         _toolCallsOut: toolsCalled,
         sourceChannel: "[USER]",
+        // U4: web turn identity for lifecycle checkpoints (only when the
+        // client sent a stable message id — retried turns share it).
+        ...(clientMessageId
+          ? { sourceTurn: { conversationId: chatId || uid, messageId: clientMessageId } }
+          : {}),
       });
     } catch (err) {
       console.error("webChat: qaAgent threw", err);

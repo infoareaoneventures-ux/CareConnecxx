@@ -2277,6 +2277,8 @@ const handleInboundInner = traceable(
           onboardingMode: true,
           onboardingRole: loopRole,
           intent:      null,
+          // U4: Linq turn identity for lifecycle checkpoints.
+          ...(sourceEventId ? { sourceTurn: { conversationId: chatId, messageId: sourceEventId } } : {}),
         });
         loopReplied = true;
         // Stuck-signup net: the cursor only advances when the model calls
@@ -2448,6 +2450,9 @@ const handleInboundInner = traceable(
             onboardingRole: loopRole,
             intent:      null,
             isRetry:     true,
+            // U4: same source-turn identity on the retry — the derived key is
+            // identical, so the retried turn shares the original's checkpoint.
+            ...(sourceEventId ? { sourceTurn: { conversationId: chatId, messageId: sourceEventId } } : {}),
           });
           await pushOnboardingStepToZep(step);
           return;

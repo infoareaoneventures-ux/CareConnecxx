@@ -1871,6 +1871,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       zepThreadId,
       session:     session as unknown as Record<string, unknown>,
       intent,
+      // U4: Linq turn identity for lifecycle checkpoints.
+      ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
     });
 
     await persistDefaultQaTurn(ctx, qaReply ?? "");

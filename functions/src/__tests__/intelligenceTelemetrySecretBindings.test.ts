@@ -16,10 +16,11 @@ const SRC_ROOT = path.resolve(__dirname, "..");
 // deployed functions. Each entry must name the deployed consumer(s) that
 // carry the secret binding on its behalf. Keep this list SHORT and reviewed.
 const LIBRARY_ALLOWLIST: Record<string, string[]> = {
-  // U9 intake library — not yet called from any deployed function. When the
-  // first deployed consumer wires submitEvalCandidate, THAT function must
-  // bind INTELLIGENCE_TELEMETRY_KEY_SECRET and be named here.
-  "evals/evalCandidateQueue.ts": ["no deployed consumer yet — intake drops candidates while key unbound"],
+  // U9 intake library. Deployed consumers listed here MUST bind
+  // INTELLIGENCE_TELEMETRY_KEY_SECRET via runWith({ secrets: [...] }).
+  "evals/evalCandidateQueue.ts": [
+    "admin/reviewProactiveDraft.ts (v1-reviewProactiveDraft — binds the secret; rejection path submits candidates)",
+  ],
 };
 
 function walk(dir: string): string[] {

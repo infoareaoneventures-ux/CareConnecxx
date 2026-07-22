@@ -2371,46 +2371,47 @@ export const dbService = {
             );
     },
 
+    /**
+     * Approve via the audited v1-reviewProactiveDraft callable (U8/AE23). The
+     * server verifies live admin role, transitions transactionally, and stamps
+     * the immutable reviewed-content hash the sender re-verifies at send time.
+     * Inline edits ride along as `editedText` so the hash covers the FINAL
+     * text (server enforces 1-320 chars). The optional review note is metadata
+     * only — written after the decision, never part of the hashed content.
+     */
     approveProactiveDraft: async (
         draftId: string,
-        adminUid: string,
-        reviewNote?: string
+        _adminUid: string,
+        reviewNote?: string,
+        editedText?: string
     ): Promise<void> => {
-        if (!isConfigured || !db) throw new Error('Not connected');
-        const patch: Record<string, any> = {
-            status:     'approved',
-            approvedAt: new Date().toISOString(),
-            approvedBy: adminUid,
-        };
-        if (reviewNote && reviewNote.trim()) patch.approvalNote = reviewNote.trim();
-        await db.collection('proactive_drafts').doc(draftId).update(patch);
+        if (!isConfigured || !functions) throw new Error('Not connected');
+        const fn = functions.httpsCallable('v1-reviewProactiveDraft');
+        const payload: Record<string, any> = { draftId, decision: 'approve' };
+        if (editedText !== undefined && editedText.trim()) payload.editedText = editedText.trim();
+        await fn(payload);
+        if (reviewNote && reviewNote.trim() && db) {
+            await db.collection('proactive_drafts').doc(draftId)
+                .update({ approvalNote: reviewNote.trim() })
+                .catch((err) => console.warn('approvalNote write failed (non-fatal):', err));
+        }
     },
 
+    /** Reject via the audited callable; the reason is metadata written after. */
     rejectProactiveDraft: async (
         draftId: string,
-        adminUid: string,
+        _adminUid: string,
         reason: string
     ): Promise<void> => {
-        if (!isConfigured || !db) throw new Error('Not connected');
+        if (!isConfigured || !functions) throw new Error('Not connected');
         if (!reason || !reason.trim()) throw new Error('Rejection requires a reason');
-        await db.collection('proactive_drafts').doc(draftId).update({
-            status:           'rejected',
-            rejectedAt:       new Date().toISOString(),
-            rejectedBy:       adminUid,
-            rejectionReason:  reason.trim(),
-        });
-    },
-
-    editProactiveDraftText: async (draftId: string, newText: string, adminUid: string): Promise<void> => {
-        if (!isConfigured || !db) throw new Error('Not connected');
-        const trimmed = (newText ?? '').trim();
-        if (!trimmed) throw new Error('Draft text cannot be empty');
-        if (trimmed.length > 1000) throw new Error('Draft text too long (max 1000 chars)');
-        await db.collection('proactive_drafts').doc(draftId).update({
-            draftText:    trimmed,
-            editedAt:     new Date().toISOString(),
-            editedBy:     adminUid,
-        });
+        const fn = functions.httpsCallable('v1-reviewProactiveDraft');
+        await fn({ draftId, decision: 'reject' });
+        if (db) {
+            await db.collection('proactive_drafts').doc(draftId)
+                .update({ rejectionReason: reason.trim() })
+                .catch((err) => console.warn('rejectionReason write failed (non-fatal):', err));
+        }
     },
 
     /**

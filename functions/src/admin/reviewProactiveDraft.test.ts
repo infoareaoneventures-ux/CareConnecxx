@@ -12,6 +12,7 @@ vi.mock("firebase-functions/v1", () => ({
       constructor(public code: string, message: string) { super(message); }
     },
   },
+  runWith: () => ({ https: { onCall: (fn: unknown) => fn } }),
   pubsub: { schedule: () => ({ timeZone: () => ({ onRun: (fn: unknown) => fn }) }) },
 }));
 

@@ -166,11 +166,12 @@ export const ProactiveReflectionDashboard: React.FC<Props> = ({ onShowToast }) =
     if (busy) return;
     setBusy(true);
     try {
-      // Save any inline edits before approving.
-      if (editMode && editedText.trim() && editedText.trim() !== d.draftText) {
-        await dbService.editProactiveDraftText(d.id, editedText, adminUid);
-      }
-      await dbService.approveProactiveDraft(d.id, adminUid, reviewNote);
+      // Inline edits ride the approve callable itself (U8/AE23) so the
+      // server's reviewed-content hash covers the FINAL text.
+      const edited = editMode && editedText.trim() && editedText.trim() !== d.draftText
+        ? editedText
+        : undefined;
+      await dbService.approveProactiveDraft(d.id, adminUid, reviewNote, edited);
       onShowToast('Draft approved — queued for send', 'success');
       setSelected(null);
     } catch (err) {
@@ -330,7 +331,7 @@ export const ProactiveReflectionDashboard: React.FC<Props> = ({ onShowToast }) =
                   value={editedText}
                   onChange={(e) => setEditedText(e.target.value)}
                   rows={4}
-                  maxLength={1000}
+                  maxLength={320}
                   className="w-full p-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-200 font-normal text-slate-800"
                 />
               ) : (

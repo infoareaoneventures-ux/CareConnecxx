@@ -14,6 +14,11 @@ import * as admin from "firebase-admin";
 import { createHash } from "crypto";
 import { requireAdmin } from "./requireAdmin";
 import { logAudit } from "../observability/auditLog";
+import { submitEvalCandidate, hashSourceContent } from "../evals/evalCandidateQueue";
+import {
+  INTELLIGENCE_TELEMETRY_KEY_NAME,
+  INTELLIGENCE_TELEMETRY_KEY_SECRET,
+} from "../observability/intelligencePseudonym";
 
 export function reviewedContentHash(draftText: string): string {
   return createHash("sha256").update(draftText).digest("hex");
@@ -51,7 +56,11 @@ export function applyReviewDecision(
   };
 }
 
-export const reviewProactiveDraft = functions.https.onCall(async (data, context) => {
+export const reviewProactiveDraft = functions
+  // U9: the rejection path below writes a reference-only eval candidate, whose
+  // actor pseudonym requires the dedicated telemetry key (KTD24 binding manifest).
+  .runWith({ secrets: [INTELLIGENCE_TELEMETRY_KEY_SECRET?.name ?? INTELLIGENCE_TELEMETRY_KEY_NAME] })
+  .https.onCall(async (data, context) => {
   const reviewerUid = await requireAdmin(context);
   const draftId = typeof data?.draftId === "string" ? data.draftId : "";
   const decision = data?.decision === "approve" || data?.decision === "reject" ? data.decision : null;
@@ -62,12 +71,13 @@ export const reviewProactiveDraft = functions.https.onCall(async (data, context)
 
   const db = admin.firestore();
   const ref = db.collection("proactive_drafts").doc(draftId);
-  const update = await db.runTransaction(async (tx) => {
+  const { update, draft } = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new functions.https.HttpsError("not-found", "Draft not found.");
-    const u = applyReviewDecision(snap.data() as { status?: string; draftText?: string }, { decision, editedText }, reviewerUid, new Date());
+    const existing = snap.data() as { status?: string; draftText?: string; userId?: string; phone?: string };
+    const u = applyReviewDecision(existing, { decision, editedText }, reviewerUid, new Date());
     tx.update(ref, u);
-    return u;
+    return { update: u, draft: existing };
   });
 
   logAudit({
@@ -75,6 +85,22 @@ export const reviewProactiveDraft = functions.https.onCall(async (data, context)
     userId: reviewerUid,
     data: { draftId, edited: editedText !== undefined },
   }).catch(() => {});
+
+  // U9: a human rejecting a proactive draft is a production quality signal —
+  // queue a reference-only review candidate (enums + refs + hash, never text).
+  // Fail-soft: eval intake must never break the review decision itself.
+  if (decision === "reject") {
+    submitEvalCandidate({
+      capability: "proactive_send",
+      rootCause: "rejected_proactive_draft",
+      channel: "linq",
+      role: "client",
+      actorId: draft.userId || draft.phone || draftId,
+      sourceRefs: [`proactive_drafts/${draftId}`],
+      sourceContentHash: hashSourceContent([draft.draftText ?? ""]),
+      metricSnapshot: { chars: (draft.draftText ?? "").length },
+    }).catch((err) => console.warn("reviewProactiveDraft: eval candidate intake failed (non-fatal)", err));
+  }
 
   return { ok: true, status: update.status };
 });

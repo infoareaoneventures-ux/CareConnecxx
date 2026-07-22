@@ -2,6 +2,8 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { quickComplete } from "../utils/openaiClient";
 import { parseWellness, describeWellness } from "../agents/careEvidence";
+import { deriveCareInsights, concerningInsights } from "../agents/careInsights";
+import { decideForRecipient } from "./proactiveDecisionEngine";
 
 // Proactive Reflection — v1 (admin-review-first)
 //
@@ -52,6 +54,11 @@ export interface ReflectionDraft {
   draftText:    string;
   reason:       string;
   severity:     DraftSeverity;
+  /** U8: model-classified category, policy-gated before entering review. */
+  category:     ReflectionCategory;
+  /** Deterministic careInsights evidence count backing a health candidate. */
+  evidenceCount: number;
+  policyDisposition: "send" | "review_first";
   contextHash:  string;
   status:       "pending_review";
   createdAt:    string;
@@ -258,7 +265,13 @@ If nothing is worth surfacing:
 {"action":"noop"}
 
 If something is worth surfacing:
-{"action":"draft","draftText":"<the actual SMS Evia would send, in her voice — warm, short, names the specific thing>","reason":"<one sentence: what pattern you detected>","severity":"low|medium|high"}
+{"action":"draft","draftText":"<the actual SMS Evia would send, in her voice — warm, short, names the specific thing>","reason":"<one sentence: what pattern you detected>","severity":"low|medium|high","category":"health|visit|billing|milestone"}
+
+Category guide (pick exactly one):
+  • health    = wellness/medication/appetite/mood pattern in the journal
+  • visit     = an upcoming or completed visit issue (no-show risk, unconfirmed)
+  • billing   = a billing event the family will notice
+  • milestone = warmth, anniversary, positive moment
 
 Severity guide:
   • high   = safety / health concern that needs the family to act today
@@ -267,11 +280,14 @@ Severity guide:
 
 Be conservative. Drafts go to a human review queue, but bad drafts still cost reviewer attention.`;
 
+export type ReflectionCategory = "health" | "visit" | "billing" | "milestone";
+
 interface ReflectionResult {
   action: "noop" | "draft";
   draftText?: string;
   reason?:    string;
   severity?:  DraftSeverity;
+  category?:  ReflectionCategory;
 }
 
 export function parseReflectionOutput(raw: string): ReflectionResult | null {
@@ -290,7 +306,15 @@ export function parseReflectionOutput(raw: string): ReflectionResult | null {
     if (!draftText || !reason) return null;
     if (draftText.length > 320) return null; // SMS-shaped; longer is a bug
 
-    return { action: "draft", draftText, reason, severity };
+    // Missing/invalid category defaults to "health" — the CONSERVATIVE choice:
+    // health candidates face the deterministic-evidence gate (U8/R42), so an
+    // unclassified draft can never sneak past it.
+    const category: ReflectionCategory =
+      obj.category === "visit" || obj.category === "billing" || obj.category === "milestone"
+        ? obj.category
+        : "health";
+
+    return { action: "draft", draftText, reason, severity, category };
   } catch {
     return null;
   }
@@ -320,7 +344,7 @@ async function reflectForFamily(opts: {
   phone:    string;
   userId:   string;
   seniorId: string;
-}): Promise<"noop" | "skipped" | "drafted" | "error"> {
+}): Promise<"noop" | "skipped" | "drafted" | "suppressed" | "error"> {
   try {
     const snap   = await loadFamilySnapshot(opts.userId, opts.seniorId);
     // Skip families with zero activity in the window — nothing to reflect on.
@@ -338,15 +362,46 @@ async function reflectForFamily(opts: {
     const parsed = parseReflectionOutput(raw);
     if (!parsed || parsed.action === "noop") return "noop";
 
+    // U8 slice 2 (R40/R42): the reflection draft is now a CANDIDATE that must
+    // pass the unified proactive policy before it may enter the review queue.
+    // Health candidates carry deterministic careInsights evidence — an LLM
+    // hunch with zero recorded-negative-day support is suppressed here, never
+    // reviewed, never sent. First manifest source migrated to the engine.
+    const insightEvidence = parsed.category === "health"
+      ? concerningInsights(deriveCareInsights(snap.journal)).length
+      : 1; // non-health categories are grounded by their own loaders
+    const CATEGORY_MAP = { health: "health_pattern", visit: "visit_risk", billing: "billing_heads_up", milestone: "warmth" } as const;
+    const nowIso = new Date().toISOString();
+    const decision = decideForRecipient([{
+      source: "proactiveReflection",
+      category: CATEGORY_MAP[parsed.category!],
+      urgency: parsed.severity === "high" ? 3 : parsed.severity === "medium" ? 2 : 1,
+      evidenceCount: insightEvidence,
+      dedupeKey: contextHash,
+      createdAt: nowIso,
+      expiresAt: new Date(Date.now() + DEDUPE_TTL_MS).toISOString(),
+    }], { optionalSendsToday: 0, inDnd: false })[0];
+    if (decision.disposition !== "send" && decision.disposition !== "review_first") {
+      console.info("proactiveReflection.policy", {
+        disposition: decision.disposition,
+        reason: decision.reason,
+        category: parsed.category,
+      });
+      return "suppressed";
+    }
+
     const draft: ReflectionDraft = {
       userId:      opts.userId,
       phone:       opts.phone,
       draftText:   parsed.draftText!,
       reason:      parsed.reason!,
       severity:    parsed.severity!,
+      category:    parsed.category!,
+      evidenceCount: insightEvidence,
+      policyDisposition: decision.disposition,
       contextHash,
       status:      "pending_review",
-      createdAt:   new Date().toISOString(),
+      createdAt:   nowIso,
       inputs: {
         journalCount:  snap.journal.length,
         pastApptCount: snap.past.length,
@@ -365,14 +420,14 @@ async function reflectForFamily(opts: {
   }
 }
 
-async function runReflectionPass(): Promise<{ scanned: number; drafted: number; noop: number; skipped: number; errored: number }> {
+async function runReflectionPass(): Promise<{ scanned: number; drafted: number; noop: number; skipped: number; suppressed: number; errored: number }> {
   const sessionsSnap = await db.collection("agent_sessions")
     .where("optedOut", "==", false)
     .where("userType", "==", "client")
     .limit(MAX_FAMILIES_PER_RUN)
     .get();
 
-  const stats = { scanned: 0, drafted: 0, noop: 0, skipped: 0, errored: 0 };
+  const stats = { scanned: 0, drafted: 0, noop: 0, skipped: 0, suppressed: 0, errored: 0 };
 
   for (const doc of sessionsSnap.docs) {
     const session = doc.data() as Record<string, unknown>;
@@ -385,6 +440,7 @@ async function runReflectionPass(): Promise<{ scanned: number; drafted: number; 
     const outcome = await reflectForFamily({ phone: doc.id, userId, seniorId });
     if (outcome === "drafted") stats.drafted++;
     else if (outcome === "skipped") stats.skipped++;
+    else if (outcome === "suppressed") stats.suppressed++;
     else if (outcome === "error")   stats.errored++;
     else stats.noop++;
 

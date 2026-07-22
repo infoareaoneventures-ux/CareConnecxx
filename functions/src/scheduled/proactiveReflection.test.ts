@@ -157,6 +157,9 @@ describe("parseReflectionOutput", () => {
       draftText: "Hey — Marco's noted Mom barely touched breakfast 3 mornings in a row. Want me to mention it to Dr. Patel?",
       reason:    "3 consecutive days of low appetite in journal",
       severity:  "medium",
+      // U8: unclassified drafts default to "health" — the conservative bucket
+      // that faces the deterministic-evidence gate.
+      category:  "health",
     });
   });
 
@@ -183,6 +186,17 @@ describe("parseReflectionOutput", () => {
     const text = "x".repeat(500);
     const raw = JSON.stringify({ action: "draft", draftText: text, reason: "r", severity: "low" });
     expect(parseReflectionOutput(raw)).toBeNull();
+  });
+
+  it("parses an explicit category and defaults invalid ones to health (U8)", () => {
+    const mk = (category: unknown) => parseReflectionOutput(JSON.stringify({
+      action: "draft", draftText: "x", reason: "y", severity: "low", category,
+    }));
+    expect(mk("milestone")?.category).toBe("milestone");
+    expect(mk("visit")?.category).toBe("visit");
+    expect(mk("billing")?.category).toBe("billing");
+    expect(mk("potato")?.category).toBe("health");
+    expect(mk(undefined)?.category).toBe("health");
   });
 
   it("returns null on unknown action", () => {

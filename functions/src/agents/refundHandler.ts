@@ -56,6 +56,17 @@ export async function handleRefundRequest(
       .limit(5)
       .get();
 
+    // Childcare skip (plan 2026-07-22-002 U8): childcare refunds are policy-
+    // driven and requested in-app (v1-requestChildcareRefund) — the SMS refund
+    // flow stays senior-only until U10.
+    const childcareAppts = apptSnap.docs.filter((d) => d.data().careVertical === "child");
+    const seniorAppts = apptSnap.docs.filter((d) => d.data().careVertical !== "child");
+    if (seniorAppts.length === 0 && childcareAppts.length > 0) {
+      await sendMessage("Childcare visit refunds are requested from the booking in the app — open the app to start one.");
+      await db.collection("agent_sessions").doc(phone).update({ refundStep: admin.firestore.FieldValue.delete() });
+      return;
+    }
+
     if (apptSnap.empty) {
       const msgR1 = await generateCaraMessage({
         audience: "family",
@@ -68,7 +79,7 @@ export async function handleRefundRequest(
       return;
     }
 
-    const visits = apptSnap.docs.map((d, i) => {
+    const visits = seniorAppts.map((d, i) => {
       const data = d.data();
       return {
         index:         i + 1,

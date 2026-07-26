@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "./caraAgent";
 import { sendToPhone } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { conversationPartitionIdsForRead } from "./turnSourceKey";
 
 const db = admin.firestore();
 
@@ -205,16 +206,21 @@ export async function escalateIssue(issueLogId: string): Promise<void> {
   // composite. The timestamp>= inequality already excludes older/missing
   // messages, so ordering does not change whether a reply exists (limit(1)
   // existence check only).
-  const replied = await db.collection("agent_conversations")
-    .doc(issue.clientPhone ?? "")
-    .collection("messages")
-    .where("role",      "==", "user")
-    .where("timestamp", ">=", new Date(issue.familyNotifiedAt).getTime())
-    .orderBy("timestamp", "desc")
-    .limit(1)
-    .get();
+  const replySnaps = await Promise.all(
+    conversationPartitionIdsForRead(issue.clientPhone ?? "", "senior").map((partitionId) =>
+      db.collection("agent_conversations")
+        .doc(partitionId)
+        .collection("messages")
+        .where("role",      "==", "user")
+        .where("timestamp", ">=", new Date(issue.familyNotifiedAt).getTime())
+        .orderBy("timestamp", "desc")
+        .limit(1)
+        .get()),
+  );
+  const replied = replySnaps.some((replySnap) =>
+    replySnap.docs.some((doc) => doc.data().careVertical !== "child"));
 
-  if (!replied.empty) {
+  if (replied) {
     // Family responded — no escalation needed
     await snap.ref.update({ escalationLevel: 1, familyReplied: true });
     return;

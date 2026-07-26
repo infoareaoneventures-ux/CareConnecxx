@@ -61,11 +61,21 @@ export async function runProactiveDraftSenderPass(): Promise<SendStats> {
   for (const doc of snap.docs) {
     stats.scanned += 1;
     const d = doc.data() as {
-      phone?:      string;
-      draftText?:  string;
-      createdAt?:  string;
-      userId?:     string;
+      phone?:        string;
+      draftText?:    string;
+      createdAt?:    string;
+      userId?:       string;
+      careVertical?: string;
     };
+
+    // Childcare U10 (R54/AE16, defense in depth): NO writer creates childcare
+    // proactive drafts in this unit (childcare proactive templates are
+    // DEFERRED), so a childcare-stamped draft is a policy violation — skip it
+    // and leave it visible for the ops queue instead of sending.
+    if (d.careVertical === "child") {
+      console.warn("[proactiveDraftSender] childcare-stamped draft skipped — childcare proactive content is deferred (U10/R54)", { draftId: doc.id });
+      continue;
+    }
 
     if (!d.phone || !d.draftText) {
       // Defensive — should never happen if the reflection job is correct.

@@ -110,7 +110,11 @@ describe("handleCaregiverPermissionsReply — capability menu on completion (U3)
   it("fires the job fan-out only when the permissions flow completes (YES/NO collision fix)", async () => {
     await handleCaregiverPermissionsReply("+1555", "chat1", "YES", session("caregiver_permissions_arrival"), "cg1");
     // The fan-out is a fire-and-forget dynamic import — wait for it to land.
-    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"), {
+      // 1s (the default) is not enough for this fire-and-forget dynamic
+      // import under full-shard CPU contention — it caused false CI failures.
+      timeout: 15_000,
+    });
   });
 
   it("decline answer COMPLETES the flow — arrival question removed, arrival notifications always granted (2026-07-15)", async () => {
@@ -127,7 +131,11 @@ describe("handleCaregiverPermissionsReply — capability menu on completion (U3)
     expect(texts.some((t) => /automatically let the family know/i.test(t))).toBe(false);
     // Completion celebration + fan-out fire straight from the decline step.
     expect(texts.some((t) => /You're all set/i.test(t))).toBe(true);
-    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"), {
+      // 1s (the default) is not enough for this fire-and-forget dynamic
+      // import under full-shard CPU contention — it caused false CI failures.
+      timeout: 15_000,
+    });
   });
 });
 
@@ -158,7 +166,11 @@ describe("permissions question-detour bailout (max ONE re-ask)", () => {
     // No re-ask of the pending permission question — the flow bailed out.
     expect(texts.some((t) => t.includes("pass on job requests"))).toBe(false);
     // The session is unblocked — job fan-out fires like any other completion.
-    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"));
+    await vi.waitFor(() => expect(notifyNewCaregiverOfJobs).toHaveBeenCalledWith("cg1"), {
+      // 1s (the default) is not enough for this fire-and-forget dynamic
+      // import under full-shard CPU contention — it caused false CI failures.
+      timeout: 15_000,
+    });
   });
 
   it("caregiver: bailout mid-flow (legacy arrival step) keeps the already-answered decline permission untouched", async () => {

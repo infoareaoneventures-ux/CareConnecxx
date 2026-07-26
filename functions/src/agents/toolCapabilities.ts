@@ -1,6 +1,11 @@
 import type { Intent } from "./intentClassifier";
 import type { McpTool } from "../mcp/server";
 import { MEDICAL_TOOL_NAMES, medicalActionsAvailable } from "./medicalBoundary";
+import {
+  CHILDCARE_TOOL_NAMES,
+  CHILDCARE_SHARED_TOOL_NAMES,
+  isAllowedInChildcareTurn,
+} from "../mcp/childcareTools";
 
 // Six capability buckets used to filter the 80+ MCP tools before each Sonnet
 // turn. The goal is to reduce the tool surface Claude has to attend to per
@@ -358,11 +363,37 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // confirmation as done would be believed and acted on.
   "archive_senior_profile", "update_family_member", "cancel_interview",
   "delete_memory_file", "confirm_cash_received",
+  // Childcare U10 (R52): falsely reporting a childcare cancellation or schedule
+  // change as done would be believed and acted on by a family.
+  "cancel_childcare_booking", "request_childcare_booking_change",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */
 export function isHighStakesMutation(toolName: string): boolean {
   return HIGH_STAKES_MUTATIONS.has(toolName);
+}
+
+// ── Childcare vertical pack (plan 2026-07-22-002, U10 / R51) ─────────────────
+//
+// Tool filtering ORDER on a childcare turn (R51): authenticated role (client)
+// → vertical (childcare pack replaces the senior surface entirely — this
+// filter) → authority (checkAuthority per child INSIDE each tool) → action
+// risk (pendingActions confirmation gate) → provider health (eligibility
+// recheck inside the booking cores) → objective pack (the childcare pack IS
+// the objective surface for the pilot) → intent (deliberately no further
+// intent narrowing — the pack is already minimal).
+//
+// Childcare tools are NOT tagged into the senior capability buckets above:
+// they are selected by VERTICAL, never by intent, and never appear on a
+// senior turn (CLIENT_TOOLS/CAREGIVER_TOOLS exclude them structurally).
+
+export { isAllowedInChildcareTurn };
+
+/** Vertical filter: the childcare pack + vertical-neutral loop/support tools. */
+export function selectChildcareTools<T extends { name: string }>(allTools: readonly T[]): T[] {
+  return allTools.filter(
+    (t) => CHILDCARE_TOOL_NAMES.has(t.name) || CHILDCARE_SHARED_TOOL_NAMES.has(t.name),
+  );
 }
 
 /**
@@ -393,9 +424,11 @@ export function selectToolsForIntent(
   });
 }
 
-/** Sanity check: every tool in MCP_TOOLS should be either tagged or core. */
+/** Sanity check: every tool in MCP_TOOLS should be either tagged or core.
+ *  Childcare tools are exempt: they are vertical-selected (never intent-
+ *  filtered) and structurally absent from every senior surface. */
 export function findUntaggedTools(allToolNames: string[]): string[] {
   return allToolNames.filter(
-    n => !CORE_TOOL_NAMES.has(n) && !TOOL_CAPABILITIES[n],
+    n => !CORE_TOOL_NAMES.has(n) && !TOOL_CAPABILITIES[n] && !CHILDCARE_TOOL_NAMES.has(n),
   );
 }

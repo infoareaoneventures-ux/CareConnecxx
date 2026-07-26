@@ -62,6 +62,13 @@ export async function createJobPost(
   clientId: string
 ): Promise<void> {
   try {
+    // Childcare U6 (plan 2026-07-22-002, R32/R33): this writer produces the
+    // SENIOR web-contract job shape (clientName, phone, location string) with
+    // no privacy projection — childcare demand never flows through it.
+    if (intakeData?.careVertical === "child") {
+      console.warn(`[createJobPost] childcare intake ${intakeId} refused — childcare jobs are created by v1-createChildcareJobPost`);
+      return;
+    }
     let lat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat ?? null;
     let lng = intakeData.lng ?? intakeData.longitude ?? intakeData.location?.longitude ?? intakeData.location?.lng ?? null;
     const city = intakeData.city ?? intakeData.location?.city ?? undefined;
@@ -124,6 +131,13 @@ export async function notifyAreaCaregivers(
   intakeData: any,
   clientId: string
 ): Promise<number> {
+  // Childcare U6 (R34/KTD11): this fan-out has NO eligibility gate — it texts
+  // every active caregiver in radius. Childcare jobs are notified only through
+  // the eligibility-gated childcare fan-out (jobCallables). Fail closed.
+  if (intakeData?.careVertical === "child") {
+    console.warn(`[notifyAreaCaregivers] childcare job ${jobId} refused — childcare notifications are eligibility-gated (R34)`);
+    return 0;
+  }
   // Coord chain accepts BOTH shapes: web-contract top-level lat/lng (all
   // writers since 2026-07-10) and the legacy location-object docs.
   const clientLat = intakeData.lat ?? intakeData.latitude ?? intakeData.location?.latitude ?? intakeData.location?.lat;
@@ -655,6 +669,9 @@ async function notifyFamilyOfApplicant(
 
 export async function closeJobPost(clientId: string): Promise<void> {
   try {
+    // Childcare U6: the status=="open" filter structurally excludes childcare
+    // jobs (they are status "open_childcare" — closed via
+    // v1-closeChildcareJobPost); the explicit skip below is defense in depth.
     const snap = await db.collection("job_posts")
       .where("clientId", "==", clientId)
       .where("status",   "==", "open")
@@ -663,6 +680,7 @@ export async function closeJobPost(clientId: string): Promise<void> {
       .get();
 
     if (snap.empty) return;
+    if (snap.docs[0].data()?.careVertical === "child") return;
 
     await snap.docs[0].ref.update({
       status:   "closed",

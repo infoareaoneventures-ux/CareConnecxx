@@ -95,6 +95,19 @@ describe("turnCheckpoint", () => {
       expect(cp).toBeNull();
     });
 
+    it("keeps senior and child checkpoints independent for the same phone and text", async () => {
+      const textHash = hashText("same inbound");
+      await writeCheckpoint(PHONE, "loop_complete", textHash, "senior reply", "senior");
+      await writeCheckpoint(PHONE, "loop_complete", textHash, "child reply", "child");
+
+      expect((await loadCheckpoint(PHONE, "same inbound", "senior"))?.reply).toBe("senior reply");
+      expect((await loadCheckpoint(PHONE, "same inbound", "child"))?.reply).toBe("child reply");
+
+      await clearCheckpoint(PHONE, "child");
+      expect(await loadCheckpoint(PHONE, "same inbound", "child")).toBeNull();
+      expect((await loadCheckpoint(PHONE, "same inbound", "senior"))?.reply).toBe("senior reply");
+    });
+
     it("does not write an empty reply", async () => {
       await writeCheckpoint(PHONE, "loop_complete", hashText("hi"), "");
       expect(hoisted.store.size).toBe(0);

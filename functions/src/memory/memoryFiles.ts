@@ -8,6 +8,7 @@ import {
   rankBySimilarity,
   EMBED_MODEL,
 } from "./embeddings";
+import { conversationPartitionIdsForRead } from "../agents/turnSourceKey";
 
 const storage = admin.storage();
 const db = admin.firestore();
@@ -516,13 +517,17 @@ export async function reconcileFactAcrossMemoryFiles(
     .where("userId", "==", userId)
     .get();
   for (const session of sessions.docs) {
-    const summaries = await db
-      .collection("agent_conversations")
-      .doc(session.id)
-      .collection("messages")
-      .where("role", "==", "summary")
-      .get();
-    await Promise.all(summaries.docs.map((summary) => summary.ref.delete()));
+    const summarySnaps = await Promise.all(
+      conversationPartitionIdsForRead(session.id, "senior").map((partitionId) =>
+        db.collection("agent_conversations")
+          .doc(partitionId)
+          .collection("messages")
+          .where("role", "==", "summary")
+          .get()),
+    );
+    await Promise.all(summarySnaps.flatMap((snap) => snap.docs)
+      .filter((summary) => summary.data().careVertical !== "child")
+      .map((summary) => summary.ref.delete()));
   }
 
   return result;
@@ -732,7 +737,19 @@ export interface InitialMemoryData {
 export async function initializeMemoryFiles(
   userId: string,
   data: InitialMemoryData,
+  // Childcare U10 (R50/KTD17): callers holding a session pass it so the
+  // eligibility decision precedes the Storage bootstrap. Absent = legacy
+  // senior caller (qaAgent's childcare branch never reaches this function).
+  opts?: { session?: import("./memoryEligibility").MemoryEligibilitySessionLike },
 ): Promise<void> {
+  if (opts?.session) {
+    const { decideMemoryEligibility, logMemoryDenial } = await import("./memoryEligibility");
+    const decision = decideMemoryEligibility(opts.session);
+    if (!decision.subsystems.memoryFiles) {
+      logMemoryDenial("initialize_memory_files", decision);
+      return;
+    }
+  }
   const seniorName = data.seniorName ?? "your loved one";
   const clientName = data.clientName ?? "";
   const relationship = data.relationship ?? "family member";
@@ -900,7 +917,19 @@ const RECONCILABLE_FILES: CanonicalMemoryFile[] = [
 export async function consolidateMemoryForUser(
   userId: string,
   phone?: string,
+  // Childcare U10 (R50/KTD17): the nightly job passes the session doc it
+  // already iterated so a denied session is refused HERE too (defense in
+  // depth under the job-level skip).
+  opts?: { session?: import("./memoryEligibility").MemoryEligibilitySessionLike },
 ): Promise<void> {
+  if (opts?.session) {
+    const { decideMemoryEligibility, logMemoryDenial } = await import("./memoryEligibility");
+    const decision = decideMemoryEligibility(opts.session);
+    if (!decision.subsystems.memoryFiles || !decision.subsystems.summaries) {
+      logMemoryDenial("consolidate_memory_for_user", decision);
+      return;
+    }
+  }
   // U4a/R23: never consolidate while a correction/forget is reconciling — a
   // nightly pass over old conversation rows could re-write the very fact being
   // removed. The user is simply skipped this run; the worker (U4b) marks source
@@ -925,18 +954,23 @@ export async function consolidateMemoryForUser(
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).getTime();
 
-  const msgSnap = await db
-    .collection("agent_conversations")
-    .doc(conversationKey)
-    .collection("messages")
-    .where("timestamp", ">=", sevenDaysAgo)
-    .orderBy("timestamp", "asc")
-    .limit(60)
-    .get();
+  const msgSnaps = await Promise.all(
+    conversationPartitionIdsForRead(conversationKey, "senior").map((partitionId) =>
+      db.collection("agent_conversations")
+        .doc(partitionId)
+        .collection("messages")
+        .where("timestamp", ">=", sevenDaysAgo)
+        .orderBy("timestamp", "asc")
+        .limit(60)
+        .get()),
+  );
+  const messageDocs = msgSnaps.flatMap((snap) => snap.docs)
+    .filter((doc) => doc.data().careVertical !== "child")
+    .sort((a, b) => Number(a.data().timestamp ?? 0) - Number(b.data().timestamp ?? 0))
+    .slice(-60);
+  if (messageDocs.length === 0) return;
 
-  if (msgSnap.empty) return;
-
-  const events = msgSnap.docs
+  const events = messageDocs
     .filter((d) => d.data().role === "user" || d.data().role === "assistant")
     // R23/KTD16 (U4b): rows the correction/forget worker marked as containing a
     // corrected/forgotten fact never enter the consolidation prompt — nightly

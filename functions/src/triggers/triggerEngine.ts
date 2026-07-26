@@ -8,8 +8,45 @@ import { sendToPhone } from "../linq/client";
 import { decideArrivalCapture } from "./noShowPolicy";
 import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
 import { gateOptionalSend } from "../scheduled/engineGate";
+import { conversationPartitionIdsForRead } from "../agents/turnSourceKey";
 
 const db = admin.firestore();
+
+async function hasSeniorConversationReplySince(phone: string, sinceMs: number): Promise<boolean> {
+  const snaps = await Promise.all(
+    conversationPartitionIdsForRead(phone, "senior").map((partitionId) =>
+      db.collection("agent_conversations")
+        .doc(partitionId)
+        .collection("messages")
+        .where("role", "==", "user")
+        .where("timestamp", ">=", sinceMs)
+        .limit(1)
+        .get()),
+  );
+  return snaps.some((snap) =>
+    snap.docs.some((doc) => doc.data().careVertical !== "child"));
+}
+
+async function getRecentSeniorConversationRows(
+  phone: string,
+  limit: number,
+): Promise<Array<{ role: string; content: string }>> {
+  const snaps = await Promise.all(
+    conversationPartitionIdsForRead(phone, "senior").map((partitionId) =>
+      db.collection("agent_conversations")
+        .doc(partitionId)
+        .collection("messages")
+        .orderBy("timestamp", "desc")
+        .limit(limit)
+        .get()),
+  );
+  return snaps.flatMap((snap) => snap.docs)
+    .filter((doc) => doc.data().careVertical !== "child")
+    .sort((a, b) => Number(b.data().timestamp ?? 0) - Number(a.data().timestamp ?? 0))
+    .slice(0, limit)
+    .reverse()
+    .map((doc) => ({ role: doc.data().role as string, content: doc.data().content as string }));
+}
 
 const SYSTEM_DIRECTIVE_PREFIXES = [
   "retry_extend_schedule:",
@@ -424,16 +461,12 @@ export const runTriggerEngine = functions.pubsub
       // Evia about anything must not kill an interview reminder or a
       // caregiver check-in (isReplyExempt).
       if (!isReplyExempt(trigger)) {
-        const lastReply = await db
-          .collection("agent_conversations")
-          .doc(trigger.phone)
-          .collection("messages")
-          .where("role",      "==", "user")
-          .where("timestamp", ">=", new Date(trigger.createdAt).getTime())
-          .limit(1)
-          .get();
+        const lastReply = await hasSeniorConversationReplySince(
+          trigger.phone,
+          new Date(trigger.createdAt).getTime(),
+        );
 
-        if (!lastReply.empty) {
+        if (lastReply) {
           // User already replied — cancel the trigger
           await doc.ref.update({ cancelledAt: now });
           continue;
@@ -578,14 +611,7 @@ export const runTriggerEngine = functions.pubsub
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 
           // Load last 5 conversation turns for suppression check
-          const recentMsgs = await db
-            .collection("agent_conversations")
-            .doc(trigger.phone)
-            .collection("messages")
-            .orderBy("timestamp", "desc")
-            .limit(5)
-            .get()
-            .then(s => s.docs.map(d => ({ role: d.data().role as string, content: d.data().content as string })).reverse())
+          const recentMsgs = await getRecentSeniorConversationRows(trigger.phone, 5)
             .catch(() => [] as Array<{ role: string; content: string }>);
 
           // Context-aware suppression: skip if topic already addressed
@@ -907,15 +933,12 @@ async function escalateHealthAlert(seniorId: string, alertDocId: string, familyP
 
   // Check if the family replied after the alert was sent
   const sentAt  = alert.sentAt as string;
-  const replied = await db.collection("agent_conversations")
-    .doc(familyPhone)
-    .collection("messages")
-    .where("role",      "==", "user")
-    .where("timestamp", ">=", new Date(sentAt).getTime())
-    .limit(1)
-    .get();
+  const replied = await hasSeniorConversationReplySince(
+    familyPhone,
+    new Date(sentAt).getTime(),
+  );
 
-  if (!replied.empty) {
+  if (replied) {
     // Family responded — no escalation needed
     await alertSnap.ref.update({ escalated: false, familyReplied: true });
     return;

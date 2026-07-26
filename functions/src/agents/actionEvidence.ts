@@ -42,6 +42,15 @@ export interface EvidenceReceipt {
   /** How long this evidence may back a claim before a fresh read is needed. */
   freshUntilMs: number;
   idempotencyKey?: string;
+  /** Immutable pending-operation identity when the action required approval. */
+  operationId?: string;
+  /**
+   * Typed vertical stamp (childcare U10/KTD18): evidence for a childcare
+   * action is stamped "child" so downstream consumers (audit summaries,
+   * claim surfaces) can never attribute it to a senior recipient. Additive;
+   * legacy receipts carry no stamp. Never recipient content (R57).
+   */
+  careVertical?: "senior" | "child";
 }
 
 export interface PostconditionContext {
@@ -76,7 +85,13 @@ const CLAIM_BY_STATUS: Record<EvidenceStatus, SafeClaimCode> = {
 };
 
 /** Receipt for actions with no declared postcondition yet (migration state). */
-export function handlerOutputReceipt(actionName: string, idempotencyKey?: string, now: Date = new Date()): EvidenceReceipt {
+export function handlerOutputReceipt(
+  actionName: string,
+  idempotencyKey?: string,
+  now: Date = new Date(),
+  careVertical?: "senior" | "child",
+  operationId?: string,
+): EvidenceReceipt {
   return {
     actionName,
     kind: "handler_output",
@@ -85,6 +100,8 @@ export function handlerOutputReceipt(actionName: string, idempotencyKey?: string
     verifiedAt: now.toISOString(),
     freshUntilMs: now.getTime() + EVIDENCE_FRESHNESS_MS,
     idempotencyKey,
+    ...(operationId ? { operationId } : {}),
+    ...(careVertical ? { careVertical } : {}),
   };
 }
 
@@ -93,7 +110,13 @@ export async function verifyPostcondition<TInput, TOutput>(
   spec: PostconditionSpec<TInput, TOutput>,
   input: TInput,
   output: TOutput,
-  opts?: { db?: admin.firestore.Firestore; now?: Date; idempotencyKey?: string },
+  opts?: {
+    db?: admin.firestore.Firestore;
+    now?: Date;
+    idempotencyKey?: string;
+    careVertical?: "senior" | "child";
+    operationId?: string;
+  },
 ): Promise<EvidenceReceipt> {
   const now = opts?.now ?? new Date();
   const base = {
@@ -103,6 +126,8 @@ export async function verifyPostcondition<TInput, TOutput>(
     verifiedAt: now.toISOString(),
     freshUntilMs: now.getTime() + EVIDENCE_FRESHNESS_MS,
     idempotencyKey: opts?.idempotencyKey,
+    ...(opts?.operationId ? { operationId: opts.operationId } : {}),
+    ...(opts?.careVertical ? { careVertical: opts.careVertical } : {}),
   };
   try {
     const result = await spec.verify(input, output, { db: opts?.db ?? admin.firestore(), now });

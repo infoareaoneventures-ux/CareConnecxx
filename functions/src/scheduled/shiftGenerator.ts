@@ -118,6 +118,18 @@ export const onBookingAccepted = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     const after  = change.after.exists  ? change.after.data()  : null;
 
+    // Childcare U7 (plan 2026-07-22-002, R46/KTD12): childcare-vertical
+    // bookings NEVER flow through the senior shift generator (its shiftBase
+    // copies address/careNeeds/emergencyContact — child-sensitive by
+    // definition). They branch to the guarded, flag-gated childcare handler
+    // (vertical-stamped, child-safe shift docs) and return BEFORE any senior
+    // logic. Senior docs are untouched.
+    if (after && after.careVertical === 'child') {
+      const { handleChildcareBookingRequestWrite } = await import('../childcare/bookingCallables');
+      await handleChildcareBookingRequestWrite(context.params.bookingId, after).catch(() => {});
+      return;
+    }
+
     // Only fire when status is 'accepted'
     if (!after || after.status !== 'accepted') return;
 
@@ -194,12 +206,22 @@ export const generateRollingShifts = functions.pubsub
     const today = new Date().toISOString().split('T')[0];
     const threshold = addDays(today, 14);
 
+    // Childcare maintenance is an independent durable phase. It runs before
+    // every senior early return and records its own retry state.
+    let childcareProcessed = 0;
+    try {
+      const { sweepChildcareRollingShifts } = await import('../childcare/bookingCallables');
+      childcareProcessed = await sweepChildcareRollingShifts();
+    } catch (err) {
+      console.error('generateRollingShifts: childcare phase failed', err);
+    }
+
     const bookingsSnap = await db.collection('booking_requests')
       .where('status', '==', 'accepted')
       .get();
 
     if (bookingsSnap.empty) {
-      console.log('generateRollingShifts: no accepted bookings');
+      console.log(`generateRollingShifts: no accepted senior bookings; childcare processed ${childcareProcessed}`);
       return;
     }
 
@@ -211,11 +233,14 @@ export const generateRollingShifts = functions.pubsub
       console.log('generateRollingShifts: running one-time cleanup...');
       const scheduledSnap = await db.collection('shifts').where('status', '==', 'scheduled').get();
       let deleted = 0;
-      for (let i = 0; i < scheduledSnap.docs.length; i += 499) {
+      const seniorScheduled = scheduledSnap.docs.filter(
+        (doc) => doc.data()?.careVertical !== 'child',
+      );
+      for (let i = 0; i < seniorScheduled.length; i += 499) {
         const batch = db.batch();
-        scheduledSnap.docs.slice(i, i + 499).forEach(d => batch.delete(d.ref));
+        seniorScheduled.slice(i, i + 499).forEach(d => batch.delete(d.ref));
         await batch.commit();
-        deleted += Math.min(499, scheduledSnap.docs.length - i);
+        deleted += Math.min(499, seniorScheduled.length - i);
       }
       console.log(`generateRollingShifts: deleted ${deleted} bad shifts`);
 
@@ -242,6 +267,16 @@ export const generateRollingShifts = functions.pubsub
       try {
         const booking = bookingDoc.data();
         const bookingId = bookingDoc.id;
+
+        // Childcare U7: childcare bookings top up through the guarded,
+        // flag-gated childcare generator (vertical-stamped shifts, no senior
+        // fields) — never the senior shiftBase below.
+        if (booking.careVertical === 'child') {
+          const { ensureChildcareRollingShifts } = await import('../childcare/bookingCallables');
+          totalCreated += await ensureChildcareRollingShifts(bookingId, booking).catch(() => 0);
+          continue;
+        }
+
         const endDate: string | null =
           booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
 
@@ -270,5 +305,5 @@ export const generateRollingShifts = functions.pubsub
       }
     }
 
-    console.log(`generateRollingShifts: created ${totalCreated} shifts`);
+    console.log(`generateRollingShifts: created ${totalCreated} senior shifts; childcare processed ${childcareProcessed}`);
   });

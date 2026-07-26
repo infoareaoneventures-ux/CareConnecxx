@@ -21,6 +21,12 @@ import {
   TRANSIENT_TOOL_TTL_MS,
 } from "../memory/memoryFiles";
 import { TERMINAL_MEMORY_SYNC_STATUS } from "../memory/memoryOperations";
+import {
+  conversationStateStamp,
+  deriveConversationPartitionId,
+} from "./turnSourceKey";
+import type { CareVertical } from "../data/contract";
+import { MEMORY_ELIGIBILITY_POLICY_VERSION } from "../memory/memoryEligibility";
 
 const db = admin.firestore();
 
@@ -95,11 +101,15 @@ export function composeHistoryWindow(rows: HistoryRow[]): HistoryRow[] {
 // Returns whether a rollup actually happened (messages were folded into the
 // summary row) so callers can record `historyRolledUp` telemetry — false for
 // every early-return (below trigger, nothing to fold, empty/failed summary).
-export async function maybeRollUpHistory(phone: string): Promise<boolean> {
+export async function maybeRollUpHistory(
+  phone: string,
+  careVertical: CareVertical = "senior",
+): Promise<boolean> {
   try {
+    const partitionId = deriveConversationPartitionId(phone, careVertical);
     const col = db
       .collection("agent_conversations")
-      .doc(phone)
+      .doc(partitionId)
       .collection("messages");
 
     // Cheap aggregation gate — avoids reading every message on turns that don't need a rollup.
@@ -151,8 +161,10 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
       // trusted context, so it must record only transcript facts and never
       // shed named entities — dropping pleasantries must not license
       // dropping a name, an amount, or a promise.
-      "You maintain a running summary of an ongoing SMS conversation between a family and Evia, a " +
-        "caregiving assistant. Merge the existing summary with the new messages into ONE concise summary " +
+      (careVertical === "child"
+        ? "You maintain a short-lived operational summary of an adult childcare-coordination conversation. "
+        : "You maintain a running summary of an ongoing SMS conversation between a family and Evia, a caregiving assistant. ") +
+        "Merge the existing summary with the new messages into ONE concise summary " +
         "(max 200 words). Record ONLY facts present in the existing summary or the new messages — never infer or invent. " +
         "Preserve durable facts, decisions, preferences, and open threads. " +
         "Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. " +
@@ -171,6 +183,15 @@ export async function maybeRollUpHistory(phone: string): Promise<boolean> {
       role: "summary",
       content: newSummary.trim(),
       timestamp: Date.now(),
+      ...conversationStateStamp(careVertical),
+      ...(careVertical === "child"
+        ? {
+            memoryExcluded: true,
+            reason: "childcare_vertical",
+            policyVersion: MEMORY_ELIGIBILITY_POLICY_VERSION,
+            decidedAt: new Date().toISOString(),
+          }
+        : {}),
     });
     for (const d of toFold) batch.delete(d.ref);
     await batch.commit();

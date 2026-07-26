@@ -86,7 +86,7 @@ export const onRefundRequestWrite = functions.firestore
     await processApprovedRefund(context.params.requestId);
   });
 
-async function claimApprovedRefund(requestId: string): Promise<{
+export async function claimApprovedRefund(requestId: string): Promise<{
   request: Record<string, any>;
   shift: Record<string, any>;
   amountCents: number;
@@ -163,7 +163,7 @@ async function claimApprovedRefund(requestId: string): Promise<{
   });
 }
 
-async function processApprovedRefund(requestId: string): Promise<void> {
+export async function processApprovedRefund(requestId: string): Promise<void> {
   const claim = await claimApprovedRefund(requestId);
   if (!claim) return;
 
@@ -174,16 +174,25 @@ async function processApprovedRefund(requestId: string): Promise<void> {
   let reversalId: string | null = null;
 
   try {
+    // Childcare U8 (R39/R57): childcare refunds carry the booking correlation
+    // on top of the senior keys (opaque IDs only). Senior metadata unchanged.
+    const refundMetadata: Record<string, string> = {
+      requestId,
+      clientId: String(request.clientId ?? ""),
+      appointmentId: String(request.appointmentId),
+      paymentGeneration: String(shift.paymentGeneration ?? 1),
+      ...(shift.careVertical === "child"
+        ? {
+            careVertical: "child",
+            childcareBookingId: String(shift.childcareBookingId ?? ""),
+          }
+        : {}),
+    };
     const refund = await getStripe().refunds.create({
       payment_intent: shift.stripeChargeId,
       amount: amountCents,
       reason: "requested_by_customer",
-      metadata: {
-        requestId,
-        clientId: String(request.clientId ?? ""),
-        appointmentId: String(request.appointmentId),
-        paymentGeneration: String(shift.paymentGeneration ?? 1),
-      },
+      metadata: refundMetadata,
     }, { idempotencyKey: `shift-refund-${requestId}` });
     stripeRefundId = refund.id;
 
@@ -233,16 +242,30 @@ async function processApprovedRefund(requestId: string): Promise<void> {
       }, { merge: true });
     });
 
-    const clientSnap = await db.collection("users").doc(String(request.clientId ?? "")).get();
-    const clientPhone = clientSnap.data()?.phone;
-    if (typeof clientPhone === "string" && clientPhone) {
-      await sendViaInteractionAgent(clientPhone, {
-        content: `Your $${(amountCents / 100).toFixed(2)} refund was processed. It may take 5-10 business days to appear.`,
-        urgency: "standard",
-        sourceAgent: "refund_processor",
-        canDrop: false,
-        preferredService: "SMS",
+    if (shift.careVertical === "child") {
+      // Childcare U8: generic child-safe IN-APP notice (Evia SMS flows for
+      // childcare are U10). Amount + status only — never child data.
+      await db.collection("users").doc(String(request.clientId ?? "")).collection("notifications").add({
+        userId: String(request.clientId ?? ""),
+        type: "childcare_refund_processed",
+        title: "Refund Processed",
+        body: `Your $${(amountCents / 100).toFixed(2)} refund was processed. It may take 5-10 business days to appear.`,
+        data: { refId: String(request.appointmentId) },
+        isRead: false,
+        createdAt: new Date().toISOString(),
       }).catch(() => {});
+    } else {
+      const clientSnap = await db.collection("users").doc(String(request.clientId ?? "")).get();
+      const clientPhone = clientSnap.data()?.phone;
+      if (typeof clientPhone === "string" && clientPhone) {
+        await sendViaInteractionAgent(clientPhone, {
+          content: `Your $${(amountCents / 100).toFixed(2)} refund was processed. It may take 5-10 business days to appear.`,
+          urgency: "standard",
+          sourceAgent: "refund_processor",
+          canDrop: false,
+          preferredService: "SMS",
+        }).catch(() => {});
+      }
     }
   } catch (error) {
     const now = new Date().toISOString();

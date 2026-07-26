@@ -19,10 +19,30 @@
 //      from the family won't re-trigger anything.
 
 import * as admin from "firebase-admin";
+import { createHash } from "crypto";
 
 const db = admin.firestore();
 
 export const PENDING_ACTION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+export interface PendingChildAuthorityBinding {
+  childId: string;
+  scope: "cancellation";
+  accessVersion: number;
+}
+
+export interface PendingOperationIdentity {
+  schema: "pending-operation-v1";
+  operationId: string;
+  principalId: string;
+  careVertical: "senior" | "child";
+  objectType: string;
+  objectId: string;
+  actionName: string;
+  actionSchemaVersion: 1;
+  sourceTurnKey: string;
+  expiresAt: string;
+}
 
 export interface PendingAction {
   id:           string;
@@ -47,6 +67,19 @@ export interface PendingAction {
   // ── Exactly-once (H-U5) ─────────────────────────────────────────────────────
   // Set when the action is claimed (awaiting → executing) just before dispatch.
   executingStartedAt?: string;
+  /** New actions are partitioned by vertical; legacy rows without this field are senior. */
+  careVertical?: "senior" | "child";
+  childcareBookingId?: string;
+  childAuthorityBindings?: PendingChildAuthorityBinding[];
+  operation?: PendingOperationIdentity;
+  terminalEvidence?: {
+    operationId: string;
+    status: "executed" | "failed";
+    safeClaimCode?: string;
+    evidenceStatus?: string;
+    targetRef?: string;
+    settledAt: string;
+  };
 }
 
 // Set of tool names that ALWAYS require confirmation regardless of args.
@@ -73,6 +106,10 @@ const ALWAYS_CONFIRM = new Set<string>([
   // visibility, and deleting a memory file destroys content + its search index.
   "archive_senior_profile",
   "delete_memory_file",
+  // Childcare U10 (R51/R52): cancelling a childcare booking revokes provider
+  // safety/conversation access and triggers the cancellation-fee policy —
+  // always round-trip an explicit family YES.
+  "cancel_childcare_booking",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
@@ -186,13 +223,37 @@ function isHealthcareWriteAction(toolName: string, toolInput: Record<string, unk
     (toolInput.loginAction === "schedule_appointment" || toolInput.loginAction === "pharmacy_refill");
 }
 
+function resolveOperationObject(
+  toolName: string,
+  input: Record<string, unknown>,
+): { type: string; id: string } {
+  const candidates: Array<[string, string]> = [
+    ["childcare_booking", String(input.bookingId ?? "")],
+    ["appointment", String(input.appointmentId ?? "")],
+    ["reminder", String(input.reminderId ?? "")],
+    ["subscription", String(input.subscriptionId ?? input.userId ?? "")],
+    ["review", String(input.reviewId ?? "")],
+    ["job", String(input.jobId ?? "")],
+    ["shift", String(input.shiftId ?? "")],
+    ["user", String(input.targetUserId ?? input.memberId ?? "")],
+  ];
+  const match = candidates.find(([, id]) => id.trim().length > 0);
+  return match
+    ? { type: match[0], id: match[1].trim() }
+    : { type: "account", id: toolName };
+}
+
 export async function proposePendingAction(params: {
   phone:     string;
   userId?:   string;
   toolName:  string;
   toolInput: Record<string, unknown>;
+  careVertical?: "senior" | "child";
+  sourceTurnKey?: string;
 }): Promise<PendingAction> {
   const now = Date.now();
+  const expiresAt = new Date(now + PENDING_ACTION_TTL_MS).toISOString();
+  const careVertical = params.careVertical === "child" ? "child" : "senior";
 
   // Healthcare write actions must be approved by the ACCOUNT HOLDER, not whoever
   // triggered them (H-U4). Key the doc under the approver's phone so their YES
@@ -214,6 +275,96 @@ export async function proposePendingAction(params: {
     docPhone = approverPhone;
   }
 
+  let childBinding:
+    | {
+        careVertical: "child";
+        childcareBookingId: string;
+        childAuthorityBindings: PendingChildAuthorityBinding[];
+      }
+    | undefined;
+  if (params.toolName === "cancel_childcare_booking") {
+    if (careVertical !== "child") {
+      throw new Error("pendingActions: childcare action proposed outside the child vertical");
+    }
+    const bookingId = String(params.toolInput.bookingId ?? "").trim();
+    if (!params.userId || !bookingId) {
+      throw new Error("pendingActions: childcare cancellation requires userId and bookingId");
+    }
+    const bookingSnap = await db.collection("booking_requests").doc(bookingId).get();
+    const booking = bookingSnap.data() ?? {};
+    const childIds = Array.isArray(booking.childIds)
+      ? booking.childIds.map((id: unknown) => String(id).trim()).filter(Boolean)
+      : [];
+    if (
+      !bookingSnap.exists ||
+      booking.careVertical !== "child" ||
+      booking.clientId !== params.userId ||
+      childIds.length === 0
+    ) {
+      throw new Error("pendingActions: childcare booking is not authorized for this user");
+    }
+    const bindings: PendingChildAuthorityBinding[] = [];
+    for (const childId of childIds) {
+      const authoritySnap = await db
+        .collection("guardian_authorities")
+        .doc(`${childId}__${params.userId}`)
+        .get();
+      const authority = authoritySnap.data() ?? {};
+      if (
+        !authoritySnap.exists ||
+        authority.state !== "active" ||
+        !Array.isArray(authority.scopes) ||
+        !authority.scopes.includes("cancellation") ||
+        !Number.isFinite(Number(authority.accessVersion))
+      ) {
+        throw new Error("pendingActions: childcare authority denied");
+      }
+      bindings.push({
+        childId,
+        scope: "cancellation",
+        accessVersion: Number(authority.accessVersion),
+      });
+    }
+    childBinding = {
+      careVertical: "child",
+      childcareBookingId: bookingId,
+      childAuthorityBindings: bindings,
+    };
+  }
+
+  const object = resolveOperationObject(params.toolName, params.toolInput);
+  const principalId = String(params.userId ?? params.phone).trim();
+  const sourceTurnKey = String(
+    params.sourceTurnKey ??
+      `direct:${createHash("sha256")
+        .update(`${params.phone}|${params.toolName}|${JSON.stringify(params.toolInput)}`)
+        .digest("hex")
+        .slice(0, 24)}`,
+  ).trim();
+  if (!principalId) throw new Error("pendingActions: immutable principal is required");
+  const operationSeed = [
+    "pending-operation-v1",
+    principalId,
+    careVertical,
+    object.type,
+    object.id,
+    params.toolName,
+    sourceTurnKey,
+    expiresAt,
+  ].join("|");
+  const operation: PendingOperationIdentity = {
+    schema: "pending-operation-v1",
+    operationId: `op_${createHash("sha256").update(operationSeed).digest("hex").slice(0, 40)}`,
+    principalId,
+    careVertical,
+    objectType: object.type,
+    objectId: object.id,
+    actionName: params.toolName,
+    actionSchemaVersion: 1,
+    sourceTurnKey,
+    expiresAt,
+  };
+
   const action: Omit<PendingAction, "id"> = {
     phone:      docPhone,
     userId:     params.userId,
@@ -221,10 +372,13 @@ export async function proposePendingAction(params: {
     toolInput:  params.toolInput,
     preview:    buildActionPreview(params.toolName, params.toolInput),
     proposedAt: new Date(now).toISOString(),
-    expiresAt:  new Date(now + PENDING_ACTION_TTL_MS).toISOString(),
+    expiresAt,
     status:     "awaiting",
     ...(approverPhone ? { approverPhone } : {}),
     ...(triggeredByPhone ? { triggeredByPhone } : {}),
+    ...(childBinding ?? {}),
+    careVertical,
+    operation,
   };
   const ref = await db.collection("pending_actions").add(action);
   const created = { id: ref.id, ...action };
@@ -248,6 +402,63 @@ export async function claimPendingAction(id: string): Promise<"claimed" | "not_c
       const data = snap.data() as PendingAction;
       if (data.status !== "awaiting") return "not_claimable";
       if (new Date(data.expiresAt).getTime() < Date.now()) return "not_claimable";
+      if (data.careVertical === "child") {
+        const bookingId = String(data.childcareBookingId ?? "").trim();
+        const bindings = data.childAuthorityBindings ?? [];
+        if (!bookingId || !data.userId || bindings.length === 0) return "not_claimable";
+        if (
+          !data.operation ||
+          data.operation.schema !== "pending-operation-v1" ||
+          data.operation.operationId.length < 10 ||
+          data.operation.principalId !== data.userId ||
+          data.operation.careVertical !== "child" ||
+          data.operation.actionName !== data.toolName ||
+          data.operation.objectId !== bookingId ||
+          data.operation.expiresAt !== data.expiresAt
+        ) {
+          return "not_claimable";
+        }
+        const flagsSnap = await tx.get(db.collection("childcare_flags").doc("global"));
+        const flags = flagsSnap.data() ?? {};
+        if (
+          !flagsSnap.exists ||
+          flags.CHILDCARE_ENABLED !== true ||
+          flags.CHILDCARE_WRITES_ENABLED !== true
+        ) {
+          return "not_claimable";
+        }
+        const bookingSnap = await tx.get(db.collection("booking_requests").doc(bookingId));
+        const booking = bookingSnap.data() ?? {};
+        const bookingChildIds = Array.isArray(booking.childIds)
+          ? booking.childIds.map((childId: unknown) => String(childId))
+          : [];
+        if (
+          !bookingSnap.exists ||
+          booking.careVertical !== "child" ||
+          booking.clientId !== data.userId ||
+          booking.status === "canceled" ||
+          booking.status === "completed" ||
+          bookingChildIds.length !== bindings.length
+        ) {
+          return "not_claimable";
+        }
+        for (const binding of bindings) {
+          if (!bookingChildIds.includes(binding.childId)) return "not_claimable";
+          const authoritySnap = await tx.get(
+            db.collection("guardian_authorities").doc(`${binding.childId}__${data.userId}`),
+          );
+          const authority = authoritySnap.data() ?? {};
+          if (
+            !authoritySnap.exists ||
+            authority.state !== "active" ||
+            !Array.isArray(authority.scopes) ||
+            !authority.scopes.includes(binding.scope) ||
+            Number(authority.accessVersion) !== Number(binding.accessVersion)
+          ) {
+            return "not_claimable";
+          }
+        }
+      }
       tx.update(ref, { status: "executing", executingStartedAt: new Date().toISOString() });
       return "claimed";
     });
@@ -287,32 +498,21 @@ export { logHealthcareAudit };
 // Look up the most recent unresolved pending action for a phone, or null.
 // "Unresolved" = status === "awaiting" AND expiresAt > now.
 // Auto-expires stale awaiting docs so they don't accumulate.
-export async function getLatestPending(phone: string): Promise<PendingAction | null> {
-  const snap = await db.collection("pending_actions")
-    .where("phone",  "==", phone)
-    .where("status", "==", "awaiting")
-    .orderBy("proposedAt", "desc")
-    .limit(1)
-    .get();
-  if (snap.empty) return null;
-  const doc  = snap.docs[0];
-  const data = doc.data() as Omit<PendingAction, "id">;
-
-  if (new Date(data.expiresAt).getTime() < Date.now()) {
-    // Lazily expire — keeps the read fast at the cost of one write per stale doc.
-    await doc.ref.update({
-      status:     "expired",
-      resolvedAt: new Date().toISOString(),
-    }).catch(() => {});
-    return null;
-  }
-  return { id: doc.id, ...data };
+export async function getLatestPending(
+  phone: string,
+  careVertical?: "senior" | "child",
+): Promise<PendingAction | null> {
+  const live = await getAllPending(phone, careVertical);
+  return live[0] ?? null;
 }
 
 // All unresolved pending actions for a phone, newest first. Same query and
 // lazy-expiry behavior as getLatestPending, without the limit. Used by the
 // webhook to detect the multi-pending case (batch confirmation).
-export async function getAllPending(phone: string): Promise<PendingAction[]> {
+export async function getAllPending(
+  phone: string,
+  careVertical?: "senior" | "child",
+): Promise<PendingAction[]> {
   const snap = await db.collection("pending_actions")
     .where("phone",  "==", phone)
     .where("status", "==", "awaiting")
@@ -322,6 +522,8 @@ export async function getAllPending(phone: string): Promise<PendingAction[]> {
   const live: PendingAction[] = [];
   for (const doc of snap.docs) {
     const data = doc.data() as Omit<PendingAction, "id">;
+    const storedVertical = data.careVertical ?? "senior";
+    if (careVertical && storedVertical !== careVertical) continue;
     if (new Date(data.expiresAt).getTime() < now) {
       // Lazily expire — keeps the read fast at the cost of one write per stale doc.
       await doc.ref.update({
@@ -346,7 +548,8 @@ export async function getPendingActionById(id: string): Promise<PendingAction | 
 // confirmed input against the stored pending input (approvalHandler rebuilds
 // these from the authenticated approver, so they legitimately differ/repeat).
 const NON_SEMANTIC_INPUT_FIELDS = new Set([
-  "_confirmedActionId", "phone", "chatId", "clientId", "userId", "sourceMessageId", "role",
+  "_confirmedActionId", "_operationId", "_boundOperationId", "_sourceTurnKey",
+  "phone", "chatId", "clientId", "userId", "sourceMessageId", "role",
 ]);
 
 // Stable canonical JSON of the semantic tool input (sorted keys, transport
@@ -383,15 +586,40 @@ export function isConfirmedActionValid(
   phone:        string | undefined,
   nowMs:        number = Date.now(),
   currentInput?: Record<string, unknown>,
+  operationId?: string,
 ): boolean {
   if (
     !(pending !== null &&
-      (pending.status === "awaiting" || pending.status === "approved") &&
+      (pending.status === "awaiting" ||
+        pending.status === "approved" ||
+        (pending.status === "executing" &&
+          !!pending.operation &&
+          operationId === pending.operation.operationId)) &&
       new Date(pending.expiresAt).getTime() > nowMs &&
       pending.toolName === toolName &&
       pending.phone === phone)
   ) {
     return false;
+  }
+  if (pending.operation) {
+    const currentVertical = currentInput?.careVertical === "child" ? "child" : "senior";
+    const currentObject = resolveOperationObject(toolName, currentInput ?? {});
+    if (
+      operationId !== pending.operation.operationId ||
+      pending.operation.schema !== "pending-operation-v1" ||
+      pending.operation.actionSchemaVersion !== 1 ||
+      pending.operation.actionName !== toolName ||
+      pending.operation.careVertical !== currentVertical ||
+      pending.operation.objectType !== currentObject.type ||
+      pending.operation.objectId !== currentObject.id ||
+      pending.operation.expiresAt !== pending.expiresAt ||
+      pending.operation.sourceTurnKey !== String(currentInput?._sourceTurnKey ?? "") ||
+      pending.operation.principalId !== String(
+        currentInput?.userId ?? currentInput?.clientId ?? phone ?? "",
+      )
+    ) {
+      return false;
+    }
   }
   // Compare semantic params only when we have both the current input and a
   // stored toolInput to compare against (real proposals always store one).
@@ -407,7 +635,14 @@ export function isConfirmedActionValid(
 export async function resolvePendingAction(
   id: string,
   status: Exclude<PendingAction["status"], "awaiting">,
-  opts: { executionPreview?: string } = {},
+  opts: {
+    executionPreview?: string;
+    evidence?: {
+      safeClaimCode?: unknown;
+      status?: unknown;
+      targetRef?: unknown;
+    };
+  } = {},
 ): Promise<void> {
   const ref = db.collection("pending_actions").doc(id);
   await db.runTransaction(async (tx) => {
@@ -428,6 +663,24 @@ export async function resolvePendingAction(
       status,
       resolvedAt: new Date().toISOString(),
       ...(opts.executionPreview ? { executionPreview: opts.executionPreview.slice(0, 500) } : {}),
+      ...(current.operation && (status === "executed" || status === "failed")
+        ? {
+            terminalEvidence: {
+              operationId: current.operation.operationId,
+              status,
+              ...(typeof opts.evidence?.safeClaimCode === "string"
+                ? { safeClaimCode: opts.evidence.safeClaimCode.slice(0, 64) }
+                : {}),
+              ...(typeof opts.evidence?.status === "string"
+                ? { evidenceStatus: opts.evidence.status.slice(0, 32) }
+                : {}),
+              ...(typeof opts.evidence?.targetRef === "string"
+                ? { targetRef: opts.evidence.targetRef.slice(0, 240) }
+                : {}),
+              settledAt: new Date().toISOString(),
+            },
+          }
+        : {}),
     });
   });
 }

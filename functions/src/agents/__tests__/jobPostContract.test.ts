@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildWebJobPostDoc } from "../jobPostContract";
+import * as fs from "fs";
+import * as path from "path";
+import {
+  buildWebJobPostDoc,
+  assertLegacyJobMirrorAllowed,
+  LegacyJobMirrorError,
+} from "../jobPostContract";
 
 // The caregiver Job Board renders the web wizard's JobPost shape. Every
 // server-side job_posts write goes through buildWebJobPostDoc — these tests
@@ -76,5 +82,49 @@ describe("buildWebJobPostDoc — web JobPost contract", () => {
     expect(doc.notifiedCount).toBe(0);
     expect(doc.summary).toContain("Dementia");
     expect(doc.phone).toBe("+14085550100");
+  });
+});
+
+// ── R32 legacy-mirror guard (childcare plan 2026-07-22-002, U6) ──────────────
+//
+// Childcare jobs are auto-ID job_posts docs and NEVER write the legacy
+// singleton job_postings/{clientUid} mirror. The guard is structural: every
+// mirror writer calls assertLegacyJobMirrorAllowed with its vertical-bearing
+// context before the mirror write.
+
+describe("assertLegacyJobMirrorAllowed (R32)", () => {
+  it("passes senior and legacy (vertical-absent) contexts", () => {
+    expect(() => assertLegacyJobMirrorAllowed({})).not.toThrow();
+    expect(() => assertLegacyJobMirrorAllowed({ careVertical: "senior" })).not.toThrow();
+    expect(() => assertLegacyJobMirrorAllowed(null, undefined, { seniorName: "M" })).not.toThrow();
+  });
+
+  it("throws for a childcare-vertical context in ANY position", () => {
+    expect(() => assertLegacyJobMirrorAllowed({ careVertical: "child" })).toThrow(LegacyJobMirrorError);
+    expect(() => assertLegacyJobMirrorAllowed({}, { careVertical: "child" })).toThrow(/job_postings/);
+  });
+
+  it("buildAndSaveJobPost calls the guard BEFORE its job_postings mirror write (structural)", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../buildJobPost.ts"),
+      "utf8",
+    );
+    const guardIdx = source.indexOf("assertLegacyJobMirrorAllowed(onboardingData, jobData)");
+    const mirrorIdx = source.indexOf('collection("job_postings")');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(mirrorIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(mirrorIdx);
+  });
+
+  it("the MCP edit_job_post mirror writer carries its own childcare rejection (structural)", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../../mcp/server.ts"),
+      "utf8",
+    );
+    const guardIdx = source.indexOf('jp.careVertical === "child"');
+    const mirrorIdx = source.indexOf('collection("job_postings")');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(mirrorIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(mirrorIdx);
   });
 });

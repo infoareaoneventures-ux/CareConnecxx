@@ -45,6 +45,13 @@ interface CaregiverProfile {
   weeklyAvailability: Record<string, string[]>;
   jobTypes: string[];
   lastActiveIso?: string;
+  // Childcare U11 (plan 2026-07-22-002, R30/R45): display-only per-vertical
+  // visibility + allowlisted evidence labels + per-vertical reputation.
+  // Absent for senior-only caregivers — rendering is then byte-identical
+  // (parity pinned by ClientCaregiverProfile.childcare.test.tsx).
+  childcareVisible?: boolean;
+  childcareEvidenceLabels?: string[];
+  childcareReputation?: { ratingAvg?: number; ratingCount?: number; completedBookings?: number; repeatFamilies?: number };
 }
 
 type Review = { id: string; reviewerName: string; reviewerPhoto?: string | null; rating: number; comment: string; dateIso: string; wouldRecommend?: boolean | null };
@@ -82,6 +89,18 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),
     jobTypes: data.jobTypes || [],
     lastActiveIso: data.lastActive || data.lastActiveIso,
+    // Childcare U11: accept BOTH source shapes — the caregivers-doc server
+    // summary (childcareProvider/childcareReputationSummary) and the public
+    // projection fields (verticalVisibility/childcareEvidenceLabels/
+    // childcareReputation). Only server-derived values pass through.
+    childcareVisible:
+      data.verticalVisibility?.child === true || data.childcareProvider?.visible === true,
+    childcareEvidenceLabels: Array.isArray(data.childcareEvidenceLabels)
+      ? data.childcareEvidenceLabels
+      : Array.isArray(data.childcareProvider?.evidenceLabels)
+        ? data.childcareProvider.evidenceLabels
+        : [],
+    childcareReputation: data.childcareReputation || data.childcareReputationSummary || undefined,
   };
 }
 
@@ -320,7 +339,19 @@ export default function ClientCaregiverProfile({
                   <CaregiverVerificationBadges
                     verified={caregiver.verified}
                     backgroundCheckStatus={caregiver.backgroundCheckStatus}
+                    childcareEvidenceLabels={caregiver.childcareVisible ? caregiver.childcareEvidenceLabels : undefined}
                   />
+                  {caregiver.childcareVisible && (
+                    <span
+                      className="inline-flex items-center gap-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full"
+                      data-testid="childcare-available-chip"
+                    >
+                      Childcare available
+                      {(caregiver.childcareReputation?.ratingCount ?? 0) > 0
+                        ? ` · ${Number(caregiver.childcareReputation?.ratingAvg ?? 0).toFixed(1)} (${caregiver.childcareReputation?.ratingCount} childcare review${caregiver.childcareReputation?.ratingCount === 1 ? '' : 's'})`
+                        : ''}
+                    </span>
+                  )}
                   {caregiver.hasTransportation && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-full">
                       <Car className="w-3.5 h-3.5" /> Transportation

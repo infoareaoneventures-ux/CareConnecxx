@@ -55,7 +55,14 @@ export const sendJobMatchNotifications = functions.pubsub
       if (pausedUntil && pausedUntil > todayIso) continue;
 
       try {
-        const recs = await getJobRecommendationsForCaregiver(cgDoc.id, 3);
+        // Childcare U6 (plan 2026-07-22-002): SENIOR-ONLY EXPLICIT SKIP —
+        // the recommender reads status=="open" job_posts, which structurally
+        // excludes childcare jobs (status "open_childcare"). This filter makes
+        // the skip explicit: no childcare job detail ever enters this SMS
+        // pipeline (childcare notifications are the eligibility-gated in-app
+        // rows written at job creation).
+        const recs = (await getJobRecommendationsForCaregiver(cgDoc.id, 3))
+          .filter((r) => (r as { careVertical?: string }).careVertical !== "child");
         const highMatch = recs.filter(r => r.matchScore >= 75);
         if (!highMatch.length) continue;
 

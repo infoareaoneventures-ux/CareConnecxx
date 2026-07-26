@@ -130,6 +130,16 @@ export const onAppointmentCreated = functions.firestore
     .onCreate(async (snap, context) => {
         const appointment = snap.data();
 
+        // Childcare U9 (plan 2026-07-22-002, R41/R43/KTD14): childcare
+        // appointments NEVER enter this senior path. ensureChatRoom below
+        // creates a PAIRWISE room keyed on the participant pair alone — the
+        // exact pattern R41 replaces for childcare (context-keyed server
+        // rooms via childcare/conversationPolicy). Childcare booking
+        // notifications are the generic child-safe registry rows written by
+        // childcare/bookingCallables at each transition. Senior path
+        // byte-identical.
+        if (appointment.careVertical === 'child') return;
+
         try {
             // Ensure chat room exists between client and caregiver
             if (appointment.clientId && appointment.caregiverId) {
@@ -279,6 +289,12 @@ export const onAppointmentCancelled = functions.firestore
         const before = change.before.data();
         const after = change.after.data();
 
+        // Childcare U9 (R43): childcare cancellations notify through the
+        // generic child-safe registry rows written by the childcare cancel
+        // callable — this senior trigger (clientName/date copy) never fires
+        // for a childcare doc. Senior path byte-identical.
+        if (after?.careVertical === 'child' || before?.careVertical === 'child') return;
+
         // Check if status changed to cancelled
         if (before && after && before.status !== 'cancelled' && after.status === 'cancelled') {
             // U3 fix: caregiver cancellations previously produced NO in-app client
@@ -361,6 +377,11 @@ export const sendShiftReminders = functions.pubsub
 
             for (const doc of appointmentsSnapshot.docs) {
                 const appointment = doc.data();
+                // Childcare U9 (R43/R54): childcare appointments are skipped —
+                // this reminder interpolates clientName into SMS copy, and
+                // childcare proactive messaging is flag-gated and deferred
+                // (approved child-safe templates are U10/U1 work).
+                if (appointment.careVertical === 'child') continue;
                 if (appointment.reminderSent === true) continue;
 
                 // Parse appointment datetime as PACIFIC wall-clock. The old

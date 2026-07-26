@@ -6,6 +6,17 @@
 // `startTime`/`hourlyRate` must mirror them into the canonical fields or
 // agent-booked visits render with a blank time and no dollar amount.
 // Spread the result of this helper into every server-side appointment set().
+//
+// Childcare U7 (plan 2026-07-22-002, R33/R46): this file is ALSO the vertical
+// seam for shared `appointments` docs. Childcare appointment writers spread
+// canonicalApptFields() PLUS childcareApptFields() — a typed recipient
+// REFERENCE (childIds + householdId) and vertical stamp, with the child's
+// age-band-safe display label as the ONLY display field. Child-sensitive
+// fields (names beyond the display label, DOB, address, custody, emergency
+// contacts, care needs) are structurally rejected by
+// assertChildSafeAppointmentDoc. Senior writers are untouched: every existing
+// call site spreads canonicalApptFields() exactly as before and produces a
+// byte-identical doc.
 export function canonicalApptFields(opts: {
   startTime: string;
   durationHours?: number;
@@ -66,6 +77,93 @@ export function normalizeAppointmentTime(raw: unknown): string | null {
   if (meridiem === "AM" && hour === 12) hour = 0;
   if (hour > 23) return null;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+// ── Childcare vertical seam (U7 — additive; senior writers never call these) ─
+
+/** Typed recipient reference for a childcare appointment/shift (R33/R46). */
+export interface ChildcareRecipientRef {
+  careVertical: "child";
+  householdId: string;
+  /** child_profiles doc IDs — references only, NEVER names/DOB/details. */
+  childIds: string[];
+}
+
+export interface ChildcareApptFields {
+  careVertical: "child";
+  recipientRef: ChildcareRecipientRef;
+  /** Age-band-safe display label from the operational doc — the ONLY child
+   *  display field an appointment may carry (never DOB/address). */
+  recipientLabel: string;
+  childcareBookingId: string;
+}
+
+/**
+ * Fields child-sensitive by definition on a SHARED appointments doc (R46).
+ * `seniorName` is on the list because a childcare appointment must never be
+ * rendered through the senior display path; the senior writers keep using it
+ * untouched.
+ */
+export const CHILD_SENSITIVE_APPT_FIELDS: readonly string[] = [
+  "seniorName",
+  "address",
+  "location",
+  "careNeeds",
+  "emergencyContact",
+  "dateOfBirth",
+  "custodyNotes",
+  "pickupNotes",
+  "healthNotes",
+  "allergiesNote",
+  "safetyProjection",
+  "childName",
+  "childNames",
+];
+
+/**
+ * Build the additive childcare fields every childcare appointment writer
+ * spreads NEXT TO canonicalApptFields(). Throws on empty references — a
+ * childcare appointment without a typed recipient reference fails closed (R2).
+ */
+export function childcareApptFields(opts: {
+  householdId: string;
+  childIds: string[];
+  displayLabel: string;
+  bookingId: string;
+}): ChildcareApptFields {
+  const householdId = String(opts.householdId ?? "").trim();
+  const childIds = Array.isArray(opts.childIds)
+    ? opts.childIds.map((c) => String(c ?? "").trim()).filter(Boolean)
+    : [];
+  const bookingId = String(opts.bookingId ?? "").trim();
+  const displayLabel = String(opts.displayLabel ?? "").trim().slice(0, 80);
+  if (!householdId || childIds.length === 0 || !bookingId) {
+    throw new Error("childcareApptFields: householdId, childIds, and bookingId are required (fail closed)");
+  }
+  return {
+    careVertical: "child",
+    recipientRef: { careVertical: "child", householdId, childIds },
+    recipientLabel: displayLabel || "your child",
+    childcareBookingId: bookingId,
+  };
+}
+
+/** Is this appointments/shifts/booking_requests doc a childcare-vertical doc? */
+export function isChildcareVerticalDoc(data: unknown): boolean {
+  return Boolean(data) && (data as Record<string, unknown>).careVertical === "child";
+}
+
+/**
+ * Structural privacy guard for childcare appointment docs: the shared record
+ * must not carry child-sensitive fields (R33/R46) — senior consumers never
+ * load child-only detail because it is never stored there.
+ */
+export function assertChildSafeAppointmentDoc(doc: Record<string, unknown>, site: string): void {
+  for (const field of CHILD_SENSITIVE_APPT_FIELDS) {
+    if (doc[field] !== undefined) {
+      throw new Error(`${site}: child-sensitive field "${field}" is prohibited on a shared appointment record (R46)`);
+    }
+  }
 }
 
 export function normalizeAppointmentDuration(

@@ -17,6 +17,9 @@
 
 import * as admin from "firebase-admin";
 import { sanitizePromptContext } from "./promptContext";
+import type { CareVertical } from "../data/contract";
+import { isChildRecipientRef, type TypedCareRecipientRef } from "./careRecipients";
+import { authorityDocId } from "../childcare/guardianAuthority";
 
 export const OBJECTIVES_COLLECTION = "agent_objectives";
 export const OBJECTIVE_LEDGER_CAPABILITY = "objective_ledger";
@@ -86,6 +89,26 @@ export interface AgentObjective {
   updatedAt: string;
   expiresAt?: string;
   terminalReason?: string;
+  /**
+   * Care vertical stamp (childcare plan 2026-07-22-002, U0/U4). ADDITIVE with
+   * the senior legacy default: an absent field on a pre-childcare objective
+   * reads as senior; childcare writers stamp "child" explicitly. New childcare
+   * records are never silently senior (contract.ts cutoff rule).
+   */
+  careVertical?: CareVertical;
+  /**
+   * Typed recipient reference (U10/KTD18): senior objectives may carry a
+   * recipientPlanKey ref; childcare objectives a childId+householdId ref
+   * (IDs + display label only — never child PII, R57). Optional/additive —
+   * legacy objectives have no ref.
+   */
+  recipientRef?: TypedCareRecipientRef;
+  /** Child objectives pin the authority version used when work was created. */
+  authorityBinding?: {
+    childId: string;
+    scope: "view";
+    accessVersion: number;
+  };
 }
 
 // ── Transition matrix (R13/R18) ──────────────────────────────────────────────
@@ -197,6 +220,18 @@ export interface CreateObjectiveInput {
   affectedRecipients?: string[];
   sourceTurnKey?: string;
   expiresAt?: string;
+  /** Vertical stamp — childcare writers pass "child" (U4); absent = legacy senior. */
+  careVertical?: CareVertical;
+  /** Typed recipient ref (U10) — see AgentObjective.recipientRef. */
+  recipientRef?: TypedCareRecipientRef;
+  authorityBinding?: AgentObjective["authorityBinding"];
+  /**
+   * Deterministic objective ID for idempotent creates (e.g. one family
+   * childcare-enrollment objective per adult — AE15 duplicate-first-inbound).
+   * When set, creation uses `create()` semantics: a concurrent duplicate
+   * fails with ALREADY_EXISTS instead of overwriting (see ensureObjective).
+   */
+  objectiveId?: string;
 }
 
 export async function createObjective(
@@ -205,7 +240,20 @@ export async function createObjective(
 ): Promise<AgentObjective> {
   const db = opts?.db ?? admin.firestore();
   const nowIso = (opts?.now ?? new Date()).toISOString();
-  const ref = db.collection(OBJECTIVES_COLLECTION).doc();
+  const ref = input.objectiveId
+    ? db.collection(OBJECTIVES_COLLECTION).doc(input.objectiveId)
+    : db.collection(OBJECTIVES_COLLECTION).doc();
+  if (input.recipientRef && isChildRecipientRef(input.recipientRef)) {
+    if (
+      input.careVertical !== "child" ||
+      !input.authorityBinding ||
+      input.authorityBinding.childId !== input.recipientRef.childId ||
+      input.authorityBinding.scope !== "view" ||
+      !Number.isFinite(Number(input.authorityBinding.accessVersion))
+    ) {
+      throw new Error("objectiveLedger: child objective requires a matching authority binding");
+    }
+  }
   const objective: AgentObjective = {
     objectiveId: ref.id,
     userId: input.userId,
@@ -226,11 +274,45 @@ export async function createObjective(
     createdAt: nowIso,
     updatedAt: nowIso,
     expiresAt: input.expiresAt,
+    careVertical: input.careVertical,
+    recipientRef: input.recipientRef,
+    authorityBinding: input.authorityBinding,
   };
   // Firestore rejects undefined field values; strip them.
   const doc = Object.fromEntries(Object.entries(objective).filter(([, v]) => v !== undefined));
-  await ref.set(doc);
+  if (input.objectiveId) {
+    // Deterministic ID ⇒ create-once semantics (idempotency belongs to the
+    // caller via ensureObjective; a raw duplicate create throws).
+    await ref.create(doc);
+  } else {
+    await ref.set(doc);
+  }
   return objective;
+}
+
+/**
+ * Idempotent create for deterministic-ID objectives (U4): first caller wins,
+ * every retry/duplicate converges on the SAME persisted objective (AE15).
+ * Never overwrites — a lost race reads the winner's record back.
+ */
+export async function ensureObjective(
+  input: CreateObjectiveInput & { objectiveId: string },
+  opts?: { db?: admin.firestore.Firestore; now?: Date },
+): Promise<{ objective: AgentObjective; created: boolean }> {
+  const db = opts?.db ?? admin.firestore();
+  try {
+    const objective = await createObjective(input, { ...opts, db });
+    return { objective, created: true };
+  } catch (err: unknown) {
+    const code = (err as { code?: number | string })?.code;
+    const alreadyExists =
+      code === 6 || code === "already-exists" ||
+      /already exists/i.test(String((err as Error)?.message ?? ""));
+    if (!alreadyExists) throw err;
+    const snap = await db.collection(OBJECTIVES_COLLECTION).doc(input.objectiveId).get();
+    if (!snap.exists) throw err; // create raced a delete — surface the original error
+    return { objective: snap.data() as AgentObjective, created: false };
+  }
 }
 
 /**
@@ -242,7 +324,12 @@ export async function transitionObjective(
   objectiveId: string,
   to: ObjectiveStatus,
   expectedVersion: number,
-  opts?: { db?: admin.firestore.Firestore; reason?: string; now?: Date },
+  opts?: {
+    db?: admin.firestore.Firestore;
+    reason?: string;
+    now?: Date;
+    bypassAuthorityCheck?: boolean;
+  },
 ): Promise<AgentObjective> {
   const db = opts?.db ?? admin.firestore();
   const ref = db.collection(OBJECTIVES_COLLECTION).doc(objectiveId);
@@ -252,6 +339,38 @@ export async function transitionObjective(
     const current = snap.data() as AgentObjective;
     if (current.version !== expectedVersion) {
       throw new Error(`objectiveLedger: version conflict on ${objectiveId} (expected ${expectedVersion}, found ${current.version})`);
+    }
+    if (
+      !opts?.bypassAuthorityCheck &&
+      current.careVertical === "child" &&
+      current.recipientRef &&
+      isChildRecipientRef(current.recipientRef)
+    ) {
+      const binding = current.authorityBinding;
+      if (!binding || binding.childId !== current.recipientRef.childId) {
+        throw new Error(`objectiveLedger: missing child authority binding on ${objectiveId}`);
+      }
+      const authoritySnap = await tx.get(
+        db.collection("guardian_authorities").doc(
+          authorityDocId(binding.childId, current.userId),
+        ),
+      );
+      const authority = authoritySnap.data() ?? {};
+      const nowMs = (opts?.now ?? new Date()).getTime();
+      const expired =
+        typeof authority.expiresAt === "string" &&
+        authority.expiresAt &&
+        Date.parse(authority.expiresAt) <= nowMs;
+      if (
+        !authoritySnap.exists ||
+        authority.state !== "active" ||
+        expired ||
+        !Array.isArray(authority.scopes) ||
+        !authority.scopes.includes(binding.scope) ||
+        Number(authority.accessVersion) !== Number(binding.accessVersion)
+      ) {
+        throw new Error(`objectiveLedger: child authority changed on ${objectiveId}`);
+      }
     }
     const next = applyTransition(current, to, { reason: opts?.reason, now: opts?.now });
     const doc = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined));
@@ -275,5 +394,34 @@ export async function loadOpenObjectives(
     .orderBy("updatedAt", "desc")
     .limit(opts?.limit ?? 10)
     .get();
-  return snap.docs.map((d) => d.data() as AgentObjective);
+  const objectives = snap.docs.map((d) => d.data() as AgentObjective);
+  const visible = await Promise.all(objectives.map(async (objective) => {
+    if (
+      objective.careVertical !== "child" ||
+      !objective.recipientRef ||
+      !isChildRecipientRef(objective.recipientRef)
+    ) {
+      return objective;
+    }
+    const binding = objective.authorityBinding;
+    if (!binding || binding.childId !== objective.recipientRef.childId) return null;
+    const authoritySnap = await db
+      .collection("guardian_authorities")
+      .doc(authorityDocId(binding.childId, objective.userId))
+      .get();
+    const authority = authoritySnap.data() ?? {};
+    const expired =
+      typeof authority.expiresAt === "string" &&
+      authority.expiresAt &&
+      Date.parse(authority.expiresAt) <= Date.now();
+    return authoritySnap.exists &&
+      authority.state === "active" &&
+      !expired &&
+      Array.isArray(authority.scopes) &&
+      authority.scopes.includes(binding.scope) &&
+      Number(authority.accessVersion) === Number(binding.accessVersion)
+      ? objective
+      : null;
+  }));
+  return visible.filter((objective): objective is AgentObjective => objective !== null);
 }

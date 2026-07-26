@@ -19,6 +19,8 @@
 
 import * as admin from "firebase-admin";
 import type { OnboardingLinkType } from "./onboardingConversation";
+import { conversationPartitionIdsForRead } from "./turnSourceKey";
+import type { CareVertical } from "../data/contract";
 
 const db = admin.firestore();
 
@@ -46,6 +48,7 @@ export interface PendingCommitment {
   userType?:    "client" | "caregiver";
   caregiverId?: string;
   zepThreadId?: string;
+  careVertical?: CareVertical;
   /** Code path that made the promise, e.g. "qaAgent:catch". */
   source:       string;
   status:       "open" | "fulfilled" | "escalated" | "cancelled";
@@ -86,6 +89,7 @@ export async function recordCommitment(input: {
   userType?:    "client" | "caregiver";
   caregiverId?: string;
   zepThreadId?: string;
+  careVertical?: CareVertical;
 }): Promise<string | null> {
   try {
     const id  = commitmentDocId(input.phone, input.kind);
@@ -106,6 +110,7 @@ export async function recordCommitment(input: {
       createdAt:   now.toISOString(),
       dueAt,
       sweepAfter:  dueAt,
+      careVertical: input.careVertical ?? "senior",
       // Firestore rejects undefined values — add optional fields conditionally.
       ...(input.question    ? { question: input.question.slice(0, 500) } : {}),
       ...(input.linkType    ? { linkType: input.linkType }       : {}),
@@ -399,13 +404,23 @@ async function attemptAnswerFulfillment(
 // silence, and the QA re-run sees full history so it recovers gracefully.
 async function isFollowUpStillOwed(c: PendingCommitment): Promise<boolean> {
   try {
-    const msgs = await db.collection("agent_conversations").doc(c.phone)
-      .collection("messages")
-      .orderBy("timestamp", "desc")
-      .limit(6)
-      .get();
+    const careVertical = c.careVertical ?? "senior";
+    const msgSnaps = await Promise.all(
+      conversationPartitionIdsForRead(c.phone, careVertical).map((partitionId) =>
+        db.collection("agent_conversations").doc(partitionId)
+          .collection("messages")
+          .orderBy("timestamp", "desc")
+          .limit(6)
+          .get()),
+    );
+    const messages = msgSnaps.flatMap((snap) => snap.docs)
+      .filter((doc) => careVertical === "child"
+        ? doc.data().careVertical === "child"
+        : doc.data().careVertical !== "child")
+      .sort((a, b) => Number(b.data().timestamp ?? 0) - Number(a.data().timestamp ?? 0))
+      .slice(0, 6);
     const createdMs = new Date(c.createdAt).getTime();
-    const since = msgs.docs
+    const since = messages
       .map((d) => d.data())
       .filter((m) => ((m.timestamp as number) ?? 0) > createdMs)
       .reverse();

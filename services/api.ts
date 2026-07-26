@@ -2,6 +2,7 @@ import { stripeService as externalStripeService } from './stripeService';
 import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 
 import firebase, { auth, db, functions, isConfigured } from '../lib/firebase';
+import { childcareCallable } from '../lib/childcareCallable';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
 import {
@@ -18,6 +19,23 @@ export interface AgentActivityItem {
     description: string;
     timestamp?: string;
 }
+
+export interface ChildcareReviewModerationRow {
+    reviewId: string;
+    bookingId: string;
+    caregiverId: string;
+    reviewerRole: 'family' | 'provider';
+    rating: number;
+    comment: string;
+    createdAt: string;
+    stateVersion: number;
+}
+
+export type ChildcareReviewModerationDecision =
+    | 'published'
+    | 'rejected'
+    | 'unpublished'
+    | 'deleted';
 
 // ==========================================
 // RATE LIMITING / DEBOUNCING UTILITIES
@@ -241,6 +259,12 @@ export const dbService = {
             });
         }
         // Firebase not configured — immediately resolve as unauthenticated
+        callback(null);
+        return () => { };
+    },
+
+    onIdTokenChanged: (callback: (user: firebase.User | null) => void) => {
+        if (isConfigured && auth) return auth.onIdTokenChanged(callback);
         callback(null);
         return () => { };
     },
@@ -3612,6 +3636,34 @@ export const adminService = {
     deleteReview: async (reviewId: string): Promise<void> => {
         if (!isConfigured || !db) throw new Error("Database not connected");
         await db.collection('reviews').doc(reviewId).delete();
+    },
+
+    listChildcareReviewModerationQueue: async (
+        cursor?: string | null,
+        pageSize = 25,
+    ): Promise<{ rows: ChildcareReviewModerationRow[]; nextCursor: string | null }> => {
+        if (!isConfigured || !functions) throw new Error("Functions not connected");
+        const callable = childcareCallable('listChildcareReviewModerationQueue');
+        const response = await callable({
+            reasonCode: 'moderation_queue_review',
+            cursor: cursor ?? null,
+            pageSize,
+        });
+        const data = response.data as { rows?: ChildcareReviewModerationRow[]; nextCursor?: string | null };
+        return { rows: data.rows ?? [], nextCursor: data.nextCursor ?? null };
+    },
+
+    moderateChildcareReview: async (input: {
+        reviewId: string;
+        expectedVersion: number;
+        decision: ChildcareReviewModerationDecision;
+        reasonCode: string;
+        publicComment?: string;
+    }): Promise<{ moderationState: string; stateVersion: number; replayed: boolean }> => {
+        if (!isConfigured || !functions) throw new Error("Functions not connected");
+        const callable = childcareCallable('moderateChildcareReview');
+        const response = await callable(input);
+        return response.data as { moderationState: string; stateVersion: number; replayed: boolean };
     },
 
     unbanUser: async (uid: string): Promise<void> => {

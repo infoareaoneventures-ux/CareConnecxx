@@ -39,6 +39,7 @@ export const sendLocationRequestNudges = functions.pubsub
         | { sentAt?: string; nudgeSent?: boolean }
         | undefined;
       if (!pending?.sentAt) continue;
+      if ((data as { careVertical?: string }).careVertical === "child") continue; // Childcare U10 (R54/AE16)
       if ((data as { optedOut?: boolean }).optedOut) continue;
 
       const phone     = doc.id;

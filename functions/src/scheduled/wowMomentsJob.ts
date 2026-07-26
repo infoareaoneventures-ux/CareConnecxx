@@ -102,6 +102,7 @@ export const wowMomentsDaily = functions.pubsub
     let sent = 0;
     for (const doc of snap.docs) {
       const session = doc.data();
+      if (session.careVertical === "child") continue; // Childcare U10 (R54/AE16): senior wow-moment copy; childcare proactive deferred
       if (session.userType && session.userType !== "client") continue;
       const userId = (session.userId ?? doc.id) as string;
       const phone = doc.id;

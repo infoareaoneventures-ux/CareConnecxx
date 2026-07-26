@@ -14,12 +14,16 @@
     "predeploy": "npm run eval",
     "deploy": "node scripts/deploy.mjs",
     "test": "vitest",
+    "test:rules:childcare": "firebase emulators:exec --only firestore \"npx vitest run tests/firestoreRules.childcare.test.ts\"",
     "icons": "node scripts/generate-icons.cjs",
     "migrate:predictive": "node scripts/run-migration.mjs",
     "migrate:predictive:dry": "node --env-file=.env scripts/run-migration.mjs",
     "audit:indexes": "node scripts/audit-firestore-query-contracts.mjs",
+    "audit:childcare-consumers": "node scripts/audit-childcare-consumers.mjs",
+    "audit:childcare-app-check": "node scripts/audit-childcare-app-check.mjs",
     "audit:indexes:live": "node scripts/audit-firestore-query-contracts.mjs --live",
-    "deploy:indexes:additive": "node scripts/deploy-firestore-additive-indexes.mjs"
+    "deploy:indexes:additive": "node scripts/deploy-firestore-additive-indexes.mjs",
+    "childcare:deploy-plan": "node scripts/childcare-deploy-plan.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.50.0",
@@ -35,6 +39,7 @@
     "react-router-dom": "^6.22.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/react": "^16.3.0",

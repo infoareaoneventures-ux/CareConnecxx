@@ -1,4 +1,6 @@
 import * as admin from "firebase-admin";
+import type { CareVertical } from "../data/contract";
+import { deriveConversationPartitionId } from "./turnSourceKey";
 
 // Turn checkpointing — Sprint 8 (post-process phase only).
 //
@@ -32,6 +34,8 @@ const COLLECTION = "agent_turn_checkpoints";
 export type CheckpointPhase = "loop_complete";
 
 export interface TurnCheckpoint {
+  schema:     "turn-checkpoint-v2";
+  careVertical: CareVertical;
   textHash:  string;
   phase:     CheckpointPhase;
   reply:     string;       // the raw reply produced by the tool loop
@@ -64,18 +68,22 @@ export async function writeCheckpoint(
   phase:    CheckpointPhase,
   textHash: string,
   reply:    string,
+  careVertical: CareVertical = "senior",
 ): Promise<void> {
   if (!isCheckpointResumeEnabled()) return;
   if (!phone || !reply) return;
   const now = Date.now();
   const checkpoint: TurnCheckpoint = {
+    schema: "turn-checkpoint-v2",
+    careVertical,
     textHash,
     phase,
     reply,
     createdAt: new Date(now).toISOString(),
     expiresAt: now + CHECKPOINT_TTL_MS,
   };
-  await db.collection(COLLECTION).doc(phone).set(checkpoint);
+  const partitionId = deriveConversationPartitionId(phone, careVertical);
+  await db.collection(COLLECTION).doc(partitionId).set(checkpoint);
 }
 
 /**
@@ -88,15 +96,24 @@ export async function writeCheckpoint(
 export async function loadCheckpoint(
   phone: string,
   text:  string,
+  careVertical: CareVertical = "senior",
 ): Promise<TurnCheckpoint | null> {
   if (!isCheckpointResumeEnabled()) return null;
   if (!phone) return null;
 
-  const snap = await db.collection(COLLECTION).doc(phone).get().catch(() => null);
+  const partitionId = deriveConversationPartitionId(phone, careVertical);
+  let snap = await db.collection(COLLECTION).doc(partitionId).get().catch(() => null);
+  let legacySenior = false;
+  if ((!snap || !snap.exists) && careVertical === "senior") {
+    snap = await db.collection(COLLECTION).doc(phone).get().catch(() => null);
+    legacySenior = Boolean(snap?.exists);
+  }
   if (!snap || !snap.exists) return null;
 
   const cp = snap.data() as TurnCheckpoint | undefined;
   if (!cp) return null;
+  if (cp.careVertical && cp.careVertical !== careVertical) return null;
+  if (!cp.careVertical && !legacySenior) return null;
 
   if (cp.expiresAt < Date.now()) {
     await snap.ref.delete().catch(() => {});
@@ -108,7 +125,14 @@ export async function loadCheckpoint(
 }
 
 /** Delete a phone's checkpoint. Called on successful send (turn finished). */
-export async function clearCheckpoint(phone: string): Promise<void> {
+export async function clearCheckpoint(
+  phone: string,
+  careVertical: CareVertical = "senior",
+): Promise<void> {
   if (!phone) return;
-  await db.collection(COLLECTION).doc(phone).delete().catch(() => {});
+  const partitionId = deriveConversationPartitionId(phone, careVertical);
+  await db.collection(COLLECTION).doc(partitionId).delete().catch(() => {});
+  if (careVertical === "senior") {
+    await db.collection(COLLECTION).doc(phone).delete().catch(() => {});
+  }
 }

@@ -16,6 +16,8 @@ export default defineConfig({
             // frontend code never imports any of these.
             openai: fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/openai.ts', import.meta.url)),
             'firebase-functions/v1': fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/firebaseFunctions.ts', import.meta.url)),
+            'firebase-functions/v2/storage': fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/firebaseFunctionsV2.ts', import.meta.url)),
+            'firebase-functions/v2/pubsub': fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/firebaseFunctionsV2.ts', import.meta.url)),
             'firebase-functions': fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/firebaseFunctions.ts', import.meta.url)),
             resend: fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/emptyModule.ts', import.meta.url)),
             '@getzep/zep-cloud': fileURLToPath(new URL('./functions/src/agents/__tests__/__stubs__/emptyModule.ts', import.meta.url)),

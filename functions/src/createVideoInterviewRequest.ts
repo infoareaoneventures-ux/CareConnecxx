@@ -16,6 +16,41 @@ export const createVideoInterviewRequest = functions.https.onCall(async (data, c
   const clientId = context.auth?.uid;
   if (!clientId) throw new functions.https.HttpsError("unauthenticated", "Sign in required");
 
+  // Childcare U6 (plan 2026-07-22-002, R35): a typed childcare request routes
+  // through the childcare both-sides gate (identity + per-child schedule
+  // authority + provider eligibility recheck context "interview" + disclosure
+  // policy) instead of the senior flow below. The childcare interview doc is
+  // vertical-stamped and carries NO child-sensitive data; calendar/email/SMS
+  // content downstream is generic (interviewLinkTrigger childcare branch).
+  // Senior requests (no careVertical field) take the exact pre-U6 path.
+  if (data?.careVertical === "child") {
+    const { getChildcareFlags } = await import("./config/featureFlags");
+    const flags = await getChildcareFlags();
+    if (!flags.writesEnabled) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Childcare features are not available yet.",
+        { code: "childcare_disabled" },
+      );
+    }
+    const ccCaregiverId = requiredText(data?.caregiverId, "caregiverId", 128);
+    const ccJobId = requiredText(data?.jobId, "jobId", 128);
+    const ccScheduled = requiredText(data?.scheduledTime, "scheduledTime", 64);
+    const ccScheduledMs = Date.parse(ccScheduled);
+    if (!Number.isFinite(ccScheduledMs) || ccScheduledMs < Date.now() - 5 * 60 * 1000) {
+      throw new functions.https.HttpsError("invalid-argument", "scheduledTime must be in the future");
+    }
+    const { createChildcareInterviewGated } = await import("./childcare/jobCallables");
+    const result = await createChildcareInterviewGated({
+      actorUid: clientId,
+      jobId: ccJobId,
+      caregiverId: ccCaregiverId,
+      caregiverName: typeof data?.caregiverName === "string" ? data.caregiverName : null,
+      scheduledMs: ccScheduledMs,
+    });
+    return { interview: { id: result.interviewId, careVertical: "child", scheduledTime: result.scheduledTime, status: "requested" } };
+  }
+
   const caregiverId = requiredText(data?.caregiverId, "caregiverId", 128);
   const clientName = requiredText(data?.clientName, "clientName");
   const caregiverName = requiredText(data?.caregiverName, "caregiverName");

@@ -431,6 +431,20 @@ async function runReflectionPass(): Promise<{ scanned: number; drafted: number; 
 
   for (const doc of sessionsSnap.docs) {
     const session = doc.data() as Record<string, unknown>;
+    // Childcare U10 (R50/R54/AE16): proactive reflection is a senior memory
+    // consumer — the eligibility decision precedes every family, and
+    // careVertical === "child" sessions are structurally skipped (childcare
+    // proactive templates are DEFERRED; no childcare proactive content ships
+    // in this unit). Senior sessions unchanged.
+    {
+      const { decideMemoryEligibility, logMemoryDenial } = await import("../memory/memoryEligibility");
+      const eligibility = decideMemoryEligibility(session as never);
+      if (!eligibility.eligible) {
+        logMemoryDenial("proactive_reflection", eligibility);
+        stats.skipped++;
+        continue;
+      }
+    }
     const userId   = session.userId   as string | undefined;
     const seniorId = (session.seniorId as string | undefined) ?? userId;
     if (!userId || !seniorId) continue;

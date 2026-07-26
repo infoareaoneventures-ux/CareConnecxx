@@ -61,6 +61,12 @@ export const sendStaleApplicantNudges = functions.pubsub
     for (const jobDoc of jobsSnap.docs) {
       const job = jobDoc.data();
       try {
+        // Childcare U6 (plan 2026-07-22-002): SENIOR-ONLY EXPLICIT SKIP —
+        // this nudge builds SMS copy from job titles via an LLM prompt and
+        // has no childcare content policy. Childcare jobs are additionally
+        // status "open_childcare", so the status gate below also excludes
+        // them; this guard makes the skip explicit (manifest disposition).
+        if (job.careVertical === "child") continue;
         if ((job.status as string) !== "open") continue;
 
         const clientId = (job.clientId ?? job.userId ?? "") as string;

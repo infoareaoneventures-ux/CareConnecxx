@@ -48,8 +48,86 @@ describe("isConfirmedActionValid", () => {
     expect(isConfirmedActionValid({ ...base, status: "approved" }, "cancel_appointment", "+15550001111", NOW)).toBe(true);
   });
 
-  it("rejects an executing action (already claimed for execution)", () => {
+  it("rejects a legacy executing action without an immutable operation binding", () => {
     expect(isConfirmedActionValid({ ...base, status: "executing" }, "cancel_appointment", "+15550001111", NOW)).toBe(false);
+  });
+
+  it("accepts the claimed executing action only with the exact operation identity", () => {
+    const executing: PendingAction = {
+      ...base,
+      userId: "user-1",
+      status: "executing",
+      careVertical: "child",
+      toolInput: {
+        bookingId: "booking-1",
+        careVertical: "child",
+        _sourceTurnKey: "turn-1",
+      },
+      operation: {
+        schema: "pending-operation-v1",
+        operationId: "op_child_1",
+        principalId: "user-1",
+        careVertical: "child",
+        objectType: "childcare_booking",
+        objectId: "booking-1",
+        actionName: "cancel_appointment",
+        actionSchemaVersion: 1,
+        sourceTurnKey: "turn-1",
+        expiresAt: base.expiresAt,
+      },
+    };
+    expect(isConfirmedActionValid(
+      executing,
+      "cancel_appointment",
+      "+15550001111",
+      NOW,
+      {
+        bookingId: "booking-1",
+        careVertical: "child",
+        _sourceTurnKey: "turn-1",
+        userId: "user-1",
+      },
+      "op_child_1",
+    )).toBe(true);
+    expect(isConfirmedActionValid(
+      executing,
+      "cancel_appointment",
+      "+15550001111",
+      NOW,
+      {
+        bookingId: "booking-1",
+        careVertical: "child",
+        _sourceTurnKey: "turn-1",
+        userId: "user-1",
+      },
+      "op_wrong",
+    )).toBe(false);
+    expect(isConfirmedActionValid(
+      executing,
+      "cancel_appointment",
+      "+15550001111",
+      NOW,
+      {
+        bookingId: "booking-2",
+        careVertical: "child",
+        _sourceTurnKey: "turn-1",
+        userId: "user-1",
+      },
+      "op_child_1",
+    )).toBe(false);
+    expect(isConfirmedActionValid(
+      executing,
+      "cancel_appointment",
+      "+15550001111",
+      NOW,
+      {
+        bookingId: "booking-1",
+        careVertical: "senior",
+        _sourceTurnKey: "turn-1",
+        userId: "user-1",
+      },
+      "op_child_1",
+    )).toBe(false);
   });
 
   it("rejects when no phone is provided", () => {

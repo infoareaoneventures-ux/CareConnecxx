@@ -43,11 +43,15 @@ describe('Firestore embedding exemptions (U7)', () => {
         expect(o.ttl, `${cg}.embedding is not a TTL field`).toBeUndefined();
     });
 
+    // Timeout: this walks + reads every source file in the repo. It runs in
+    // ~300ms standalone but can exceed the 5s default under full-shard CPU
+    // contention (the tree grew substantially with the childcare units), which
+    // showed up as a false CI failure. The budget is generous on purpose.
     it('no source query filters or orders by an embedding field', () => {
         const src = collectSource();
         expect(/\.where\(\s*['"`]embedding['"`]/.test(src)).toBe(false);
         expect(/\.orderBy\(\s*['"`]embedding['"`]/.test(src)).toBe(false);
-    });
+    }, 60_000);
 });
 
 describe('Preserved load-bearing override (A2)', () => {

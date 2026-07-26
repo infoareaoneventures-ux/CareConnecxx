@@ -14,6 +14,78 @@ export interface CareRecipient {
   age?:          number;
 }
 
+// ── Typed care-recipient union (childcare plan 2026-07-22-002, U2) ───────────
+//
+// The amendment extends THIS seam — resolveRecipientKey/describeWhoIsWho stay
+// the senior resolution path — rather than creating a parallel recipient-
+// resolution module. Senior behavior is unchanged: senior recipients keep the
+// recipientPlanKey scheme below; child recipients are referenced by childId +
+// householdId and are authorized EXCLUSIVELY through
+// childcare/guardianAuthority.checkAuthority (never by name matching, never by
+// household membership alone). A child ref carries no child PII beyond an
+// optional display label (first name / nickname only — R10/R57).
+
+export interface SeniorRecipientRef {
+  vertical: "senior";
+  /** recipientPlanKey-format key (see recipientPlanKey below). */
+  recipientKey: string;
+}
+
+export interface ChildRecipientRef {
+  vertical: "child";
+  childId: string;
+  householdId: string;
+  /** Display label only (first name / nickname) — never full identity data. */
+  displayLabel?: string;
+}
+
+export type TypedCareRecipientRef = SeniorRecipientRef | ChildRecipientRef;
+
+export function seniorRecipientRef(firstName: string, lastName = ""): SeniorRecipientRef {
+  return { vertical: "senior", recipientKey: recipientPlanKey(firstName, lastName) };
+}
+
+export function childRecipientRef(
+  childId: string,
+  householdId: string,
+  displayLabel?: string,
+): ChildRecipientRef {
+  if (!childId || !householdId) throw new Error("childRecipientRef: childId and householdId are required");
+  return { vertical: "child", childId, householdId, ...(displayLabel ? { displayLabel } : {}) };
+}
+
+export function isChildRecipientRef(ref: unknown): ref is ChildRecipientRef {
+  return (
+    !!ref &&
+    typeof ref === "object" &&
+    (ref as Record<string, unknown>).vertical === "child" &&
+    typeof (ref as Record<string, unknown>).childId === "string" &&
+    typeof (ref as Record<string, unknown>).householdId === "string"
+  );
+}
+
+export function isSeniorRecipientRef(ref: unknown): ref is SeniorRecipientRef {
+  return (
+    !!ref &&
+    typeof ref === "object" &&
+    (ref as Record<string, unknown>).vertical === "senior" &&
+    typeof (ref as Record<string, unknown>).recipientKey === "string"
+  );
+}
+
+/**
+ * Guard for senior-only consumers (manifest disposition
+ * senior-only-explicit-skip): throws on a child recipient instead of silently
+ * processing it — a malformed child record entering a senior path is the
+ * critical risk (plan R2).
+ */
+export function assertSeniorRecipientRef(ref: TypedCareRecipientRef): SeniorRecipientRef {
+  if (ref.vertical !== "senior") {
+    throw new Error("assertSeniorRecipientRef: child recipient reached a senior-only consumer — fail closed");
+  }
+  return ref;
+}
+
 // Mirrors components/CarePlan.tsx getKey (and PostJobFlow's key builder):
 // `${first.toLowerCase()}_${(last || 'noname').toLowerCase()}` with whitespace
 // collapsed to _ and Firestore-field-path-hostile chars stripped.

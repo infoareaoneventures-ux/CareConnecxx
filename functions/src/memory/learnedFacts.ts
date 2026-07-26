@@ -386,13 +386,20 @@ export interface FactExtractionRefusal {
 }
 
 export interface FactExtractionResult {
-  skipped?: "turn_kind" | "too_short" | "extraction_failed" | "nothing_extracted";
+  skipped?: "turn_kind" | "too_short" | "extraction_failed" | "nothing_extracted" | "memory_denied";
   stored: number;
   refusals: FactExtractionRefusal[];
 }
 
 export interface FactExtractionOptions {
   turnKind?: FactTurnKind;
+  /**
+   * Childcare U10 (R50/KTD17/AE22): session shape for the memory-eligibility
+   * decision. When provided and the learnedFacts subsystem is denied
+   * (childcare vertical, pending/unclassified, caregiver with active
+   * childcare context), extraction is refused before any model call.
+   */
+  session?: import("./memoryEligibility").MemoryEligibilitySessionLike;
 }
 
 export async function extractAndStoreFacts(
@@ -406,6 +413,15 @@ export async function extractAndStoreFacts(
   // of new passive facts — the staged operation owns that turn's meaning.
   if (options?.turnKind && options.turnKind !== "normal") {
     return { skipped: "turn_kind", stored: 0, refusals: [] };
+  }
+  // Childcare U10 (R50/AE22): the eligibility decision precedes extraction.
+  if (options?.session) {
+    const { decideMemoryEligibility, logMemoryDenial } = await import("./memoryEligibility");
+    const decision = decideMemoryEligibility(options.session);
+    if (!decision.subsystems.learnedFacts) {
+      logMemoryDenial("learned_facts_extraction", decision);
+      return { skipped: "memory_denied", stored: 0, refusals: [] };
+    }
   }
   if (!text || text.length < 10) return { skipped: "too_short", stored: 0, refusals: [] };
 

@@ -799,6 +799,22 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
       await createCaregiverNotification(caregiverUid, notificationPayload.title, notificationPayload.body);
     }
 
+    // ── Childcare vertical evidence mirror (plan 2026-07-22-002 U5, KTD10) ──
+    // ADDITIVE: after the (unchanged) senior handling above, fan the event out
+    // to caregivers/{uid}/screenings/child — but ONLY when the event matches
+    // that screening's stored provider references (candidate/invitation/report
+    // id + the shared base package slug), with doc-level idempotency for
+    // out-of-order/redelivered events. Fully guarded: a childcare failure can
+    // never affect the senior webhook outcome, and Checkr state remains
+    // EVIDENCE — the mirror never writes approval (R27). MVR-wall events and
+    // ignored candidate events returned earlier and are (correctly) excluded.
+    try {
+      const { mirrorCheckrEventToChildcareScreening } = await import("./childcare/providerEligibility");
+      await mirrorCheckrEventToChildcareScreening({ caregiverUid, eventId, type, payload });
+    } catch (err) {
+      console.error("childcare screening mirror error (ignored):", err instanceof Error ? err.message : err);
+    }
+
     await settle("processed");
     res.status(200).json({ received: true });
   } catch (error: any) {

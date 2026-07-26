@@ -10,6 +10,12 @@ const hoisted = vi.hoisted(() => {
     timestamp: number;
     memorySyncStatus?: string;
     excludeFromMemoryConsolidationAt?: string;
+    memoryExcluded?: boolean;
+    careVertical?: string;
+    conversationPartitionSchema?: string;
+    reason?: string;
+    policyVersion?: string;
+    decidedAt?: string;
   }> = [];
   let autoId = 0;
   const committed: Array<{ type: "set" | "delete"; id: string; data?: any }> =
@@ -79,6 +85,9 @@ const hoisted = vi.hoisted(() => {
         timestamp: number;
         memorySyncStatus?: string;
         excludeFromMemoryConsolidationAt?: string;
+        memoryExcluded?: boolean;
+        careVertical?: string;
+        conversationPartitionSchema?: string;
       }>,
     ) => {
       docs = msgs.map((m, i) => ({ id: `m${i}`, ...m }));
@@ -150,6 +159,25 @@ describe("maybeRollUpHistory", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0].content).toContain("medication");
     expect(live).toHaveLength(HISTORY_WINDOW); // only the recent window survives
+  });
+
+  it("writes child operational summaries with immutable memory exclusion metadata", async () => {
+    hoisted.seed(makeMsgs(ROLLUP_TRIGGER + 6).map((row) => ({
+      ...row,
+      careVertical: "child",
+      conversationPartitionSchema: "care-vertical-v1",
+      memoryExcluded: true,
+    })));
+
+    await expect(maybeRollUpHistory("+15550001111", "child")).resolves.toBe(true);
+    const summary = hoisted.snapshot().find((row) => row.role === "summary");
+    expect(summary).toMatchObject({
+      careVertical: "child",
+      conversationPartitionSchema: "care-vertical-v1",
+      memoryExcluded: true,
+      reason: "childcare_vertical",
+    });
+    expect(summary?.policyVersion).toMatch(/^memory-eligibility-/);
   });
 
   it("merges an existing summary instead of creating a second one", async () => {

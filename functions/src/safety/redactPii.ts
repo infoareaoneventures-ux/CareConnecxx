@@ -88,3 +88,41 @@ export function redactPii(text: string): RedactResult {
 
   return { text: result, redactions };
 }
+
+// ── Childcare log/telemetry redaction (U13, R57) ─────────────────────────────
+//
+// ADDITIVE, and deliberately NOT wired into the outbound transport: the senior
+// SMS/email paths legitimately carry shift dates and addresses, so widening the
+// transport redactor to strip dates/addresses would regress senior copy. These
+// helpers scrub CHILD-sensitive shapes from strings destined for LOGS, error
+// payloads, traces, and canary/metric detail — contexts where an exact DOB or
+// street address must never appear (a child display label in an AUTHENTICATED
+// view is NOT redacted here — that is a policy decision for the view layer, not
+// a structural log leak). Paired with childcare/privacyAssertions.ts, which
+// REJECTS such fields at the source; this is defense-in-depth for the log sink.
+
+// Exact date-of-birth shapes: M/D/YYYY, M-D-YYYY, and ISO YYYY-MM-DD. Word
+// boundaries keep ordinary times ("3:30") and short refs from matching.
+export const DOB_SLASH_PATTERN = /\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](19|20)\d\d\b/g;
+export const DOB_ISO_PATTERN = /\b(19|20)\d\d-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g;
+
+/**
+ * Redact child-sensitive STRING shapes (SSN + exact DOB) for a logging/telemetry
+ * context. Reuses the SSN pattern above; adds DOB. NEVER throws — a redactor
+ * that crashes the log call is worse than the leak it prevents, so any internal
+ * error returns the input unchanged with a `failed` marker the caller can alert
+ * on (U13 "redactor failure handling" scenario).
+ */
+export function redactChildSensitiveForLog(text: string): RedactResult & { failed: boolean } {
+  try {
+    const redactions: string[] = [];
+    let result = text;
+    result = result.replace(SSN_PATTERN, () => { redactions.push("ssn"); return REDACTED; });
+    result = result.replace(DOB_SLASH_PATTERN, () => { redactions.push("dob"); return REDACTED; });
+    result = result.replace(DOB_ISO_PATTERN, () => { redactions.push("dob"); return REDACTED; });
+    return { text: result, redactions, failed: false };
+  } catch {
+    // Fail safe: never propagate. The caller treats `failed` as a canary signal.
+    return { text, redactions: [], failed: true };
+  }
+}

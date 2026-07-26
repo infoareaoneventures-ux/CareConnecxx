@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { conversationPartitionIdsForRead } from "../agents/turnSourceKey";
 
 // ── inferActiveHours — learn each user's quiet window from behavior ────────────
 //
@@ -70,6 +71,7 @@ export async function runInferActiveHours(): Promise<InferActiveHoursResult> {
   for (const doc of sessions.docs) {
     const session = doc.data();
     if (session.optedOut) continue;
+    if (session.careVertical === "child") continue;
     const userId = (session.userId as string | undefined) ?? "";
     if (!userId) continue;
     result.scanned++;
@@ -79,15 +81,22 @@ export async function runInferActiveHours(): Promise<InferActiveHoursResult> {
       const prefs = prefSnap.data() ?? {};
       const tz = (prefs.timezone as string | undefined) || "America/Los_Angeles";
 
-      const msgs = await db.collection("agent_conversations").doc(doc.id)
-        .collection("messages")
-        .orderBy("timestamp", "desc")
-        .limit(MESSAGES_PER_USER)
-        .get();
+      const msgSnaps = await Promise.all(
+        conversationPartitionIdsForRead(doc.id, "senior").map((partitionId) =>
+          db.collection("agent_conversations").doc(partitionId)
+            .collection("messages")
+            .orderBy("timestamp", "desc")
+            .limit(MESSAGES_PER_USER)
+            .get()),
+      );
+      const messages = msgSnaps.flatMap((snap) => snap.docs)
+        .filter((message) => message.data().careVertical !== "child")
+        .sort((a, b) => Number(b.data().timestamp ?? 0) - Number(a.data().timestamp ?? 0))
+        .slice(0, MESSAGES_PER_USER);
 
       const hourCounts = new Array<number>(24).fill(0);
       let userMsgCount = 0;
-      for (const m of msgs.docs) {
+      for (const m of messages) {
         const data = m.data();
         if (data.role !== "user") continue;
         const ts = data.timestamp as number | undefined;

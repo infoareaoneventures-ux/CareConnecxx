@@ -1,4 +1,10 @@
-import { isHighRisk, proposePendingAction, buildPendingActionStub } from "../agents/pendingActions";
+import {
+  isHighRisk,
+  proposePendingAction,
+  buildPendingActionStub,
+  getPendingActionById,
+  isConfirmedActionValid,
+} from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 
 /**
@@ -25,7 +31,7 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 /** Error shape — mirrors server.ts `toolError` so migrated tools are wire-identical. */
 export type ToolErrorCode =
   | "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT"
-  | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN";
+  | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "CHILDCARE_NOT_SUPPORTED";
 
 export function toolError(code: ToolErrorCode, message: string) {
   return { _toolError: true, success: false, code, message };
@@ -40,6 +46,8 @@ export interface RunToolContext {
   caregiverId?: string;
   /** "client" | "caregiver" — selects which actor's tool surface is in play. */
   actor?:       "client" | "caregiver";
+  careVertical?: "senior" | "child";
+  sourceTurnKey?: string;
 }
 
 /**
@@ -88,6 +96,10 @@ function injectFields(
   if (want.includes("chatId") && ctx.chatId !== undefined) out.chatId = ctx.chatId;
   if (want.includes("userId") && ctx.userId !== undefined) { out.clientId = ctx.userId; out.userId = ctx.userId; }
   if (want.includes("caregiverId") && ctx.caregiverId !== undefined) out.caregiverId = ctx.caregiverId;
+  if (ctx.careVertical === "child") out.careVertical = "child";
+  else delete out.careVertical;
+  if (ctx.sourceTurnKey) out._sourceTurnKey = ctx.sourceTurnKey;
+  else delete out._sourceTurnKey;
   return out;
 }
 
@@ -115,8 +127,27 @@ export async function runTool(
 
   // 3. Confirmation gate (identical semantics to handleToolCall).
   const confirmedActionId = input._confirmedActionId as string | undefined;
+  const confirmedOperationId = input._operationId as string | undefined;
+  let confirmedPending: Awaited<ReturnType<typeof getPendingActionById>> = null;
   if (confirmedActionId) {
     delete input._confirmedActionId;
+    delete input._operationId;
+    const pending = await getPendingActionById(confirmedActionId);
+    confirmedPending = pending;
+    if (!isConfirmedActionValid(
+      pending,
+      handler.name,
+      input.phone as string | undefined,
+      Date.now(),
+      input,
+      confirmedOperationId,
+    )) {
+      return toolError(
+        "PERMISSION_DENIED",
+        "This confirmation is no longer valid. Please try the action again.",
+      );
+    }
+    if (confirmedOperationId) input._boundOperationId = confirmedOperationId;
   } else if (isHighRisk(handler.name, input)) {
     const phone = input.phone as string | undefined;
     if (!phone) {
@@ -128,6 +159,8 @@ export async function runTool(
       userId:    input.userId as string | undefined,
       toolName:  handler.name,
       toolInput: input,
+      careVertical: ctx.careVertical === "child" ? "child" : "senior",
+      sourceTurnKey: ctx.sourceTurnKey,
     });
     console.info("runTool gate: proposed pending action", { phone, actionId: action.id, toolName: handler.name });
     return buildPendingActionStub(action);
@@ -139,7 +172,22 @@ export async function runTool(
   let result: unknown;
   if (confirmedActionId && handler.idempotent) {
     const key = toolExecutionKey(confirmedActionId, handler.name, input);
-    const claim = await claimToolExecution(key);
+    const operation = confirmedPending?.operation;
+    const claim = await claimToolExecution(key, {
+      strict: operation?.careVertical === "child",
+      ...(operation ? {
+        binding: {
+          operationId: operation.operationId,
+          careVertical: operation.careVertical,
+          principalId: operation.principalId,
+          objectType: operation.objectType,
+          objectId: operation.objectId,
+          actionName: operation.actionName,
+          sourceTurnKey: operation.sourceTurnKey,
+          expiresAt: operation.expiresAt,
+        },
+      } : {}),
+    });
     if (claim.cached) return claim.result; // exact replay — do NOT re-run the side effect
     try {
       result = await handler.run(input, ctx);

@@ -167,6 +167,116 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   journal_comment_edited:             { included: false },
   proactive_draft_approved:           { included: false },
   proactive_draft_rejected:           { included: false },
+
+  // ── excluded: childcare U2 household/guardian-authority events ────────────
+  // Child-vertical authority bookkeeping never enters the SENIOR family
+  // activity feed (plan 2026-07-22-002 R46/R57; the feed is a senior-vertical
+  // surface — childcare surfaces arrive in U11 with their own projection).
+  household_created:                   { included: false },
+  household_invite_created:            { included: false },
+  household_invite_accepted:           { included: false },
+  guardian_authority_granted:          { included: false },
+  guardian_authority_updated:          { included: false },
+  guardian_authority_revoked:          { included: false },
+  guardian_authority_dispute_hold:     { included: false },
+  guardian_authority_dispute_resolved: { included: false },
+
+  // ── excluded: childcare U3 child-profile / privacy-lifecycle events ───────
+  // Same rule as U2: child-vertical events never enter the senior activity
+  // feed (R46/R57) — and these additionally reference the most restricted
+  // data zones on the platform. Childcare surfaces arrive in U11.
+  child_profile_created:               { included: false },
+  child_profile_callable_create:       { included: false },
+  child_profile_aged_out:              { included: false },
+  child_safety_version_appended:       { included: false },
+  child_file_upload_intent:            { included: false },
+  child_file_upload_confirmed:         { included: false },
+  child_file_read_grant:               { included: false },
+  child_file_upload_verified:          { included: false },
+  child_file_object_rejected:          { included: false },
+  child_file_scan_result:              { included: false },
+  lifecycle_provider_task_completed:   { included: false },
+  data_lifecycle_completed:            { included: false },
+  adult_account_deletion_started:      { included: false },
+
+  // Childcare U4 (plan 2026-07-22-002): same rule — child-vertical signup,
+  // consent, and identity events never enter the senior activity feed
+  // (R46/R57). Childcare-facing surfaces arrive in U11.
+  childcare_signup_ingress:            { included: false },
+  childcare_objective_created:         { included: false },
+  childcare_consent_receipts_recorded: { included: false },
+  childcare_consent_receipt_revoked:   { included: false },
+  childcare_identity_session_created:  { included: false },
+  childcare_identity_session_reused:   { included: false },
+  childcare_identity_callback_consumed: { included: false },
+  childcare_identity_status_mirrored:  { included: false },
+
+  // Childcare U5 (plan 2026-07-22-002): provider vertical profile, screening
+  // evidence, and eligibility events are childcare-vertical operational
+  // records — never senior activity-feed content (R46/R57).
+  childcare_vertical_profile_upserted:   { included: false },
+  childcare_policy_accepted:             { included: false },
+  childcare_screening_evidence_adopted:  { included: false },
+  childcare_screening_invitation_sent:   { included: false },
+  childcare_provider_approved:           { included: false },
+  childcare_provider_approval_revoked:   { included: false },
+  childcare_provider_suspended:          { included: false },
+  childcare_provider_suspension_lifted:  { included: false },
+
+  // Childcare U6 (plan 2026-07-22-002): job/application/interview events are
+  // childcare-vertical operational records — never senior activity-feed
+  // content (R46/R57). Childcare-facing surfaces arrive in U11.
+  childcare_job_created:                 { included: false },
+  childcare_job_closed:                  { included: false },
+  childcare_application_created:         { included: false },
+  childcare_interview_requested:         { included: false },
+  // Childcare U7 (excluded: childcare events stay out of the senior-lineage
+  // activity feed entirely until U11 ships an authenticated childcare surface;
+  // no child data may transit a generic feed — R46/R57).
+  childcare_booking_requested:           { included: false },
+  childcare_booking_accepted:            { included: false },
+  childcare_booking_declined:            { included: false },
+  childcare_booking_confirmed:           { included: false },
+  childcare_booking_canceled:            { included: false },
+  childcare_booking_substituted:         { included: false },
+  childcare_shift_checked_in:            { included: false },
+  childcare_shift_checked_out:           { included: false },
+  childcare_booking_safety_read:         { included: false },
+  childcare_safety_projection_created:   { included: false },
+  childcare_safety_projection_revoked:   { included: false },
+  childcare_application_accepted:        { included: false },
+  childcare_application_rejected:        { included: false },
+  // Childcare U8 money/review events: excluded — money state and review
+  // activity never transit the generic feed (R46/R57).
+  childcare_payment_pending_payer:       { included: false },
+  childcare_payment_authorized:          { included: false },
+  childcare_validated_hours_created:     { included: false },
+  childcare_visit_overdue:               { included: false },
+  childcare_refund_requested:            { included: false },
+  childcare_payout_held:                 { included: false },
+  childcare_review_submitted:            { included: false },
+  // Childcare U9: conversation/coordination events never enter the senior
+  // activity feed (child-adjacent context stays out of broad surfaces, R57).
+  childcare_conversation_opened:         { included: false },
+  childcare_coordination_read:           { included: false },
+  // Childcare U11: household member enumeration is an operator/family settings
+  // read — never a broad activity-feed row (R57).
+  childcare_household_members_listed:    { included: false },
+  // Childcare U10: incident escalations are operator-only (U12 queue) — never
+  // a family-visible feed row, and never any content beyond the category.
+  childcare_incident_escalated:          { included: false },
+  // Childcare U12: operator RBAC, restricted incident cases, and moderation
+  // are operator/audit surfaces ONLY (R55-R57) — a family feed must never
+  // reveal that a case exists, who accessed it, or why.
+  childcare_operator_access:             { included: false },
+  childcare_incident_case_created:       { included: false },
+  childcare_incident_status_changed:     { included: false },
+  childcare_incident_assigned:           { included: false },
+  childcare_incident_evidence_added:     { included: false },
+  childcare_incident_party_excluded:     { included: false },
+  childcare_incident_payout_hold:        { included: false },
+  childcare_incident_litigation_hold:    { included: false },
+  childcare_review_moderated:            { included: false },
 };
 
 /** The static, PII-free description for an included event, or null if excluded. */

@@ -172,4 +172,24 @@ export const checkBackgroundCheckExpiry = functions.pubsub
     console.log(
       `[backgroundCheckExpiry] Done. Expired: ${expiredCount}, expiring-soon warnings: ${warningCount}`
     );
+
+    // ── Childcare screening expiry sweep (plan 2026-07-22-002 U5, R31/AE9) ──
+    // ADDITIVE guarded branch: runs AFTER the senior sweep above, is gated on
+    // the Firestore-resident childcare flags (skips entirely while childcare
+    // is dark), and touches ONLY caregivers/{uid}/screenings/child plus the
+    // namespaced childcareProvider derived summary — NEVER a senior field
+    // (verified / verificationStatus / status / backgroundCheckData). Expired
+    // childcare evidence removes childcare visibility while still-valid senior
+    // eligibility is untouched. Safe when skipped: providerEligibility
+    // evaluates report age LIVE, so a stale doc can never grant eligibility.
+    try {
+      const { runChildcareScreeningExpirySweep } = await import("../childcare/providerEligibility");
+      const sweep = await runChildcareScreeningExpirySweep();
+      console.log(
+        `[backgroundCheckExpiry] childcare sweep: skipped=${sweep.skipped} scanned=${sweep.scanned} ` +
+        `expired=${sweep.expired} renewalNotices=${sweep.renewalNotices}`
+      );
+    } catch (err) {
+      console.error("[backgroundCheckExpiry] childcare sweep error (senior sweep unaffected):", err);
+    }
   });

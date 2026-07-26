@@ -30,10 +30,14 @@ export const dailyContactCardShare = functions.pubsub
     }
 
     const results = await Promise.allSettled(
-      snap.docs.map((doc) => {
-        const { chatId } = doc.data() as { chatId: string };
-        return shareContactCard(chatId);
-      })
+      snap.docs
+        // Childcare U10 (R54/AE16): childcare sessions never get the senior
+        // contact-card share; childcare proactive messaging is deferred.
+        .filter((doc) => (doc.data() as { careVertical?: string }).careVertical !== "child")
+        .map((doc) => {
+          const { chatId } = doc.data() as { chatId: string };
+          return shareContactCard(chatId);
+        })
     );
 
     const failed = results.filter((r) => r.status === "rejected").length;

@@ -124,6 +124,10 @@ import {
   MIN_USER_ROWS_KEPT,
   composeHistoryWindow,
 } from "./contextManagement";
+import {
+  CONVERSATION_PARTITION_SCHEMA,
+  deriveConversationPartitionId,
+} from "./turnSourceKey";
 
 const PHONE = "+15559990000";
 
@@ -266,6 +270,30 @@ describe("getConversationHistory — U3 window guardrail", () => {
       { role: "assistant", content: "b" },
     ]);
   });
+
+  it("physically isolates mixed senior and child histories for the same phone", async () => {
+    const childPartition = deriveConversationPartitionId(PHONE, "child");
+    hoisted.conversations.set(childPartition, [
+      {
+        __id: "child-1",
+        role: "user",
+        content: "child-only coordination",
+        timestamp: 10,
+        careVertical: "child",
+        conversationPartitionSchema: CONVERSATION_PARTITION_SCHEMA,
+        memoryExcluded: true,
+      },
+    ]);
+    hoisted.conversations.set(PHONE, [
+      { __id: "legacy-1", role: "user", content: "legacy senior context", timestamp: 1 },
+      { __id: "poison-1", role: "user", content: "misplaced child context", timestamp: 2, careVertical: "child" },
+    ]);
+
+    expect((await getConversationHistory(PHONE, "child")).map((row) => row.content))
+      .toEqual(["child-only coordination"]);
+    expect((await getConversationHistory(PHONE, "senior")).map((row) => row.content))
+      .toEqual(["legacy senior context"]);
+  });
 });
 
 describe("composeHistoryWindow (pure)", () => {
@@ -317,10 +345,11 @@ describe("skip-flag call sites — source-level guarantees", () => {
   const trackerSrc = fs.readFileSync(path.resolve(__dirname, "commitmentTracker.ts"), "utf8");
 
   it("the three saveConversationTurn-backed sends and the filler pass skipHistoryRecord", () => {
-    expect(qaSrc).toContain("await sendSplit(chatId, reply, { skipHistoryRecord: true });");          // main reply
-    expect(qaSrc).toContain("await sendSplit(chatId, resumedReply, { skipHistoryRecord: true });");   // checkpoint resume
-    expect(qaSrc).toContain("buildClickableMessage(reply), { skipHistoryRecord: true })");            // runQuickReply
-    expect(qaSrc).toContain('sendSplit(chatId, "On it — give me a moment.", { skipHistoryRecord: true })'); // mid-loop filler
+    expect(qaSrc).toContain("await sendSplit(chatId, reply, { ...transportOpts, skipHistoryRecord: true });");          // main reply
+    expect(qaSrc).toContain("await sendSplit(chatId, resumedReply, { ...transportOpts, skipHistoryRecord: true });");   // checkpoint resume
+    expect(qaSrc).toContain("buildClickableMessage(reply), {");                                        // runQuickReply
+    expect(qaSrc).toContain("...(executionContext ? { executionContext } : {})");
+    expect(qaSrc).toContain('await sendSplit(chatId, "On it — give me a moment.", {'); // mid-loop filler
   });
 
   it("sendSplit itself never sets the flag — it only forwards caller opts", () => {
@@ -354,19 +383,22 @@ describe("skip-flag call sites — source-level guarantees", () => {
 describe("U3b — durable turn pair contract (adoption dependency)", () => {
   const qaSrc = fs.readFileSync(path.resolve(__dirname, "qaAgent.ts"), "utf8");
 
-  it("qaAgent still writes the durable pair on the resume, main, and quick paths", () => {
-    // Exactly the three awaited saveConversationTurn call sites the adoption
-    // scan depends on (checkpoint resume, main reply, quick reply).
-    expect([...qaSrc.matchAll(/await saveConversationTurn\(/g)]).toHaveLength(3);
+  it("qaAgent still writes the durable pair on the resume, main, and quick paths (+ the U10 childcare deterministic replies)", () => {
+    // The three awaited saveConversationTurn call sites the adoption scan
+    // depends on (checkpoint resume, main reply, quick reply) PLUS the two
+    // childcare fail-closed deterministic replies added by U10 (flags-off and
+    // envelope-failure), which persist exclusion-stamped rows.
+    expect([...qaSrc.matchAll(/await saveConversationTurn\(/g)]).toHaveLength(5);
   });
 
-  it("saveConversationTurn writes plain rows (no source tag) so they stay adoptable", () => {
+  it("saveConversationTurn writes adoptable rows (no source tag; only the U10 exclusion stamp may ride)", () => {
     const body = qaSrc.slice(
       qaSrc.indexOf("async function saveConversationTurn"),
       qaSrc.indexOf("// ── System prompt builders"),
     );
-    expect(body).toContain('{ role: "user",      content: userText,       timestamp: now }');
-    expect(body).toContain('{ role: "assistant", content: assistantReply, timestamp: now + 1 }');
+    expect(body).toContain('{ role: "user",      content: userText,       timestamp: now,     ...partitionStamp, ...(stamp ?? {}) }');
+    expect(body).toContain('{ role: "assistant", content: assistantReply, timestamp: now + 1, ...partitionStamp, ...(stamp ?? {}) }');
+    expect(body).toContain("conversationStateStamp(careVertical)");
     expect(body).not.toContain("source:");
   });
 

@@ -59,6 +59,27 @@ describe("verifyPostcondition (U5/R24/AE6)", () => {
     expect(r.kind).toBe("handler_output");
     expect(r.safeClaimCode).toBe("completed_unconfirmed");
   });
+
+  it("U10: receipts carry the typed vertical stamp when provided and omit it otherwise", async () => {
+    const stamped = await verifyPostcondition(
+      "cancel_childcare_booking",
+      spec(async () => ({ ok: true })),
+      { id: "bk-1" }, { ok: true },
+      { db: {} as never, now, careVertical: "child" },
+    );
+    expect(stamped.careVertical).toBe("child");
+
+    const legacy = await verifyPostcondition(
+      "update_care_plan",
+      spec(async () => ({ ok: true })),
+      { id: "appt-1" }, { ok: true },
+      { db: {} as never, now },
+    );
+    expect("careVertical" in legacy).toBe(false);
+
+    const handler = handlerOutputReceipt("childcare_action", "k3", now, "child");
+    expect(handler.careVertical).toBe("child");
+  });
 });
 
 describe("decideAutonomy (U5/R27)", () => {

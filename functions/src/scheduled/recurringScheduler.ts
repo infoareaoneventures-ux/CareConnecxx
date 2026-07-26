@@ -107,6 +107,15 @@ async function extendSchedule(
   scheduleId: string,
   schedule:   RecurringSchedule
 ): Promise<void> {
+  // Childcare U7 (defensive skip): recurring_schedules is a SENIOR-only
+  // collection — childcare recurrence lives on the booking doc and generates
+  // vertical-stamped shifts via childcare/bookingCallables. If a childcare-
+  // stamped doc ever lands here, skip it instead of writing senior-shaped
+  // appointments (seniorName, billingAuthority) for a child booking.
+  if ((schedule as unknown as Record<string, unknown>).careVertical === 'child') {
+    console.warn(`[extendSchedule] skipping childcare-vertical recurring_schedules/${scheduleId} (senior-only path)`);
+    return;
+  }
   // Find the latest booked appointment for this recurring schedule
   const latestSnap = await db.collection("appointments")
     .where("recurringScheduleId", "==", scheduleId)

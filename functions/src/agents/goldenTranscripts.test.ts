@@ -18,6 +18,7 @@
 // transcripts focused on the agent behavior rather than the storage shape.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { bustChildcareFlagsCache } from "../config/featureFlags";
 
 // ── Shared fixture state — populated per-transcript inside beforeEach ─────────
 
@@ -53,6 +54,9 @@ function resetState(): void {
   STATE.claudeScript.length = 0;
   STATE.toolCalls.length    = 0;
   STATE.sentChunks.length   = 0;
+  // Childcare U10: the flags module caches per-doc reads for 60s — bust it so
+  // each transcript's childcare_flags docs override takes effect immediately.
+  bustChildcareFlagsCache();
 }
 
 // ── Module mocks (hoisted by vi.mock) ────────────────────────────────────────
@@ -97,7 +101,10 @@ vi.mock("firebase-admin", () => {
   };
 
   const firestoreFn = () => ({ collection: (name: string) => buildCollection(name), batch: () => ({ set: vi.fn(), commit: async () => undefined }) });
-  const firestore = Object.assign(firestoreFn, { FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) } });
+  const firestore = Object.assign(firestoreFn, {
+    FieldValue: { delete: vi.fn(() => "__DELETE__"), arrayUnion: vi.fn((x) => x) },
+    Timestamp: { fromMillis: (millis: number) => ({ millis }) },
+  });
   return {
     __esModule: true,
     // `apps` / `initializeApp` are read at module-load by notifications.ts, now
@@ -148,6 +155,13 @@ vi.mock("../utils/openaiClient", () => ({
     // verifier answers SUPPORTED. Without this the echo fallback parses as
     // indeterminate and high-risk claims get fail-closed neutral copy.
     if (sys.includes("fact-check gate")) {
+      // Childcare U10 (R52/AE14): the unsupported-claim transcript scripts a
+      // completion claim with NO tool result behind it — a healthy verifier
+      // must answer UNSUPPORTED for that draft. Every other golden draft is a
+      // grounded control (claims backed by scripted tool results/context).
+      if (user.includes("Done — I've canceled your childcare booking")) {
+        return "UNSUPPORTED";
+      }
       return "SUPPORTED";
     }
     if (sys.includes("human conversation repair editor")) {
@@ -221,6 +235,12 @@ vi.mock("../mcp/server", () => ({
   MCP_TOOLS:        [],
   CAREGIVER_TOOLS:  [],
   CLIENT_TOOLS:     [],
+  // Childcare U10: minimal pack so childcare transcripts bind real defs.
+  CHILDCARE_CLIENT_TOOLS: [
+    { name: "get_childcare_bookings", description: "d", input_schema: { type: "object", properties: {} } },
+    { name: "cancel_childcare_booking", description: "d", input_schema: { type: "object", properties: {} } },
+    { name: "complete_task", description: "d", input_schema: { type: "object", properties: {} } },
+  ],
   handleToolCall:   vi.fn(async (name: string, _input: Record<string, unknown>) => {
     STATE.toolCalls.push(name);
     const mock = STATE.toolMocks.get(name);
@@ -249,6 +269,11 @@ vi.mock("./contextManagement", () => ({
 vi.mock("./toolCapabilities", () => ({
   selectToolsForIntent: (tools: unknown[]) => tools,
   isHighStakesMutation: () => false,
+  // Childcare U10: same boundary the real module derives from mcp/childcareTools.
+  isAllowedInChildcareTurn: (name: string) =>
+    ["get_childcare_bookings", "cancel_childcare_booking", "list_my_children",
+     "get_childcare_coordination_summary", "request_childcare_booking_change",
+     "resend_childcare_links", "complete_task", "write_todos", "create_support_ticket"].includes(name),
 }));
 // Checkpointing disabled in transcript replays — we exercise the normal path,
 // not resume. Stub to inert no-ops so the flag/env doesn't matter.
@@ -1167,6 +1192,86 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
       oneQuestionAtATime:       true,
     },
   },
+
+  // ── Childcare U10 (plan 2026-07-22-002, R49-R52) ────────────────────────────
+  {
+    name:        "childcare-booking-status-uses-childcare-tools",
+    description: "A classified childcare-family session asks about their booking. Evia runs the childcare branch (childcare prompt + pack), calls get_childcare_bookings, and answers from the tool result.",
+    session:     { careVertical: "child", verticalIntent: "child", userType: "client" },
+    docs: {
+      "childcare_flags/global": {
+        CHILDCARE_ENABLED: true, CHILDCARE_DISCOVERY_ENABLED: true,
+        CHILDCARE_WRITES_ENABLED: true, CHILDCARE_PROACTIVE_ENABLED: false,
+      },
+    },
+    toolMocks: {
+      get_childcare_bookings: {
+        success: true,
+        bookings: [{ bookingId: "bk-1", status: "confirmed", caregiverName: "Ana G.", recipientLabel: "Mia", pendingChange: false }],
+      },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_childcare_bookings", input: {} }] },
+      { text: "Your booking with Ana G. for Mia is confirmed — Thursday 9am to 1pm. Want me to request any changes?" },
+    ],
+    input: { text: "is our childcare booking still on?" },
+    expect: {
+      replyContains:       ["confirmed", "Ana G."],
+      replyNotContains:    ["what can I help", "senior", "care plan"],
+      toolsCalled:         ["get_childcare_bookings"],
+      noListShape:         true,
+      noGenericHelpAsk:    true,
+      oneQuestionAtATime:  true,
+    },
+  },
+
+  {
+    name:        "childcare-unsupported-cancel-claim-caught",
+    description: "R52/AE14: the model claims a childcare cancellation with NO tool call behind it. The grounding gate verdicts UNSUPPORTED and the reply is replaced by the human-handoff copy — the false claim never reaches the family.",
+    session:     { careVertical: "child", verticalIntent: "child", userType: "client" },
+    docs: {
+      "childcare_flags/global": {
+        CHILDCARE_ENABLED: true, CHILDCARE_DISCOVERY_ENABLED: true,
+        CHILDCARE_WRITES_ENABLED: true, CHILDCARE_PROACTIVE_ENABLED: false,
+      },
+    },
+    claudeScript: [
+      { text: "Done — I've canceled your childcare booking for Thursday." },
+    ],
+    input: { text: "did you cancel thursday's childcare booking?" },
+    expect: {
+      replyContains:    ["teammate"],
+      replyNotContains: ["I've canceled", "canceled your childcare booking"],
+      toolsCalled:      [],
+    },
+  },
+
+  {
+    name:        "childcare-senior-tool-fails-closed",
+    description: "R51: on a childcare turn the model tries a SENIOR tool (get_senior_profile). Dispatch rejects it without executing; the model recovers with a childcare-appropriate reply.",
+    session:     { careVertical: "child", verticalIntent: "child", userType: "client" },
+    docs: {
+      "childcare_flags/global": {
+        CHILDCARE_ENABLED: true, CHILDCARE_DISCOVERY_ENABLED: true,
+        CHILDCARE_WRITES_ENABLED: true, CHILDCARE_PROACTIVE_ENABLED: false,
+      },
+    },
+    toolMocks: {
+      get_senior_profile: { name: "SHOULD NEVER BE RETURNED" },
+    },
+    claudeScript: [
+      { tools: [{ name: "get_senior_profile", input: { seniorId: "s-1" } }] },
+      { text: "I handle your childcare here — your other care contexts are managed separately. What do you need for the kids?" },
+    ],
+    input: { text: "show me mom's profile" },
+    expect: {
+      replyContains:    ["childcare"],
+      replyNotContains: ["SHOULD NEVER BE RETURNED"],
+      // Dispatch guard rejects before execution — handleToolCall never runs.
+      toolsCalled:      [],
+      oneQuestionAtATime: true,
+    },
+  },
 ];
 
 // ── Replay driver ────────────────────────────────────────────────────────────
@@ -1289,4 +1394,169 @@ describe("golden transcripts", () => {
       }
     });
   }
+});
+
+// ── Front door golden transcripts (childcare front door, Stage 1) ─────────────
+//
+// docs/architecture/childcare-front-door-design.md — the design note's own
+// resolution table, replayed as golden rows. Same spirit as the runQaAgent
+// transcripts above (one utterance in, one pinned outcome out), but the unit
+// under test is the FRONT DOOR rather than an agent turn: this is the seam that
+// decides which funnel a person enters, so it deserves the same regression net.
+//
+// Two model postures per row, because both happen in production:
+//   • model DOWN ("__parse_error__") — proves the deterministic pre-pass alone
+//     carries the four unambiguous combinations;
+//   • model UP — proves the reconciliation layer (dual, ambiguity, conflict)
+//     produces the same outcome the design note specifies.
+//
+// The authoritative decision is asserted too, so a row can never "pass" by
+// classifying correctly while the server would have stamped something else.
+describe("front door golden transcripts — role x vertical resolution table", () => {
+  interface FrontDoorRow {
+    name: string;
+    utterance: string;
+    /** Model reply used for rows the deterministic pass cannot settle. */
+    modelReply?: Record<string, unknown>;
+    expect: {
+      role: "client" | "caregiver" | null;
+      vertical: "senior" | "child" | null;
+      ambiguous: boolean;
+      dual?: boolean;
+      outcome: "senior" | "child" | "ask" | "dual_ask" | "unavailable";
+      /** Exact authoritative session patch (AE19: closed field set). */
+      sessionPatch: Record<string, unknown>;
+      askedQuestion?: boolean;
+    };
+  }
+
+  const ROWS: FrontDoorRow[] = [
+    {
+      name: "client x senior — 'I need help for my mom, she has dementia'",
+      utterance: "I need help for my mom, she has dementia",
+      expect: {
+        role: "client", vertical: "senior", ambiguous: false, outcome: "senior",
+        // The senior path gains NOTHING. This empty object is the byte-identical
+        // senior parity guarantee, pinned at the golden level.
+        sessionPatch: {},
+      },
+    },
+    {
+      name: "client x child — 'Looking for a sitter Tuesday nights'",
+      utterance: "Looking for a sitter Tuesday nights",
+      modelReply: { role: "client", vertical: "child", confidence: 0.95 },
+      expect: {
+        role: "client", vertical: "child", ambiguous: false, outcome: "child",
+        sessionPatch: { careVertical: "child", verticalIntent: "child" },
+      },
+    },
+    {
+      name: "caregiver x senior — \"I'm a CNA looking for shifts\"",
+      utterance: "I'm a CNA looking for shifts",
+      expect: {
+        role: "caregiver", vertical: "senior", ambiguous: false, outcome: "senior",
+        sessionPatch: {},
+      },
+    },
+    {
+      name: "caregiver x child — 'I want to nanny part-time'",
+      utterance: "I want to nanny part-time",
+      expect: {
+        role: "caregiver", vertical: "child", ambiguous: false, outcome: "child",
+        sessionPatch: { careVertical: "child", verticalIntent: "child" },
+      },
+    },
+    {
+      name: "AMBIGUOUS — 'I need care' asks, and never guesses senior (R-FD1)",
+      utterance: "I need care",
+      modelReply: { role: "client", vertical: "unknown", confidence: 0.9 },
+      expect: {
+        role: "client", vertical: null, ambiguous: true, outcome: "ask",
+        sessionPatch: {
+          verticalIntent: "pending", verticalAskAttempts: 1, verticalPendingRole: "client",
+        },
+        askedQuestion: true,
+      },
+    },
+    {
+      name: "AMBIGUOUS — 'I need work' asks on the caregiver side too",
+      utterance: "I need work, whatever is available",
+      modelReply: { role: "caregiver", vertical: "unknown", confidence: 0.9 },
+      expect: {
+        role: "caregiver", vertical: null, ambiguous: true, outcome: "ask",
+        sessionPatch: {
+          verticalIntent: "pending", verticalAskAttempts: 1, verticalPendingRole: "caregiver",
+        },
+        askedQuestion: true,
+      },
+    },
+    {
+      name: "DUAL — 'my mom and my kids' asks which to set up first",
+      utterance: "I need help with my mom and my kids",
+      modelReply: { role: "client", vertical: "both", confidence: 0.92 },
+      expect: {
+        role: "client", vertical: null, ambiguous: true, dual: true, outcome: "dual_ask",
+        sessionPatch: {
+          verticalIntent: "pending",
+          verticalAskAttempts: 1,
+          verticalPendingRole: "client",
+          // "both" is the marker: which vertical becomes the noted interest is
+          // only knowable once they pick one to set up first.
+          verticalNotedInterest: "both",
+        },
+        askedQuestion: true,
+      },
+    },
+  ];
+
+  for (const row of ROWS) {
+    it(`resolves "${row.name}"`, async () => {
+      const { classifyRoleAndVertical } = await import("./verticalClassifier");
+      const { resolveVerticalFrontDoor } = await import("./verticalFrontDoor");
+
+      const parse = vi.fn(async () =>
+        row.modelReply ? JSON.stringify(row.modelReply) : "__parse_error__",
+      );
+      const classification = await classifyRoleAndVertical({
+        text: row.utterance,
+        isFirstContact: true,
+        parse,
+      });
+
+      expect(classification.role).toBe(row.expect.role);
+      expect(classification.vertical).toBe(row.expect.vertical);
+      expect(classification.ambiguous).toBe(row.expect.ambiguous);
+      expect(classification.dual).toBe(row.expect.dual ?? false);
+
+      // Childcare enabled, so the child rows land on "child" rather than the
+      // waitlist; the flags-off variant is pinned in verticalFrontDoor.test.ts.
+      const decision = resolveVerticalFrontDoor({ classification, childcareEnabled: true });
+      expect(decision.outcome).toBe(row.expect.outcome);
+      expect(decision.sessionPatch).toEqual(row.expect.sessionPatch);
+      if (row.expect.askedQuestion) {
+        expect(typeof decision.question).toBe("string");
+        expect((decision.question ?? "").length).toBeGreaterThan(10);
+      } else {
+        expect(decision.question).toBeUndefined();
+      }
+    });
+  }
+
+  it("every row's session patch stays inside the pinned allow-list (AE19)", async () => {
+    const { classifyRoleAndVertical } = await import("./verticalClassifier");
+    const { resolveVerticalFrontDoor, VERTICAL_PATCH_FIELDS } = await import("./verticalFrontDoor");
+    for (const row of ROWS) {
+      for (const childcareEnabled of [true, false]) {
+        const classification = await classifyRoleAndVertical({
+          text: row.utterance,
+          isFirstContact: true,
+          parse: vi.fn(async () => (row.modelReply ? JSON.stringify(row.modelReply) : "__parse_error__")),
+        });
+        const decision = resolveVerticalFrontDoor({ classification, childcareEnabled });
+        for (const key of Object.keys(decision.sessionPatch)) {
+          expect(VERTICAL_PATCH_FIELDS as readonly string[]).toContain(key);
+        }
+      }
+    }
+  });
 });

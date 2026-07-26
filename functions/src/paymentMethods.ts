@@ -32,6 +32,16 @@ export const updateBookingPaymentMethod = functions.https.onCall(async (data, co
   if (appt.clientId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'Not your booking');
   }
+  // Childcare U8 (R40): childcare visits settle by saved card only — the
+  // offline methods (cash/Venmo/Zelle) are not policy-approved for the child
+  // vertical. Childcare payment method selection reuses the saved-method
+  // infrastructure (Billing Portal default card) via setupChildcareBookingPayment.
+  if (appt.careVertical === 'child' && paymentMethod !== 'credit') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Childcare visits are paid by card through your saved payment method',
+    );
+  }
   if (appt.status !== 'confirmed') {
     throw new functions.https.HttpsError('failed-precondition', 'Can only change payment before the booking starts');
   }

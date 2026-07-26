@@ -44,6 +44,10 @@ import {
   ACTIVITY_BACKFILL_FUTURE_SKEW_MS,
 } from "./conversationMemory";
 import { hashSourceTurnKey, turnSyncOperationId } from "./memoryOperations";
+import {
+  CONVERSATION_PARTITION_SCHEMA,
+  deriveConversationPartitionId,
+} from "../agents/turnSourceKey";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -299,6 +303,11 @@ const turnInput = {
   turnTimestampMs: Date.parse("2026-07-17T18:00:00Z"),
   extractFacts: true,
 };
+const TURN_PARTITION = deriveConversationPartitionId(PHONE, "senior");
+const PARTITION_STAMP = {
+  conversationPartitionSchema: CONVERSATION_PARTITION_SCHEMA,
+  careVertical: "senior",
+};
 
 beforeEach(() => {
   turnStore.clear();
@@ -321,22 +330,24 @@ describe("persistCompletedTurn (U3)", () => {
     expect(commits).toEqual([3]);
 
     const hash = hashSourceTurnKey("web", "client-msg-7");
-    const userRow = turnStore.get(`agent_conversations/${PHONE}/messages/${turnMessageDocId(hash, "user")}`);
-    const assistantRow = turnStore.get(`agent_conversations/${PHONE}/messages/${turnMessageDocId(hash, "assistant")}`);
+    const userRow = turnStore.get(`agent_conversations/${TURN_PARTITION}/messages/${turnMessageDocId(hash, "user")}`);
+    const assistantRow = turnStore.get(`agent_conversations/${TURN_PARTITION}/messages/${turnMessageDocId(hash, "assistant")}`);
     expect(userRow).toEqual({
       role: "user", content: turnInput.userText, timestamp: turnInput.turnTimestampMs,
       sourceTurnKeyHash: hash, sourceChannel: "web", memorySyncStatus: "pending",
+      ...PARTITION_STAMP,
     });
     expect(assistantRow).toEqual({
       role: "assistant", content: turnInput.assistantText, timestamp: turnInput.turnTimestampMs + 1,
       sourceTurnKeyHash: hash, sourceChannel: "web", memorySyncStatus: "pending",
+      ...PARTITION_STAMP,
     });
 
     const op = turnStore.get(`memory_operations/${turnSyncOperationId(hash)}`) as any;
     expect(op.kind).toBe("turn_sync");
     expect(op.sourceMessageRefs).toEqual([
-      `agent_conversations/${PHONE}/messages/${turnMessageDocId(hash, "user")}`,
-      `agent_conversations/${PHONE}/messages/${turnMessageDocId(hash, "assistant")}`,
+      `agent_conversations/${TURN_PARTITION}/messages/${turnMessageDocId(hash, "user")}`,
+      `agent_conversations/${TURN_PARTITION}/messages/${turnMessageDocId(hash, "assistant")}`,
     ]);
     expect(op.sourceTurnTimestamp).toBe(turnInput.turnTimestampMs);
     expect(op.targets.learnedFacts.status).toBe("pending");
@@ -411,14 +422,14 @@ describe("persistCompletedTurn (U3)", () => {
 // both channels; persistCompletedTurn must ADOPT those rows — never write a
 // second pair, because the prompt history reader has no content dedupe.
 describe("persistCompletedTurn — adoptExistingRows (U3b)", () => {
-  const MSGS = `agent_conversations/${PHONE}/messages`;
+  const MSGS = `agent_conversations/${TURN_PARTITION}/messages`;
   const adoptInput = { ...turnInput, turnTimestampMs: undefined, adoptExistingRows: true };
   let userTs: number;
 
   function seedAgentPair(): void {
     userTs = Date.now() - 5_000;
-    turnStore.set(`${MSGS}/auto-1`, { role: "user", content: turnInput.userText, timestamp: userTs });
-    turnStore.set(`${MSGS}/auto-2`, { role: "assistant", content: turnInput.assistantText, timestamp: userTs + 1 });
+    turnStore.set(`${MSGS}/auto-1`, { role: "user", content: turnInput.userText, timestamp: userTs, ...PARTITION_STAMP });
+    turnStore.set(`${MSGS}/auto-2`, { role: "assistant", content: turnInput.assistantText, timestamp: userTs + 1, ...PARTITION_STAMP });
   }
 
   it("adopts the agent-written pair: tags it, writes NO second pair, op references the adopted paths", async () => {
@@ -434,6 +445,7 @@ describe("persistCompletedTurn — adoptExistingRows (U3b)", () => {
     expect(turnStore.get(`${MSGS}/auto-1`)).toEqual({
       role: "user", content: turnInput.userText, timestamp: userTs,
       sourceTurnKeyHash: hash, sourceChannel: "web", memorySyncStatus: "pending",
+      ...PARTITION_STAMP,
     });
     expect(turnStore.get(`${MSGS}/auto-2`)).toMatchObject({
       role: "assistant", sourceTurnKeyHash: hash, memorySyncStatus: "pending",

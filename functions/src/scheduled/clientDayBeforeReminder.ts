@@ -40,6 +40,11 @@ export const sendClientDayBeforeReminders = functions.pubsub
 
     for (const doc of snap.docs) {
       const appt    = doc.data();
+      // Childcare U9 (plan 2026-07-22-002, R43/R54): skip childcare docs -
+      // this sender interpolates senior names into Evia SMS copy, and
+      // childcare proactive messaging stays deferred behind approved
+      // child-safe templates (U1/U10). Senior behavior unchanged.
+      if (appt.careVertical === "child") continue;
       const apptId  = doc.id;
       if (appt.clientDayBeforeReminderSent === true) continue;
       const clientId    = (appt.clientId    ?? "") as string;

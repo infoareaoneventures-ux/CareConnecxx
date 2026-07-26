@@ -18,7 +18,9 @@ export const expirePostVisitFeedback = functions.pubsub
 
     if (snap.empty) return;
 
-    const stale = snap.docs.filter(doc => doc.data().feedbackReceived == null);
+    // Childcare U10 (R54/AE16): defensive — no childcare writer creates these
+    // feedback rows; a childcare-stamped row is skipped rather than mutated.
+    const stale = snap.docs.filter(doc => doc.data().feedbackReceived == null && doc.data().careVertical !== "child");
 
     if (stale.length === 0) return;
 

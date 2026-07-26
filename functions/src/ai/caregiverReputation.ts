@@ -15,9 +15,24 @@ import * as admin from "firebase-admin";
  * for display. On each outcome the prior score is decayed to "now" before the
  * new ±1 is added, so recent outcomes dominate and old ones fade without
  * storing per-event history. A caregiver with no outcomes scores neutral (0).
+ *
+ * VERTICAL AWARENESS (childcare plan 2026-07-22-002 U6, R45): reputation is
+ * per-vertical. The legacy top-level fields (score/lastOutcomeAt/hireCount/
+ * passCount) ARE the senior vertical — every existing reader/writer keeps its
+ * exact pre-U6 behavior when no vertical is named (senior default, byte-
+ * identical). Childcare outcomes live under separate child-prefixed fields on
+ * the same doc, so:
+ *   • senior hire/pass history can never move a childcare ranking, and
+ *   • childcare outcomes can never contaminate the senior boost.
+ * Childcare MATCHING additionally consumes NO reputation boost at all in U6 —
+ * ai/scoring.scoreChildcareCandidate has no reputation input (structural R45);
+ * the per-vertical child fields exist so U8's outcome writers have a home that
+ * is provably not the senior signal.
  */
 
 const COLLECTION = "caregiver_reputation";
+
+export type ReputationVertical = "senior" | "child";
 
 /** Score halves every ~365 days of inactivity. Recent outcomes dominate. */
 export const REPUTATION_HALF_LIFE_MS = 365 * 24 * 60 * 60 * 1000;
@@ -33,6 +48,25 @@ export interface CaregiverReputation {
   lastOutcomeAt: number; // epoch ms of the most recent outcome
   hireCount:     number;
   passCount:     number;
+}
+
+/**
+ * Per-vertical field names on the caregiver_reputation doc. The senior
+ * vertical keeps the ORIGINAL unprefixed fields (legacy data + every pre-U6
+ * reader stay valid); childcare uses child-prefixed fields.
+ */
+export function reputationFieldNames(vertical: ReputationVertical): {
+  score: string; lastOutcomeAt: string; hireCount: string; passCount: string;
+} {
+  if (vertical === "child") {
+    return {
+      score: "childScore",
+      lastOutcomeAt: "childLastOutcomeAt",
+      hireCount: "childHireCount",
+      passCount: "childPassCount",
+    };
+  }
+  return { score: "score", lastOutcomeAt: "lastOutcomeAt", hireCount: "hireCount", passCount: "passCount" };
 }
 
 /** Decay a stored score forward to `nowMs` (pure). */
@@ -62,41 +96,62 @@ export function reputationBoost(
  * Record a hire/pass outcome for a caregiver. Transactional so concurrent
  * outcomes can't lose an increment. Decays the prior score to now before
  * adding the new signal.
+ *
+ * `vertical` defaults to "senior" (the pre-U6 behavior, byte-identical field
+ * writes). Pass "child" for childcare outcomes — they land in the child-
+ * prefixed fields and never touch the senior score (R45).
  */
 export async function recordCaregiverOutcome(
   db: admin.firestore.Firestore,
   caregiverId: string,
   outcome: "hire" | "pass",
   nowMs: number = Date.now(),
+  vertical: ReputationVertical = "senior",
 ): Promise<void> {
   if (!caregiverId) return;
   const ref = db.collection(COLLECTION).doc(caregiverId);
   const delta = outcome === "hire" ? 1 : -1;
+  const f = reputationFieldNames(vertical);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const prev = snap.exists ? (snap.data() as Partial<CaregiverReputation>) : undefined;
-    const decayed = decayScore(prev?.score ?? 0, prev?.lastOutcomeAt ?? 0, nowMs);
+    const prev = snap.exists ? (snap.data() as Record<string, unknown>) : undefined;
+    const prevScore = typeof prev?.[f.score] === "number" ? (prev[f.score] as number) : 0;
+    const prevAt = typeof prev?.[f.lastOutcomeAt] === "number" ? (prev[f.lastOutcomeAt] as number) : 0;
+    const decayed = decayScore(prevScore, prevAt, nowMs);
     tx.set(ref, {
-      score:         decayed + delta,
-      lastOutcomeAt: nowMs,
-      hireCount:     admin.firestore.FieldValue.increment(outcome === "hire" ? 1 : 0),
-      passCount:     admin.firestore.FieldValue.increment(outcome === "pass" ? 1 : 0),
+      [f.score]:         decayed + delta,
+      [f.lastOutcomeAt]: nowMs,
+      [f.hireCount]:     admin.firestore.FieldValue.increment(outcome === "hire" ? 1 : 0),
+      [f.passCount]:     admin.firestore.FieldValue.increment(outcome === "pass" ? 1 : 0),
     }, { merge: true });
   }).catch((err) => console.error("[caregiverReputation] recordCaregiverOutcome error:", err));
 }
 
-/** Read a caregiver's current reputation boost (0 when none recorded). */
+/**
+ * Read a caregiver's current reputation boost (0 when none recorded).
+ * Vertical-scoped: the default ("senior") reads the legacy fields exactly as
+ * before U6; "child" reads ONLY the child-prefixed fields — a caregiver with
+ * senior hires but no childcare outcomes gets a 0 childcare boost (R45).
+ */
 export async function getCaregiverReputationBoost(
   db: admin.firestore.Firestore,
   caregiverId: string,
   nowMs: number = Date.now(),
+  vertical: ReputationVertical = "senior",
 ): Promise<number> {
   if (!caregiverId) return 0;
   try {
     const snap = await db.collection(COLLECTION).doc(caregiverId).get();
     if (!snap.exists) return 0;
-    const d = snap.data() as Partial<CaregiverReputation>;
-    return reputationBoost({ score: d.score ?? 0, lastOutcomeAt: d.lastOutcomeAt ?? 0 }, nowMs);
+    const d = snap.data() as Record<string, unknown>;
+    const f = reputationFieldNames(vertical);
+    return reputationBoost(
+      {
+        score: typeof d[f.score] === "number" ? (d[f.score] as number) : 0,
+        lastOutcomeAt: typeof d[f.lastOutcomeAt] === "number" ? (d[f.lastOutcomeAt] as number) : 0,
+      },
+      nowMs,
+    );
   } catch (err) {
     console.warn("[caregiverReputation] getCaregiverReputationBoost failed:", err);
     return 0;
@@ -108,10 +163,11 @@ export async function getReputationBoosts(
   db: admin.firestore.Firestore,
   caregiverIds: string[],
   nowMs: number = Date.now(),
+  vertical: ReputationVertical = "senior",
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   await Promise.all(caregiverIds.map(async (id) => {
-    out.set(id, await getCaregiverReputationBoost(db, id, nowMs));
+    out.set(id, await getCaregiverReputationBoost(db, id, nowMs, vertical));
   }));
   return out;
 }

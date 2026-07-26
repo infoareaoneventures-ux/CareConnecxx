@@ -7,6 +7,9 @@ const gate = vi.hoisted(() => ({
   isHighRisk: vi.fn().mockReturnValue(false),
   proposePendingAction: vi.fn().mockResolvedValue({ id: "pa_1", preview: "Cancel appointment?" }),
   buildPendingActionStub: vi.fn().mockReturnValue({ _pendingAction: true, actionId: "pa_1" }),
+  // The confirmed-action branch also resolves and validates the pending action.
+  getPendingActionById: vi.fn().mockResolvedValue(null),
+  isConfirmedActionValid: vi.fn().mockReturnValue(true),
 }));
 vi.mock("../../agents/pendingActions", () => gate);
 

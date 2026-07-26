@@ -4,6 +4,7 @@ import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed } from "../agents/intentClassifier";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
+import { conversationPartitionIdsForRead } from "../agents/turnSourceKey";
 
 /** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
 const hasAppointmentId = (v: unknown): boolean =>
@@ -136,6 +137,8 @@ async function handleRecurringCancel(phone: string, chatId: string, session: Age
     { status: "cancelled", cancelledAt: new Date().toISOString() }
   );
   for (const doc of futureSnap.docs) {
+    // Childcare U7 defensive skip: SMS mutations never touch childcare visits.
+    if (doc.data()?.careVertical === "child") continue;
     batch.update(doc.ref, { status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
   }
   await batch.commit();
@@ -421,6 +424,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         const { appointmentId } = cancelConfirm303;
         const apptRef  = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
+        if (apptSnap.exists && apptSnap.data()!.careVertical === "child") {
+          // Childcare U7: SMS mutations must not touch childcare bookings in
+          // this unit (web/callable-only until U10). Clear the flag, redirect.
+          await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() }).catch(() => {});
+          await sendMessage(chatId, "Childcare bookings are managed on the web for now — you can cancel from your dashboard at any time.");
+          return;
+        }
         if (apptSnap.exists) {
           const appt = apptSnap.data()!;
           await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
@@ -594,6 +604,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         const { appointmentId } = cancelConfirm470;
         const apptRef = db.collection("appointments").doc(appointmentId);
         const apptSnap = await apptRef.get();
+        if (apptSnap.exists && apptSnap.data()!.careVertical === "child") {
+          // Childcare U7: SMS mutations must not touch childcare bookings in
+          // this unit (web/callable-only until U10). Clear the flag, redirect.
+          await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() }).catch(() => {});
+          await sendMessage(chatId, "Childcare bookings are managed on the web for now — you can cancel from your dashboard at any time.");
+          return;
+        }
         if (apptSnap.exists) {
           const appt = apptSnap.data()!;
           await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
@@ -929,10 +946,15 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         // a question Evia just asked (e.g. "What date/time works best?" → "Today
         // at 11am"). Without it, a scheduling-time reply was being misread as an
         // availability refilter and triggering a fresh caregiver search.
-        const lastAssistantMessage = await db
-          .collection("agent_conversations").doc(phone).collection("messages")
-          .where("role", "==", "assistant").orderBy("timestamp", "desc").limit(1).get()
-          .then(s => (s.empty ? undefined : (s.docs[0].data().content as string | undefined)))
+        const lastAssistantMessage = await Promise.all(
+          conversationPartitionIdsForRead(phone, "senior").map((partitionId) =>
+            db.collection("agent_conversations").doc(partitionId).collection("messages")
+              .where("role", "==", "assistant").orderBy("timestamp", "desc").limit(1).get()),
+        )
+          .then((snaps) => snaps.flatMap((snap) => snap.docs)
+            .filter((doc) => doc.data().careVertical !== "child")
+            .sort((a, b) => Number(b.data().timestamp ?? 0) - Number(a.data().timestamp ?? 0))[0]
+            ?.data().content as string | undefined)
           .catch(() => undefined);
         const refilter = await detectMatchRefilter(text, lastAssistantMessage).catch(() => null);
         if (refilter) {

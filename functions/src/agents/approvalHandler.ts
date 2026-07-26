@@ -83,7 +83,12 @@ async function executeConfirmedAction(params: {
   userId?:  string;
   userType: "client" | "caregiver";
   pending:  PendingAction;
-}): Promise<{ succeeded: boolean; alertFlagged: boolean; skipped: boolean }> {
+}): Promise<{
+  succeeded: boolean;
+  alertFlagged: boolean;
+  skipped: boolean;
+  safeClaimCode?: string;
+}> {
   const { phone, chatId, userId, userType, pending } = params;
 
   console.info("approvalHandler.execute", {
@@ -95,10 +100,52 @@ async function executeConfirmedAction(params: {
   // H-U5: claim BEFORE dispatch (awaiting → executing) so a duplicate YES / retry
   // can't double-dispatch. A second confirmation finds it already executing/
   // executed and no-ops here.
-  const claim = await claimPendingAction(pending.id);
+  let claim: Awaited<ReturnType<typeof claimPendingAction>>;
+  try {
+    claim = await claimPendingAction(pending.id);
+  } catch (err) {
+    const executionPreview = `approval denied: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500);
+    await resolvePendingAction(pending.id, "failed", { executionPreview }).catch((resolveErr) => {
+      console.error("approvalHandler: failed to settle denied action", { actionId: pending.id, resolveErr });
+    });
+    try {
+      await logHealthcareAudit(pending, "failed", executionPreview);
+    } catch {
+      // The denied action is already terminal; audit failure is surfaced by the ops alert below.
+    }
+    const alertFlagged = await createCaraOpsAlert({
+      type: "cara_pending_action_failed",
+      severity: "high",
+      phone,
+      userId: userId ?? pending.userId,
+      role: userType,
+      source: "approvalHandler",
+      actionId: pending.id,
+      toolName: pending.toolName,
+      targetCollection: "pending_actions",
+      targetDocId: pending.id,
+      message: `Evia denied an approved action after the live authorization recheck: ${pending.preview}`,
+      reason: executionPreview,
+      context: {
+        preview: pending.preview,
+        careVertical: pending.careVertical ?? "senior",
+      },
+    }).catch(() => false);
+    return {
+      succeeded: false,
+      alertFlagged,
+      skipped: false,
+      safeClaimCode: "denied_live_recheck",
+    };
+  }
   if (claim !== "claimed") {
     console.info("approvalHandler.execute: action not claimable (duplicate/expired) — skipping", { actionId: pending.id });
-    return { succeeded: false, alertFlagged: true, skipped: true };
+    return {
+      succeeded: false,
+      alertFlagged: true,
+      skipped: true,
+      safeClaimCode: pending.terminalEvidence?.safeClaimCode,
+    };
   }
   await logHealthcareAudit(pending, "confirmed");
   logAgentAction({
@@ -126,8 +173,13 @@ async function executeConfirmedAction(params: {
   const dispatch = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
   // Strip any _confirmedActionId that rode in on the stored tool input (e.g.
   // injected via extracted portal text) — only THIS direct dispatch may set it.
-  const { _confirmedActionId: _injected, ...safeToolInput } = pending.toolInput as Record<string, unknown>;
+  const {
+    _confirmedActionId: _injected,
+    _operationId: _injectedOperation,
+    ...safeToolInput
+  } = pending.toolInput as Record<string, unknown>;
   void _injected;
+  void _injectedOperation;
   // Inject identifiers + the bypass flag so the MCP gate executes instead of
   // re-proposing. _confirmedActionId is read by the MCP gate; see mcp/server.ts.
   const enrichedInput: Record<string, unknown> = {
@@ -136,15 +188,27 @@ async function executeConfirmedAction(params: {
     chatId,
     ...(userId ? { clientId: userId, userId } : {}),
     _confirmedActionId: pending.id,
+    ...(pending.operation ? { _operationId: pending.operation.operationId } : {}),
   };
 
   let executionPreview = "";
   let succeeded = false;
+  let executionEvidence:
+    | { safeClaimCode?: unknown; status?: unknown; targetRef?: unknown }
+    | undefined;
   try {
     const result = await dispatch(pending.toolName, enrichedInput);
     succeeded = !(result as { _toolError?: boolean; error?: unknown })?._toolError &&
                 !(result as { error?: unknown })?.error;
     executionPreview = JSON.stringify(result).slice(0, 500);
+    const evidence = (result as { evidence?: unknown })?.evidence;
+    if (evidence && typeof evidence === "object") {
+      executionEvidence = evidence as {
+        safeClaimCode?: unknown;
+        status?: unknown;
+        targetRef?: unknown;
+      };
+    }
   } catch (err) {
     console.error("approvalHandler: tool execution failed", { actionId: pending.id, err });
     executionPreview = `error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500);
@@ -153,7 +217,7 @@ async function executeConfirmedAction(params: {
   await resolvePendingAction(
     pending.id,
     succeeded ? "executed" : "failed",
-    { executionPreview },
+    { executionPreview, evidence: executionEvidence },
   );
   await logHealthcareAudit(pending, succeeded ? "executed" : "failed", succeeded ? undefined : executionPreview);
   logAgentAction({
@@ -198,13 +262,24 @@ async function executeConfirmedAction(params: {
 
   // H-U4: tell the requester (if a secondary member triggered it) the outcome.
   if (pending.triggeredByPhone && pending.triggeredByPhone !== phone) {
+    const verified = executionEvidence?.safeClaimCode === "completed_verified";
     await sendMessage(pending.triggeredByPhone, succeeded
-      ? `Update: the account holder approved "${pending.preview}" and it's done.`
+      ? verified || pending.careVertical !== "child"
+        ? `Update: the account holder approved "${pending.preview}" and it's done.`
+        : `Update: the account holder approved "${pending.preview}". The request ran, but I couldn't verify the final state yet.`
       : `Update: "${pending.preview}" couldn't be completed. The account holder has been notified.`,
     ).catch(() => {});
   }
 
-  return { succeeded, alertFlagged, skipped: false };
+  return {
+    succeeded,
+    alertFlagged,
+    skipped: false,
+    safeClaimCode:
+      typeof executionEvidence?.safeClaimCode === "string"
+        ? executionEvidence.safeClaimCode
+        : undefined,
+  };
 }
 
 // Main entry point. Loads or accepts the pending action, classifies the
@@ -257,7 +332,12 @@ export async function handlePendingApproval(params: {
   }
 
   // decision === "YES" — execute the tool with the bypass flag set.
-  const { succeeded, alertFlagged, skipped } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
+  const {
+    succeeded,
+    alertFlagged,
+    skipped,
+    safeClaimCode,
+  } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
 
   // Acknowledge to the family. Keep it short — the tool itself may have
   // already sent richer downstream notifications (e.g. caregiver SMS). A
@@ -265,7 +345,9 @@ export async function handlePendingApproval(params: {
   // failure — never tell the user it "didn't go through". Only claim it was
   // "flagged for review" when the ops alert actually persisted.
   const ackMessage = succeeded
-    ? "Done."
+    ? pending.careVertical === "child" && safeClaimCode !== "completed_verified"
+      ? "I completed the request, but I couldn't verify the final state yet. Please check the childcare booking before relying on it."
+      : "Done."
     : skipped
       ? "That's already been taken care of — nothing more needed."
       : alertFlagged
@@ -278,17 +360,36 @@ export async function handlePendingApproval(params: {
   return { outcome: "handled" };
 }
 
-// Batch variant — used by the webhook when MORE THAN ONE action is awaiting
-// confirmation for the same phone. A bare "yes" against a single preview
-// would silently approve actions the family may not remember, so the YES/NO
-// classification runs against a combined numbered preview of everything
-// pending. YES executes ALL of them sequentially (each through the
-// single-fire resolvePendingAction + dispatch in executeConfirmedAction, so
-// a double YES can't double-execute), NO rejects all, QUESTION falls
-// through to the QA agent exactly like the single-action path.
-//
-// With exactly one pending action this delegates to handlePendingApproval,
-// so callers can pass whatever getAllPending returned.
+function parseNumberedApproval(
+  text: string,
+  count: number,
+): { index: number; decision: "YES" | "NO" } | null {
+  const normalized = text.trim().toLowerCase();
+  const numeric = normalized.match(/(?:^|\s|#)(\d+)(?:\s|$|[.,!?])/);
+  const ordinalWords: Record<string, number> = {
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5,
+  };
+  const ordinal = Object.entries(ordinalWords).find(([word]) =>
+    new RegExp(`\\b${word}\\b`).test(normalized),
+  )?.[1];
+  const selected = numeric ? Number(numeric[1]) : ordinal;
+  if (!selected || selected < 1 || selected > count) return null;
+
+  if (/\b(no|nope|reject|skip|leave)\b|do not|don't/.test(normalized)) {
+    return { index: selected - 1, decision: "NO" };
+  }
+  if (/\b(yes|approve|confirm|proceed)\b|go ahead|do it/.test(normalized)) {
+    return { index: selected - 1, decision: "YES" };
+  }
+  return null;
+}
+
+// Multiple pending actions require a numbered operation choice. Approval text
+// alone is not a stable operation identity and must never execute a batch.
 export async function handlePendingApprovals(params: {
   phone:       string;
   chatId:      string;
@@ -308,6 +409,17 @@ export async function handlePendingApprovals(params: {
   // so "1." matches what Evia asked about first.
   const ordered = [...pendings].reverse();
   const combinedPreview = ordered.map((p, i) => `${i + 1}. ${p.preview}`).join("  ");
+  const selected = parseNumberedApproval(text, ordered.length);
+  if (selected) {
+    return handlePendingApproval({
+      phone,
+      chatId,
+      text: selected.decision === "YES" ? "yes" : "no",
+      userId,
+      userType,
+      pending: ordered[selected.index],
+    });
+  }
   const decision = await classifyApproval(text, combinedPreview);
 
   if (decision === "QUESTION") {
@@ -324,25 +436,12 @@ export async function handlePendingApprovals(params: {
     return { outcome: "handled" };
   }
 
-  // decision === "YES" — execute all sequentially.
-  let failures = 0;
-  let unflagged = 0; // failures whose ops alert also failed to persist
-  for (const pending of ordered) {
-    const { succeeded, alertFlagged, skipped } = await executeConfirmedAction({ phone, chatId, userId, userType, pending });
-    // skipped = duplicate/already-handled confirmation; not an execution failure.
-    if (succeeded || skipped) continue;
-    failures++;
-    if (!alertFlagged) unflagged++;
-  }
-
-  const failedText = failures === 1 ? "one action didn't go through" : `${failures} actions didn't go through`;
-  const ackMessage = failures === 0
-    ? "Done — all set."
-    : unflagged === 0
-      ? `I completed what I could, but ${failedText}. I've flagged ${failures === 1 ? "it" : "them"} for review.`
-      : `I completed what I could, but ${failedText}, and I couldn't log ${unflagged === 1 ? "it" : "them"} for review automatically. Text me what happened and I can try the next step here.`;
-  await sendMessage(chatId, ackMessage).catch((err) => {
-    console.error("handlePendingApprovals: sendMessage (YES) failed", err);
+  // A YES without a unique operation reference must not execute anything.
+  await sendMessage(
+    chatId,
+    `I have more than one action waiting. Reply "yes to 1" or "yes to 2" for exactly one action: ${combinedPreview}`,
+  ).catch((err) => {
+    console.error("handlePendingApprovals: sendMessage (ambiguous YES) failed", err);
   });
 
   return { outcome: "handled" };

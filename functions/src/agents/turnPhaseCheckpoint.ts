@@ -15,6 +15,7 @@
 import * as admin from "firebase-admin";
 import {
   deriveSourceTurnKey,
+  deriveLegacySourceTurnKey,
   deriveBindings,
   validateSourceTurn,
   type SourceTurnIdentity,
@@ -45,6 +46,13 @@ export interface PhaseCheckpointDoc {
   objectiveVersion: number;
   /** Deterministic action keys already committed this turn (replay guard). */
   completedActionKeys: string[];
+  /**
+   * Typed vertical stamp (childcare U10/KTD18): a checkpoint written on a
+   * childcare turn records "child" so a resumed/retried turn can never be
+   * re-driven under the wrong vertical. Optional/additive — legacy senior
+   * checkpoints have no stamp. Never recipient content (R57).
+   */
+  careVertical: "senior" | "child";
   updatedAt: string;
   expiresAt: string; // ISO; load treats past-expiry as absent
 }
@@ -55,12 +63,17 @@ export async function writePhaseCheckpoint(
   opts?: {
     objectiveId?: string;
     completedActionKeys?: string[];
+    /** Deprecated compatibility input. Must match identity.careVertical. */
+    careVertical?: "senior" | "child";
     db?: admin.firestore.Firestore;
     now?: Date;
   },
 ): Promise<{ key: string }> {
   const db = opts?.db ?? admin.firestore();
   const now = opts?.now ?? new Date();
+  if (opts?.careVertical && opts.careVertical !== identity.careVertical) {
+    throw new Error("phase checkpoint vertical does not match turn identity");
+  }
   const key = deriveSourceTurnKey(identity);
   const doc: PhaseCheckpointDoc = {
     schema: "phase-v1",
@@ -71,6 +84,7 @@ export async function writePhaseCheckpoint(
     updatedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + PHASE_CHECKPOINT_TTL_MS).toISOString(),
     ...(opts?.objectiveId ? { objectiveId: opts.objectiveId } : {}),
+    careVertical: identity.careVertical,
   };
   await db.collection(PHASE_CHECKPOINT_COLLECTION).doc(key).set(doc);
   return { key };
@@ -96,12 +110,28 @@ export async function loadPhaseCheckpoint(
     return null; // incomplete identity can never load state
   }
 
-  const snap = await db.collection(PHASE_CHECKPOINT_COLLECTION).doc(key).get();
+  let snap = await db.collection(PHASE_CHECKPOINT_COLLECTION).doc(key).get();
+  let legacySenior = false;
+  if (!snap.exists && identity.careVertical === "senior") {
+    key = deriveLegacySourceTurnKey(identity);
+    snap = await db.collection(PHASE_CHECKPOINT_COLLECTION).doc(key).get();
+    legacySenior = snap.exists;
+  }
   if (!snap.exists) return null;
   const doc = snap.data() as PhaseCheckpointDoc | undefined;
   if (!doc || doc.schema !== "phase-v1") return null; // legacy rescue doc shape — not ours
+  if (doc.careVertical && doc.careVertical !== identity.careVertical) return null;
+  if (!doc.careVertical && !legacySenior) return null;
   if (!doc.expiresAt || Date.parse(doc.expiresAt) <= now.getTime()) return null;
-  if (!validateSourceTurn(identity, { key, bindings: doc.bindings })) return null;
+  if (legacySenior) {
+    const fresh = deriveBindings(identity);
+    if (
+      doc.bindings.principalHash !== fresh.principalHash
+      || doc.bindings.channelBindingHash !== fresh.channelBindingHash
+    ) return null;
+  } else if (!validateSourceTurn(identity, { key, bindings: doc.bindings })) {
+    return null;
+  }
   return doc;
 }
 

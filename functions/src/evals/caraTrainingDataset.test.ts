@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   CARA_TRAINING_DATASET_VERSION,
   STARTER_CARA_TRAINING_EXAMPLES,
+  assertTrainingExampleCaptureAllowed,
   exportCaraTrainingJsonl,
   toCaraEvalCases,
+  type CaraTrainingExample,
 } from "./caraTrainingDataset";
 
 describe("Evia training dataset", () => {
@@ -96,5 +98,54 @@ describe("Evia training dataset", () => {
     expect(evalCases.every((testCase) => testCase.category.startsWith("cara_dataset_"))).toBe(true);
     expect(evalCases.some((testCase) => testCase.mustContain?.includes("911"))).toBe(true);
     expect(evalCases.some((testCase) => testCase.mustNotContain?.includes("contact support"))).toBe(true);
+  });
+
+  // ── Childcare U10 (R50/KTD17): real childcare turns never enter the dataset ─
+  describe("childcare capture denial", () => {
+    const base: CaraTrainingExample = {
+      id: "cc-fixture",
+      split: "eval",
+      source: "synthetic_seed",
+      userRole: "client",
+      channel: "web_chat",
+      message: "synthetic childcare fixture",
+      context: "synthetic",
+      labels: {
+        intent: "childcare_status", risk: "low", missingInfo: [], expectedTools: [],
+        expectedCollections: [], expectedPageVisibility: [], forbidden: [], humanReviewRequired: false,
+      },
+      idealResponse: "synthetic",
+      reviewer: { status: "approved_seed", pii: "synthetic" },
+      careVertical: "child",
+    };
+
+    it("the shipped starter dataset contains ZERO childcare-vertical examples", () => {
+      expect(STARTER_CARA_TRAINING_EXAMPLES.filter((e) => e.careVertical === "child")).toEqual([]);
+    });
+
+    it("admits a fully synthetic childcare seed fixture", () => {
+      expect(() => assertTrainingExampleCaptureAllowed(base)).not.toThrow();
+    });
+
+    it("rejects a childcare example sourced from production review (a real turn)", () => {
+      expect(() => assertTrainingExampleCaptureAllowed({
+        ...base, source: "production_review", reviewer: { status: "approved_production", pii: "redacted" },
+      })).toThrow(/never captured/);
+      expect(() => assertTrainingExampleCaptureAllowed({
+        ...base, source: "failed_turn_review",
+      })).toThrow(/never captured/);
+    });
+
+    it("rejects a childcare example whose PII is merely redacted (not synthetic)", () => {
+      expect(() => assertTrainingExampleCaptureAllowed({
+        ...base, reviewer: { status: "approved_seed", pii: "redacted" },
+      })).toThrow(/never captured/);
+    });
+
+    it("senior examples are unaffected regardless of source", () => {
+      expect(() => assertTrainingExampleCaptureAllowed({
+        ...base, careVertical: undefined, source: "production_review",
+      })).not.toThrow();
+    });
   });
 });

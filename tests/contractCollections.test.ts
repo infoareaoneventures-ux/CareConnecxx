@@ -133,6 +133,9 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'shift_checkins', 'shift_hours', 'tax_summaries',
     'responses',         // support_tickets/{id}/responses — covered by 'support_tickets' entry
     'subscriptions',     // customers/{uid}/subscriptions — covered by 'customers' entry
+    // Childcare shift-generation reconciliation summaries (childcare U7) —
+    // server-written run counters only; the web never reads them.
+    'childcare_reconciliation_runs',
     // caregivers/{id}/private/{background|payout} — identity PII + Stripe payout
     // fields (2026-07-11 waves). Covered by the 'caregivers' contract entry and
     // the private/{docId} rules block (owner||admin read, client write:false).

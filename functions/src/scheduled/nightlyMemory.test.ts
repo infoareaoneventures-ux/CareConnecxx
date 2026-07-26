@@ -319,15 +319,37 @@ beforeEach(() => {
 });
 
 describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
+  it("U10 (R50/AE16): a childcare-vertical session is memory-denied and never consolidated", async () => {
+    seedSession("+14085550009", { careVertical: "child", verticalIntent: "child" });
+    const counts = await runNightlyMemoryConsolidation();
+    expect(hoisted.consolidateMock).not.toHaveBeenCalled();
+    expect(counts.skipped).toBe(1);
+    expect(counts.attempted).toBe(0);
+  });
+
+  it("U10 (AE22): a caregiver-childcare-context session is skipped; a plain senior session still consolidates", async () => {
+    seedSession("+14085550010", { childcareContextActive: true });
+    seedSession("+14085550011");
+    const counts = await runNightlyMemoryConsolidation();
+    expect(hoisted.consolidateMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.consolidateMock).toHaveBeenCalledWith(
+      "user-+14085550011", "+14085550011", expect.anything(),
+    );
+    expect(counts.skipped).toBe(1);
+  });
+
   it("selects a recently active, completed, opted-in client and consolidates it", async () => {
     seedSession("+14085550001");
 
     const counts = await runNightlyMemoryConsolidation();
 
     expect(hoisted.consolidateMock).toHaveBeenCalledTimes(1);
+    // U10: the session doc is threaded through so the consolidator re-checks
+    // memory eligibility itself (defense in depth).
     expect(hoisted.consolidateMock).toHaveBeenCalledWith(
       "user-+14085550001",
       "+14085550001",
+      expect.objectContaining({ session: expect.objectContaining({ userType: "client" }) }),
     );
     expect(counts).toEqual({
       eligible: 1,
@@ -358,7 +380,7 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     const counts = await runNightlyMemoryConsolidation();
 
     expect(hoisted.consolidateMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.consolidateMock).toHaveBeenCalledWith("user-+6000", "+6000");
+    expect(hoisted.consolidateMock).toHaveBeenCalledWith("user-+6000", "+6000", expect.anything());
     expect(counts.eligible).toBe(1);
   });
 
@@ -387,6 +409,7 @@ describe("runNightlyMemoryConsolidation — selection (R2/KTD3)", () => {
     expect(hoisted.consolidateMock).toHaveBeenCalledWith(
       "user-+14085550003",
       "+14085550003",
+      expect.anything(),
     );
   });
 

@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// objectiveLedger reaches childcare/guardianAuthority → observability/auditLog,
+// which calls admin.firestore() at module scope. Same stub objectiveLedger's own
+// suite uses, so importing the pure adapters never needs a live Firebase app.
+vi.mock("firebase-admin", () => {
+  const stubFs = () => ({ collection: () => ({}) });
+  return { __esModule: true, default: { firestore: stubFs }, firestore: stubFs };
+});
 
 import { projectActiveGoal, isLegacyGoalStale, isProjection, type LegacyActiveGoal } from "./objectiveAdapters";
 import { selectForegroundObjective, applyTransition, type AgentObjective } from "./objectiveLedger";

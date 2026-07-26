@@ -15,6 +15,21 @@ export async function handleRecurringConfirm(
   chatId:  string,
   session: AgentSession
 ): Promise<void> {
+  // Childcare U7 (plan 2026-07-22-002): SMS-driven appointment creation is
+  // senior-only in this unit — a childcare-vertical session must never write
+  // senior-shaped appointments/recurring_schedules (childcare booking
+  // mutations are web/callable-only until U10 adds classified Evia tools).
+  if ((session as unknown as Record<string, unknown>).careVertical === "child") {
+    await db.collection("agent_sessions").doc(phone).update({
+      awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
+      pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+    await sendMessage(chatId,
+      "Childcare bookings are managed on the web for now — you can set up a recurring schedule from your dashboard."
+    );
+    return;
+  }
+
   const pending = (session as any).pendingRecurringSchedule as {
     caregiverId:   string;
     caregiverName: string;

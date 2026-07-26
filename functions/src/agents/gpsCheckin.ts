@@ -64,6 +64,33 @@ export const submitGpsCheckin = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError("permission-denied", "This shift is not assigned to you.");
   }
 
+  // ── Childcare U7 (additive guarded branch — plan 2026-07-22-002, R38/R57) ──
+  // Childcare check-in requires the CURRENT assigned caregiver + current
+  // safety access version + an active booking state — enforced by the
+  // childcare state machine (v1-checkInChildcareShift), which this branch
+  // delegates to. NO child location data is validated, stored, or logged:
+  // no senior_profiles read, no coordinates persisted, no GPS distance.
+  if (appt.careVertical === "child") {
+    const bookingId = String(appt.childcareBookingId ?? "");
+    if (!bookingId) {
+      throw new functions.https.HttpsError("failed-precondition", "This visit cannot be checked into yet.");
+    }
+    const { checkInChildcareBookingCore } = await import("../childcare/bookingCallables");
+    await checkInChildcareBookingCore({ bookingId, callerUid: context.auth.uid });
+    const ref = await db.collection("shift_checkins").add({
+      appointmentId,
+      caregiverId,
+      clientId: appt.clientId,
+      careVertical: "child",
+      checkinAt: new Date().toISOString(),
+      status: "arrived",
+      gpsProvided: false,
+      gpsValidated: false,
+      note: "Childcare check-in (location not collected)",
+    });
+    return { validated: false, checkinId: ref.id, message: "Checked in. The family has been notified." };
+  }
+
   // Manual (no-GPS) check-in — record an unvalidated arrival and notify family.
   if (manual || latitude == null || longitude == null) {
     const ref = await db.collection("shift_checkins").add({

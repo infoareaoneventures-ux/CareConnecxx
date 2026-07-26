@@ -23,6 +23,16 @@ import {
   MEMORY_OPERATIONS_COLLECTION,
   turnSyncOperationId,
 } from "./memoryOperations";
+import {
+  decideMemoryEligibility,
+  logMemoryDenial,
+  type MemoryEligibilitySessionLike,
+} from "./memoryEligibility";
+import {
+  conversationStateStamp,
+  deriveConversationPartitionId,
+} from "../agents/turnSourceKey";
+import type { CareVertical } from "../data/contract";
 
 /** Canonical field name for the nightly-selection activity timestamp. */
 export const SESSION_ACTIVITY_FIELD = "lastMessageAt";
@@ -189,6 +199,14 @@ export interface CompletedTurnInput {
    * constitutes a completed turn stays authoritative.
    */
   adoptExistingRows?: boolean;
+  /**
+   * Childcare U10 (R50/KTD17): the session shape for the memory-eligibility
+   * decision. When provided and DENIED, no turn_sync operation is created —
+   * no Zep transcript, no fact extraction, no summary input — and the denial
+   * is logged. Absent = legacy caller (senior paths keep their behavior; the
+   * memoryOperationWorker re-checks eligibility at dispatch as the backstop).
+   */
+  session?: MemoryEligibilitySessionLike;
 }
 
 /** How many recent rows the adoption scan reads (a turn writes 2; headroom for
@@ -213,6 +231,19 @@ export async function persistCompletedTurn(
   input: CompletedTurnInput,
   db: admin.firestore.Firestore = admin.firestore(),
 ): Promise<TurnPersistenceOutcome> {
+  // Childcare U10 (R50/KTD17): the memory-eligibility decision precedes the
+  // turn_sync operation. A denied session (childcare / pending / unclassified
+  // / caregiver-childcare-context) creates NO operation — no Zep transcript,
+  // no fact extraction, no summary input. The durable history rows already
+  // carry the immutable exclusion stamp from the agent layer.
+  if (input.session) {
+    const decision = decideMemoryEligibility(input.session);
+    if (!decision.subsystems.conversationMemory) {
+      logMemoryDenial("persist_completed_turn", decision);
+      return { ok: false, errorClass: "memory_denied" };
+    }
+  }
+
   const sourceKey = input.sourceKey?.trim();
   if (!sourceKey) {
     // No stable key → no idempotency promise (Implementation-Time Checks:
@@ -229,11 +260,17 @@ export async function persistCompletedTurn(
   const sourceTurnKeyHash = hashSourceTurnKey(input.channel, sourceKey);
   const operationId = turnSyncOperationId(sourceTurnKeyHash);
   try {
-    const messagesCol = db.collection("agent_conversations").doc(input.phone).collection("messages");
+    const careVertical: CareVertical = input.session?.careVertical === "child"
+      ? "child"
+      : "senior";
+    const partitionId = deriveConversationPartitionId(input.phone, careVertical);
+    const messagesCol = db.collection("agent_conversations").doc(partitionId).collection("messages");
+    const partitionStamp = conversationStateStamp(careVertical);
 
     const rowShared = {
       sourceTurnKeyHash,
       sourceChannel: input.channel,
+      ...partitionStamp,
       // Unresolved sync protects the row from nightly compression (R9).
       memorySyncStatus: "pending",
     };
@@ -256,8 +293,8 @@ export async function persistCompletedTurn(
     } else {
       const userDocId = turnMessageDocId(sourceTurnKeyHash, "user");
       const assistantDocId = turnMessageDocId(sourceTurnKeyHash, "assistant");
-      userMessagePath = `agent_conversations/${input.phone}/messages/${userDocId}`;
-      assistantMessagePath = `agent_conversations/${input.phone}/messages/${assistantDocId}`;
+      userMessagePath = `agent_conversations/${partitionId}/messages/${userDocId}`;
+      assistantMessagePath = `agent_conversations/${partitionId}/messages/${assistantDocId}`;
       batch.set(messagesCol.doc(userDocId), {
         role: "user", content: input.userText, timestamp: ts, ...rowShared,
       });
@@ -321,6 +358,9 @@ async function findAdoptableTurnRows(
   assistantRef: admin.firestore.DocumentReference;
   turnTimestampMs: number;
 } | null> {
+  const expectedVertical: CareVertical = input.session?.careVertical === "child"
+    ? "child"
+    : "senior";
   const snap = await messagesCol
     .orderBy("timestamp", "desc")
     .limit(ADOPTED_ROW_SCAN_LIMIT)
@@ -332,6 +372,10 @@ async function findAdoptableTurnRows(
 
   for (const d of snap.docs) {
     const row = d.data() as Record<string, unknown>;
+    if (
+      row.careVertical !== expectedVertical
+      || row.conversationPartitionSchema !== "care-vertical-v1"
+    ) continue;
     const rowTs = row.timestamp;
     if (typeof rowTs !== "number") continue;                    // summary/odd rows — never candidates
     if (rowTs < nowMs - ADOPTED_ROW_MAX_AGE_MS) break;          // newest-first: everything after is older
@@ -340,6 +384,10 @@ async function findAdoptableTurnRows(
     // atomic ALREADY_EXISTS dedupe instead of a false rows_not_found.
     if (row.sourceTurnKeyHash && row.sourceTurnKeyHash !== sourceTurnKeyHash) continue;
     if (typeof row.source === "string") continue; // transport-recorded outbound, not the turn pair
+    // Childcare U10 (R50): an exclusion-stamped row is IMMUTABLY memory-denied
+    // — it can never be adopted into a turn_sync operation, even if the
+    // session later reclassifies (retroactive-sync prohibition).
+    if (row.memoryExcluded === true) continue;
     if (!assistantDoc && row.role === "assistant" && row.content === input.assistantText) {
       assistantDoc = d;
     } else if (!userDoc && row.role === "user" && row.content === input.userText) {

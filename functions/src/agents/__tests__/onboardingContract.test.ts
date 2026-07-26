@@ -15,6 +15,8 @@ import {
   normalizeOnboardingFieldValue,
   CAREGIVER_JOB_TYPES,
   caregiverJobTypesToWebIds,
+  isChildcareVerticalSession,
+  isPendingVerticalSession,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
@@ -249,6 +251,59 @@ describe("onboardingContract", () => {
     it("never routes caregiver media / empty-text turns", () => {
       expect(shouldRouteOnboardingToLoop({ ...base, hasMedia: true })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, hasText: false })).toBe(false);
+    });
+  });
+
+  // ── Front door Stage 1: vertical stamps at the routing predicate ───────────
+  //
+  // docs/architecture/childcare-front-door-design.md. U5 added the child guard
+  // on the assumption that a CAREGIVER childcare stamp could never exist. Stage
+  // 1 makes it possible, so the guard is broadened here and pinned: neither a
+  // stamped child session nor a session whose vertical is still being RESOLVED
+  // may enter either collection funnel.
+  describe("shouldRouteOnboardingToLoop — vertical stamps (R-FD1/R-FD5)", () => {
+    const client = { role: "client", step: "client_ask_needs", hasText: true, hasMedia: false };
+    const caregiver = { role: "caregiver", step: "caregiver_ask_location", hasText: true, hasMedia: false };
+
+    it("a senior session (no stamp at all) routes exactly as before", () => {
+      expect(shouldRouteOnboardingToLoop(client)).toBe(true);
+      expect(shouldRouteOnboardingToLoop(caregiver)).toBe(true);
+      expect(shouldRouteOnboardingToLoop({ ...client, careVertical: null, verticalIntent: null })).toBe(true);
+      expect(shouldRouteOnboardingToLoop({ ...client, careVertical: "senior", verticalIntent: "senior" })).toBe(true);
+    });
+
+    it("a childcare stamp never routes into the senior loop — for EITHER role", () => {
+      for (const base of [client, caregiver]) {
+        expect(shouldRouteOnboardingToLoop({ ...base, careVertical: "child" })).toBe(false);
+        expect(shouldRouteOnboardingToLoop({ ...base, verticalIntent: "child" })).toBe(false);
+      }
+    });
+
+    it("a PENDING vertical never routes into either funnel (nothing is decided yet)", () => {
+      for (const base of [client, caregiver]) {
+        expect(shouldRouteOnboardingToLoop({ ...base, verticalIntent: "pending" })).toBe(false);
+        expect(shouldRouteOnboardingToLoop({ ...base, careVertical: "pending" })).toBe(false);
+      }
+    });
+  });
+
+  describe("isPendingVerticalSession", () => {
+    it("is true only for the unresolved-classification stamps", () => {
+      expect(isPendingVerticalSession({ verticalIntent: "pending" })).toBe(true);
+      expect(isPendingVerticalSession({ careVertical: "pending" })).toBe(true);
+      expect(isPendingVerticalSession({ verticalIntent: "child" })).toBe(false);
+      expect(isPendingVerticalSession({ careVertical: "senior" })).toBe(false);
+      expect(isPendingVerticalSession({})).toBe(false);
+      expect(isPendingVerticalSession(null)).toBe(false);
+    });
+
+    it("is DISTINCT from a childcare session — pending belongs to no vertical", () => {
+      const pending = { verticalIntent: "pending" };
+      expect(isChildcareVerticalSession(pending)).toBe(false);
+      expect(isPendingVerticalSession(pending)).toBe(true);
+      const child = { careVertical: "child", verticalIntent: "child" };
+      expect(isChildcareVerticalSession(child)).toBe(true);
+      expect(isPendingVerticalSession(child)).toBe(false);
     });
   });
 });

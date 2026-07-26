@@ -136,6 +136,8 @@ vi.mock("./client", () => ({
 }));
 
 import { handleWebChatTurn, AgentUnavailableError } from "./webChat";
+import { bustChildcareFlagsCache } from "../config/featureFlags";
+import { CHILDCARE_INCIDENT_ACK } from "../childcare/incidentSignal";
 
 const UID = "uid-1";
 const PHONE = "+14085551234";
@@ -163,6 +165,7 @@ describe("handleWebChatTurn", () => {
     hoisted.describeFlowMock.mockReturnValue(null);
     hoisted.claimLedgerMock.mockResolvedValue("claimed");
     hoisted.persistTurnMock.mockResolvedValue({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false });
+    bustChildcareFlagsCache(); // U10: flags docs are per-test fixtures
   });
 
   it("happy path with a Linq chat: mirrors inbound once, runs agent without skipSend, never mirrors the reply manually", async () => {
@@ -251,6 +254,174 @@ describe("handleWebChatTurn", () => {
     expect(res.available).toBe(false);
     expect(hoisted.qaMock).not.toHaveBeenCalled();
     expect(hoisted.mirrorMock).not.toHaveBeenCalled();
+  });
+
+  // Childcare U4 (plan 2026-07-22-002): typed childcare/pending sessions fail
+  // closed BEFORE markSessionActivity — no agent, no tools, no memory writes.
+  it("childcare-stamped session: fails closed before the agent AND before any memory activity", async () => {
+    seedUser();
+    seedSession({ careVertical: "child", onboardingStep: "complete" });
+
+    const res = await handleWebChatTurn({ uid: UID, message: "book a sitter" });
+
+    expect(res.available).toBe(false);
+    expect(res.status).toBe("notSetUp");
+    expect(res.reply).toMatch(/childcare/i);
+    expect(hoisted.qaMock).not.toHaveBeenCalled();
+    expect(hoisted.mirrorMock).not.toHaveBeenCalled();
+    // No session-activity stamp: the guard sits before markSessionActivity.
+    expect(hoisted.writes.filter((w) => w.path.includes("agent_sessions"))).toEqual([]);
+  });
+
+  it("pending-classification session (verticalIntent 'pending') also fails closed", async () => {
+    seedUser();
+    seedSession({ verticalIntent: "pending", onboardingStep: "complete" });
+    const res = await handleWebChatTurn({ uid: UID, message: "hello" });
+    expect(res.status).toBe("notSetUp");
+    expect(hoisted.qaMock).not.toHaveBeenCalled();
+  });
+
+  // ── Front door Stage 1 (childcare front door design note) ──────────────────
+  //
+  // A PENDING session has no vertical yet — Evia asked "adult or kids?" over
+  // text and is waiting. Answering with childcare copy would assert a vertical
+  // the server has not decided (R-FD1/R-FD2), so the pending reply is
+  // vertical-NEUTRAL and points back at the thread that owns the resolution.
+  it("pending session gets a VERTICAL-NEUTRAL reply — it never claims childcare", async () => {
+    seedUser();
+    seedSession({ verticalIntent: "pending", onboardingStep: "complete" });
+    const res = await handleWebChatTurn({ uid: UID, message: "hello" });
+    expect(res.reply).toMatch(/which kind of care/i);
+    expect(res.reply.toLowerCase()).not.toContain("childcare dashboard");
+    expect(hoisted.qaMock).not.toHaveBeenCalled();
+    expect(hoisted.mirrorMock).not.toHaveBeenCalled();
+    // Fails closed before markSessionActivity, exactly like the child branch.
+    expect(hoisted.writes.filter((w) => w.path.includes("agent_sessions"))).toEqual([]);
+  });
+
+  // U5's guards assumed a caregiver childcare stamp could never exist. It can
+  // now, and the family branches here (guardian authority, the family tool
+  // pack, the family childcare dashboard) would answer them with family copy
+  // and point at a route they cannot open.
+  it("CAREGIVER childcare session gets the caregiver surface, not the family dashboard", async () => {
+    seedUser({ userType: "caregiver" });
+    seedSession({
+      careVertical: "child",
+      verticalIntent: "child",
+      userType: "caregiver",
+      onboardingStep: "childcare_caregiver_hold",
+    });
+    const res = await handleWebChatTurn({ uid: UID, message: "when do I get approved for childcare?" });
+    expect(res.available).toBe(false);
+    expect(res.status).toBe("notSetUp");
+    expect(res.reply).toMatch(/childcare profile/i);
+    expect(res.reply.toLowerCase()).not.toContain("childcare dashboard");
+    // Never the agent loop, never a mirror, never a memory-activity stamp.
+    expect(hoisted.qaMock).not.toHaveBeenCalled();
+    expect(hoisted.mirrorMock).not.toHaveBeenCalled();
+    expect(hoisted.writes.filter((w) => w.path.includes("agent_sessions"))).toEqual([]);
+  });
+
+  it("senior session parity: no childcare stamp means the guard is a no-op", async () => {
+    seedUser();
+    seedSession(); // no careVertical/verticalIntent
+    const res = await handleWebChatTurn({ uid: UID, message: "hi evia" });
+    expect(res.status).toBe("ok");
+    expect(hoisted.qaMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Childcare U10: web routing upgrade (channel parity with the SMS router) ─
+  describe("childcare U10 routing upgrade", () => {
+    const seedFlagsOn = () => {
+      hoisted.docs.set("childcare_flags/global", {
+        CHILDCARE_ENABLED: true, CHILDCARE_DISCOVERY_ENABLED: true,
+        CHILDCARE_WRITES_ENABLED: true, CHILDCARE_PROACTIVE_ENABLED: false,
+      });
+    };
+    const seedAuthority = (state = "active") => {
+      hoisted.queryItems.set("guardian_authorities", [{
+        id: `child-1__${UID}`, authorityId: `child-1__${UID}`,
+        childId: "child-1", adultUid: UID, state, scopes: ["view"],
+      }]);
+    };
+    const seedChildSession = (extra: Record<string, unknown> = {}) =>
+      seedSession({ careVertical: "child", verticalIntent: "child", onboardingStep: "childcare_web_profile", ...extra });
+
+    it("R53: a serious-incident web message escalates deterministically before flags and the loop", async () => {
+      seedUser();
+      seedChildSession();
+      // No flags doc at all — the incident path must not depend on flags.
+      const res = await handleWebChatTurn({ uid: UID, message: "the sitter is drunk and my kid is in danger" });
+      expect(res.status).toBe("ok");
+      expect(res.reply).toBe(CHILDCARE_INCIDENT_ACK);
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      const hold = hoisted.writes.find((w) => w.path === `agent_sessions/${PHONE}` && w.data?.handedToHuman === true);
+      expect(hold?.data).toMatchObject({
+        handedToHumanReason: "childcare_incident",
+        childcareIncidentMarker: "danger",
+      });
+    });
+
+    it("flags off: deterministic paused reply, never the agent, no memory activity", async () => {
+      seedUser();
+      seedChildSession();
+      const res = await handleWebChatTurn({ uid: UID, message: "can I change the booking?" });
+      expect(res.available).toBe(false);
+      expect(res.reply).toMatch(/paused/i);
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      expect(hoisted.persistTurnMock).not.toHaveBeenCalled();
+    });
+
+    it("enrollment (no live authority): static secure-dashboard reply, never the agent", async () => {
+      seedUser();
+      seedChildSession();
+      seedFlagsOn();
+      const res = await handleWebChatTurn({ uid: UID, message: "how do I add my daughter?" });
+      expect(res.available).toBe(false);
+      expect(res.reply).toMatch(/secure account/i);
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+    });
+
+    it("revoked authority does not unlock the loop (fail closed)", async () => {
+      seedUser();
+      seedChildSession();
+      seedFlagsOn();
+      seedAuthority("revoked");
+      const res = await handleWebChatTurn({ uid: UID, message: "booking status?" });
+      expect(hoisted.qaMock).not.toHaveBeenCalled();
+      expect(res.available).toBe(false);
+    });
+
+    it("enrolled family runs the REAL agent loop through the normal locked turn (web/Linq parity)", async () => {
+      seedUser();
+      seedChildSession();
+      seedFlagsOn();
+      seedAuthority();
+      const res = await handleWebChatTurn({ uid: UID, message: "move thursday to 3pm", clientMessageId: "web_1234567890_abcd" });
+      expect(res.status).toBe("ok");
+      expect(hoisted.qaMock).toHaveBeenCalledTimes(1);
+      const params = hoisted.qaMock.mock.calls[0][0] as Record<string, unknown>;
+      expect((params.session as Record<string, unknown>).careVertical).toBe("child");
+      expect(params.executionContext).toMatchObject({
+        principal: UID,
+        careVertical: "child",
+        channel: "web",
+        conversationPartition: `child:${UID}`,
+      });
+      // R50: persistCompletedTurn receives the session so the eligibility
+      // decision inside it denies the turn_sync op for childcare turns.
+      expect(hoisted.persistTurnMock).toHaveBeenCalledTimes(1);
+      const persistInput = hoisted.persistTurnMock.mock.calls[0][0] as Record<string, unknown>;
+      expect((persistInput.session as Record<string, unknown>).careVertical).toBe("child");
+      const inboundMirror = hoisted.mirrorMock.mock.calls.find(([p]: any[]) => p.direction === "inbound");
+      expect(inboundMirror?.[0].executionContext).toMatchObject({
+        principal: UID,
+        careVertical: "child",
+        channel: "web",
+        conversationPartition: `child:${UID}`,
+      });
+      expect(hoisted.collectionMock).not.toHaveBeenCalledWith("threads");
+    });
   });
 
   it("no phone on file: notSetUp with zero thread writes", async () => {
@@ -358,7 +529,17 @@ describe("handleWebChatTurn", () => {
       expect(res.showMatches).toBe(false);
       expect(hoisted.qaMock).not.toHaveBeenCalled();
       // Linq branch: sendMessage delivers + auto-mirrors; no manual outbound mirror.
-      expect(hoisted.sendLinqMock).toHaveBeenCalledWith("chat-1", "capability help for client");
+      expect(hoisted.sendLinqMock).toHaveBeenCalledWith(
+        "chat-1",
+        "capability help for client",
+        expect.objectContaining({
+          executionContext: expect.objectContaining({
+            principal: UID,
+            careVertical: "senior",
+            channel: "web",
+          }),
+        }),
+      );
       const outbound = hoisted.mirrorMock.mock.calls.filter(([p]: any[]) => p.direction === "outbound");
       expect(outbound).toHaveLength(0);
       // Inbound was still mirrored before the reply.

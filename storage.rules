@@ -106,6 +106,22 @@ service firebase.storage {
     }
 
     // ==========================================
+    // CHILDCARE FILES (childcare marketplace plan 2026-07-22-002 U3, R12/R59)
+    //
+    // Dedicated root for restricted child files:
+    //   childcare/{householdId}/{childId}/{purpose}/{fileId}
+    //
+    // ALL client access is denied — reads AND writes, owners AND admins.
+    // Uploads use single-use, metadata-bound signed WRITE intents. Reads are
+    // streamed by the authenticated childFileDelivery endpoint, which checks
+    // current authority, assignment, scan state, generation, and expiry on
+    // every request. No read URL or permanent getDownloadURL token is issued.
+    // ==========================================
+    match /childcare/{restOfChildcarePath=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
     // DEFAULT DENY
     // ==========================================
     match /{allPaths=**} {

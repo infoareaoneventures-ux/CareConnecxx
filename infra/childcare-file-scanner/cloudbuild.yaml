@@ -1,0 +1,13 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - CARECONNEX_GIT_SHA=${_GIT_SHA}
+      - --build-arg
+      - CARECONNEX_LOCK_SHA256=${_LOCK_SHA256}
+      - --tag
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}

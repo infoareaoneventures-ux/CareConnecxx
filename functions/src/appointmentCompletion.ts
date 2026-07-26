@@ -55,6 +55,25 @@ export const markAppointmentsCompleted = functions.pubsub
             }
             if (now < endMs + GRACE_MINUTES * 60 * 1000) continue;
 
+            // Childcare guard (plan 2026-07-22-002 U8, R37/R39): childcare
+            // visits are NEVER wall-clock auto-completed — completion feeds
+            // capture, so only a real provider check-out may complete one.
+            // Overdue childcare visits get explicit late/no-show policy states
+            // instead (awaiting_checkout / missed_visit_review, no charge).
+            // Senior appointments keep the exact pre-U8 behavior below.
+            if (a.careVertical === "child") {
+                try {
+                    const { handleOverdueChildcareVisit } = await import("./childcare/shiftPayments");
+                    await handleOverdueChildcareVisit(doc.id, a);
+                } catch (err) {
+                    console.error(
+                        `[markAppointmentsCompleted] childcare overdue handler error for ${doc.id} (senior path unaffected):`,
+                        err instanceof Error ? err.message : err,
+                    );
+                }
+                continue;
+            }
+
             await doc.ref.update({
                 status: "completed",
                 completedAt: admin.firestore.FieldValue.serverTimestamp(),

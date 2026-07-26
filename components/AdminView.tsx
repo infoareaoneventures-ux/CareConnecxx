@@ -4,7 +4,7 @@ import {
   ChevronLeft, AlertCircle, MessageSquare, Search,
   FileText, TrendingUp, UserCheck, X, HeartHandshake,
   Heart, Users, Phone, Filter, Download, Shield,
-  Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles, Flag,
+  Star, ClipboardList, BookOpen, ShieldCheck, BellRing, Sparkles, Flag, Baby,
 } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
 import { SupportTicket, AdminUser, JobPost, Caregiver, ClientIntakeData } from '../types';
@@ -27,6 +27,7 @@ import { ProactiveReflectionDashboard } from './admin/ProactiveReflectionDashboa
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
+import { ChildcareIncidentQueue } from './admin/ChildcareIncidentQueue';
 
 interface AdminViewProps {
   onBack: () => void;
@@ -36,7 +37,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'tickets' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'proactive_drafts' | 'alerts' | 'reports';
+  | 'cara_control' | 'proactive_drafts' | 'alerts' | 'reports' | 'childcare_incidents';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -225,6 +226,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
       label: 'Security',
       items: [
         { id: 'reports' as TabId, label: 'Reports', icon: Flag, badge: newReportsCount },
+        // Childcare incident queue (U12). Shown to all operators; the callables
+        // (v1-listChildcareIncidents / v1-getChildcareIncidentDetail) enforce
+        // least-privilege operator scope + reason-for-access server-side and the
+        // component renders their denial gracefully — matching the show-and-let-
+        // the-callable-deny pattern the other admin tabs use.
+        { id: 'childcare_incidents' as TabId, label: 'Childcare Incidents', icon: Baby },
         { id: 'audit' as TabId, label: 'Audit Log', icon: Shield },
       ],
     },
@@ -234,7 +241,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
   const currentLabel = allNavItems.find(n => n.id === activeTab)?.label ?? '';
 
   // Tabs that fill the full content area without internal padding
-  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'proactive_drafts', 'reports'];
+  const fullBleedTabs: TabId[] = ['clients', 'caregivers', 'verification', 'coordinators', 'appointments', 'reviews', 'matching', 'assignments', 'disputes', 'messages', 'blog', 'cara_control', 'proactive_drafts', 'reports', 'childcare_incidents'];
   const isFullBleed = fullBleedTabs.includes(activeTab);
 
   return (
@@ -332,6 +339,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {activeTab === 'cara_control' && <AdminCaraControlRoom onShowToast={showToast} onNavigate={(tab) => setActiveTab(tab as TabId)} />}
             {activeTab === 'proactive_drafts' && <ProactiveReflectionDashboard onShowToast={(msg) => showToast(msg)} />}
             {activeTab === 'reports'      && <AdminReports />}
+            {activeTab === 'childcare_incidents' && <ChildcareIncidentQueue />}
           </div>
         ) : (
           <div className="flex-1 overflow-auto p-6 space-y-6">

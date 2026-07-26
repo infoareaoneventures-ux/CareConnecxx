@@ -1,6 +1,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Settings, CreditCard, LogOut, ChevronLeft, Shield, Home, Loader2, X, Plus, Lock, Trash2, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { User, Settings, CreditCard, LogOut, ChevronLeft, Shield, Home, Loader2, X, Plus, Lock, Trash2, Users, Baby } from 'lucide-react';
+// Childcare U11 (plan 2026-07-22-002): additive childcare card. Availability
+// comes from the once-per-session callable probe — senior-only accounts (or
+// flags off) render this page byte-identically to before (parity pinned by
+// ClientProfile.childcare.test.tsx).
+import { fetchFamilyChildcareAccess, type ChildSummary } from './shared/childcareAccess';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Badge } from './ui/Badge';
@@ -16,7 +22,21 @@ interface ClientProfileProps {
 }
 
 export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShowToast }) => {
+  const navigate = useNavigate();
+  const currentUser = authService.getCurrentUser();
   const [activeTab, setActiveTab] = useState<'profile' | 'family' | 'security'>('profile');
+  // Childcare U11: additive card state (hidden while unavailable).
+  const [childcareChildren, setChildcareChildren] = useState<ChildSummary[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setChildcareChildren(null);
+    void fetchFamilyChildcareAccess(currentUser?.uid).then((access) => {
+      if (!active) return;
+      setChildcareChildren(access.status === 'available' && access.hasChildren ? access.children : null);
+    });
+    return () => { active = false; };
+  }, [currentUser?.uid]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Partial<Senior> & { email?: string, phone?: string }>({
     name: '',
@@ -31,8 +51,6 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
   
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
-  const currentUser = authService.getCurrentUser();
 
   // U3: dirty-guard so the live senior-profile listener (below) never clobbers
   // unsaved edits. Any field edit marks dirty; a successful save clears it.
@@ -309,6 +327,30 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
               </div>
             </div>
           </div>
+
+          {/* Childcare U11: additive card — appears ONLY when childcare is
+              available AND the household has child recipients. Adult account
+              settings stay separate from recipient profiles. */}
+          {childcareChildren && childcareChildren.length > 0 && (
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-6" data-testid="client-profile-childcare-card">
+              <div className="p-6">
+                <h3 className="font-bold text-slate-900 mb-2 flex items-center">
+                  <Baby className="w-5 h-5 mr-2 text-primary-600" /> Childcare
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                  {childcareChildren.length} child profile{childcareChildren.length === 1 ? '' : 's'} in your
+                  household. Child details live in the secure childcare area, separate from this profile.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/childcare')}
+                  className="text-sm font-semibold text-primary-600 hover:text-primary-700 hover:underline"
+                >
+                  Open childcare dashboard
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-6">
             <div className="p-6">

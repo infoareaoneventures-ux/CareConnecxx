@@ -1,7 +1,45 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// In-memory Firestore mock for the vertical-awareness (R45) write/read tests.
+const hoisted = vi.hoisted(() => {
+  const docs = new Map<string, any>();
+  const makeDocRef = (path: string): any => ({
+    id: path.split("/").pop(),
+    path,
+    get: async () => ({ exists: docs.has(path), data: () => docs.get(path) }),
+    set: async (data: any, opts?: any) => {
+      const prev = opts?.merge ? { ...(docs.get(path) ?? {}) } : {};
+      const next: Record<string, any> = { ...prev };
+      for (const [k, v] of Object.entries(data)) {
+        next[k] = v && typeof v === "object" && "__inc" in (v as any)
+          ? ((prev[k] as number | undefined) ?? 0) + (v as any).__inc
+          : v;
+      }
+      docs.set(path, next);
+    },
+  });
+  const runTransaction = async (fn: any) =>
+    fn({ get: (ref: any) => ref.get(), set: (ref: any, d: any, o?: any) => void ref.set(d, o) });
+  return { docs, makeDocRef, runTransaction, reset: () => docs.clear() };
+});
+
+vi.mock("firebase-admin", () => {
+  const firestore: any = () => ({
+    collection: (p: string) => ({ doc: (id: string) => hoisted.makeDocRef(`${p}/${id}`) }),
+    runTransaction: hoisted.runTransaction,
+  });
+  firestore.FieldValue = { increment: (n: number) => ({ __inc: n }) };
+  return { __esModule: true, default: { firestore, apps: [{}] }, firestore, apps: [{}] };
+});
+
+import * as admin from "firebase-admin";
 import {
   decayScore,
   reputationBoost,
+  reputationFieldNames,
+  recordCaregiverOutcome,
+  getCaregiverReputationBoost,
+  getReputationBoosts,
   REPUTATION_HALF_LIFE_MS,
   MAX_REPUTATION_BOOST,
 } from "../caregiverReputation";
@@ -65,5 +103,54 @@ describe("reputationBoost (U6)", () => {
     const oneHire = reputationBoost({ score: 1, lastOutcomeAt: NOW }, NOW);
     expect(oneHire).toBeGreaterThan(0);
     expect(oneHire).toBeLessThan(MAX_REPUTATION_BOOST / 2);
+  });
+});
+
+// ── Vertical awareness (childcare plan 2026-07-22-002 U6, R45) ───────────────
+
+describe("per-vertical reputation (U6, R45)", () => {
+  const db = admin.firestore() as any;
+
+  beforeEach(() => hoisted.reset());
+
+  it("senior keeps the ORIGINAL unprefixed fields (default vertical — parity)", () => {
+    expect(reputationFieldNames("senior")).toEqual({
+      score: "score",
+      lastOutcomeAt: "lastOutcomeAt",
+      hireCount: "hireCount",
+      passCount: "passCount",
+    });
+  });
+
+  it("default (senior) outcome writes are byte-identical to the pre-U6 field shape", async () => {
+    await recordCaregiverOutcome(db, "cg-1", "hire", NOW);
+    const doc = hoisted.docs.get("caregiver_reputation/cg-1");
+    expect(doc).toEqual({ score: 1, lastOutcomeAt: NOW, hireCount: 1, passCount: 0 });
+    // No child fields appear on a senior write.
+    expect(Object.keys(doc).some((k) => k.startsWith("child"))).toBe(false);
+  });
+
+  it("childcare outcomes land in child-prefixed fields and never touch the senior score", async () => {
+    await recordCaregiverOutcome(db, "cg-1", "hire", NOW);          // senior
+    await recordCaregiverOutcome(db, "cg-1", "pass", NOW, "child"); // childcare
+    const doc = hoisted.docs.get("caregiver_reputation/cg-1");
+    expect(doc.score).toBe(1);          // senior untouched by the childcare pass
+    expect(doc.childScore).toBe(-1);
+    expect(doc.childPassCount).toBe(1);
+    expect(doc.hireCount).toBe(1);
+  });
+
+  it("R45: a senior hire history yields ZERO childcare boost (cross-vertical never qualifies)", async () => {
+    for (let i = 0; i < 5; i++) await recordCaregiverOutcome(db, "cg-senior-star", "hire", NOW);
+    expect(await getCaregiverReputationBoost(db, "cg-senior-star", NOW)).toBeGreaterThan(0);
+    expect(await getCaregiverReputationBoost(db, "cg-senior-star", NOW, "child")).toBe(0);
+    const boosts = await getReputationBoosts(db, ["cg-senior-star"], NOW, "child");
+    expect(boosts.get("cg-senior-star")).toBe(0);
+  });
+
+  it("childcare outcomes never move the senior boost either (isolation both ways)", async () => {
+    for (let i = 0; i < 5; i++) await recordCaregiverOutcome(db, "cg-child-star", "hire", NOW, "child");
+    expect(await getCaregiverReputationBoost(db, "cg-child-star", NOW)).toBe(0);
+    expect(await getCaregiverReputationBoost(db, "cg-child-star", NOW, "child")).toBeGreaterThan(0);
   });
 });

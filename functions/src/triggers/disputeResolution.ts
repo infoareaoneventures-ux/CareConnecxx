@@ -15,6 +15,52 @@ export const onDisputeCreated = functions.firestore
 
     const { clientId, caregiverId, appointmentId, reason } = dispute;
 
+    // ── Childcare guarded branch (plan 2026-07-22-002 U8, R39/R43) ──────────
+    // A childcare dispute HOLDS the payout rail for its occurrence and both
+    // parties get generic child-safe IN-APP notices (Evia SMS dispute flows
+    // for childcare are U10). The senior path below is byte-identical.
+    if (dispute.careVertical === "child") {
+      const slaDeadlineChild = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+      const { enqueueChildcarePayoutHold } = await import("../childcare/payoutHoldWorker");
+      await enqueueChildcarePayoutHold({
+        sourceType: "internal_dispute",
+        sourceId: disputeId,
+        appointmentId: appointmentId ? String(appointmentId) : null,
+        bookingId: typeof dispute.childcareBookingId === "string" ? dispute.childcareBookingId : null,
+        reason: `dispute:${disputeId}`,
+      });
+      await snap.ref.update({ slaDeadline: slaDeadlineChild, status: "open", notifiedAt: new Date().toISOString() });
+      const notice = {
+        title: "Payment Under Review",
+        body: "A payment concern was raised for a recent childcare visit. Our team is reviewing it and will respond within 48 hours.",
+      };
+      for (const uid of [clientId, caregiverId]) {
+        if (!uid) continue;
+        await db.collection("users").doc(String(uid)).collection("notifications").add({
+          userId: String(uid),
+          type: "childcare_dispute_opened",
+          title: notice.title,
+          body: notice.body,
+          data: { refId: String(appointmentId ?? disputeId) },
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+      await db.collection("admin_alerts").add({
+        type: "dispute_opened",
+        disputeId,
+        clientId,
+        caregiverId,
+        appointmentId,
+        careVertical: "child",
+        slaDeadline: slaDeadlineChild,
+        createdAt: new Date().toISOString(),
+        resolved: false,
+      });
+      console.log(`[onDisputeCreated] Childcare dispute ${disputeId} opened, payout held, SLA: ${slaDeadlineChild}`);
+      return;
+    }
+
     // Load phones for both parties
     const [clientSnap, caregiverSnap] = await Promise.all([
       db.collection("users").doc(clientId ?? "").get(),
@@ -105,6 +151,34 @@ async function escalateDispute(disputeId: string, dispute: any): Promise<void> {
     status:      "escalated",
     escalatedAt: new Date().toISOString(),
   });
+
+  // Childcare guarded branch (U8): generic in-app escalation notices, no SMS.
+  if (dispute.careVertical === "child") {
+    for (const uid of [dispute.clientId, dispute.caregiverId]) {
+      if (!uid) continue;
+      await db.collection("users").doc(String(uid)).collection("notifications").add({
+        userId: String(uid),
+        type: "childcare_dispute_escalated",
+        title: "Review Escalated",
+        body: "Your payment review was escalated for a final decision. You'll hear from us within 24 hours.",
+        data: { refId: String(dispute.appointmentId ?? disputeId) },
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
+    await db.collection("admin_alerts").add({
+      type:        "dispute_escalated",
+      disputeId,
+      clientId:    dispute.clientId,
+      caregiverId: dispute.caregiverId,
+      careVertical: "child",
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+      priority:    "high",
+    });
+    console.log(`[escalateDispute] Childcare dispute ${disputeId} escalated`);
+    return;
+  }
 
   // Notify both parties of escalation
   const [clientSnap, caregiverSnap] = await Promise.all([

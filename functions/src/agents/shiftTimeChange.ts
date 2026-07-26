@@ -31,6 +31,13 @@ export async function requestShiftTimeChange(params: {
   if (!apptSnap.exists) return { ok: false, status: "failed", reason: "appointment_not_found" };
   const appt = apptSnap.data()!;
 
+  // Childcare U7: SMS-driven time changes must not touch childcare visits in
+  // this unit (web/callable-only — v1-requestChildcareBookingChange owns
+  // childcare schedule changes with full revalidation).
+  if (appt.careVertical === "child") {
+    return { ok: false, status: "failed", reason: "childcare_web_only" };
+  }
+
   // Resolve the family's phone for offer-outcome notifications.
   let clientPhone = params.clientPhone;
   if (!clientPhone) {

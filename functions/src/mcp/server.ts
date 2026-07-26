@@ -28,6 +28,14 @@ import { resolveShiftBillableAmount, shiftEndFromHours } from "../billing/shiftB
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
+// Childcare U10 (plan 2026-07-22-002, R51): the family-side childcare tool
+// pack — defs + fail-closed handlers in one vertical-scoped module.
+import {
+  CHILDCARE_TOOL_DEFS,
+  CHILDCARE_TOOL_NAMES,
+  CHILDCARE_SHARED_TOOL_NAMES,
+  executeChildcareTool,
+} from "./childcareTools";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
 // at most once per confirmation. When one runs as a confirmed action, its
@@ -47,6 +55,7 @@ import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 // single-fire claim.
 export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
   "perform_web_action",
+  "cancel_childcare_booking",
 ]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
@@ -67,7 +76,7 @@ const db = admin.firestore();
 // READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
 // `quote_booking`, and reusable by the committing `request_booking` path.
 // Shared literal union for structured tool failures (see toolError below).
-type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN";
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "CHILDCARE_NOT_SUPPORTED";
 
 type BookingQuoteResult =
   | { ok: false; code: ToolErrorCode; message: string }
@@ -2581,6 +2590,11 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId", "appointmentId"],
     },
   },
+  // ── Childcare U10 (plan 2026-07-22-002, R51): the family-side childcare tool
+  // pack. Definitions + handlers live in mcp/childcareTools.ts; they are
+  // EXCLUDED from CLIENT_TOOLS/CAREGIVER_TOOLS below (senior turns never see
+  // them) and selected only by qaAgent's childcare-vertical branch.
+  ...CHILDCARE_TOOL_DEFS,
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -2660,7 +2674,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "verify_checkr_otp",
   "get_checkr_report",
 ]);
-export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
+export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(
+  t => CAREGIVER_TOOL_NAMES.has(t.name) && !CHILDCARE_TOOL_NAMES.has(t.name),
+);
 
 // Tools that exist ONLY for the caregiver role. Excluded from client turns so the
 // client surface stays under OpenAI's 128-tool hard cap (otherwise capToolsForOpenAi
@@ -2707,7 +2723,17 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "verify_checkr_otp",
   "get_checkr_report",
 ]);
-export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name));
+export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(
+  t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name) && !CHILDCARE_TOOL_NAMES.has(t.name),
+);
+
+// ── Childcare U10 (R51): the tool surface for a classified childcare-family
+// turn — the childcare pack plus the vertical-neutral loop/support tools.
+// Senior tools are structurally absent (cross-vertical leak = impossible by
+// construction); qaAgent additionally fail-closes any other name at dispatch.
+export const CHILDCARE_CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(
+  t => CHILDCARE_TOOL_NAMES.has(t.name) || CHILDCARE_SHARED_TOOL_NAMES.has(t.name),
+);
 
 export async function handleToolCallForCaregiver(
   name: string,
@@ -3117,23 +3143,35 @@ export async function handleToolCall(
   // The re-run from approvalHandler sets _confirmedActionId to bypass the gate.
   // See pendingActions.ts for the full design.
   const confirmedActionId = input._confirmedActionId as string | undefined;
+  const confirmedOperationId = input._operationId as string | undefined;
+  let confirmedPending: Awaited<ReturnType<typeof getPendingActionById>> = null;
   if (confirmedActionId) {
     delete input._confirmedActionId;
+    delete input._operationId;
     // Validate the confirmation against the pending doc so the gate's safety
     // lives HERE, not in caller discipline: a forged, expired, already-resolved,
     // wrong-phone, or wrong-tool id is refused instead of blindly bypassing.
     // The legit re-run (approvalHandler) dispatches BEFORE resolving, so the
     // doc is still "awaiting" at this point.
     const pending = await getPendingActionById(confirmedActionId);
+    confirmedPending = pending;
     // Pass the current input so a valid confirmation id can't be reused to commit
     // a DIFFERENT action than the one that was proposed/approved.
-    const valid = isConfirmedActionValid(pending, name, input.phone as string | undefined, Date.now(), input);
+    const valid = isConfirmedActionValid(
+      pending,
+      name,
+      input.phone as string | undefined,
+      Date.now(),
+      input,
+      confirmedOperationId,
+    );
     if (!valid) {
       console.warn("MCP gate: rejected invalid _confirmedActionId", {
         name, confirmedActionId, status: pending?.status,
       });
       return toolError("PERMISSION_DENIED", "This confirmation is no longer valid. Please try the action again.");
     }
+    if (confirmedOperationId) input._boundOperationId = confirmedOperationId;
   } else if (isHighRisk(name, input)) {
     const phone = input.phone as string | undefined;
     if (!phone) {
@@ -3150,6 +3188,8 @@ export async function handleToolCall(
         userId:    input.userId as string | undefined,
         toolName:  name,
         toolInput: input,
+        careVertical: input.careVertical === "child" ? "child" : "senior",
+        sourceTurnKey: String(input._sourceTurnKey ?? "") || undefined,
       });
     } catch (err) {
       // Fail closed: a healthcare action with no resolvable account holder is
@@ -3206,7 +3246,22 @@ export async function handleToolCall(
   // deferred long tail; the production money-safety guarantee lands here.)
   if (confirmedActionId && IDEMPOTENT_CONFIRMED_TOOLS.has(name)) {
     const idemKey = toolExecutionKey(confirmedActionId, name, input);
-    const claim = await claimToolExecution(idemKey);
+    const operation = confirmedPending?.operation;
+    const claim = await claimToolExecution(idemKey, {
+      strict: operation?.careVertical === "child",
+      ...(operation ? {
+        binding: {
+          operationId: operation.operationId,
+          careVertical: operation.careVertical,
+          principalId: operation.principalId,
+          objectType: operation.objectType,
+          objectId: operation.objectId,
+          actionName: operation.actionName,
+          sourceTurnKey: operation.sourceTurnKey,
+          expiresAt: operation.expiresAt,
+        },
+      } : {}),
+    });
     if (claim.cached) return claim.result;
     try {
       const r = await executeToolCall(name, input, confirmedActionId);
@@ -3246,6 +3301,14 @@ async function executeToolCall(
 
   try {
     const result = await (async (): Promise<unknown> => {
+    // Childcare U10 (R51): childcare tools dispatch to their own vertical-
+    // scoped executor BEFORE the senior switch. The executor fails closed
+    // unless the input carries the server-stamped childcare vertical, and
+    // re-runs authority/eligibility/flags checks inside every handler.
+    if (CHILDCARE_TOOL_NAMES.has(name)) {
+      const childcareResult = await executeChildcareTool(name, input);
+      if (childcareResult !== null) return childcareResult;
+    }
     switch (name) {
       case "get_senior_profile": {
         if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
@@ -3975,6 +4038,12 @@ async function executeToolCall(
         const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
         if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
         const appt = apptSnap.data()!;
+        // Childcare U7: MCP booking tools gain NO childcare access in this
+        // unit — childcare mutations are web/callable-only until U10 ships
+        // classified Evia tools.
+        if (appt.careVertical === "child") {
+          return toolError("CHILDCARE_NOT_SUPPORTED", "Childcare bookings are managed on the web and can't be changed here yet.");
+        }
         if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
         if (["cancelled_by_client", "cancelled"].includes(appt.status)) {
           return toolError("INVALID_INPUT", "Appointment is already cancelled");
@@ -5107,6 +5176,10 @@ async function executeToolCall(
       const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
       if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
       const appt = apptSnap.data()!;
+      // Childcare U8 (R44): childcare reviews are created ONLY by the
+      // server-side v1-submitChildcareReview callable (booking-bound,
+      // vertical-stamped) — never through the senior SMS review tool.
+      if (appt.careVertical === "child") return toolError("CHILDCARE_NOT_SUPPORTED", "Childcare reviews are left in the app after the booking completes");
       if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
       if (appt.hasReview === true) return toolError("INVALID_INPUT", "This appointment has already been reviewed");
       const dupSnap = await db.collection("reviews").where("appointmentId", "==", appointmentId).limit(1).get();
@@ -5218,6 +5291,10 @@ async function executeToolCall(
       const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
       if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
       const appt = apptSnap.data()!;
+      // Childcare U7: MCP booking tools gain NO childcare access in this unit.
+      if (appt.careVertical === "child") {
+        return toolError("CHILDCARE_NOT_SUPPORTED", "Childcare bookings are managed on the web and can't be changed here yet.");
+      }
       if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
       if (["cancelled","cancelled_by_client","completed"].includes(appt.status as string)) return toolError("INVALID_INPUT", `Cannot reschedule an appointment with status '${appt.status}'`);
       const conflictSnap = await db.collection("appointments").where("caregiverId", "==", appt.caregiverId).where("date", "==", newDate).where("status", "in", ["confirmed","in-progress","pending_caregiver_confirmation"]).get();
@@ -5749,6 +5826,12 @@ async function executeToolCall(
       const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
       if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
       const appt = apptSnap.data()!;
+      // Childcare U7: MCP booking tools gain NO childcare access in this unit
+      // (childcare acceptance is v1-acceptChildcareBooking, with its own
+      // eligibility + conflict + safety-projection contract).
+      if (appt.careVertical === "child") {
+        return toolError("CHILDCARE_NOT_SUPPORTED", "Childcare bookings are managed on the web and can't be changed here yet.");
+      }
       if (appt.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this caregiver");
       // Idempotent: already in the requested terminal state → success-shaped no-op.
       if (decision === "accept" && (appt.status === "confirmed" || appt.caregiverConfirmed === true)) {
@@ -6239,6 +6322,12 @@ async function executeToolCall(
       if (!jpSnap.exists) return toolError("NOT_FOUND", "Job post not found");
       const jp = jpSnap.data()!;
       if (jp.clientId !== clientId) return toolError("PERMISSION_DENIED", "This job post does not belong to you");
+      // R32 (childcare U6): this tool mirrors edits into the legacy singleton
+      // job_postings/{clientUid} — childcare-vertical jobs never touch that
+      // mirror (their edits flow through v1-updateChildcareJobPost). The
+      // status gate below would also reject (childcare jobs are never
+      // status "open"), but the vertical check is the structural guard.
+      if (jp.careVertical === "child") return toolError("PERMISSION_DENIED", "Childcare jobs are managed through the childcare tools");
       if (jp.status !== "open") return toolError("INVALID_INPUT", `Cannot edit a job post with status '${jp.status}'`);
       const upd: Record<string, unknown> = { updatedAt: nowIso };
       if (rate        != null)  upd.hourlyRate    = rate;
@@ -7216,6 +7305,11 @@ async function executeToolCall(
       const snap = await ref.get();
       if (!snap.exists) return toolError("NOT_FOUND", "Appointment not found.");
       const appt = snap.data()!;
+      // Childcare U7: MCP booking tools gain NO childcare access in this unit
+      // (childcare payment flows are U8-owned, never this senior path).
+      if (appt.careVertical === "child") {
+        return toolError("CHILDCARE_NOT_SUPPORTED", "Childcare bookings are managed on the web and can't be changed here yet.");
+      }
       if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This booking doesn't belong to this family.");
       if (appt.status !== "confirmed") {
         return toolError("INVALID_INPUT", "Payment method can only be changed on a confirmed booking that hasn't started.");

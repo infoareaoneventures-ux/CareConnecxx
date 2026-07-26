@@ -250,6 +250,27 @@ describe("getAllPending", () => {
     expect(got.map((a) => a.id)).toEqual([second.id, first.id]);
   });
 
+  it("keeps simultaneous senior and child approvals on the same phone isolated", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    hoisted.seed([
+      ["pa_1", {
+        phone: "+15550001111", status: "awaiting",
+        proposedAt: "2026-07-25T10:00:00.000Z", expiresAt: future,
+        toolName: "cancel_appointment", toolInput: {}, preview: "Senior",
+        careVertical: "senior",
+      }],
+      ["pa_2", {
+        phone: "+15550001111", status: "awaiting",
+        proposedAt: "2026-07-25T11:00:00.000Z", expiresAt: future,
+        toolName: "cancel_childcare_booking", toolInput: {}, preview: "Child",
+        careVertical: "child",
+      }],
+    ]);
+
+    expect((await getAllPending("+15550001111", "senior")).map((a) => a.id)).toEqual(["pa_1"]);
+    expect((await getAllPending("+15550001111", "child")).map((a) => a.id)).toEqual(["pa_2"]);
+  });
+
   it("lazily expires stale docs and excludes them from the result", async () => {
     const live  = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment", toolInput: { appointmentId: "a1" } });
     const stale = await proposePendingAction({ phone: "+15550001111", toolName: "delete_reminder",    toolInput: { reminderId: "r1" } });

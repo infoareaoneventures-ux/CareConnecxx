@@ -53,6 +53,16 @@ export async function handleClientSwapRequest(
       .limit(5)
       .get();
 
+    // Childcare skip (plan 2026-07-22-002 U8, R37): childcare bookings never
+    // enter the senior SMS swap flow — substitution is the web-managed
+    // v1-substituteChildcareCaregiver path (Evia childcare flows are U10).
+    const childcareDocs = snap.docs.filter((d) => d.data().careVertical === "child");
+    const seniorDocs = snap.docs.filter((d) => d.data().careVertical !== "child");
+    if (seniorDocs.length === 0 && childcareDocs.length > 0) {
+      await sendMessage(chatId, "Childcare bookings are managed on the web — open the app to change the caregiver for a childcare visit.");
+      return;
+    }
+
     if (snap.empty) {
       await sendMessage(chatId, await generateCaraMessage({
         audience: "family",
@@ -64,7 +74,7 @@ export async function handleClientSwapRequest(
       return;
     }
 
-    const visits = snap.docs.map((d, i) => ({
+    const visits = seniorDocs.map((d, i) => ({
       index: i + 1,
       id: d.id,
       date: d.data().date,

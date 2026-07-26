@@ -175,7 +175,7 @@ vi.mock("../../safety/supervisor", () => ({
 }));
 vi.mock("../../observability/auditLog", () => ({ logMessageSent: vi.fn(async () => {}) }));
 
-import { sendMessage, signalThinking } from "../client";
+import { sendMessage, sendToPhone, signalThinking } from "../client";
 import {
   resolvePhones,
   recordOutboundHistory,
@@ -185,6 +185,7 @@ import {
   TRANSPORT_ROWS_KEPT,
   TRANSPORT_PRUNE_EVERY_N,
 } from "../threadMirror";
+import { deriveConversationPartitionId } from "../../agents/turnSourceKey";
 
 // Recording is awaited on the send path (Gen-1 teardown safety), but give the
 // microtask/macrotask queue a beat to settle before asserting ABSENCE so a
@@ -245,7 +246,7 @@ describe("recordOutboundHistory (direct)", () => {
     await recordOutboundHistory({ chatId: "roh-schema", text: "Your visit is confirmed." });
     expect(hoisted.state.convAdds).toHaveLength(1);
     const { phone, data } = hoisted.state.convAdds[0];
-    expect(phone).toBe("+15551230010");
+    expect(phone).toBe(deriveConversationPartitionId("+15551230010", "senior"));
     expect(data.role).toBe("assistant");
     expect(data.content).toBe("Your visit is confirmed.");
     expect(typeof data.timestamp).toBe("number");
@@ -333,6 +334,41 @@ describe("URL neutralization — history never stores tokenized/bearer URLs", ()
 });
 
 describe("sendMessage → outbound history recording", () => {
+  it("does not write generic history when a child session is created by first contact", async () => {
+    const result = await sendToPhone("+15551249998", "Welcome to childcare.", {
+      executionContext: {
+        principal: "child-family-2",
+        careVertical: "child",
+        channel: "linq",
+        conversationPartition: "child:+15551249998",
+        sourceTurn: {
+          conversationId: "+15551249998",
+          messageId: "child-welcome-1",
+        },
+      },
+    });
+
+    expect(result).toBe("sent");
+    expect(hoisted.state.convAdds).toHaveLength(0);
+  });
+
+  it("does not write child-vertical sends to legacy web threads or generic transport history", async () => {
+    hoisted.state.sessions = [{
+      __id: "+15551249999",
+      chatId: "sm-child",
+      userId: "child-family-1",
+      careVertical: "child",
+    }];
+
+    const result = await sendMessage("sm-child", "Your childcare booking was updated.");
+
+    expect(result.message_id).toBe("msg-1");
+    await settle();
+    expect(hoisted.state.convAdds).toHaveLength(0);
+    expect(hoisted.state.otherAdds.filter((row) => row.path.startsWith("threads/cara_"))).toHaveLength(0);
+    expect(messagePosts()).toHaveLength(1);
+  });
+
   it("records ONE assistant row keyed by PHONE for a scripted send", async () => {
     hoisted.state.sessions = [
       { __id: "+15551240001", chatId: "sm-scripted", userId: "uid-99" },
@@ -341,7 +377,7 @@ describe("sendMessage → outbound history recording", () => {
     await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(1));
 
     const { phone, data } = hoisted.state.convAdds[0];
-    expect(phone).toBe("+15551240001"); // session DOC id, not userId
+    expect(phone).toBe(deriveConversationPartitionId("+15551240001", "senior"));
     expect(data).toMatchObject({
       role:    "assistant",
       content: expect.stringContaining("Maria is confirmed"),
@@ -358,7 +394,10 @@ describe("sendMessage → outbound history recording", () => {
     await sendMessage("sm-group", "Family update: the visit went well.");
     await vi.waitFor(() => expect(hoisted.state.convAdds).toHaveLength(2));
     expect(hoisted.state.convAdds.map((a) => a.phone).sort())
-      .toEqual(["+15551240002", "+15551240003"]);
+      .toEqual([
+        deriveConversationPartitionId("+15551240002", "senior"),
+        deriveConversationPartitionId("+15551240003", "senior"),
+      ].sort());
   });
 
   it("records exactly ONE row for a multi-bubble (URL-split) send, with the full text", async () => {
@@ -591,22 +630,23 @@ describe("pruneTransportRows", () => {
 
 describe("recordOutboundHistory → prune trigger (1-in-N throttle)", () => {
   const PHONE = "+15551260002";
+  const PARTITION = deriveConversationPartitionId(PHONE, "senior");
 
   it("prunes only on every Nth recorded write, then trims to the cap", async () => {
     hoisted.state.sessions = [{ __id: PHONE, chatId: "prune-trigger", userId: "u" }];
     // Pre-seed a backlog well over the cap, all OLDER than the new writes.
-    seedConvRows(PHONE, Array.from({ length: TRANSPORT_ROWS_KEPT + 10 }, (_, i) => transportRow(1000 + i)));
+    seedConvRows(PARTITION, Array.from({ length: TRANSPORT_ROWS_KEPT + 10 }, (_, i) => transportRow(1000 + i)));
 
     // N-1 writes: no prune yet — backlog plus every new row still present.
     for (let i = 0; i < TRANSPORT_PRUNE_EVERY_N - 1; i++) {
       await recordOutboundHistory({ chatId: "prune-trigger", text: `update ${i}` });
     }
-    expect(hoisted.state.convAdds.filter((r) => r.phone === PHONE))
+    expect(hoisted.state.convAdds.filter((r) => r.phone === PARTITION))
       .toHaveLength(TRANSPORT_ROWS_KEPT + 10 + TRANSPORT_PRUNE_EVERY_N - 1);
 
     // The Nth write fires the sweep and trims this phone to the cap.
     await recordOutboundHistory({ chatId: "prune-trigger", text: "the Nth update" });
-    const remaining = hoisted.state.convAdds.filter((r) => r.phone === PHONE);
+    const remaining = hoisted.state.convAdds.filter((r) => r.phone === PARTITION);
     expect(remaining).toHaveLength(TRANSPORT_ROWS_KEPT);
     // Newest rows survive — the Nth write itself is still there.
     expect(remaining.some((r) => r.data.content === "the Nth update")).toBe(true);

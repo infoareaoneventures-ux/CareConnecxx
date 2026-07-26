@@ -101,7 +101,20 @@ describe("handlePendingApproval", () => {
       chatId:  "chat_1",
       text:    "yes",
       userId:  "user-1",
-      pending: makePending(),
+      pending: makePending({
+        operation: {
+          schema: "pending-operation-v1",
+          operationId: "op_42",
+          principalId: "user-1",
+          careVertical: "senior",
+          objectType: "appointment",
+          objectId: "appt_123",
+          actionName: "cancel_appointment",
+          actionSchemaVersion: 1,
+          sourceTurnKey: "turn-42",
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      }),
     });
 
     expect(result).toEqual({ outcome: "handled" });
@@ -109,6 +122,7 @@ describe("handlePendingApproval", () => {
     const [toolName, calledInput] = hoisted.handleToolCallMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(toolName).toBe("cancel_appointment");
     expect(calledInput._confirmedActionId).toBe("pa_42");
+    expect(calledInput._operationId).toBe("op_42");
     expect(calledInput.phone).toBe("+15550001111");
     expect(calledInput.userId).toBe("user-1");
     expect(calledInput.appointmentId).toBe("appt_123");
@@ -210,6 +224,30 @@ describe("handlePendingApproval", () => {
     expect(result).toEqual({ outcome: "handled" });
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_42", "failed", expect.any(Object));
   });
+
+  it("denies execution when the live claim recheck rejects the operation", async () => {
+    hoisted.claimPendingMock.mockRejectedValueOnce(new Error("childcare authority version changed"));
+    const result = await handlePendingApproval({
+      phone: "+15550001111",
+      chatId: "chat_1",
+      text: "yes",
+      userId: "user-1",
+      pending: makePending({ careVertical: "child" }),
+    });
+
+    expect(result).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith(
+      "pa_42",
+      "failed",
+      expect.objectContaining({ executionPreview: expect.stringContaining("authority version changed") }),
+    );
+    expect(hoisted.createCaraOpsAlertMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      "chat_1",
+      expect.stringContaining("didn't go through"),
+    );
+  });
 });
 
 describe("handlePendingApprovals — batch confirmation", () => {
@@ -231,7 +269,7 @@ describe("handlePendingApprovals — batch confirmation", () => {
     }),
   ];
 
-  it("YES executes ALL pending actions sequentially, oldest first, each single-fire", async () => {
+  it("bare YES executes nothing when more than one operation is pending", async () => {
     const result = await handlePendingApprovals({
       phone:    "+15550001111",
       chatId:   "chat_1",
@@ -241,20 +279,30 @@ describe("handlePendingApprovals — batch confirmation", () => {
     });
 
     expect(result).toEqual({ outcome: "handled" });
-    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(2);
+    expect(hoisted.handleToolCallMock).not.toHaveBeenCalled();
+    expect(hoisted.resolvePendingMock).not.toHaveBeenCalled();
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      "chat_1",
+      expect.stringContaining('Reply "yes to 1" or "yes to 2"'),
+    );
+  });
 
-    // Proposal order: pa_1 (cancel_appointment) before pa_2 (cancel_subscription).
-    const calls = hoisted.handleToolCallMock.mock.calls as Array<[string, Record<string, unknown>]>;
-    expect(calls[0][0]).toBe("cancel_appointment");
-    expect(calls[0][1]._confirmedActionId).toBe("pa_1");
-    expect(calls[1][0]).toBe("cancel_subscription");
-    expect(calls[1][1]._confirmedActionId).toBe("pa_2");
+  it("numbered YES executes only the selected operation", async () => {
+    const result = await handlePendingApprovals({
+      phone:    "+15550001111",
+      chatId:   "chat_1",
+      text:     "yes to 2",
+      userId:   "user-1",
+      pendings: makeTwoPendings(),
+    });
 
-    // Each action resolved through the single-fire transactional resolver —
-    // a duplicate YES finds no awaiting docs and can't double-execute.
-    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "executed", expect.any(Object));
+    expect(result).toEqual({ outcome: "handled" });
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(1);
+    const [toolName, calledInput] = hoisted.handleToolCallMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(toolName).toBe("cancel_subscription");
+    expect(calledInput._confirmedActionId).toBe("pa_2");
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "executed", expect.any(Object));
-    expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("Done"));
+    expect(hoisted.resolvePendingMock).not.toHaveBeenCalledWith("pa_1", expect.anything(), expect.anything());
   });
 
   it("classifies the reply against a combined numbered preview of all actions", async () => {
@@ -300,19 +348,17 @@ describe("handlePendingApprovals — batch confirmation", () => {
     expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it("partial failure: still executes the rest and sends the recovery ACK", async () => {
-    hoisted.handleToolCallMock
-      .mockResolvedValueOnce({ _toolError: true, message: "boom" })
-      .mockResolvedValueOnce({ success: true });
+  it("selected-operation failure leaves every other pending action untouched", async () => {
+    hoisted.handleToolCallMock.mockResolvedValueOnce({ _toolError: true, message: "boom" });
     await handlePendingApprovals({
       phone:    "+15550001111",
       chatId:   "chat_1",
-      text:     "yes",
+      text:     "yes to 1",
       pendings: makeTwoPendings(),
     });
-    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(2);
+    expect(hoisted.handleToolCallMock).toHaveBeenCalledTimes(1);
     expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_1", "failed",   expect.any(Object));
-    expect(hoisted.resolvePendingMock).toHaveBeenCalledWith("pa_2", "executed", expect.any(Object));
+    expect(hoisted.resolvePendingMock).not.toHaveBeenCalledWith("pa_2", expect.anything(), expect.anything());
     expect(hoisted.createCaraOpsAlertMock).toHaveBeenCalledTimes(1);
     expect(hoisted.sendMessageMock).toHaveBeenCalledWith("chat_1", expect.stringContaining("flagged it for review"));
   });

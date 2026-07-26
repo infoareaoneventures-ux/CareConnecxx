@@ -13,6 +13,10 @@ import {
 // rejected labels are funnel/offline evidence only and cannot touch ranking.
 import { isCaregiverBookable } from "./utils/caregiverEligibility";
 import { canAccessMatchAssignment } from "./auth/matchAssignmentAccess";
+import {
+  matchingSourceBelongsToAssignment,
+  resolveMatchingSourceContract,
+} from "./childcare/matchingEligibility";
 
 /**
  * Cloud Function: Run AI Matching Algorithm
@@ -52,16 +56,77 @@ export const runAiMatching = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError("permission-denied", "Not your match assignment");
     }
 
-    const intakeSnap = await db
-      .collection("clientIntakes")
-      .where("userId", "==", clientId)
-      .orderBy("createdAt", "desc")
-      .limit(1)
-      .get();
+    const sourceContract = resolveMatchingSourceContract(assignment);
+    if (!sourceContract) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "The matching request is missing a valid source.",
+      );
+    }
 
-    const intakeDoc = intakeSnap.empty ? null : intakeSnap.docs[0];
-    const intakeData = intakeDoc ? intakeDoc.data() : assignment;
-    const intakeId = intakeDoc ? intakeDoc.id : matchAssignmentId;
+    let intakeData: Record<string, any>;
+    let intakeId: string;
+    if ("legacyLatest" in sourceContract) {
+      const intakeSnap = await db
+        .collection("clientIntakes")
+        .where("userId", "==", clientId)
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get();
+      const intakeDoc = intakeSnap.empty ? null : intakeSnap.docs[0];
+      intakeData = intakeDoc ? intakeDoc.data() : assignment;
+      intakeId = intakeDoc ? intakeDoc.id : matchAssignmentId;
+    } else {
+      const sourceDoc = await db.collection(sourceContract.collection).doc(sourceContract.id).get();
+      const source = sourceDoc.exists ? sourceDoc.data() as Record<string, any> : null;
+      if (!source || !matchingSourceBelongsToAssignment(sourceContract, source, clientId)) {
+        throw new functions.https.HttpsError(
+          "failed-precondition",
+          "The matching request source is unavailable.",
+        );
+      }
+      intakeData = source;
+      intakeId = sourceDoc.id;
+    }
+
+    // Childcare U6 (plan 2026-07-22-002, R34/KTD11): a typed childcare
+    // assignment/intake never runs the senior candidate sweep or the Claude
+    // ranking below. Candidate retrieval + hard eligibility + scoring happen
+    // in the childcare seam (approved features only — no senior verified pool,
+    // no embeddings, no cross-vertical reputation, R45); Claude receives
+    // nothing. Senior assignments take the exact pre-U6 path.
+    if (sourceContract.careVertical === "child") {
+      const { computeChildcareMatchesForIntake } = await import("./childcare/matchingEligibility");
+      const childcareMatches = await computeChildcareMatchesForIntake(intakeId, intakeData);
+      const suggested = childcareMatches.map((m, index) => ({
+        caregiverId: m.caregiverId,
+        matchScore: m.score,
+        confidence: m.confidence,
+        reasoning: m.reasons, // sanitized allowlist phrases only (R30/R33)
+        redFlags: [],
+        scoreBreakdown: {
+          semantic: 0,
+          hardSkills: m.hardSkillsScore,
+          distance: m.distanceScore,
+          availability: m.availabilityScore,
+          rating: m.ratingScore,
+          experience: m.experienceScore,
+        },
+        source: "childcare-eligibility-gate",
+        ranking: index + 1,
+      }));
+      await db.collection("match_assignments").doc(matchAssignmentId).update({
+        aiSuggestedMatches: suggested,
+        status: "matches_ready",
+        matchingRunAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        success: true,
+        matches: suggested,
+        totalScored: suggested.length,
+        matchesFound: suggested.length,
+      };
+    }
 
     // Load embeddings, caregivers, and feedback in parallel.
     // U7 (plan 2026-07-18-001, R36/KTD14): hired|rejected outcome patterns are

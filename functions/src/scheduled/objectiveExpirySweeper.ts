@@ -43,8 +43,10 @@ export async function runObjectiveExpirySweep(now: Date = new Date()): Promise<{
     if (!isExpiryEligible(objective, now)) continue;
     try {
       await transitionObjective(objective.objectiveId, "expired", objective.version, {
+        db,
         reason: "expiry_sweep",
         now,
+        bypassAuthorityCheck: true,
       });
       stats.expired++;
     } catch (err) {

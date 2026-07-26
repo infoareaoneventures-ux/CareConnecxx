@@ -10,6 +10,18 @@ import {
   TERMINAL_MEMORY_SYNC_STATUS,
 } from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
+// Childcare U10 (R50/R54/AE16): the nightly senior memory job consults the
+// typed MemoryEligibilityDecision before touching any session, and childcare
+// (careVertical === "child") records are structurally skipped everywhere.
+import {
+  decideMemoryEligibility,
+  logMemoryDenial,
+  MEMORY_ELIGIBILITY_POLICY_VERSION,
+} from "../memory/memoryEligibility";
+import {
+  careVerticalFromConversationPartitionId,
+  conversationStateStamp,
+} from "../agents/turnSourceKey";
 
 const db = admin.firestore();
 
@@ -36,11 +48,13 @@ interface PhoneCompressionResult {
 }
 
 async function compressConversationForPhone(
-  phone: string,
+  conversationPartitionId: string,
 ): Promise<PhoneCompressionResult> {
+  const careVertical = careVerticalFromConversationPartitionId(conversationPartitionId)
+    ?? "senior";
   const col = db
     .collection("agent_conversations")
-    .doc(phone)
+    .doc(conversationPartitionId)
     .collection("messages");
   const allSnap = await col.orderBy("timestamp", "asc").get();
 
@@ -61,8 +75,13 @@ async function compressConversationForPhone(
   // but their content never enters the summarizer prompt. They must NOT block
   // compression: one forget would otherwise wedge compression for the phone
   // forever and agent_conversations would grow unbounded.
+  // Childcare U10 (R50): rows carrying the IMMUTABLE memory-exclusion stamp
+  // (memoryExcluded === true — childcare turns) take the same
+  // deletable-but-never-summarizable path: their content must never enter a
+  // generic summary, even if the session later reclassifies.
   const isExcluded = (d: (typeof realDocs)[number]) =>
-    Boolean(d.data().excludeFromMemoryConsolidationAt);
+    Boolean(d.data().excludeFromMemoryConsolidationAt)
+    || (careVertical === "senior" && d.data().memoryExcluded === true);
   const agedCutoff = Date.now() - AGED_PENDING_SYNC_MS;
   const agedPending = realDocs.filter(
     (d) =>
@@ -140,8 +159,9 @@ async function compressConversationForPhone(
     const response = await getSharedClient().messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
-      system:
-        `You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with "<summary>".`,
+      system: careVertical === "child"
+        ? `You are maintaining a short-lived operational summary of an adult childcare-coordination conversation. Write 3-5 concise sentences covering verified scheduling decisions, open coordination tasks, and commitments. Record ONLY facts present in the conversation; never infer, diagnose, or add child identity details. Begin your response with "<summary>".`
+        : `You are summarizing a caregiving conversation for an AI assistant named Evia. Write 3-5 sentences covering: care needs mentioned, decisions made, key facts about the senior, and emotional context. Be specific — include names, dates, and care details if present. Record ONLY facts present in the conversation — never infer or invent. Preserve verbatim: people's names, dollar amounts, and any commitments or promises made. Begin your response with "<summary>".`,
       messages: [{ role: "user", content: promptParts[0] }],
     });
 
@@ -165,6 +185,15 @@ async function compressConversationForPhone(
         role: "summary",
         content: summaryText,
         timestamp: summaryTimestamp,
+        ...conversationStateStamp(careVertical),
+        ...(careVertical === "child"
+          ? {
+              memoryExcluded: true,
+              reason: "childcare_vertical",
+              policyVersion: MEMORY_ELIGIBILITY_POLICY_VERSION,
+              decidedAt: new Date().toISOString(),
+            }
+          : {}),
       });
     await batch.commit();
   }
@@ -238,6 +267,9 @@ export async function analyzeBookingPatterns(): Promise<void> {
   const byClient: Record<string, { day: number; status: string }[]> = {};
   for (const doc of apptSnap.docs) {
     const d = doc.data();
+    // Childcare U10 (R54/AE16): childcare appointments never feed the senior
+    // booking-pattern memory (child records untouched by senior memory jobs).
+    if (d.careVertical === "child") continue;
     const clientId = d.clientId as string;
     if (!clientId || !d.date) continue;
     const dayOfWeek = new Date(d.date).getUTCDay();
@@ -254,6 +286,7 @@ export async function analyzeBookingPatterns(): Promise<void> {
 
   for (const doc of cancelSnap.docs) {
     const d = doc.data();
+    if (d.careVertical === "child") continue; // Childcare U10 (R54/AE16)
     const clientId = d.clientId as string;
     if (!clientId || !d.date) continue;
     const dayOfWeek = new Date(d.date).getUTCDay();
@@ -364,24 +397,38 @@ export async function runNightlyMemoryConsolidation(): Promise<NightlyMemoryCoun
     if (page.empty) break;
     counts.eligible += page.docs.length;
 
-    const targets: Array<{ userId: string; phone: string }> = [];
+    const targets: Array<{ userId: string; phone: string; session: Record<string, unknown> }> = [];
     for (const doc of page.docs) {
-      const userId = (doc.data().userId as string | undefined) ?? doc.id;
+      const sessionData = doc.data() as Record<string, unknown>;
+      // Childcare U10 (R50/R54/AE16): the memory-eligibility decision precedes
+      // nightly consolidation — childcare-vertical, pending, and
+      // caregiver-childcare-context sessions are skipped (careVertical ===
+      // "child" records never enter this senior memory job). Senior sessions
+      // are eligible exactly as before.
+      const eligibility = decideMemoryEligibility(sessionData as never);
+      if (!eligibility.eligible) {
+        logMemoryDenial("nightly_memory_consolidation", eligibility);
+        counts.skipped++;
+        continue;
+      }
+      const userId = (sessionData.userId as string | undefined) ?? doc.id;
       if (!userId || processed.has(doc.id)) {
         counts.skipped++;
         continue;
       }
       processed.add(doc.id);
-      targets.push({ userId, phone: doc.id });
+      targets.push({ userId, phone: doc.id, session: sessionData });
     }
 
     for (let i = 0; i < targets.length; i += CONSOLIDATION_CONCURRENCY) {
       const chunk = targets.slice(i, i + CONSOLIDATION_CONCURRENCY);
       await Promise.all(
-        chunk.map(async ({ userId, phone }) => {
+        chunk.map(async ({ userId, phone, session }) => {
           counts.attempted++;
           try {
-            await consolidateMemoryForUser(userId, phone);
+            // Session threaded through so the consolidator re-checks
+            // eligibility itself (U10 defense in depth).
+            await consolidateMemoryForUser(userId, phone, { session: session as never });
             counts.succeeded++;
           } catch (err) {
             // R21: sanitized error class only — no userId/phone, no message

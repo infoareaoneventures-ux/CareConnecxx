@@ -164,6 +164,18 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     }
   }
 
+  // Childcare guard (plan 2026-07-22-002 U8, R39): childcare visit hours are
+  // server-derived at check-out (childcare/shiftPayments.ts) — caregiver-
+  // submitted timesheets never enter the childcare money path. Fail closed
+  // with a web redirect; the senior path below is byte-identical.
+  if (appointmentSnap.data()?.careVertical === 'child') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Childcare visit hours are recorded automatically when you check out in the app.',
+      { code: 'childcare_hours_are_server_derived' },
+    );
+  }
+
   try {
     const result = await createValidatedShiftHours({
       appointmentId,
@@ -532,6 +544,13 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
   await requireAdmin(context.auth.uid);
+  // U12 (plan 2026-07-22-002, R55/AE18): ADDITIVE generalOperator scope gate.
+  // Broad isAdmin satisfies generalOperator by design (pilot decision), so the
+  // existing admin UI keeps working; the gate exists so billing/support
+  // reconciliation is attributable to an operator ROLE — childcare rows carry
+  // correlation IDs + amounts only (R46), never custody/child safety data.
+  const { requireOperatorScope, OPERATOR_SCOPE_GENERAL } = await import('./admin/requireOperatorScope');
+  await requireOperatorScope(context, OPERATOR_SCOPE_GENERAL, { recentAuth: false });
 
   const { appointmentId, finalStartTime, finalEndTime, note } = data;
   if (!appointmentId || !finalStartTime || !finalEndTime) {
@@ -1075,6 +1094,23 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     return { ok: true };
   }
 
+  // Dispute/chargeback hold (childcare U8, R39): a held row never charges or
+  // transfers until an admin resolves it. Senior rows never carry payoutHold
+  // today, so the senior path is byte-identical.
+  if (shift.payoutHold === true) {
+    await ref.update({
+      status: 'requires_admin_review',
+      autoApproveAt: null,
+      updatedAt: now,
+    });
+    await updateShiftPaymentOperation(operationKey, 'requires_admin_review', {
+      providerOperationId: shift.stripeChargeId ?? null,
+      nextAttemptAt: null,
+      lastErrorCode: 'payout_hold_active',
+    });
+    return { ok: false, error: 'payout_hold_active' };
+  }
+
   // Declared outside the try so the catch can record it on payment_failed —
   // a `let` scoped inside the try is invisible to the catch (ReferenceError).
   let paymentIntentId: string | undefined = shift.stripeChargeId;
@@ -1092,9 +1128,15 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     // checkout session is created) AND is mirrored onto users/{clientId} by the
     // checkout webhook. Read customers first, then fall back to users so a
     // client subscribed via either path can be charged.
-    let stripeCustomerId = (await db.collection('customers').doc(shift.clientId).get()).data()?.stripeCustomerId;
+    // Childcare U8 (R7/A3): the charged party is the recorded PAYER
+    // (billingUserId — may differ from the guardian clientId). Senior rows
+    // never carry billingUserId, so they resolve exactly as before.
+    const billingUid = (typeof shift.billingUserId === 'string' && shift.billingUserId)
+      ? shift.billingUserId
+      : shift.clientId;
+    let stripeCustomerId = (await db.collection('customers').doc(billingUid).get()).data()?.stripeCustomerId;
     if (!stripeCustomerId) {
-      stripeCustomerId = (await db.collection('users').doc(shift.clientId).get()).data()?.stripeCustomerId;
+      stripeCustomerId = (await db.collection('users').doc(billingUid).get()).data()?.stripeCustomerId;
     }
     if (!stripeCustomerId) {
       throw new Error('Client has no Stripe customer');
@@ -1115,7 +1157,17 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     }
 
     const grossCents = computeGrossCents(shift);
-    const feeCents = Math.max(Math.round(grossCents * PLATFORM_FEE_RATE), Math.round(PLATFORM_FEE_MIN * 100));
+    // Childcare U8 (R40): a childcare row's platform fee comes ONLY from its
+    // frozen jurisdiction-policy pricing snapshot — a missing/invalid snapshot
+    // THROWS (fail closed into payment_failed/admin review), never falls back
+    // to the senior constants. Senior rows keep the exact pre-U8 fee math.
+    let feeCents: number;
+    if (shift.careVertical === 'child') {
+      const { childcareFeeCentsForShift } = await import('./childcare/paymentPolicy');
+      feeCents = childcareFeeCentsForShift(shift, grossCents);
+    } else {
+      feeCents = Math.max(Math.round(grossCents * PLATFORM_FEE_RATE), Math.round(PLATFORM_FEE_MIN * 100));
+    }
     const totalChargeCents = grossCents + feeCents;
 
     // Charge the client, then capture whether it actually settled. An
@@ -1135,6 +1187,22 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     }
 
     if (!paymentIntentId) {
+      // Childcare U8 (R39/R57): childcare charges carry the ledger correlation
+      // (booking + shift IDs — opaque IDs only, pinned key set) on top of the
+      // senior trio, which every existing webhook/reconcile path keys on.
+      // Senior metadata is byte-identical.
+      const baseMetadata = { appointmentId, shiftHoursId: appointmentId, paymentGeneration: String(generation) };
+      let chargeMetadata: Record<string, string> = baseMetadata;
+      if (shift.careVertical === 'child') {
+        const { assertChildSafeStripeMetadata, CHILDCARE_CHARGE_METADATA_KEYS } = await import('./childcare/paymentPolicy');
+        chargeMetadata = {
+          ...baseMetadata,
+          careVertical: 'child',
+          childcareBookingId: String(shift.childcareBookingId ?? ''),
+          childcareShiftId: String(shift.childcareShiftId ?? appointmentId),
+        };
+        assertChildSafeStripeMetadata(chargeMetadata, CHILDCARE_CHARGE_METADATA_KEYS, 'processShiftPayment');
+      }
       const intent = await stripe.paymentIntents.create({
         amount: totalChargeCents,
         currency: shift.currency || 'usd',
@@ -1143,7 +1211,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
         confirm: true,
         off_session: true,
         description: `Evia shift ${appointmentId}`,
-        metadata: { appointmentId, shiftHoursId: appointmentId, paymentGeneration: String(generation) },
+        metadata: chargeMetadata,
       }, {
         // Key on (appointment, attempt) ALWAYS. `attempt` is derived from the
         // input snapshot's paymentAttemptCount, so:
@@ -1277,6 +1345,13 @@ export const confirmCashReceived = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only the caregiver can confirm cash receipt');
   }
 
+  // Childcare U8: offline settlement (cash/Venmo/Zelle) is not a policy-
+  // approved childcare payment method — childcare rows are credit-only and
+  // fail closed here even if a paymentMethod field were ever tampered.
+  if (shift.careVertical === 'child') {
+    throw new functions.https.HttpsError('failed-precondition', 'Childcare visits settle by card only');
+  }
+
   if (!isOfflinePaymentMethod(shift.paymentMethod)) {
     throw new functions.https.HttpsError('failed-precondition', 'Shift is not an offline (cash/Venmo/Zelle) payment');
   }
@@ -1328,6 +1403,9 @@ export async function approveShiftHoursForClient(appointmentId: string): Promise
     .get();
   if (snap.empty) return;
   const iMsgShift = snap.docs[0].data();
+  // Childcare U8: SMS/iMessage timesheet approval for childcare rows is U10 —
+  // childcare hours are approved in-app/web or auto-approve; skip here.
+  if (iMsgShift.careVertical === "child") return;
   const iMsgBasePay        = Math.round(iMsgShift.submittedTotalHours * iMsgShift.payRate * 100) / 100;
   const iMsgLineItems      = Array.isArray(iMsgShift.lineItems) ? iMsgShift.lineItems : [];
   const iMsgLineItemsTotal = Math.round(iMsgLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0) * 100) / 100;

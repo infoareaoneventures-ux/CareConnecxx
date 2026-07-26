@@ -45,6 +45,18 @@ export async function handleTimesheetApproval(
       .limit(5)
       .get();
 
+    // Childcare skip (plan 2026-07-22-002 U8): childcare hours are reviewed
+    // in-app/web — the SMS timesheet approval flow is senior-only until U10.
+    const childcareRows = snap.docs.filter((d) => d.data().careVertical === "child");
+    const seniorRows = snap.docs.filter((d) => d.data().careVertical !== "child");
+    if (seniorRows.length === 0 && childcareRows.length > 0) {
+      await sendMessage("Your childcare visit hours are reviewed in the app — open the app to approve them.");
+      await db.collection("agent_sessions").doc(phone).update({
+        timesheetStep: admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      return;
+    }
+
     if (snap.empty) {
       const msg = await generateCaraMessage({
         audience: "family",
@@ -60,7 +72,7 @@ export async function handleTimesheetApproval(
     }
 
     const timesheets: PendingTimesheet[] = await Promise.all(
-      snap.docs.map(async (d) => {
+      seniorRows.map(async (d) => {
         const ts = d.data();
         const cgSnap = await db.collection("caregivers").doc(ts.caregiverId as string).get().catch(() => null);
         const cg = cgSnap?.data() ?? {};

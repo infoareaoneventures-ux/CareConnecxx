@@ -235,6 +235,27 @@ export async function runMatchingForClient(
   opts?:   MatchRunOptions
 ): Promise<MatchRunResult> {
   const suppressSends = !!opts?.suppressConversationalSends;
+
+  // Childcare U6 (plan 2026-07-22-002, R34/KTD11): this is the SENIOR SMS
+  // matching flow — its candidate pool (status active/pending_review, city
+  // match, senior trust scores, cross-vertical reputation boosts) has no
+  // childcare eligibility gate, so a typed childcare intake FAILS CLOSED here
+  // instead of receiving senior-gated candidates. Childcare candidate
+  // retrieval lives in childcare/matchingEligibility + jobCallables; the SMS
+  // childcare conversation surface is U10/U11 work. Senior intakes (field
+  // absent or "senior") take the exact pre-U6 path below.
+  if ((intake as Record<string, unknown>)?.careVertical === "child") {
+    console.warn("[matchingAgent] childcare intake refused by senior matching flow (fail closed, R34)");
+    await db.collection("admin_alerts").add({
+      type:        "childcare_matching_unrouted",
+      clientPhone: phone,
+      createdAt:   new Date().toISOString(),
+      resolved:    false,
+      severity:    "high",
+    }).catch(() => {});
+    return "failed";
+  }
+
   try {
     // Matching starting = the family is actively trying to hire. Record a
     // DURABLE goal (7-day horizon, generous turn budget) so Evia carries the

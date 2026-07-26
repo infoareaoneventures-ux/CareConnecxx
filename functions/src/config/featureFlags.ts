@@ -1,6 +1,12 @@
 // Env-driven feature flags. Default OFF — a flag is on only when its env var is
 // exactly "true".
 //
+// (Exception: the CHILDCARE flags at the bottom of this file are
+// Firestore-resident, NOT env vars — see the childcare section.)
+
+import * as admin from "firebase-admin";
+
+//
 // realWorldHealthcareActions ships the propose→confirm→execute healthcare
 // browser actions (appointment booking, pharmacy refill, insurance check) DARK
 // until the pre-launch gate closes:
@@ -124,3 +130,193 @@ export function isConvergenceFlipped(flow: string): boolean {
 // path (loop-only). Routing is now unconditional for text turns at a collection
 // step — see shouldRouteOnboardingToLoop in agents/onboardingContract.ts. The env
 // vars ONBOARDING_AGENT_LOOP / _PHONES / _COHORT_PCT are no longer read.
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare flags (childcare marketplace plan 2026-07-22-002, U1 / R61)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// UNLIKE every flag above, the childcare flags are FIRESTORE-RESIDENT and
+// runtime-flippable — never process.env values requiring a functions redeploy.
+// Emergency-off must take effect without a deploy (R61); the only latency is
+// the short in-memory cache TTL below (~60s).
+//
+// Documents (contract: data/contract.ts → childcare_flags):
+//   • childcare_flags/global   — platform-wide baseline
+//   • childcare_flags/{STATE}  — per-state overlay (e.g. childcare_flags/CA)
+//
+// Semantics — ALL fail-closed (childcare is OPT-IN; note this is the OPPOSITE
+// default from the senior kill switches above, which default ON):
+//   • Absent doc, absent field, or any non-`true` value ⇒ OFF.
+//   • A state-scoped read requires BOTH the global doc AND that state's
+//     overlay doc to set the flag to exactly `true` — a state can only narrow
+//     global, never widen it, and no state is on by implication.
+//   • Sub-capabilities (discovery/writes/proactive) are additionally gated on
+//     CHILDCARE_ENABLED — the master flag off means everything is off.
+//   • `emergencyOff: true` in EITHER doc force-falses every childcare flag
+//     for that scope, regardless of the other fields.
+//
+// Cache: per-doc in-memory cache with a 60s TTL so hot paths don't re-read
+// Firestore per turn, plus bustChildcareFlagsCache() for tests/admin tooling
+// that needs an immediate re-read (e.g. right after flipping emergency-off).
+// (The firebase-admin import lives at the top of the file; every env-var flag
+// above reads process.env only.)
+
+export const CHILDCARE_FLAGS_COLLECTION = "childcare_flags";
+export const CHILDCARE_GLOBAL_FLAGS_DOC = "global";
+export const CHILDCARE_FLAGS_CACHE_TTL_MS = 60_000;
+
+/** Firestore field names on the flag docs (exact-`true` semantics). */
+export const CHILDCARE_FLAG_NAMES = [
+  "CHILDCARE_ENABLED",
+  "CHILDCARE_DISCOVERY_ENABLED",
+  "CHILDCARE_WRITES_ENABLED",
+  "CHILDCARE_PROACTIVE_ENABLED",
+] as const;
+export type ChildcareFlagName = (typeof CHILDCARE_FLAG_NAMES)[number];
+
+export interface ChildcareFlags {
+  /** Master flag — everything childcare requires it. */
+  enabled: boolean;
+  /** Discovery/search/matching surfaces. */
+  discoveryEnabled: boolean;
+  /** Child-sensitive mutations (profiles, jobs, bookings). */
+  writesEnabled: boolean;
+  /** Proactive/scheduled childcare messaging. */
+  proactiveEnabled: boolean;
+  /** True when either scope has emergencyOff set — everything above is forced false. */
+  emergencyOff: boolean;
+}
+
+export type ChildcareAppCheckMode = "off" | "monitor" | "enforce";
+
+export interface ChildcareAppCheckConfig {
+  mode: ChildcareAppCheckMode;
+  source: "firestore" | "environment" | "default";
+  transitionRecorded: boolean;
+  transitionAt: string | null;
+  providerRegistrationVerified: boolean;
+  debugTokensAllowed: boolean;
+  verifiedDomains: string[];
+}
+
+const CHILDCARE_ALL_OFF: ChildcareFlags = {
+  enabled: false,
+  discoveryEnabled: false,
+  writesEnabled: false,
+  proactiveEnabled: false,
+  emergencyOff: false,
+};
+
+type FirestoreLike = Pick<admin.firestore.Firestore, "collection">;
+
+interface FlagDocCacheEntry {
+  data: Record<string, unknown> | null; // null = doc absent (cached too)
+  fetchedAtMs: number;
+}
+
+const childcareFlagDocCache = new Map<string, FlagDocCacheEntry>();
+
+/** Explicit cache-bust hook: next read hits Firestore (tests, admin flips). */
+export function bustChildcareFlagsCache(): void {
+  childcareFlagDocCache.clear();
+}
+
+async function readChildcareFlagDoc(
+  docId: string,
+  db: FirestoreLike,
+): Promise<Record<string, unknown> | null> {
+  const cached = childcareFlagDocCache.get(docId);
+  const nowMs = Date.now();
+  if (cached && nowMs - cached.fetchedAtMs < CHILDCARE_FLAGS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  try {
+    const snap = await db.collection(CHILDCARE_FLAGS_COLLECTION).doc(docId).get();
+    const data = snap.exists ? ((snap.data() ?? {}) as Record<string, unknown>) : null;
+    childcareFlagDocCache.set(docId, { data, fetchedAtMs: nowMs });
+    return data;
+  } catch {
+    // Fail closed on read error and do NOT cache the failure — the next call
+    // retries immediately instead of pinning childcare off for a full TTL.
+    return null;
+  }
+}
+
+function normalizeChildcareStateDocId(state: string): string {
+  return state.trim().toUpperCase();
+}
+
+export async function getChildcareAppCheckConfig(
+  opts: { db?: FirestoreLike } = {},
+): Promise<ChildcareAppCheckConfig> {
+  const db = opts.db ?? admin.firestore();
+  const globalDoc = await readChildcareFlagDoc(CHILDCARE_GLOBAL_FLAGS_DOC, db);
+  const firestoreMode = String(globalDoc?.CHILDCARE_APPCHECK_MODE ?? "").trim().toLowerCase();
+  const envMode = String(process.env.CHILDCARE_APPCHECK_MODE ?? "").trim().toLowerCase();
+  const valid = (value: string): value is ChildcareAppCheckMode =>
+    value === "off" || value === "monitor" || value === "enforce";
+  const mode = valid(firestoreMode)
+    ? firestoreMode
+    : valid(envMode)
+      ? envMode
+      : "monitor";
+  const source = valid(firestoreMode)
+    ? "firestore"
+    : valid(envMode)
+      ? "environment"
+      : "default";
+  const verifiedDomains = Array.isArray(globalDoc?.CHILDCARE_APPCHECK_VERIFIED_DOMAINS)
+    ? globalDoc.CHILDCARE_APPCHECK_VERIFIED_DOMAINS
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 10)
+    : [];
+
+  return {
+    mode,
+    source,
+    transitionRecorded: source === "firestore" && typeof globalDoc?.CHILDCARE_APPCHECK_TRANSITION_AT === "string",
+    transitionAt:
+      typeof globalDoc?.CHILDCARE_APPCHECK_TRANSITION_AT === "string"
+        ? globalDoc.CHILDCARE_APPCHECK_TRANSITION_AT
+        : null,
+    providerRegistrationVerified:
+      globalDoc?.CHILDCARE_APPCHECK_PROVIDER_VERIFIED === true,
+    debugTokensAllowed:
+      globalDoc?.CHILDCARE_APPCHECK_DEBUG_TOKENS_ALLOWED === true,
+    verifiedDomains,
+  };
+}
+
+/**
+ * Read the effective childcare flags. Without `state`, returns the global
+ * scope; with `state`, returns the AND-combined global+overlay scope for that
+ * jurisdiction. `db` is injectable for tests (default: admin.firestore()).
+ */
+export async function getChildcareFlags(
+  opts: { state?: string; db?: FirestoreLike } = {},
+): Promise<ChildcareFlags> {
+  const db = opts.db ?? admin.firestore();
+  const globalDoc = await readChildcareFlagDoc(CHILDCARE_GLOBAL_FLAGS_DOC, db);
+  const stateDoc =
+    opts.state !== undefined
+      ? await readChildcareFlagDoc(normalizeChildcareStateDocId(opts.state), db)
+      : undefined;
+
+  if (globalDoc?.emergencyOff === true || stateDoc?.emergencyOff === true) {
+    return { ...CHILDCARE_ALL_OFF, emergencyOff: true };
+  }
+
+  const on = (name: ChildcareFlagName): boolean =>
+    globalDoc?.[name] === true && (opts.state === undefined || stateDoc?.[name] === true);
+
+  const enabled = on("CHILDCARE_ENABLED");
+  return {
+    enabled,
+    discoveryEnabled: enabled && on("CHILDCARE_DISCOVERY_ENABLED"),
+    writesEnabled: enabled && on("CHILDCARE_WRITES_ENABLED"),
+    proactiveEnabled: enabled && on("CHILDCARE_PROACTIVE_ENABLED"),
+    emergencyOff: false,
+  };
+}

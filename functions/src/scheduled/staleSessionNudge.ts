@@ -37,6 +37,13 @@ export const sendStaleSessionNudges = functions.pubsub
 
     for (const doc of stuckSnap.docs) {
       const session = doc.data();
+      if (session.careVertical === "child") continue; // Childcare U10 (R54/AE16): childcare steps are owned by the childcare ingress
+      // Front door Stage 1 (R-FD1): a PENDING-vertical session is mid-question
+      // ("adult or kids?") and belongs to no vertical yet. Nudging it with the
+      // generic ROLE question would talk past the question Evia actually asked,
+      // which reads as Evia forgetting the conversation. Skipped like childcare;
+      // Stage 2 owns vertical-aware re-engagement copy.
+      if (session.verticalIntent === "pending") continue;
       if (session.optedOut) continue;
       // Only recover sessions stuck > 7 days
       const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
@@ -82,6 +89,8 @@ export const sendStaleSessionNudges = functions.pubsub
 
     for (const doc of permSnap.docs) {
       const session = doc.data();
+      if (session.careVertical === "child") continue; // Childcare U10 (R54/AE16)
+      if (session.verticalIntent === "pending") continue; // Front door Stage 1 (R-FD1)
       if (session.optedOut) continue;
       const updatedAt = (session.updatedAt ?? session.createdAt ?? "") as string;
       if (!updatedAt || updatedAt > sevenDaysAgo) continue;
@@ -125,6 +134,8 @@ export const sendStaleSessionNudges = functions.pubsub
     for (const doc of snap.docs) {
       const session = doc.data();
 
+      if (session.careVertical === "child") continue; // Childcare U10 (R54/AE16)
+      if (session.verticalIntent === "pending") continue; // Front door Stage 1 (R-FD1)
       // Skip opted-out users
       if (session.optedOut) continue;
 

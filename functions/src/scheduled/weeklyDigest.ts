@@ -194,6 +194,10 @@ async function runInBatches<T>(items: T[], size: number, fn: (item: T) => Promis
 // Send one client's weekly care digest. Returns true when a digest was sent.
 async function sendClientDigest(sessionDoc: any, today: string): Promise<boolean> {
   const session = sessionDoc.data() as AgentSession;
+  // Childcare U10 (R54/AE16): the weekly digest is a senior care summary —
+  // careVertical === "child" sessions are skipped (childcare proactive
+  // content is deferred; child records never feed this job).
+  if ((session as unknown as Record<string, unknown>).careVertical === "child") return false;
   if (!session.userId || session.optedIn === false) return false;
 
   const phone = sessionDoc.id;
@@ -273,6 +277,9 @@ async function sendCaregiverEarnings(cgDoc: any, weekAgo: string, today: string)
 
   const visits = shiftSnap.docs
     .map(d => d.data())
+    // Childcare U10 (R54/AE16): childcare shift rows never feed the senior
+    // earnings digest — their money summaries stay in the childcare surfaces.
+    .filter(v => v.careVertical !== "child")
     .filter(v => isShiftEarnedSince(v, weekAgo));
 
   if (visits.length === 0) return false;

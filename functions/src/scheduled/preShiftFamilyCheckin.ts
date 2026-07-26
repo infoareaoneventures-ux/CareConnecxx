@@ -52,6 +52,10 @@ export const sendPreShiftFamilyCheckin = functions.pubsub
     for (const doc of snap.docs) {
       const appt     = doc.data();
       const apptId   = doc.id;
+      // Childcare U10 (R54/AE16): childcare appointments are skipped — this
+      // check-in interpolates senior names into family SMS copy, and
+      // childcare proactive messaging is deferred. Senior rows unchanged.
+      if (appt.careVertical === "child") continue;
       if (appt.preShiftCheckinSent === true) continue;
       const clientId = (appt.clientId ?? "") as string;
       const startTime = (appt.startTime ?? "") as string;

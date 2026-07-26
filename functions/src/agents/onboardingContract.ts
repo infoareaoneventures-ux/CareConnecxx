@@ -24,6 +24,29 @@
 
 export type OnboardingRole = "client" | "caregiver";
 
+// ── R-FD5: the contract becomes role × vertical, ADDITIVELY ──────────────────
+//
+// docs/architecture/childcare-front-door-design.md. Every role-keyed seam below
+// gained an optional SECOND key — the care vertical — defaulting to "senior", so
+// every existing senior call site is byte-identical (same arguments, same
+// returned array/set IDENTITY, same values). The legacy `…ForRole` exports are
+// kept as thin senior-defaulting wrappers so nothing downstream had to change.
+//
+// The rule this encodes: a childcare caregiver is NOT a senior caregiver with
+// extra fields. They share the BASE identity/contact/logistics fields (collected
+// once, never re-asked — AE21) and diverge on everything vertical-specific
+// (which ages they serve, childcare experience, childcare credentials,
+// transport). R-FD6's "two independent vertical profiles" starts here: the
+// contract can describe one vertical without asserting anything about the other.
+export type OnboardingVertical = "senior" | "child";
+
+/** The default second key. Senior is the live path and must never move. */
+export const DEFAULT_ONBOARDING_VERTICAL: OnboardingVertical = "senior";
+
+function normalizeVertical(vertical?: OnboardingVertical | null): OnboardingVertical {
+  return vertical === "child" ? "child" : "senior";
+}
+
 // Mirror of CLIENT_STEP_ORDER in onboardingConversation.ts — the conversational
 // collection steps the agent loop owns (client-first). Kept here so the routing
 // predicate stays in this pure leaf module. Must stay in sync with the legacy
@@ -48,8 +71,58 @@ export const CAREGIVER_COLLECTION_STEPS: readonly string[] = [
   "caregiver_ask_email", "caregiver_ask_bio",
 ];
 
-export function collectionStepsForRole(role: OnboardingRole): readonly string[] {
+// ── Childcare caregiver collection steps (R-FD5 / R-FD6, Stage 2) ────────────
+//
+// The childcare caregiver funnel. Steps prefixed `caregiver_ask_childcare_` are
+// the VERTICAL DELTA; every other step in the list is the SHARED BASE step of
+// the same name the senior funnel uses — deliberately the same identifier,
+// because it collects the same field into the same key. That identity is what
+// makes AE21 mechanical rather than aspirational: an existing senior caregiver
+// adding childcare already has those base fields, so
+// providerEligibility.computeMissingChildcareFields reports them as reused and
+// the funnel simply never reaches those steps.
+//
+// Excluded, mirroring the senior caregiver list: confirm-name (owns its own
+// parsing) and every deterministic gate. The childcare gates are the post-
+// collection enrollment steps below (policy acceptance → screening consent →
+// screening → MANUAL review), owned by agents/childcareCaregiverFunnel.ts.
+export const CAREGIVER_CHILDCARE_COLLECTION_STEPS: readonly string[] = [
+  "caregiver_ask_name",
+  "caregiver_ask_location",
+  "caregiver_ask_childcare_experience",
+  "caregiver_ask_childcare_ages",
+  "caregiver_ask_childcare_services",
+  "caregiver_ask_childcare_credentials",
+  "caregiver_ask_childcare_transport",
+  "caregiver_ask_availability",
+  "caregiver_ask_job_type",
+  "caregiver_ask_rate",
+  "caregiver_ask_email",
+  "caregiver_ask_bio",
+];
+
+/**
+ * R-FD4: the childcare CLIENT conversation collects nothing over SMS. Child
+ * names, ages, DOB, health, custody, pickup, and address are web-form-only
+ * (R33/R57), so there is deliberately NO childcare client collection step and NO
+ * childcare client collectable field — an empty allowed set means the loop
+ * cannot write a single child detail into a session even if a model tried.
+ */
+export const CLIENT_CHILDCARE_COLLECTION_STEPS: readonly string[] = [];
+
+export function collectionStepsFor(
+  role: OnboardingRole,
+  vertical?: OnboardingVertical | null,
+): readonly string[] {
+  if (normalizeVertical(vertical) === "child") {
+    return role === "caregiver" ? CAREGIVER_CHILDCARE_COLLECTION_STEPS : CLIENT_CHILDCARE_COLLECTION_STEPS;
+  }
   return role === "caregiver" ? CAREGIVER_COLLECTION_STEPS : CLIENT_COLLECTION_STEPS;
+}
+
+/** Senior-defaulting wrapper — kept so every existing call site is unchanged. */
+export function collectionStepsForRole(role: OnboardingRole): readonly string[] {
+  return collectionStepsFor(role, DEFAULT_ONBOARDING_VERTICAL);
 }
 
 // Mirror of isFieldFilled in onboardingConversation.ts.
@@ -108,6 +181,62 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "canDrive", "bioSkipped", "jobTypes",
 ]);
 
+// ── Childcare caregiver fields (R-FD5 / R-FD6) ───────────────────────────────
+//
+// SHARED BASE keys (`name`, `city`, `availability`, `jobType`, `hourlyRate`,
+// `email`, `bio`) are deliberately the SAME keys the senior funnel writes: one
+// question, one collected key, and the enrollment step then copies the value
+// into the caregiver's OWN childcare vertical profile document
+// (caregivers/{uid}/vertical_profiles/child). That is how AE21 ("never re-ask
+// verified base work") and R24/R-FD6 ("two independent vertical profiles") hold
+// at the same time — the ASK is shared, the STORAGE is not: the vertical
+// profile's rate/approval/screening/reputation can diverge from senior's
+// forever after, and nothing in the childcare path ever writes a senior field.
+//
+// VERTICAL-DELTA keys are all `childcare*` / `yearsChildcareExperience` and map
+// 1:1 onto the U5 vertical-profile schema (providerEligibility.ts):
+//   childcareAgeBands        → ageBands
+//   childcareServices        → services            (enableable categories ONLY)
+//   yearsChildcareExperience → yearsChildcareExperience
+//   childcareCredentials     → credentials
+//   childcareTransport       → transport.offersTransport
+//   childcareLimitations     → limitations
+//   childcareReferences      → references
+//   adultAgeAttested         → adultAgeAttested    (R25 adult-age evidence)
+// `jurisdictionState` is NEVER asked — it is derived from the collected city
+// (the CA pilot service area), because a caregiver typing a state code is not
+// evidence of anything.
+//
+// Senior keys are ABSENT on purpose: `specialties`, `skills`, `services`,
+// `certifications`, and `yearsExperience` are senior-vertical fields, and a
+// childcare turn must not be able to write them (that would be exactly the
+// approval/ratings bleed R-FD6 forbids).
+// NOTE on the two boolean entries: `adultAgeAttested` and `childcareTransport`
+// are required to have been ANSWERED, not required to be true. `isFieldFilled`
+// treats `false` as filled, so "no, I won't drive kids" satisfies the transport
+// gate and the funnel moves on — the capability is simply withheld (AE13:
+// transport never blocks eligibility). `adultAgeAttested` is the exception and
+// carries its own rule in `missingRequiredFields`: only an explicit `true`
+// counts, because it is an ATTESTATION, not a preference.
+export const CAREGIVER_CHILDCARE_REQUIRED_FIELDS: readonly string[] = [
+  "name", "city",
+  "yearsChildcareExperience", "childcareAgeBands", "childcareServices",
+  "adultAgeAttested", "childcareTransport",
+  "availability", "jobType", "hourlyRate", "email", "bio",
+];
+
+export const CAREGIVER_CHILDCARE_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
+  ...CAREGIVER_CHILDCARE_REQUIRED_FIELDS,
+  // Optional childcare delta the funnel captures but never blocks on:
+  "childcareCredentials", "childcareLimitations", "childcareReferences",
+  // Shared optional base fields (same keys, same meaning as senior):
+  "zipCode", "gender", "languages", "canDrive", "bioSkipped", "jobTypes",
+]);
+
+/** R-FD4: nothing is collectable for a childcare CLIENT over the conversation. */
+export const CLIENT_CHILDCARE_ALLOWED_FIELDS: ReadonlySet<string> = new Set<string>();
+export const CLIENT_CHILDCARE_REQUIRED_FIELDS: readonly string[] = [];
+
 // The step the flow advances to once conversational collection completes and the
 // agent loop hands back to the deterministic gate machine. Client → the legacy
 // post-collection step. Caregiver → the first upload gate (matches the scripted
@@ -115,24 +244,90 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
 export const CAREGIVER_FIRST_GATE_STEP = "caregiver_send_photo";
 
-export function requiredFieldsForRole(role: OnboardingRole): readonly string[] {
+/**
+ * Childcare caregiver post-collection handoff. NOT an upload gate: the childcare
+ * enrollment sequence is vertical-profile upsert + policy acceptance → explicit
+ * screening consent → shared-base-package screening → MANUAL operator review.
+ * Owned by agents/childcareCaregiverFunnel.ts.
+ */
+export const CAREGIVER_CHILDCARE_FIRST_GATE_STEP = "childcare_caregiver_enroll";
+
+/**
+ * Childcare CLIENT post-collection handoff: the authenticated child-profile
+ * form (R-FD4 — there is nothing to collect over text, so this is where the
+ * conversation always points).
+ */
+export const CLIENT_CHILDCARE_POST_COLLECTION_STEP = "childcare_web_profile";
+
+export function requiredFieldsFor(
+  role: OnboardingRole,
+  vertical?: OnboardingVertical | null,
+): readonly string[] {
+  if (normalizeVertical(vertical) === "child") {
+    return role === "caregiver" ? CAREGIVER_CHILDCARE_REQUIRED_FIELDS : CLIENT_CHILDCARE_REQUIRED_FIELDS;
+  }
   return role === "caregiver" ? CAREGIVER_REQUIRED_FIELDS : CLIENT_REQUIRED_FIELDS;
 }
 
-export function allowedFieldsForRole(role: OnboardingRole): ReadonlySet<string> {
+export function allowedFieldsFor(
+  role: OnboardingRole,
+  vertical?: OnboardingVertical | null,
+): ReadonlySet<string> {
+  if (normalizeVertical(vertical) === "child") {
+    return role === "caregiver" ? CAREGIVER_CHILDCARE_ALLOWED_FIELDS : CLIENT_CHILDCARE_ALLOWED_FIELDS;
+  }
   return role === "caregiver" ? CAREGIVER_ALLOWED_FIELDS : CLIENT_ALLOWED_FIELDS;
 }
 
-export function isAllowedField(role: OnboardingRole, fieldName: string): boolean {
-  return allowedFieldsForRole(role).has(fieldName);
+/** Senior-defaulting wrappers — kept so every existing call site is unchanged. */
+export function requiredFieldsForRole(role: OnboardingRole): readonly string[] {
+  return requiredFieldsFor(role, DEFAULT_ONBOARDING_VERTICAL);
+}
+
+export function allowedFieldsForRole(role: OnboardingRole): ReadonlySet<string> {
+  return allowedFieldsFor(role, DEFAULT_ONBOARDING_VERTICAL);
+}
+
+export function isAllowedField(
+  role: OnboardingRole,
+  fieldName: string,
+  vertical?: OnboardingVertical | null,
+): boolean {
+  return allowedFieldsFor(role, vertical).has(fieldName);
 }
 
 // The canonical jobType enum the downstream world (caregiver doc, matching,
 // deriveJobDataFromIntake) expects. Mirrors JOB_TYPES in caregiverFieldAbsorber.ts
 // and the scripted parser's clamp in onboardingSteps.caregiver.ts.
-export const CAREGIVER_JOB_TYPES: ReadonlySet<string> = new Set([
+export const CAREGIVER_SENIOR_JOB_TYPES: ReadonlySet<string> = new Set([
   "occasional", "part_time", "full_time",
 ]);
+
+/**
+ * R-FD5: CAREGIVER_JOB_TYPES gains childcare job types. Childcare keeps the
+ * three schedule shapes (a nanny can be part-time) and adds the engagement
+ * shapes families actually search for.
+ *
+ * Scoped by vertical on purpose: `caregiverJobTypesFor("senior")` is still
+ * EXACTLY the original three, so a senior caregiver can never be clamped to
+ * "nanny" and the senior matching engine's enum is untouched.
+ */
+export const CAREGIVER_CHILDCARE_JOB_TYPES: ReadonlySet<string> = new Set([
+  "occasional", "part_time", "full_time",
+  "nanny", "babysitter", "after_school",
+]);
+
+/** The union — the widest set any caregiver jobType value may legitimately be. */
+export const CAREGIVER_JOB_TYPES: ReadonlySet<string> = new Set([
+  ...CAREGIVER_SENIOR_JOB_TYPES,
+  ...CAREGIVER_CHILDCARE_JOB_TYPES,
+]);
+
+export function caregiverJobTypesFor(vertical?: OnboardingVertical | null): ReadonlySet<string> {
+  return normalizeVertical(vertical) === "child"
+    ? CAREGIVER_CHILDCARE_JOB_TYPES
+    : CAREGIVER_SENIOR_JOB_TYPES;
+}
 
 // Free-form spellings the model may hand to save_onboarding_field (it saves the
 // raw string it extracted — "Full time", "FT", "part-time"). Keyed on the
@@ -235,15 +430,29 @@ export function caregiverJobTypesToWebIds(
 export function missingRequiredFields(
   role: OnboardingRole,
   data: Record<string, unknown> | undefined,
+  vertical?: OnboardingVertical | null,
 ): string[] {
   const d = data ?? {};
-  return requiredFieldsForRole(role).filter((f) => {
+  return requiredFieldsFor(role, vertical).filter((f) => {
     if (role === "caregiver" && f === "bio" && d.bioSkipped === true) return false;
+    // R25 adult-age evidence is an ATTESTATION, not a value: only an explicit
+    // `true` counts. isFieldFilled would accept `false` (a boolean is "filled"),
+    // which would let "no, I'm 16" satisfy the gate — so it gets its own rule,
+    // mirroring the bioSkipped special case above.
+    if (f === "adultAgeAttested") return d.adultAgeAttested !== true;
     return !isFieldFilled(d[f]);
   });
 }
 
-export function firstGateStep(role: OnboardingRole): string {
+export function firstGateStep(
+  role: OnboardingRole,
+  vertical?: OnboardingVertical | null,
+): string {
+  if (normalizeVertical(vertical) === "child") {
+    return role === "caregiver"
+      ? CAREGIVER_CHILDCARE_FIRST_GATE_STEP
+      : CLIENT_CHILDCARE_POST_COLLECTION_STEP;
+  }
   return role === "caregiver" ? CAREGIVER_FIRST_GATE_STEP : CLIENT_POST_COLLECTION_STEP;
 }
 
@@ -274,10 +483,91 @@ export function shouldRouteOnboardingToLoop(args: {
   step: string;
   hasText: boolean;
   hasMedia: boolean;
+  /**
+   * Childcare U5 (plan 2026-07-22-002, R47/R48): the session's typed care
+   * vertical, when the caller has it. A "child"-stamped session NEVER routes
+   * into the senior collection loop — childcare provider enrollment is
+   * web/callable work (providerVerticalCallables.ts) until Stage 2 ships the
+   * conversational childcare caregiver funnel. Optional and additive: senior
+   * sessions carry no stamp, and callers that omit the field behave exactly as
+   * before (the webhooks ingress already fail-closes childcare sessions
+   * upstream; this is the defense-in-depth layer at the routing predicate).
+   *
+   * Front door Stage 1 note: this predicate returning `false` used to be the
+   * WHOLE story for a caregiver childcare stamp, on the assumption that such a
+   * stamp could never exist (the only origin was gated on `role === "client"`).
+   * It can now. Returning false here is still correct — the senior loop is
+   * exactly where they must not go — but it is no longer sufficient on its own:
+   * linq/webhooks.ts routes childcare-stamped sessions to
+   * childcare/signupIngress.ts BEFORE this predicate is consulted, and that
+   * router owns the caregiver branch. Both layers are required; neither may be
+   * removed on the grounds that the other exists.
+   */
+  careVertical?: string | null;
+  /**
+   * The unresolved/typed intent stamp (`"child"` | `"pending"` | `"senior"`).
+   * Accepted so the predicate ALSO refuses a session whose vertical is still
+   * being resolved: a pending session has no confirmed vertical, so it has no
+   * business inside either collection funnel (R-FD1).
+   */
+  verticalIntent?: string | null;
 }): boolean {
   const { role, step, hasText, hasMedia } = args;
+  if (args.careVertical === "child" || args.verticalIntent === "child") return false;
+  if (args.careVertical === "pending" || args.verticalIntent === "pending") return false;
   if (role !== "client" && role !== "caregiver") return false;
   if (!collectionStepsForRole(role).includes(step)) return false;
   if (!hasText || hasMedia) return false;
   return true;
+}
+
+/**
+ * Childcare U5: typed guard for the SMS onboarding surfaces — true when a
+ * session carries the typed childcare vertical stamp (careVertical /
+ * verticalIntent, written only by the U4 ingress while the Firestore-resident
+ * childcare flags are on). Senior sessions have neither field and always
+ * return false. Used by senior-only scheduled sources (e.g.
+ * onboardingReengagement) to explicitly skip childcare sessions rather than
+ * sending them senior-flavored copy.
+ */
+export function isChildcareVerticalSession(
+  session: { careVertical?: unknown; verticalIntent?: unknown } | null | undefined,
+): boolean {
+  return session?.careVertical === "child" || session?.verticalIntent === "child";
+}
+
+/**
+ * Front door Stage 1 (R-FD1): true while a session's vertical is still being
+ * RESOLVED — Evia has asked "adult or kids?" and is waiting. Distinct from
+ * `isChildcareVerticalSession`: nothing is stamped yet, so the session belongs
+ * to no vertical at all. Senior-only surfaces must skip these the same way they
+ * skip childcare (memory/memoryEligibility already denies them under
+ * `pending_classification`); a pending session must never be treated as senior
+ * by default, which is exactly the guess R-FD1 forbids.
+ */
+export function isPendingVerticalSession(
+  session: { careVertical?: unknown; verticalIntent?: unknown } | null | undefined,
+): boolean {
+  return session?.careVertical === "pending" || session?.verticalIntent === "pending";
+}
+
+/**
+ * Front door Stage 2: true while the CHILDCARE CAREGIVER funnel is mid-flight on
+ * this session (agents/childcareCaregiverFunnelTurn.ts owns the field).
+ *
+ * The funnel keeps its state in its own session namespace precisely so a
+ * dual-vertical ADDITION does not disturb a live senior session (R-FD6) — which
+ * means such a session is NOT childcare-stamped and would slip past
+ * `isChildcareVerticalSession`. Senior-only scheduled sources must skip it
+ * anyway: somebody two questions into a childcare profile has no business
+ * getting "finish your bio" senior copy. Senior sessions carry no such field, so
+ * this is a no-op for them.
+ */
+export const CHILDCARE_CAREGIVER_FUNNEL_SESSION_FIELD = "childcareCaregiverFunnel";
+
+export function isChildcareCaregiverFunnelSession(
+  session: Record<string, unknown> | null | undefined,
+): boolean {
+  const state = session?.[CHILDCARE_CAREGIVER_FUNNEL_SESSION_FIELD];
+  return !!state && typeof state === "object" && typeof (state as { step?: unknown }).step === "string";
 }

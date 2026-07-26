@@ -6,6 +6,7 @@ import { lintPreservingLayout } from "../safety/linter";
 import { redactPii } from "../safety/redactPii";
 import { logMessageSent } from "../observability/auditLog";
 import { getAppUrl } from "../config/appUrl";
+import type { VerticalExecutionContext } from "../agents/turnSourceKey";
 
 const db = admin.firestore();
 
@@ -92,6 +93,9 @@ export interface AgentSession {
   onboardingData?:  Record<string, unknown>;
   // Preferred language for outbound messages ("en" | "es"); set during onboarding.
   preferredLanguage?: string;
+  // Server-owned routing stamp. Childcare sessions must never fall back into
+  // senior conversation mirrors or generic transport history.
+  careVertical?:     "senior" | "child";
   // Linq id of the user's most recent inbound message — the default target for
   // react_to_message (outbound tapbacks). Refreshed on every message.received.
   lastInboundMessageId?: string;
@@ -461,6 +465,8 @@ async function sendOneMessage(
 }
 
 export interface SendOptions {
+  /** Server-owned vertical context for child-capable transport paths. */
+  executionContext?: VerticalExecutionContext;
   /**
    * Linq protocol selection. Omitted = automatic iMessage → RCS → SMS fallback.
    * "iMessage" = iMessage only, NO fallback (fails if recipient is not on iMessage).
@@ -611,6 +617,14 @@ async function sendMessageDeliver(
   opts: SendOptions = {}
 ): Promise<{ message_id: string }> {
   const { preferredService } = opts;
+  const executionContext = opts.executionContext ?? await (async () => {
+    try {
+      const { resolveVerticalExecutionContext } = await import("./threadMirror");
+      return await resolveVerticalExecutionContext({ chatId, channel: "linq" });
+    } catch {
+      return null;
+    }
+  })();
   // Apply the requested protocol to every outgoing part-message below. For
   // structured callers that already set their own preferred_service, theirs wins.
   const svc = preferredService ? { preferred_service: preferredService } : {};
@@ -623,7 +637,12 @@ async function sendMessageDeliver(
     // Mirror the cleaned text so the web inbox matches what actually went out
     // over SMS/iMessage — see cleanOutboundText for the lint+redact contract.
     mirrorText = await cleanOutboundText(textOrMessage);
-    void mirrorToWebThread({ chatId, direction: "outbound", text: mirrorText });
+    void mirrorToWebThread({
+      chatId,
+      direction: "outbound",
+      text: mirrorText,
+      ...(executionContext ? { executionContext } : {}),
+    });
   } catch { /* non-critical */ }
 
   // Outbound history recorder (hallucination hardening U3 / R4). Fired AFTER
@@ -647,7 +666,11 @@ async function sendMessageDeliver(
     historyRecorded = true;
     try {
       const { recordOutboundHistory } = await import("./threadMirror");
-      historyRefs = await recordOutboundHistory({ chatId, text: mirrorText });
+      historyRefs = await recordOutboundHistory({
+        chatId,
+        text: mirrorText,
+        ...(executionContext ? { executionContext } : {}),
+      });
     } catch { /* non-critical — recorder is itself fail-soft */ }
   };
   // Register one provider part id → canonical refs. Fail-soft: provider-map
@@ -1219,6 +1242,9 @@ export async function sendToPhone(
       optedOut:  false,
       createdAt: new Date().toISOString(),
       phone,
+      ...(opts.executionContext
+        ? { careVertical: opts.executionContext.careVertical }
+        : {}),
     };
     await ref.set(newSession);
 
@@ -1231,7 +1257,11 @@ export async function sendToPhone(
     if (!opts.skipHistoryRecord) {
       try {
         const { recordOutboundHistory } = await import("./threadMirror");
-        await recordOutboundHistory({ chatId: chat_id, text: await cleanOutboundText(textOrMessage) });
+        await recordOutboundHistory({
+          chatId: chat_id,
+          text: await cleanOutboundText(textOrMessage),
+          ...(opts.executionContext ? { executionContext: opts.executionContext } : {}),
+        });
       } catch { /* non-critical — recorder is itself fail-soft */ }
     }
 

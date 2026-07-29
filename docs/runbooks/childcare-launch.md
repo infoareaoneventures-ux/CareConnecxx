@@ -277,15 +277,22 @@ oversight. Fill them via
 `docs/runbooks/childcare-ca-approvals.template.json` →
 `node scripts/seed-childcare-jurisdiction.mjs --values=<file> --apply --project=<id>`.
 
-### Open question for counsel (not a checklist item)
+### TrustLine — FOUNDER DECISION 2026-07-28: not required
 
-Does Evia's **matching engine** make it a referral/placement service under
-California law, and if so does TrustLine attach? [HSC §1596.66] compels TrustLine
-only for license-exempt providers paid from public subsidy funds (Alternative
-Payment / CalWORKs / CCDBG), excepting grandparents/aunts/uncles — so a
-private-pay marketplace is not compelled. But UrbanSitter, which skips TrustLine,
-does so while explicitly disclaiming in its Terms that it is "NOT A REFERRAL,
-MATCHING OR PLACEMENT SERVICE." Evia cannot make that disclaimer while shipping
-matching. Record the answer in `approvals.jurisdictionScreeningProgram`.
-**If Evia ever accepts subsidy-funded families, TrustLine becomes mandatory for
-those caregivers.**
+Evia does **not** use TrustLine. The approved CA screening program is the shared
+Checkr base package with annual renewal (same package as senior care).
+
+Basis: [HSC §1596.66] compels TrustLine only for license-exempt providers paid
+from public subsidy funds (Alternative Payment / CalWORKs / CCDBG), excepting
+grandparents/aunts/uncles. Evia is private-pay, so it is not compelled.
+
+Recorded here because it was raised and decided, not overlooked. The
+counter-consideration that was weighed: UrbanSitter also skips TrustLine, but
+does so while disclaiming in its Terms that it is "NOT A REFERRAL, MATCHING OR
+PLACEMENT SERVICE" — a disclaimer Evia cannot make while shipping a matching
+engine. Founder decided this does not change the conclusion. Closed.
+
+**Remaining trigger to watch:** if Evia ever accepts subsidy-funded families
+(Alternative Payment / CalWORKs / CCDBG), TrustLine becomes **mandatory** for
+those caregivers. That is a statutory condition on the funding source, not a
+policy preference — revisit only if the payment model changes.

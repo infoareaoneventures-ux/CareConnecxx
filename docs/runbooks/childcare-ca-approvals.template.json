@@ -43,7 +43,7 @@
       "issuedBy": "",
       "approvedOn": "",
       "policyVersion": "CA-2026-07-22.1",
-      "_note": "The approved CA screening program. TrustLine is NOT legally required for a private-pay marketplace — HSC 1596.66 compels it only for license-exempt providers paid with public subsidy funds (Alternative Payment / CalWORKs / CCDBG), excepting grandparents, aunts, uncles. A counsel memo recording 'the approved CA screening program is the shared Checkr base package with annual renewal' satisfies this field. IF Evia ever accepts subsidy-funded families, TrustLine becomes mandatory for those caregivers."
+      "_note": "FOUNDER DECISION 2026-07-28: TrustLine is NOT used. The approved CA screening program is the shared Checkr base package with annual renewal (same as senior care). Basis: HSC 1596.66 compels TrustLine only for license-exempt providers paid with public subsidy funds (Alternative Payment / CalWORKs / CCDBG), excepting grandparents/aunts/uncles — Evia is private-pay. Put the counsel memo ID recording that program here. REMAINING TRIGGER: if Evia ever accepts subsidy-funded families, TrustLine becomes mandatory for those caregivers (statutory condition on the funding source, not a preference)."
     }
   },
 

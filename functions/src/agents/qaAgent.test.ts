@@ -555,6 +555,89 @@ describe("buildCaregiverCoreContext", () => {
     expect(buildCaregiverCoreContext({ hourlyRate: 25 })).toBe("");
   });
 
+  // ── Childcare vertical (dual-vertical caregivers) ──────────────────────────
+  describe("childcare vertical", () => {
+    // THE parity pin: recomputeChildcareProviderVisibility deliberately writes
+    // no summary for senior-only caregivers (AE9 byte-identical projection), so
+    // a senior-only doc must produce byte-identical context to before childcare
+    // existed. If this drifts, every senior caregiver's prompt changed.
+    it("emits NOTHING for a senior-only caregiver", () => {
+      const out = buildCaregiverCoreContext(fullDoc);
+      expect(out).not.toMatch(/childcare/i);
+      expect(out).not.toContain("CHILDCARE PROFILE");
+      expect(out).not.toContain("CHILDCARE STATUS");
+    });
+
+    it("surfaces the childcare profile separately from senior skills", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        yearsChildcareExperience: 4,
+        childcareAgeBands: ["toddler", "school_age"],
+        childcareServices: ["babysitting", "after_school_care"],
+      });
+      expect(out).toContain("CHILDCARE PROFILE (separate from senior care)");
+      expect(out).toContain("4 years childcare experience");
+      expect(out).toContain("toddler, school_age");
+      expect(out).toContain("babysitting, after_school_care");
+      // Senior skills must still be present and unmerged.
+      expect(out).toContain("dementia care");
+      expect(out).toContain("6 years experience");
+    });
+
+    it("states APPROVED plainly when discoverable, so Evia can answer 'am I approved'", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: {
+          visible: true,
+          approvalState: "approved",
+          evidenceStatus: "clear",
+          transportCapable: true,
+        },
+      });
+      expect(out).toContain("APPROVED and discoverable for childcare jobs");
+      expect(out).toContain("cleared to transport children");
+      expect(out).toContain("OVERRIDES anything");
+    });
+
+    it("says NOT discoverable when visible is false — never leaves it ambiguous", () => {
+      // The 2026-07-22 incident shape: silence lets stale memory answer. An
+      // explicit negative is required, not an omission.
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: { visible: false, approvalState: "pending", evidenceStatus: "none" },
+      });
+      expect(out).toContain("NOT yet discoverable for childcare jobs");
+      expect(out).toContain("approval pending");
+    });
+
+    it("treats a missing `visible` as NOT discoverable (fail closed)", () => {
+      const out = buildCaregiverCoreContext({ ...fullDoc, childcareProvider: {} });
+      expect(out).toContain("NOT yet discoverable");
+    });
+
+    it("does not claim transport clearance unless explicitly true", () => {
+      for (const transportCapable of [false, undefined, "yes"]) {
+        const out = buildCaregiverCoreContext({
+          ...fullDoc,
+          childcareProvider: { visible: true, transportCapable },
+        });
+        expect(out, `transportCapable=${String(transportCapable)}`)
+          .not.toContain("cleared to transport");
+      }
+    });
+
+    it("keeps senior and childcare status as two distinct blocks", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: { visible: true, approvalState: "approved" },
+      });
+      expect(out).toContain("ACCOUNT STATUS");
+      expect(out).toContain("CHILDCARE STATUS");
+      // Senior bg-check wording must not be reused for childcare evidence.
+      expect(out).toContain("background check CLEARED");
+    });
+  });
+
   it("surfaces service area, skills, availability, and verification/account status", () => {
     const out = buildCaregiverCoreContext(fullDoc);
     expect(out).toContain("SERVICE AREA: San Jose, 95112.");

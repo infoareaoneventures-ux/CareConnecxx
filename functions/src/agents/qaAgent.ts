@@ -609,6 +609,55 @@ export function buildCaregiverCoreContext(caregiver: any): string {
     );
   }
 
+  // ── Childcare vertical (dual-vertical caregivers) ───────────────────────────
+  // Everything above reads SENIOR-shaped fields only (specialties,
+  // yearsExperience). A caregiver enrolled in childcare has an entirely separate
+  // profile — yearsChildcareExperience, childcareAgeBands, childcareServices —
+  // plus the server-derived `childcareProvider` summary that holds their
+  // childcare approval and discoverability state. None of it reached this
+  // context, so an enrolled childcare caregiver asking "am I approved for
+  // childcare?" got senior facts or nothing: the same shape as the 2026-07-22
+  // incident above, where missing context let stale memory answer unchallenged.
+  //
+  // SENIOR PARITY: emits NOTHING unless a childcare field is actually present.
+  // recomputeChildcareProviderVisibility deliberately writes no summary for
+  // senior-only caregivers (AE9 byte-identical projection), so absence is the
+  // reliable "not a childcare provider" signal and senior context is unchanged.
+  const cc = (caregiver as Record<string, unknown>).childcareProvider as
+    | Record<string, unknown>
+    | undefined;
+  const ccSkills: string[] = [];
+  if (caregiver.yearsChildcareExperience) {
+    ccSkills.push(`${caregiver.yearsChildcareExperience} years childcare experience`);
+  }
+  if (Array.isArray(caregiver.childcareAgeBands) && caregiver.childcareAgeBands.length) {
+    ccSkills.push(`age groups: ${caregiver.childcareAgeBands.join(", ")}`);
+  }
+  if (Array.isArray(caregiver.childcareServices) && caregiver.childcareServices.length) {
+    ccSkills.push(`services: ${caregiver.childcareServices.join(", ")}`);
+  }
+  if (ccSkills.length) {
+    parts.push(`CHILDCARE PROFILE (separate from senior care): ${ccSkills.join("; ")}.`);
+  }
+  if (cc) {
+    const ccBits: string[] = [];
+    // "visible" is the discoverability outcome — the thing a caregiver actually
+    // means by "am I approved / can families find me for childcare jobs".
+    ccBits.push(
+      cc.visible === true
+        ? "APPROVED and discoverable for childcare jobs"
+        : "NOT yet discoverable for childcare jobs",
+    );
+    if (cc.approvalState) ccBits.push(`approval ${String(cc.approvalState)}`);
+    if (cc.evidenceStatus) ccBits.push(`screening evidence ${String(cc.evidenceStatus)}`);
+    if (cc.transportCapable === true) ccBits.push("cleared to transport children");
+    parts.push(
+      `CHILDCARE STATUS (live, read just now — the source of truth for childcare; ` +
+      `separate from the senior account status above, and it OVERRIDES anything ` +
+      `older memory or past conversation claims): ${ccBits.join(", ")}.`,
+    );
+  }
+
   return parts.length ? parts.join("\n") : "";
 }
 

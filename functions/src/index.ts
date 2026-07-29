@@ -163,11 +163,21 @@ export {
   getChildFileDeliveryReference,
   childFileDelivery,
 } from './childcare/childFileAccess';
+// The two scan-PIPELINE entry points stay UNEXPORTED until the scanner service
+// actually exists (2026-07-28). They are inert regardless — every one of
+// CHILD_FILE_SCANNER_REGION / _IMAGE_DIGEST, CHILD_FILE_SCAN_REQUEST_TOPIC /
+// _RESULT_TOPIC, CHILD_FILE_DISPATCHER_SERVICE_ACCOUNT is unset — but deploying
+// them would demand a `v1-CHILD_FILE_SCAN_RESULT_HMAC_SECRET` twin (a real
+// secret for a non-existent counterpart) and, because they declare a failure
+// policy, `firebase deploy --force`, which also deletes the two untriaged
+// production orphans (caraPhase1Webhook, onTaskCreated). Neither price is worth
+// paying for dead code. Restore both exports — with the secret provisioned and
+// retry:true — when the scanner is built. Upload/delivery is unaffected: child
+// files simply stay in `scanState: "none"` and are never served, which is the
+// fail-closed posture childFileAccess already enforces.
+// export { dispatchChildFileScanOnFinalize } from './childcare/childFileScan';
+// export { consumeChildFileScanResultMessage } from './childcare/childFileScanResult';
 export {
-  dispatchChildFileScanOnFinalize,
-} from './childcare/childFileScan';
-export {
-  consumeChildFileScanResultMessage,
   reconcileChildFileScans,
 } from './childcare/childFileScanResult';
 // Childcare U4 (plan 2026-07-22-002) — Stripe Identity gate for childcare

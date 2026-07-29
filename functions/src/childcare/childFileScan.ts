@@ -253,7 +253,16 @@ export const dispatchChildFileScanOnFinalize = onObjectFinalized(
     region: process.env.CHILD_FILE_SCANNER_REGION || "us-central1",
     serviceAccount:
       process.env.CHILD_FILE_DISPATCHER_SERVICE_ACCOUNT || undefined,
-    retry: true,
+    // retry disabled for the initial dark deploy (2026-07-28). A failure policy
+    // forces `firebase deploy --force`, which ALSO deletes any deployed function
+    // absent from source — currently the two untriaged orphans caraPhase1Webhook
+    // and onTaskCreated. Deleting production functions as a side effect of a
+    // deploy flag is not acceptable, and childcare is dark, so nothing is lost:
+    // a failed dispatch leaves the file unusable (fail-closed) rather than
+    // self-healing. Re-enable (with --force, after the orphan audit) before
+    // childcare handles real uploads. dispatchChildFileScan is idempotent via a
+    // deterministic operationId, so retry is safe to restore.
+    retry: false,
     timeoutSeconds: 120,
     memory: "512MiB",
   },

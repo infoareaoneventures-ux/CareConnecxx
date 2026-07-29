@@ -437,7 +437,12 @@ export const consumeChildFileScanResultMessage = onMessagePublished(
   {
     topic: CHILD_FILE_SCAN_RESULT_TOPIC,
     region: process.env.CHILD_FILE_SCANNER_REGION || "us-central1",
-    retry: true,
+    // retry disabled for the initial dark deploy (2026-07-28) — see the matching
+    // note on dispatchChildFileScanOnFinalize: a failure policy forces
+    // `--force`, which would delete the two untriaged production orphans.
+    // applyChildFileScanResult already returns {status:"duplicate"} for a
+    // terminal operation, so retry is safe to restore after the orphan audit.
+    retry: false,
     timeoutSeconds: 60,
     memory: "256MiB",
     secrets: ["CHILD_FILE_SCAN_RESULT_HMAC_SECRET"],

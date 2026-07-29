@@ -28,15 +28,20 @@
  * DRY RUN BY DEFAULT.
  */
 
-const FLAG_BY_ALIAS = {
+import { pathToFileURL } from "node:url";
+
+export const FLAG_BY_ALIAS = {
   enabled: "CHILDCARE_ENABLED",
   discovery: "CHILDCARE_DISCOVERY_ENABLED",
   writes: "CHILDCARE_WRITES_ENABLED",
   proactive: "CHILDCARE_PROACTIVE_ENABLED",
 };
-const ALL_FLAGS = Object.values(FLAG_BY_ALIAS);
+export const ALL_FLAGS = Object.values(FLAG_BY_ALIAS);
 
-function parseOn(args) {
+/** Thrown instead of process.exit so the parse is testable. */
+export class FlagArgError extends Error {}
+
+export function parseOn(args) {
   const arg = args.find((a) => a.startsWith("--on="));
   if (!arg) return [];
   const raw = (arg.split("=")[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -45,15 +50,16 @@ function parseOn(args) {
   for (const alias of raw) {
     const flag = FLAG_BY_ALIAS[alias] ?? (ALL_FLAGS.includes(alias) ? alias : null);
     if (!flag) {
-      console.error(`\nREFUSED: unknown flag "${alias}". Valid: ${Object.keys(FLAG_BY_ALIAS).join(", ")}, all\n`);
-      process.exit(2);
+      throw new FlagArgError(
+        `unknown flag "${alias}". Valid: ${Object.keys(FLAG_BY_ALIAS).join(", ")}, all`,
+      );
     }
     out.push(flag);
   }
   return out;
 }
 
-async function verifyPrerequisites(db, on) {
+export async function verifyPrerequisites(db, on) {
   // Only meaningful when actually enabling something.
   if (!on.includes("CHILDCARE_ENABLED")) return [];
   const problems = [];
@@ -156,7 +162,23 @@ async function main() {
   console.log("   Flag cache TTL is 60s — allow a minute for running instances to pick this up.\n");
 }
 
-main().catch((err) => {
-  console.error("flag write failed:", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// Only run as a CLI. Importing this module (tests/childcareGoLiveSeeders.test.ts
+// exercises parseOn + verifyPrerequisites) must NOT execute main().
+//
+// pathToFileURL, not hand-built "file://" + path: this repo lives at a path with
+// BOTH a space and parentheses ("CareConnecxx-main (1)"), and `file://D:/...`
+// parses "D:" as the URL host. Getting this wrong makes the CLI silently no-op,
+// which is the worst possible failure immediately before a production write.
+const invokedDirectly =
+  !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    if (err instanceof FlagArgError) {
+      console.error(`\nREFUSED: ${err.message}\n`);
+      process.exit(2);
+    }
+    console.error("flag write failed:", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

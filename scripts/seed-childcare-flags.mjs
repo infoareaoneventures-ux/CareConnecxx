@@ -137,7 +137,10 @@ async function main() {
     process.exit(2);
   }
 
-  const admin = await import("firebase-admin");
+  // firebase-admin is CJS; ESM dynamic import wraps it under .default —
+  // admin.apps would be undefined and .length throws before initializeApp.
+  const adminMod = await import("firebase-admin");
+  const admin = adminMod.default ?? adminMod;
   if (!admin.apps.length) admin.initializeApp();
   const resolved = admin.app().options.projectId
     ?? process.env.GCLOUD_PROJECT ?? process.env.GOOGLE_CLOUD_PROJECT ?? "";

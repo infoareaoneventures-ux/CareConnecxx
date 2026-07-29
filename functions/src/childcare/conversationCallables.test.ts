@@ -631,7 +631,13 @@ describe("revocation wiring (U7 cancel/substitute → U9 conversation + address)
     // Family still reads their own history.
     const familyRead = await getMessages({ roomId }, ctx(FAMILY));
     expect(familyRead.success).toBe(true);
-  });
+    // Explicit timeout: these two revocation-wiring cases drive the full
+    // confirmed-booking → consent → coordination → cancel/substitute chain
+    // through the real callables, so they are the slowest in this file (~350ms
+    // in isolation vs ~5ms for the rest). The 5s default is comfortable alone
+    // but not under a full --shard run, where hundreds of files share one fork.
+    // Timeout ONLY — no behavior is relaxed; every assertion above still holds.
+  }, 30_000);
 
   it("SUBSTITUTION revoke-first: old caregiver loses room+address BEFORE the replacement gains a NEW room+address", async () => {
     seedFamily();
@@ -661,7 +667,7 @@ describe("revocation wiring (U7 cancel/substitute → U9 conversation + address)
     expect(coord.coordination[0].addressDetail).toBe("123 Exact St");
     const sent = await send({ roomId: newRoomId, text: "on my way" }, ctx(CG2));
     expect(sent.created).toBe(true);
-  });
+  }, 30_000); // see the timeout note on the CANCEL case above
 });
 
 // ── getChildcareBookingCoordination (THE address callable) ───────────────────

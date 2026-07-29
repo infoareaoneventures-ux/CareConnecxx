@@ -96,12 +96,60 @@ function runAudit(label, cmd) {
   }
 }
 
+const CARE_VERTICAL_CUTOFF_SENTINEL = '9999-12-31T23:59:59.999Z';
+
+/**
+ * Mirror isCareVerticalCutoffSet() from functions/src/data/contract.ts.
+ *
+ * contract.ts assigns CARE_VERTICAL_MIGRATION_CUTOFF one of two forms: the
+ * placeholder IDENTIFIER while unset, or a real ISO string LITERAL once the
+ * cutoff is chosen. Both must be recognized.
+ *
+ * The previous regex matched only identifiers ([A-Za-z_]+), so setting the
+ * cutoff the natural way — a quoted ISO literal — produced NO match, and
+ * `!!m` then reported the cutoff as unset. The gate could never go green no
+ * matter what you wrote, while the runtime isCareVerticalCutoffSet() (which
+ * compares values) correctly saw it as set. Two mirrors of one rule, silently
+ * disagreeing. Returns {set, reason} so an unparseable assignment is
+ * distinguishable from a deliberately-unset one instead of looking identical.
+ */
 function cutoffIsSet() {
-  // Mirror isCareVerticalCutoffSet(): the placeholder is the far-future sentinel.
   const src = fs.readFileSync(path.join(ROOT, 'functions', 'src', 'data', 'contract.ts'), 'utf8');
-  const m = src.match(/CARE_VERTICAL_MIGRATION_CUTOFF\s*=\s*([A-Za-z_]+)/);
-  // The constant is assigned the placeholder identifier while unset.
-  return !!m && m[1] !== 'CARE_VERTICAL_CUTOFF_PLACEHOLDER';
+  const m = src.match(
+    /export const CARE_VERTICAL_MIGRATION_CUTOFF\s*=\s*(?:"([^"]*)"|'([^']*)'|([A-Za-z_$][\w$]*))/,
+  );
+  if (!m) {
+    return {
+      set: false,
+      reason:
+        'could not parse the CARE_VERTICAL_MIGRATION_CUTOFF assignment in ' +
+        'functions/src/data/contract.ts — fix this parser before trusting the gate',
+    };
+  }
+  const literal = m[1] ?? m[2] ?? null;
+  if (literal !== null) {
+    if (literal === CARE_VERTICAL_CUTOFF_SENTINEL) {
+      return { set: false, reason: 'still the far-future placeholder sentinel' };
+    }
+    if (Number.isNaN(Date.parse(literal))) {
+      return { set: false, reason: `not a valid ISO-8601 timestamp: ${literal}` };
+    }
+    return { set: true, reason: literal };
+  }
+  if (m[3] === 'CARE_VERTICAL_CUTOFF_PLACEHOLDER') {
+    return { set: false, reason: 'still assigned the placeholder identifier' };
+  }
+  // Assigned some other identifier — resolve it to its literal to avoid
+  // reporting SET for an alias that itself still holds the sentinel.
+  const alias = src.match(new RegExp(`${m[3]}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`));
+  const aliasValue = alias ? (alias[1] ?? alias[2]) : null;
+  if (aliasValue === null) {
+    return { set: false, reason: `cutoff aliased to ${m[3]}, whose value could not be resolved` };
+  }
+  if (aliasValue === CARE_VERTICAL_CUTOFF_SENTINEL) {
+    return { set: false, reason: `aliased to ${m[3]}, which is still the sentinel` };
+  }
+  return { set: true, reason: aliasValue };
 }
 
 function loadSignals() {
@@ -129,7 +177,7 @@ function main() {
   if (!consumerAudit.passed) refusals.push(['consumer_audit_failed', `audit:childcare-consumers FAILED — ${consumerAudit.detail ?? ''}`]);
   if (!appCheckAudit.passed) refusals.push(['consumer_audit_failed', `audit:childcare-app-check FAILED — ${appCheckAudit.detail ?? ''}`]);
   if (!indexAudit.passed) refusals.push(['index_audit_failed', `audit:indexes FAILED — ${indexAudit.detail ?? ''}`]);
-  if (!cutoffSet) refusals.push(['cutoff_unset', 'CARE_VERTICAL_MIGRATION_CUTOFF is still the placeholder — set the real cutoff before applying the migration.']);
+  if (!cutoffSet.set) refusals.push(['cutoff_unset', `CARE_VERTICAL_MIGRATION_CUTOFF is not usable (${cutoffSet.reason}) — set the real cutoff before applying the migration.`]);
 
   // Live gates (from --signals). Missing = not yet verified → block.
   if (s.rolloutHeld === true) refusals.push(['rollout_held', `childcare canary rollout-HOLD set: ${(s.rolloutReasons ?? []).join(', ') || 'unknown'}`]);
@@ -185,7 +233,7 @@ function main() {
   console.log(`  [${consumerAudit.passed ? 'PASS' : 'FAIL'}] consumer manifest audit`);
   console.log(`  [${appCheckAudit.passed ? 'PASS' : 'FAIL'}] App Check policy audit`);
   console.log(`  [${indexAudit.passed ? 'PASS' : 'FAIL'}] query/index contract audit`);
-  console.log(`  [${cutoffSet ? 'SET ' : 'UNSET'}] migration cutoff\n`);
+  console.log(`  [${cutoffSet.set ? 'SET ' : 'UNSET'}] migration cutoff — ${cutoffSet.reason}\n`);
 
   console.log('Deployment Gate steps:');
   for (const [n, title, blockedBy] of STEPS) {

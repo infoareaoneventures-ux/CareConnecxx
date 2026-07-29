@@ -23,7 +23,11 @@
     "audit:childcare-app-check": "node scripts/audit-childcare-app-check.mjs",
     "audit:indexes:live": "node scripts/audit-firestore-query-contracts.mjs --live",
     "deploy:indexes:additive": "node scripts/deploy-firestore-additive-indexes.mjs",
-    "childcare:deploy-plan": "node scripts/childcare-deploy-plan.mjs"
+    "childcare:deploy-plan": "node scripts/childcare-deploy-plan.mjs",
+    "childcare:seed-pricing": "node scripts/seed-childcare-pricing.mjs",
+    "childcare:seed-jurisdiction": "node scripts/seed-childcare-jurisdiction.mjs",
+    "childcare:flags": "node scripts/seed-childcare-flags.mjs",
+    "childcare:go-live-plan": "node scripts/childcare-go-live.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.50.0",

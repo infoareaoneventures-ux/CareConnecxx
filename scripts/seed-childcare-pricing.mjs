@@ -13,10 +13,14 @@
  *   node scripts/seed-childcare-pricing.mjs                        # plan only
  *   node scripts/seed-childcare-pricing.mjs --apply --project=careconnex-d4c8b
  *
- * After applying, confirm activation is unblocked:
- *   evaluateJurisdictionReadiness("CA").activatable === true
- * (it will still be false until the legal/insurance/TrustLine references and
- * consent versions are recorded — those are separate, non-pricing gates.)
+ * After applying, childcare payment setup stops refusing with `pricing_unset`.
+ *
+ * NOTE on readiness: evaluateJurisdictionReadiness("CA").activatable will still
+ * be false until the legal/insurance/screening-program references and the six
+ * consent versions are recorded. That evaluator is consulted ONLY by
+ * childcare/deployGate.ts (the launch checklist) — no runtime request path calls
+ * it — so those references are a governance requirement, not a code gate. They
+ * do not block a family from paying once these pricing configs exist.
  */
 
 // ── Founder decisions, 2026-07-25 ────────────────────────────────────────────
@@ -38,11 +42,15 @@ const DECIDED = {
   screeningFeeTreatment: "shared_base_package_same_as_senior",
 };
 
-// ── PROPOSED defaults — need founder sign-off ────────────────────────────────
-// These three were NOT decided. They are my recommendations, encoded so the
-// pilot is not blocked; each is a one-line edit. Cancellation/refund terms carry
-// real legal and caregiver-trust weight — read them before applying.
-const PROPOSED = {
+// ── Founder-approved, 2026-07-28 ─────────────────────────────────────────────
+// These three were previously PROPOSED defaults. The founder signed off on all
+// three as written on 2026-07-28. Market grounding recorded at decision time:
+// national babysitting rates run $26.24/hr for one child and $29.87/hr for two
+// (+$3.63), with $3–4/hr per additional child — so +$3.00 sits at the low end.
+// The refund window is deliberately far more generous than the market leader
+// (UrbanSitter's terms: "ALL FEES AND CHARGES ARE NONREFUNDABLE"); that is a
+// launch trust investment, chosen knowingly, not an inherited default.
+const APPROVED = {
   // Senior couples care charges +$3–6/hr rather than 2× for a second recipient.
   // The sibling analogue: a flat per-additional-child hourly surcharge.
   siblingSurchargePerHourCents: 300, // +$3.00/hr per additional child
@@ -63,6 +71,7 @@ const PROPOSED = {
 
 const POLICY_VERSION = "CA-2026-07-22.1"; // must match jurisdiction_care_policies/CA
 const STATE = "CA";
+const FOUNDER_SIGNOFF_DATE = "2026-07-28";
 
 const REF_IDS = {
   familyEntitlementRef: "ca-family-entitlement-v1",
@@ -102,20 +111,23 @@ function buildDocs() {
     [REF_IDS.siblingPolicyRef]: {
       ...base,
       kind: "sibling_policy",
-      surchargePerHourCents: PROPOSED.siblingSurchargePerHourCents,
-      note: "PROPOSED — mirrors senior couples-care surcharge shape, not 2x.",
+      surchargePerHourCents: APPROVED.siblingSurchargePerHourCents,
+      approvedOn: FOUNDER_SIGNOFF_DATE,
+      note: "Founder-approved 2026-07-28. Mirrors senior couples-care surcharge shape, not 2x. Market: +$3.63/hr observed for a 2nd child; $3.00 is the low end.",
     },
     [REF_IDS.cancellationPolicyRef]: {
       ...base,
       kind: "cancellation_policy",
-      ...PROPOSED.cancellation,
-      note: "PROPOSED — confirm before pilot; carries legal + trust weight.",
+      ...APPROVED.cancellation,
+      approvedOn: FOUNDER_SIGNOFF_DATE,
+      note: "Founder-approved 2026-07-28. >=24h full refund, inside 24h 50%, provider no-show 100%.",
     },
     [REF_IDS.refundPolicyRef]: {
       ...base,
       kind: "refund_policy",
-      ...PROPOSED.refund,
-      note: "PROPOSED — confirm before pilot.",
+      ...APPROVED.refund,
+      approvedOn: FOUNDER_SIGNOFF_DATE,
+      note: "Founder-approved 2026-07-28. 72h post-shift window, partial allowed, max 100%.",
     },
   };
 }
@@ -138,11 +150,12 @@ async function main() {
   console.log(`\njurisdiction_care_policies/${STATE}  ← pricing refs`);
   for (const [key, id] of Object.entries(REF_IDS)) console.log(`  pricing.${key} = "${id}"`);
 
-  const proposedCount = Object.values(docs).filter((d) =>
+  const unsigned = Object.values(docs).filter((d) =>
     String(d.note ?? "").startsWith("PROPOSED")).length;
-  if (proposedCount) {
-    console.log(`\n⚠️  ${proposedCount} of these are PROPOSED defaults awaiting founder sign-off`);
-    console.log("    (sibling surcharge, cancellation windows, refund window).");
+  if (unsigned) {
+    console.log(`\n⚠️  ${unsigned} document(s) still marked PROPOSED — founder sign-off missing.`);
+  } else {
+    console.log(`\nAll 6 configs are founder-approved (sign-off ${FOUNDER_SIGNOFF_DATE}).`);
   }
 
   if (!apply) {
@@ -168,9 +181,16 @@ async function main() {
   for (const [id, doc] of Object.entries(docs)) {
     batch.set(db.collection("childcare_pricing_configs").doc(id), doc, { merge: true });
   }
-  const refs = {};
-  for (const [key, id] of Object.entries(REF_IDS)) refs[`pricing.${key}`] = id;
-  batch.set(db.collection("jurisdiction_care_policies").doc(STATE), refs, { merge: true });
+  // NESTED object, not dotted keys. Firestore set() treats a key containing a
+  // dot as a LITERAL field name — only update() interprets dots as field paths.
+  // Writing {"pricing.familyEntitlementRef": id} would create a top-level field
+  // literally named `pricing.familyEntitlementRef`, leaving policy.pricing
+  // undefined, so resolveChildcarePricingSnapshot would still fail with
+  // pricing_unset while this script printed success. merge:true merges the
+  // nested map field-by-field, so sibling pricing keys are preserved.
+  const pricing = {};
+  for (const [key, id] of Object.entries(REF_IDS)) pricing[key] = id;
+  batch.set(db.collection("jurisdiction_care_policies").doc(STATE), { pricing }, { merge: true });
   await batch.commit();
 
   console.log(`\n✅ wrote ${Object.keys(docs).length} pricing configs + ${Object.keys(REF_IDS).length} refs to ${projectArg}`);

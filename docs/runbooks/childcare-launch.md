@@ -117,6 +117,38 @@ Capture ONE Git SHA and the matching evidence into `childcare_canary_state/deplo
 | Monitoring health (`rolloutHeld=false`, `redSignals=0`) | __________ |
 | Rollback drill (`ranAt` + `seniorSmokeUnchanged=true`) | __________ |
 
+### Dark-deploy record — 2026-07-28 (infrastructure only; NOT an enablement authorization)
+
+The code is deployed to production with every childcare flag off. This is the
+evidence captured for that deploy. It is deliberately NOT a `complete: true`
+proof bundle — the rows left blank above are the ones that gate *enablement*,
+and none of them is satisfied yet.
+
+| Evidence | Value |
+|---|---|
+| Git SHA | `93aafca` (branch `feat/childcare-marketplace`, PR #4) |
+| Firebase project | `careconnex-d4c8b` |
+| Deploy order | indexes → **polled to 46/46 READY** → rules → functions → hosting |
+| Index states | 46/46 contracts PASS via `audit-firestore-query-contracts.mjs --live` (progression 32 → 39 → 46; `code=9` = still building) |
+| Firestore + Storage Rules | both released; verified backward-compatible first — all 51 childcare guards use the defaulted `.get('careVertical','senior')`, zero bare-field refs, so legacy senior docs pass unchanged |
+| Functions | 205 → **291** (86 created, **0 deleted** — deployed WITHOUT `--force`) |
+| Hosting | released; `careconnex-d4c8b.web.app`, `.firebaseapp.com`, and `eviacares.com` (apex 301 → www) all serve `assets/index-zsdJvo4t.js`, matching the local build |
+| Invoker check | new callables return **401, not 403** → `allUsers` invoker present; no `gcloud add-iam-policy-binding` needed |
+| Senior smoke | callables 401 (reachable + auth guard), `linqWebhook`/`checkrWebhook` 405 (POST-only), `stripeWebhook` 400 (no signature). **No 403s, no 5xx.** |
+| Flag state | `childcare_flags/global` **never created** → absent = OFF for every childcare flag |
+| Migrations | **NOT RUN.** `CARE_VERTICAL_MIGRATION_CUTOFF` is still the placeholder, so apply refuses with HTTP 412 |
+| Scan pipeline | `dispatchChildFileScanOnFinalize` + `consumeChildFileScanResultMessage` deliberately UNEXPORTED (`93aafca`) — see that commit for why; `reconcileChildFileScans` is deployed |
+| Smokes / rollback drill / monitoring | not executed against production |
+
+**Known gaps at deploy time, all blocking enablement:** no full test-suite run has
+completed on this tree (the authoring machine wedged on memory); no human code
+review or funnel QA; pricing configs unseeded; jurisdiction legal/insurance/
+TrustLine references and consent versions absent; App Check in monitor mode with
+no provider registered; no operators provisioned; Stripe
+`charge.dispute.created` not subscribed.
+
+**Emergency-off remains a Firestore flag flip — no redeploy required.**
+
 ## Founder-run go-live checklist (the culminating deliverable)
 
 Every real-world action to actually go live, IN ORDER. None was executed by U14.
@@ -185,3 +217,75 @@ Filter `admin_alerts` by `type == "childcare_canary"`, then by `signal`, `severi
 
 - System operator (flags, rollback): founder (imran@angelicare.com) until U12 operator roles exist.
 - Incident escalation: `jurisdiction_care_policies/CA.incidentContacts` (unpopulated at U1 — must be filled before any enablement).
+
+## Go-live sequence (2026-07-28)
+
+Three writes take childcare from dark to functional. **Order is load-bearing** —
+flags before pricing/policy opens a signup funnel that cannot take a payment or
+produce a match, so a family would onboard into a dead end.
+
+```bash
+npm run childcare:go-live-plan                                    # dry-run all three
+node scripts/childcare-go-live.mjs --apply --project=careconnex-d4c8b
+```
+
+The orchestrator runs, in order: `seed-childcare-pricing.mjs` →
+`seed-childcare-jurisdiction.mjs` → `seed-childcare-flags.mjs`, aborting the
+chain on the first failure (exit 1). Step 3 independently re-verifies steps 1
+and 2 against live Firestore — policy exists, `status === "configured"`,
+`policyVersion` present, categories non-empty, all six pricing refs set AND
+each pointing at a `childcare_pricing_configs` doc that really exists — and
+exits 3 without enabling anything if not. A partial go-live is not reachable.
+
+**Rollback** (always works, skips prerequisite checks):
+```bash
+node scripts/seed-childcare-flags.mjs --emergency-off --apply --project=careconnex-d4c8b
+```
+Flag reads cache 60s (`CHILDCARE_FLAGS_CACHE_TTL_MS`), so allow a minute in
+either direction.
+
+`CHILDCARE_PROACTIVE_ENABLED` is **off** in the default `--on` set. It is not
+needed to go live. It governs proactive outbound childcare SMS — the only
+irreversible surface here, since a flag can be switched back but a delivered
+text cannot be recalled. Add `,proactive` to `--on` deliberately.
+
+### Founder-approved pricing (2026-07-28)
+
+Sibling surcharge **+$3.00/hr** per additional child (market: +$3.63/hr observed
+for a 2nd child, $3–4/hr per additional — this is the low end). Cancellation
+**≥24h → 100%, inside 24h → 50%, provider no-show → 100%**. Refund window **72h
+post-shift, partial allowed, max 100%** — far more generous than the market
+leader (UrbanSitter terms: "ALL FEES AND CHARGES ARE NONREFUNDABLE"), a
+deliberate launch trust investment.
+
+### Known tension: enabling with governance refs unpopulated
+
+The Contacts section above states `incidentContacts` **must be filled before any
+enablement**. Nothing in the code enforces that. `evaluatePolicyReadiness` — the
+only thing that checks `incidentContacts`, `approvals.*`, and `consentVersions.*`
+— is consulted **exclusively** by `childcare/deployGate.ts`, the launch
+checklist. No runtime request path calls it. So childcare will operate with all
+13 external references empty, and `npm run childcare:deploy-plan` will keep
+reporting `jurisdiction_incomplete`. Both statements are true simultaneously;
+neither is a malfunction.
+
+The concrete exposure of enabling without them: a caregiver reporting a child
+injury escalates to an **empty contact list**. The incident is recorded and
+classified, but no human is paged. That is a business/duty-of-care decision, not
+a technical one — recorded here so it is a choice on the record rather than an
+oversight. Fill them via
+`docs/runbooks/childcare-ca-approvals.template.json` →
+`node scripts/seed-childcare-jurisdiction.mjs --values=<file> --apply --project=<id>`.
+
+### Open question for counsel (not a checklist item)
+
+Does Evia's **matching engine** make it a referral/placement service under
+California law, and if so does TrustLine attach? [HSC §1596.66] compels TrustLine
+only for license-exempt providers paid from public subsidy funds (Alternative
+Payment / CalWORKs / CCDBG), excepting grandparents/aunts/uncles — so a
+private-pay marketplace is not compelled. But UrbanSitter, which skips TrustLine,
+does so while explicitly disclaiming in its Terms that it is "NOT A REFERRAL,
+MATCHING OR PLACEMENT SERVICE." Evia cannot make that disclaimer while shipping
+matching. Record the answer in `approvals.jurisdictionScreeningProgram`.
+**If Evia ever accepts subsidy-funded families, TrustLine becomes mandatory for
+those caregivers.**

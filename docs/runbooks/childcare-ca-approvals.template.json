@@ -1,0 +1,72 @@
+{
+  "_README": [
+    "Template for the 13 external governance references on jurisdiction_care_policies/CA.",
+    "",
+    "Copy this file, fill in the real values, then:",
+    "  node scripts/seed-childcare-jurisdiction.mjs --values=<yourfile>.json            (plan)",
+    "  node scripts/seed-childcare-jurisdiction.mjs --values=<yourfile>.json --apply --project=careconnex-d4c8b",
+    "",
+    "These are NOT runtime blockers. Childcare operates without them. They are",
+    "checked by evaluatePolicyReadiness, which only childcare/deployGate.ts (the",
+    "launch checklist) consults — so npm run childcare:deploy-plan will report",
+    "jurisdiction_incomplete until they are recorded. Both facts are true at once.",
+    "",
+    "Do NOT put placeholder text in the approvals block. A reference ID that",
+    "asserts counsel or an insurer signed off, when they did not, is a false",
+    "compliance record — and it is precisely what someone would read back after",
+    "an incident. Leave a field out entirely rather than inventing it; the seeder",
+    "only writes keys you supply, and it rejects an approval that is present but",
+    "structurally incomplete.",
+    "",
+    "DELETE this _README key before use (or leave it — it is ignored)."
+  ],
+
+  "approvals": {
+    "legalCounsel": {
+      "referenceId": "",
+      "issuedBy": "",
+      "approvedOn": "",
+      "policyVersion": "CA-2026-07-22.1",
+      "expiresOn": null,
+      "_note": "Counsel memo/opinion ID + firm + date. This is also the natural place to record the answer to the open question: does Evia's MATCHING engine make it a referral/placement service under CA law, and if so does TrustLine attach? UrbanSitter avoids TrustLine while explicitly disclaiming that it is a 'referral, matching or placement service' — Evia cannot make that same disclaimer."
+    },
+    "insurance": {
+      "referenceId": "",
+      "issuedBy": "",
+      "approvedOn": "",
+      "policyVersion": "CA-2026-07-22.1",
+      "expiresOn": "",
+      "_note": "Certificate number + insurer + issue date + EXPIRY. Readiness fails once expiresOn is in the past, so this one needs a renewal reminder. Note the incumbent carries none and pushes insurance onto users — carrying coverage is a differentiator, not a requirement."
+    },
+    "jurisdictionScreeningProgram": {
+      "referenceId": "",
+      "issuedBy": "",
+      "approvedOn": "",
+      "policyVersion": "CA-2026-07-22.1",
+      "_note": "The approved CA screening program. TrustLine is NOT legally required for a private-pay marketplace — HSC 1596.66 compels it only for license-exempt providers paid with public subsidy funds (Alternative Payment / CalWORKs / CCDBG), excepting grandparents, aunts, uncles. A counsel memo recording 'the approved CA screening program is the shared Checkr base package with annual renewal' satisfies this field. IF Evia ever accepts subsidy-funded families, TrustLine becomes mandatory for those caregivers."
+    }
+  },
+
+  "consentVersions": {
+    "terms": "",
+    "privacy": "",
+    "screeningDisclosure": "",
+    "guardianAttestation": "",
+    "communicationConsent": "",
+    "childcarePolicy": "",
+    "_note": "Version identifiers for the PUBLISHED documents a user actually agreed to. Use the version string of the live document, not a date you picked."
+  },
+
+  "guardianProcessRef": "",
+  "reportingObligationsRef": "",
+  "insuranceEvidenceRefs": [],
+  "incidentContacts": [
+    {
+      "label": "24/7 childcare incident escalation",
+      "phone": "",
+      "_note": "Must be a number a human actually answers around the clock. This is the path a caregiver's 'she fell and hit her head' escalates to. An unanswered number here is worse than none, because the system will believe escalation succeeded."
+    }
+  ],
+
+  "effectiveOn": null
+}

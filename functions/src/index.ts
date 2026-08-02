@@ -223,6 +223,15 @@ export { onRefundRequestWrite, reviewRefundRequest } from './triggers/refundProc
 // CARE PLAN HISTORY trigger (saves version on every care plan write)
 export * from './triggers/carePlanHistory';
 
+// JOB POST GEOCODING — writes lat/lng back when a job_posts doc has an address but no coords
+export { geocodeJobPost } from './triggers/jobPostGeocode';
+
+// CLIENT INTAKE GEOCODING — writes lat/lng to users/{uid} when clientIntakes is saved
+export { geocodeClientIntake } from './triggers/clientIntakeGeocode';
+
+// CAREGIVER GEOCODING — re-geocodes lat/lng server-side when address fields change
+export { geocodeCaregiverDoc } from './triggers/caregiverGeocode';
+
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
 

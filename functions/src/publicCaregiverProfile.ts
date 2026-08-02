@@ -33,6 +33,7 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
       "hourlyRate", "availability", "weeklyAvailability", "jobTypes", "isAvailable",
       "photo", "imageUrl", "profilePhoto", "photoURL",
       "lookingFor", "preferredSchedule", "isApprovedDriver", "travelRadius", "serviceRadius",
+      "lat", "lng", "latitude", "longitude",
     ),
     location: [cg.city, cg.state].filter(value => typeof value === "string" && value).join(", "),
   };

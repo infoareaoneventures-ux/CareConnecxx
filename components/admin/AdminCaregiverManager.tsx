@@ -182,6 +182,11 @@ export const AdminCaregiverManager: React.FC = () => {
           (updates as any).membershipPaid = true;
           (updates as any).membershipStatus = 'active';
         }
+        const bgWillBeApproved = approveBackground || (selected as any).backgroundCheckStatus === 'clear';
+        const membershipWillBeApproved = approveMembership || (selected as any).membershipPaid === true;
+        if (bgWillBeApproved && membershipWillBeApproved) {
+          (updates as any).onboardingStatus = 'profile_complete';
+        }
       }
       if (status === 'rejected') { (updates as any).verificationStatus = 'rejected'; updates.verified = false; (updates as any).rejectionReason = rejectReason; }
       if (status === 'info_requested') { (updates as any).verificationStatus = 'info_requested'; updates.verified = false; }
@@ -700,11 +705,22 @@ export const AdminCaregiverManager: React.FC = () => {
                         <span className="text-sm text-slate-700">Membership payment</span>
                         <div className="flex gap-2">
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { membershipPaid: true, membershipStatus: 'active' } as any); setSelected(p => p ? { ...p, membershipPaid: true, membershipStatus: 'active' } as any : p); showToast('Membership approved', 'success'); }}
+                            onClick={async () => {
+                              const bgApproved = (selected as any).backgroundCheckStatus === 'clear';
+                              const patch: any = { membershipPaid: true, membershipStatus: 'active', ...(bgApproved ? { onboardingStatus: 'profile_complete' } : {}) };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              showToast('Membership approved', 'success');
+                            }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).membershipPaid ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
                           >Approved</button>
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { membershipPaid: false, membershipStatus: 'inactive' } as any); setSelected(p => p ? { ...p, membershipPaid: false, membershipStatus: 'inactive' } as any : p); showToast('Membership revoked', 'success'); }}
+                            onClick={async () => {
+                              const patch: any = { membershipPaid: false, membershipStatus: 'inactive', onboardingStatus: 'in_progress' };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              showToast('Membership revoked', 'success');
+                            }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${!(selected as any).membershipPaid ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
                           >Revoked</button>
                         </div>
@@ -714,11 +730,22 @@ export const AdminCaregiverManager: React.FC = () => {
                         <span className="text-sm text-slate-700">Background check</span>
                         <div className="flex gap-2">
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved' } as any : p); showToast('Background check approved', 'success'); }}
+                            onClick={async () => {
+                              const membershipApproved = (selected as any).membershipPaid === true;
+                              const patch: any = { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved', ...(membershipApproved ? { onboardingStatus: 'profile_complete' } : {}) };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              showToast('Background check approved', 'success');
+                            }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus === 'clear' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
                           >Approved</button>
                           <button
-                            onClick={async () => { await adminService.updateCaregiver(selected.uid, { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending' } as any); setSelected(p => p ? { ...p, backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending' } as any : p); showToast('Background check revoked', 'success'); }}
+                            onClick={async () => {
+                              const patch: any = { backgroundCheckStatus: 'pending', backgroundCheckComplete: false, verified: false, verificationStatus: 'pending', onboardingStatus: 'in_progress' };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              showToast('Background check revoked', 'success');
+                            }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus !== 'clear' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
                           >Revoked</button>
                         </div>

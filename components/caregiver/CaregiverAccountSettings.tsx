@@ -183,8 +183,8 @@ export const CaregiverAccountSettings: React.FC = () => {
       await dbService.updateUser('caregivers', currentUser.uid, {
         street, zipCode: zip, city, state,
         location: city && state ? `${city}, ${state}` : city || '',
-        latitude: coords?.lat ?? null,
-        longitude: coords?.lng ?? null,
+        // Only overwrite coords if geocoding succeeded — server-side trigger handles it otherwise
+        ...(coords ? { lat: coords.lat, lng: coords.lng, latitude: coords.lat, longitude: coords.lng } : {}),
       } as any);
       setEditingAddress(false);
       addToast('Address saved', 'success');

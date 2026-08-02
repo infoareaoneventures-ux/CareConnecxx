@@ -207,6 +207,7 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
             availability: Array.isArray(data.availability) ? data.availability : [],
             instantPayAvailable: data.instantPayAvailable || false,
             personalityTags: data.personalityTags || [],
+            serviceRadius: data.serviceRadius ?? data.travelRadius ?? null,
             matchScore: 0,
             _skillsScore: skillsOverlap(cgSkills, allCareTypes),
             _availScore: availabilityOverlap(cgAvailability, clientSchedule),
@@ -218,9 +219,15 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         caregiversSnap?.forEach(pushDoc);
 
         // Bookability was already enforced by approvedIds in pushDoc.
-        // ── 5. Hard filter: distance ──
+        // ── 5. Hard filter: distance + caregiver's own serviceRadius ──
         const withinRange = locs.length > 0
-          ? caregiverList.filter(c => ((c as any).latitude != null && (c as any).longitude != null) ? c.distance <= maxDistance : true)
+          ? caregiverList.filter(c => {
+              if ((c as any).latitude == null || (c as any).longitude == null) return true;
+              if (c.distance > maxDistance) return false;
+              const sr = (c as any).serviceRadius ?? (c as any).travelRadius;
+              if (sr != null && sr > 0 && c.distance > sr) return false;
+              return true;
+            })
           : caregiverList;
 
         // ── 6. Hard filter: transportation if needed ──

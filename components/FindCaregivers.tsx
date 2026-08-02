@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import firebase from 'firebase/compat/app';
 import { AIMatchScore } from '../services/aiMatchingService';
@@ -177,10 +178,11 @@ export default function FindCaregivers() {
         .catch(() => {});
 
       // ── Collect all client care location lat/lngs in parallel ──
-      const [postsSnap, jpDoc, cpDoc] = await Promise.all([
+      const [postsSnap, jpDoc, cpDoc, spDoc] = await Promise.all([
         fdb.collection('job_posts').where('clientId', '==', user.uid).where('status', '==', 'open').get(),
         fdb.collection('job_postings').doc(user.uid).get(),
         fdb.collection('carePlans').doc(user.uid).get(),
+        fdb.collection('senior_profiles').doc(user.uid).get(),
       ]);
 
       // Populate clientOpenPosts from the same query
@@ -207,10 +209,60 @@ export default function FindCaregivers() {
         (d.locationPool || []).forEach((loc: any) => addLoc(loc.lat, loc.lng));
       }
 
-      // 4. Fallback — signup address on users/{uid}
+      // 3b. senior_profiles/{uid} — geocoded by ClientDashboard, most reliable client coords
+      if (spDoc.exists) {
+        const d = spDoc.data() as any;
+        addLoc(d.latitude, d.longitude);
+        addLoc(d.lat, d.lng);
+      }
+
+      // 4. Fallback — signup address on users/{uid} (raw coords)
+      let userDocData: any = null;
       if (locs.length === 0) {
         const userDoc = await fdb.collection('users').doc(user.uid).get();
-        if (userDoc.exists) { const d = userDoc.data() as any; addLoc(d.latitude, d.longitude); }
+        if (userDoc.exists) {
+          userDocData = userDoc.data() as any;
+          addLoc(userDocData.latitude, userDocData.longitude);
+          addLoc(userDocData.lat, userDocData.lng);
+        }
+      }
+
+      // 5. Geocode from job post address fields (city/state/zip without coords)
+      if (locs.length === 0) {
+        for (const p of openPosts as any[]) {
+          if (p.city || p.zipCode || p.zip) {
+            const coords = await geocodeToLatLng(p.street, p.city, p.state, p.zipCode || p.zip);
+            if (coords) { addLoc(coords.lat, coords.lng); break; }
+          }
+        }
+      }
+
+      // 6. Geocode from account holder address on users doc
+      if (locs.length === 0) {
+        if (!userDocData) {
+          const userDoc = await fdb.collection('users').doc(user.uid).get();
+          if (userDoc.exists) userDocData = userDoc.data() as any;
+        }
+        if (userDocData) {
+          const coords = await geocodeToLatLng(
+            userDocData.street || userDocData.streetAddress,
+            userDocData.city,
+            userDocData.state,
+            userDocData.zipCode || userDocData.zip
+          );
+          if (coords) addLoc(coords.lat, coords.lng);
+        }
+      }
+
+      // 7. Geocode from clientIntakes address (already loaded above — intake has streetAddress/city/state/zipCode)
+      if (locs.length === 0 && intakeData) {
+        const coords = await geocodeToLatLng(
+          intakeData.streetAddress,
+          intakeData.city,
+          intakeData.state,
+          intakeData.zipCode
+        );
+        if (coords) addLoc(coords.lat, coords.lng);
       }
 
       setClientLocations(locs);
@@ -427,6 +479,8 @@ export default function FindCaregivers() {
       // Distance filter — only applied when client has locations AND caregiver has coords
       if (clientLocations.length > 0 && cg.lat != null && cg.lng != null) {
         if (cg.distance > maxDistance) return false;
+        // Also respect caregiver's own travel radius — don't show if client is outside it
+        if (cg.serviceRadius != null && cg.serviceRadius > 0 && cg.distance > cg.serviceRadius) return false;
       }
       if (nameQuery) {
         const q = nameQuery.toLowerCase();

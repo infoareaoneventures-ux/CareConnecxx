@@ -10,7 +10,7 @@
 //   3. no re-greet       — Evia never re-greets / re-introduces after turn 1
 //   4. no double-send    — at most one user-facing message per turn
 
-import { OnboardingRole, missingRequiredFields } from "./onboardingContract";
+import { OnboardingRole, OnboardingVertical, missingRequiredFields } from "./onboardingContract";
 
 // Greeting / re-introduction openers the directive explicitly bans mid-conversation
 // (onboardingDirective.ts "HOW TO TALK"). A reply on turn 2+ that opens with any of
@@ -71,6 +71,13 @@ export interface TranscriptGrade {
  * @param perTurnSendCounts  number of user-facing messages actually sent per turn
  * @param finalData          onboardingData accumulated by the end of the run
  * @param role               onboarding role
+ * @param vertical           care vertical ("senior" | "child"). The required-field
+ *                           set is keyed on role×vertical (R-FD5): the childcare
+ *                           CLIENT funnel is deliberately SHORTER than senior
+ *                           (R-FD4 — no child details are collected over SMS), so
+ *                           omitting this grades a childcare transcript against
+ *                           the senior field set and fails it spuriously.
+ *                           Defaults to senior, matching normalizeVertical().
  * @param completeFiredWith  the missingRequiredFields snapshot AT the moment the
  *                           loop called complete_collection (undefined if it never
  *                           fired). Used for the fields-before-handoff gate.
@@ -80,13 +87,14 @@ export function gradeOnboardingTranscript(args: {
   perTurnSendCounts: number[];
   finalData: Record<string, unknown>;
   role: OnboardingRole;
+  vertical?: OnboardingVertical | null;
   completeFiredWith?: string[];
 }): TranscriptGrade {
-  const { replies, perTurnSendCounts, finalData, role, completeFiredWith } = args;
+  const { replies, perTurnSendCounts, finalData, role, vertical, completeFiredWith } = args;
   const failures: string[] = [];
 
   // Gate 1 — completion.
-  const missingAtEnd = missingRequiredFields(role, finalData);
+  const missingAtEnd = missingRequiredFields(role, finalData, vertical);
   const completed = missingAtEnd.length === 0;
   if (!completed) {
     failures.push(`incomplete: required fields still missing at end → ${missingAtEnd.join(", ")}`);

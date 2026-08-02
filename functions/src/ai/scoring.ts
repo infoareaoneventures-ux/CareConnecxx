@@ -375,6 +375,146 @@ export function availabilityOverlap(
     return Math.min(1, overlapMin / clientNeededMin);
 }
 
+// ── Childcare scoring (plan 2026-07-22-002 U6 — R34/R45) ────────────────────
+//
+// A SEPARATE scoring path for childcare candidates. It consumes ONLY the
+// approved childcare features listed in CHILDCARE_APPROVED_SCORING_FEATURES:
+//   • age-band coverage and service-category coverage (provider capability vs
+//     the job's typed child requirement projection — never child data),
+//   • distance to the job's APPROXIMATE area,
+//   • availability overlap, childcare-specific experience, and the
+//     per-vertical childcare rating (U8 reputation projection).
+//
+// STRUCTURALLY EXCLUDED (R45): cross-vertical hire/pass reputation
+// (ai/caregiverReputation senior boost), per-client senior feedback boosts,
+// senior ratings, and embeddings built from senior profiles. The input type
+// simply has no field for them; scoring.childcare.test.ts pins that unknown
+// extra keys (personalBoost, reputationBoost, rating, …) cannot move the score.
+//
+// scoreCaregiver() above is the SENIOR path and is byte-identical to its
+// pre-U6 behavior (characterization-pinned in scoring.childcare.test.ts).
+
+export const CHILDCARE_APPROVED_SCORING_FEATURES = [
+    "ageBandCoverage",
+    "categoryCoverage",
+    "distanceMiles",
+    "availabilityOverlap",
+    "yearsChildcareExperience",
+    "childcareRating",
+] as const;
+
+export interface ChildcareScoringInput {
+    caregiverId: string;
+    /** Age bands the JOB requires (typed projection — bands only, R33). */
+    jobAgeBands: string[];
+    /** Age bands the provider's childcare vertical profile supports. */
+    providerAgeBands: string[];
+    /** Enableable service categories the job requires. */
+    jobCategories: string[];
+    /** Enableable service categories the provider offers. */
+    providerServices: string[];
+    /** Distance between provider and the job's APPROXIMATE area. */
+    distanceMiles?: number;
+    /** 0..1 overlap between provider availability and the job schedule. */
+    availabilityOverlap?: number;
+    /** Childcare-specific experience (vertical profile) — never senior years. */
+    yearsChildcareExperience?: number;
+    /** Per-vertical childcare rating ONLY (U8 projection) — never senior rating. */
+    childcareRating?: number;
+}
+
+export interface ChildcareScoredMatch {
+    caregiverId: string;
+    score: number;
+    /** Sanitized, allowlisted explanation strings — no restricted fields. */
+    reasons: string[];
+    confidence: "high" | "medium" | "low";
+    coverageScore: number;
+    distanceScore: number;
+    availabilityScore: number;
+    experienceScore: number;
+    ratingScore: number;
+}
+
+const CHILDCARE_WEIGHTS = {
+    coverage: 40, // age bands + categories (hard-filtered upstream; this grades margin)
+    distance: 25,
+    availability: 20,
+    experience: 10,
+    rating: 5,
+};
+
+function coverageRatio(required: string[], offered: string[]): number {
+    if (!required.length) return 1;
+    const have = new Set(offered.map((s) => s.toLowerCase().trim()));
+    const met = required.filter((r) => have.has(r.toLowerCase().trim())).length;
+    return met / required.length;
+}
+
+/**
+ * Score an ALREADY hard-eligible childcare candidate (KTD11: eligibility runs
+ * before this — scoring never rescues an ineligible provider). Pure.
+ */
+export function scoreChildcareCandidate(input: ChildcareScoringInput): ChildcareScoredMatch {
+    const bandCov = coverageRatio(input.jobAgeBands ?? [], input.providerAgeBands ?? []);
+    const catCov = coverageRatio(input.jobCategories ?? [], input.providerServices ?? []);
+    const coverage = (bandCov + catCov) / 2;
+
+    const dist = softDistanceScore(input.distanceMiles);
+    const avail = availabilityScore(input.availabilityOverlap);
+    const exp = experienceScore(input.yearsChildcareExperience);
+    const rate = ratingScore(input.childcareRating);
+
+    const coveragePts = coverage * CHILDCARE_WEIGHTS.coverage;
+    const distancePts = dist * CHILDCARE_WEIGHTS.distance;
+    const availPts = avail * CHILDCARE_WEIGHTS.availability;
+    const expPts = exp * CHILDCARE_WEIGHTS.experience;
+    const ratingPts = rate * CHILDCARE_WEIGHTS.rating;
+
+    const total = Math.round(
+        Math.min(100, Math.max(0, coveragePts + distancePts + availPts + expPts + ratingPts)),
+    );
+
+    // R33/R57-safe explanations: fixed allowlisted phrases built ONLY from
+    // provider capability + coarse job facts. Never a child fact, never a
+    // screening/internal reason.
+    const reasons: string[] = [];
+    if (bandCov >= 1 && (input.jobAgeBands?.length ?? 0) > 0) {
+        reasons.push("Supports all requested age groups");
+    }
+    if (catCov >= 1 && (input.jobCategories?.length ?? 0) > 0) {
+        reasons.push("Offers all requested care types");
+    }
+    if (input.distanceMiles !== undefined && input.distanceMiles <= 10) {
+        reasons.push("Close to the job area");
+    }
+    if (input.availabilityOverlap !== undefined && input.availabilityOverlap >= 0.75) {
+        reasons.push("Available during the requested hours");
+    }
+    if ((input.yearsChildcareExperience ?? 0) >= 3) {
+        reasons.push(`${input.yearsChildcareExperience}+ years of childcare experience`);
+    }
+    if ((input.childcareRating ?? 0) >= 4.5) {
+        reasons.push("Highly rated for childcare");
+    }
+    if (!reasons.length) reasons.push("Eligible childcare provider in your area");
+
+    const confidence: "high" | "medium" | "low" =
+        total >= 75 ? "high" : total >= 55 ? "medium" : "low";
+
+    return {
+        caregiverId: input.caregiverId,
+        score: total,
+        reasons: reasons.slice(0, 4),
+        confidence,
+        coverageScore: Math.round(coveragePts),
+        distanceScore: Math.round(distancePts),
+        availabilityScore: Math.round(availPts),
+        experienceScore: Math.round(expPts),
+        ratingScore: Math.round(ratingPts),
+    };
+}
+
 export function haversineMiles(
     lat1?: number,
     lon1?: number,

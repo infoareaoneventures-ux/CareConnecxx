@@ -145,6 +145,11 @@ async function runMonthlyHealthTrends(): Promise<number> {
 
   for (const sessionDoc of sessionsSnap.docs) {
     const session = sessionDoc.data() as AgentSession;
+    // Childcare U10 (R54/AE16): senior health-trend analysis never touches a
+    // childcare record — careVertical === "child" sessions are skipped
+    // (childcare appointments are additionally excluded because this job
+    // reads senior_profiles/care journals keyed off senior identities).
+    if ((session as unknown as Record<string, unknown>).careVertical === "child") continue;
     if (!session.userId || session.optedIn === false) continue;
 
     try {

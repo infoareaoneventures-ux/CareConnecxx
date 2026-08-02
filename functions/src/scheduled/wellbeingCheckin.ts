@@ -26,6 +26,7 @@ export const wellbeingCheckinJob = functions.pubsub
     for (const doc of sessionsSnap.docs) {
       const phone = doc.id;
       const data  = doc.data();
+      if (data.careVertical === "child") continue; // Childcare U10 (R54/AE16)
       if (data.optedOut) continue;
 
       const checkinMsg = await generateCaraMessage({

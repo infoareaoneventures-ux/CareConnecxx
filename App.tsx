@@ -17,6 +17,18 @@ const Schedule = lazy(() => import('./components/Schedule'));
 const ClientVisitsPage = lazy(() => import('./components/client/ClientVisitsPage').then(m => ({ default: m.ClientVisitsPage })));
 const ClientCaregiverProfile = lazy(() => import('./components/ClientCaregiverProfile'));
 const IdentityCallback = lazy(() => import('./components/client/IdentityCallback'));
+// Childcare U4 (plan 2026-07-22-002): the authenticated secure child-profile
+// form. Dark until the Firestore-resident childcare flags are on (the
+// callables fail closed with a friendly unavailable state).
+const ChildProfileFlow = lazy(() => import('./components/client/childcare/ChildProfileFlow'));
+// Childcare U11 (plan 2026-07-22-002): family + caregiver childcare surfaces.
+// All render a friendly unavailable state while the Firestore-resident
+// childcare flags are off (the callables fail closed with childcare_disabled).
+const ChildcareDashboard = lazy(() => import('./components/client/childcare/ChildcareDashboard'));
+const ChildcareMatches = lazy(() => import('./components/client/childcare/ChildcareMatches'));
+const ChildcareBookingDetails = lazy(() => import('./components/client/childcare/ChildcareBookingDetails'));
+const AuthorityAndPrivacyPanel = lazy(() => import('./components/client/childcare/AuthorityAndPrivacyPanel'));
+const ChildcareVerticalProfile = lazy(() => import('./components/caregiver/ChildcareVerticalProfile'));
 const BookingFlow = lazy(() => import('./components/client/booking/BookingFlow'));
 const ReviewSystem = lazy(() => import('./components/ReviewSystem'));
 const WeeklySummary = lazy(() => import('./components/WeeklySummary'));
@@ -357,6 +369,19 @@ const AppContent: React.FC = () => {
               without a web session. The component already handles the no-auth case
               (waits for the webhook). Gating it behind ClientRoute bounced them to login. */}
           <Route path="/client/identity-callback" element={<IdentityCallback />} />
+          {/* Childcare U4: authenticated child-profile completion + identity
+              return target (childcare Stripe Identity return_url points here —
+              the URL grants nothing; the one-time callback state is presented
+              via v1-consumeChildcareIdentityCallback). */}
+          <Route path="/childcare/children" element={<ClientRoute element={<ChildProfileFlow />} />} />
+          {/* Childcare U11: family childcare surfaces (dashboard, matches,
+              booking details, authority & privacy). Flag-gated server-side —
+              a direct URL while dark shows the unavailable state, never an
+              error and never child data. */}
+          <Route path="/childcare" element={<ClientRoute element={<ChildcareDashboard />} />} />
+          <Route path="/childcare/authority" element={<ClientRoute element={<AuthorityAndPrivacyPanel />} />} />
+          <Route path="/childcare/jobs/:jobId/matches" element={<ClientRoute element={<ChildcareMatches />} />} />
+          <Route path="/childcare/bookings/:bookingId" element={<ClientRoute element={<ChildcareBookingDetails />} />} />
           <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />
           <Route path="/client/review/:visitId" element={<ClientRoute element={<ReviewSystem />} />} />
           <Route path="/client/weekly-summary" element={<ClientRoute element={<WeeklySummary />} />} />
@@ -384,6 +409,10 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/video" element={<CaregiverRoute element={<CaregiverIntroVideo />} />} />
           <Route path="/caregiver/families" element={<CaregiverRoute element={<CaregiverFamiliesPage />} />} />
           <Route path="/caregiver/settings" element={<CaregiverRoute element={<CaregiverAccountSettings />} />} />
+          {/* Childcare U11: single-page childcare vertical profile (pilot
+              staging — reachable from CaregiverAccountSettings). Must stay
+              ABOVE the /caregiver/:id public-profile catch-all. */}
+          <Route path="/caregiver/childcare" element={<CaregiverRoute element={<ChildcareVerticalProfile />} />} />
           <Route path="/caregiver/payments" element={<CaregiverRoute element={<CaregiverPaymentsPage />} />} />
           {/* Legacy routes — redirect to unified payments page */}
           <Route path="/caregiver/transactions" element={<CaregiverRoute element={<CaregiverTransactionsPage />} />} />

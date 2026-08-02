@@ -121,6 +121,219 @@ export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupMan
 // writes to agent_tasks / agent_approvals).
 export { confirmAgentTask, getAgentTaskByToken } from './agents/quickConfirm';
 
+// Childcare U2 (plan 2026-07-22-002) — household + guardian-authority callables
+// (deployed as v1-createHousehold etc. via the firebase.json prefix). All gated
+// on the Firestore-resident childcare flags (R61) — dark until launch — plus
+// App Check (KTD22), auth_time recent-auth on high-risk ops (R18), fail-closed
+// rate limits, idempotency keys, and enumeration-safe errors (R21).
+export {
+  createHousehold,
+  inviteHouseholdAdult,
+  acceptHouseholdInvite,
+  grantGuardianAuthority,
+  updateAuthorityScopes,
+  revokeGuardianAuthority,
+  getMyHouseholdState,
+} from './childcare/authorityCallables';
+// Durable authority-change effect drainer (R18 co-guardian notices +
+// derived-access invalidation; claim/lease/retry/terminal like the billing
+// approval outbox). Runs every minute; no-ops on an empty outbox.
+export { dispatchGuardianAuthorityOutbox } from './childcare/guardianAuthority';
+
+// Childcare U3 (plan 2026-07-22-002) — child profiles, restricted files, and
+// the privacy lifecycle. Same middleware stack as U2 (App Check, Firestore-
+// resident flags, rate limits, auth_time recent-auth on high-risk ops,
+// idempotency, enumeration-safe errors). Browser writes to child_profiles /
+// data_lifecycle_requests are rules-denied; these callables are the only
+// mutation path. File delivery is short-lived Admin-SDK signed URLs ONLY
+// (R12 — never stored download tokens).
+export {
+  createChildProfile,
+  updateChildProfile,
+  appendChildSafetyVersion,
+  getChildProfile,
+  listMyChildren,
+  requestChildDataExport,
+  requestChildDataDeletion,
+  getLifecycleRequestStatus,
+} from './childcare/childProfileCallables';
+export {
+  createChildFileUploadIntent,
+  confirmChildFileUploadCallable as confirmChildFileUpload,
+  getChildFileDeliveryReference,
+  childFileDelivery,
+} from './childcare/childFileAccess';
+// The two scan-PIPELINE entry points stay UNEXPORTED until the scanner service
+// actually exists (2026-07-28). They are inert regardless — every one of
+// CHILD_FILE_SCANNER_REGION / _IMAGE_DIGEST, CHILD_FILE_SCAN_REQUEST_TOPIC /
+// _RESULT_TOPIC, CHILD_FILE_DISPATCHER_SERVICE_ACCOUNT is unset — but deploying
+// them would demand a `v1-CHILD_FILE_SCAN_RESULT_HMAC_SECRET` twin (a real
+// secret for a non-existent counterpart) and, because they declare a failure
+// policy, `firebase deploy --force`, which also deletes the two untriaged
+// production orphans (caraPhase1Webhook, onTaskCreated). Neither price is worth
+// paying for dead code. Restore both exports — with the secret provisioned and
+// retry:true — when the scanner is built. Upload/delivery is unaffected: child
+// files simply stay in `scanState: "none"` and are never served, which is the
+// fail-closed posture childFileAccess already enforces.
+// export { dispatchChildFileScanOnFinalize } from './childcare/childFileScan';
+// export { consumeChildFileScanResultMessage } from './childcare/childFileScanResult';
+export {
+  reconcileChildFileScans,
+} from './childcare/childFileScanResult';
+// Childcare U4 (plan 2026-07-22-002) — Stripe Identity gate for childcare
+// enrollment (deployed as v1-createChildcareIdentitySession /
+// v1-consumeChildcareIdentityCallback). One verification session per
+// objective (idempotent reuse); one-time expiring callback state bound to the
+// authenticated adult (R22); no child PII in Stripe metadata (R57). Same U2/U3
+// middleware stack; dark behind the Firestore-resident childcare flags.
+export {
+  createChildcareIdentitySession,
+  consumeChildcareIdentityCallback,
+} from './childcare/identityCallables';
+// Childcare U5 (plan 2026-07-22-002) — provider vertical profile, screening,
+// and eligibility callables (deployed as v1-upsertChildcareVerticalProfile
+// etc.). Same U2/U3 middleware stack; dark behind the Firestore-resident
+// childcare flags. approve/suspend are operator-seam callables gated on the
+// requireChildcareOperatorScope STUB that U12 replaces with least-privilege
+// operator roles (R55). Checkr states stay evidence — manual approval is the
+// only path to childcare visibility (R27/R28).
+export {
+  upsertChildcareVerticalProfile,
+  getMyChildcareProviderState,
+  acceptChildcarePolicy,
+  startChildcareScreening,
+  approveChildcareProvider,
+  suspendChildcareProvider,
+} from './childcare/providerVerticalCallables';
+// Childcare U6 (plan 2026-07-22-002) — privacy-safe childcare jobs,
+// applications, discovery, and interviews (deployed as
+// v1-createChildcareJobPost etc.). Same U2/U3 middleware stack; dark behind
+// the Firestore-resident childcare flags. Structural contracts: auto-ID
+// job_posts only (NEVER the legacy job_postings singleton mirror — R32);
+// stored job/application docs ARE the safe public projection (R33/AE12);
+// hard eligibility (recheckChildcareProviderEligibility + fit) precedes
+// discovery, application, notification, and interview (R34/KTD11); interviews
+// are adult-to-adult, vertical-stamped, disclosure-safe (R35).
+export {
+  createChildcareJobPost,
+  updateChildcareJobPost,
+  closeChildcareJobPost,
+  listMyChildcareJobs,
+  applyToChildcareJob,
+  listEligibleChildcareJobs,
+  requestChildcareInterview,
+} from './childcare/jobCallables';
+// Childcare U7 (plan 2026-07-22-002) — booking, appointment, availability,
+// and safety projection (deployed as v1-requestChildcareBooking etc.). Same
+// U2/U3 middleware stack; dark behind the Firestore-resident childcare flags.
+// Structural contracts: R36 confirmation order (request → acceptance →
+// conflict → current gates → payment authorization → confirmed once, with
+// actionEvidence postconditions); AE14 truthful pending copy; KTD13 versioned
+// safety projections with revoke-before-replace (AE6); R46 shared appointment
+// docs carry typed recipient references + display label only; application
+// accept/reject (the U6 deferral) feeds booking requests. Payment
+// authorization state + correlation IDs only — Stripe flows are U8
+// (recordChildcareBookingPaymentAuthorization is the documented seam).
+export {
+  requestChildcareBooking,
+  acceptChildcareBooking,
+  declineChildcareBooking,
+  cancelChildcareBooking,
+  requestChildcareBookingChange,
+  respondChildcareBookingChange,
+  substituteChildcareCaregiver,
+  checkInChildcareShift,
+  checkOutChildcareShift,
+  getChildcareBookingSafety,
+  acceptChildcareApplication,
+  rejectChildcareApplication,
+} from './childcare/bookingCallables';
+// Childcare U11 (plan 2026-07-22-002) — family-facing READ seams the U11 UI
+// wired (deployed as v1-listMyChildcareBookings etc.). Same U2/U3/U7 middleware
+// stack; dark behind the Firestore-resident childcare flags (read gate). Thin,
+// authorization-correct reads reusing U2-U9 logic: guardian authority as THE
+// primitive (never a derived cache), equality-only queries (no new composite
+// index), family-safe projections (display label only — never DOB/exact
+// address), the U6 public application projection + eligibility hard-filter, and
+// the manager-only household-member enumeration getMyHouseholdState omits.
+export {
+  listMyChildcareBookings,
+  getChildcareBooking,
+  listChildcareJobApplications,
+  listHouseholdMembers,
+} from './childcare/familyReadCallables';
+// Childcare U8 (plan 2026-07-22-002) — shift operations, payments, refunds,
+// reviews, and reputation (deployed as v1-setupChildcareBookingPayment etc.).
+// Same U2/U3 middleware stack; dark behind the Firestore-resident childcare
+// flags. Structural contracts: R40 fail-closed pricing (jurisdiction pricing
+// refs → childcare_pricing_configs; NEVER senior amounts); payment
+// authorization through the documented recordChildcareBookingPaymentAuthorization
+// seam (SetupIntent + saved off-session method — the senior saved-method
+// rail); occurrence charges/transfers reuse the PROVEN shiftHours machinery
+// with vertical-stamped rows + R39 booking/shift ledger correlation; refunds
+// flow through the EXISTING refundRequests state machine; reviews are
+// server-only, booking-bound, once per reviewer+booking (R44); reputation is
+// per-vertical (R45 — childcare aggregates never include senior reviews and
+// vice versa).
+export { setupChildcareBookingPayment, requestChildcareRefund } from './childcare/shiftPayments';
+export { submitChildcareReview } from './childcare/reviewCallables';
+export {
+  listChildcareReviewModerationQueue,
+  moderateChildcareReview,
+} from './childcare/reviewModerationCallables';
+export {
+  onChildcareReviewWritten,
+  reconcileChildcareReviewProjections,
+} from './triggers/reviewProjection';
+// Childcare U9 (plan 2026-07-22-002) — context chat + notification privacy
+// (deployed as v1-openChildcareConversation etc.). Same U2/U3 middleware
+// stack; dark behind the Firestore-resident childcare flags. Structural
+// contracts: KTD14/R41 context-keyed server-owned rooms (browser creates
+// rules-denied; senior pairwise chat untouched — AE5); R42 access-version +
+// disclosure-phase stamps with revoke-first wiring from cancel/substitute
+// and the U2 authority outbox; R43/KTD16 generic childSafe template registry
+// for every outbound payload (lock screens carry template title/body only —
+// AE17); R20 consent-receipt-gated SMS nudges; AE24 excludedUids fan-out
+// exclusion; and v1-getChildcareBookingCoordination — the assigned-caregiver
+// exact-address read deferred from U7 (versioned coordination projection on
+// the U7 revoke-first safety machinery; audit-logged, never in messages,
+// notifications, or logs).
+export {
+  openChildcareConversation,
+  sendChildcareMessage,
+  listMyChildcareConversations,
+  getChildcareConversationMessages,
+  markChildcareConversationRead,
+  getChildcareBookingCoordination,
+} from './childcare/conversationCallables';
+// Scheduled privacy-lifecycle drain: export/delete/redact state machine,
+// age-band recalc + explicit age-out (R16), retention sweep (ships OFF —
+// durations are POLICY-TBD). Runs ungated by childcare flags: deletion/export
+// are data rights that must survive an emergency-off.
+export { childcareLifecycleWorker } from './scheduled/childcareLifecycleWorker';
+// Childcare U12 (plan 2026-07-22-002) — least-privilege operator callables
+// (deployed as v1-createChildcareIncident etc.). Gated on
+// admin/requireOperatorScope (R55: childSafetyOperator vs generalOperator —
+// broad isAdmin alone never reads child-sensitive incident detail, AE18);
+// child-sensitive reads require a recorded reason + recent auth (R56).
+// DELIBERATELY ungated by the childcare runtime flags: incident handling and
+// operator access are safety operations that must work during emergency-off
+// (same never-dark carve-out class as the lifecycle worker above).
+export {
+  createChildcareIncident,
+  listChildcareIncidents,
+  getChildcareIncidentDetail,
+  updateChildcareIncidentStatus,
+  assignChildcareIncident,
+  applyChildcareIncidentAction,
+  resolveChildcareAuthorityDispute,
+  markProviderRedactionComplete,
+} from './childcare/incidentCallables';
+export { appCheckReplayProbe } from './childcare/appCheckProbe';
+export { getChildcareOperatorObject } from './childcare/operatorCallables';
+export { processChildcarePayoutHolds } from './childcare/payoutHoldWorker';
+export { processChildcareShiftGeneration } from './childcare/shiftGenerationOperations';
+
 // Linq Sprint 4 — weekly digest + monthly health trends
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
@@ -132,6 +345,13 @@ export { runNoVisitCheck } from './scheduled/noVisitCheck';
 export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
 export { sweepExpiredObjectives } from './scheduled/objectiveExpirySweeper';
 export { intelligenceCanaryWatch } from './agents/intelligenceCanaryWatch';
+// Childcare canary watch (U13, plan 2026-07-22-002). Hourly privacy-safe metric
+// sweep → deduped content-free admin alerts + an automatic rollout-HOLD signal
+// (childcare_canary_state) the U14 deploy gate + emergency-off can read. Ships
+// DARK: the scheduled body no-ops unless CHILDCARE_ENABLED is on (getChildcareFlags),
+// so it is a safe no-op until childcare is live and parks automatically on
+// emergency-off. Reads COUNTS only — no child data in telemetry (R57/R61-R63).
+export { childcareCanaryWatch } from './childcare/childcareCanaryWatch';
 
 // Proactive draft sender — every 5 min; consumes status="approved" drafts the admin reviewed.
 export { runProactiveDraftSender, triggerProactiveDraftSendNow, sendApprovedDraftNow } from './scheduled/proactiveDraftSender';
@@ -307,6 +527,32 @@ export * from './migrations/backfillCaregiverPrivateBackground';
 export * from './migrations/backfillCaregiverPayoutPrivate';
 export * from './migrations/backfillAppointmentScheduleFields';
 
+// ── Childcare migration rehearsals (plan 2026-07-22-002, U14) ────────────────
+// All THREE are REHEARSAL-CAPABLE, not executed: dry-run by default, and apply
+// mode refuses the production project via the hard non-production guard (no real
+// production data is migrated in U14 — the founder runs them against emulator /
+// copied non-production data per docs/runbooks/childcare-launch.md).
+//   • backfillCareVertical (U0) — now exported (its module header deferred the
+//     export to U14). Apply also refuses until the real migration cutoff is set.
+//   • migrateHouseholds — legacy family sources → households + memberships
+//     (phone-only adults → provisional; unresolved/orphan → quarantine).
+//   • backfillProviderVerticalProfiles — provider base/senior split (no child
+//     vertical profile or approval created).
+export * from './migrations/backfillCareVertical';
+export * from './migrations/migrateHouseholds';
+export * from './migrations/backfillProviderVerticalProfiles';
+
+// R2 interim careVertical backfill triggers (amended R2 bake-window seam). DARK
+// by default — no-op unless CARE_VERTICAL_INTERIM_BACKFILL_ENABLED=true; stamp
+// "senior" on browser writes missing a vertical during the Rules bake window;
+// never overwrite, never infer "child". Retired once Rules enforce the field.
+export {
+  interimBackfillAppointmentVertical,
+  interimBackfillChatRoomVertical,
+  interimBackfillReviewVertical,
+  interimBackfillBookingRequestVertical,
+} from './triggers/careVerticalBackfillTrigger';
+
 // fixAcceptedCounterPay migration already executed — not exported
 
 // ── initiateCara — DEPRECATED no-op stub (do not extend) ──────────────────────
@@ -355,6 +601,21 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const role    = (data.role    as string | undefined) === "caregiver" ? "caregiver" : "client";
   const consent = (data.consentText as string | undefined) ?? "v1.0";
   const referralId = (data.referralId as string | undefined)?.trim();
+  // Childcare U4 (plan 2026-07-22-002, R47): typed vertical intent. ADDITIVE
+  // with the senior default — the field is stamped on the bridge doc ONLY for
+  // an explicit "child" request AND while the Firestore-resident childcare
+  // flags are on; every other shape (absent, "senior", unknown, flags off)
+  // leaves the bridge doc byte-identical to the pre-childcare shape.
+  //
+  // Front door Stage 1 (docs/architecture/childcare-front-door-design.md):
+  // the `role === "client"` restriction is GONE. It was the structural reason
+  // no caregiver could ever reach childcare onboarding, and it made the whole
+  // caregiver side of the marketplace unreachable by any conversational or
+  // organic route. Both roles may now request the vertical; every other guard
+  // (flags fail-closed, active clearing of a stale stamp, the field-set
+  // privacy contract) is unchanged, and the bridge doc still carries the TYPED
+  // VERTICAL ONLY — never a child name, age, or any recipient detail.
+  const requestedVertical = (data.careVertical as string | undefined) === "child" ? "child" : null;
   const rawName = (data.name as string | undefined) ?? "";
   // Keep printable chars only, collapse whitespace, bound length. Empty/blank →
   // undefined so the webhook's name-present check (and the legacy "ask name"
@@ -391,6 +652,23 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const ttlExpireAt    = new Date(now.getTime() + 30 * 60 * 1000); // 30 min — Firestore TTL purges
   const linqPhoneNumber = process.env.LINQ_PHONE_NUMBER ?? "";
 
+  // Stamp the typed vertical only while the runtime flags are on (fail-closed —
+  // R61). Flag reads fail closed too, so a Firestore hiccup can never stamp a
+  // childcare intent. Role-agnostic as of front door Stage 1 — the bridge
+  // consumer (linq/webhooks.ts) routes by the doc's own `role` field to the
+  // family ingress or the caregiver ingress.
+  let careVertical: "child" | null = null;
+  // Front door Stage 2 (deliverable 7): whether childcare was AVAILABLE at
+  // /start time. Distinct from `careVertical`, which is the AUTHORITATIVE stamp
+  // and still never written while the flags are off.
+  let childcareAvailable = false;
+  if (requestedVertical === "child") {
+    const { getChildcareFlags } = await import("./config/featureFlags");
+    const childcareFlags = await getChildcareFlags().catch(() => null);
+    childcareAvailable = childcareFlags?.enabled === true;
+    if (childcareAvailable) careVertical = "child";
+  }
+
   await db.collection("web_onboarding_sessions").doc(phone).set({
     uid:         context.auth.uid,
     role,
@@ -398,6 +676,38 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     consentText: consent,
     ...(name ? { name } : {}),
     ...(referralId && role === "caregiver" ? { referralId } : {}),
+    // R33/R57: the bridge doc carries the typed vertical ONLY — never child
+    // names, ages, or any recipient detail (those are collected exclusively
+    // in the authenticated web form). The merge write must actively CLEAR a
+    // stale stamp from an earlier attempt when this request doesn't qualify
+    // (fail closed — flags flipped off / role changed between attempts).
+    ...(careVertical
+      ? { careVertical }
+      : { careVertical: admin.firestore.FieldValue.delete() }),
+    // Front door Stage 2 (deliverable 7) — THE WEB FLAGS-OFF FALL-THROUGH FIX.
+    //
+    // The bug: with childcare flags off, the stamp above is actively DELETED
+    // (correctly — fail closed), which left the bridge doc byte-identical to a
+    // senior signup. linq/webhooks.ts then routed the person into SENIOR
+    // onboarding even though they had explicitly picked childcare on the web —
+    // while the SMS path, for the same intent, correctly reached the waitlist.
+    //
+    // The fix keeps the guard and adds a NON-AUTHORITATIVE marker: it records
+    // only that childcare was REQUESTED and was not available. It is not a
+    // vertical stamp, nothing reads it as one, and it grants nothing — the
+    // ingress it unlocks re-reads the live flags itself (R61) and owns the
+    // decision. It also doubles as a client-readable availability signal via the
+    // `childcareAvailable` field in the response below, so /start can show an
+    // explicit unavailable/waitlist screen instead of pretending it worked.
+    //
+    // Cleared on every request that does not qualify, so a stale marker from an
+    // earlier attempt can never survive a role change or a flag flip.
+    ...(requestedVertical === "child" && !careVertical
+      ? { childcareRequested: true, childcareAvailable: false }
+      : {
+        childcareRequested: admin.firestore.FieldValue.delete(),
+        childcareAvailable: admin.firestore.FieldValue.delete(),
+      }),
     status:      "awaiting_inbound",
     createdAt:   admin.firestore.Timestamp.fromDate(now),
     ttlExpireAt: admin.firestore.Timestamp.fromDate(ttlExpireAt),
@@ -514,6 +824,10 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     linqPhone:   linqPhoneNumber,
     smsBody:     "Hey Evia",
     expiresInMs: 30 * 60 * 1000,
+    // Front door Stage 2 (deliverable 7): the client-readable availability
+    // signal. ADDITIVE and present only for an explicit childcare request, so
+    // every senior response shape is byte-identical to before.
+    ...(requestedVertical === "child" ? { childcareAvailable } : {}),
   };
 });
 
@@ -700,6 +1014,12 @@ export const onReviewWritten = functions.firestore
     const caregiverId = (after ?? before)?.caregiverId;
     if (!caregiverId) return;
 
+    // Childcare U8 (R45): childcare reviews NEVER enter the senior aggregate —
+    // they route through triggers/reviewProjection.onChildcareReviewWritten
+    // into the per-vertical childcare projection. Senior rows (no vertical
+    // stamp) keep the exact pre-U8 behavior below.
+    if ((after ?? before)?.careVertical === 'child') return;
+
     // U3: new review → notify the caregiver (server-owned; the browser no longer
     // peer-writes this). Idempotent + create-if-absent so a trigger retry
     // converges to one notification. Only on true creation (before absent).
@@ -727,7 +1047,10 @@ export const onReviewWritten = functions.firestore
       .where('caregiverId', '==', caregiverId)
       .get();
 
-    const reviews = snap.docs.map(d => d.data());
+    // Cross-vertical isolation (R45): the SENIOR aggregate is computed from
+    // non-childcare reviews only, even when both verticals exist for one
+    // caregiver. Senior-only caregivers see an identical result set.
+    const reviews = snap.docs.map(d => d.data()).filter(r => r.careVertical !== 'child');
     const count = reviews.length;
 
     if (count === 0) {

@@ -40,6 +40,14 @@ export interface ChatRoom {
   createdAt: any;
   deletedAt?: { [uid: string]: any };
   messagesCutoff?: { [uid: string]: any };
+  // ── Childcare U9 (plan 2026-07-22-002) — ADDITIVE, absent on every senior
+  // room. Server-owned context-room stamps; the browser only ever READS them.
+  careVertical?: 'senior' | 'child';
+  contextType?: 'interview' | 'booking' | 'objective';
+  contextId?: string;
+  disclosurePhase?: 'pre_booking' | 'confirmed_booking';
+  accessVersion?: number;
+  state?: 'active' | 'revoked';
 }
 
 export interface Message {
@@ -611,6 +619,43 @@ export const chatService = {
     });
 
     return roomRef.id;
+  },
+
+  /**
+   * Childcare U9 (plan 2026-07-22-002, R41/KTD14) — READ-ONLY seam.
+   *
+   * Childcare conversations are SERVER-OWNED context rooms in the same
+   * chatRooms collection (careVertical === 'child', deterministic `cchat_…`
+   * IDs). The browser NEVER creates them, never writes messages into them,
+   * and never updates their metadata — firestore.rules denies all of that.
+   * The full flow for childcare chat is:
+   *   • list rooms:      v1-listMyChildcareConversations (callable)
+   *   • open a room:     v1-openChildcareConversation (callable)
+   *   • send a message:  v1-sendChildcareMessage (callable; server timestamps)
+   *   • mark read:       v1-markChildcareConversationRead (callable)
+   *   • READ messages:   subscribeToChildcareMessages below — a thin alias of
+   *     the existing per-room message subscription, which is already safe for
+   *     childcare rooms because rules scope message reads to CURRENT
+   *     participants (a revoked adult/provider is off the participants array
+   *     and loses the live subscription).
+   * The senior pairwise functions above are byte-identical to their pre-U9
+   * form (characterized by conversationPolicy tests). UI wiring is U11.
+   */
+  isChildcareChatRoom(room: Pick<ChatRoom, 'id'> & { careVertical?: string }): boolean {
+    return room?.careVertical === 'child';
+  },
+
+  /**
+   * Subscribe to a childcare room's messages by server-listed room ID.
+   * Identical mechanics to subscribeToMessages — reads are authorized by the
+   * participants array on the (server-owned) room doc.
+   */
+  subscribeToChildcareMessages(
+    chatRoomId: string,
+    callback: (messages: Message[]) => void,
+    onError?: (error: Error) => void
+  ) {
+    return chatService.subscribeToMessages(chatRoomId, callback, onError);
   },
 
   /**

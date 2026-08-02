@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, Eye, EyeOff, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, Eye, EyeOff, X, Baby } from 'lucide-react';
+// Childcare U11 (plan 2026-07-22-002, pilot staging): the childcare vertical
+// profile is a single page reachable from HERE. The section below appears
+// only when childcare is available (once-per-session probe) — senior-only
+// caregivers see this settings page byte-identically to before (parity
+// pinned by CaregiverAccountSettings.childcare.test.tsx).
+import { fetchCaregiverChildcareAccess, type ChildcareProviderStateResponse } from '../shared/childcareAccess';
 import { authService, dbService } from '../../services/api';
 import firebase from '../../lib/firebase';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
@@ -30,11 +37,25 @@ export const CaregiverAccountSettings: React.FC = () => {
     ...Object.entries(blockedUserProfiles).map(([id, p]) => ({ id, ...p })),
     ...Array.from(blockedIds).filter(id => !blockedUserProfiles[id]).map(id => ({ id, name: 'Blocked User', photo: '' })),
   ];
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<Caregiver | null>(null);
   const [prefs, setPrefs] = useState<Partial<UserProfile>>({});
   const [openAccount, setOpenAccount] = useState(true);
   const [openTransport, setOpenTransport] = useState(false);
   const [openBlocked, setOpenBlocked] = useState(false);
+  // Childcare U11: additive section state (null while unavailable/probing).
+  const [childcareProvider, setChildcareProvider] = useState<ChildcareProviderStateResponse | null>(null);
+  const [openChildcare, setOpenChildcare] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setChildcareProvider(null);
+    void fetchCaregiverChildcareAccess(currentUser?.uid).then((access) => {
+      if (!active) return;
+      if (access.status === 'available') setChildcareProvider(access.provider);
+    });
+    return () => { active = false; };
+  }, [currentUser?.uid]);
 
   // Personal info fields
   const [firstName, setFirstName] = useState('');
@@ -496,6 +517,48 @@ export const CaregiverAccountSettings: React.FC = () => {
                   All three documents are required to activate the transportation badge.
                 </p>
               )}
+            </div>
+          </Accordion>
+        )}
+
+        {/* ── Childcare Profile (U11 — appears only when childcare is available) ── */}
+        {childcareProvider && (
+          <Accordion
+            open={openChildcare}
+            onToggle={() => setOpenChildcare(o => !o)}
+            title="Childcare Profile"
+            badge={childcareProvider.eligibility?.eligible
+              ? <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Visible</span>
+              : <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full">Setup needed</span>}
+          >
+            <div className="p-5 space-y-3" data-testid="childcare-settings-section">
+              <p className="text-sm text-slate-500">
+                Your childcare qualifications, policy acceptance, and background check are managed separately from
+                senior care — nothing there changes your senior services or approval.
+              </p>
+              <div className="text-sm text-slate-700 space-y-1">
+                <p>
+                  Profile:{' '}
+                  <span className="font-medium">
+                    {childcareProvider.hasVerticalProfile ? 'created' : 'not created yet'}
+                  </span>
+                </p>
+                <p>
+                  Childcare visibility:{' '}
+                  <span className="font-medium">
+                    {childcareProvider.eligibility?.eligible
+                      ? 'visible to families'
+                      : `not visible yet (${(childcareProvider.eligibility?.issues ?? []).length} item${(childcareProvider.eligibility?.issues ?? []).length === 1 ? '' : 's'} to resolve)`}
+                  </span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/caregiver/childcare')}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-500 hover:bg-primary-600 text-white text-sm font-semibold"
+              >
+                <Baby className="w-4 h-4" aria-hidden="true" /> Manage childcare profile
+              </button>
             </div>
           </Accordion>
         )}

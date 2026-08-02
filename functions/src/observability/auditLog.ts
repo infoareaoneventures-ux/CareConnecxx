@@ -125,7 +125,105 @@ export type AuditEventType =
   | "journal_comment_edited"
   // U8 review callable (plan 2026-07-18-001)
   | "proactive_draft_approved"
-  | "proactive_draft_rejected";
+  | "proactive_draft_rejected"
+  // Childcare U2 (plan 2026-07-22-002): household + guardian-authority events
+  // (childcare/householdRepository.ts, guardianAuthority.ts,
+  // authorityCallables.ts). Data carries IDs/scopes/versions ONLY — never a
+  // child name or other child PII (R57).
+  | "household_created"
+  | "household_invite_created"
+  | "household_invite_accepted"
+  | "guardian_authority_granted"
+  | "guardian_authority_updated"
+  | "guardian_authority_revoked"
+  | "guardian_authority_dispute_hold"
+  | "guardian_authority_dispute_resolved"
+  // Childcare U3 (plan 2026-07-22-002): child profiles, restricted files, and
+  // the privacy lifecycle. Event data carries IDs, versions, and counts only —
+  // never a display label, exact DOB, safety detail, or file content (R57).
+  | "child_profile_created"
+  | "child_profile_callable_create"
+  | "child_profile_aged_out"
+  | "child_safety_version_appended"
+  | "child_file_upload_intent"
+  | "child_file_upload_confirmed"
+  | "child_file_read_grant"
+  | "child_file_upload_verified"
+  | "child_file_object_rejected"
+  | "child_file_scan_result"
+  | "lifecycle_provider_task_completed"
+  | "data_lifecycle_completed"
+  | "adult_account_deletion_started"
+  // Childcare U4 (plan 2026-07-22-002): family signup ingress, versioned
+  // consent receipts, and the Stripe Identity gate. Event data carries IDs,
+  // versions, states, and counts only — never child PII, message text, or a
+  // callback nonce (R57).
+  | "childcare_signup_ingress"
+  | "childcare_objective_created"
+  | "childcare_consent_receipts_recorded"
+  | "childcare_consent_receipt_revoked"
+  | "childcare_identity_session_created"
+  | "childcare_identity_session_reused"
+  | "childcare_identity_callback_consumed"
+  | "childcare_identity_status_mirrored"
+  // Childcare U5 — provider vertical profile, screening, eligibility
+  | "childcare_vertical_profile_upserted"
+  | "childcare_policy_accepted"
+  | "childcare_screening_evidence_adopted"
+  | "childcare_screening_invitation_sent"
+  | "childcare_provider_approved"
+  | "childcare_provider_approval_revoked"
+  | "childcare_provider_suspended"
+  | "childcare_provider_suspension_lifted"
+  // Childcare U6 — jobs, applications, interviews (counts/IDs only — never
+  // child facts, R57)
+  | "childcare_job_created"
+  | "childcare_job_closed"
+  | "childcare_application_created"
+  | "childcare_interview_requested"
+  // Childcare U7 — booking state machine, safety projections, applications
+  // (IDs, versions, states, counts only — never child facts, R57)
+  | "childcare_booking_requested"
+  | "childcare_booking_accepted"
+  | "childcare_booking_declined"
+  | "childcare_booking_confirmed"
+  | "childcare_booking_canceled"
+  | "childcare_booking_substituted"
+  | "childcare_shift_checked_in"
+  | "childcare_shift_checked_out"
+  | "childcare_booking_safety_read"
+  | "childcare_safety_projection_created"
+  | "childcare_safety_projection_revoked"
+  | "childcare_application_accepted"
+  | "childcare_application_rejected"
+  // Childcare U8 (shift payments, refunds, reviews, reputation)
+  | "childcare_payment_pending_payer"
+  | "childcare_payment_authorized"
+  | "childcare_validated_hours_created"
+  | "childcare_visit_overdue"
+  | "childcare_refund_requested"
+  | "childcare_payout_held"
+  | "childcare_review_submitted"
+  // Childcare U9 (context chat + notification privacy + coordination read)
+  | "childcare_conversation_opened"
+  | "childcare_coordination_read"
+  // Childcare U11 (family-facing read seams — household member enumeration)
+  | "childcare_household_members_listed"
+  // Childcare U10 (Evia context/tools/memory-denial/incident seam) —
+  // categories/ids only, never message content (R57)
+  | "childcare_incident_escalated"
+  // Childcare U12 (operator RBAC + incident cases + moderation) — scopes,
+  // case ids, categories, states, and the R56 reason-for-access only; never
+  // child PII, message text, or evidence content (R57)
+  | "childcare_operator_access"
+  | "childcare_incident_case_created"
+  | "childcare_incident_status_changed"
+  | "childcare_incident_assigned"
+  | "childcare_incident_evidence_added"
+  | "childcare_incident_party_excluded"
+  | "childcare_incident_payout_hold"
+  | "childcare_incident_litigation_hold"
+  | "childcare_review_moderated";
 
 export interface AuditEvent {
   eventType: AuditEventType;

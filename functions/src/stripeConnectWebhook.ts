@@ -110,14 +110,16 @@ export const stripeConnectWebhook = functions
                     const payoutsCol = db.collection("caregivers").doc(caregiverId).collection("payouts");
                     const ledgerSnap = await payoutsCol.where("stripePayoutId", "==", payout.id).limit(1).get();
                     const settledStatus = event.type === "payout.paid" ? "paid" : "failed";
+                    let payoutLedgerRef: FirebaseFirestore.DocumentReference | null = null;
                     if (!ledgerSnap.empty) {
+                        payoutLedgerRef = ledgerSnap.docs[0].ref;
                         await ledgerSnap.docs[0].ref.update({
                             status: settledStatus,
                             ...(event.type === "payout.failed" ? { failureReason: payout.failure_message ?? payout.failure_code ?? "payout_failed" } : {}),
                             settledAt: new Date().toISOString(),
                         });
                     } else {
-                        await payoutsCol.add({
+                        payoutLedgerRef = await payoutsCol.add({
                             amount: payout.amount / 100,
                             grossAmount: payout.amount / 100,
                             fee: 0,
@@ -148,6 +150,11 @@ export const stripeConnectWebhook = functions
                         // claims the money hit the bank ~1 day early.
                         const payoutCreatedMs = (payout.created ?? 0) * 1000;
                         let stamped = 0;
+                        // Childcare U8 (R39): the payout ledger row also records
+                        // WHICH childcare bookings/shifts this sweep covered —
+                        // opaque IDs only, one correlation per booking/shift.
+                        const childcareShiftHoursIds: string[] = [];
+                        const childcareBookingIds = new Set<string>();
                         unstampedShifts.forEach((shiftDoc) => {
                             const s = shiftDoc.data();
                             // Offline shifts (cash/Venmo/Zelle) settle outside Stripe
@@ -169,9 +176,24 @@ export const stripeConnectWebhook = functions
                                     paidAt: paidOutAt,
                                 }, { merge: true });
                             }
+                            if (s.careVertical === "child") {
+                                childcareShiftHoursIds.push(shiftDoc.id);
+                                if (typeof s.childcareBookingId === "string" && s.childcareBookingId) {
+                                    childcareBookingIds.add(s.childcareBookingId);
+                                }
+                            }
                             stamped++;
                         });
                         if (stamped > 0) await batch.commit();
+                        // Additive childcare ledger correlation — written only
+                        // when a childcare shift was actually covered, so a
+                        // senior-only payout row is byte-identical to pre-U8.
+                        if (childcareShiftHoursIds.length > 0 && payoutLedgerRef) {
+                            await payoutLedgerRef.update({
+                                childcareShiftHoursIds,
+                                childcareBookingIds: [...childcareBookingIds],
+                            }).catch((err) => console.error("childcare payout correlation update failed:", err));
+                        }
 
                         await db.collection("users").doc(caregiverId).collection("notifications").add({
                             userId: caregiverId,

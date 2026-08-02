@@ -330,6 +330,33 @@ export interface JobPost {
   applicantCount?: number;
   preferredDate?: string;
   notes?: string;
+
+  // ── Childcare (plan 2026-07-22-002 U6 — ADDITIVE, server-written only) ────
+  // Senior jobs never carry these. Childcare jobs are created exclusively by
+  // v1-createChildcareJobPost; the browser reads them via the childcare
+  // callables (UI surfaces are U11 work).
+  careVertical?: 'senior' | 'child';
+  disclosurePhase?: string;
+  childRequirements?: ChildcareJobRequirements;
+  /** "City, ST" — approximate area only (R33); never an exact address. */
+  areaLabel?: string;
+  approxLat?: number | null;
+  approxLng?: number | null;
+  jurisdictionState?: string;
+}
+
+/**
+ * Childcare U6 — the typed child requirement projection on a childcare job
+ * post (R33/AE12): age bands, categories, credentials, transport ONLY. Child
+ * names, exact address, custody, pickup, emergency contacts, and health
+ * details are structurally excluded (server-enforced).
+ */
+export interface ChildcareJobRequirements {
+  childCount: number;
+  ageBands: string[];
+  serviceCategories: string[];
+  requiredCredentials: string[];
+  transportRequired: boolean;
 }
 
 // --- MICRO-VISIT TYPES ---
@@ -427,6 +454,18 @@ export interface Review {
     text: string;
     respondedAt: string;
   };
+  // Childcare U8 (plan 2026-07-22-002, R44/R45) — additive vertical stamps on
+  // server-created childcare reviews. Senior reviews never carry these.
+  careVertical?: 'senior' | 'child';
+  childcareBookingId?: string;
+  reviewerUid?: string;
+  reviewerRole?: 'family' | 'provider';
+  moderationState?: 'pending' | 'published' | 'rejected' | 'unpublished' | 'deleted' | 'flagged' | 'removed';
+  schemaVersion?: 'childcare-review-public-v1';
+  sourceReviewId?: string;
+  sourceVersion?: number;
+  sourceStateVersion?: number;
+  isPublic?: boolean;
 }
 
 export interface SystemLog {
@@ -489,6 +528,16 @@ export interface Appointment {
 
   // Multi-senior household: explicit seniorId (was implicit = clientId in old model)
   seniorId?: string;
+
+  // ── Childcare U7 (plan 2026-07-22-002, R46) — ADDITIVE, absent on every
+  // senior appointment. Childcare appointments carry typed recipient
+  // REFERENCES + the age-band-safe display label ONLY (no seniorName, no
+  // address, no care details — enforced server-side by
+  // functions/src/utils/appointmentDoc.assertChildSafeAppointmentDoc).
+  careVertical?: 'senior' | 'child';
+  recipientRef?: { careVertical: 'child'; householdId: string; childIds: string[] };
+  recipientLabel?: string;
+  childcareBookingId?: string;
 }
 
 // --- SHIFT HOURS (per-appointment caregiver hours submission + client approval) ---
@@ -971,4 +1020,387 @@ export interface HireRequest {
   caregiverNotifiedAt?: string;
   caregiverRespondedAt?: string;
   bookingId?: string;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare marketplace U2 (plan 2026-07-22-002) — household, membership,
+// guardian authority, and invite-token contracts. Frontend mirror of the
+// server-owned shapes in functions/src/childcare/{householdRepository,
+// guardianAuthority,authorityCallables}.ts. ALL writes are server-side
+// callables (v1-createHousehold, v1-acceptHouseholdInvite, ...); the browser
+// never mutates these collections (firestore.rules denies it). UI ships in
+// U11 — these types exist so services/api.ts additions stay typed.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Care vertical stamp (mirror of functions/src/data/contract.ts CareVertical). */
+export type CareVertical = 'senior' | 'child';
+
+/**
+ * Recipient-scoped permission scopes (R7). Household membership grants NONE of
+ * these — every scope is an explicit, independently revocable
+ * guardian_authorities grant. `payment` (payer) is independent of the rest
+ * (payer-not-guardian / guardian-not-payer are both real states).
+ */
+export type GuardianScope =
+  | 'view'
+  | 'schedule'
+  | 'message'
+  | 'pickup'
+  | 'emergency'
+  | 'cancellation'
+  | 'payment'
+  | 'management';
+
+export type HouseholdStatus = 'active' | 'closed';
+export type HouseholdMembershipRole = 'primary' | 'adult';
+/** `provisional` = SMS-joined phone-only adult with NO Firebase Auth — zero grantable scopes. */
+export type HouseholdMembershipStatus = 'active' | 'provisional' | 'revoked' | 'superseded';
+export type GuardianAuthorityState = 'active' | 'dispute_hold' | 'revoked' | 'expired';
+
+export interface Household {
+  householdId: string;
+  primaryAdultUid: string;
+  status: HouseholdStatus;
+  policyVersion: string | null;
+  /** Bumped transactionally on every household-scoped access change. */
+  accessVersion: number;
+  /** Versioned DERIVED display cache — never independently authorizing (R6). */
+  derivedSummary?: {
+    activeAdultCount: number;
+    provisionalMemberCount: number;
+    childIdsWithActiveAuthority: string[];
+    careVerticals: CareVertical[];
+    summaryVersion: number;
+    computedAt: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HouseholdMembership {
+  membershipId: string;
+  householdId: string;
+  /** null ONLY for provisional phone-only members. */
+  adultUid: string | null;
+  role: HouseholdMembershipRole;
+  status: HouseholdMembershipStatus;
+  source: 'household_create' | 'invite' | 'sms_join' | 'promotion';
+  invitedByUid?: string | null;
+  consentVersion?: string | null;
+  joinedAt: string | null;
+  revokedAt?: string | null;
+  revokedByUid?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GuardianAuthority {
+  authorityId: string;
+  householdId: string;
+  childId: string;
+  adultUid: string;
+  careVertical: 'child';
+  scopes: GuardianScope[];
+  state: GuardianAuthorityState;
+  source: 'bootstrap_primary_guardian' | 'explicit_grant' | 'invite_acceptance';
+  grantedByUid: string;
+  effectiveAt: string;
+  expiresAt: string | null;
+  revokedAt?: string | null;
+  revokedByUid?: string | null;
+  /** Bumped in every state/scope transaction — derived projections pin it. */
+  accessVersion: number;
+  /** R18 co-guardian dispute-hold record (notice + operator review path). */
+  disputeHold?: {
+    pendingAction: 'revoke' | 'reduce_scopes';
+    pendingScopes?: GuardianScope[];
+    openedAt: string;
+    openedByUid: string;
+    reason: string | null;
+    resolvedAt?: string | null;
+    resolvedByUid?: string | null;
+    resolution?: 'applied' | 'restored' | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Server-only invite-token record (browser never reads these — the raw token
+ * travels in the invite link and only its hash is stored). Typed here for the
+ * callable request/response surfaces.
+ */
+export interface ChildcareInviteToken {
+  tokenId: string;
+  householdId: string;
+  invitedByUid: string;
+  intendedContact: { channel: 'sms' | 'email'; value: string };
+  proposedScopes: Array<{ childId: string; scopes: GuardianScope[] }>;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  expiresAt: string;
+  usedByUid?: string | null;
+  usedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare U3 — child profiles + privacy lifecycle (plan 2026-07-22-002).
+// Browser-visible mirrors of the server-owned shapes in
+// functions/src/data/childProfileRepository.ts and
+// functions/src/privacy/dataLifecycle.ts. ALL writes are server-side callables
+// (v1-createChildProfile, v1-requestChildDataDeletion, ...); the browser never
+// mutates these collections, and it NEVER sees the private safety zone (exact
+// birth date, emergency contacts, health/pickup/custody detail) — only the
+// operational summary below. STRUCTURAL invariant (R9): a child profile type
+// carries NO email, phone, or Firebase Auth uid field of the child's own —
+// children are never platform actors. UI ships in U11.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Derived age band — the ONLY age signal outside the private zone (R10). */
+export type ChildAgeBand =
+  | 'infant'
+  | 'toddler'
+  | 'preschool'
+  | 'school_age'
+  | 'preteen'
+  | 'teen'
+  | 'aged_out';
+
+/** Age-out is an EXPLICIT state transition, never a silent adult conversion (R16). */
+export type ChildProfileState = 'active' | 'aged_out' | 'deleted';
+
+/**
+ * The operational summary the browser may read (Rules authorize via the
+ * authorizedViewerUids derived cache — display read only, never authority).
+ */
+export interface ChildProfileSummary {
+  childId: string;
+  householdId: string;
+  careVertical: 'child';
+  displayLabel: string;
+  ageBand: ChildAgeBand;
+  careCategories: string[];
+  state: ChildProfileState;
+  safetyCurrentVersion: number;
+  retentionPolicyVersion: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChildDataLifecycleScope = 'export' | 'delete' | 'redact';
+
+export type ChildDataLifecycleState =
+  | 'pending'
+  | 'in_progress'
+  | 'awaiting_provider'
+  | 'blocked_legal_hold'
+  | 'completed'
+  | 'requires_admin_review';
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare U5 — provider vertical profile, screening, and eligibility (plan
+// 2026-07-22-002). Frontend mirrors of the server-owned shapes in
+// functions/src/childcare/{screeningPolicy,providerEligibility,
+// providerVerticalCallables}.ts. ALL writes are server-side callables
+// (v1-upsertChildcareVerticalProfile, v1-startChildcareScreening, ...);
+// screenings are EVIDENCE and fully server-only (own status flows through
+// v1-getMyChildcareProviderState). The browser only ever reads the derived
+// per-vertical visibility on publicCaregiverProfiles (verticalVisibility +
+// allowlisted childcareEvidenceLabels — R30). UI ships in U11/U12.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Provider capability age bands (never child data). */
+export type ChildcareProviderAgeBand =
+  | 'infant'
+  | 'toddler'
+  | 'preschool'
+  | 'school_age'
+  | 'preteen'
+  | 'teen';
+
+export type ChildcareEvidenceStatusLabel =
+  | 'none' | 'pending' | 'clear' | 'consider' | 'suspended' | 'disputed' | 'canceled' | 'expired';
+
+export type ChildcareApprovalState = 'none' | 'approved' | 'revoked';
+
+/** v1-getMyChildcareProviderState response (provider's OWN remediation view). */
+export interface ChildcareProviderState {
+  hasVerticalProfile: boolean;
+  verticalProfile: {
+    ageBands: string[];
+    services: string[];
+    yearsChildcareExperience: number | null;
+    hourlyRate: number | null;
+    transport: { offersTransport: boolean };
+    limitations: string[];
+    jurisdictionState: string | null;
+    adultAgeAttested: boolean;
+    acceptedPolicyVersion: string | null;
+    approvalState: ChildcareApprovalState;
+    suspensionActive: boolean;
+    profileVersion: number;
+  } | null;
+  screening: {
+    evidenceStatus: ChildcareEvidenceStatusLabel;
+    invitationStatus: 'none' | 'sent' | 'completed' | 'expired' | 'canceled';
+    expiresAt: string | null;
+    adverseActionState: 'none' | 'pre_adverse' | 'dispute' | 'post_adverse';
+    evidenceVersion: number;
+  } | null;
+  /** AE21: base fields already on the adult profile — never re-asked. */
+  reusedBaseFields: string[];
+  missingBaseFields: string[];
+  missingChildcareFields: string[];
+  eligibility: {
+    eligible: boolean;
+    eligibilityVersion: string;
+    evidenceVersion: number;
+    issues: Array<{ code: string; field: string }>;
+    transportCapable: boolean;
+    renewalDue: boolean;
+  };
+}
+
+/** Public-projection additions (R30 — derived labels only, only when visible). */
+export interface PublicCaregiverVerticalFields {
+  verticalVisibility?: { child: boolean };
+  childcareEvidenceLabels?: string[];
+}
+
+/** v1-getLifecycleRequestStatus response shape (requester-scoped). */
+export interface ChildDataLifecycleStatus {
+  requestId: string;
+  scope: ChildDataLifecycleScope;
+  state: ChildDataLifecycleState;
+  tasks: Array<{ kind: string; state: string; completedAt: string | null }>;
+  proof: {
+    counts: Record<string, number>;
+    startedAt: string | null;
+    completedAt: string | null;
+    retainedRecordReasons: string[];
+  };
+  /** Export scope, completed only: short-lived signed download URL. */
+  exportDownloadUrl?: string | null;
+  exportUrlExpiresAt?: string | null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare U7 — booking, appointment, availability, and safety projection
+// (plan 2026-07-22-002). Browser-visible mirrors of the server-owned shapes in
+// functions/src/childcare/{bookingPolicy,bookingCallables,safetyProjection}.ts.
+// ALL childcare booking writes are server-side callables
+// (v1-requestChildcareBooking, v1-acceptChildcareBooking, ...); the browser
+// reads its own participant-scoped booking docs, which are safe by
+// construction (typed recipient references + age-band-safe display label
+// ONLY — R46). Safety projections have NO browser read path at all — the
+// assigned caregiver calls v1-getChildcareBookingSafety. UI ships in U11.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export type ChildcareBookingStatus =
+  | 'requested'
+  | 'accepted'
+  | 'confirmed'
+  | 'in_progress'
+  | 'completed'
+  | 'declined'
+  | 'canceled';
+
+/** Payment authorization STATE only — the Stripe flows themselves are U8. */
+export type ChildcarePaymentAuthorizationState = 'none' | 'pending' | 'authorized' | 'canceled';
+
+export interface ChildcareBookingSummary {
+  bookingId: string;
+  careVertical: 'child';
+  clientId: string;
+  caregiverId: string;
+  caregiverName: string;
+  householdId: string;
+  /** Typed recipient REFERENCES only — never child names/DOB/details (R46). */
+  childIds: string[];
+  recipientLabel: string;
+  status: ChildcareBookingStatus;
+  /** Optimistic-concurrency pin: callables reject stale expectedStateVersion. */
+  stateVersion: number;
+  schedule: {
+    dates: Array<{ date: string; startTime: string; endTime: string }>;
+    recurring: { days: string[]; startTime: string; endTime: string } | null;
+  };
+  hourlyRate: number | null;
+  paymentAuthorization: { state: ChildcarePaymentAuthorizationState; correlationId: string | null };
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** v1-getChildcareBookingSafety response (assigned caregiver, current version only). */
+export interface ChildcareBookingSafetyView {
+  bookingId: string;
+  version: number;
+  children: Array<{
+    childId: string;
+    displayLabel: string;
+    ageBand: ChildAgeBand | string;
+    pickupNotes: string | null;
+    emergencyContacts: Array<{ name: string; relationship: string; phone: string }>;
+    healthNotes: string | null;
+    allergiesNote: string | null;
+    sourceSafetyVersion: number;
+  }>;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Childcare U9 — context chat + notification privacy (plan 2026-07-22-002,
+// KTD14/R41-R43). Frontend mirrors of the server-owned shapes in
+// functions/src/childcare/{conversationPolicy,conversationCallables,
+// notificationPolicy}.ts. Childcare rooms live in the shared chatRooms
+// collection as SERVER-owned careVertical:'child' docs: the browser lists
+// them via v1-listMyChildcareConversations, opens via
+// v1-openChildcareConversation, sends via v1-sendChildcareMessage, marks read
+// via v1-markChildcareConversationRead, and only ever READS messages by
+// server-listed room ID (rules deny every childcare browser write). The exact
+// address for a confirmed booking comes ONLY from
+// v1-getChildcareBookingCoordination — never from chat, notifications, or
+// room metadata. UI ships in U11.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export type ChildcareConversationContextType = 'interview' | 'booking' | 'objective';
+export type ChildcareDisclosurePhase = 'pre_booking' | 'confirmed_booking';
+
+/** One row of the v1-listMyChildcareConversations response. */
+export interface ChildcareConversationSummary {
+  roomId: string;
+  contextType: ChildcareConversationContextType;
+  contextId: string;
+  participants: string[];
+  participantNames: string[];
+  disclosurePhase: ChildcareDisclosurePhase;
+  state: 'active' | 'revoked';
+  accessVersion: number;
+  /** ALWAYS a generic label ('New message' / '') — never message text. */
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+}
+
+/** One row of the v1-getChildcareConversationMessages response. */
+export interface ChildcareConversationMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  type: 'text';
+  disclosurePhase: ChildcareDisclosurePhase;
+  createdAt: string;
+}
+
+/** v1-getChildcareBookingCoordination response (assigned caregiver on a
+ *  confirmed/in-progress booking, or a family adult with `view` scope). */
+export interface ChildcareBookingCoordinationView {
+  bookingId: string;
+  version: number;
+  coordination: Array<{
+    childId: string;
+    addressDetail: string | null;
+    arrivalNotes: string | null;
+  }>;
 }

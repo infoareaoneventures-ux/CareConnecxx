@@ -60,6 +60,13 @@ import {
   getZepUserId,
 } from "../memory/zepClient";
 import { sessionActivityFields } from "../memory/conversationMemory";
+// Childcare U4 (plan 2026-07-22-002, R48/R50): every initializeZepOnFirstContact
+// call site + the onboarding Zep logging is gated on this decision — childcare
+// and unclassified/pending sessions are memory-DENIED; classified senior
+// sessions are eligible (parity pinned in memoryEligibility.test.ts).
+import { decideMemoryEligibility, logMemoryDenial } from "../memory/memoryEligibility";
+// Front door Stage 1 — pure, dependency-free constant (no side effects at import).
+import { VERTICAL_INTENT_PENDING } from "../agents/verticalFrontDoor";
 import { MEMORY_FINGERPRINT_KEY_NAME, MEMORY_FINGERPRINT_KEY_SECRET } from "../memory/fingerprintKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { quickComplete } from "../utils/openaiClient";
@@ -71,6 +78,10 @@ import { detectPersonaShift } from "../utils/personaShiftDetector";
 import { collectKnownNames } from "../utils/knownNames";
 import { detectLanguage, languageFromSession, t as tr, flowLabel, type Language } from "../utils/language";
 import { recordApprovalNoticeProviderStatus } from "../billing/approvalNoticeDispatcher";
+import {
+  conversationPartitionIdsForRead,
+  createVerticalExecutionContext,
+} from "../agents/turnSourceKey";
 
 const db = admin.firestore();
 
@@ -168,6 +179,11 @@ async function handleTypingStarted(event: unknown): Promise<void> {
 
   const session = sessionSnap.data() as AgentSession;
   if (session.optedOut || session.optedIn === false) return;
+  if (session.careVertical === "child") return;
+  // Front door Stage 1 (R-FD1): an UNRESOLVED session must perform no recipient
+  // reads. This prefetch loads senior profile / journal / appointments, so a
+  // pending-vertical session has to be skipped here too — not just childcare.
+  if ((session as { verticalIntent?: unknown }).verticalIntent === VERTICAL_INTENT_PENDING) return;
 
   const seniorId = session.seniorId ?? session.userId ?? "";
   const userId   = session.userId ?? "";
@@ -177,6 +193,16 @@ async function handleTypingStarted(event: unknown): Promise<void> {
   // order as qaAgent's own read — a prefetch HIT and a prefetch MISS must see
   // the identical senior (previously this cached canonical-only while the MISS
   // path read legacy `seniors`, a per-turn split brain).
+  const historyPromise = Promise.all(
+    conversationPartitionIdsForRead(phone, "senior").map((partitionId) =>
+      db.collection("agent_conversations").doc(partitionId)
+        .collection("messages").orderBy("timestamp", "desc").limit(10).get()),
+  ).then((snaps) => ({
+    docs: snaps.flatMap((snap) => snap.docs)
+      .filter((doc) => doc.data().careVertical !== "child")
+      .sort((a, b) => Number(b.data().timestamp ?? 0) - Number(a.data().timestamp ?? 0))
+      .slice(0, 10),
+  }));
   const [seniorProfileRead, journalSnap, apptSnap, historySnap] = await Promise.all([
     getSeniorProfileWithSource(seniorId, db),
     db.collection("care_journal")
@@ -187,8 +213,7 @@ async function handleTypingStarted(event: unknown): Promise<void> {
       .where("isoDate",  ">=", now.slice(0, 10))
       .where("status",   "in", ["confirmed", "pending_caregiver_confirmation"])
       .orderBy("isoDate", "asc").limit(1).get(),
-    db.collection("agent_conversations").doc(phone)
-      .collection("messages").orderBy("timestamp", "desc").limit(10).get(),
+    historyPromise,
   ]).catch(() => [null, null, null, null]);
 
   if (!seniorProfileRead) return;
@@ -384,9 +409,23 @@ async function createSecondaryMemberSession(
     ...(groupChatId ? { groupChatId } : {}),
   });
 
-  await initializeZepOnFirstContact(phone).catch((err) =>
-    console.error("Zep init failed (secondary member):", err)
-  );
+  // U4 memory eligibility: this session was just written classified
+  // (userType "client") — eligible, so the senior path is unchanged. The gate
+  // exists so a future childcare-stamped secondary member can never init Zep.
+  {
+    const memDecision = decideMemoryEligibility({
+      userType: "client",
+      careVertical: (primarySession as any).careVertical,
+      verticalIntent: (primarySession as any).verticalIntent,
+    });
+    if (memDecision.eligible) {
+      await initializeZepOnFirstContact(phone).catch((err) =>
+        console.error("Zep init failed (secondary member):", err)
+      );
+    } else {
+      logMemoryDenial("secondary_member", memDecision);
+    }
+  }
 
   await sendMessage(chatId,
     `Hi, I'm Evia — the care coordinator for ${(primarySession as any).onboardingData?.seniorName ?? "your family"}. ` +
@@ -511,9 +550,23 @@ async function handlePendingConsentReply(
     }).catch(() => {/* non-critical */});
   }
 
-  await initializeZepOnFirstContact(phone).catch((err) =>
-    console.error("Zep init failed (pending consent opt-in):", err)
-  );
+  // U4 memory eligibility: the update above just classified this session
+  // (userType from the users doc, default "client") — eligible for the senior
+  // shapes, denied if a childcare/pending stamp is ever present.
+  {
+    const memDecision = decideMemoryEligibility({
+      userType: (userData.userType as string | undefined) ?? "client",
+      careVertical: (session as any).careVertical,
+      verticalIntent: (session as any).verticalIntent,
+    });
+    if (memDecision.eligible) {
+      await initializeZepOnFirstContact(phone).catch((err) =>
+        console.error("Zep init failed (pending consent opt-in):", err)
+      );
+    } else {
+      logMemoryDenial("pending_consent_opt_in", memDecision);
+    }
+  }
 
   // First impressions matter — route the handoff through Evia's actual voice,
   // mirroring the web bridge's welcome (frozen fallbacks if the LLM fails).
@@ -990,7 +1043,25 @@ const handleInboundInner = traceable(
     // conversation shows up in Chat/ChatInbox. Best-effort, never blocks.
     if (text && stored.userId) {
       const { mirrorToWebThread } = await import("./threadMirror");
-      void mirrorToWebThread({ userId: stored.userId, direction: "inbound", text });
+      const careVertical = (stored as AgentSession & { careVertical?: unknown }).careVertical === "child"
+        ? "child"
+        : "senior";
+      const executionContext = createVerticalExecutionContext({
+        principal: stored.userId,
+        careVertical,
+        channel: "linq",
+        conversationPartition: `${careVertical}:${stored.userId}`,
+        sourceTurn: {
+          conversationId: chatId,
+          messageId: inboundMessageId || `linq:${Date.now()}`,
+        },
+      });
+      void mirrorToWebThread({
+        userId: stored.userId,
+        direction: "inbound",
+        text,
+        executionContext,
+      });
     }
   }
 
@@ -1112,6 +1183,56 @@ const handleInboundInner = traceable(
     const webSessionSnap = await webSessionRef.get();
     if (webSessionSnap.exists && webSessionSnap.data()?.status === "awaiting_inbound") {
       const webSessionData = webSessionSnap.data() ?? {};
+
+      // ── Childcare vertical handoff (U4, plan 2026-07-22-002) ────────────────
+      // Entered ONLY when the bridge doc carries the typed childcare vertical
+      // (stamped by createWebOnboardingSession when the childcare flags are
+      // on). The handler owns the whole turn — session stamp, one enrollment
+      // objective, consent receipts, secure web link — and NEVER initializes
+      // memory (R48/R50). A typed childcare signup is never allowed to fall
+      // through into senior onboarding (fail closed).
+      //
+      // Front door Stage 1: the bridge doc can now carry a CAREGIVER childcare
+      // signup too (createWebOnboardingSession no longer gates the stamp on
+      // role). Route by the doc's own role field — the family ingress owns the
+      // enrollment objective and the child-profile route; the caregiver ingress
+      // stamps and holds at the authenticated childcare vertical-profile page.
+      // Either way a childcare signup never reaches senior onboarding.
+      // Front door Stage 2 (deliverable 7): the WEB flags-off fall-through.
+      //
+      // createWebOnboardingSession deliberately never writes the authoritative
+      // `careVertical` stamp while the childcare flags are off — but that meant a
+      // web user who explicitly PICKED childcare arrived here with a bridge doc
+      // indistinguishable from a senior signup and silently landed in SENIOR
+      // onboarding, while the SMS path correctly reached the waitlist. The
+      // callable now records a NON-AUTHORITATIVE marker (`childcareRequested`)
+      // alongside the deleted stamp, and it is enough to enter the childcare
+      // ingress — which re-reads the flags itself (R61) and produces the explicit
+      // unavailable/waitlist state. Flags flipped back ON in the meantime is a
+      // bonus: the same handler then enrols them properly.
+      const bridgeWantsChildcare =
+        (webSessionData.careVertical as string | undefined) === "child" ||
+        webSessionData.childcareRequested === true;
+      if (bridgeWantsChildcare) {
+        const bridgeVerticalRole =
+          (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
+        const ingress = await import("../childcare/signupIngress");
+        const runIngress = bridgeVerticalRole === "caregiver"
+          ? ingress.handleChildcareCaregiverBridgeInbound
+          : ingress.handleChildcareWebBridgeInbound;
+        const handled = await runIngress({
+          phone,
+          chatId,
+          service,
+          preferredLanguage,
+          webSessionData: webSessionData as Record<string, unknown>,
+        }).catch((err) => {
+          console.error("childcare web-bridge ingress failed:", err, { role: bridgeVerticalRole });
+          return true; // fail CLOSED — never senior onboarding for a childcare intent
+        });
+        if (handled) return;
+      }
+
       const webRole  = (webSessionData.role as string | undefined) === "caregiver" ? "caregiver" : "client";
       const referralId = webRole === "caregiver" ? (webSessionData.referralId as string | undefined) : undefined;
       // Name typed on the /start web form (if any). When present, we pre-seed it into
@@ -1183,9 +1304,20 @@ const handleInboundInner = traceable(
         chatId,
       }).catch(() => {/* non-critical */});
 
-      await initializeZepOnFirstContact(phone).catch((err) =>
-        console.error("Zep init failed (web bridge):", err)
-      );
+      // U4 memory eligibility: web-bridge sessions are classified at creation
+      // (webRole client/caregiver — childcare bridges returned above), so the
+      // senior path is unchanged; the gate protects against any future
+      // childcare/pending stamp reaching this site.
+      {
+        const memDecision = decideMemoryEligibility({ userType: webRole });
+        if (memDecision.eligible) {
+          await initializeZepOnFirstContact(phone).catch((err) =>
+            console.error("Zep init failed (web bridge):", err)
+          );
+        } else {
+          logMemoryDenial("web_bridge", memDecision);
+        }
+      }
 
       if (service === "iMessage") await startTyping(chatId).catch(() => {});
 
@@ -1259,6 +1391,102 @@ const handleInboundInner = traceable(
       return;
     }
 
+    // ── Cold-inbound role × vertical resolution (front door Stage 1) ────────
+    //
+    // docs/architecture/childcare-front-door-design.md. THE fix for "vertical is
+    // decided by a URL parameter, never by what a person says": resolve both
+    // axes from the first message BEFORE any role/vertical-dependent branching,
+    // then let the SERVER decide what gets stamped (R-FD2 — the classifier is
+    // advisory; resolveVerticalFrontDoor applies flags and role rules).
+    //
+    // Senior parity is structural, not incidental: `outcome === "senior"` (and
+    // every unresolved-but-not-childcare-capable shape) falls straight through
+    // to the untouched intro + ask_role session below. Only a childcare or
+    // genuinely-ambiguous outcome diverges, and the classifier fails safe to
+    // "ask", never to a guess.
+    {
+      const { classifyRoleAndVertical, detectDeterministicSignals } =
+        await import("../agents/verticalClassifier");
+      const { resolveVerticalFrontDoor, STEP_ASK_VERTICAL, verticalQuestion } =
+        await import("../agents/verticalFrontDoor");
+      const { getChildcareFlags } = await import("../config/featureFlags");
+      const classification = await classifyRoleAndVertical({
+        text,
+        isFirstContact: true,
+      }).catch((err) => {
+        console.error("cold-inbound vertical classification failed (senior fallthrough):", err);
+        return null;
+      });
+
+      // A childcare-capable outcome is the ONLY reason to read the flags — a
+      // senior/no-signal first message must not add a Firestore read per cold
+      // inbound. Flag reads fail closed (R61).
+      const needsFlags = !!classification && (classification.vertical === "child" || classification.dual);
+      const childcareEnabled = needsFlags
+        ? (await getChildcareFlags({ db }).catch(() => null))?.enabled === true
+        : false;
+
+      const decision = classification
+        ? resolveVerticalFrontDoor({ classification, childcareEnabled, askAttempts: 0 })
+        : null;
+
+      // "ask" with no childcare-capable signal at all is the plain cold inbound:
+      // the existing intro ALREADY asks the funnel's first question, so asking a
+      // second one would talk over it. Only divert to the vertical question when
+      // the message actually carried childcare-capable ambiguity (dual, or a
+      // conflicting/child-adjacent signal the classifier could not settle).
+      const askIsChildcareCapable =
+        !!classification &&
+        (classification.dual ||
+          classification.reason === "signal_conflict" ||
+          detectDeterministicSignals(text).child);
+
+      if (decision && (decision.outcome === "child" || decision.outcome === "unavailable")) {
+        const { handleChildcareColdInbound } = await import("../childcare/signupIngress");
+        const handled = await handleChildcareColdInbound({
+          phone,
+          chatId,
+          service,
+          preferredLanguage,
+          role: decision.role,
+          sessionPatch: decision.sessionPatch,
+        }).catch((err) => {
+          console.error("childcare cold ingress failed:", err);
+          return true; // fail CLOSED — never senior onboarding for a childcare intent
+        });
+        if (handled) {
+          if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+          return;
+        }
+      }
+
+      if (decision && (decision.outcome === "ask" || decision.outcome === "dual_ask") && askIsChildcareCapable) {
+        // Unresolved is a REAL state (R-FD1): userType stays null so no
+        // role-dependent branch fires, verticalIntent "pending" makes
+        // decideMemoryEligibility a denial (pending_classification), and the
+        // session sits on a step the senior state machine does not own — so no
+        // recipient tools and no recipient reads are reachable.
+        const pendingSession: Record<string, unknown> = {
+          chatId,
+          phone,
+          service,
+          userType:       null,
+          onboardingStep: STEP_ASK_VERTICAL,
+          optedIn:        true,
+          optedOut:       false,
+          preferredLanguage,
+          createdAt:      new Date().toISOString(),
+          ...decision.sessionPatch,
+        };
+        await db.collection("agent_sessions").doc(phone).set(pendingSession);
+        logMemoryDenial("vertical_pending_first_contact", decideMemoryEligibility(pendingSession));
+        if (service === "iMessage") await startTyping(chatId).catch(() => {});
+        await sendMessage(chatId, decision.question ?? verticalQuestion(0));
+        if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
+        return;
+      }
+    }
+
     // No web session and no prior history — a cold inbound. Phone verification
     // happens on the WEBSITE (Firebase Phone Auth) before createWebOnboardingSession,
     // not over SMS — so we do NOT gate the thread behind an OTP. Lead with a proper
@@ -1276,11 +1504,24 @@ const handleInboundInner = traceable(
       createdAt:      new Date().toISOString(),
     });
 
-    // Start Zep memory immediately — awaited so zepThreadId is written before
-    // the next message arrives (fast: ~200ms HTTP call).
-    await initializeZepOnFirstContact(phone).catch((err) =>
-      console.error("Zep init failed (first contact):", err)
-    );
+    // U4 memory eligibility (plan 2026-07-22-002, R48/AE23): this session was
+    // just written UNCLASSIFIED (userType null, ask_role) — a cold inbound may
+    // classify role/vertical but may NOT initialize memory, and earlier turns
+    // are never retroactively synced. Zep now starts on the first turn AFTER
+    // classification via the lazy self-heal below (the plan names this as the
+    // deliberate inversion of the old always-initialize-at-first-contact
+    // invariant). Classified paths (web bridge, secondary member, consent
+    // opt-in) are unchanged.
+    {
+      const memDecision = decideMemoryEligibility({ userType: null });
+      if (memDecision.eligible) {
+        await initializeZepOnFirstContact(phone).catch((err) =>
+          console.error("Zep init failed (first contact):", err)
+        );
+      } else {
+        logMemoryDenial("first_contact", memDecision);
+      }
+    }
 
     if (service === "iMessage") await startTyping(chatId).catch(() => {});
     // LAUNCH: conversational automation disclosure REMOVED by explicit founder
@@ -1558,6 +1799,15 @@ const handleInboundInner = traceable(
   // STOP — works at any stage (CANCEL is NOT here — it cancels a visit, not the account)
   if (stopWords.has(norm)) {
     await optOutPhoneNumber(phone);
+    // Childcare U4 (guarded, typed-vertical only): STOP also revokes the
+    // versioned communication-consent receipt (R23 — receipts, not booleans).
+    // Senior sessions never enter this branch.
+    if ((session as any).careVertical === "child" && session.userId) {
+      const { revokeCommunicationConsentReceipts } = await import("../childcare/consentReceipts");
+      await revokeCommunicationConsentReceipts(session.userId).catch((err) =>
+        console.error("childcare consent revocation on STOP failed:", err)
+      );
+    }
     const lang = languageFromSession(session as unknown as Record<string, unknown>);
     // TCPA opt-out confirmation must land reliably — force SMS, never iMessage.
     await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
@@ -1851,16 +2101,150 @@ const handleInboundInner = traceable(
     return;
   }
 
+  // ── Unresolved-vertical turns (front door Stage 1, R-FD1) ─────────────────
+  //
+  // The session is HELD pending: Evia asked "adult or kids?" and this inbound is
+  // the answer. Placed here — after the shared carrier-protocol guards (STOP /
+  // START / HELP / crisis / bereavement all still win) and BEFORE every
+  // role/vertical-dependent branch — because an unresolved session must not
+  // reach the senior state machine, the intent classifier, recipient reads, or
+  // any tool surface. `verticalIntent: "pending"` also makes
+  // decideMemoryEligibility a denial, so nothing here is remembered either.
+  //
+  // The ANSWER resolves the stamp; an answer that still does not resolve asks
+  // once more (explicit either/or). It never falls back to senior.
+  if ((session as any).verticalIntent === VERTICAL_INTENT_PENDING) {
+    const { classifyRoleAndVertical } = await import("../agents/verticalClassifier");
+    const { resolvePendingVerticalAnswer, verticalQuestion } = await import("../agents/verticalFrontDoor");
+    const { getChildcareFlags } = await import("../config/featureFlags");
+
+    const pendingRole = (session as any).verticalPendingRole === "caregiver"
+      ? ("caregiver" as const)
+      : (session as any).verticalPendingRole === "client"
+        ? ("client" as const)
+        : session.userType === "caregiver"
+          ? ("caregiver" as const)
+          : session.userType === "client"
+            ? ("client" as const)
+            : null;
+    const askAttempts = Number((session as any).verticalAskAttempts ?? 1) || 1;
+
+    const classification = await classifyRoleAndVertical({
+      text,
+      currentRole: pendingRole,
+      // Deliberately NO currentVertical: nothing is stamped yet, and passing one
+      // would let the fail-safe "never move a stamped vertical" branch resolve
+      // a session that has never been classified.
+      currentVertical: null,
+    }).catch(() => null);
+
+    const childcareEnabled = (await getChildcareFlags({ db }).catch(() => null))?.enabled === true;
+    const decision = classification
+      ? resolvePendingVerticalAnswer({
+          classification,
+          knownRole: pendingRole,
+          childcareEnabled,
+          askAttempts,
+          notedInterest: ((session as any).verticalNotedInterest ?? null) as "senior" | "child" | "both" | null,
+        })
+      : null;
+
+    if (!decision || decision.outcome === "ask" || decision.outcome === "dual_ask") {
+      // Still unresolved — ask again (deny-by-default is "keep asking", never
+      // "assume senior"). The attempt counter escalates the copy to an explicit
+      // either/or exactly once.
+      const nextAttempts = askAttempts + 1;
+      await db.collection("agent_sessions").doc(phone).update({
+        verticalAskAttempts: nextAttempts,
+      }).catch(() => {});
+      await stopTyping(chatId).catch(() => {});
+      await sendMessage(chatId, decision?.question ?? verticalQuestion(askAttempts));
+      return;
+    }
+
+    if (decision.outcome === "child" || decision.outcome === "unavailable") {
+      const { handleChildcareColdInbound } = await import("../childcare/signupIngress");
+      await handleChildcareColdInbound({
+        phone,
+        chatId,
+        service,
+        preferredLanguage: languageFromSession(session as unknown as Record<string, unknown>),
+        role: decision.role,
+        sessionPatch: decision.sessionPatch,
+      }).catch((err) => {
+        console.error("childcare cold ingress failed (pending answer):", err);
+        return true; // fail CLOSED — never senior onboarding for a childcare intent
+      });
+      return;
+    }
+
+    // Resolved SENIOR: clear the pending posture and hand this same turn to the
+    // untouched senior funnel by re-entering it at ask_role, so every existing
+    // senior handler sees exactly the shape it always saw. The role is stamped
+    // ONLY when it actually resolved — otherwise ask_role asks for it, which is
+    // the funnel's own question, not a guess.
+    const resolvedRole = decision.role;
+    await db.collection("agent_sessions").doc(phone).update({
+      ...decision.sessionPatch,
+      ...(resolvedRole ? { userType: resolvedRole } : {}),
+      onboardingStep: "ask_role",
+    }).catch(() => {});
+    (session as any).verticalIntent = "senior";
+    if (resolvedRole) (session as any).userType = resolvedRole;
+    session.onboardingStep = "ask_role";
+    await stopTyping(chatId).catch(() => {});
+    await handleOnboardingStep(phone, chatId, text, session, { service });
+    return;
+  }
+
+  // ── Childcare session turns (U4 → U10, plan 2026-07-22-002) ───────────────
+  // Entered ONLY on a typed childcare vertical stamp. STOP/START/HELP/crisis
+  // were already handled by the shared carrier-protocol guards above (they
+  // must keep working). U10 upgrade: the router first runs the DETERMINISTIC
+  // incident classifier (R53 — pre-LLM, unaffected by flags), then either the
+  // real agent loop (families with live child authority, flags on) or the U4
+  // deterministic responder (flags-off/emergency/enrollment fallback). Senior
+  // sessions never enter this branch.
+  //
+  // Front door Stage 1: the router now splits on session.userType immediately
+  // after the incident classifier — a CAREGIVER childcare session gets the
+  // caregiver deterministic route (secure childcare-profile link), never the
+  // family enrollment/objective/tool-pack branches and never the senior
+  // caregiver collection loop. Before Stage 1 a caregiver childcare stamp was
+  // assumed impossible, so it would have been answered with family copy.
+  if ((session as any).careVertical === "child") {
+    const { routeChildcareSessionInbound } = await import("../childcare/signupIngress");
+    const handled = await routeChildcareSessionInbound({
+      phone,
+      chatId,
+      text,
+      session: session as unknown as Record<string, unknown>,
+      eventId: sourceEventId,
+    }).catch((err) => {
+      console.error("childcare session inbound handler failed:", err);
+      return true; // fail CLOSED — a childcare turn never falls into senior routing
+    });
+    if (handled) return;
+  }
+
   // ── Zep lazy-init / self-heal — ANY session without a thread ──────────────
   // Was gated to onboardingStep === "complete" (backfill for pre-Zep users),
   // which left MID-onboarding sessions that skipped first-contact init with no
   // thread at all — their entire signup never reached long-term memory (seen
   // live 07-14: caregiver session with zero zepThreadId). Idempotent; runs
   // once per gap, never blocks the reply.
+  // U4: gated on memory eligibility — childcare, pending, and unclassified
+  // sessions are DENIED (R48/R50); classified senior sessions self-heal
+  // exactly as before.
   if (!(session as any).zepThreadId) {
-    initializeZepOnFirstContact(phone).catch((err) =>
-      console.error("Zep lazy-init error:", err)
-    );
+    const memDecision = decideMemoryEligibility(session as any);
+    if (memDecision.eligible) {
+      initializeZepOnFirstContact(phone).catch((err) =>
+        console.error("Zep lazy-init error:", err)
+      );
+    } else {
+      logMemoryDenial("lazy_self_heal", memDecision);
+    }
   }
 
   // ── ONBOARDING gate — route to state machine if not complete ─────────────
@@ -2020,7 +2404,63 @@ const handleInboundInner = traceable(
   }
 
   const step = session.onboardingStep ?? "";
+
+  // ── Dual-vertical ADDITION on a COMPLETED session (front door Stage 2, R-FD6) ─
+  //
+  // The Stage 1 switch seam is gated on `verticalSwitchEligibleStep`, which
+  // excludes "complete" — correctly, because a bare "yes" on a live account is
+  // not a vertical change. The consequence was that an ONBOARDED senior family
+  // or caregiver saying "I also need childcare" fell through to runQaAgent, a
+  // senior tool surface with no childcare anything.
+  //
+  // Per R-FD6 that is an ADDITION, not a switch: two independent vertical
+  // profiles, not one relabelled one. So this handler never re-stamps
+  // `careVertical` — their senior session, step, and state are left exactly as
+  // they are, and the childcare objective/funnel runs in its own session
+  // namespace beside it. It is also where `verticalNotedInterest` is finally
+  // consumed (once, on a low-content turn, then cleared).
+  //
+  // Deliberately NOT handleVerticalSwitchTurn: that seam stays onboarding-only.
+  if (
+    step === "complete" &&
+    (session as any).careVertical !== "child" &&
+    text.trim() !== "" && !inboundMedia && text !== "__RESUME__"
+  ) {
+    const { handleVerticalAdditionTurn } = await import("../agents/verticalAddition");
+    const additionHandled = await handleVerticalAdditionTurn({
+      phone,
+      chatId,
+      text,
+      session: session as unknown as Record<string, unknown>,
+      sendMessage: (async (cid: string, body: string) => sendMessage(cid, body)) as never,
+    }).catch((err) => {
+      console.error("vertical addition detection failed (turn continues normally):", err);
+      return { handled: false, outcome: "error" };
+    });
+    if (additionHandled.handled) return;
+  }
+
   if (step && step !== "complete") {
+    // ── Mid-flow VERTICAL switch (front door R-FD7) ──────────────────────────
+    //
+    // Must run HERE, not only inside handleOnboardingStep: under loop-only,
+    // every COLLECTION-step text turn is dispatched straight to runQaAgent
+    // below and returns, so the scripted runner (and its switch detector) is
+    // never reached — which is exactly where "actually this is for my kids"
+    // gets said. handleOnboardingStep still calls the same helper for its KEPT
+    // steps; the helper self-marks the session so a turn is only ever checked
+    // once, and it costs nothing (one regex, no model call) unless the text
+    // actually carries a signal for the other vertical.
+    if (text.trim() !== "" && !inboundMedia && text !== "__RESUME__") {
+      const { handleVerticalSwitchTurn } = await import("../agents/onboardingConversation");
+      const switchHandled = await handleVerticalSwitchTurn(phone, chatId, text, session as never, step)
+        .catch((err) => {
+          console.error("vertical switch detection failed (turn continues normally):", err);
+          return false;
+        });
+      if (switchHandled) return;
+    }
+
     // Soft-resume ack REMOVED (founder, 2026-07-14): the old 10–30-min-gap
     // "Welcome back — picking up where we left off." line fired absurdly —
     // mid-onboarding gaps are almost always the user doing a task Evia HERSELF
@@ -2029,15 +2469,22 @@ const handleInboundInner = traceable(
     // the returning-user greeting and the explicit RESUME checkpoint nudge.
 
     // Log every onboarding message to Zep — this is where names, conditions,
-    // and care needs are shared, so Zep starts building the knowledge graph now
+    // and care needs are shared, so Zep starts building the knowledge graph now.
+    // U4: eligibility-gated — a childcare/pending/unclassified session never
+    // writes a transcript line even if it somehow carries a thread id (R50).
     const onboardingZepThreadId = (session as any).zepThreadId as string | undefined;
     if (onboardingZepThreadId) {
-      addUserMessageToZep({
-        threadId: onboardingZepThreadId,
-        content:  text,
-        userName: (session as any).onboardingData?.firstName ?? "User",
-        sentAt:   new Date(),
-      }).catch(console.error);
+      const memDecision = decideMemoryEligibility(session as any);
+      if (memDecision.eligible) {
+        addUserMessageToZep({
+          threadId: onboardingZepThreadId,
+          content:  text,
+          userName: (session as any).onboardingData?.firstName ?? "User",
+          sentAt:   new Date(),
+        }).catch(console.error);
+      } else {
+        logMemoryDenial("onboarding_transcript", memDecision);
+      }
     }
     // (No else: a missing thread is self-healed by the widened Zep lazy-init
     // earlier in handleInbound — one call site, no double-create race.)
@@ -2137,6 +2584,7 @@ const handleInboundInner = traceable(
     // fallback handlers still need the raw pin, so it is left untouched.
     if (inboundLocation && text.trim() === "" && shouldRouteOnboardingToLoop({
       role: session.userType, step, hasText: true, hasMedia: false,
+      careVertical: (session as any).careVertical ?? null, // U5: childcare sessions never enter the senior loop
     })) {
       const { lat, lng } = inboundLocation;
       const rev = await reverseGeocode(lat, lng).catch(() => null);
@@ -2158,6 +2606,7 @@ const handleInboundInner = traceable(
     // untouched, so handleInboundMedia still owns the actual upload gates.
     if (inboundMedia && text.trim() !== "" && shouldRouteOnboardingToLoop({
       role: session.userType, step, hasText: true, hasMedia: false,
+      careVertical: (session as any).careVertical ?? null, // U5: childcare sessions never enter the senior loop
     })) {
       inboundMedia = null; // now a text turn — hasMedia is false below
       console.info("webhooks: collection-step media had a caption — routing caption to loop, media set aside", { phone, step });
@@ -2174,6 +2623,7 @@ const handleInboundInner = traceable(
     // fallback stay untouched.
     if (text.trim() === "" && !inboundMedia && !inboundLocation && shouldRouteOnboardingToLoop({
       role: session.userType, step, hasText: true, hasMedia: false,
+      careVertical: (session as any).careVertical ?? null, // U5: childcare sessions never enter the senior loop
     })) {
       await stopTyping(chatId).catch(() => {});
       await sendMessage(chatId, "Sorry — I couldn't read that. Mind typing it out for me?");
@@ -2185,6 +2635,7 @@ const handleInboundInner = traceable(
       step,
       hasText:     text.trim() !== "",
       hasMedia:    !!inboundMedia,
+      careVertical: (session as any).careVertical ?? null, // U5: childcare sessions never enter the senior loop
     })) {
       // U9: runQaAgent sends its own reply internally. Once that resolves, the
       // turn has already replied — any failure in the post-send writes below
@@ -2655,12 +3106,12 @@ const handleInboundInner = traceable(
   // generalist 50-intent classifier would misroute. See pendingActions.ts +
   // approvalHandler.ts for the full design.
   {
-    // getAllPending so MULTIPLE awaiting actions get a combined numbered
-    // confirmation (YES approves all, NO rejects all) instead of a bare
-    // "yes" silently resolving only the most recent one. With a single
-    // pending action handlePendingApprovals behaves exactly like the old
-    // handlePendingApproval path.
-    const pendings = await getAllPending(phone).catch((err) => {
+    // Multiple awaiting actions get a numbered choice. A bare YES executes
+    // none; the reply must select one operation. Child sessions own the same
+    // child-only gate inside routeChildcareSessionInbound because they return
+    // before reaching this senior path.
+    const pendingVertical = session.careVertical === "child" ? "child" : "senior";
+    const pendings = await getAllPending(phone, pendingVertical).catch((err) => {
       console.error("handleInbound: getAllPending failed", err);
       return [];
     });
@@ -2790,6 +3241,7 @@ const handleInboundInner = traceable(
         userId:      (session.userId as string | undefined),
         seniorId:    (session.seniorId as string | undefined),
         userType:    session.userType === "caregiver" ? "caregiver" : "client",
+        careVertical: session.careVertical === "child" ? "child" : "senior",
         source:      "webhooks:handleInbound_catch",
         dueInMs:     10 * 60_000,
       });

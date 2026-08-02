@@ -194,4 +194,43 @@ describe("mirrorToWebThread", () => {
 
     expect(hoisted.docState.get("threads/cara_cachedUser").lastMessage).toBe("second");
   });
+
+  // ── Childcare U9 (plan 2026-07-22-002, R41/R50/KTD14) ──────────────────────
+
+  it("CHILDCARE: a child-vertical turn is never mirrored into the senior thread structures", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-cc", userId: "ccParent" },
+    ]);
+
+    await mirrorToWebThread({
+      chatId: "direct-chat-cc",
+      direction: "outbound",
+      text: "Your childcare booking update",
+      careVertical: "child",
+    });
+
+    // NOTHING written: no thread doc, no message row, no unread increment.
+    expect(hoisted.sets).toHaveLength(0);
+    expect(hoisted.adds).toHaveLength(0);
+    expect(hoisted.docState.get("threads/cara_ccParent")).toBeUndefined();
+  });
+
+  it("CHILDCARE: senior and unclassified turns mirror exactly as before (compat)", async () => {
+    hoisted.collState.set("agent_sessions", [
+      { id: "primary", chatId: "direct-chat-sv", userId: "seniorClient" },
+    ]);
+
+    // Explicit senior classification behaves like the historical default.
+    await mirrorToWebThread({
+      chatId: "direct-chat-sv",
+      direction: "outbound",
+      text: "senior turn",
+      careVertical: "senior",
+    });
+    expect(hoisted.docState.get("threads/cara_seniorClient").lastMessage).toBe("senior turn");
+
+    // Unclassified (no careVertical) is the senior-compatible default.
+    await mirrorToWebThread({ chatId: "direct-chat-sv", direction: "outbound", text: "plain turn" });
+    expect(hoisted.docState.get("threads/cara_seniorClient").lastMessage).toBe("plain turn");
+  });
 });

@@ -63,6 +63,10 @@ export const sendFirstVisitActivation = functions.pubsub
       const s = sessionDoc.data();
       try {
         // Cheap in-memory gates first, before the per-client appointments read.
+        // Childcare U10 (R54/AE16): careVertical === "child" sessions are
+        // skipped — this nudge is senior first-visit copy, and childcare
+        // proactive messaging is deferred (no approved templates yet).
+        if (s.careVertical === "child") continue;
         if (s.optedOut) continue;
         if (s.onboardingStep !== "complete") continue;
         if (s.firstVisitNudgedAt) continue;

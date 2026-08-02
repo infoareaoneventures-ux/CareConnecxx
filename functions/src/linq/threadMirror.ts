@@ -8,6 +8,13 @@
 
 import * as admin from "firebase-admin";
 import { outboundHistoryRecordEnabled } from "../config/featureFlags";
+import {
+  conversationStateStamp,
+  createVerticalExecutionContext,
+  deriveConversationPartitionId,
+  type VerticalExecutionContext,
+} from "../agents/turnSourceKey";
+import type { CareVertical } from "../data/contract";
 
 const db = admin.firestore();
 
@@ -105,6 +112,54 @@ async function resolveSessionValues<T>(params: {
 
 const chatUserCache: SessionValueCache<string> = new Map();
 
+export async function resolveVerticalExecutionContext(params: {
+  chatId: string;
+  channel: "linq" | "web";
+  messageId?: string;
+}): Promise<VerticalExecutionContext | null> {
+  if (!params.chatId.trim()) return null;
+  try {
+    const directSnap = await db.collection("agent_sessions")
+      .where("chatId", "==", params.chatId)
+      .limit(1)
+      .get();
+    let docs: SessionDoc[] = directSnap.docs;
+    if (directSnap.empty) {
+      const groupSnap = await db.collection("agent_sessions")
+        .where("groupChatId", "==", params.chatId)
+        .limit(GROUP_MIRROR_LIMIT + 1)
+        .get();
+      docs = groupSnap.docs.slice(0, GROUP_MIRROR_LIMIT);
+    }
+    if (docs.length === 0) return null;
+
+    // A mixed group fails toward the more restrictive child boundary.
+    const careVertical = docs.some((doc) => doc.data().careVertical === "child")
+      ? "child"
+      : "senior";
+    const first = docs[0];
+    const data = first.data();
+    const principal = String(data.userId ?? first.id).trim();
+    if (!principal) return null;
+    return createVerticalExecutionContext({
+      principal,
+      careVertical,
+      channel: params.channel,
+      conversationPartition: `${careVertical}:${principal}`,
+      sourceTurn: {
+        conversationId: params.chatId,
+        messageId: params.messageId?.trim() || `transport:${Date.now()}`,
+      },
+    });
+  } catch (err) {
+    console.warn("threadMirror: vertical context lookup failed", {
+      chatId: params.chatId,
+      errorClass: err instanceof Error ? err.constructor.name : typeof err,
+    });
+    return null;
+  }
+}
+
 async function resolveUserIds(params: { userId?: string; chatId?: string }): Promise<string[]> {
   if (params.userId) return [params.userId];
   if (!params.chatId) return [];
@@ -188,23 +243,34 @@ export function resetTransportPruneCounterForTests(): void {
  * messages(source ASC, timestamp DESC) in firestore.indexes.json.
  * Returns the number of rows deleted (0 on failure).
  */
-export async function pruneTransportRows(phone: string): Promise<number> {
+export async function pruneTransportRows(
+  phone: string,
+  careVertical: CareVertical = "senior",
+): Promise<number> {
   try {
-    const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
+    const partitionIds = [
+      deriveConversationPartitionId(phone, careVertical),
+      ...(careVertical === "senior" ? [phone] : []),
+    ];
+    let deleted = 0;
+    for (const partitionId of partitionIds) {
+      const snap = await db.collection("agent_conversations").doc(partitionId).collection("messages")
       .where("source", "==", "outbound_transport")
       .orderBy("timestamp", "desc")
       .limit(TRANSPORT_ROWS_KEPT + 100) // batch deletes ≤ 100 per run
       .get();
-    const stale = snap.docs.slice(TRANSPORT_ROWS_KEPT);
-    if (stale.length === 0) return 0;
-    const batch = db.batch();
-    for (const doc of stale) batch.delete(doc.ref);
-    await batch.commit();
-    return stale.length;
+      const stale = snap.docs.slice(TRANSPORT_ROWS_KEPT);
+      if (stale.length === 0) continue;
+      const batch = db.batch();
+      for (const doc of stale) batch.delete(doc.ref);
+      await batch.commit();
+      deleted += stale.length;
+    }
+    return deleted;
   } catch (err) {
     // Counts/keys only — never log message text.
     console.warn("threadMirror: transport-row prune failed (non-blocking)", {
-      phone,
+      careVertical,
       err: err instanceof Error ? err.message : String(err),
     });
     return 0;
@@ -225,12 +291,13 @@ export async function pruneTransportRows(phone: string): Promise<number> {
 export async function recordOutboundHistory(params: {
   chatId: string;
   text:   string;
+  executionContext?: VerticalExecutionContext;
 }): Promise<string[]> {
   // Returns the canonical message doc paths written (U2): the send path
   // registers each provider message id against these refs so delivery/edit
   // webhooks can resolve to the right row. Empty on any skip/failure.
   try {
-    if (!outboundHistoryRecordEnabled()) return [];
+    if (!outboundHistoryRecordEnabled() || params.executionContext?.careVertical === "child") return [];
 
     const text = neutralizeUrlsForHistory((params.text ?? "").trim());
     if (!text) return [];
@@ -242,12 +309,17 @@ export async function recordOutboundHistory(params: {
     if (phones.length === 0) return []; // pre-session send: nothing to key by
 
     const timestamp = Date.now();
+    const careVertical = params.executionContext?.careVertical ?? "senior";
+    const partitionStamp = conversationStateStamp(careVertical);
     const refs = await Promise.all(phones.map((phone) =>
-      db.collection("agent_conversations").doc(phone).collection("messages").add({
+      db.collection("agent_conversations")
+        .doc(deriveConversationPartitionId(phone, careVertical))
+        .collection("messages").add({
         role:      "assistant",
         content:   text,
         timestamp,
         source:    "outbound_transport",
+        ...partitionStamp,
       })
     ));
 
@@ -257,7 +329,7 @@ export async function recordOutboundHistory(params: {
     // fail the send, and the surrounding catch absorbs anything unexpected.
     transportWriteCounter += 1;
     if (transportWriteCounter % TRANSPORT_PRUNE_EVERY_N === 0) {
-      await Promise.all(phones.map((phone) => pruneTransportRows(phone)));
+      await Promise.all(phones.map((phone) => pruneTransportRows(phone, careVertical)));
     }
     return refs.map((r) => r.path);
   } catch (err) {
@@ -280,8 +352,22 @@ export async function mirrorToWebThread(params: {
   /** Client-generated id from the web composer, used to reconcile optimistic
    *  bubbles and to keep retries from duplicating the message. */
   clientMessageId?: string;
+  executionContext?: VerticalExecutionContext;
+  /** Childcare U9 (plan 2026-07-22-002, R41/R50/KTD14): the caller's vertical
+   *  classification for this turn. "child" turns are NOT mirrored into the
+   *  senior thread structures at all — cara_{uid} threads are senior-shaped,
+   *  broadly consumed (notifications, digests, web inbox), and must never
+   *  carry childcare context. Callers that cannot classify leave it unset
+   *  (senior-compatible default — U10 owns turn classification). */
+  careVertical?: string;
 }): Promise<void> {
   try {
+    // Truthful classification, fail closed for the child vertical: skip the
+    // mirror entirely rather than mirror child-context text generically —
+    // routing visibility for childcare conversations is the U9 context-room
+    // list (v1-listMyChildcareConversations), not the senior thread mirror.
+    if (params.executionContext?.careVertical === "child" || params.careVertical === "child") return;
+
     const text = (params.text ?? "").trim();
     if (!text) return;
 

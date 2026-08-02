@@ -7,6 +7,7 @@ import { isConfigured, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
 import { Appointment, Caregiver, EmergencyAlert, ToastMessage, ToastType, User, UserProfile } from '../types';
 import { EmergencyAlertBanner } from '../components/EmergencyAlertBanner';
+import { resetChildcareAccessCache } from '../components/shared/childcareAccess';
 
 /**
  * Extended user with profile data from Firestore
@@ -179,6 +180,14 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             if (unsubscribe) unsubscribe();
         };
     }, [authRetryNonce]);
+
+    // Childcare access summaries are principal-bound. Token refresh, login,
+    // logout, and account switching invalidate both settled and in-flight
+    // entries before any child-derived state can be reused.
+    useEffect(() => {
+        if (!isConfigured || !authService.onIdTokenChanged) return;
+        return authService.onIdTokenChanged(() => resetChildcareAccessCache());
+    }, []);
 
     const retryAuth = () => {
         setAuthResolved(false);

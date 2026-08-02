@@ -53,6 +53,12 @@ export const sendInterviewResponseReminders = functions.pubsub
     for (const reqDoc of snap.docs) {
       const req = reqDoc.data();
       try {
+        // Childcare U6 (plan 2026-07-22-002): SENIOR-ONLY EXPLICIT SKIP —
+        // this reminder interpolates seniorName/relationship into SMS copy.
+        // Childcare interviews live in video_interviews (vertical-stamped,
+        // generic content); any childcare-stamped interview_requests row is
+        // skipped, never processed by accident.
+        if (req.careVertical === "child") continue;
         const caregiverId = req.caregiverId as string | undefined;
         if (!caregiverId || remindedCaregivers.has(caregiverId)) continue;
 

@@ -113,6 +113,40 @@ export const onJobApplicationCreated = functions.firestore
             const clientId = (job.clientId ?? job.userId ?? "") as string;
             if (!clientId) return;
 
+            // Childcare U6 (plan 2026-07-22-002, R34/R43): childcare
+            // applications get a GENERIC child-safe notification through the
+            // in-app notification writer — never the senior SMS pipeline below
+            // (which interpolates seniorName/job details into an LLM prompt).
+            // Eligibility is rechecked before notifying (R29 "contact"): if
+            // the applicant went stale between applying and this trigger, the
+            // family is not prompted to engage them. Senior applications take
+            // the exact pre-U6 path.
+            if (app.careVertical === "child" || job.careVertical === "child") {
+                const cgId = (app.caregiverId ?? "") as string;
+                if (cgId) {
+                    const { recheckChildcareProviderEligibility } = await import("../childcare/providerEligibility");
+                    const eligibility = await recheckChildcareProviderEligibility(cgId, { context: "contact", db });
+                    if (!eligibility.eligible) {
+                        console.warn(`[onJobApplicationCreated] childcare applicant ${cgId} no longer eligible — notification skipped`);
+                        await snap.ref.update({ clientNotifiedAt: new Date().toISOString(), clientNotifySkipped: "provider_not_eligible" }).catch(() => {});
+                        return;
+                    }
+                }
+                const payload = {
+                    title: "New childcare applicant",
+                    body: "A caregiver applied to your childcare job. Sign in to review their profile and application.",
+                    type: "childcare_job_application",
+                    jobId,
+                    isRead: false,
+                    createdAt: new Date().toISOString(),
+                };
+                const { assertChildSafeOutboundPayload } = await import("../childcare/matchingEligibility");
+                assertChildSafeOutboundPayload(payload, "onJobApplicationCreated.childcare");
+                await db.collection("users").doc(clientId).collection("notifications").add(payload);
+                await snap.ref.update({ clientNotifiedAt: new Date().toISOString() }).catch(() => {});
+                return;
+            }
+
             // Resolve client phone — agent_sessions is keyed by phone, indexed on userId
             const sessionQ = await db.collection("agent_sessions")
                 .where("userId", "==", clientId)

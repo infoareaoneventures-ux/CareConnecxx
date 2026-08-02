@@ -214,3 +214,84 @@ describe("U1 — charge-before-transfer settlement", () => {
     expect(hoisted.stripeApi.transfers.create).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── Childcare U8 (plan 2026-07-22-002, R39/R40) ──────────────────────────────
+//
+// Childcare rows ride this SAME proven rail. The vertical branches under test:
+// the platform fee comes ONLY from the frozen policy snapshot (fail closed —
+// never the senior constants), the charged party is the recorded PAYER, the
+// PaymentIntent carries the pinned booking/shift ledger correlation, and a
+// dispute payout hold parks the row. The senior tests above are the byte-
+// identical parity characterization for every one of these seams.
+
+const childcareShift = {
+  caregiverId: "cg1",
+  clientId: "cl1",
+  billingUserId: "payer1",
+  careVertical: "child",
+  childcareBookingId: "cbook_1",
+  childcareShiftId: "cappt_1",
+  grossPay: 100,
+  currency: "usd",
+  paymentMethod: "credit",
+  childcarePricing: { platformFeeRate: 0.05, platformFeeMinCents: 100, currency: "usd" },
+};
+
+describe("U8 — childcare rows on the shared settlement rail", () => {
+  beforeEach(() => {
+    hoisted.reset();
+    seedPayableEnv();
+    hoisted.docState.set("customers/payer1", { stripeCustomerId: "cus_payer" });
+  });
+
+  it("charges the PAYER the policy fee (5% snapshot, not the senior 1.5%) and transfers gross", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_cc", status: "succeeded" } as any);
+    const r = await processSeededShift("cappt_1", { ...childcareShift });
+    expect(r.ok).toBe(true);
+    const [args] = hoisted.stripeApi.paymentIntents.create.mock.calls[0] as any[];
+    // $100 gross + $5.00 policy fee (senior math would be $1.50 → 10150).
+    expect(args.amount).toBe(10500);
+    expect(args.customer).toBe("cus_payer"); // the recorded payer, not the guardian
+    // R57/R39: pinned metadata key set — senior trio + the childcare correlation.
+    expect(Object.keys(args.metadata).sort()).toEqual(
+      ["appointmentId", "careVertical", "childcareBookingId", "childcareShiftId", "paymentGeneration", "shiftHoursId"].sort(),
+    );
+    expect(args.metadata.childcareBookingId).toBe("cbook_1");
+    // Caregiver still receives exactly gross via the same transfer rail.
+    const [transferArgs] = hoisted.stripeApi.transfers.create.mock.calls[0] as any[];
+    expect(transferArgs.amount).toBe(10000);
+    expect(hoisted.docState.get("shiftHours/cappt_1")?.status).toBe("paid");
+  });
+
+  it("FAILS CLOSED (payment_failed, no Stripe call) when the pricing snapshot is missing (R40)", async () => {
+    const { childcarePricing: _omit, ...withoutSnapshot } = childcareShift as any;
+    const r = await processSeededShift("cappt_2", withoutSnapshot);
+    expect(r.ok).toBe(false);
+    expect(hoisted.stripeApi.paymentIntents.create).not.toHaveBeenCalled();
+    expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
+    const shift = hoisted.docState.get("shiftHours/cappt_2");
+    expect(shift?.status).toBe("payment_failed");
+    expect(shift?.stripeFailureReason).toMatch(/fail closed|policy pricing/i);
+  });
+
+  it("a dispute/chargeback payout hold parks the row before any money moves", async () => {
+    const r = await processSeededShift("cappt_3", { ...childcareShift, payoutHold: true, payoutHoldReason: "dispute:d1" });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("payout_hold_active");
+    expect(hoisted.stripeApi.paymentIntents.create).not.toHaveBeenCalled();
+    expect(hoisted.stripeApi.transfers.create).not.toHaveBeenCalled();
+    expect(hoisted.docState.get("shiftHours/cappt_3")?.status).toBe("requires_admin_review");
+  });
+
+  it("senior rows never enter the childcare fee branch (no billingUserId → same customer lookup)", async () => {
+    hoisted.stripeApi.paymentIntents.create.mockResolvedValue({ id: "pi_sr", status: "succeeded" } as any);
+    const r = await processSeededShift("a-senior", { ...baseShift });
+    expect(r.ok).toBe(true);
+    const [args] = hoisted.stripeApi.paymentIntents.create.mock.calls[0] as any[];
+    expect(args.amount).toBe(10150); // $100 + senior 1.5% ($1.50)
+    expect(args.customer).toBe("cus_1");
+    expect(Object.keys(args.metadata).sort()).toEqual(
+      ["appointmentId", "paymentGeneration", "shiftHoursId"].sort(), // senior key set byte-identical
+    );
+  });
+});

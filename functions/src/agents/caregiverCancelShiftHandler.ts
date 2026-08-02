@@ -72,6 +72,19 @@ export async function handleCaregiverCancelShift(
       .limit(5)
       .get();
 
+    // Childcare skip (plan 2026-07-22-002 U8, R37): childcare visits are
+    // canceled through the web booking flow (v1-cancelChildcareBooking),
+    // never the senior SMS cancel path (Evia childcare flows are U10).
+    const childcareDocs = snap.docs.filter((d) => d.data().careVertical === "child");
+    const seniorDocs = snap.docs.filter((d) => d.data().careVertical !== "child");
+    if (seniorDocs.length === 0 && childcareDocs.length > 0) {
+      await sendMessage(chatId, "Childcare bookings are managed on the web — open the app to cancel a childcare visit.");
+      await db.collection("agent_sessions").doc(caregiverPhone).update({
+        cancelStep: admin.firestore.FieldValue.delete(),
+      });
+      return;
+    }
+
     if (snap.empty) {
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
@@ -86,7 +99,7 @@ export async function handleCaregiverCancelShift(
       return;
     }
 
-    const shifts: CancelShift[] = snap.docs.map((d, i) => ({
+    const shifts: CancelShift[] = seniorDocs.map((d, i) => ({
       index:      i + 1,
       id:         d.id,
       date:       d.data().date,
@@ -254,6 +267,18 @@ export async function handleCaregiverCancelShift(
     // Load the appointment for context
     const apptSnap = await db.collection("appointments").doc(shiftId).get();
     const apptData = apptSnap.data() ?? {};
+
+    // Belt guard (U8): even a stale/spoofed candidate can never SMS-cancel a
+    // childcare visit — the write below must not run for a childcare doc.
+    if (apptData.careVertical === "child") {
+      await sendMessage(chatId, "Childcare bookings are managed on the web — open the app to cancel a childcare visit.");
+      await db.collection("agent_sessions").doc(caregiverPhone).update({
+        cancelStep:       admin.firestore.FieldValue.delete(),
+        cancelCandidates: admin.firestore.FieldValue.delete(),
+        cancelShiftId:    admin.firestore.FieldValue.delete(),
+      }).catch(() => {});
+      return;
+    }
     const seniorName = (apptData.seniorName ?? apptData.clientName ?? "the client") as string;
 
     // Mark appointment cancelled

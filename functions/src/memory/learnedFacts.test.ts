@@ -577,6 +577,23 @@ describe("extractAndStoreFacts — turn-kind + tombstone guards (U4a)", () => {
     expect(getFact(deterministicFactDocId(FACT))).toBeDefined();
   });
 
+  it("Childcare U10 (R50/AE22): a memory-denied session refuses extraction — no model call, no writes", async () => {
+    for (const session of [
+      { userType: "client", careVertical: "child" },
+      { userType: "caregiver", childcareContextActive: true },
+      {}, // unclassified (AE23)
+    ]) {
+      const result = await extractAndStoreFacts(USER, TURN_TEXT, undefined, PROVENANCE, { session });
+      expect(result).toEqual({ skipped: "memory_denied", stored: 0, refusals: [] });
+    }
+    expect(h.quickComplete).not.toHaveBeenCalled();
+    expect(h.docs.size).toBe(0);
+    // Senior parity: an eligible session extracts exactly as before.
+    h.quickComplete.mockResolvedValueOnce(EXTRACTION);
+    const senior = await extractAndStoreFacts(USER, TURN_TEXT, undefined, PROVENANCE, { session: { userType: "client" } });
+    expect(senior.stored).toBe(1);
+  });
+
   it("a STRIPPED tombstone blocks passive exact re-extraction via the HMAC fingerprint (case/whitespace variant)", async () => {
     // Post-U4b shape: plaintext and _norm gone; only the fingerprint remains.
     setFact("tomb-1", {

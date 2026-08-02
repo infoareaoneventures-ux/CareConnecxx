@@ -60,11 +60,20 @@ describe("display-price literals live only in config/pricing.ts (R7)", () => {
 describe("no background-check timing promise anywhere in functions/src (R8)", () => {
   it('contains no "1–3 days" / "1-3 days" in any source, prompt, or doc file', () => {
     const offenders: string[] = [];
+    // Self-exclusion by path suffix rather than `resolve(file) === resolve(__filename)`:
+    // equivalent here, but immune to drive-letter/separator normalisation
+    // differences across platforms. Names exactly one file, so the guard keeps
+    // biting for every other source file.
+    const SELF = join("__tests__", "pricingLiterals.test.ts");
     for (const file of walk(SRC_ROOT)) {
-      if (resolve(file) === resolve(__filename)) continue; // this guard describes the phrases
+      if (file.endsWith(SELF)) continue; // this guard describes the phrases
       const text = readFileSync(file, "utf8");
       if (TIMING_PHRASES.some((p) => text.includes(p))) offenders.push(file);
     }
     expect(offenders, `bg-check timing promises found in: ${offenders.join(", ")} — say "Evia texts you the moment it clears" instead`).toEqual([]);
-  });
+    // Timeout: this walks + reads every .ts/.tsx/.md under functions/src (~785
+    // files and growing). It clocked 6.2s once the childcare units landed, so the
+    // 5s default made this guard fail deterministically on tree size alone — a
+    // false failure on a truthfulness guard is how guards get ignored or deleted.
+  }, 120_000);
 });

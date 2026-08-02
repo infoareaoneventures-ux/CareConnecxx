@@ -43,6 +43,9 @@ export const sendFamilySatisfactionCheckins = functions.pubsub
       const phone = doc.id;
       const session = doc.data() as Record<string, unknown>;
       try {
+        // Childcare U10 (R54/AE16): careVertical === "child" sessions are
+        // skipped — senior satisfaction copy, childcare proactive deferred.
+        if (session.careVertical === "child") continue;
         if (session.optedOut) continue;
         if (session.optedIn === false) continue;
         if (session.bereavementMode) continue;

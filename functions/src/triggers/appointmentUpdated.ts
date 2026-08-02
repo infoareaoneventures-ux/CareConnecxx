@@ -81,6 +81,14 @@ export const onAppointmentUpdated = functions.firestore
       const before = change.before.data();
       const after  = change.after.data();
 
+      // Childcare U7 (plan 2026-07-22-002, R43/R46): childcare appointments
+      // are handled by childcare/bookingCallables (generic child-safe
+      // notifications written at the transition). This senior trigger's SMS
+      // flows (emergency replacement blast, caregiver name copy) must never
+      // fire for a childcare doc. Senior docs (no careVertical, or 'senior')
+      // are untouched.
+      if (after.careVertical === "child" || before.careVertical === "child") return;
+
       if (!after.clientId) return;
 
       const statusChanged = before.status !== after.status;

@@ -137,6 +137,12 @@ export const onBookingRequestWrite = functions.firestore
     const after  = change.after.exists  ? change.after.data()  : null;
     if (!after) return;
 
+    // Childcare U7 (R43): childcare booking notifications are generic
+    // child-safe rows written by childcare/bookingCallables at the transition
+    // — this senior trigger (clientName/caregiverName copy) must never fire
+    // for a childcare doc.
+    if (after.careVertical === 'child') return;
+
     const statusBefore = before?.status;
     const statusAfter  = after.status;
 
@@ -190,6 +196,10 @@ export const onBookingAmendmentWrite = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     const after  = change.after.exists  ? change.after.data()  : null;
     if (!after) return;
+
+    // Childcare U7 (defensive skip): childcare schedule changes flow through
+    // v1-requestChildcareBookingChange, never booking_amendments.
+    if (after.careVertical === 'child') return;
 
     const statusBefore = before?.status;
     const statusAfter  = after.status;
@@ -265,6 +275,11 @@ export const onShiftStatusChanged = functions.firestore
   .onUpdate(async (change, context) => {
     const before = change.before.data();
     const after  = change.after.data();
+
+    // Childcare U7 (R43): childcare shifts notify through the child-safe
+    // callable path (check-in/out); booking completion is owned by the
+    // childcare state machine, never this senior status sweep.
+    if (after.careVertical === 'child' || before.careVertical === 'child') return;
 
     if (before.status === after.status) return;
 

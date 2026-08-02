@@ -37,6 +37,7 @@ const INTERVIEW_MINUTES = 30;
 type DeliveryOutcome = { status: string; at: string };
 type InterviewDoc = Record<string, unknown> & {
   status?: string;
+  careVertical?: string;
   callUrl?: string;
   icsUrl?: string;
   clientId?: string;
@@ -49,6 +50,43 @@ type InterviewDoc = Record<string, unknown> & {
   remindersScheduledAt?: string;
   requestNotifiedAt?: string;
 };
+
+// ── Childcare content branch (plan 2026-07-22-002 U6, R35/R43) ───────────────
+//
+// Childcare interviews (careVertical === "child") use FULLY GENERIC calendar
+// titles and message bodies: no participant names, no child data, no job
+// detail. The senior strings below are byte-identical to their pre-U6 values.
+
+function isChildcareInterview(doc: InterviewDoc): boolean {
+  return doc.careVertical === "child";
+}
+
+/** Calendar/ICS title (R35: no child-sensitive data; childcare fully generic). */
+export function interviewCalendarTitle(doc: InterviewDoc, caregiverName: string): string {
+  return isChildcareInterview(doc) ? "Evia Care Interview" : `Care Interview — ${caregiverName}`;
+}
+
+/** SMS body for a confirmed-interview link delivery. */
+export function interviewLinkMessage(
+  doc: InterviewDoc,
+  who: "client" | "caregiver",
+  otherPartyName: string,
+  formattedTime: string,
+  callUrl: string,
+  icsUrl: string,
+): string {
+  if (isChildcareInterview(doc)) {
+    // Generic body: adult-to-adult, no names, no child facts (R35/R43).
+    return (
+      `Your Evia interview is confirmed for ${formattedTime}. Join from your phone: ${callUrl}` +
+      (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : "")
+    );
+  }
+  return (
+    `Your interview with ${otherPartyName} is confirmed for ${formattedTime}. Join from your phone: ${callUrl}` +
+    (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : "")
+  );
+}
 
 function deliveryComplete(doc: InterviewDoc): boolean {
   return Boolean(doc.linkDelivery?.client?.status && doc.linkDelivery?.caregiver?.status);
@@ -144,7 +182,7 @@ async function processInterview(
     // Failure raises the ops alert inside the helper and throws; the claim is
     // released by the caller's finally so a later write can retry.
     const assets = await createInterviewCallAssets({
-      title:           `Care Interview — ${caregiverName}`,
+      title:           interviewCalendarTitle(doc, caregiverName),
       startTime:       new Date(startMs).toISOString(),
       durationMinutes: INTERVIEW_MINUTES,
       interviewId,
@@ -164,16 +202,14 @@ async function processInterview(
       ? ((await db.collection("caregivers").doc(doc.caregiverId).get()).data()?.phone as string | undefined)
       : undefined;
     const outcome = await deliverLink(cgPhone, interviewId, "caregiver",
-      `Your interview with ${clientName} is confirmed for ${formatted}. Join from your phone: ${callUrl}` +
-      (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
+      interviewLinkMessage(doc, "caregiver", clientName, formatted, callUrl, icsUrl));
     if (outcome) updates["linkDelivery.caregiver"] = outcome;
   }
 
   if (!delivery.client?.status) {
     const clientPhone = await resolveClientPhone(doc.clientId);
     const outcome = await deliverLink(clientPhone, interviewId, "client",
-      `Your interview with ${caregiverName} is confirmed for ${formatted}. Join from your phone: ${callUrl}` +
-      (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
+      interviewLinkMessage(doc, "client", caregiverName, formatted, callUrl, icsUrl));
     if (outcome) updates["linkDelivery.client"] = outcome;
   }
 
@@ -236,13 +272,17 @@ async function scheduleReminders(
   const { scheduleTrigger } = await import("./triggerEngine");
   const refId = `video_interview_${interviewId}`; // cancelTriggersByRef key on decline/cancel
   const clientPhone = await resolveClientPhone(doc.clientId);
+  // Childcare reminders are fully generic (R35/R43); senior strings unchanged.
+  const clientReminder = isChildcareInterview(doc)
+    ? `Your Evia interview is in an hour — ${callUrl}`
+    : `Your interview with ${caregiverName} is in an hour — ${callUrl}`;
   if (clientPhone) {
     await scheduleTrigger({
       userId:      doc.clientId ?? clientPhone,
       phone:       clientPhone,
       type:        "appointment_reminder",
       scheduledAt: new Date(oneHourBefore).toISOString(),
-      message:     `Your interview with ${caregiverName} is in an hour — ${callUrl}`,
+      message:     clientReminder,
       refId,
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (client) error:", err));
   }
@@ -279,10 +319,16 @@ async function notifyCaregiverOfRequest(
   const when = Number.isNaN(startMs) ? "a time that works" : formatInterviewTime(startMs);
   const clientName = (doc.clientName as string) || "A family";
 
+  // Childcare requests are fully generic (R35/R43); the senior string is
+  // byte-identical to its pre-U6 value.
+  const requestMessage = isChildcareInterview(doc)
+    ? `Hi — a family on Evia would like a 30-minute video interview with you on ${when}. ` +
+      `Reply to confirm, or suggest another time and I'll pass it along.`
+    : `Hi — ${clientName} would like a 30-minute video interview with you on ${when}. ` +
+      `Reply to confirm, or suggest another time and I'll pass it along.`;
   const outcome = await trySend(
     cgPhone,
-    `Hi — ${clientName} would like a 30-minute video interview with you on ${when}. ` +
-    `Reply to confirm, or suggest another time and I'll pass it along.`,
+    requestMessage,
     "interviewLinkTrigger:requested"
   );
   await ref.update({ requestNotifiedAt: new Date().toISOString() }).catch(() => {});

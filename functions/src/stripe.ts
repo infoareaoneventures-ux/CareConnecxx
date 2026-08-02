@@ -284,6 +284,16 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
         break;
       }
 
+      // Childcare U8 (R39): a chargeback on a childcare occurrence charge
+      // holds the payout rail until an admin resolves it. Deliberately scoped
+      // to childcare-stamped rows — senior charges keep the exact pre-U8
+      // behavior for this event type (previously unhandled; logged the same).
+      case 'charge.dispute.created': {
+        const dispute = event.data.object as Stripe.Dispute;
+        await handleChildcareChargeDispute(dispute);
+        break;
+      }
+
       default:
         console.log(`Unhandled event type: ${event.type}`);
     }
@@ -1257,6 +1267,21 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
   };
   const status = statusMap[session.status] || session.status;
 
+  // ── Childcare identity sessions (U4, plan 2026-07-22-002) — ADDITIVE ───────
+  // Entered only for sessions created by childcare/identityCallables.ts (their
+  // metadata carries childcareObjectiveId and NEVER a phone, so the SMS branch
+  // below stays senior-only). The shared users-doc mirror further down still
+  // applies — identityCheckStatus is adult-level evidence, not vertical data.
+  const childcareObjectiveId = session.metadata?.childcareObjectiveId;
+  if (childcareObjectiveId) {
+    try {
+      const { mirrorChildcareIdentityEvent } = await import('./childcare/identityCallables');
+      await mirrorChildcareIdentityEvent(session.id, childcareObjectiveId, status);
+    } catch (err) {
+      console.error('childcare identity mirror error:', err);
+    }
+  }
+
   // ── iMessage onboarding flow (phone metadata, no firebaseUID yet) ──────────
   if (phone) {
     const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
@@ -1442,6 +1467,46 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
       lastErrorCode: 'payment_intent_failed',
     });
   }
+}
+
+/**
+ * Childcare U8 (R39): charge.dispute.created → hold the childcare payout rail.
+ * Resolves the disputed PaymentIntent's shiftHours row from its metadata
+ * (appointmentId/shiftHoursId — the same correlation every other webhook path
+ * keys on) and, ONLY for a careVertical:"child" row, applies a payout hold
+ * (or escalates when the transfer already went out). Senior rows are left
+ * exactly as before this event type was handled: logged and ignored.
+ */
+async function handleChildcareChargeDispute(dispute: Stripe.Dispute) {
+  const paymentIntentId = typeof dispute.payment_intent === 'string'
+    ? dispute.payment_intent
+    : dispute.payment_intent?.id;
+  if (!paymentIntentId) return;
+
+  const intent = await getStripeClient().paymentIntents.retrieve(paymentIntentId);
+  const appointmentId = intent.metadata?.appointmentId || intent.metadata?.shiftHoursId || null;
+  const declaredChildcare =
+    intent.metadata?.careVertical === 'child' ||
+    intent.metadata?.childcareBookingId !== undefined;
+  if (!appointmentId && !declaredChildcare) return;
+  if (appointmentId) {
+    const shiftSnap = await admin.firestore().collection('shiftHours').doc(appointmentId).get();
+    if (!shiftSnap.exists || shiftSnap.data()?.careVertical !== 'child') {
+      // Senior charge dispute: unchanged pre-U8 behavior (no automated action).
+      console.log(`charge.dispute.created ${dispute.id}: non-childcare charge — ignoring`);
+      return;
+    }
+  }
+
+  const { enqueueChildcarePayoutHold } = await import('./childcare/payoutHoldWorker');
+  await enqueueChildcarePayoutHold({
+    sourceType: 'stripe_dispute',
+    sourceId: dispute.id,
+    appointmentId,
+    bookingId: intent.metadata?.childcareBookingId ?? null,
+    paymentIntentId,
+    reason: `stripe_chargeback:${dispute.id}`,
+  });
 }
 
 /**

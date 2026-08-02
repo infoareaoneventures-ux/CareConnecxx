@@ -149,6 +149,14 @@ export async function handleShiftOfferReply(params: {
   }
   const offer = offerSnap.data() as ShiftOffer;
 
+  // Childcare U7 (defensive skip): SMS offer replies must never mutate a
+  // childcare booking in this unit (web/callable-only until U10). Clear the
+  // stale flag and let the normal QA path answer.
+  if ((offer as unknown as Record<string, unknown>).careVertical === "child") {
+    await clearOfferFlag(phone);
+    return "fallthrough";
+  }
+
   // Expired but the sweep hasn't run yet — resolve it now.
   if (new Date(offer.expiresAt) < new Date()) {
     const claimed = await claimOffer(offerId, "expired");
@@ -468,6 +476,11 @@ export async function expireShiftOffers(): Promise<number> {
   let expired = 0;
   for (const doc of snap.docs) {
     const offer = doc.data() as ShiftOffer;
+    // Childcare U7 (defensive skip): childcare bookings are web/callable-only
+    // in this unit and never create shift_offers; if a childcare-stamped offer
+    // ever appears, the senior expiry side effects (appointment rollback,
+    // family SMS, re-match) must not run against it.
+    if ((offer as unknown as Record<string, unknown>).careVertical === "child") continue;
     if (offer.expiresAt >= nowIso) continue;
     const claimed = await claimOffer(doc.id, "expired");
     if (!claimed) continue; // raced with a live reply — that path handles it

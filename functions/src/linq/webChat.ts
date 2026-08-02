@@ -12,6 +12,7 @@
 // an unanswered user bubble in the web thread.
 
 import * as admin from "firebase-admin";
+import { createVerticalExecutionContext } from "../agents/turnSourceKey";
 
 /** Thrown when the agent loop itself fails; the callable wrapper converts it
  *  to an HttpsError so the client sees a clean `internal` failure. */
@@ -126,14 +127,114 @@ export async function handleWebChatTurn(args: {
     }
   }
 
+  // ── Childcare sessions (U4 → U10, plan 2026-07-22-002) ────────────────────
+  // Entered ONLY on a typed childcare/pending stamp — senior sessions are
+  // untouched. U10 upgrade (web/Linq channel parity):
+  //   1. deterministic incident classification FIRST (R53 — pre-LLM,
+  //      unaffected by flags; model text cannot suppress it);
+  //   2. flags-off / pending / not-yet-enrolled → static fail-closed replies
+  //      that write nothing into any memory subsystem (R48/R50);
+  //   3. enrolled families (≥1 live child authority) CONTINUE through the
+  //      normal turn machinery (idempotency claim, per-phone lock) into
+  //      runQaAgent, whose childcare branch owns envelope/tools/memory denial
+  //      — the same tool pack and memory decision the SMS channel resolves.
+  let childcareAgentTurn = false;
+  if (
+    session.careVertical === "child" ||
+    session.verticalIntent === "child" ||
+    session.verticalIntent === "pending"
+  ) {
+    const staticChildcareReply: WebChatResult = {
+      available: false,
+      status:    "notSetUp",
+      reply:     "Childcare setup happens in your secure account area — head to your childcare dashboard to continue. Chat support for childcare is coming soon.",
+      ...withId,
+    };
+    // Front door Stage 1 (R-FD1): a PENDING session has no vertical yet — Evia
+    // asked "adult or kids?" over text and is waiting. Answering here with
+    // childcare copy would assert a vertical the server has not decided, so the
+    // pending reply is vertical-NEUTRAL and points back at the text thread that
+    // owns the resolution. Still fails closed: no agent, no tools, no memory.
+    if (session.verticalIntent === "pending" || session.careVertical === "pending") {
+      return {
+        available: false,
+        status:    "notSetUp",
+        reply:     "I just asked you over text which kind of care this is for — answer me there and this chat picks right back up.",
+        ...withId,
+      };
+    }
+    if (session.careVertical !== "child") return staticChildcareReply; // fail closed
+
+    const { classifyChildcareIncidentSignal, escalateChildcareIncident, CHILDCARE_INCIDENT_ACK } =
+      await import("../childcare/incidentSignal");
+    const signal = classifyChildcareIncidentSignal(message);
+    if (signal.incident && signal.category) {
+      await escalateChildcareIncident({
+        phone, userId: uid, category: signal.category, channel: "web", db,
+      }).catch((err) => {
+        console.error("webChat childcare incident escalation failed (ack still sent):", err);
+        return { held: false, alerted: false };
+      });
+      return { available: true, status: "ok", reply: CHILDCARE_INCIDENT_ACK, showMatches: false, ...withId };
+    }
+
+    // Front door Stage 1: a CAREGIVER childcare session can now exist (the
+    // vertical stamp is no longer gated on role === "client"). The branches
+    // below are family-shaped — guardian authority, the family tool pack, the
+    // family childcare dashboard — so a caregiver would be answered with family
+    // copy and pointed at a route they cannot open. Answer deterministically
+    // with the caregiver childcare surface instead. Incident escalation above
+    // already ran for both roles.
+    //
+    // Front door Stage 2: the conversational childcare caregiver funnel now
+    // exists, but it lives on the TEXT thread (childcare/signupIngress.ts →
+    // agents/childcareCaregiverFunnelTurn.ts) — the same one-thread invariant
+    // the senior side keeps, where the web chat stays read-only until setup is
+    // done. So this reply now POINTS AT the funnel instead of implying the only
+    // route is the web form; running a second, parallel collection conversation
+    // here would fork the funnel's state across two surfaces.
+    if (session.userType === "caregiver") {
+      return {
+        available: false,
+        status:    "notSetUp",
+        reply:     "Childcare work has its own childcare profile and its own screening. I can walk you through it over text — just reply to my text thread — or open your childcare profile under Caregiver.",
+        ...withId,
+      };
+    }
+
+    const { getChildcareFlags } = await import("../config/featureFlags");
+    const flags = await getChildcareFlags({ db }).catch(() => null);
+    if (!flags?.enabled) {
+      return {
+        available: false,
+        status:    "notSetUp",
+        reply:     "Childcare support is paused right now. Your account and details are safe — email support@eviacares.com for anything urgent.",
+        ...withId,
+      };
+    }
+
+    let hasChild = false;
+    try {
+      const { listAuthoritiesForAdult } = await import("../childcare/guardianAuthority");
+      const authorities = await listAuthoritiesForAdult(uid, db);
+      hasChild = authorities.some((a) => a?.state === "active");
+    } catch {
+      hasChild = false; // fail closed → static enrollment reply
+    }
+    if (!hasChild) return staticChildcareReply;
+    childcareAgentTurn = true; // continue into the locked agent turn below
+  }
+
   // Mid-onboarding conversations are driven by the onboarding flow on the SMS
   // path; running the QA agent here would advance a parallel conversation and
   // clobber session flags. The web thread stays read-only until setup is done.
   // Completed sessions carry onboardingStep: "complete" PERMANENTLY, so only a
   // set-and-not-"complete" step is mid-onboarding — same canonical test the SMS
   // router uses (webhooks.ts:1435). Legacy sessions with no onboardingStep at
-  // all are treated as done.
-  if (session.onboardingStep && session.onboardingStep !== "complete") {
+  // all are treated as done. Childcare agent turns skip this guard: their
+  // session step (childcare_web_profile) is owned by the childcare ingress,
+  // not the senior onboarding state machine (U10).
+  if (!childcareAgentTurn && session.onboardingStep && session.onboardingStep !== "complete") {
     return {
       available: false,
       status:    "finishSetup",
@@ -224,6 +325,17 @@ export async function handleWebChatTurn(args: {
     // optedOut/chatId must never be trusted here.
     const optedOut = session.optedOut === true;
     const chatId   = (session.chatId as string | undefined) ?? "";
+    const careVertical = childcareAgentTurn ? "child" : "senior";
+    const executionContext = createVerticalExecutionContext({
+      principal: uid,
+      careVertical,
+      channel: "web",
+      conversationPartition: `${careVertical}:${uid}`,
+      sourceTurn: {
+        conversationId: chatId || uid,
+        messageId: clientMessageId || `web:${Date.now()}`,
+      },
+    });
 
     // ── Active-SMS-flow guard (U2), evaluated on the fresh re-read ──────────
     // Defer if a fresh flow is in flight. Read-only — the web path never
@@ -251,7 +363,7 @@ export async function handleWebChatTurn(args: {
     // duplicate the bubble.
     const { mirrorToWebThread } = await import("./threadMirror");
     let alreadyMirrored = false;
-    if (clientMessageId) {
+    if (clientMessageId && careVertical === "senior") {
       const dup = await db.collection("threads").doc(`cara_${uid}`)
         .collection("messages")
         .where("clientMessageId", "==", clientMessageId)
@@ -266,6 +378,7 @@ export async function handleWebChatTurn(args: {
         text:      message,
         source:    "cara_web",
         clientMessageId,
+        executionContext,
       });
     }
 
@@ -302,9 +415,15 @@ export async function handleWebChatTurn(args: {
         // sendMessage auto-mirrors the outbound into threads/cara_{uid} - same
         // one-thread invariant as the agent branch. Manual mirror is forbidden here.
         const { sendMessage } = await import("./client");
-        await sendMessage(chatId, helpReply);
+        await sendMessage(chatId, helpReply, { executionContext });
       } else {
-        await mirrorToWebThread({ userId: uid, direction: "outbound", text: helpReply, source: "cara_web" });
+        await mirrorToWebThread({
+          userId: uid,
+          direction: "outbound",
+          text: helpReply,
+          source: "cara_web",
+          executionContext,
+        });
       }
       // HELP sent a reply (side effect); a retry must not re-send it.
       if (claimKey) await settleWebhookEvent(WEB_TURN_CLAIMS_COLLECTION, claimKey, "processed");
@@ -336,6 +455,7 @@ export async function handleWebChatTurn(args: {
         skipSend:      !deliverViaLinq,
         _toolCallsOut: toolsCalled,
         sourceChannel: "[USER]",
+        executionContext,
         // U4: web turn identity for lifecycle checkpoints (only when the
         // client sent a stable message id — retried turns share it).
         ...(clientMessageId
@@ -350,7 +470,13 @@ export async function handleWebChatTurn(args: {
     // skipSend branch is the only place the reply is mirrored manually — the
     // Linq branch already mirrored it inside sendMessage.
     if (!deliverViaLinq && reply) {
-      await mirrorToWebThread({ userId: uid, direction: "outbound", text: reply, source: "cara_web" });
+      await mirrorToWebThread({
+        userId: uid,
+        direction: "outbound",
+        text: reply,
+        source: "cara_web",
+        executionContext,
+      });
     }
 
     // ── Completed-turn memory parity (memory-grounding plan U3, R8/R9) ──────
@@ -375,6 +501,9 @@ export async function handleWebChatTurn(args: {
         // R8 parity with the SMS tail: family-fact extraction is CLIENT-only.
         extractFacts:  session.userType !== "caregiver",
         adoptExistingRows: true,
+        // Childcare U10 (R50): the eligibility decision runs INSIDE
+        // persistCompletedTurn — childcare sessions create no turn_sync op.
+        session:       session as Record<string, unknown>,
       }).catch((err: unknown) => ({
         ok: false as const,
         errorClass: err instanceof Error ? err.constructor.name : typeof err,

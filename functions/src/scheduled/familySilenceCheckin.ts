@@ -47,6 +47,7 @@ export const familySilenceCheckinJob = functions.pubsub
       const phone   = doc.id;
       const session = doc.data();
 
+      if (session.careVertical === "child") continue; // Childcare U10 (R54/AE16): senior copy; childcare proactive deferred
       if (session.optedOut) continue;
       if (session.optedIn === false) continue;
       if (session.bereavementMode) continue;            // grief — don't nudge

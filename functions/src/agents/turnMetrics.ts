@@ -17,6 +17,8 @@
 //   - Both pathways emit `cara.turn` with `pathway` distinguishing them, so a
 //     single Cloud Logging filter (`jsonPayload.event="cara.turn"`) sees both.
 
+import { createHash } from "crypto";
+
 export type TurnPathway = "qa" | "quick";
 
 export interface TurnMetrics {
@@ -24,6 +26,7 @@ export interface TurnMetrics {
   phone:    string;
   userId?:  string;
   userType: "client" | "caregiver";
+  careVertical?: "senior" | "child";
 
   // Pathway + entry conditions
   pathway:       TurnPathway;
@@ -270,6 +273,7 @@ export function createTurnMetrics(init: {
   pathway:       TurnPathway;
   isRetry?:      boolean;
   inputChannel?: TurnMetrics["inputChannel"];
+  careVertical?: "senior" | "child";
 }): TurnMetrics {
   return {
     phone:        init.phone,
@@ -278,8 +282,13 @@ export function createTurnMetrics(init: {
     pathway:      init.pathway,
     isRetry:      init.isRetry,
     inputChannel: init.inputChannel,
+    careVertical: init.careVertical,
     startedAt:    Date.now(),
   };
+}
+
+function pseudonymousTurnId(value: string): string {
+  return createHash("sha256").update(`childcare-turn:${value}`).digest("hex").slice(0, 32);
 }
 
 // Single log emission. Pass the reply text so we can record length without
@@ -293,6 +302,13 @@ export function createTurnMetrics(init: {
 export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; error?: unknown } = {}): void {
   const durationMs = Date.now() - metrics.startedAt;
   const reply = opts.reply ?? "";
+  const childcareTurn = metrics.careVertical === "child";
+  const principalHash = childcareTurn
+    ? pseudonymousTurnId(metrics.userId ?? metrics.phone)
+    : undefined;
+  const correlationHash = childcareTurn
+    ? pseudonymousTurnId(`${metrics.phone}:${metrics.startedAt}:${metrics.pathway}`)
+    : undefined;
 
   // Dedupe toolNames defensively. Callers may push the same name multiple times
   // across iterations; we want a compact, distinct list for log readability.
@@ -321,6 +337,12 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
 
   // startedAt isn't useful for downstream queries — durationMs supersedes it.
   delete (payload as { startedAt?: number }).startedAt;
+  if (childcareTurn) {
+    delete payload.phone;
+    delete payload.userId;
+    payload.principalHash = principalHash;
+    payload.correlationHash = correlationHash;
+  }
 
   console.info("cara.turn", payload);
 
@@ -348,8 +370,9 @@ export function emitTurnMetrics(metrics: TurnMetrics, opts: { reply?: string; er
     mirrorTurnMetricRecord({
       source:                    "turn_metrics",
       at:                        new Date().toISOString(),
-      phone:                     metrics.phone,
-      userId:                    metrics.userId ?? null,
+      ...(childcareTurn
+        ? { principalHash, correlationHash, careVertical: "child" }
+        : { phone: metrics.phone, userId: metrics.userId ?? null, careVertical: "senior" }),
       userType:                  metrics.userType,
       inputChannel:              metrics.inputChannel ?? null,
       pathway:                   metrics.pathway,

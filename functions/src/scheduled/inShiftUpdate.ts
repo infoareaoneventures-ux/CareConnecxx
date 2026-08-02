@@ -142,6 +142,9 @@ export const sendInShiftUpdates = functions.pubsub
     for (const apptDoc of activeAppts) {
       const appt = apptDoc.data();
       const apptId = apptDoc.id;
+      // Childcare U10 (R54/AE16): childcare appointments never get senior
+      // in-shift nudges (they interpolate senior care-plan/journal content).
+      if (appt.careVertical === "child") continue;
 
       try {
         const caregiverId = appt.caregiverId as string;

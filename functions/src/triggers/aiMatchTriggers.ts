@@ -110,6 +110,16 @@ export const onIntakeAiMatch = functions.firestore
         const intakeId = context.params.intakeId;
         const data = snap.data();
         if (!data) return null;
+        // Childcare U6 (plan 2026-07-22-002, R32/R34): a typed childcare
+        // intake never enters this senior fan-out — childcare demand (job
+        // post + eligibility-gated provider notification) is created
+        // exclusively by v1-createChildcareJobPost. Skipping here prevents
+        // the senior createJobPost/notifyAreaCaregivers pipeline (no
+        // eligibility gate, legacy shapes) from ever seeing childcare.
+        if (data.careVertical === "child") {
+            console.log(`[onIntakeAiMatch] childcare intake ${intakeId} skipped — childcare demand flows through v1-createChildcareJobPost`);
+            return null;
+        }
         try {
             const result = await runMatchingForIntake(intakeId, data);
             console.log(
@@ -146,6 +156,8 @@ export const onIntakeUpdatedAiMatch = functions.firestore
         const before = change.before.data();
         const after = change.after.data();
         if (!after) return null;
+        // Childcare U6: same skip as onIntakeAiMatch (senior pipeline only).
+        if (after.careVertical === "child") return null;
         const watched = ["careTypes", "tasks", "schedule", "additionalComments", "location"];
         const changed = watched.some(
             (f) => JSON.stringify(before?.[f] ?? null) !== JSON.stringify(after?.[f] ?? null)
@@ -248,6 +260,10 @@ export const onJobApplicationOutcome = functions.firestore
         const after = change.after.data();
         if (!after || before?.status === after.status) return null;
         if (after.status !== "accepted" && after.status !== "rejected") return null;
+        // Childcare U6 (R45): childcare application outcomes never feed the
+        // senior match_outcomes learning loop (per-vertical reputation is U8
+        // childcare/reputationProjection work). Senior rows unchanged.
+        if (after.careVertical === "child") return null;
         try {
             await writeMatchOutcome({
                 clientId: after.clientId,
@@ -272,6 +288,9 @@ export const onVideoInterviewClientDecline = functions.firestore
         const after = change.after.data();
         if (!after || before?.status === after.status) return null;
         if (after.status !== "declined" || after.declinedBy !== "client") return null;
+        // Childcare U6 (R45): childcare interview declines never feed the
+        // senior match_outcomes learning loop.
+        if (after.careVertical === "child") return null;
         try {
             await writeMatchOutcome({
                 clientId: after.clientId,

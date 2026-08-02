@@ -75,6 +75,19 @@ function deleteConditions(block: string): string[] {
 
 const SAFE = new Set(['false', 'isAdmin()']);
 
+/**
+ * A destructive-delete condition is safe when it is a full deny, exactly
+ * isAdmin(), or isAdmin() further NARROWED by &&-joined terms (e.g. the
+ * childcare-vertical exclusion `isAdmin() && ...careVertical != 'child'`,
+ * which is strictly stricter than admin-only). Any `||` widens the grant
+ * beyond admin, so it is never accepted.
+ */
+function isSafeDeleteCondition(cond: string): boolean {
+    if (SAFE.has(cond)) return true;
+    if (cond.includes('||')) return false;
+    return cond.startsWith('isAdmin()&&');
+}
+
 describe('Entity lifecycle — destructive-delete protection (U10)', () => {
     it.each(PROTECTED_ENTITIES)(
         'firestore.rules has a match block for protected entity %s',
@@ -104,10 +117,11 @@ describe('Entity lifecycle — destructive-delete protection (U10)', () => {
 
             for (const cond of conds) {
                 expect(
-                    SAFE.has(cond),
+                    isSafeDeleteCondition(cond),
                     `protected entity '${entity}' grants a non-admin destructive delete: ` +
                     `"allow ... : if ${cond};" — clients/caregivers must never destructively ` +
-                    `delete audit/payment/health records. Use 'if false' or 'if isAdmin()'.`
+                    `delete audit/payment/health records. Use 'if false', 'if isAdmin()', or ` +
+                    `'if isAdmin() && <further restriction>'.`
                 ).toBe(true);
             }
         }

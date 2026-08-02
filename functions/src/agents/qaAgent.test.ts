@@ -26,6 +26,7 @@ const qaHarness = vi.hoisted(() => {
   firestore.collection = (name: string) => makeChain(name);
   firestore.batch = () => ({ set: () => {}, update: () => {}, commit: async () => {} });
   firestore.FieldValue = { delete: () => "__delete__", serverTimestamp: () => "__timestamp__" };
+  firestore.Timestamp = { fromMillis: (millis: number) => ({ millis }) };
 
   return {
     firestore,
@@ -41,6 +42,29 @@ const qaHarness = vi.hoisted(() => {
     getMemoryContext: vi.fn(async (..._args: unknown[]) => ""),
     initializeMemoryFiles: vi.fn(async (..._args: unknown[]) => undefined),
     getMemoryReconciliationState: vi.fn(async (..._args: unknown[]) => ({ pending: false, zepMasked: false, storageMasked: false })),
+    // ── Childcare U10 seams ───────────────────────────────────────────────────
+    getZepContextResult: vi.fn(async (..._args: unknown[]) => null),
+    handleToolCall: vi.fn(async (..._args: unknown[]): Promise<Record<string, unknown>> => ({ success: true })),
+    getChildcareFlags: vi.fn(async (..._args: unknown[]) => ({
+      enabled: true, discoveryEnabled: true, writesEnabled: true, proactiveEnabled: false, emergencyOff: false,
+    })),
+    buildChildcareEnvelope: vi.fn(async (..._args: unknown[]): Promise<Record<string, unknown> | null> => ({
+      vertical: "child",
+      policyVersion: "childcare-envelope-test",
+      actorUid: "client-123",
+      phone: "+15555550123",
+      role: "client",
+      channel: "web",
+      children: [{ childId: "c1", householdId: "h1", displayLabel: "Mia", ageBand: "preschool", scopes: ["view"] }],
+      bookings: [],
+      objectives: [],
+      memory: {
+        eligible: false, reason: "childcare_vertical", policyVersion: "p",
+        subsystems: { zep: false, learnedFacts: false, conversationMemory: false, memoryFiles: false, summaries: false, evalCapture: false },
+      },
+      flags: { enabled: true, discoveryEnabled: true, writesEnabled: true, proactiveEnabled: false, emergencyOff: false },
+      builtAt: "2026-07-23T00:00:00.000Z",
+    })),
   };
 });
 
@@ -65,8 +89,34 @@ vi.mock("../utils/openaiClient",   () => ({ quickComplete: (...args: unknown[]) 
 vi.mock("../utils/claudeRetry",    () => ({ callClaudeWithRetry: vi.fn() }));
 vi.mock("../safety/supervisor",    () => ({ supervise: (msg: string) => Promise.resolve(msg) }));
 vi.mock("../safety/linter",        () => ({ lintMessage: (msg: string) => msg }));
-vi.mock("../mcp/server",           () => ({ MCP_TOOLS: [], CAREGIVER_TOOLS: [], CLIENT_TOOLS: [], handleToolCall: vi.fn(), handleToolCallForCaregiver: vi.fn() }));
-vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: vi.fn(async () => null), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
+vi.mock("../mcp/server",           () => ({
+  MCP_TOOLS: [],
+  CAREGIVER_TOOLS: [],
+  CLIENT_TOOLS: [],
+  // Childcare U10: a representative pack so the childcare branch binds real
+  // tool defs and the dispatch guard can be exercised.
+  CHILDCARE_CLIENT_TOOLS: [
+    { name: "list_my_children", description: "d", input_schema: { type: "object", properties: {} } },
+    { name: "get_childcare_bookings", description: "d", input_schema: { type: "object", properties: {} } },
+    { name: "cancel_childcare_booking", description: "d", input_schema: { type: "object", properties: {} } },
+    { name: "complete_task", description: "d", input_schema: { type: "object", properties: {} } },
+  ],
+  handleToolCall: (...args: unknown[]) => qaHarness.handleToolCall(...args),
+  handleToolCallForCaregiver: vi.fn(),
+}));
+vi.mock("../memory/zepClient",     () => ({ getZepContext: vi.fn(), getZepContextResult: (...args: unknown[]) => qaHarness.getZepContextResult(...args), addUserMessageToZep: vi.fn(), addAssistantMessageToZep: vi.fn() }));
+// Childcare U10: envelope resolution is unit-tested in childcareSituation.test.ts;
+// here it is a controllable seam so the qaAgent branch behavior is pinned.
+vi.mock("./childcareSituation", () => ({
+  CHILDCARE_ENVELOPE_POLICY_VERSION: "childcare-envelope-test",
+  buildChildcareContextEnvelope: (...args: unknown[]) => qaHarness.buildChildcareEnvelope(...args),
+  childcareEnvelopeHealth: () => ({ children: 1, bookings: 0, objectives: 0, flagsEnabled: true, memoryEligible: false }),
+  projectChildcareSituation: () => ({ text: "CURRENT CHILDCARE SITUATION (test block)", chars: 40 }),
+}));
+vi.mock("../config/featureFlags", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getChildcareFlags: (...args: unknown[]) => qaHarness.getChildcareFlags(...args),
+}));
 vi.mock("../memory/memoryFiles",   () => ({ getMemoryContext: (...args: unknown[]) => qaHarness.getMemoryContext(...args), initializeMemoryFiles: (...args: unknown[]) => qaHarness.initializeMemoryFiles(...args) }));
 vi.mock("../memory/memoryOperations", () => ({ getMemoryReconciliationState: (...args: unknown[]) => qaHarness.getMemoryReconciliationState(...args) }));
 vi.mock("../memory/learnedFacts",  () => ({
@@ -503,6 +553,89 @@ describe("buildCaregiverCoreContext", () => {
 
   it("returns empty string when the doc has none of the surfaced fields", () => {
     expect(buildCaregiverCoreContext({ hourlyRate: 25 })).toBe("");
+  });
+
+  // ── Childcare vertical (dual-vertical caregivers) ──────────────────────────
+  describe("childcare vertical", () => {
+    // THE parity pin: recomputeChildcareProviderVisibility deliberately writes
+    // no summary for senior-only caregivers (AE9 byte-identical projection), so
+    // a senior-only doc must produce byte-identical context to before childcare
+    // existed. If this drifts, every senior caregiver's prompt changed.
+    it("emits NOTHING for a senior-only caregiver", () => {
+      const out = buildCaregiverCoreContext(fullDoc);
+      expect(out).not.toMatch(/childcare/i);
+      expect(out).not.toContain("CHILDCARE PROFILE");
+      expect(out).not.toContain("CHILDCARE STATUS");
+    });
+
+    it("surfaces the childcare profile separately from senior skills", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        yearsChildcareExperience: 4,
+        childcareAgeBands: ["toddler", "school_age"],
+        childcareServices: ["babysitting", "after_school_care"],
+      });
+      expect(out).toContain("CHILDCARE PROFILE (separate from senior care)");
+      expect(out).toContain("4 years childcare experience");
+      expect(out).toContain("toddler, school_age");
+      expect(out).toContain("babysitting, after_school_care");
+      // Senior skills must still be present and unmerged.
+      expect(out).toContain("dementia care");
+      expect(out).toContain("6 years experience");
+    });
+
+    it("states APPROVED plainly when discoverable, so Evia can answer 'am I approved'", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: {
+          visible: true,
+          approvalState: "approved",
+          evidenceStatus: "clear",
+          transportCapable: true,
+        },
+      });
+      expect(out).toContain("APPROVED and discoverable for childcare jobs");
+      expect(out).toContain("cleared to transport children");
+      expect(out).toContain("OVERRIDES anything");
+    });
+
+    it("says NOT discoverable when visible is false — never leaves it ambiguous", () => {
+      // The 2026-07-22 incident shape: silence lets stale memory answer. An
+      // explicit negative is required, not an omission.
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: { visible: false, approvalState: "pending", evidenceStatus: "none" },
+      });
+      expect(out).toContain("NOT yet discoverable for childcare jobs");
+      expect(out).toContain("approval pending");
+    });
+
+    it("treats a missing `visible` as NOT discoverable (fail closed)", () => {
+      const out = buildCaregiverCoreContext({ ...fullDoc, childcareProvider: {} });
+      expect(out).toContain("NOT yet discoverable");
+    });
+
+    it("does not claim transport clearance unless explicitly true", () => {
+      for (const transportCapable of [false, undefined, "yes"]) {
+        const out = buildCaregiverCoreContext({
+          ...fullDoc,
+          childcareProvider: { visible: true, transportCapable },
+        });
+        expect(out, `transportCapable=${String(transportCapable)}`)
+          .not.toContain("cleared to transport");
+      }
+    });
+
+    it("keeps senior and childcare status as two distinct blocks", () => {
+      const out = buildCaregiverCoreContext({
+        ...fullDoc,
+        childcareProvider: { visible: true, approvalState: "approved" },
+      });
+      expect(out).toContain("ACCOUNT STATUS");
+      expect(out).toContain("CHILDCARE STATUS");
+      // Senior bg-check wording must not be reused for childcare evidence.
+      expect(out).toContain("background check CLEARED");
+    });
   });
 
   it("surfaces service area, skills, availability, and verification/account status", () => {
@@ -1301,5 +1434,192 @@ describe("runQaAgent U5 wiring (source scan) — current message reaches getRele
     expect(block).toContain("unconfirmedIdentity");
     expect(block).toContain("[] as Array<{ fact: string; category: string }>");
     expect(block).toContain("getRelevantFacts(userId, text)");
+  });
+});
+
+
+// ── Childcare U10 (plan 2026-07-22-002, R49-R51, KTD17) ───────────────────────
+// The childcare-vertical branch: server-owned envelope before prompt/tool
+// decisions, the childcare tool pack replacing the senior surface, memory
+// subsystems never touched, fail-closed behavior in both tool directions, and
+// byte-identical senior parity when the stamp is absent.
+describe("runQaAgent childcare vertical branch (U10)", () => {
+  const CHILD_SESSION = { careVertical: "child", verticalIntent: "child", userType: "client" };
+  const baseParams = {
+    phone: "+15555550123",
+    chatId: "chat-childcare",
+    userId: "client-123",
+    seniorId: "",
+    userType: "client" as const,
+    skipSend: true,
+  };
+
+  const agentText = (text: string) => ({
+    stop_reason: "end_turn",
+    content: [{ type: "text", text }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+  const agentTool = (name: string, input: Record<string, unknown> = {}) => ({
+    stop_reason: "tool_use",
+    content: [{ type: "tool_use", id: "toolu_cc", name, input }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+
+  beforeEach(() => {
+    qaHarness.writes.length = 0;
+    for (const key of Object.keys(qaHarness.sessionData)) delete qaHarness.sessionData[key];
+    qaHarness.runAgentModelTurn.mockReset();
+    qaHarness.quickComplete.mockReset();
+    qaHarness.quickComplete.mockResolvedValue("SUPPORTED");
+    qaHarness.handleToolCall.mockReset();
+    qaHarness.handleToolCall.mockResolvedValue({ success: true, bookings: [] });
+    qaHarness.getChildcareFlags.mockReset();
+    qaHarness.getChildcareFlags.mockResolvedValue({
+      enabled: true, discoveryEnabled: true, writesEnabled: true, proactiveEnabled: false, emergencyOff: false,
+    });
+    qaHarness.buildChildcareEnvelope.mockClear();
+    qaHarness.getMemoryContext.mockClear();
+    qaHarness.initializeMemoryFiles.mockClear();
+    qaHarness.getZepContextResult.mockClear();
+    qaHarness.detectAndStageFactChange.mockReset();
+    qaHarness.detectAndStageFactChange.mockResolvedValue({ kind: "not_correction" });
+    qaHarness.factChangeAckCopy.mockReset();
+    qaHarness.factChangeAckCopy.mockReturnValue(null);
+    qaHarness.findTombstonedRestatement.mockReset();
+    qaHarness.findTombstonedRestatement.mockResolvedValue(null);
+  });
+
+  it("resolves the envelope BEFORE the model runs and builds the childcare prompt (R49)", async () => {
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("Booking status coming up."));
+    const reply = await runQaAgent({ ...baseParams, text: "status?", session: CHILD_SESSION });
+
+    expect(reply).toBe("Booking status coming up.");
+    expect(qaHarness.buildChildcareEnvelope).toHaveBeenCalledTimes(1);
+    const call = qaHarness.runAgentModelTurn.mock.calls[0][0] as {
+      system: Array<{ text: string }>;
+      tools: Array<{ name: string }>;
+    };
+    const systemText = call.system.map((b) => b.text).join("\n");
+    expect(systemText).toContain("childcare coordinator");
+    expect(systemText).toContain("NEVER communicate with a child directly");
+    expect(systemText).toContain("CURRENT CHILDCARE SITUATION");
+    // No senior persona/context blocks on a childcare turn.
+    expect(systemText.toLowerCase()).not.toContain("senior_profile");
+    expect(systemText).not.toContain("get_senior_profile");
+  });
+
+  it("binds ONLY the childcare tool pack (R51 — vertical filtering replaces the senior surface)", async () => {
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("ok"));
+    await runQaAgent({ ...baseParams, text: "hi", session: CHILD_SESSION });
+    const call = qaHarness.runAgentModelTurn.mock.calls[0][0] as { tools: Array<{ name: string }> };
+    const names = call.tools.map((t) => t.name);
+    expect(names).toContain("get_childcare_bookings");
+    expect(names).toContain("cancel_childcare_booking");
+    expect(names).not.toContain("get_senior_profile");
+    expect(names).not.toContain("request_booking");
+  });
+
+  it("stamps the server-owned vertical on childcare tool dispatch — forged values never survive (AE19)", async () => {
+    qaHarness.runAgentModelTurn
+      .mockResolvedValueOnce(agentTool("get_childcare_bookings", { careVertical: "senior", bookingId: "bk-1" }))
+      .mockResolvedValueOnce(agentText("Found it."));
+    await runQaAgent({ ...baseParams, text: "check my bookings", session: CHILD_SESSION });
+    expect(qaHarness.handleToolCall).toHaveBeenCalledTimes(1);
+    const [name, input] = qaHarness.handleToolCall.mock.calls[0] as [string, Record<string, unknown>];
+    expect(name).toBe("get_childcare_bookings");
+    expect(input.careVertical).toBe("child"); // server-owned, overwrote the forged value
+    expect(input.userId).toBe("client-123");
+  });
+
+  it("fails closed when the model calls a SENIOR tool on a childcare turn (R51)", async () => {
+    qaHarness.runAgentModelTurn
+      .mockResolvedValueOnce(agentTool("get_senior_profile", { seniorId: "s-1" }))
+      .mockResolvedValueOnce(agentText("I can only help with childcare here."));
+    await runQaAgent({ ...baseParams, text: "show the senior profile", session: CHILD_SESSION });
+    expect(qaHarness.handleToolCall).not.toHaveBeenCalled(); // rejected before dispatch
+  });
+
+  it("writes child format uncertainty only to pseudonymous quality telemetry", async () => {
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("- First item\n- Second item"));
+    qaHarness.quickComplete.mockResolvedValue("Here are the two items in one sentence.");
+    await runQaAgent({
+      ...baseParams,
+      text: "What should I know?",
+      session: CHILD_SESSION,
+      sourceTurn: { conversationId: "c1", messageId: "m1" },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        qaHarness.writes.some((write) => write.collection === "childcare_quality_events"),
+      ).toBe(true);
+    });
+    const quality = qaHarness.writes.find(
+      (write) => write.collection === "childcare_quality_events",
+    )?.data;
+    expect(quality).toMatchObject({
+      careVertical: "child",
+      eventCode: "format_revision",
+    });
+    expect(quality).not.toHaveProperty("phone");
+    expect(quality).not.toHaveProperty("userId");
+    expect(quality).not.toHaveProperty("question");
+    expect(quality).not.toHaveProperty("reply");
+    expect(
+      qaHarness.writes.some((write) => write.collection === "agent_uncertainty_log"),
+    ).toBe(false);
+  });
+
+  it("strips a model-forged childcare stamp on a SENIOR turn (reverse direction fails closed at the handler)", async () => {
+    qaHarness.runAgentModelTurn
+      .mockResolvedValueOnce(agentTool("cancel_childcare_booking", { careVertical: "child", bookingId: "bk-1" }))
+      .mockResolvedValueOnce(agentText("done"));
+    await runQaAgent({ ...baseParams, seniorId: "senior-123", text: "cancel it", session: {} });
+    expect(qaHarness.handleToolCall).toHaveBeenCalledTimes(1);
+    const [, input] = qaHarness.handleToolCall.mock.calls[0] as [string, Record<string, unknown>];
+    expect("careVertical" in input).toBe(false); // the handler vertical guard now denies
+  });
+
+  it("NEVER touches a memory subsystem on a childcare turn (R50/KTD17)", async () => {
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("ok"));
+    await runQaAgent({ ...baseParams, text: "remember Mia is allergic to peanuts", session: { ...CHILD_SESSION, zepThreadId: "zep-1" } });
+    expect(qaHarness.getZepContextResult).not.toHaveBeenCalled();
+    expect(qaHarness.getMemoryContext).not.toHaveBeenCalled();
+    expect(qaHarness.initializeMemoryFiles).not.toHaveBeenCalled();
+    expect(qaHarness.detectAndStageFactChange).not.toHaveBeenCalled();
+    expect(qaHarness.findTombstonedRestatement).not.toHaveBeenCalled();
+  });
+
+  it("emergency-off fails closed to the deterministic safe responder — no model, no tools (R61)", async () => {
+    qaHarness.getChildcareFlags.mockResolvedValue({
+      enabled: false, discoveryEnabled: false, writesEnabled: false, proactiveEnabled: false, emergencyOff: true,
+    });
+    const reply = await runQaAgent({ ...baseParams, text: "hi", session: CHILD_SESSION });
+    expect(reply).toContain("paused");
+    expect(reply).toContain("support@eviacares.com");
+    expect(qaHarness.runAgentModelTurn).not.toHaveBeenCalled();
+    expect(qaHarness.buildChildcareEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the envelope cannot be resolved — never the senior prompt (R49)", async () => {
+    qaHarness.buildChildcareEnvelope.mockResolvedValue(null);
+    const reply = await runQaAgent({ ...baseParams, text: "hi", session: CHILD_SESSION });
+    expect(reply).toContain("securely load");
+    expect(qaHarness.runAgentModelTurn).not.toHaveBeenCalled();
+  });
+
+  it("SENIOR PARITY: a session without the childcare stamp never touches any childcare seam", async () => {
+    qaHarness.runAgentModelTurn.mockResolvedValue(agentText("I can help with that."));
+    const reply = await runQaAgent({ ...baseParams, seniorId: "senior-123", text: "How is Mom doing?", session: {} });
+    expect(reply).toBe("I can help with that.");
+    expect(qaHarness.buildChildcareEnvelope).not.toHaveBeenCalled();
+    expect(qaHarness.getChildcareFlags).not.toHaveBeenCalled();
+    const call = qaHarness.runAgentModelTurn.mock.calls[0][0] as { system: Array<{ text: string }> };
+    const systemText = call.system.map((b) => b.text).join("\n");
+    expect(systemText).not.toContain("CHILDCARE");
+    expect(systemText).not.toContain("childcare coordinator");
+    // Senior memory fetches still run exactly as before.
+    expect(qaHarness.getMemoryContext).toHaveBeenCalled();
+    expect(qaHarness.detectAndStageFactChange).toHaveBeenCalled();
   });
 });

@@ -10,7 +10,14 @@ import { getAppUrl } from "../config/appUrl";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
-async function hasConflict(
+// Exported (Childcare U7): the cross-vertical conflict gate. Childcare
+// appointments live in this same shared collection with the same blocking
+// statuses, so a senior booking structurally cannot land on top of a
+// confirmed childcare visit — and the childcare conflict check
+// (childcare/bookingCallables.findChildcareBookingConflict) reads the same
+// collection for the reverse direction. Behavior for senior callers is
+// byte-identical (export only).
+export async function hasConflict(
   caregiverId: string,
   date: string,
   startTime: string,
@@ -82,6 +89,21 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   if (!txResult) return; // Already processed by a concurrent caller
   const { task, didExpire } = txResult;
+
+  // Childcare U7 (defensive guard): the SMS agent booking pipeline is senior-
+  // only in this unit — childcare bookings are web/callable-only until U10.
+  // A childcare-stamped task must never write senior-shaped appointments.
+  if ((task as unknown as Record<string, unknown>).careVertical === "child") {
+    await taskRef.update({ status: "failed", failedReason: "childcare_not_supported_via_sms" }).catch(() => {});
+    await db.collection("admin_alerts").add({
+      type: "childcare_task_in_senior_pipeline",
+      agentTaskId: taskId,
+      createdAt: new Date().toISOString(),
+      resolved: false,
+      priority: "high",
+    }).catch(() => {});
+    return;
+  }
 
   if (didExpire) {
     const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();

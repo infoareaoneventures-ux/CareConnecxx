@@ -97,6 +97,10 @@ export const sendMorningBriefings = functions.pubsub
 
     for (const doc of snap.docs) {
       const appt = doc.data();
+      // Childcare U10 (R54/AE16): childcare appointments never feed the senior
+      // morning briefing (this copy interpolates senior names/care plans, and
+      // childcare proactive messaging is deferred). Senior rows unchanged.
+      if (appt.careVertical === "child") continue;
       const caregiverId = appt.caregiverId as string;
       if (!caregiverId) continue;
 
@@ -245,6 +249,7 @@ export async function checkCaregiverWorkloads(): Promise<void> {
   const hoursById: Record<string, { hours: number; name: string; phone?: string }> = {};
   for (const doc of apptSnap.docs) {
     const d = doc.data();
+    if (d.careVertical === "child") continue; // Childcare U10 (R54/AE16)
     const cgId   = d.caregiverId as string;
     const cgName = d.caregiverName as string;
     if (!cgId) continue;
@@ -333,6 +338,7 @@ async function sendFamilyMorningBriefings(
 
   for (const doc of apptDocs) {
     const appt       = doc.data();
+    if (appt.careVertical === "child") continue; // Childcare U10 (R54/AE16)
     const clientId   = appt.clientId as string;
     if (!clientId || seenClients.has(clientId)) continue;
     seenClients.add(clientId);

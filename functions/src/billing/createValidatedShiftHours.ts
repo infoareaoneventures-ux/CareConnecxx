@@ -68,6 +68,15 @@ export async function createValidatedShiftHours(input: {
       throw new ValidatedShiftHoursError("not_found", "Appointment not found");
     }
     const appointment = appointmentSnap.data()!;
+    // Childcare U8 (R39): every senior timesheet source (web/mcp/care_note/
+    // agent/recurring) fails closed on a childcare appointment — childcare
+    // hours are server-derived at check-out (childcare/shiftPayments.ts).
+    if (appointment.careVertical === "child") {
+      throw new ValidatedShiftHoursError(
+        "not_billable",
+        "Childcare visits bill through the childcare completion path",
+      );
+    }
     if (appointment.caregiverId !== input.actorUid) {
       throw new ValidatedShiftHoursError("forbidden", "Appointment is not assigned to this caregiver");
     }

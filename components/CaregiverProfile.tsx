@@ -1,8 +1,14 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, Star, Loader2,
-  CheckCircle, MapPin, Car, AlertCircle
+  CheckCircle, MapPin, Car, AlertCircle, Baby
 } from 'lucide-react';
+// Childcare U11 (plan 2026-07-22-002): additive childcare summary card.
+// Availability comes from the once-per-session callable probe — senior-only
+// caregivers (or flags off) render this page byte-identically to before
+// (parity pinned by CaregiverProfile.childcare.test.tsx).
+import { fetchCaregiverChildcareAccess, type ChildcareProviderStateResponse } from './shared/childcareAccess';
 import { AvatarUpload } from './ui/AvatarUpload';
 import { Badge } from './ui/Badge';
 import { ViewType, AddToastFunction, Review, Caregiver } from '../types';
@@ -31,10 +37,27 @@ interface CaregiverProfileProps {
 const LANGUAGES = ['English', 'Spanish', 'French', 'Mandarin', 'Vietnamese', 'Tagalog'];
 
 export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, onShowToast }) => {
+  const navigate = useNavigate();
   const { refreshCaregiverProfile } = useCareConnex();
+  // Declared here (ahead of the childcare probe effect below) because that
+  // effect depends on currentUser?.uid; the senior sections further down use
+  // the same value they always have.
+  const currentUser = authService.getCurrentUser();
   const [loading, setLoading] = useState(true);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [profile, setProfile] = useState<Partial<Caregiver> & Record<string, any>>({});
+  // Childcare U11: additive card state (null while unavailable/probing).
+  const [childcareProvider, setChildcareProvider] = useState<ChildcareProviderStateResponse | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setChildcareProvider(null);
+    void fetchCaregiverChildcareAccess(currentUser?.uid).then((access) => {
+      if (!active) return;
+      if (access.status === 'available') setChildcareProvider(access.provider);
+    });
+    return () => { active = false; };
+  }, [currentUser?.uid]);
 
   // Editable state mirroring wizard fields
   const [editingSection, setEditingSection] = useState<string | null>(null);
@@ -63,7 +86,6 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     registration: registrationRef,
   };
 
-  const currentUser = authService.getCurrentUser();
   const [hasEngagement, setHasEngagement] = useState(false);
 
   useEffect(() => {
@@ -376,6 +398,32 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
                 </div>
               )}
             </div>
+
+            {/* Childcare U11: additive childcare vertical summary — appears
+                only when childcare is available. Senior services/approval
+                above are untouched (R24/AE9). */}
+            {childcareProvider && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5" data-testid="caregiver-profile-childcare-card">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                    <Baby className="w-4 h-4 text-primary-600" aria-hidden="true" /> Childcare
+                  </h3>
+                  {childcareProvider.eligibility?.eligible
+                    ? <Badge variant="success">Visible</Badge>
+                    : <Badge variant="neutral">Setup needed</Badge>}
+                </div>
+                <p className="text-sm text-slate-500 mb-3">
+                  Childcare services, screening, and reviews are separate from your senior care profile.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/caregiver/childcare')}
+                  className="text-sm font-semibold text-primary-600 hover:text-primary-700 hover:underline"
+                >
+                  Manage childcare profile
+                </button>
+              </div>
+            )}
 
             {/* Transport Documents — only rows that need action; section hidden when badge is active */}
             {(() => {

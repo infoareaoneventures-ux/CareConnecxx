@@ -94,6 +94,19 @@ export async function computeMatchesForIntake(
     intakeData: any,
     intakeEmbedding: number[] | null
 ): Promise<ScoredMatch[]> {
+    // Childcare U6 (plan 2026-07-22-002, R34/KTD11): a typed childcare intake
+    // never enters the senior pipeline below — candidate retrieval, hard
+    // eligibility, and scoring happen in the childcare seam, which returns
+    // only ELIGIBLE candidates scored on approved features (no senior
+    // embeddings, no cross-vertical reputation — R45). Senior intakes
+    // (careVertical absent or "senior") take the exact pre-U6 path.
+    if (intakeData?.careVertical === "child") {
+        const { computeChildcareMatchesForIntake } = await import(
+            "../childcare/matchingEligibility"
+        );
+        return computeChildcareMatchesForIntake(intakeId, intakeData);
+    }
+
     const db = admin.firestore();
     const clientId = intakeData.userId || intakeId;
 

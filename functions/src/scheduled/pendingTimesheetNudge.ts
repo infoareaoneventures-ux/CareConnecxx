@@ -66,6 +66,10 @@ export const sendPendingTimesheetNudges = functions.pubsub
 
     const byClient = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
     for (const d of snap.docs) {
+      // Childcare skip (plan 2026-07-22-002 U8): the SMS timesheet nudge is a
+      // senior Evia flow — childcare rows are reviewed in-app/web and their
+      // Evia SMS surfaces are U10. Senior rows are unaffected.
+      if (d.data().careVertical === "child") continue;
       const clientId = d.data().clientId as string | undefined;
       if (!clientId) continue;
       const arr = byClient.get(clientId);

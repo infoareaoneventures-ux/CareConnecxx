@@ -540,6 +540,176 @@ async function detectRoleSwitch(
   }
 }
 
+// ── Mid-flow VERTICAL switch: detect → confirm → re-stamp (R-FD7) ────────────
+//
+// docs/architecture/childcare-front-door-design.md. The vertical sibling of
+// detectRoleSwitch, with the same discipline plus one extra rule the role
+// switch does not need: a confirmed vertical switch CLEARS the vertical-specific
+// collected answers (senior name/age/conditions never become part of a
+// childcare profile — R-FD4 forbids childcare from holding those fields at all).
+//
+// Steps excluded here are the same transactional gates the role switch excludes,
+// for the same reason: a bare "yes" at a payment/upload/confirm-name step is an
+// answer to THAT step, not a vertical change.
+
+const VERTICAL_SWITCH_EXCLUDED_SUFFIXES = [
+  "_send_payment", "_awaiting_payment", "_awaiting_stripe", "_awaiting_bgcheck",
+  "_awaiting_membership", "_awaiting_documents", "_awaiting_photo",
+  "_send_photo", "_send_documents", "_send_bgcheck", "_send_membership",
+  "_send_stripe_connect", "_awaiting_identity",
+] as const;
+
+function verticalSwitchEligibleStep(step: string): boolean {
+  if (!step || step === "ask_role" || step === "verify_phone" || step === "complete") return false;
+  if (step === "client_confirm_name" || step === "caregiver_confirm_name") return false;
+  if (step.startsWith("childcare_")) return false; // childcare sessions never reach here
+  return !VERTICAL_SWITCH_EXCLUDED_SUFFIXES.some((s) => step.endsWith(s));
+}
+
+/** Yes/no on the switch confirmation. Fails safe to "not confirmed". */
+async function classifyVerticalSwitchAnswer(text: string, switchTo: "senior" | "child"): Promise<"yes" | "no" | "unclear"> {
+  const raw = await parseWithClaude(
+    `Evia just asked the user to confirm switching their setup over to ` +
+      `${switchTo === "child" ? "CHILDCARE for their kids" : "care for an ADULT"}. ` +
+      'Classify their reply. Clear agreement to switch → yes. Clear refusal, "no", or "I meant the other one" → no. ' +
+      "Anything else or ambiguous → unclear. Reply with exactly one word: yes, no, or unclear.",
+    text,
+  ).catch(() => "unclear");
+  const v = raw.trim().toLowerCase();
+  return v === "yes" || v === "no" ? v : "unclear";
+}
+
+/**
+ * Returns true when this turn was CONSUMED by the vertical-switch machinery
+ * (a confirmation answer, or a newly detected switch that got parked).
+ *
+ * EXPORTED because it has two call sites by necessity: the webhook's
+ * mid-onboarding gate (loop-only means collection-step turns never reach the
+ * scripted runner) and handleOnboardingStep itself (for the KEPT gate steps).
+ * The `_verticalSwitchChecked` in-memory marker makes the pair idempotent —
+ * a single turn is never classified twice, and nothing extra is persisted.
+ */
+export async function handleVerticalSwitchTurn(
+  phone:   string,
+  chatId:  string,
+  text:    string,
+  session: AgentSession,
+  step:    string,
+): Promise<boolean> {
+  if (text === "__RESUME__" || text.trim() === "") return false;
+  if ((session as any)._verticalSwitchChecked) return false;
+  (session as any)._verticalSwitchChecked = true;
+
+  const {
+    detectVerticalSwitch, detectDeterministicSignals,
+  } = await import("./verticalClassifier");
+  const {
+    buildVerticalSwitchHold, buildVerticalSwitchConfirmation,
+    resolveVerticalSwitchConfirmation, readVerticalSwitchHold,
+    clearVerticalSwitchHold, VERTICAL_SWITCH_MAX_ASKS,
+  } = await import("./verticalFrontDoor");
+
+  const currentVertical: "senior" | "child" =
+    (session as any).careVertical === "child" ? "child" : "senior";
+
+  // ── (1) A parked switch is awaiting confirmation: THIS turn is the answer ──
+  // readVerticalSwitchHold also expires a stale hold, so an ignored
+  // confirmation can never pin a live signup behind a question forever.
+  const hold = readVerticalSwitchHold((session as any).pendingVerticalSwitch);
+  if ((session as any).pendingVerticalSwitch && !hold) {
+    await updateSession(phone, clearVerticalSwitchHold());
+    (session as any).pendingVerticalSwitch = null;
+  }
+  const heldSwitchTo = hold?.switchTo ?? null;
+  if (heldSwitchTo) {
+    const answer = await classifyVerticalSwitchAnswer(text, heldSwitchTo);
+    if (answer === "unclear") {
+      // Max ONE re-ask, then deny by default — and deny here means "do NOT
+      // switch" (R-FD7: an unconfirmed switch never re-stamps). Abandoning the
+      // hold returns the user to the step they were on rather than trapping
+      // them in a confirmation loop.
+      if (hold!.asks >= VERTICAL_SWITCH_MAX_ASKS) {
+        await updateSession(phone, clearVerticalSwitchHold());
+        await sendMessage(chatId,
+          "No problem — I'll leave things as they are. Back to it: " +
+          `${currentStepQuestion(step, session)}`);
+        return true;
+      }
+      await updateSession(phone, buildVerticalSwitchHold(heldSwitchTo, new Date(), hold!.asks + 1));
+      await sendMessage(chatId, buildVerticalSwitchConfirmation(heldSwitchTo));
+      return true;
+    }
+    const flags = heldSwitchTo === "child"
+      ? await (await import("../config/featureFlags")).getChildcareFlags().catch(() => null)
+      : null;
+    const result = resolveVerticalSwitchConfirmation({
+      switchTo: heldSwitchTo,
+      affirmative: answer === "yes",
+      childcareEnabled: flags?.enabled === true,
+    });
+
+    if (!result.confirmed) {
+      // result.sessionPatch on a decline is exactly the hold clear — no stamp.
+      await updateSession(phone, result.sessionPatch);
+      await sendMessage(chatId,
+        "Got it — staying with what we started. Picking back up: " +
+        `${currentStepQuestion(step, session)}`);
+      return true;
+    }
+
+    // Confirmed: drop the vertical-specific answers, then re-stamp.
+    const existing = (session.onboardingData ?? {}) as Record<string, unknown>;
+    const cleaned: Record<string, unknown> = { ...existing };
+    for (const f of result.clearCollectedFields) delete cleaned[f];
+    await updateSession(phone, { ...result.sessionPatch, onboardingData: cleaned });
+    session.onboardingData = cleaned;
+
+    if (result.vertical === "child") {
+      // Route into the childcare ingress from here — a childcare-stamped session
+      // must not continue in the senior state machine even for one more turn.
+      // mergeSession keeps the existing identity fields (userId, cleared
+      // onboardingData) while the ingress owns the step + typed stamp.
+      const { handleChildcareColdInbound } = await import("../childcare/signupIngress");
+      await handleChildcareColdInbound({
+        phone,
+        chatId,
+        service: (session as any).service ?? "SMS",
+        preferredLanguage: session.preferredLanguage === "es" ? "es" : "en",
+        role: session.userType === "caregiver" ? "caregiver" : "client",
+        sessionPatch: result.sessionPatch,
+        mergeSession: true,
+      }).catch((err) => {
+        console.error("vertical switch → childcare ingress failed:", err);
+        return true;
+      });
+      return true;
+    }
+
+    await updateSession(phone, { onboardingStep: "ask_role" });
+    await sendMessage(chatId,
+      "Got it — let's set this up for an adult instead. Are you looking for care for a loved one, " +
+      "or are you a caregiver looking for work?");
+    return true;
+  }
+
+  // ── (2) Detect a NEW switch. Model call only when a child signal is present ──
+  if (!verticalSwitchEligibleStep(step)) return false;
+  const signals = detectDeterministicSignals(text);
+  const worthChecking = currentVertical === "senior" ? signals.child : signals.senior;
+  if (!worthChecking) return false;
+
+  const detection = await detectVerticalSwitch({
+    text,
+    currentVertical,
+    currentRole: session.userType === "caregiver" ? "caregiver" : session.userType === "client" ? "client" : null,
+  });
+  if (!detection.switchTo) return false;
+
+  await updateSession(phone, buildVerticalSwitchHold(detection.switchTo));
+  await sendMessage(chatId, buildVerticalSwitchConfirmation(detection.switchTo));
+  return true;
+}
+
 // ── Mid-flow correction detector ─────────────────────────────────────────────
 
 async function detectCorrection(text: string): Promise<{ field: string; value: string } | null> {
@@ -1002,6 +1172,21 @@ export async function handleOnboardingStep(
   // runs its own pre-turn absorber (webhooks Fix 1). handleOnboardingStep now only
   // ever sees KEPT steps (ask_role, gates/awaiting, confirm-name, post-collection,
   // job_*), so there is no client_ask_* collection step to front-load into.
+
+  // ── Mid-flow VERTICAL switch (front door R-FD7) ─────────────────────────────
+  //
+  // Sibling of the role switch below, and deliberately BEFORE it: "actually
+  // this is for my kids, not my mom" is a vertical change, and letting the role
+  // detector see it first would read it as a role question and wipe progress.
+  //
+  // Two-turn contract: detect → CONFIRM → re-stamp. A detected switch never
+  // re-stamps on its own, and confirming CLEARS the vertical-specific collected
+  // answers instead of carrying senior intake into a childcare profile.
+  //
+  // Cost/parity guard: the model is only consulted when the deterministic
+  // pre-pass actually sees a childcare signal in the text, so a senior turn
+  // with no child words costs exactly what it cost before (zero extra calls).
+  if (await handleVerticalSwitchTurn(phone, chatId, text, session, step)) return;
 
   // Mid-flow role switch: "wait I'm actually a caregiver" / "no I need care, not a job".
   // Previously the only escape hatch was START OVER which wiped all progress.

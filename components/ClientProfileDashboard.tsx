@@ -3,12 +3,36 @@ import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../lib/firebase';
 import { ClientIntakeData } from '../types';
 import { ClientNavigation } from './client/ClientNavigation';
+// Childcare U11 (plan 2026-07-22-002): the client profile is the RECIPIENT
+// HUB — an explicit vertical/recipient switch. Senior recipients keep exactly
+// their current rendering; the childcare tab exists only when childcare is
+// available (Firestore-resident flags on) and the user opts in / has child
+// recipients. Availability comes from the once-per-session callable probe —
+// unavailable (senior-only) renders byte-identically to before.
+import { ageBandLabel, fetchFamilyChildcareAccess, type ChildSummary } from './shared/childcareAccess';
 
 export default function ClientProfileDashboard() {
   const navigate = useNavigate();
   const [intakeData, setIntakeData] = useState<ClientIntakeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(auth?.currentUser);
+  // Childcare U11 recipient-hub state.
+  const [childcareAvailable, setChildcareAvailable] = useState(false);
+  const [childRecipients, setChildRecipients] = useState<ChildSummary[]>([]);
+  const [activeVertical, setActiveVertical] = useState<'senior' | 'child'>('senior');
+
+  useEffect(() => {
+    let active = true;
+    setChildcareAvailable(false);
+    setChildRecipients([]);
+    setActiveVertical('senior');
+    void fetchFamilyChildcareAccess(user?.uid).then((access) => {
+      if (!active) return;
+      setChildcareAvailable(access.status === 'available');
+      setChildRecipients(access.children);
+    });
+    return () => { active = false; };
+  }, [user?.uid]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -69,6 +93,77 @@ export default function ClientProfileDashboard() {
           </div>
         </div>
 
+        {/* Childcare U11: explicit vertical/recipient switch. Rendered ONLY
+            when childcare is available — senior-only households see no pills
+            and the exact pre-childcare layout below. */}
+        {childcareAvailable && (
+          <div className="flex gap-2 mb-6" role="tablist" aria-label="Care recipients">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeVertical === 'senior'}
+              onClick={() => setActiveVertical('senior')}
+              className={`px-4 py-2 rounded-full text-sm font-semibold ${
+                activeVertical === 'senior' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-700'
+              }`}
+            >
+              Senior care
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeVertical === 'child'}
+              onClick={() => setActiveVertical('child')}
+              className={`px-4 py-2 rounded-full text-sm font-semibold ${
+                activeVertical === 'child' ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-700'
+              }`}
+            >
+              Childcare
+            </button>
+          </div>
+        )}
+
+        {childcareAvailable && activeVertical === 'child' && (
+          <section aria-label="Childcare recipients" className="space-y-4" data-testid="recipient-hub-childcare">
+            {childRecipients.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Also caring for a child?</h3>
+                <p className="text-gray-600 text-sm mb-4">
+                  Add a child profile to book verified babysitters and nannies. Child details stay in your secure
+                  account and are never mixed with senior care.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/childcare')}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold"
+                >
+                  Set up childcare
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm p-6 space-y-3">
+                <h3 className="text-lg font-semibold text-gray-900">Children</h3>
+                {childRecipients.map((child) => (
+                  <div key={child.childId} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg p-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{child.displayLabel}</p>
+                      <p className="text-xs text-gray-500">{ageBandLabel(child.ageBand)}</p>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => navigate('/childcare')}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold"
+                >
+                  Open childcare dashboard
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {(!childcareAvailable || activeVertical === 'senior') && (
         <div className="grid md:grid-cols-3 gap-6">
           {/* Care Request Summary */}
           <div className="md:col-span-2 space-y-6">
@@ -226,6 +321,7 @@ export default function ClientProfileDashboard() {
             </div>
           </div>
         </div>
+        )}
       </main>
     </div>
   );

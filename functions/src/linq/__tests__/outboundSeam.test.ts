@@ -42,7 +42,10 @@ describe("outbound seam — static guard", () => {
     };
     walk(srcDir);
     expect(offenders, "Linq sends must go through linq/client.ts, not direct axios").toEqual([]);
-  });
+    // Timeout: this walks + reads all of functions/src. Fast standalone, but it
+    // can exceed the 5s default under full-shard CPU contention (a false CI
+    // failure, same class as tests/firestoreFieldOverrides.test.ts).
+  }, 60_000);
 });
 
 describe("outbound seam — behavioral", () => {

@@ -588,6 +588,72 @@ describe("booking tools", () => {
     });
   });
 
+  // ── Childcare U7 (plan 2026-07-22-002): MCP booking tools gain NO childcare
+  // access in this unit — childcare booking mutations are web/callable-only
+  // until U10 ships classified Evia tools. Every appointment-mutating tool
+  // must refuse a careVertical:'child' doc with an explicit skip.
+  describe("childcare skip (U7 — MCP booking tools have no childcare access)", () => {
+    const CHILD_APPT = {
+      clientId: "c1",
+      caregiverId: "cg1",
+      status: "confirmed",
+      date: "2026-08-10",
+      startTime: "09:00",
+      endTime: "13:00",
+      careVertical: "child",
+      recipientRef: { careVertical: "child", householdId: "hh1", childIds: ["child-a"] },
+      recipientLabel: "M.",
+      childcareBookingId: "cbook_1",
+    };
+
+    it("cancel_appointment refuses a childcare appointment and writes nothing", async () => {
+      hoisted.docState.set("appointments/ca1", { ...CHILD_APPT });
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "ca1", clientId: "c1", _confirmedActionId: "test" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("CHILDCARE_NOT_SUPPORTED");
+      expect(hoisted.docState.get("appointments/ca1").status).toBe("confirmed"); // untouched
+      expect(trySend).not.toHaveBeenCalled();
+    });
+
+    it("reschedule_appointment refuses a childcare appointment (no pendingTimeChange stamp)", async () => {
+      hoisted.docState.set("appointments/ca2", { ...CHILD_APPT });
+      const r = await handleToolCall("reschedule_appointment", {
+        appointmentId: "ca2", clientId: "c1", newDate: "2026-08-12", newTime: "10:00",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("CHILDCARE_NOT_SUPPORTED");
+      expect(hoisted.docState.get("appointments/ca2").pendingTimeChange).toBeUndefined();
+    });
+
+    it("respond_to_booking_request refuses a childcare booking request", async () => {
+      hoisted.docState.set("appointments/ca3", { ...CHILD_APPT, status: "pending_caregiver_confirmation" });
+      const r = await handleToolCall("respond_to_booking_request", {
+        caregiverId: "cg1", appointmentId: "ca3", decision: "accept",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("CHILDCARE_NOT_SUPPORTED");
+      expect(hoisted.docState.get("appointments/ca3").status).toBe("pending_caregiver_confirmation");
+    });
+
+    it("update_booking_payment_method refuses a childcare booking (childcare money is U8)", async () => {
+      hoisted.docState.set("appointments/ca4", { ...CHILD_APPT });
+      const r = await handleToolCall("update_booking_payment_method", {
+        appointmentId: "ca4", clientId: "c1", paymentMethod: "credit",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("CHILDCARE_NOT_SUPPORTED");
+      expect(hoisted.docState.get("appointments/ca4").paymentMethod).toBeUndefined();
+    });
+
+    it("the guard keys ONLY on the vertical stamp — senior docs (absent field) behave exactly as before", async () => {
+      hoisted.docState.set("appointments/sa1", { clientId: "c1", status: "confirmed", caregiverId: "cg1", date: "2026-06-01", caregiverName: "Alice" });
+      hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
+      const r = await handleToolCall("cancel_appointment", { appointmentId: "sa1", clientId: "c1", _confirmedActionId: "test" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.cancelled).toBe(true);
+    });
+  });
+
   describe("referral tools", () => {
     it("send_referral generates a code, persists it, and files a referral", async () => {
       hoisted.docState.set("users/u1", { userType: "client" });

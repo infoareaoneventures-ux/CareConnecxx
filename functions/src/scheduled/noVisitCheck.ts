@@ -22,6 +22,9 @@ export const runNoVisitCheck = functions.pubsub
 
     for (const scheduleDoc of scheduleSnap.docs) {
       const schedule = scheduleDoc.data();
+      // Childcare U10 (R54/AE16): childcare records never feed this senior
+      // no-visit nudge; childcare proactive messaging is deferred.
+      if (schedule.careVertical === "child") continue;
       const clientId = schedule.clientId as string | undefined;
       if (!clientId) continue;
 

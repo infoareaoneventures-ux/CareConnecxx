@@ -388,7 +388,11 @@ async function handleMsConfirm(
   const batch = db.batch();
 
   // Cancel old future visits
+  // (Childcare U7 defensive skip: this SMS flow is senior-only — a childcare-
+  // stamped appointment is never mutated here, even if one ever carried a
+  // recurringScheduleId.)
   for (const doc of futureSnap.docs) {
+    if (doc.data()?.careVertical === "child") continue;
     batch.update(doc.ref, { status: "cancelled_modified", cancelledAt: now, cancelReason: "schedule_modified" });
   }
 

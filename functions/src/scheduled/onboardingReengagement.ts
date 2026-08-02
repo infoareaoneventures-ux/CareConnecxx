@@ -3,6 +3,11 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { gateOptionalSend } from "./engineGate";
+import {
+  isChildcareCaregiverFunnelSession,
+  isChildcareVerticalSession,
+  isPendingVerticalSession,
+} from "../agents/onboardingContract";
 
 const db = admin.firestore();
 
@@ -38,12 +43,54 @@ export const sendOnboardingReengagement = functions.pubsub
 
     let nudgesSent = 0;
     let skipped    = 0;
+    // Counted separately so a deliberately-skipped vertical cohort is VISIBLE in
+    // the run summary instead of hidden inside the generic skip count.
+    let verticalSkipped = 0;
 
     for (const sessionDoc of sessionsSnap.docs) {
       const session = sessionDoc.data();
       const phone   = sessionDoc.id;
 
       try {
+        // Childcare U5 (plan 2026-07-22-002, R54): this is a SENIOR-only
+        // scheduled source — a typed childcare-vertical session is explicitly
+        // skipped (never nudged with senior-flavored copy or run through the
+        // LLM). Senior sessions carry neither stamp, so behavior is unchanged.
+        //
+        // Front door Stage 1 review of this stub: the skip is CORRECT and stays,
+        // and it now covers the two shapes U5 could not produce —
+        //   • a CAREGIVER childcare session (parked at childcare_caregiver_hold),
+        //     which U5 assumed impossible because the only stamp origin was
+        //     gated on role === "client"; and
+        //   • a PENDING-vertical session (R-FD1), which belongs to no vertical
+        //     at all and must not be nudged as if it were senior.
+        // The skip is not a silent drop: it is counted and logged separately, so
+        // "childcare signups are not being re-engaged" is visible in the run
+        // summary rather than invisible. Childcare re-engagement COPY is
+        // deliberately absent — the pilot staging decision defers every
+        // childcare proactive template (pinned by
+        // scheduled/__tests__/childcareSkipClassification.test.ts, which
+        // asserts no childcare proactive source exists), so shipping a nudge
+        // here would break that binding decision. Stage 2 owns it.
+        //
+        // Front door Stage 2 adds a THIRD shape the two predicates above cannot
+        // see: a dual-vertical ADDITION (R-FD6) runs the childcare caregiver
+        // funnel in its own session namespace and deliberately leaves
+        // `careVertical` alone, so the senior session is not disturbed. Such a
+        // session is mid-CHILDCARE-collection while carrying no childcare stamp —
+        // nudging it with senior "finish your bio" copy would be exactly the
+        // wrong-vertical copy this skip exists to prevent.
+        const verticalSession = session as { careVertical?: unknown; verticalIntent?: unknown };
+        if (
+          isChildcareVerticalSession(verticalSession) ||
+          isPendingVerticalSession(verticalSession) ||
+          isChildcareCaregiverFunnelSession(session as Record<string, unknown>)
+        ) {
+          skipped++;
+          verticalSkipped++;
+          continue;
+        }
+
         const onboardingStep = session.onboardingStep as string | undefined;
         if (!onboardingStep || onboardingStep === "complete") { skipped++; continue; }
 
@@ -122,7 +169,7 @@ export const sendOnboardingReengagement = functions.pubsub
       }
     }
 
-    console.log(`[onboardingReengagement] Done. Nudges sent: ${nudgesSent}, skipped: ${skipped}`);
+    console.log(`[onboardingReengagement] Done. Nudges sent: ${nudgesSent}, skipped: ${skipped} (childcare/pending-vertical skipped: ${verticalSkipped})`);
   });
 
 function humanLabelForStep(step: string): string {

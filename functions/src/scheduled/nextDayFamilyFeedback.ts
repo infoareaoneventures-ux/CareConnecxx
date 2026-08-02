@@ -47,6 +47,7 @@ export const sendNextDayFamilyFeedback = functions.pubsub
     for (const doc of snap.docs) {
       const appt = doc.data();
       try {
+        if (appt.careVertical === "child") continue; // Childcare U10 (R54/AE16): senior feedback copy; childcare deferred
         if (appt.nextDayFeedbackSent === true) continue; // per-shift dedupe
         const clientId = appt.clientId as string;
         const caregiverId = appt.caregiverId as string;

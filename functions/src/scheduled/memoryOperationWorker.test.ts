@@ -398,6 +398,50 @@ beforeEach(() => {
   __setFingerprintKeyForTests("test-fingerprint-key");
 });
 
+// ── Childcare U10 (R50/KTD17): dispatch-time eligibility backstop ────────────
+// Retroactive-sync prohibition: even for an operation created BEFORE a denial
+// (or a session reclassified senior→child with a live zepThreadId), the worker
+// re-decides eligibility at dispatch and skips every target — no Zep write, no
+// fact extraction, ever.
+describe("childcare U10 — eligibility backstop at dispatch", () => {
+  it("a session reclassified senior→child with an EXISTING Zep thread is never backfilled", async () => {
+    seedSession({ careVertical: "child", verticalIntent: "child" }); // zepThreadId stays "thread-1"
+    seedTurn("opcc1");
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1); // the op converges — durably skipped, not retried forever
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.zepAssistant).not.toHaveBeenCalled();
+    expect(h.extractFacts).not.toHaveBeenCalled();
+    const op = h.docs.get("memory_operations/opcc1")!;
+    expect((op.targets as Record<string, { status: string }>).zepTranscript.status).toBe("skipped");
+    expect((op.targets as Record<string, { status: string }>).learnedFacts.status).toBe("skipped");
+  });
+
+  it("an exclusion-STAMPED row denies sync even when the session reads senior (immutable row truth)", async () => {
+    seedSession(); // plain senior session — eligible
+    const { userPath } = seedTurn("opcc2");
+    h.docs.set(userPath, { ...h.docs.get(userPath)!, memoryExcluded: true, reason: "childcare_vertical" });
+
+    const counts = await runMemoryOperationWorker();
+
+    expect(counts.completed).toBe(1);
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.extractFacts).not.toHaveBeenCalled();
+  });
+
+  it("AE22: a caregiver session with active childcare context is denied at dispatch", async () => {
+    seedSession({ userType: "caregiver", childcareContextActive: true });
+    seedTurn("opcc3");
+
+    await runMemoryOperationWorker();
+
+    expect(h.zepUser).not.toHaveBeenCalled();
+    expect(h.extractFacts).not.toHaveBeenCalled();
+  });
+});
+
 describe("runMemoryOperationWorker — happy path (KTD5/KTD6)", () => {
   it("claims a due op, writes Zep with the PERSISTED uuid + ORIGINAL turn timestamp, extracts facts, clears memorySyncStatus, completes", async () => {
     seedSession();

@@ -21,7 +21,8 @@ vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolve
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
 vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
 
-import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS } from "../server";
+import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS, CHILDCARE_CLIENT_TOOLS } from "../server";
+import { CHILDCARE_TOOL_NAMES, CHILDCARE_SHARED_TOOL_NAMES } from "../childcareTools";
 
 /**
  * Action-parity guard (U3).
@@ -37,6 +38,13 @@ import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS } from "../server";
  */
 
 const qaSource = readFileSync(join(__dirname, "../../agents/qaAgent.ts"), "utf8");
+// Childcare U10: the childcare pack's authoritative prompt documentation lives
+// in the childcare system-prompt builder, not qaAgent.ts — the documentation
+// guard scans both sources so an undocumented childcare tool still fails.
+const childcarePromptSource = readFileSync(
+  join(__dirname, "../../agents/childcarePromptAugmenter.ts"),
+  "utf8",
+);
 
 // Tools that are intentionally not surfaced as individual prompt lines (internal
 // helpers / scheduled-job markers / dynamically described tools).
@@ -119,9 +127,64 @@ describe("action parity (U3)", () => {
     // Was a soft console.warn guard until 2026-07-06; the legacy back-fill is
     // done (28 gaps closed), so an undocumented tool is now a build failure —
     // a bound-but-invisible tool depends on schema text alone for discovery.
+    // Childcare tools are documented in childcarePromptAugmenter.ts (their
+    // system prompt) — the guard scans that source for them.
     const undocumented = MCP_TOOLS
       .map(t => t.name)
-      .filter(n => !PROMPT_EXEMPT.has(n) && !qaSource.includes(n));
-    expect(undocumented, `tool(s) not named in any qaAgent.ts prompt: ${undocumented.join(", ")}`).toEqual([]);
+      .filter(n => !PROMPT_EXEMPT.has(n))
+      .filter(n => CHILDCARE_TOOL_NAMES.has(n) ? !childcarePromptSource.includes(n) : !qaSource.includes(n));
+    expect(undocumented, `tool(s) not named in any system prompt: ${undocumented.join(", ")}`).toEqual([]);
+  });
+
+  // ── Childcare U10 (R51 / channel parity) ───────────────────────────────────
+  describe("childcare vertical pack", () => {
+    it("registers every childcare tool in MCP_TOOLS and the childcare surface", () => {
+      const all = new Set(MCP_TOOLS.map(t => t.name));
+      const pack = new Set(CHILDCARE_CLIENT_TOOLS.map(t => t.name));
+      for (const name of CHILDCARE_TOOL_NAMES) {
+        expect(all.has(name), `${name} missing from MCP_TOOLS`).toBe(true);
+        expect(pack.has(name), `${name} missing from CHILDCARE_CLIENT_TOOLS`).toBe(true);
+      }
+    });
+
+    it("keeps childcare tools OUT of every senior surface (cross-vertical leak guard)", () => {
+      const client = new Set(CLIENT_TOOLS.map(t => t.name));
+      const caregiver = new Set(CAREGIVER_TOOLS.map(t => t.name));
+      for (const name of CHILDCARE_TOOL_NAMES) {
+        expect(client.has(name), `${name} leaked into CLIENT_TOOLS`).toBe(false);
+        expect(caregiver.has(name), `${name} leaked into CAREGIVER_TOOLS`).toBe(false);
+      }
+    });
+
+    it("keeps senior tools OUT of the childcare surface (reverse leak guard)", () => {
+      for (const t of CHILDCARE_CLIENT_TOOLS) {
+        expect(
+          CHILDCARE_TOOL_NAMES.has(t.name) || CHILDCARE_SHARED_TOOL_NAMES.has(t.name),
+          `senior tool ${t.name} leaked into CHILDCARE_CLIENT_TOOLS`,
+        ).toBe(true);
+      }
+      // Spot-check the highest-risk senior tools by name.
+      const pack = new Set(CHILDCARE_CLIENT_TOOLS.map(t => t.name));
+      for (const senior of ["get_senior_profile", "request_booking", "update_care_plan", "send_caregiver_message", "search_memory", "read_memory_file"]) {
+        expect(pack.has(senior), `${senior} present in childcare pack`).toBe(false);
+      }
+    });
+
+    it("web/Linq channel parity: ONE pack constant serves both channels", () => {
+      // Both channels reach the pack through the same qaAgent selection
+      // (CHILDCARE_CLIENT_TOOLS) — assert the selection is deterministic and
+      // derived from MCP_TOOLS so no channel can bind a divergent surface.
+      const fromMaster = MCP_TOOLS.filter(
+        t => CHILDCARE_TOOL_NAMES.has(t.name) || CHILDCARE_SHARED_TOOL_NAMES.has(t.name),
+      );
+      expect(CHILDCARE_CLIENT_TOOLS.map(t => t.name)).toEqual(fromMaster.map(t => t.name));
+      // Tool object identity is shared with the master list (no copies).
+      for (const t of CHILDCARE_CLIENT_TOOLS) expect(MCP_TOOLS.includes(t)).toBe(true);
+    });
+
+    it("keeps the childcare surface small and under the OpenAI cap", () => {
+      expect(CHILDCARE_CLIENT_TOOLS.length).toBeGreaterThan(0);
+      expect(CHILDCARE_CLIENT_TOOLS.length).toBeLessThanOrEqual(16);
+    });
   });
 });

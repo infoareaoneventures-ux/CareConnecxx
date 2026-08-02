@@ -15,6 +15,36 @@
 // extras (schedule object, summary, hourlyRate passthrough, notifiedCount) ride
 // along for the existing SMS/snapshot consumers.
 
+// ── R32 legacy-mirror guard (childcare plan 2026-07-22-002, U6) ──────────────
+//
+// Childcare jobs use AUTO-ID job_posts docs with a typed child requirement
+// projection and NEVER write the legacy singleton job_postings/{clientUid}
+// mirror. Every job_postings mirror writer (buildAndSaveJobPost, the MCP
+// edit_job_post tool) must call this guard with whatever vertical-bearing
+// context it has before the mirror write; a childcare-vertical payload throws.
+
+export class LegacyJobMirrorError extends Error {
+  constructor() {
+    super(
+      "job_postings/{clientUid} is the legacy SENIOR singleton mirror — childcare-vertical jobs never write it (R32).",
+    );
+    this.name = "LegacyJobMirrorError";
+  }
+}
+
+/**
+ * Structural guard for the legacy job_postings/{clientUid} mirror: throws when
+ * any provided context object is childcare-vertical. Absent/senior verticals
+ * pass (legacy senior records may lack the field entirely — R2 cutoff rule).
+ */
+export function assertLegacyJobMirrorAllowed(
+  ...contexts: Array<Record<string, unknown> | null | undefined>
+): void {
+  for (const ctx of contexts) {
+    if (ctx?.careVertical === "child") throw new LegacyJobMirrorError();
+  }
+}
+
 export interface WebJobPostInput {
   clientId:         string;
   source:           string;                  // "cara" | "cara_sms" | "intake_trigger"

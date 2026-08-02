@@ -153,3 +153,166 @@ describe("transitionObjective — optimistic concurrency (R25)", () => {
     expect(state.doc.version).toBe(3);
   });
 });
+
+describe("transitionObjective childcare revocation boundary", () => {
+  const childObjective = base({
+    careVertical: "child",
+    recipientRef: { vertical: "child", childId: "c1", householdId: "h1" },
+    authorityBinding: { childId: "c1", scope: "view", accessVersion: 4 },
+  });
+
+  const makeDb = (authority: Record<string, unknown>) => {
+    const state = { objective: { ...childObjective } as AgentObjective };
+    const refs = {
+      objective: { kind: "objective" },
+      authority: { kind: "authority" },
+    };
+    return {
+      state,
+      db: {
+        collection: (name: string) => ({
+          doc: () => name === "agent_objectives" ? refs.objective : refs.authority,
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<unknown>) =>
+          fn({
+            get: async (ref: { kind: string }) =>
+              ref.kind === "objective"
+                ? { exists: true, data: () => state.objective }
+                : { exists: true, data: () => authority },
+            set: (_ref: unknown, doc: AgentObjective) => { state.objective = doc; },
+          }),
+      } as any,
+    };
+  };
+
+  it("allows a transition while the pinned child authority is current", async () => {
+    const { db } = makeDb({
+      state: "active",
+      scopes: ["view"],
+      accessVersion: 4,
+      expiresAt: null,
+    });
+    await expect(
+      transitionObjective("obj-1", "waiting_user", 1, { db }),
+    ).resolves.toMatchObject({ status: "waiting_user", version: 2 });
+  });
+
+  it("denies execution after revocation or any authority-version change", async () => {
+    const { db, state } = makeDb({
+      state: "revoked",
+      scopes: ["view"],
+      accessVersion: 5,
+      expiresAt: null,
+    });
+    await expect(
+      transitionObjective("obj-1", "waiting_user", 1, { db }),
+    ).rejects.toThrow(/child authority changed/);
+    expect(state.objective.status).toBe("active");
+  });
+});
+
+// ── Childcare U4 additions (plan 2026-07-22-002): careVertical stamp +
+// deterministic-ID idempotent creation (ensureObjective) ─────────────────────
+describe("createObjective / ensureObjective — careVertical + deterministic IDs (U4)", () => {
+  const makeCreateDb = () => {
+    const docs = new Map<string, Record<string, unknown>>();
+    let autoCounter = 0;
+    const makeRef = (id: string) => ({
+      id,
+      set: async (doc: Record<string, unknown>) => { docs.set(id, doc); },
+      create: async (doc: Record<string, unknown>) => {
+        if (docs.has(id)) {
+          const err = new Error(`Document already exists: ${id}`) as Error & { code: number };
+          err.code = 6;
+          throw err;
+        }
+        docs.set(id, doc);
+      },
+      get: async () => ({ exists: docs.has(id), data: () => docs.get(id) }),
+    });
+    return {
+      docs,
+      db: {
+        collection: () => ({
+          doc: (id?: string) => makeRef(id ?? `auto-${++autoCounter}`),
+        }),
+      } as any,
+    };
+  };
+
+  it("createObjective stamps careVertical when provided and strips it when absent (legacy senior)", async () => {
+    const { docs, db } = makeCreateDb();
+    const { createObjective } = await import("./objectiveLedger");
+    const child = await createObjective(
+      { userId: "u1", role: "client", channel: "linq", intent: "childcare.family_enrollment", careVertical: "child" },
+      { db },
+    );
+    expect(child.careVertical).toBe("child");
+    expect(docs.get(child.objectiveId)?.careVertical).toBe("child");
+
+    const senior = await createObjective(
+      { userId: "u1", role: "client", channel: "linq", intent: "schedule.reschedule_visit" },
+      { db },
+    );
+    expect(senior.careVertical).toBeUndefined();
+    expect("careVertical" in (docs.get(senior.objectiveId) ?? {})).toBe(false);
+  });
+
+  it("ensureObjective is create-once: the duplicate converges on the winner's record (AE15)", async () => {
+    const { db } = makeCreateDb();
+    const { ensureObjective } = await import("./objectiveLedger");
+    const input = {
+      objectiveId: "childcare-family-signup_u1",
+      userId: "u1",
+      role: "client" as const,
+      channel: "linq" as const,
+      intent: "childcare.family_enrollment",
+      careVertical: "child" as const,
+    };
+    const first = await ensureObjective(input, { db });
+    const second = await ensureObjective({ ...input, description: "different retry text" }, { db });
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.objective).toEqual(first.objective);
+  });
+
+  it("U10: persists the typed recipient ref (child ids + display label only) and strips it when absent", async () => {
+    const { docs, db } = makeCreateDb();
+    const { createObjective } = await import("./objectiveLedger");
+    const withRef = await createObjective(
+      {
+        userId: "u1", role: "client", channel: "linq",
+        intent: "childcare.booking_change", careVertical: "child",
+        recipientRef: { vertical: "child", childId: "c1", householdId: "h1", displayLabel: "Mia" },
+        authorityBinding: { childId: "c1", scope: "view", accessVersion: 7 },
+      },
+      { db },
+    );
+    expect(docs.get(withRef.objectiveId)?.recipientRef).toEqual({
+      vertical: "child", childId: "c1", householdId: "h1", displayLabel: "Mia",
+    });
+    expect(docs.get(withRef.objectiveId)?.authorityBinding).toEqual({
+      childId: "c1", scope: "view", accessVersion: 7,
+    });
+
+    const withoutRef = await createObjective(
+      { userId: "u1", role: "client", channel: "linq", intent: "schedule.reschedule_visit" },
+      { db },
+    );
+    expect("recipientRef" in (docs.get(withoutRef.objectiveId) ?? {})).toBe(false);
+  });
+
+  it("deterministic-ID createObjective throws on a raw duplicate (create semantics, never overwrite)", async () => {
+    const { db } = makeCreateDb();
+    const { createObjective } = await import("./objectiveLedger");
+    const input = {
+      objectiveId: "obj-fixed",
+      userId: "u1",
+      role: "client" as const,
+      channel: "web" as const,
+      intent: "childcare.family_enrollment",
+    };
+    await createObjective(input, { db });
+    await expect(createObjective(input, { db })).rejects.toThrow(/already exists/i);
+  });
+});

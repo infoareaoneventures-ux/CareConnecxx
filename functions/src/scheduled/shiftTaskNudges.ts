@@ -130,6 +130,7 @@ export const sendShiftTaskNudges = functions.pubsub
     for (const apptDoc of activeAppts) {
       const appt  = apptDoc.data();
       const apptId = apptDoc.id;
+      if (appt.careVertical === "child") continue; // Childcare U10 (R54/AE16): senior task nudges only
 
       try {
         const caregiverId = appt.caregiverId as string;

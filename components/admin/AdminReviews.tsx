@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Star, Search, Trash2, RefreshCw, MessageSquare, ChevronDown, AlertCircle } from 'lucide-react';
+import { Star, Search, Trash2, RefreshCw, MessageSquare, ChevronDown, AlertCircle, EyeOff } from 'lucide-react';
 import { adminService } from '../../services/api';
 import { Review } from '../../types';
+import { ChildcareReviewModerationQueue } from './ChildcareReviewModerationQueue';
 
 type ToastState = { msg: string; type: 'success' | 'error' } | null;
 
@@ -33,10 +34,23 @@ export const AdminReviews: React.FC = () => {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      await adminService.deleteReview(confirmDelete.id);
+      if (confirmDelete.careVertical === 'child') {
+        if (!confirmDelete.sourceReviewId || !confirmDelete.sourceStateVersion) {
+          throw new Error('Missing childcare review moderation version');
+        }
+        await adminService.moderateChildcareReview({
+          reviewId: confirmDelete.sourceReviewId,
+          expectedVersion: confirmDelete.sourceStateVersion,
+          decision: 'unpublished',
+          reasonCode: 'unpublish_policy',
+        });
+      } else {
+        await adminService.deleteReview(confirmDelete.id);
+      }
       setReviews(prev => prev.filter(r => r.id !== confirmDelete.id));
+      const wasChildcare = confirmDelete.careVertical === 'child';
       setConfirmDelete(null);
-      showToast('Review deleted', 'success');
+      showToast(wasChildcare ? 'Review unpublished' : 'Review deleted', 'success');
     } catch {
       showToast('Failed to delete review', 'error');
     } finally {
@@ -80,6 +94,10 @@ export const AdminReviews: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-white">
+      <div className="px-6 pt-6">
+        <ChildcareReviewModerationQueue />
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-7 gap-3 p-6 border-b border-slate-100">
         <div className="col-span-1 bg-slate-50 rounded-xl p-4 text-center">
@@ -149,13 +167,22 @@ export const AdminReviews: React.FC = () => {
                   <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
                     <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-red-800">Delete this review?</p>
-                      <p className="text-xs text-red-600 mt-0.5">By {r.clientName} · {r.rating.toFixed(1)} stars. This cannot be undone.</p>
+                      <p className="text-sm font-medium text-red-800">
+                        {r.careVertical === 'child' ? 'Unpublish this review?' : 'Delete this review?'}
+                      </p>
+                      <p className="text-xs text-red-600 mt-0.5">
+                        By {r.clientName || 'Client'} · {r.rating.toFixed(1)} stars.
+                        {r.careVertical === 'child'
+                          ? ' This removes it from public display.'
+                          : ' This cannot be undone.'}
+                      </p>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <button onClick={() => setConfirmDelete(null)} className="px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-white transition-colors">Cancel</button>
                       <button onClick={handleDelete} disabled={deleting} className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 transition-colors">
-                        {deleting ? 'Deleting…' : 'Delete'}
+                        {deleting
+                          ? (r.careVertical === 'child' ? 'Unpublishing...' : 'Deleting...')
+                          : (r.careVertical === 'child' ? 'Unpublish' : 'Delete')}
                       </button>
                     </div>
                   </div>
@@ -194,9 +221,11 @@ export const AdminReviews: React.FC = () => {
                     <button
                       onClick={() => setConfirmDelete(r)}
                       className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
-                      title="Delete review"
+                      title={r.careVertical === 'child' ? 'Unpublish review' : 'Delete review'}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      {r.careVertical === 'child'
+                        ? <EyeOff className="w-4 h-4" />
+                        : <Trash2 className="w-4 h-4" />}
                     </button>
                   </div>
                 )}

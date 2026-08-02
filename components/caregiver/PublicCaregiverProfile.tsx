@@ -68,6 +68,16 @@ export const PublicCaregiverProfile: React.FC = () => {
   const photo = profile.photo || profile.imageUrl || (profile as any).profilePhoto || (profile as any).photoURL;
   const city = [profile.city, profile.state].filter(Boolean).join(', ') || profile.location;
 
+  // Childcare U11 (plan 2026-07-22-002, R30/R45): render ONLY what the U5/U8
+  // projection provides — per-vertical visibility, allowlisted evidence
+  // labels, and the per-vertical reputation numbers. A senior-only projection
+  // (no verticalVisibility field) renders byte-identically to before.
+  const childcareVisible = (profile as any).verticalVisibility?.child === true;
+  const childcareEvidenceLabels: string[] = childcareVisible && Array.isArray((profile as any).childcareEvidenceLabels)
+    ? (profile as any).childcareEvidenceLabels
+    : [];
+  const childcareReputation = childcareVisible ? (profile as any).childcareReputation : undefined;
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
@@ -95,7 +105,12 @@ export const PublicCaregiverProfile: React.FC = () => {
               {profile.name}
               {profile.verified && <ShieldCheck className="w-5 h-5 text-blue-500" fill="currentColor" />}
             </h1>
-            <CaregiverVerificationBadges verified={profile.verified} backgroundCheckStatus={profile.backgroundCheckStatus} className="mt-2" />
+            <CaregiverVerificationBadges
+              verified={profile.verified}
+              backgroundCheckStatus={profile.backgroundCheckStatus}
+              childcareEvidenceLabels={childcareEvidenceLabels}
+              className="mt-2"
+            />
             <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 mt-1">
               {profile.rating != null && (
                 <span className="flex items-center gap-1">
@@ -132,6 +147,28 @@ export const PublicCaregiverProfile: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-2xl p-5 mt-4">
             <p className="font-bold text-slate-900 mb-2">About {profile.name.split(' ')[0]}</p>
             <p className="text-sm text-slate-700 whitespace-pre-line">{profile.bio}</p>
+          </div>
+        )}
+
+        {childcareVisible && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 mt-4" data-testid="childcare-public-section">
+            <p className="font-bold text-slate-900 mb-2">Childcare</p>
+            <p className="text-sm text-slate-600 mb-3">
+              Available for childcare. Childcare qualifications and reviews are tracked separately from senior care.
+            </p>
+            {childcareReputation && (childcareReputation.ratingCount ?? 0) > 0 ? (
+              <p className="text-sm text-slate-700 flex items-center gap-1.5">
+                <Star className="w-4 h-4 text-primary-400" fill="currentColor" aria-hidden="true" />
+                <span className="font-medium">{Number(childcareReputation.ratingAvg ?? 0).toFixed(1)}</span>
+                <span className="text-slate-500">
+                  ({childcareReputation.ratingCount} childcare review{childcareReputation.ratingCount === 1 ? '' : 's'}
+                  {(childcareReputation.completedBookings ?? 0) > 0 ? ` · ${childcareReputation.completedBookings} completed childcare booking${childcareReputation.completedBookings === 1 ? '' : 's'}` : ''}
+                  {(childcareReputation.repeatFamilies ?? 0) > 0 ? ` · ${childcareReputation.repeatFamilies} repeat famil${childcareReputation.repeatFamilies === 1 ? 'y' : 'ies'}` : ''})
+                </span>
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">No childcare reviews yet.</p>
+            )}
           </div>
         )}
 

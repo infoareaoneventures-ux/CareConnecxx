@@ -29,6 +29,30 @@ export interface CaraTrainingExample {
     pii: "synthetic" | "redacted";
     notes?: string;
   };
+  /**
+   * Childcare U10 (R50/KTD17): vertical stamp for dataset intake. Real
+   * childcare conversations are NEVER captured into training/eval datasets —
+   * see assertTrainingExampleCaptureAllowed below. Absent = senior legacy.
+   */
+  careVertical?: "senior" | "child";
+}
+
+/**
+ * Childcare U10 (R50): dataset-intake gate. A childcare-vertical example is
+ * admissible ONLY as a fully synthetic seed fixture (synthetic PII, seed
+ * source) — an example sourced from production review or failed-turn review
+ * with a childcare stamp is a capture of a real childcare turn and must be
+ * rejected. Every future intake path (production_review adders) must call
+ * this before appending to the dataset.
+ */
+export function assertTrainingExampleCaptureAllowed(example: CaraTrainingExample): void {
+  if (example.careVertical !== "child") return;
+  const synthetic = example.source === "synthetic_seed" && example.reviewer.pii === "synthetic";
+  if (!synthetic) {
+    throw new Error(
+      `caraTrainingDataset: childcare example ${example.id} rejected — real childcare turns are never captured (R50); only synthetic seed fixtures are admissible`,
+    );
+  }
 }
 
 export interface CaraDatasetEvalCase {

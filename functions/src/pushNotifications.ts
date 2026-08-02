@@ -38,24 +38,61 @@ export const sendPushNotification = functions.firestore
 
       if (!recipientId) return null;
 
-      // Get recipient's FCM tokens
-      const userDoc = await admin
-        .firestore()
-        .collection("users")
-        .doc(recipientId)
-        .get();
-
-      if (!userDoc.exists) return null;
-
-      const userData = userDoc.data();
-      const fcmTokens: string[] = userData?.fcmTokens || [];
-
-      if (fcmTokens.length === 0) {
-        console.log(`No FCM tokens for user ${recipientId}`);
-        return null;
+      // ── Childcare U9 (plan 2026-07-22-002, R43/KTD16/AE17/AE24) ──────────
+      // Childcare context rooms get a FULLY GENERIC lock-screen payload:
+      // static registry title/body, NO message text, NO sender name, opaque
+      // room id only — detail is fetched inside authenticated views. The
+      // fan-out also consults the booking's excludedUids set (suspected-
+      // unsafe-party exclusion): an excluded recipient gets NO push. Any
+      // uncertainty (booking unreadable) fails CLOSED to no push. Senior
+      // rooms below are byte-identical to their pre-U9 behavior.
+      const isChildcareRoom = chatRoom?.careVertical === "child";
+      if (isChildcareRoom) {
+        try {
+          const {
+            evaluateChildcarePushContext,
+            getChildcareNotificationTemplate,
+          } = await import(
+            "./childcare/notificationPolicy"
+          );
+          if (chatRoom?.contextType !== "booking" || !chatRoom?.contextId) return null;
+          const bookingSnap = await admin
+            .firestore()
+            .collection("booking_requests")
+            .doc(String(chatRoom.contextId))
+            .get();
+          const decision = evaluateChildcarePushContext({
+            roomId: chatRoomId,
+            room: chatRoom ?? {},
+            message: message ?? {},
+            booking: bookingSnap.exists ? bookingSnap.data() ?? {} : null,
+            recipientUid: recipientId,
+          });
+          if (!decision.allowed) {
+            console.warn("Childcare push suppressed", {
+              reason: decision.reason,
+              roomId: chatRoomId,
+            });
+            return null;
+          }
+          const template = getChildcareNotificationTemplate("childcare_message");
+          const genericNotification = {
+            title: template.title,
+            body: template.body,
+            icon: "/icon-192.png",
+            badge: "/icon-192.png",
+            tag: chatRoomId,
+            requireInteraction: false,
+            data: { chatRoomId, click_action: "/inbox" },
+          };
+          return await sendPushToUserTokens(recipientId, genericNotification);
+        } catch (error) {
+          console.error("Error sending childcare push (fail closed, no push):", error);
+          return null;
+        }
       }
 
-      // Prepare notification
+      // Prepare notification (senior payload — byte-identical to pre-U9)
       const senderName = message.senderName || "Evia";
       const notification = {
         title: `New message from ${senderName}`,
@@ -76,62 +113,99 @@ export const sendPushNotification = functions.firestore
         },
       };
 
-      // Send to all tokens (user might have multiple devices)
-      const sendPromises = fcmTokens.map(async (token: string) => {
-        try {
-          await admin.messaging().send({
-            token,
-            notification,
-            android: {
-              priority: "high",
-              notification: {
-                channelId: "chat-messages",
-                priority: "high",
-                defaultSound: true,
-                defaultVibrateTimings: true,
-              },
-            },
-            apns: {
-              payload: {
-                aps: {
-                  sound: "default",
-                  badge: 1,
-                  alert: {
-                    title: notification.title,
-                    body: notification.body,
-                  },
-                },
-              },
-            },
-          });
-          return { success: true, token };
-        } catch (error: any) {
-          // If token is invalid, remove it
-          if (
-            error.code === "messaging/invalid-registration-token" ||
-            error.code === "messaging/registration-token-not-registered"
-          ) {
-            console.log(`Removing invalid token for user ${recipientId}`);
-            await removeInvalidToken(recipientId, token);
-          }
-          return { success: false, token, error: error.message };
-        }
-      });
-
-      const results = await Promise.all(sendPromises);
-      const successful = results.filter((r) => r.success).length;
-      const failed = results.filter((r) => !r.success).length;
-
-      console.log(
-        `Push notification sent: ${successful} successful, ${failed} failed`
-      );
-
-      return { success: true, sent: successful, failed };
+      return await sendPushToUserTokens(recipientId, notification);
     } catch (error: any) {
       console.error("Error sending push notification:", error);
       return { success: false, error: error.message };
     }
   });
+
+/**
+ * Send one prepared web-push notification to every FCM token of a user.
+ * Extracted (behavior-preserving) so the childcare U9 generic branch and the
+ * senior branch share exactly one delivery path.
+ */
+async function sendPushToUserTokens(
+  recipientId: string,
+  notification: {
+    title: string;
+    body: string;
+    icon: string;
+    badge?: string;
+    tag?: string;
+    requireInteraction?: boolean;
+    data?: Record<string, string>;
+  }
+) {
+  // Get recipient's FCM tokens
+  const userDoc = await admin
+    .firestore()
+    .collection("users")
+    .doc(recipientId)
+    .get();
+
+  if (!userDoc.exists) return null;
+
+  const userData = userDoc.data();
+  const fcmTokens: string[] = userData?.fcmTokens || [];
+
+  if (fcmTokens.length === 0) {
+    console.log(`No FCM tokens for user ${recipientId}`);
+    return null;
+  }
+
+  // Send to all tokens (user might have multiple devices)
+  const sendPromises = fcmTokens.map(async (token: string) => {
+    try {
+      await admin.messaging().send({
+        token,
+        notification,
+        android: {
+          priority: "high",
+          notification: {
+            channelId: "chat-messages",
+            priority: "high",
+            defaultSound: true,
+            defaultVibrateTimings: true,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              badge: 1,
+              alert: {
+                title: notification.title,
+                body: notification.body,
+              },
+            },
+          },
+        },
+      });
+      return { success: true, token };
+    } catch (error: any) {
+      // If token is invalid, remove it
+      if (
+        error.code === "messaging/invalid-registration-token" ||
+        error.code === "messaging/registration-token-not-registered"
+      ) {
+        console.log(`Removing invalid token for user ${recipientId}`);
+        await removeInvalidToken(recipientId, token);
+      }
+      return { success: false, token, error: error.message };
+    }
+  });
+
+  const results = await Promise.all(sendPromises);
+  const successful = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success).length;
+
+  console.log(
+    `Push notification sent: ${successful} successful, ${failed} failed`
+  );
+
+  return { success: true, sent: successful, failed };
+}
 
 /**
  * Send push notification for appointment reminders

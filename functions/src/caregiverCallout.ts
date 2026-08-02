@@ -549,6 +549,13 @@ export const selectBackupCaregiver = functions.https.onCall(async (data, context
 
         const appointment = appointmentDoc.data() as Appointment;
 
+        // Childcare skip (plan 2026-07-22-002 U8, R37): childcare visits never
+        // enter the senior callout/backup flow — substitution is the eligibility-
+        // gated v1-substituteChildcareCaregiver path.
+        if ((appointment as unknown as Record<string, unknown>).careVertical === 'child') {
+            throw new functions.https.HttpsError('failed-precondition', 'Childcare bookings are managed on the web — use the childcare substitution flow.');
+        }
+
         // Verify this is the client who owns the appointment
         if (appointment.clientId !== context.auth.uid) {
             throw new functions.https.HttpsError('permission-denied', 'Not authorized to modify this appointment');
@@ -636,6 +643,12 @@ export const requestCalloutRefund = functions.https.onCall(async (data, context)
             throw new functions.https.HttpsError('permission-denied', 'Not authorized');
         }
 
+        // Childcare skip (U8): childcare refunds are policy-driven and flow
+        // through v1-requestChildcareRefund (frozen jurisdiction pricing).
+        if ((appointment as unknown as Record<string, unknown>).careVertical === 'child') {
+            throw new functions.https.HttpsError('failed-precondition', 'Childcare refunds are requested from the childcare booking in the app.');
+        }
+
         // Update appointment
         await appointmentRef.update({
             status: 'cancelled_refund_requested',
@@ -695,6 +708,12 @@ export const getBackupCaregiverOptions = functions.https.onCall(async (data, con
         // Verify ownership
         if (appointment.clientId !== context.auth.uid) {
             throw new functions.https.HttpsError('permission-denied', 'Not authorized');
+        }
+
+        // Childcare skip (U8): backup options come from the childcare
+        // substitution flow (eligibility-gated), never the senior backup finder.
+        if ((appointment as unknown as Record<string, unknown>).careVertical === 'child') {
+            throw new functions.https.HttpsError('failed-precondition', 'Childcare bookings are managed on the web — use the childcare substitution flow.');
         }
 
         // If we already have backup options stored, return those

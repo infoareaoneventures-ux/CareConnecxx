@@ -12,11 +12,36 @@ import { supportPhone } from '../../../utils/launchConfig';
 import { BloomMark } from '../../ui/BloomMark';
 
 export type OnboardingRole = 'client' | 'caregiver';
-type Step = 'role' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected';
+export type CareType = 'senior' | 'child';
+type Step =
+  | 'role' | 'careType' | 'consent' | 'name' | 'phone' | 'verify' | 'handoff' | 'connected'
+  // Front door Stage 2 (deliverable 7): childcare was picked but is not open
+  // yet. An EXPLICIT state — the bug this replaces silently dropped the person
+  // into senior onboarding, which SMS never did.
+  | 'childcareUnavailable';
 
 interface Props {
   initialRole?: OnboardingRole | null;
   referralId?: string | null;
+  /**
+   * Childcare U4 (plan 2026-07-22-002): true for an explicit childcare entry
+   * param (/start?vertical=child). Front door Stage 1 keeps this working
+   * exactly as before — the deep link PRE-ANSWERS the care-type question, so
+   * the step is skipped entirely and the payload carries careVertical: 'child'.
+   */
+  childcareEntry?: boolean;
+  /**
+   * Front door Stage 1 (docs/architecture/childcare-front-door-design.md):
+   * render the "what kind of care?" step for ORGANIC arrivals — a person who
+   * lands on /start with no vertical in the URL was previously never asked, so
+   * childcare was unreachable unless you already knew the deep link existed.
+   *
+   * Senior stays byte-identical DOWNSTREAM of the answer: picking the older
+   * adult sends the exact pre-childcare payload (no careVertical key at all),
+   * so every senior consumer — the bridge doc field set, the SMS ingress, the
+   * senior funnel — sees precisely what it saw before.
+   */
+  askCareType?: boolean;
 }
 
 const RECAPTCHA_CONTAINER = 'careconnex-recaptcha-container';
@@ -34,10 +59,19 @@ function formatDisplay(val: string): string {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
-export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => {
+export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId, childcareEntry, askCareType }) => {
   const device = useDeviceClass();
   const [role, setRole] = useState<OnboardingRole | null>(initialRole ?? null);
-  const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
+  // The deep link is an ANSWER, not a prompt: ?vertical=child means the person
+  // already told us, so the question is skipped (and must keep being skipped).
+  const [careType, setCareType] = useState<CareType | null>(childcareEntry ? 'child' : null);
+  // Ask organically only when the URL did not already answer it.
+  const showCareTypeStep = Boolean(askCareType) && !childcareEntry;
+  const [step, setStep] = useState<Step>(
+    initialRole
+      ? (showCareTypeStep ? 'careType' : 'consent')
+      : 'role',
+  );
   const [agreed, setAgreed] = useState(false);
   const [name, setName] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
@@ -113,8 +147,32 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       // Phone Auth succeeded — caller now has a Firebase token bound to this phone.
       const create = functions.httpsCallable('v1-createWebOnboardingSession');
       const cleanName = sanitizeName(name).slice(0, 80);
-      const resp = await create({ phone: e164, role, name: cleanName, consentText: CONSENT_VERSION, referralId });
-      const data = resp.data as { linqPhone?: string };
+      // Childcare U4: careVertical is ADDITIVE — sent only when the childcare
+      // entry explicitly selected childcare. Every other flow's payload is
+      // byte-identical to the pre-childcare shape.
+      const resp = await create({
+        phone: e164,
+        role,
+        name: cleanName,
+        consentText: CONSENT_VERSION,
+        referralId,
+        // careVertical is ADDITIVE and role-agnostic as of front door Stage 1
+        // (createWebOnboardingSession dropped its role === 'client' gate, which
+        // was the structural reason no caregiver could reach childcare). It is
+        // sent ONLY on an explicit childcare answer — deep link or organic
+        // pick — so every senior payload stays byte-identical in shape.
+        ...(careType === 'child' ? { careVertical: 'child' } : {}),
+      });
+      const data = resp.data as { linqPhone?: string; childcareAvailable?: boolean };
+      // Front door Stage 2 (deliverable 7): the server tells us whether childcare
+      // was actually available. `false` is an EXPLICIT unavailable/waitlist
+      // state — never a silent fall-through into senior onboarding. The field is
+      // additive and only ever present for a childcare request, so a senior
+      // signup (undefined) behaves exactly as it always did.
+      if (careType === 'child' && data?.childcareAvailable === false) {
+        setStep('childcareUnavailable');
+        return;
+      }
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);
       setStep('handoff');
@@ -152,7 +210,21 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       return (
         <RolePicker
           tone={tone}
-          onPick={(r) => { setRole(r); setStep('consent'); }}
+          onPick={(r) => {
+            setRole(r);
+            // Organic arrivals get asked; a ?vertical=child arrival already
+            // answered, so it goes straight to consent as it always did.
+            setStep(showCareTypeStep ? 'careType' : 'consent');
+          }}
+        />
+      );
+    }
+    if (step === 'careType') {
+      return (
+        <CareTypePicker
+          role={role}
+          onPick={(c) => { setCareType(c); setStep('consent'); }}
+          onBack={initialRole ? undefined : () => setStep('role')}
         />
       );
     }
@@ -163,7 +235,11 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           tone={tone}
           agreed={agreed}
           setAgreed={setAgreed}
-          onBack={initialRole ? undefined : () => setStep('role')}
+          onBack={
+            childcareEntry && role === 'client'
+              ? () => setStep('careType')
+              : initialRole ? undefined : () => setStep('role')
+          }
           onContinue={() => setStep('name')}
         />
       );
@@ -212,6 +288,9 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           onChangeNumber={() => { setStep('phone'); setError(null); }}
         />
       );
+    }
+    if (step === 'childcareUnavailable') {
+      return <ChildcareUnavailableScreen role={role!} tone={tone} />;
     }
     if (step === 'handoff') {
       return (
@@ -334,6 +413,55 @@ const RolePicker: React.FC<{ tone: 'dark' | 'light'; onPick: (r: OnboardingRole)
     </div>
   );
 };
+
+// The care-type question. Front door Stage 1 renders it for ORGANIC arrivals
+// (both roles) and skips it when ?vertical=child already answered it.
+//
+// No child details are asked here — this only sets the typed vertical intent
+// (R47/R33); child names, ages, and every other recipient detail are collected
+// exclusively in the authenticated ChildProfileFlow.
+const CareTypePicker: React.FC<{
+  role: OnboardingRole | null;
+  onPick: (c: CareType) => void;
+  onBack?: () => void;
+}> = ({ role, onPick, onBack }) => (
+  <div className="space-y-4">
+    <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">
+      {role === 'caregiver' ? 'What kind of care do you provide?' : 'Who is this care for?'}
+    </h2>
+    <button
+      onClick={() => onPick('senior')}
+      className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
+    >
+      <div className="font-semibold text-lg text-ink-900">
+        {role === 'caregiver' ? 'Older adults' : 'An older adult'}
+      </div>
+      <div className="text-ink-600 mt-1">
+        {role === 'caregiver'
+          ? 'Senior care — companionship, personal care, dementia support'
+          : 'Care for a parent, spouse, or loved one'}
+      </div>
+    </button>
+    <button
+      onClick={() => onPick('child')}
+      className="w-full px-6 py-5 rounded-2xl border hairline bg-white hover:shadow-md transition text-left"
+    >
+      <div className="font-semibold text-lg text-ink-900">
+        {role === 'caregiver' ? 'Children' : 'My children'}
+      </div>
+      <div className="text-ink-600 mt-1">
+        {role === 'caregiver'
+          ? 'Childcare — babysitting and nanny work'
+          : 'Babysitters and nannies for your family'}
+      </div>
+    </button>
+    {onBack && (
+      <button type="button" onClick={onBack} className="w-full py-3 text-sm text-ink-600 hover:text-ink-900 font-medium transition">
+        ← Back
+      </button>
+    )}
+  </div>
+);
 
 const ConsentScreen: React.FC<{
   role: OnboardingRole;
@@ -763,6 +891,45 @@ const HandoffScreen: React.FC<{
     />
   );
 };
+
+// Front door Stage 2 (deliverable 7). The bug: with the childcare flags off,
+// createWebOnboardingSession cleared the vertical stamp (correct — fail closed)
+// and the person silently continued into SENIOR onboarding, even though they had
+// picked childcare. SMS, for the same intent, reached an explicit waitlist. This
+// screen is the web's equivalent of that waitlist: honest, terminal, and it does
+// not pretend a childcare signup happened.
+//
+// No SMS handoff is offered here on purpose — texting Evia would start the
+// senior funnel, which is exactly the fall-through being fixed.
+const ChildcareUnavailableScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }> = ({ role, tone }) => (
+  <div className={`text-center space-y-4 ${tone === 'dark' ? '' : 'pt-4'}`}>
+    <div className="w-14 h-14 mx-auto rounded-full bg-paper-100 border hairline flex items-center justify-center">
+      <BloomMark className="w-7 h-7 text-ink-900" />
+    </div>
+    <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">
+      Childcare isn&rsquo;t open here yet
+    </h2>
+    <p className="text-ink-600 text-base leading-relaxed">
+      {role === 'caregiver'
+        ? "We're not taking childcare caregivers in your area quite yet. Your phone number is saved and we'll text you the moment it opens up."
+        : "We're not offering childcare in your area quite yet. Your phone number is saved and we'll text you the moment it opens up."}
+    </p>
+    <p className="text-ink-600 text-base leading-relaxed">
+      {role === 'caregiver'
+        ? 'Looking for senior-care work in the meantime? '
+        : 'Need care for an older adult in the meantime? '}
+      <Link to="/start" className="underline underline-offset-2 font-medium text-ink-900">
+        Start there instead
+      </Link>
+      .
+    </p>
+    {supportPhone && (
+      <p className="text-ink-400 text-sm">
+        Questions? Call us at {supportPhone.display}.
+      </p>
+    )}
+  </div>
+);
 
 const ConnectedScreen: React.FC<{ role: OnboardingRole; tone: 'dark' | 'light' }> = ({ role, tone }) => {
   if (tone === 'dark') {

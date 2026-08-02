@@ -65,11 +65,29 @@ export type ToolClaim =
   | { cached: true;  result: unknown }
   | { cached: false };
 
-export async function claimToolExecution(key: string): Promise<ToolClaim> {
+export interface ToolExecutionBinding {
+  operationId: string;
+  careVertical: "senior" | "child";
+  principalId: string;
+  objectType: string;
+  objectId: string;
+  actionName: string;
+  sourceTurnKey: string;
+  expiresAt: string;
+}
+
+export async function claimToolExecution(
+  key: string,
+  opts: { strict?: boolean; binding?: ToolExecutionBinding } = {},
+): Promise<ToolClaim> {
   try {
     const ref = admin.firestore().collection(TOOL_EXECUTION_COLLECTION).doc(key);
     try {
-      await ref.create({ status: "running", claimedAtMs: Date.now() });
+      await ref.create({
+        status: "running",
+        claimedAtMs: Date.now(),
+        ...(opts.binding ? { binding: opts.binding } : {}),
+      });
       return { cached: false };
     } catch {
       // ALREADY_EXISTS (or rare infra). Resolve in a transaction.
@@ -80,6 +98,20 @@ export async function claimToolExecution(key: string): Promise<ToolClaim> {
           return { cached: false };
         }
         const data = snap.data() ?? {};
+        if (
+          opts.binding &&
+          (!data.binding ||
+            data.binding.operationId !== opts.binding.operationId ||
+            data.binding.careVertical !== opts.binding.careVertical ||
+            data.binding.principalId !== opts.binding.principalId ||
+            data.binding.objectType !== opts.binding.objectType ||
+            data.binding.objectId !== opts.binding.objectId ||
+            data.binding.actionName !== opts.binding.actionName ||
+            data.binding.sourceTurnKey !== opts.binding.sourceTurnKey ||
+            data.binding.expiresAt !== opts.binding.expiresAt)
+        ) {
+          throw new Error("toolExecutionLedger: immutable operation binding mismatch");
+        }
         if (data.status === "done") {
           return { cached: true, result: data.result ?? null };
         }
@@ -99,6 +131,7 @@ export async function claimToolExecution(key: string): Promise<ToolClaim> {
       });
     }
   } catch (err) {
+    if (opts.strict) throw err;
     console.error(`toolExecutionLedger: claim failed open for ${key}:`, err);
     return { cached: false }; // fail open — run the confirmed action (at-least-once)
   }

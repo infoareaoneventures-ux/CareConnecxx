@@ -379,6 +379,248 @@
       "disposition": "composite",
       "status": "new",
       "callers": ["functions/src/scheduled/objectiveExpirySweeper.ts"]
+    },
+    {
+      "id": "Q30",
+      "collectionGroup": "guardianAuthorityOutbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U2 authority-outbox drain: state IN [pending,retry] + nextAttemptAt <= now, ordered.",
+      "callers": ["functions/src/childcare/guardianAuthority.ts"]
+    },
+    {
+      "id": "Q31",
+      "collectionGroup": "data_lifecycle_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U3 lifecycle drain: ready export/delete/redact requests.",
+      "callers": [
+        "functions/src/privacy/dataLifecycle.ts",
+        "functions/src/scheduled/childcareLifecycleWorker.ts"
+      ]
+    },
+    {
+      "id": "Q32",
+      "collectionGroup": "job_posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U6 listMyChildcareJobs: the family's childcare jobs, newest first.",
+      "callers": ["functions/src/childcare/jobCallables.ts"]
+    },
+    {
+      "id": "Q33",
+      "collectionGroup": "job_posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U6 listEligibleChildcareJobs: open childcare jobs, newest first (eligibility gates run before results leave the server).",
+      "callers": ["functions/src/childcare/jobCallables.ts"]
+    },
+    {
+      "id": "Q34",
+      "collectionGroup": "booking_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "caregiverId", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 cross-vertical conflict check: all childcare bookings for a caregiver (status/date overlap filtered in memory). U8: also feeds the per-vertical reputation recompute (booking reliability aggregates).",
+      "callers": [
+        "functions/src/childcare/bookingCallables.ts",
+        "functions/src/childcare/reputationProjection.ts"
+      ]
+    },
+    {
+      "id": "Q35",
+      "collectionGroup": "booking_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 rolling-shift sweep: confirmed/in_progress recurring childcare bookings (status IN).",
+      "callers": ["functions/src/childcare/bookingCallables.ts"]
+    },
+    {
+      "id": "Q36",
+      "collectionGroup": "childcare_booking_safety",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedCaregiverUid", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 assigned-provider file-grant source (childFileAccess seam).",
+      "callers": ["functions/src/childcare/safetyProjection.ts"]
+    },
+    {
+      "id": "Q37",
+      "collectionGroup": "childcare_booking_safety",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "childIds", "arrayConfig": "CONTAINS" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 authority-change fan-out: active safety pointers naming a child (reprojectActiveBookingSafetyForChild).",
+      "callers": ["functions/src/childcare/safetyProjection.ts"]
+    },
+    {
+      "id": "Q38",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "caregiverId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "existing",
+      "notes": "Childcare U7 per-date conflict check on the SHARED appointments collection (status IN) — the same composite the senior bookingExecutor conflict gate uses; already checked in.",
+      "callers": [
+        "functions/src/childcare/bookingCallables.ts",
+        "functions/src/agents/bookingExecutor.ts"
+      ]
+    },
+    {
+      "id": "Q39",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "childcareBookingId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 check-in/out: today's visit docs for a booking.",
+      "callers": [
+        "functions/src/childcare/bookingCallables.ts",
+        "functions/src/childcare/shiftPayments.ts"
+      ]
+    },
+    {
+      "id": "Q40",
+      "collectionGroup": "shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingRequestId", "order": "ASCENDING" },
+        { "fieldPath": "careVertical", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 cancellation/substitution: this booking's vertical-stamped shifts.",
+      "callers": ["functions/src/childcare/bookingCallables.ts"]
+    },
+    {
+      "id": "Q41",
+      "collectionGroup": "shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingRequestId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U7 check-in/out: today's shift docs for a booking.",
+      "callers": [
+        "functions/src/childcare/bookingCallables.ts",
+        "functions/src/childcare/shiftPayments.ts"
+      ]
+    },
+    {
+      "id": "Q42",
+      "collectionGroup": "reviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "caregiverId", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U8 per-vertical reputation (R45): all childcare reviews for a caregiver (moderation filtered in memory). The senior aggregation keeps its single-equality caregiverId query.",
+      "callers": ["functions/src/childcare/reputationProjection.ts"]
+    },
+    {
+      "id": "Q43",
+      "collectionGroup": "chatRooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "careVertical", "order": "ASCENDING" },
+        { "fieldPath": "participants", "arrayConfig": "CONTAINS" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U9 (KTD14/R41): the adult's childcare context rooms — v1-listMyChildcareConversations (sorted in memory) and the authority-change conversation-revocation fan-out share this one composite. The booking-room revoke/phase queries are equality-only (careVertical + contextType + contextId) and need no composite. Senior room listing keeps its participants+lastMessageTimestamp index untouched.",
+      "callers": ["functions/src/childcare/conversationPolicy.ts"]
+    },
+    {
+      "id": "Q44",
+      "collectionGroup": "childcare_review_submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "moderationState", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare launch remediation U2: oldest-first private moderation queue and pending-review SLA scan. Public review projections remain in reviews.",
+      "callers": [
+        "functions/src/childcare/reviewModerationCallables.ts",
+        "functions/src/triggers/reviewProjection.ts"
+      ]
+    },
+    {
+      "id": "Q45",
+      "collectionGroup": "childcare_file_scan_operations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "deadlineAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U11: bounded malware-scan timeout and retry reconciliation.",
+      "callers": ["functions/src/childcare/childFileScanResult.ts"]
+    },
+    {
+      "id": "Q46",
+      "collectionGroup": "childcare_file_scan_operations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ],
+      "disposition": "composite",
+      "status": "new",
+      "notes": "Childcare U11: seven-day generation-safe quarantine cleanup with legal-hold exclusion.",
+      "callers": ["functions/src/childcare/childFileScanResult.ts"]
     }
   ],
   "forbidden": [

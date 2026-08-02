@@ -87,6 +87,7 @@ import {
   raiseAgedMemoryOperationAlert,
   raiseTurnSyncOrderingBacklogAlert,
 } from "../observability/caraOpsAlerts";
+import { conversationPartitionIdsForRead } from "../agents/turnSourceKey";
 
 const db = admin.firestore();
 
@@ -363,6 +364,39 @@ async function processTurnSyncOperation(
   const assistantRow = rows.find(r => r?.role === "assistant");
   if (!userRow || !assistantRow) throw new Error("source_row_missing");
 
+  // ── Childcare U10 backstop (R50/KTD17): eligibility is re-decided at
+  // DISPATCH time from the live session + the immutable row stamps. A denied
+  // session (reclassified senior→child, caregiver-childcare-context) or an
+  // exclusion-stamped row marks every remaining target skipped — the worker
+  // can never sync a denied turn into Zep or extract facts from it, even for
+  // an operation created before the denial (retroactive-sync prohibition).
+  {
+    const { decideMemoryEligibility, logMemoryDenial, isMemoryExcludedRow } =
+      await import("../memory/memoryEligibility");
+    const sessionSnapForEligibility = await db.doc(String(op.sessionRef)).get();
+    const sessionForEligibility = sessionSnapForEligibility.exists ? sessionSnapForEligibility.data()! : null;
+    const decision = decideMemoryEligibility(sessionForEligibility as never);
+    const rowExcluded = rows.some((r) => isMemoryExcludedRow(r as Record<string, unknown>));
+    if (rowExcluded || !decision.eligible) {
+      if (!decision.eligible) logMemoryDenial("memory_operation_worker_turn_sync", decision);
+      else console.info(JSON.stringify({ memory_denied: true, site: "memory_operation_worker_turn_sync", reason: "row_exclusion_stamp" }));
+      if (targets.zepTranscript?.status === "pending" || targets.zepTranscript?.status === "failed") {
+        await markMemoryOperationTarget(operationId, "zepTranscript", "skipped");
+        zepTranscriptSkipped = 1;
+      }
+      if (targets.learnedFacts?.status === "pending" || targets.learnedFacts?.status === "failed") {
+        await markMemoryOperationTarget(operationId, "learnedFacts", "skipped");
+      }
+      const clearDenied = db.batch();
+      for (const path of sourceRefs) {
+        clearDenied.update(db.doc(path), { memorySyncStatus: admin.firestore.FieldValue.delete() });
+      }
+      await clearDenied.commit().catch(() => {});
+      await completeMemoryOperation(operationId, leaseOwner);
+      return { zepDuplicates, zepTranscriptSkipped };
+    }
+  }
+
   if (targets.zepTranscript?.status === "pending" || targets.zepTranscript?.status === "failed") {
     const sessionSnap = await db.doc(String(op.sessionRef)).get();
     const session = sessionSnap.exists ? sessionSnap.data()! : {};
@@ -624,13 +658,19 @@ async function processFactChangeOperation(
       // nightly consolidation reads, marking rows that restate the fact.
       const phone = await resolveOperationPhone(op);
       if (phone) {
-        const snap = await db.collection("agent_conversations").doc(phone).collection("messages")
-          .where("timestamp", ">=", Date.now() - LEGACY_SOURCE_SCAN_WINDOW_MS)
-          .orderBy("timestamp", "asc")
-          .limit(LEGACY_SOURCE_SCAN_LIMIT)
-          .get()
-          .catch(() => null);
-        for (const d of snap?.docs ?? []) {
+        const snaps = await Promise.all(
+          conversationPartitionIdsForRead(phone, "senior").map((partitionId) =>
+            db.collection("agent_conversations").doc(partitionId).collection("messages")
+              .where("timestamp", ">=", Date.now() - LEGACY_SOURCE_SCAN_WINDOW_MS)
+              .orderBy("timestamp", "asc")
+              .limit(LEGACY_SOURCE_SCAN_LIMIT)
+              .get()),
+        ).catch(() => []);
+        const sourceDocs = snaps.flatMap((snap) => snap.docs)
+          .filter((doc) => doc.data().careVertical !== "child")
+          .sort((a, b) => Number(a.data().timestamp ?? 0) - Number(b.data().timestamp ?? 0))
+          .slice(-LEGACY_SOURCE_SCAN_LIMIT);
+        for (const d of sourceDocs) {
           const row = d.data();
           if (row.role !== "user" && row.role !== "assistant") continue;
           if (row.excludeFromMemoryConsolidationAt) continue;

@@ -5,10 +5,14 @@ import {
   ChevronDown, LogOut, Settings, CreditCard, Crown,
   Users, FileText, CalendarCheck,
   Briefcase, X, MoreHorizontal, HelpCircle, Mail,
-  MessageCircle,
+  MessageCircle, Baby,
 } from 'lucide-react';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { BloomMark } from '../ui/BloomMark';
+// Childcare U11 (plan 2026-07-22-002): once-per-session availability probe.
+// Unavailable (flags off / senior-only backend errors) hides the entry —
+// senior-only navigation stays byte-identical.
+import { fetchFamilyChildcareAccess } from '../shared/childcareAccess';
 
 const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
 import { authService, dbService } from '../../services/api';
@@ -34,6 +38,11 @@ export const ClientNavigation: React.FC = () => {
   const [myCareOpen, setMyCareOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<any>(null);
   const [profilePhotoUrl, setProfilePhotoUrl] = React.useState<string | null>(null);
+  // Childcare U11: additive, flag-gated entry. Shown only when the childcare
+  // flags are on AND the household is already engaged with childcare (has
+  // children or a household) — the opt-in entry for new childcare families
+  // lives on the profile recipient hub, not here.
+  const [showChildcare, setShowChildcare] = React.useState(false);
   const caraUnread = useCaraUnread();
 
   const avatarRef = React.useRef<HTMLDivElement>(null);
@@ -57,6 +66,18 @@ export const ClientNavigation: React.FC = () => {
       }).catch(() => {});
     }
   }, []);
+
+  // Childcare U11: once-per-session availability probe (module-cached; a
+  // failure resolves to unavailable and simply hides the entry).
+  React.useEffect(() => {
+    let active = true;
+    setShowChildcare(false);
+    void fetchFamilyChildcareAccess(currentUser?.uid).then((access) => {
+      if (!active) return;
+      setShowChildcare(access.status === 'available' && (access.hasChildren || access.households.length > 0));
+    });
+    return () => { active = false; };
+  }, [currentUser?.uid]);
 
   // Close dropdowns on outside click
   React.useEffect(() => {
@@ -239,6 +260,9 @@ export const ClientNavigation: React.FC = () => {
             {avatarOpen && (
               <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
                 {[
+                  // Childcare U11: additive entry, present only when childcare
+                  // is available AND the household is engaged with it.
+                  ...(showChildcare ? [{ icon: <Baby className="w-4 h-4" />, label: 'Childcare', path: '/childcare' }] : []),
                   { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
                   { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
                   { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
@@ -341,6 +365,8 @@ export const ClientNavigation: React.FC = () => {
                 { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
                 { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
                 { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
+                // Childcare U11: additive, flag-gated entry (see showChildcare).
+                ...(showChildcare ? [{ icon: <Baby className="w-4 h-4" />, label: 'Childcare', path: '/childcare' }] : []),
               ].map(item => (
                 <button key={item.path}
                   onClick={() => { setMoreOpen(false); navigate(item.path); }}

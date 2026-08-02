@@ -15,6 +15,19 @@ import * as admin from "firebase-admin";
 
 const db = admin.firestore();
 
+/**
+ * Childcare U5 (plan 2026-07-22-002, R30): the derived evidence LABELS a
+ * public projection may carry. Anything outside this allowlist — raw statuses,
+ * report data, candidate PII, internal denial reasons, or universal safety
+ * language — never reaches the projection.
+ */
+export const PUBLIC_CHILDCARE_EVIDENCE_LABELS: readonly string[] = [
+  "background_check_current",
+  "childcare_reviewed",
+  "childcare_policy_accepted",
+  "transport_capable",
+];
+
 /** Exported for unit tests: strip a caregiver doc down to the public subset. */
 export function toPublicProfile(id: string, cg: Record<string, unknown>): Record<string, unknown> {
   const pick = (...keys: string[]) => {
@@ -22,7 +35,7 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
     for (const k of keys) if (cg[k] !== undefined && cg[k] !== null) out[k] = cg[k];
     return out;
   };
-  return {
+  const profile: Record<string, unknown> = {
     id,
     ...pick(
       "name", "firstName", "lastName", "bio", "city", "state",
@@ -37,6 +50,44 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
     ),
     location: [cg.city, cg.state].filter(value => typeof value === "string" && value).join(", "),
   };
+
+  // ── Childcare U5 (R24/R30/AE9): derived per-vertical visibility ──────────
+  // Emitted ONLY when the server-owned childcareProvider summary exists on the
+  // source doc — a senior-only caregiver's projection stays BYTE-IDENTICAL to
+  // the pre-childcare shape (pinned by publicCaregiverProfile parity tests).
+  // When present: a visibility boolean + allowlisted evidence labels only.
+  // Never the summary itself (it carries eligibility internals), never raw
+  // screening state, never candidate identifiers.
+  const summary = cg.childcareProvider as Record<string, unknown> | undefined;
+  if (summary && typeof summary === "object") {
+    const visible = summary.visible === true;
+    profile.verticalVisibility = { child: visible };
+    if (visible) {
+      const labels = Array.isArray(summary.evidenceLabels) ? summary.evidenceLabels : [];
+      profile.childcareEvidenceLabels = labels.filter(
+        (l): l is string => typeof l === "string" && PUBLIC_CHILDCARE_EVIDENCE_LABELS.includes(l),
+      );
+
+      // ── Childcare U8 (R45): per-vertical reputation LABELS ────────────────
+      // Numbers derived exclusively from childcare reviews/bookings
+      // (caregivers.childcareReputationSummary, written by
+      // childcare/reputationProjection.ts) — the senior rating/reviewCount
+      // fields above stay the SENIOR aggregate. Emitted only while the
+      // provider is childcare-visible; a deliberate additive extension of the
+      // pinned projection key set.
+      const rep = cg.childcareReputationSummary as Record<string, unknown> | undefined;
+      if (rep && typeof rep === "object") {
+        profile.childcareReputation = {
+          ratingAvg: typeof rep.ratingAvg === "number" ? rep.ratingAvg : 0,
+          ratingCount: typeof rep.ratingCount === "number" ? rep.ratingCount : 0,
+          completedBookings: typeof rep.completedBookings === "number" ? rep.completedBookings : 0,
+          repeatFamilies: typeof rep.repeatFamilies === "number" ? rep.repeatFamilies : 0,
+        };
+      }
+    }
+  }
+
+  return profile;
 }
 
 export const publicCaregiverProfile = functions.https.onCall(async (data) => {

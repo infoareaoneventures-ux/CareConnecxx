@@ -122,6 +122,23 @@ export async function runEmergencyReplacement(params: {
   const { appointmentId, clientId, clientPhone, appt } = params;
   const now = new Date().toISOString();
 
+  // Childcare skip (plan 2026-07-22-002 U8, R37): the senior emergency-
+  // replacement pipeline (senior scorer, care_plans context, SMS confirm
+  // loop) never runs for a childcare visit. Childcare substitution is the
+  // web-managed v1-substituteChildcareCaregiver path; raise an admin alert
+  // so a human coordinates coverage (Evia childcare flows are U10).
+  if (appt?.careVertical === "child") {
+    await db.collection("admin_alerts").add({
+      type:          "childcare_replacement_needed",
+      appointmentId,
+      bookingId:     String(appt.childcareBookingId ?? ""),
+      severity:      "high",
+      resolved:      false,
+      createdAt:     now,
+    }).catch(() => {});
+    return;
+  }
+
   // This is a safety-critical path: the family has been told coverage is being found.
   // A thrown error must NOT be silently swallowed by a fire-and-forget caller, so we
   // catch at the top level and raise an admin alert.

@@ -15,6 +15,10 @@ import firebase from '../../lib/firebase';
 import { dbService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
+// Childcare U11 (plan 2026-07-22-002): ADDITIVE childcare bookings section.
+// It renders null while childcare is unavailable (flags off / probe failure),
+// so senior-only caregivers see this page byte-identically to before.
+import { ChildcareBookingsSection } from './ChildcareBookingsSection';
 
 type Tab = 'requests' | 'active' | 'past';
 
@@ -1813,6 +1817,10 @@ export const CaregiverBookingsPage: React.FC = () => {
         <div className="mb-6">
           <PendingSwapsPanel swaps={pendingSwaps} title="Pending swaps" subtitle="Swaps you've requested" />
         </div>
+
+        {/* Childcare bookings (U11) — additive; renders nothing when childcare
+            is unavailable so the senior page is unchanged. */}
+        <ChildcareBookingsSection />
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 mb-6">

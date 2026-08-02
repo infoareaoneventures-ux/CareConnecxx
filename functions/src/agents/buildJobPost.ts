@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
 import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
-import { buildWebJobPostDoc } from "./jobPostContract";
+import { buildWebJobPostDoc, assertLegacyJobMirrorAllowed } from "./jobPostContract";
 import { geocodeZip, geocodeCity } from "../utils/geocode";
 
 const db = admin.firestore();
@@ -41,6 +41,13 @@ export async function buildAndSaveJobPost(params: {
   jobData:        Record<string, unknown>;
 }): Promise<{ jobId: string; notifiedCount: number }> {
   const { uid, phone, onboardingData, jobData } = params;
+
+  // R32 (childcare U6): this builder is the legacy SENIOR pipeline — it writes
+  // the singleton job_postings/{uid} mirror below, which childcare-vertical
+  // jobs must never touch. Childcare demand is created exclusively by
+  // childcare/jobCallables.createChildcareJobPost (auto-ID job_posts, typed
+  // requirement projection). Structural guard, fail closed:
+  assertLegacyJobMirrorAllowed(onboardingData, jobData);
 
   const seniorName    = (onboardingData.seniorName    ?? "") as string;
   const firstName     = seniorName.split(" ")[0] || seniorName;

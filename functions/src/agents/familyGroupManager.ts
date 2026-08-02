@@ -1,3 +1,14 @@
+// ── LEGACY-COMPAT BOUNDARY (childcare plan 2026-07-22-002, U2) ────────────────
+// This module is the legacy PHONE-KEYED family-group flow (Linq group chat +
+// phones-in-list membership). It is classified
+// legacy-compat-remove-after-migration in the childcare consumer manifest and
+// stays SENIOR-ONLY: a recycled phone number satisfies the phone-in-list rule,
+// so NO child-vertical data may ever flow through these readers. The canonical
+// replacement is childcare/householdRepository.ts (memberships) +
+// childcare/guardianAuthority.ts (explicit recipient-scoped grants); SMS-joined
+// adults map to PROVISIONAL memberships with zero grantable scopes there.
+// Do not extend this module with childcare behavior.
+
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import {

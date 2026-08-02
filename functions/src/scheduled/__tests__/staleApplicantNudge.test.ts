@@ -61,3 +61,17 @@ describe("shouldNudgeStaleApplicants", () => {
     })).toBe(false);
   });
 });
+
+// ── Childcare U6 classification: SENIOR-ONLY EXPLICIT SKIP (plan 2026-07-22-002) ──
+describe("childcare explicit skip (U6 manifest disposition)", () => {
+  it("the job loop skips careVertical=='child' rows before any nudge logic", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(path.resolve(__dirname, "../staleApplicantNudge.ts"), "utf8");
+    const skipIdx = source.indexOf('if (job.careVertical === "child") continue;');
+    const statusIdx = source.indexOf('(job.status as string) !== "open"');
+    expect(skipIdx).toBeGreaterThan(-1);
+    expect(statusIdx).toBeGreaterThan(-1);
+    expect(skipIdx).toBeLessThan(statusIdx); // skip precedes even the status gate
+  });
+});

@@ -29,12 +29,30 @@ import {
 import { sanitizePromptContext } from "./promptContext";
 import { buildCapabilityHint, DiscoveryRole } from "./capabilityDiscovery";
 import { findAdvertisedRecipeWithoutBacking, hasPaymentAuthorityLeak, type CareRecipeRole } from "./careRecipes";
-import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
+import { MCP_TOOLS, CAREGIVER_TOOLS, CLIENT_TOOLS, CHILDCARE_CLIENT_TOOLS, handleToolCall, handleToolCallForCaregiver } from "../mcp/server";
 import { resolveCaraModelConfig, estimateCostUsd } from "../config/caraModels";
 import { runAgentModelTurn } from "./agentModelTurn";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 import { getActiveAgentForUser } from "./executionAgent";
-import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
+import { selectToolsForIntent, isHighStakesMutation, isAllowedInChildcareTurn } from "./toolCapabilities";
+// ── Childcare U10 (plan 2026-07-22-002, R49-R51, KTD17) ──────────────────────
+import {
+  buildChildcareContextEnvelope,
+  childcareEnvelopeHealth,
+  type ChildcareContextEnvelope,
+} from "./childcareSituation";
+import { buildChildcareSystemPrompt, childcarePromptAugmenter } from "./childcarePromptAugmenter";
+import {
+  decideMemoryEligibility,
+  buildMemoryExclusionStamp,
+  logMemoryDenial,
+  type MemoryEligibilityDecision,
+} from "../memory/memoryEligibility";
+import { getChildcareFlags } from "../config/featureFlags";
+import {
+  recordChildcareQualityEvent,
+  type ChildcareQualityEventCode,
+} from "../childcare/childcareMetrics";
 import { selectToolPack, TOOL_PACKS_CAPABILITY } from "./toolPackSelector";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { describeWhoIsWho } from "./careRecipients";
@@ -51,7 +69,14 @@ import {
 } from "./objectiveLedger";
 import { projectActiveGoal, isLegacyGoalStale, isProjection, type LegacyActiveGoal } from "./objectiveAdapters";
 import { writePhaseCheckpoint, loadPhaseCheckpoint, buildResumeDirective, TURN_LIFECYCLE_CAPABILITY } from "./turnPhaseCheckpoint";
-import type { SourceTurnIdentity } from "./turnSourceKey";
+import {
+  conversationStateStamp,
+  deriveConversationPartitionId,
+  deriveSourceTurnKey,
+  type SourceTurnIdentity,
+  type VerticalExecutionContext,
+} from "./turnSourceKey";
+import type { CareVertical } from "../data/contract";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
 import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
@@ -213,10 +238,13 @@ async function getCaregiverTodayAppointment(caregiverId: string) {
 
 // Exported for tests (outbound-history window guardrail, U3).
 export async function getConversationHistory(
-  phone: string
+  phone: string,
+  careVertical: CareVertical = "senior",
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
-  const [recentSnap, recentUserSnap, summarySnap] = await Promise.all([
-    db.collection("agent_conversations").doc(phone).collection("messages")
+  const loadPartition = async (partitionId: string, legacySenior: boolean) => {
+    const col = db.collection("agent_conversations").doc(partitionId).collection("messages");
+    const [recentSnap, recentUserSnap, summarySnap] = await Promise.all([
+    col
       .orderBy("timestamp", "desc")
       // Over-fetch well past HISTORY_WINDOW (U3 guardrail): transport-recorded
       // outbound rows (scheduled nudges, gate messages) can crowd the window,
@@ -233,25 +261,47 @@ export async function getConversationHistory(
     // firestore.indexes.json. FAIL-SOFT on a missing/failed index: degrade to
     // the pre-guard behavior (recentSnap only) rather than failing the whole
     // agent turn — this keeps deploy ordering (indexes vs functions) non-fatal.
-    db.collection("agent_conversations").doc(phone).collection("messages")
+    col
       .where("role", "==", "user")
       .orderBy("timestamp", "desc")
       .limit(MIN_USER_ROWS_KEPT)
       .get()
       .catch((err): { docs: [] } => {
-        console.warn("getConversationHistory: user-row horizon query failed (missing index?) — degrading to over-fetch only", err instanceof Error ? err.message : err);
+        console.warn(
+          "getConversationHistory: user-row horizon query failed (missing index?) — degrading to over-fetch only",
+          careVertical === "child"
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
         return { docs: [] };
       }),
-    db.collection("agent_conversations").doc(phone).collection("messages")
+    col
       .where("role", "==", "summary")
       .limit(1)
       .get(),
+    ]);
+    return { partitionId, legacySenior, recentSnap, recentUserSnap, summarySnap };
+  };
+
+  const partitionId = deriveConversationPartitionId(phone, careVertical);
+  const partitions = await Promise.all([
+    loadPartition(partitionId, false),
+    ...(careVertical === "senior" ? [loadPartition(phone, true)] : []),
   ]);
 
   // Merge both queries, deduped by doc id (a recent user row appears in both),
   // then restore chronological order for the window composer.
-  const byId = new Map<string, (typeof recentSnap.docs)[number]>();
-  for (const d of [...recentSnap.docs, ...recentUserSnap.docs]) byId.set(d.id, d);
+  const byId = new Map<string, (typeof partitions)[number]["recentSnap"]["docs"][number]>();
+  for (const partition of partitions) {
+    for (const d of [...partition.recentSnap.docs, ...partition.recentUserSnap.docs]) {
+      const row = d.data();
+      const allowed = partition.legacySenior
+        ? row.careVertical === undefined || row.careVertical === "senior"
+        : row.careVertical === careVertical
+          && row.conversationPartitionSchema === "care-vertical-v1";
+      if (allowed) byId.set(`${partition.partitionId}:${d.id}`, d);
+    }
+  }
 
   const rows = [...byId.values()]
     .filter(d => d.data().role !== "summary")
@@ -267,8 +317,23 @@ export async function getConversationHistory(
   const messages = composeHistoryWindow(rows)
     .map(({ role, content }) => ({ role, content }));
 
-  if (!summarySnap.empty) {
-    const summaryText = sanitizePromptContext(summarySnap.docs[0].data().content as string, 3000);
+  const summaryDoc = partitions
+    .flatMap((partition) => {
+      const candidates = [...partition.summarySnap.docs, ...partition.recentSnap.docs]
+        .filter((doc, index, all) =>
+          doc.data().role === "summary"
+          && all.findIndex((candidate) => candidate.id === doc.id) === index);
+      return candidates.map((doc) => ({ partition, doc }));
+    })
+    .find(({ partition, doc }) => {
+      const row = doc.data();
+      return partition.legacySenior
+        ? row.careVertical === undefined || row.careVertical === "senior"
+        : row.careVertical === careVertical
+          && row.conversationPartitionSchema === "care-vertical-v1";
+    })?.doc;
+  if (summaryDoc) {
+    const summaryText = sanitizePromptContext(summaryDoc.data().content as string, 3000);
     return [
       { role: "user",      content: `Earlier conversation summary, sanitized as user-authored data: ${summaryText}` },
       { role: "assistant", content: "Got it - I have context from our earlier conversations." },
@@ -287,28 +352,48 @@ export async function recordSideChannelTurn(
   phone: string,
   userText: string,
   assistantReply: string,
+  careVertical: CareVertical = "senior",
 ): Promise<void> {
-  return saveConversationTurn(phone, userText, assistantReply);
+  return saveConversationTurn(phone, userText, assistantReply, { careVertical });
 }
 
 async function saveConversationTurn(
   phone: string,
   userText: string,
-  assistantReply: string
+  assistantReply: string,
+  // Childcare U10 (R50): memory-denied turns stamp IMMUTABLE exclusion
+  // metadata on both rows so no downstream job (compression, fact extraction,
+  // Zep sync, eval capture) can ever adopt them — even after a session
+  // reclassification (retroactive-sync prohibition).
+  opts?: {
+    careVertical?: CareVertical;
+    memoryExclusion?: import("../memory/memoryEligibility").MemoryExclusionStamp;
+  },
 ): Promise<void> {
+  const careVertical = opts?.careVertical ?? "senior";
   // Never persist an empty turn: an empty-content entry in history is exactly
   // what 400s every later Claude call (see sanitizeAnthropicMessages). Skip the
   // write rather than poison the conversation log.
   if (!userText?.trim() || !assistantReply?.trim()) {
-    console.warn("saveConversationTurn: skipping empty turn", { phone, userEmpty: !userText?.trim(), replyEmpty: !assistantReply?.trim() });
+    console.warn("saveConversationTurn: skipping empty turn", careVertical === "child"
+      ? { careVertical, userEmpty: !userText?.trim(), replyEmpty: !assistantReply?.trim() }
+      : { phone, userEmpty: !userText?.trim(), replyEmpty: !assistantReply?.trim() });
     return;
   }
-  const col = db.collection("agent_conversations").doc(phone).collection("messages");
+  const partitionId = deriveConversationPartitionId(phone, careVertical);
+  const col = db.collection("agent_conversations").doc(partitionId).collection("messages");
   const now = Date.now();
+  const stamp = opts?.memoryExclusion ?? null;
+  const partitionStamp = conversationStateStamp(careVertical);
   const batch = db.batch();
-  batch.set(col.doc(), { role: "user",      content: userText,       timestamp: now });
-  batch.set(col.doc(), { role: "assistant", content: assistantReply, timestamp: now + 1 });
-  await batch.commit().catch((err) => console.error("saveConversationTurn error:", err));
+  batch.set(col.doc(), { role: "user",      content: userText,       timestamp: now,     ...partitionStamp, ...(stamp ?? {}) });
+  batch.set(col.doc(), { role: "assistant", content: assistantReply, timestamp: now + 1, ...partitionStamp, ...(stamp ?? {}) });
+  await batch.commit().catch((err) => console.error(
+    "saveConversationTurn error:",
+    careVertical === "child"
+      ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+      : err,
+  ));
 }
 
 // ── System prompt builders ────────────────────────────────────────────────────
@@ -521,6 +606,55 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   if (accountBits.length) {
     parts.push(
       `ACCOUNT STATUS (live, read just now — the source of truth; OVERRIDES anything older memory or past conversation claims): ${accountBits.join(", ")}.`,
+    );
+  }
+
+  // ── Childcare vertical (dual-vertical caregivers) ───────────────────────────
+  // Everything above reads SENIOR-shaped fields only (specialties,
+  // yearsExperience). A caregiver enrolled in childcare has an entirely separate
+  // profile — yearsChildcareExperience, childcareAgeBands, childcareServices —
+  // plus the server-derived `childcareProvider` summary that holds their
+  // childcare approval and discoverability state. None of it reached this
+  // context, so an enrolled childcare caregiver asking "am I approved for
+  // childcare?" got senior facts or nothing: the same shape as the 2026-07-22
+  // incident above, where missing context let stale memory answer unchallenged.
+  //
+  // SENIOR PARITY: emits NOTHING unless a childcare field is actually present.
+  // recomputeChildcareProviderVisibility deliberately writes no summary for
+  // senior-only caregivers (AE9 byte-identical projection), so absence is the
+  // reliable "not a childcare provider" signal and senior context is unchanged.
+  const cc = (caregiver as Record<string, unknown>).childcareProvider as
+    | Record<string, unknown>
+    | undefined;
+  const ccSkills: string[] = [];
+  if (caregiver.yearsChildcareExperience) {
+    ccSkills.push(`${caregiver.yearsChildcareExperience} years childcare experience`);
+  }
+  if (Array.isArray(caregiver.childcareAgeBands) && caregiver.childcareAgeBands.length) {
+    ccSkills.push(`age groups: ${caregiver.childcareAgeBands.join(", ")}`);
+  }
+  if (Array.isArray(caregiver.childcareServices) && caregiver.childcareServices.length) {
+    ccSkills.push(`services: ${caregiver.childcareServices.join(", ")}`);
+  }
+  if (ccSkills.length) {
+    parts.push(`CHILDCARE PROFILE (separate from senior care): ${ccSkills.join("; ")}.`);
+  }
+  if (cc) {
+    const ccBits: string[] = [];
+    // "visible" is the discoverability outcome — the thing a caregiver actually
+    // means by "am I approved / can families find me for childcare jobs".
+    ccBits.push(
+      cc.visible === true
+        ? "APPROVED and discoverable for childcare jobs"
+        : "NOT yet discoverable for childcare jobs",
+    );
+    if (cc.approvalState) ccBits.push(`approval ${String(cc.approvalState)}`);
+    if (cc.evidenceStatus) ccBits.push(`screening evidence ${String(cc.evidenceStatus)}`);
+    if (cc.transportCapable === true) ccBits.push("cleared to transport children");
+    parts.push(
+      `CHILDCARE STATUS (live, read just now — the source of truth for childcare; ` +
+      `separate from the senior account status above, and it OVERRIDES anything ` +
+      `older memory or past conversation claims): ${ccBits.join(", ")}.`,
     );
   }
 
@@ -1500,6 +1634,7 @@ export async function runQaAgent(params: {
   // during migration — ingresses that don't pass it simply write no phase
   // checkpoint (observable in shadow logs as coverage).
   sourceTurn?: { conversationId: string; messageId: string };
+  executionContext?: VerticalExecutionContext;
   // Classified intent from the webhook — used to filter the tool list to a
   // capability-relevant subset. Optional: when absent (web callable, agent
   // callers), the full tool list is bound.
@@ -1514,7 +1649,33 @@ export async function runQaAgent(params: {
   onboardingMode?: boolean;
   onboardingRole?: "client" | "caregiver";
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, _iterationsOut, sourceChannel, intent, shadowMode = false, onboardingMode = false, onboardingRole } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, zepThreadId, session, isRetry, skipSend, _toolCallsOut, _iterationsOut, sourceChannel, intent, shadowMode = false, onboardingMode = false, onboardingRole, executionContext } = params;
+  const transportOpts = executionContext ? { executionContext } : {};
+
+  // ── Childcare U10 (plan 2026-07-22-002, R49/KTD5): server-owned vertical ───
+  // The vertical is resolved from the SESSION's typed stamp before any prompt
+  // or tool decision — never from message text, model output, or stored free
+  // text (AE19). Every childcare behavior below guards on this boolean, so a
+  // senior session (stamp absent) takes a byte-identical path.
+  const careVertical: CareVertical = executionContext?.careVertical
+    ?? (String((session as Record<string, unknown> | undefined)?.careVertical ?? "") === "child"
+      ? "child"
+      : "senior");
+  const childcareTurn = careVertical === "child";
+  // R50/KTD17: one memory decision per childcare turn — always a denial —
+  // reused for the transcript exclusion stamp and the denial log.
+  const childcareMemoryDecision: MemoryEligibilityDecision | null = childcareTurn
+    ? decideMemoryEligibility(session as Record<string, unknown>)
+    : null;
+  const memoryExclusionOpts = {
+    careVertical,
+    ...(childcareMemoryDecision && !childcareMemoryDecision.eligible
+      ? { memoryExclusion: buildMemoryExclusionStamp(childcareMemoryDecision) }
+      : {}),
+  };
+  // Populated by the childcare branch below; read by the augmenter extras and
+  // the tool-dispatch guard.
+  let childcareEnvelope: ChildcareContextEnvelope | null = null;
 
   // Tag the input so Claude can apply different judgment per channel.
   // [USER] messages may require a reply; [TRIGGER] / [AGENT] inputs may not.
@@ -1533,10 +1694,39 @@ export async function runQaAgent(params: {
     phone,
     userId,
     userType,
+    careVertical,
     pathway:      "qa",
     isRetry,
     inputChannel,
   });
+  const childPrincipalHash = hashText(userId ?? phone);
+  const logActor = childcareTurn ? { principalHash: childPrincipalHash } : { userId };
+  const childQualityWrites: Promise<void>[] = [];
+  const recordChildQuality = (
+    eventCode: ChildcareQualityEventCode,
+    metadata: Record<string, unknown> = {},
+  ): void => {
+    if (!childcareTurn) return;
+    const write = recordChildcareQualityEvent({
+      principalId: userId ?? phone,
+      correlationId: params.sourceTurn
+        ? `${params.sourceTurn.conversationId}:${params.sourceTurn.messageId}`
+        : `${turnTextHash}:${metrics.startedAt}`,
+      eventCode,
+      metadata,
+    }).catch((err) => {
+      const contractReason =
+        err instanceof Error && err.message.startsWith("childcare quality telemetry")
+          ? err.message
+          : undefined;
+      console.error("qaAgent: child quality telemetry write failed", {
+        eventCode,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        ...(contractReason ? { contractReason } : {}),
+      });
+    });
+    childQualityWrites.push(write);
+  };
 
   // DND check — skip if user has quiet hours enabled
   const prefs = await getPreferences(userId).catch(() => null);
@@ -1544,7 +1734,8 @@ export async function runQaAgent(params: {
     if (!skipSend) {
       // Don't leave the family in silence — acknowledge the message respectfully
       await sendSplit(chatId,
-        "You're in quiet hours right now. I'll hold your message and follow up when they end."
+        "You're in quiet hours right now. I'll hold your message and follow up when they end.",
+        transportOpts,
       ).catch(() => {});
     }
     return "";
@@ -1558,14 +1749,17 @@ export async function runQaAgent(params: {
   // (handoffTtlMs) so the user is never permanently stranded, and this sits
   // AFTER the upstream crisis fast-path, so emergencies are never suppressed.
   if (!onboardingMode && channel === "[USER]" && isHandoffActive(session, Date.now())) {
-    console.info("qaAgent: thread held for human handoff — suppressing auto-reply", { userId });
+    console.info("qaAgent: thread held for human handoff — suppressing auto-reply", logActor);
     createCaraOpsAlert({
       type:     "human_handoff_followup",
       severity: "high",
-      phone, userId, role: userType,
+      ...(childcareTurn ? {} : { phone, userId }),
+      role: userType,
       source:   "qaAgent",
       message:  "Held thread received a follow-up message while awaiting a teammate.",
-      context:  { text: safeText.slice(0, 300) },
+      context:  childcareTurn
+        ? { pathway: "held_followup", operationHash: childPrincipalHash }
+        : { text: safeText.slice(0, 300) },
     }).catch(() => {});
     return skipSend ? HUMAN_HANDOFF_HELD_COPY : "";
   }
@@ -1577,22 +1771,25 @@ export async function runQaAgent(params: {
   // tool — so no booking/message side effects fire twice. No-op unless the
   // CARA_CHECKPOINT_RESUME flag is on and the stored text hash matches.
   if (!skipSend) {
-    const checkpoint = await loadCheckpoint(phone, text).catch(() => null);
+    const checkpoint = await loadCheckpoint(phone, text, careVertical).catch(() => null);
     if (checkpoint) {
       metrics.resumedFromCheckpoint = true;
       metrics.checkpointPhase = checkpoint.phase;
-      console.info("qaAgent: resuming from checkpoint", { phone, phase: checkpoint.phase });
+      console.info("qaAgent: resuming from checkpoint", {
+        ...logActor,
+        phase: checkpoint.phase,
+      });
       let resumedReply = checkpoint.reply;
       // Re-run the safety supervisor (a gate, not optional style polish). Fail
       // open to the raw reply if it throws — getting the message out beats
       // re-silencing the family.
       resumedReply = await supervise(resumedReply, { phone, role: userType }).catch(() => resumedReply);
-      await saveConversationTurn(phone, text, resumedReply);
+      await saveConversationTurn(phone, text, resumedReply, memoryExclusionOpts);
       // saveConversationTurn just persisted this reply — skip the transport's
       // outbound-history recorder so the resumed turn lands exactly once (U3).
-      await sendSplit(chatId, resumedReply, { skipHistoryRecord: true });
-      await clearCheckpoint(phone);
-      metrics.historyRolledUp = await maybeRollUpHistory(phone);
+      await sendSplit(chatId, resumedReply, { ...transportOpts, skipHistoryRecord: true });
+      await clearCheckpoint(phone, careVertical);
+      metrics.historyRolledUp = await maybeRollUpHistory(phone, careVertical);
       emitTurnMetrics(metrics, { reply: resumedReply });
       return resumedReply;
     }
@@ -1624,7 +1821,59 @@ export async function runQaAgent(params: {
   // unavailable/timeout, 6s hard cap with a timer that clears on success) and
   // mapped to prompt text + metrics by applyZepContextResult above.
 
-  if (userType === "caregiver" && caregiverId) {
+  if (childcareTurn) {
+    // ── Childcare U10 (R49-R51, KTD17): the childcare-vertical turn ─────────
+    // NO senior context, NO memory subsystems: Zep, learned facts, memory
+    // files, fact-change staging, and reconciliation masking are never touched
+    // on this branch (they all live in the senior branches below). The system
+    // prompt is built exclusively from the server-resolved envelope.
+    if (childcareMemoryDecision) logMemoryDenial("qa_agent_childcare_turn", childcareMemoryDecision);
+
+    // Emergency-off / disabled (R61): routing normally short-circuits before
+    // the agent loop, but the flags are re-read HERE too so a mid-flight flip
+    // fails closed to the deterministic safe responder — no tools, no model.
+    const childcareFlags = await getChildcareFlags().catch(() => null);
+    if (!childcareFlags?.enabled) {
+      const paused =
+        "Childcare support is paused right now. Your account and details are safe — " +
+        "please use your secure dashboard, or email support@eviacares.com for anything urgent.";
+      if (!skipSend) await sendSplit(chatId, paused, transportOpts).catch(() => {});
+      await saveConversationTurn(phone, text, paused, memoryExclusionOpts);
+      emitTurnMetrics(metrics, { reply: paused });
+      return paused;
+    }
+
+    try {
+      childcareEnvelope = await buildChildcareContextEnvelope({
+        actorUid: userId,
+        phone,
+        channel: skipSend ? "web" : "linq",
+        session: (session ?? {}) as Record<string, unknown>,
+      });
+    } catch (err) {
+      console.error("qaAgent: childcare envelope build failed", {
+        reason: err instanceof Error ? err.message.slice(0, 160) : "unknown",
+      });
+      childcareEnvelope = null;
+    }
+    if (!childcareEnvelope) {
+      // R49 fail closed: no authoritative envelope → no agent turn. Never fall
+      // through to the senior prompt/tooling for a child-stamped session.
+      const failClosed =
+        "I couldn't securely load your childcare account just now. Please try again in a few " +
+        "minutes, or manage everything from your secure dashboard.";
+      if (!skipSend) await sendSplit(chatId, failClosed, transportOpts).catch(() => {});
+      await saveConversationTurn(phone, text, failClosed, memoryExclusionOpts);
+      emitTurnMetrics(metrics, { reply: failClosed });
+      return failClosed;
+    }
+    console.info("childcareTurn.envelope", childcareEnvelopeHealth(childcareEnvelope));
+
+    // Conversation history with THIS phone is operational routing/status text
+    // only (child details never ride SMS — R33); rows are exclusion-stamped.
+    history = await getConversationHistory(phone, careVertical);
+    systemPrompt = buildChildcareSystemPrompt(childcareEnvelope);
+  } else if (userType === "caregiver" && caregiverId) {
     // U4b (KTD9): the caregiver branch applies the SAME reconciliation masking
     // as the client branch — a caregiver with an unresolved correction/forget
     // operation must not receive stale Zep context. This closes the U4a-noted
@@ -1642,7 +1891,7 @@ export async function runQaAgent(params: {
     const [caregiver, todayAppt, hist, cgZepResult, cgSnapshot] = await Promise.all([
       getCaregiverProfile(caregiverId),
       getCaregiverTodayAppointment(caregiverId),
-      getConversationHistory(phone),
+      getConversationHistory(phone, careVertical),
       zepThreadId && !cgReconciliationMask.omitZep ? getZepContextResult(zepThreadId) : Promise.resolve(null),
       // Situation snapshot — the caregiver standing context was nearly bare;
       // this surfaces pending interviews/applications/offers so Evia can lead.
@@ -1720,14 +1969,14 @@ export async function runQaAgent(params: {
       journal     = [];
       nextAppt    = null;
       permissions = null;
-      history     = await getConversationHistory(phone);
+      history     = await getConversationHistory(phone, careVertical);
     } else {
       [senior, journal, nextAppt, permissions, history] = await Promise.all([
         getSeniorProfile(seniorId),
         getRecentJournalEntries(seniorId, 3),
         getNextAppointment(userId),
         getAgentPermissions(userId),
-        getConversationHistory(phone),
+        getConversationHistory(phone, careVertical),
       ]);
     }
 
@@ -1789,7 +2038,12 @@ export async function runQaAgent(params: {
           if (rollout.enabled) careSituationPromptBlock = projection.text;
         }
       } catch (err) {
-        console.warn("careSituation.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+        console.warn(
+          "careSituation.shadow failed (non-fatal)",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
       }
 
       // ── U3 shadow (plan 2026-07-18-001, dark) ─────────────────────────────
@@ -1824,7 +2078,12 @@ export async function runQaAgent(params: {
           });
         }
       } catch (err) {
-        console.warn("objectiveLedger.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+        console.warn(
+          "objectiveLedger.shadow failed (non-fatal)",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
       }
 
       // ── U4 shadow (plan 2026-07-18-001, dark) ─────────────────────────────
@@ -1841,6 +2100,7 @@ export async function runQaAgent(params: {
             conversationId: params.sourceTurn.conversationId,
             messageId: params.sourceTurn.messageId,
             objectiveVersion: 0, // no ledger objective bound yet (U3 bridge pending)
+            careVertical,
           };
           // U4 slice 3b — resume-at-verify (R21): a RETRY of an identity whose
           // checkpoint shows committed side effects gets a verify-don't-act
@@ -1865,14 +2125,24 @@ export async function runQaAgent(params: {
                 channel: turnIdentity.channel,
                 mode: lifecycleRollout.mode,
               }))
-              .catch((err) => console.warn("turnLifecycle.shadow write failed (non-fatal)", err instanceof Error ? err.message : err));
+              .catch((err) => console.warn(
+                "turnLifecycle.shadow write failed (non-fatal)",
+                childcareTurn
+                  ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+                  : err instanceof Error ? err.message : err,
+              ));
           }
         } else if (lifecycleRollout.shadow || lifecycleRollout.enabled) {
           // Coverage gap: this ingress didn't thread a sourceTurn yet.
           console.info("turnLifecycle.shadow", { phase: "no_source_turn", channel: params.skipSend ? "web" : "linq", mode: lifecycleRollout.mode });
         }
       } catch (err) {
-        console.warn("turnLifecycle.shadow failed (non-fatal)", err instanceof Error ? err.message : err);
+        console.warn(
+          "turnLifecycle.shadow failed (non-fatal)",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
       }
     }
 
@@ -1912,7 +2182,7 @@ export async function runQaAgent(params: {
               : result.reason === "reconciliation_pending"
                 ? lf.RE_REMEMBER_BLOCKED_COPY
                 : lf.FACT_CHANGE_NO_MATCH_COPY;
-            if (!skipSend) await sendSplit(chatId, reply).catch(() => {});
+            if (!skipSend) await sendSplit(chatId, reply, transportOpts).catch(() => {});
             emitTurnMetrics(metrics, { reply });
             return reply;
           }
@@ -1951,7 +2221,7 @@ export async function runQaAgent(params: {
         // passively extracted downstream (R23) — the staged operation owns
         // this turn's meaning. R21: outcome enum only in the log.
         console.info("qaAgent: fact-change deterministic ack", { userId, outcome: factChange.kind });
-        if (!skipSend) await sendSplit(chatId, ack).catch(() => {});
+        if (!skipSend) await sendSplit(chatId, ack, transportOpts).catch(() => {});
         emitTurnMetrics(metrics, { reply: ack });
         return ack;
       }
@@ -1972,7 +2242,7 @@ export async function runQaAgent(params: {
               pendingReRememberCategory:  restated.category,
               pendingReRememberExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
             }).catch(() => {});
-            if (!skipSend) await sendSplit(chatId, lf.RE_REMEMBER_QUESTION_COPY).catch(() => {});
+            if (!skipSend) await sendSplit(chatId, lf.RE_REMEMBER_QUESTION_COPY, transportOpts).catch(() => {});
             emitTurnMetrics(metrics, { reply: lf.RE_REMEMBER_QUESTION_COPY });
             return lf.RE_REMEMBER_QUESTION_COPY;
           }
@@ -2220,11 +2490,16 @@ export async function runQaAgent(params: {
       ...(metrics.frustrationDetected || metrics.rephraseLoopDetected
         ? { frustrationThisTurn: true }
         : {}),
+      // Childcare U10: the server-resolved envelope rides extras so the
+      // childcare augmenter's predicate keys on it (senior turns: absent).
+      ...(childcareEnvelope ? { childcareEnvelope } : {}),
     },
   };
   const PIPELINE: PromptAugmenter[] = [
     experimentsAugmenter,
     ...DEFAULT_AUGMENTERS,
+    // No-op on senior turns by predicate (extras.childcareEnvelope absent).
+    childcarePromptAugmenter,
   ];
   const augResult = await runAugmenters(systemPrompt, PIPELINE, augmenterCtx);
   systemPrompt = augResult.systemPrompt;
@@ -2298,7 +2573,12 @@ export async function runQaAgent(params: {
 
   // Unconfirmed-identity short-circuits: skip all per-phone task/goal/agent
   // context — they may reference work on behalf of a different linked person.
-  const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity || onboardingMode;
+  const skipCrossEntity = !!(session as any)?.__unconfirmedIdentity || onboardingMode
+    // Childcare U10 (R49/R50): senior operational context (pending senior
+    // actions, senior goals, senior background tasks, execution agents,
+    // senior capability hints) never enters a childcare prompt — the envelope
+    // + childcare prompt own the whole context surface for these turns.
+    || childcareTurn;
 
   // Sentinel injected when the operations-context fetch FAILS — as opposed to a
   // clean empty result (which means "nothing pending" and should add nothing).
@@ -2321,7 +2601,12 @@ export async function runQaAgent(params: {
   if (!skipCrossEntity) {
     const operationalContextData = await loadCaraOperationalContext({ phone, userId, caregiverId })
       .catch((err) => {
-        console.warn("qaAgent: operational context unavailable", err instanceof Error ? err.message : err);
+        console.warn(
+          "qaAgent: operational context unavailable",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
         return null;
       });
     const operationalContext = operationalContextData
@@ -2346,7 +2631,7 @@ export async function runQaAgent(params: {
   // applies. The literal "HELP" SMS carrier keyword is handled separately in
   // webhooks.ts. Secondary family members get the care-visibility hint with the
   // payment-authority boundary (AE4) baked in.
-  {
+  if (!childcareTurn) { // childcare turns document their own capabilities (U10)
     const capabilityHint = [
       buildCapabilityHint(discoveryRole, hasLiveOpsContext),
       operationalRecipeLead ? `Current best lead recipe: ${operationalRecipeLead}` : undefined,
@@ -2448,16 +2733,21 @@ export async function runQaAgent(params: {
     // (senior profile, pending tasks, etc.) are always included.
     // U3: onboarding mode restricts the surface to the onboarding tools so the
     // loop stays focused (and fast) on collection — never the full 88-tool set.
-    const baseTools = onboardingMode
-      ? MCP_TOOLS.filter(t => isOnboardingTool(t.name))
-      : userType === "caregiver" ? CAREGIVER_TOOLS : CLIENT_TOOLS;
-    let activeTools = (onboardingMode || userType === "caregiver")
+    // Childcare U10 (R51): a classified childcare turn binds ONLY the childcare
+    // pack — vertical filtering replaces the whole senior surface, and neither
+    // intent filtering nor tool packs apply (the pack is already minimal).
+    const baseTools = childcareTurn
+      ? (CHILDCARE_CLIENT_TOOLS ?? [])
+      : onboardingMode
+        ? MCP_TOOLS.filter(t => isOnboardingTool(t.name))
+        : userType === "caregiver" ? CAREGIVER_TOOLS : CLIENT_TOOLS;
+    let activeTools = (onboardingMode || userType === "caregiver" || childcareTurn)
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
     // U6 (plan 2026-07-18-001, R28-R29): on BROAD client turns, the foreground
     // objective's intent narrows the surface the legacy filter leaves at full
     // catalog. Fail-open: selector null or rollout off → legacy list unchanged.
-    if (!onboardingMode && userType !== "caregiver" && activeTools.length === baseTools.length) {
+    if (!onboardingMode && userType !== "caregiver" && !childcareTurn && activeTools.length === baseTools.length) {
       try {
         const packRollout = await getRolloutDecision(TOOL_PACKS_CAPABILITY, phone);
         if (packRollout.enabled) {
@@ -2476,7 +2766,12 @@ export async function runQaAgent(params: {
           }
         }
       } catch (err) {
-        console.warn("toolPacks selection failed (non-fatal, legacy surface kept)", err instanceof Error ? err.message : err);
+        console.warn(
+          "toolPacks selection failed (non-fatal, legacy surface kept)",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err instanceof Error ? err.message : err,
+        );
       }
     }
     // Care-plan interview: the save tools must survive the per-intent filter —
@@ -2559,7 +2854,12 @@ export async function runQaAgent(params: {
     let turnInputTokens  = 0;
     let turnOutputTokens = 0;
     let turnCostUsd       = 0;
-    console.info("qaAgent.loopBudget", { userId, flowClass, maxIterations, maxCostUsd: budget.maxCostUsd });
+    console.info("qaAgent.loopBudget", {
+      ...logActor,
+      flowClass,
+      maxIterations,
+      maxCostUsd: budget.maxCostUsd,
+    });
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       // On the final allowed iteration, or once the wall-clock budget is spent,
       // force a text-only completion (tool_choice:none) so the model MUST emit a
@@ -2571,13 +2871,23 @@ export async function runQaAgent(params: {
       const costCapExceeded  = turnCostUsd >= budget.maxCostUsd;
       const forceTextReply   = budgetExceeded || toolCapExceeded || costCapExceeded || iteration === maxIterations - 1;
       if (budgetExceeded) {
-        console.warn("qaAgent: turn budget exceeded — forcing final text reply", { userId, iteration });
+        console.warn("qaAgent: turn budget exceeded — forcing final text reply", {
+          ...logActor,
+          iteration,
+        });
       }
       if (toolCapExceeded) {
-        console.warn("qaAgent: per-turn tool-call cap reached — forcing final text reply", { userId, totalToolCalls });
+        console.warn("qaAgent: per-turn tool-call cap reached — forcing final text reply", {
+          ...logActor,
+          totalToolCalls,
+        });
       }
       if (costCapExceeded) {
-        console.warn("qaAgent: per-turn cost cap reached — forcing final text reply", { userId, turnCostUsd: turnCostUsd.toFixed(4), maxCostUsd: budget.maxCostUsd });
+        console.warn("qaAgent: per-turn cost cap reached — forcing final text reply", {
+          ...logActor,
+          turnCostUsd: turnCostUsd.toFixed(4),
+          maxCostUsd: budget.maxCostUsd,
+        });
         metrics.costBudgetExceeded = true;
       }
       // Clip oversized tool_use args in older messages — the result is what
@@ -2594,7 +2904,11 @@ export async function runQaAgent(params: {
       // bug in the loop pairing.
       const patched = patchDanglingToolCalls(messages);
       if (patched > 0) {
-        console.warn("qaAgent: patched dangling tool calls", { userId, iteration, patched });
+        console.warn("qaAgent: patched dangling tool calls", {
+          ...logActor,
+          iteration,
+          patched,
+        });
         metrics.patchedOrphans = (metrics.patchedOrphans ?? 0) + patched;
       }
       metrics.iterations = (metrics.iterations ?? 0) + 1;
@@ -2637,7 +2951,7 @@ export async function runQaAgent(params: {
         response.content.some((b) => b.type === "tool_use")
       ) {
         console.warn("qaAgent: max_tokens with tool_use blocks — treating as truncated", {
-          userId,
+          ...logActor,
           iteration,
           toolNames: response.content
             .filter((b) => b.type === "tool_use")
@@ -2670,7 +2984,11 @@ export async function runQaAgent(params: {
               type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
               content: `Invalid status "${String(ci.status)}". status must be one of: "done", "blocked", "needs_user".`,
             }] });
-            console.warn("qaAgent.completeTaskRejected", { userId, reason: "invalid_status", status: String(ci.status) });
+            console.warn("qaAgent.completeTaskRejected", {
+              ...logActor,
+              reason: "invalid_status",
+              status: String(ci.status),
+            });
             continue;
           }
           const status = ci.status;
@@ -2684,7 +3002,14 @@ export async function runQaAgent(params: {
             try {
               pending = await getLatestPending(phone);
             } catch (err) {
-              console.warn("qaAgent.completeTaskRejected", { userId, reason: "pending_fetch_failed", err: err instanceof Error ? err.message : String(err) });
+              console.warn("qaAgent.completeTaskRejected", {
+                ...logActor,
+                reason: "pending_fetch_failed",
+                errorClass: err instanceof Error ? err.constructor.name : typeof err,
+                ...(childcareTurn
+                  ? {}
+                  : { error: err instanceof Error ? err.message : String(err) }),
+              });
               messages.push({ role: "assistant", content: response.content });
               messages.push({ role: "user", content: [{
                 type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
@@ -2698,12 +3023,15 @@ export async function runQaAgent(params: {
                 type: "tool_result", tool_use_id: completeBlock.id, is_error: true,
                 content: "Cannot complete yet — an action is still awaiting the user's YES/NO confirmation. Wait for their reply before completing.",
               }] });
-              console.info("qaAgent.completeTaskRejected", { userId, reason: "pending_awaiting" });
+              console.info("qaAgent.completeTaskRejected", {
+                ...logActor,
+                reason: "pending_awaiting",
+              });
               continue;
             }
           }
           if (message) reply = message;
-          console.info("qaAgent.completeTask", { userId, status, hasMessage: !!message });
+          console.info("qaAgent.completeTask", { ...logActor, status, hasMessage: !!message });
           break;
         }
 
@@ -2718,12 +3046,36 @@ export async function runQaAgent(params: {
             // overrun within one iteration. Reject (don't execute) any block
             // beyond the cap so the mutation blast-radius bound holds.
             if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
-              console.warn("qaAgent: per-turn tool-call cap reached mid-iteration — rejecting tool", { userId, tool: block.name, totalToolCalls });
+              console.warn("qaAgent: per-turn tool-call cap reached mid-iteration — rejecting tool", {
+                ...logActor,
+                tool: block.name,
+                totalToolCalls,
+              });
               toolResults.push({
                 type:        "tool_result",
                 tool_use_id: block.id,
                 is_error:    true,
                 content:     "Tool-call limit for this turn reached — do not call more tools; reply to the user now with what you have.",
+              });
+              continue;
+            }
+            // Childcare U10 (R51): fail-closed vertical tool boundary at
+            // DISPATCH time — a childcare turn may only run the childcare
+            // pack (+ vertical-neutral loop tools); any senior or unknown
+            // tool name is rejected without executing. The reverse direction
+            // (childcare tool on a senior turn) is enforced by the handler's
+            // own vertical guard plus the authoritative stamp below.
+            if (childcareTurn && !isAllowedInChildcareTurn(block.name)) {
+              console.warn("qaAgent: non-childcare tool rejected on childcare turn", {
+                principalHash: childPrincipalHash,
+                tool: block.name,
+              });
+              metrics.toolErrors = (metrics.toolErrors ?? 0) + 1;
+              toolResults.push({
+                type:        "tool_result",
+                tool_use_id: block.id,
+                is_error:    true,
+                content:     "That tool does not exist in a childcare conversation. Use only the childcare tools listed in your instructions.",
               });
               continue;
             }
@@ -2737,7 +3089,10 @@ export async function runQaAgent(params: {
               ((block.input as any)?.actionType === "browse" || (block.input as any)?.loginAction)
             ) {
               // Filler, same class as signalThinking — never recorded (U3).
-              await sendSplit(chatId, "On it — give me a moment.", { skipHistoryRecord: true }).catch(() => {});
+              await sendSplit(chatId, "On it — give me a moment.", {
+                ...transportOpts,
+                skipHistoryRecord: true,
+              }).catch(() => {});
             }
 
             const toolHandler = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
@@ -2761,10 +3116,36 @@ export async function runQaAgent(params: {
               // any model-guessed value) so a hallucinated role can't stall a save.
               ...(onboardingMode && onboardingRole ? { role: onboardingRole } : {}),
             };
+            // Childcare U10 (R49/AE19): the vertical stamp is SERVER-owned.
+            // Childcare turns stamp it from the session; every other turn
+            // strips any model-supplied value, so a childcare tool handler's
+            // vertical guard can never be satisfied from a senior turn.
+            if (childcareTurn) enrichedInput.careVertical = "child";
+            else delete enrichedInput.careVertical;
+            if (params.sourceTurn) {
+              enrichedInput._sourceTurnKey = deriveSourceTurnKey({
+                channel: params.skipSend ? "web" : "linq",
+                principal: phone,
+                conversationId: params.sourceTurn.conversationId,
+                messageId: params.sourceTurn.messageId,
+                objectiveVersion: 0,
+                careVertical,
+              });
+            } else {
+              delete enrichedInput._sourceTurnKey;
+            }
             const toolStart = Date.now();
             const result = await toolHandler(block.name, enrichedInput, shadowMode)
               .catch((err) => {
-                console.error(`qaAgent: tool call failed [${block.name}]`, err);
+                console.error(
+                  `qaAgent: tool call failed [${block.name}]`,
+                  childcareTurn
+                    ? {
+                        principalHash: childPrincipalHash,
+                        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+                      }
+                    : err,
+                );
                 return {
                   _toolError: true,
                   message: "Tool unavailable — tell the user you don't have that information right now and offer to try again.",
@@ -2796,9 +3177,15 @@ export async function runQaAgent(params: {
                   conversationId: params.sourceTurn.conversationId,
                   messageId: params.sourceTurn.messageId,
                   objectiveVersion: 0,
+                  careVertical,
                 },
                 "acted",
-                { completedActionKeys: [...(metrics.completedActionKeys ?? [])] },
+                {
+                  completedActionKeys: [...(metrics.completedActionKeys ?? [])],
+                  // U10: typed vertical stamp so a retried childcare turn can
+                  // never be re-driven under the senior vertical.
+                  ...(childcareTurn ? { careVertical: "child" as const } : {}),
+                },
               ).catch(() => {});
             }
             if (!errored && (result as { sent?: boolean })?.sent === true) {
@@ -2819,18 +3206,22 @@ export async function runQaAgent(params: {
               const succeeded = !(result as any)?._toolError && !(result as any)?.error;
               console.info("qaAgent.toolUse", {
                 tool:     block.name,
-                phone,
-                userId,
+                ...logActor,
                 succeeded,
                 durationMs: Date.now() - toolStart,
               });
               db.collection("agent_tool_metrics").add({
                 tool:        block.name,
-                phone,
-                userId,
+                ...(childcareTurn
+                  ? {
+                      careVertical: "child",
+                      principalHash: childPrincipalHash,
+                    }
+                  : { phone, userId }),
                 succeeded,
                 durationMs:  Date.now() - toolStart,
-                errorPreview: succeeded ? null : JSON.stringify(result).slice(0, 200),
+                errorPreview:
+                  succeeded || childcareTurn ? null : JSON.stringify(result).slice(0, 200),
                 ranAt:       new Date().toISOString(),
               }).catch(() => {/* non-critical */});
             }
@@ -2892,12 +3283,20 @@ export async function runQaAgent(params: {
               content: `<recovery_suggestion>\n${rec.output}\n</recovery_suggestion>`,
             });
             console.info("qaAgent.recoveryFired", {
-              userId,
+              ...logActor,
               consecutiveErrorIterations,
               durationMs: rec.durationMs,
             });
           } catch (err) {
-            console.warn("qaAgent: recovery sub-agent threw — continuing without hint", err);
+            console.warn(
+              "qaAgent: recovery sub-agent threw — continuing without hint",
+              childcareTurn
+                ? {
+                    principalHash: childPrincipalHash,
+                    errorClass: err instanceof Error ? err.constructor.name : typeof err,
+                  }
+                : err,
+            );
           }
         }
       } else {
@@ -2912,7 +3311,10 @@ export async function runQaAgent(params: {
         // still iteration budget, push the empty assistant turn and force ONE more
         // text completion so the user always gets a real sentence.
         if (!reply && iteration < maxIterations - 1) {
-          console.info("qaAgent: empty text reply — nudging for a user-facing sentence", { userId, iteration });
+          console.info(
+            "qaAgent: empty text reply — nudging for a user-facing sentence",
+            { ...logActor, iteration },
+          );
           messages.push({
             role: "assistant",
             content: response.content?.length ? response.content : [{ type: "text", text: "…" }],
@@ -2933,7 +3335,12 @@ export async function runQaAgent(params: {
     const loopProducedReply = !!reply;
 
     if (!reply) {
-      console.warn("qaAgent: tool-use loop exhausted without text reply", { userId, isRetry, preview: text.slice(0, 80), deliveredToUser });
+      console.warn("qaAgent: tool-use loop exhausted without text reply", {
+        ...logActor,
+        isRetry,
+        deliveredToUser,
+        ...(childcareTurn ? {} : { preview: text.slice(0, 80) }),
+      });
 
       if (deliveredToUser) {
         // The link/artifact already went out this turn; the only thing missing
@@ -2968,6 +3375,7 @@ export async function runQaAgent(params: {
           promiseText: CHECKING_COPY,
           question:    text.slice(0, 500),
           userId, seniorId, userType, caregiverId, zepThreadId,
+          careVertical,
           source:      "qaAgent:loop_exhausted",
           dueInMs:     10 * 60_000,
         });
@@ -2977,20 +3385,30 @@ export async function runQaAgent(params: {
         // message is natural and warm, not "broken". The copy promises the
         // question "does not get lost", so record the commitment that makes
         // that true: the sweep re-answers or hands off to a human.
-        db.collection("admin_alerts").add({
-          type:      "qa_loop_exhausted",
-          userId,
-          phone,
-          question:  text.slice(0, 300),
-          severity:  "medium",
-          createdAt: new Date().toISOString(),
-          resolved:  false,
-        }).catch(() => {});
+        db.collection("admin_alerts").add(childcareTurn
+          ? {
+              type: "qa_loop_exhausted",
+              careVertical: "child",
+              principalHash: childPrincipalHash,
+              severity: "medium",
+              createdAt: new Date().toISOString(),
+              resolved: false,
+            }
+          : {
+              type: "qa_loop_exhausted",
+              userId,
+              phone,
+              question: text.slice(0, 300),
+              severity: "medium",
+              createdAt: new Date().toISOString(),
+              resolved: false,
+            }).catch(() => {});
         await recordCommitment({
           phone, chatId, kind: "qa_answer",
           promiseText: SNAG_ANSWER_COPY,
           question:    text.slice(0, 500),
           userId, seniorId, userType, caregiverId, zepThreadId,
+          careVertical,
           source:      "qaAgent:retry_exhausted",
           dueInMs:     10 * 60_000,
         });
@@ -3016,15 +3434,21 @@ export async function runQaAgent(params: {
     if (hasMedicalContent && detectLowConfidence(reply)) {
       // R21: grounding-path telemetry carries hashes/enums only — never the
       // question, draft, or a preview of either.
-      console.warn("qaAgent: grounding revision triggered", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
+      console.warn(
+        childcareTurn ? "qaAgent: child grounding revision triggered" : "qaAgent: grounding revision triggered",
+        childcareTurn ? { eventCode: "grounding_revision" } : { userId, turnHash: turnTextHash, draftHash: hashText(reply) },
+      );
       metrics.groundingTriggered = true;
-      db.collection("agent_uncertainty_log").add({
-        userId,
-        turnHash:  turnTextHash,
-        draftHash: hashText(reply),
-        detectedAt: new Date().toISOString(),
-        groundingTriggered: true,
-      }).catch(() => {});
+      recordChildQuality("grounding_revision", { action: "rewrite" });
+      if (!childcareTurn) {
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash:  turnTextHash,
+          draftHash: hashText(reply),
+          detectedAt: new Date().toISOString(),
+          groundingTriggered: true,
+        }).catch(() => {});
+      }
       try {
         const groundedController = new AbortController();
         const groundedTimer = setTimeout(() => groundedController.abort(), 8_000);
@@ -3050,23 +3474,35 @@ export async function runQaAgent(params: {
       // Confident, unhedged medical fact — flagged for the context-aware gate,
       // not rewritten here. The claim classifier also matches it, so the
       // handoff grounding check downstream verifies it against the care plan.
-      console.warn("qaAgent: confident medical assertion flagged for grounding gate", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
+      console.warn(
+        childcareTurn ? "qaAgent: child confidence claim flagged" : "qaAgent: confident medical assertion flagged for grounding gate",
+        childcareTurn ? { eventCode: "confidence_claim", claimRisk: "high" } : { userId, turnHash: turnTextHash, draftHash: hashText(reply) },
+      );
       metrics.groundingTriggered = true;
-      db.collection("agent_uncertainty_log").add({
-        userId,
-        turnHash:  turnTextHash,
-        draftHash: hashText(reply),
-        detectedAt: new Date().toISOString(),
-        confidentMedicalClaim: true,
-      }).catch(() => {});
+      recordChildQuality("confidence_claim", { action: "verify", claimRisk: "high" });
+      if (!childcareTurn) {
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash:  turnTextHash,
+          draftHash: hashText(reply),
+          detectedAt: new Date().toISOString(),
+          confidentMedicalClaim: true,
+        }).catch(() => {});
+      }
     } else if (detectLowConfidence(reply)) {
-      console.warn("qaAgent: low-confidence reply (no medical claims)", { userId, turnHash: turnTextHash, draftHash: hashText(reply) });
-      db.collection("agent_uncertainty_log").add({
-        userId,
-        turnHash:  turnTextHash,
-        draftHash: hashText(reply),
-        detectedAt: new Date().toISOString(),
-      }).catch(() => {});
+      console.warn(
+        childcareTurn ? "qaAgent: child low-confidence reply" : "qaAgent: low-confidence reply (no medical claims)",
+        childcareTurn ? { eventCode: "confidence_claim", claimRisk: "low" } : { userId, turnHash: turnTextHash, draftHash: hashText(reply) },
+      );
+      recordChildQuality("confidence_claim", { action: "observe", claimRisk: "low" });
+      if (!childcareTurn) {
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash:  turnTextHash,
+          draftHash: hashText(reply),
+          detectedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
     }
 
     // Format revision — if Claude produced list-shaped output (numbered list,
@@ -3076,15 +3512,22 @@ export async function runQaAgent(params: {
     // pass above. Defense in depth — the prompt is supposed to prevent this
     // but the screenshot that started this fix proves Claude still slips up.
     if (hasListShape(reply)) {
-      console.warn("qaAgent: format revision triggered (list-shaped reply)", { userId, preview: reply.slice(0, 120) });
+      if (childcareTurn) {
+        console.warn("qaAgent: child format revision triggered", { eventCode: "format_revision" });
+      } else {
+        console.warn("qaAgent: format revision triggered (list-shaped reply)", { userId, preview: reply.slice(0, 120) });
+      }
       metrics.formatRevisionTriggered = true;
-      db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question: text.slice(0, 200),
-        reply:    reply.slice(0, 500),
-        detectedAt: new Date().toISOString(),
-        formatRevisionTriggered: true,
-      }).catch(() => {});
+      recordChildQuality("format_revision", { action: "rewrite" });
+      if (!childcareTurn) {
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question: text.slice(0, 200),
+          reply:    reply.slice(0, 500),
+          detectedAt: new Date().toISOString(),
+          formatRevisionTriggered: true,
+        }).catch(() => {});
+      }
       try {
         const fmtController = new AbortController();
         const fmtTimer = setTimeout(() => fmtController.abort(), 8_000);
@@ -3122,16 +3565,23 @@ export async function runQaAgent(params: {
 
     const repairReasons = getConversationRepairReasons(reply);
     if (repairReasons.length > 0) {
-      console.warn("qaAgent: conversation repair triggered", { userId, reasons: repairReasons, preview: reply.slice(0, 120) });
+      if (childcareTurn) {
+        console.warn("qaAgent: child conversation repair triggered", { reasonCodes: repairReasons });
+      } else {
+        console.warn("qaAgent: conversation repair triggered", { userId, reasons: repairReasons, preview: reply.slice(0, 120) });
+      }
       metrics.conversationRepairTriggered = true;
-      db.collection("agent_uncertainty_log").add({
-        userId, phone,
-        question: text.slice(0, 200),
-        reply:    reply.slice(0, 500),
-        detectedAt: new Date().toISOString(),
-        conversationRepairTriggered: true,
-        repairReasons,
-      }).catch(() => {});
+      recordChildQuality("conversation_repair", { reasonCodes: repairReasons });
+      if (!childcareTurn) {
+        db.collection("agent_uncertainty_log").add({
+          userId, phone,
+          question: text.slice(0, 200),
+          reply:    reply.slice(0, 500),
+          detectedAt: new Date().toISOString(),
+          conversationRepairTriggered: true,
+          repairReasons,
+        }).catch(() => {});
+      }
       try {
         const repairController = new AbortController();
         const repairTimer = setTimeout(() => repairController.abort(), 8_000);
@@ -3170,7 +3620,7 @@ export async function runQaAgent(params: {
     // Fire-and-forget (no-op unless CARA_CHECKPOINT_RESUME is on). Only genuine
     // loop replies — never the exhausted fallback stubs.
     if (loopProducedReply && !skipSend) {
-      writeCheckpoint(phone, "loop_complete", turnTextHash, reply).catch(() => {});
+      writeCheckpoint(phone, "loop_complete", turnTextHash, reply, careVertical).catch(() => {});
     }
     // U4 slice 3: identity-bound "responded" phase checkpoint alongside the
     // legacy rescue. Fire-and-forget, fail-open; written for genuine loop
@@ -3183,6 +3633,7 @@ export async function runQaAgent(params: {
           conversationId: params.sourceTurn.conversationId,
           messageId: params.sourceTurn.messageId,
           objectiveVersion: 0,
+          careVertical,
         },
         "responded",
         { completedActionKeys: [...(metrics.completedActionKeys ?? [])] },
@@ -3222,14 +3673,19 @@ export async function runQaAgent(params: {
     const preSuperviseReply = reply;
     reply = await supervise(reply, { phone, role: userType }).catch((err) => {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error("qaAgent: supervisor threw, sending unsupervised", errMsg);
+      const errorClass = err instanceof Error ? err.constructor.name : typeof err;
+      recordChildQuality("supervisor_failure", { errorClass });
+      if (childcareTurn) {
+        console.error("qaAgent: child supervisor failed", { errorClass });
+      } else {
+        console.error("qaAgent: supervisor threw, sending unsupervised", errMsg);
+      }
       const minuteBucket = new Date().toISOString().slice(0, 16);
       db.collection("admin_alerts").add({
         type:      "supervisor_fail_open",
-        phone,
-        userId,
-        error:     errMsg.slice(0, 500),
-        preview:   reply.slice(0, 200),
+        ...(childcareTurn
+          ? { careVertical: "child", errorClass }
+          : { phone, userId, error: errMsg.slice(0, 500), preview: reply.slice(0, 200) }),
         source:    "qaAgent",
         dedupeKey: `supervisor_fail_open:${minuteBucket}`,
         severity:  "high",
@@ -3362,36 +3818,51 @@ export async function runQaAgent(params: {
       if (gateAction === "handoff") {
         handedOff = true;
         metrics.humanHandoffTriggered = true;
-        console.warn("qaAgent: low-confidence handoff to human", {
-          userId,
-          turnHash: turnTextHash,
-          draftHash,
-          claimCategories: metrics.groundingClaimCategories,
-          claimRisk: metrics.groundingClaimRisk,
-          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+        recordChildQuality("human_handoff", {
+          action: "handoff",
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk: metrics.groundingClaimRisk ?? "unknown",
+          verdict: groundingVerdict,
+          latencyMs: metrics.groundingVerifierLatencyMs ?? 0,
         });
+        console.warn(
+          childcareTurn ? "qaAgent: child low-confidence handoff" : "qaAgent: low-confidence handoff to human",
+          childcareTurn
+            ? { action: "handoff", claimRisk: metrics.groundingClaimRisk ?? "unknown" }
+            : {
+                userId,
+                turnHash: turnTextHash,
+                draftHash,
+                claimCategories: metrics.groundingClaimCategories,
+                claimRisk: metrics.groundingClaimRisk,
+                verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+              },
+        );
         const handoffIso = new Date().toISOString();
         db.collection("agent_sessions").doc(phone).set({
           handedToHuman:       true,
           handedToHumanAt:     handoffIso,
           handedToHumanReason: "low_confidence_unbacked_claim",
         }, { merge: true }).catch(() => { /* non-critical */ });
-        db.collection("agent_uncertainty_log").add({
-          userId,
-          turnHash:  turnTextHash,
-          draftHash,
-          claimCategories: metrics.groundingClaimCategories ?? [],
-          claimRisk:       metrics.groundingClaimRisk ?? null,
-          groundingVerdict,
-          action:          "handoff",
-          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
-          detectedAt:  handoffIso,
-          humanHandoff: true,
-        }).catch(() => {});
+        if (!childcareTurn) {
+          db.collection("agent_uncertainty_log").add({
+            userId,
+            turnHash:  turnTextHash,
+            draftHash,
+            claimCategories: metrics.groundingClaimCategories ?? [],
+            claimRisk:       metrics.groundingClaimRisk ?? null,
+            groundingVerdict,
+            action:          "handoff",
+            verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+            detectedAt:  handoffIso,
+            humanHandoff: true,
+          }).catch(() => {});
+        }
         createCaraOpsAlert({
           type:     "human_handoff_low_confidence",
           severity: "high",
-          phone, userId, role: userType,
+          ...(childcareTurn ? {} : { phone, userId }),
+          role: userType,
           source:   "qaAgent",
           message:  "Evia handed a thread to a teammate: an unbacked confident claim fell below the confidence bar.",
           context:  {
@@ -3414,26 +3885,40 @@ export async function runQaAgent(params: {
         // page a human either.
         groundingNeutralizedThisTurn = true;
         metrics.groundingNeutralized = true;
-        console.warn("qaAgent: high-risk claim unverifiable — neutral copy sent", {
-          userId,
-          turnHash: turnTextHash,
-          draftHash,
-          claimCategories: metrics.groundingClaimCategories,
-          claimRisk: metrics.groundingClaimRisk,
-          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
-        });
-        db.collection("agent_uncertainty_log").add({
-          userId,
-          turnHash:  turnTextHash,
-          draftHash,
+        recordChildQuality("confidence_claim", {
+          action: "neutralize",
           claimCategories: metrics.groundingClaimCategories ?? [],
-          claimRisk:       metrics.groundingClaimRisk ?? null,
-          groundingVerdict,
-          action:          "neutralize",
-          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
-          detectedAt:  new Date().toISOString(),
-          groundingNeutralized: true,
-        }).catch(() => {});
+          claimRisk: metrics.groundingClaimRisk ?? "unknown",
+          verdict: groundingVerdict,
+          latencyMs: metrics.groundingVerifierLatencyMs ?? 0,
+        });
+        console.warn(
+          childcareTurn ? "qaAgent: child high-risk claim neutralized" : "qaAgent: high-risk claim unverifiable — neutral copy sent",
+          childcareTurn
+            ? { action: "neutralize", claimRisk: metrics.groundingClaimRisk ?? "unknown" }
+            : {
+                userId,
+                turnHash: turnTextHash,
+                draftHash,
+                claimCategories: metrics.groundingClaimCategories,
+                claimRisk: metrics.groundingClaimRisk,
+                verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+              },
+        );
+        if (!childcareTurn) {
+          db.collection("agent_uncertainty_log").add({
+            userId,
+            turnHash:  turnTextHash,
+            draftHash,
+            claimCategories: metrics.groundingClaimCategories ?? [],
+            claimRisk:       metrics.groundingClaimRisk ?? null,
+            groundingVerdict,
+            action:          "neutralize",
+            verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+            detectedAt:  new Date().toISOString(),
+            groundingNeutralized: true,
+          }).catch(() => {});
+        }
         reply = neutralCopyForClaims(groundingClaims) ?? HUMAN_HANDOFF_COPY;
       } else {
         // send: either the claim is grounded (supported — pass through
@@ -3442,20 +3927,29 @@ export async function runQaAgent(params: {
         // downside is a possibly-wrong schedule/availability/age/location
         // detail, logged below for tuning, never a stranded thread).
         if (groundingVerdict === "supported") metrics.humanHandoffSuppressed = true;
-        db.collection("agent_uncertainty_log").add({
-          userId,
-          turnHash:  turnTextHash,
-          draftHash,
+        recordChildQuality("confidence_claim", {
+          action: "send",
           claimCategories: metrics.groundingClaimCategories ?? [],
-          claimRisk:       metrics.groundingClaimRisk ?? null,
-          groundingVerdict,
-          action:          "send",
-          verifierLatencyMs: metrics.groundingVerifierLatencyMs,
-          detectedAt:  new Date().toISOString(),
-          ...(groundingVerdict === "supported"
-            ? { handoffSuppressedBySupport: true }
-            : { groundingLowRiskFallback: true }),
-        }).catch(() => {});
+          claimRisk: metrics.groundingClaimRisk ?? "unknown",
+          verdict: groundingVerdict,
+          latencyMs: metrics.groundingVerifierLatencyMs ?? 0,
+        });
+        if (!childcareTurn) {
+          db.collection("agent_uncertainty_log").add({
+            userId,
+            turnHash:  turnTextHash,
+            draftHash,
+            claimCategories: metrics.groundingClaimCategories ?? [],
+            claimRisk:       metrics.groundingClaimRisk ?? null,
+            groundingVerdict,
+            action:          "send",
+            verifierLatencyMs: metrics.groundingVerifierLatencyMs,
+            detectedAt:  new Date().toISOString(),
+            ...(groundingVerdict === "supported"
+              ? { handoffSuppressedBySupport: true }
+              : { groundingLowRiskFallback: true }),
+          }).catch(() => {});
+        }
       }
     }
 
@@ -3472,15 +3966,31 @@ export async function runQaAgent(params: {
       const selfRepeat = detectAgentSelfRepeat(reply, history);
       if (selfRepeat.repeated) {
         metrics.agentSelfRepeatDetected = true;
-        console.warn("qaAgent: agent self-repeat detected", { userId, score: selfRepeat.score, preview: reply.slice(0, 100) });
-        db.collection("agent_uncertainty_log").add({
-          userId, phone,
-          question: text.slice(0, 200),
-          reply:    reply.slice(0, 500),
-          priorReply: (selfRepeat.matchedPrior ?? "").slice(0, 500),
-          detectedAt: new Date().toISOString(),
-          agentSelfRepeat: true,
-        }).catch(() => {});
+        if (childcareTurn) {
+          console.warn("qaAgent: child agent self-repeat detected", {
+            principalHash: childPrincipalHash,
+            scoreBand: (selfRepeat.score ?? 0) >= 0.9 ? "high" : "medium",
+          });
+          recordChildQuality("conversation_repair", {
+            action: "agent_self_repeat",
+            reasonCodes: ["agent_self_repeat"],
+            rewriteApplied: false,
+          });
+        } else {
+          console.warn("qaAgent: agent self-repeat detected", {
+            userId,
+            score: selfRepeat.score,
+            preview: reply.slice(0, 100),
+          });
+          db.collection("agent_uncertainty_log").add({
+            userId, phone,
+            question: text.slice(0, 200),
+            reply:    reply.slice(0, 500),
+            priorReply: (selfRepeat.matchedPrior ?? "").slice(0, 500),
+            detectedAt: new Date().toISOString(),
+            agentSelfRepeat: true,
+          }).catch(() => {});
+        }
         try {
           const varyController = new AbortController();
           const varyTimer = setTimeout(() => varyController.abort(), 8_000);
@@ -3501,6 +4011,13 @@ export async function runQaAgent(params: {
           if (trimmed && !detectAgentSelfRepeat(trimmed, history).repeated) {
             reply = trimmed;
             metrics.agentSelfRepeatRewritten = true;
+            if (childcareTurn) {
+              recordChildQuality("conversation_repair", {
+                action: "agent_self_repeat",
+                reasonCodes: ["agent_self_repeat"],
+                rewriteApplied: true,
+              });
+            }
           }
         } catch {
           // Non-critical — proceed with the original reply.
@@ -3508,10 +4025,10 @@ export async function runQaAgent(params: {
       }
     }
 
-    await saveConversationTurn(phone, text, reply);
+    await saveConversationTurn(phone, text, reply, memoryExclusionOpts);
     // saveConversationTurn just persisted this reply — skip the transport's
     // outbound-history recorder so the turn lands exactly once (U3).
-    if (!skipSend) await sendSplit(chatId, reply, { skipHistoryRecord: true });
+    if (!skipSend) await sendSplit(chatId, reply, { ...transportOpts, skipHistoryRecord: true });
 
     // Link-promise net (onboarding): the model narrated an incoming link
     // ("I'm pulling up your secure photo link — I'll send it here") without
@@ -3524,7 +4041,12 @@ export async function runQaAgent(params: {
     if (!skipSend && !shadowMode && onboardingMode && !deliveredLinkArtifact && reply.trim()) {
       const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
       await fulfillNarratedLinkPromise({ phone, chatId, reply, userType }).catch((err) =>
-        console.error("qaAgent: link-promise net failed", err));
+        console.error(
+          "qaAgent: link-promise net failed",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err,
+        ));
     }
 
     // Care-plan interview completion — data-driven, checked AFTER this turn's
@@ -3535,7 +4057,12 @@ export async function runQaAgent(params: {
     // must finish before this function invocation ends.
     if (interviewActive && !skipSend && !shadowMode) {
       await maybeCompleteCarePlanInterview(phone, session as Record<string, unknown> | undefined)
-        .catch((err) => console.error("qaAgent: care-plan completion check failed", err));
+        .catch((err) => console.error(
+          "qaAgent: care-plan completion check failed",
+          childcareTurn
+            ? { errorClass: err instanceof Error ? err.constructor.name : typeof err }
+            : err,
+        ));
     }
 
     // A real answer went out — clear any open "I'll get back to you"
@@ -3559,11 +4086,16 @@ export async function runQaAgent(params: {
       !shadowMode && !onboardingMode &&
       detectPromiseWithoutToolCall(reply, metrics.toolCalls ?? 0)
     ) {
+      recordChildQuality("promise_without_tool", {
+        action: "commitment_created",
+        toolCount: metrics.toolCalls ?? 0,
+      });
       await recordCommitment({
         phone, chatId, kind: "qa_answer",
         promiseText: reply.slice(0, 300),
         question:    text.slice(0, 500),
         userId, seniorId, userType, caregiverId, zepThreadId,
+        careVertical,
         source:      "qaAgent:llm_promise",
         dueInMs:     10 * 60_000,
       });
@@ -3572,18 +4104,26 @@ export async function runQaAgent(params: {
     // Sprint 8: turn finished cleanly — clear any checkpoint so a later inbound
     // never resumes this (now-delivered) reply. No-op if the flag is off or no
     // checkpoint was written.
-    if (!skipSend) await clearCheckpoint(phone).catch(() => {});
+    if (!skipSend) await clearCheckpoint(phone, careVertical).catch(() => {});
 
     // After the reply is sent: fold older turns into the rolling summary so long
     // conversations stay coherent without bloating the per-turn context.
-    metrics.historyRolledUp = await maybeRollUpHistory(phone);
+    metrics.historyRolledUp = await maybeRollUpHistory(phone, careVertical);
 
     _iterationsOut?.push(metrics.iterations ?? 0);
+    await Promise.all(childQualityWrites);
     emitTurnMetrics(metrics, { reply });
     return reply;
   } catch (err) {
-    console.error("qaAgent error:", err);
+    const errorClass = err instanceof Error ? err.constructor.name : typeof err;
+    recordChildQuality("turn_failure", { errorClass, pathway: "qa" });
+    if (childcareTurn) {
+      console.error("qaAgent child turn error", { errorClass });
+    } else {
+      console.error("qaAgent error:", err);
+    }
     if (skipSend) {
+      await Promise.all(childQualityWrites);
       emitTurnMetrics(metrics, { error: err });
       throw err;
     }
@@ -3606,7 +4146,7 @@ export async function runQaAgent(params: {
         : "Everything's in what I just sent above — text me if anything's unclear.")
       : await degradedFailureNotice(phone, session, SNAG_ANSWER_COPY).catch(() => SNAG_ANSWER_COPY);
     if (failureCopy) {
-      await sendMessage(chatId, failureCopy).catch(() => {});
+      await sendMessage(chatId, failureCopy, transportOpts).catch(() => {});
     }
     const errMsg = failureCopy ?? SNAG_ANSWER_COPY;
     // The snag copy promises the question is flagged and won't get lost —
@@ -3617,30 +4157,44 @@ export async function runQaAgent(params: {
         promiseText: SNAG_ANSWER_COPY,
         question:    text.slice(0, 500),
         userId, seniorId, userType, caregiverId, zepThreadId,
+        careVertical,
         source:      "qaAgent:catch",
         dueInMs:     10 * 60_000,
       });
     }
-    db.collection("admin_alerts").add({
-      type:      "qa_agent_failure",
-      phone,
-      userId,
-      question:  text.slice(0, 300),
-      error:     err instanceof Error ? err.message : String(err),
-      severity:  "medium",
-      createdAt: new Date().toISOString(),
-      resolved:  false,
-    }).catch(() => {});
+    db.collection("admin_alerts").add(childcareTurn
+      ? {
+          type: "qa_agent_failure",
+          careVertical: "child",
+          principalHash: childPrincipalHash,
+          errorClass,
+          severity: "medium",
+          createdAt: new Date().toISOString(),
+          resolved: false,
+        }
+      : {
+          type: "qa_agent_failure",
+          phone,
+          userId,
+          question: text.slice(0, 300),
+          error: err instanceof Error ? err.message : String(err),
+          severity: "medium",
+          createdAt: new Date().toISOString(),
+          resolved: false,
+        }).catch(() => {});
     // The generic qa_agent_failure alert above doesn't tell ops WHY the turn
     // failed. When the failure is a provider call (credit exhaustion, auth,
     // rate limit, timeout), raise the typed alert too so billing/auth issues
     // page the founder instead of surfacing only as this deflection copy.
-    raiseProviderFailureAlert({
-      phone,
-      provider: metrics.modelProvider,
-      model: metrics.modelUsed,
-      error: err,
-    }).catch(() => {});
+    if (!childcareTurn) {
+      raiseProviderFailureAlert({
+        phone,
+        provider: metrics.modelProvider,
+        model: metrics.modelUsed,
+        error: err,
+      }).catch(() => {});
+    }
+    await Promise.all(childQualityWrites);
     emitTurnMetrics(metrics, { reply: errMsg, error: err });
     return errMsg;
   }
@@ -3734,21 +4288,51 @@ export async function runQuickReply(params: {
   userType?: "client" | "caregiver";
   caregiverId?: string;
   session?: Record<string, unknown>;
+  executionContext?: VerticalExecutionContext;
 }): Promise<string> {
-  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, session } = params;
+  const { text, phone, chatId, userId, seniorId, userType = "client", caregiverId, session, executionContext } = params;
+  const careVertical: CareVertical = executionContext?.careVertical
+    ?? (String(session?.careVertical ?? "") === "child" ? "child" : "senior");
 
   const metrics = createTurnMetrics({
     phone,
     userId,
     userType,
+    careVertical,
     pathway:      "quick",
     inputChannel: "USER",
   });
+  const quickChildcareTurn = careVertical === "child";
+  const quickPrincipalHash = hashText(userId ?? phone);
+  const quickChildQualityWrites: Promise<void>[] = [];
+  const recordQuickChildQuality = (
+    eventCode: ChildcareQualityEventCode,
+    metadata: Record<string, unknown> = {},
+  ): void => {
+    if (careVertical !== "child") return;
+    const write = recordChildcareQualityEvent({
+      principalId: userId ?? phone,
+      correlationId: `${hashText(text)}:${metrics.startedAt}:quick`,
+      eventCode,
+      metadata,
+    }).catch((err) => {
+      const contractReason =
+        err instanceof Error && err.message.startsWith("childcare quality telemetry")
+          ? err.message
+          : undefined;
+      console.error("runQuickReply: child quality telemetry write failed", {
+        eventCode,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        ...(contractReason ? { contractReason } : {}),
+      });
+    });
+    quickChildQualityWrites.push(write);
+  };
 
   // Pre-fetch lightweight context in parallel — used to make greetings smart.
   // Each loader is wrapped so a single failure doesn't break the reply.
   const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts] = await Promise.all([
-    getConversationHistory(phone).catch(() => []),
+    getConversationHistory(phone, careVertical).catch(() => []),
     userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
     userType === "client"
       ? db.collection("agent_tasks")
@@ -3883,7 +4467,15 @@ export async function runQuickReply(params: {
     reply = (res.choices[0]?.message?.content ?? "").trim();
   } catch (err) {
     clearTimeout(timer);
-    console.warn("runQuickReply error — falling back to context-aware default", err instanceof Error ? err.message : err);
+    console.warn(
+      "runQuickReply error — falling back to context-aware default",
+      quickChildcareTurn
+        ? {
+            principalHash: quickPrincipalHash,
+            errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          }
+        : err instanceof Error ? err.message : err,
+    );
     reply = contextFallbackGreeting();
     usedDeterministicFallback = true;
   }
@@ -3928,25 +4520,38 @@ export async function runQuickReply(params: {
     if (gate.swapped) {
       // R21: hashes/enums only — no question/reply text or previews.
       const turnHash = hashText(text);
-      console.warn("runQuickReply: unverified claim in quick reply — using context fallback", {
-        userId,
-        turnHash,
-        draftHash: hashText(reply),
-        claimCategories: metrics.groundingClaimCategories,
-        claimRisk: metrics.groundingClaimRisk,
-        verdict: gate.verdict,
-      });
-      db.collection("agent_uncertainty_log").add({
-        userId,
-        turnHash,
-        draftHash: hashText(reply),
+      recordQuickChildQuality("confidence_claim", {
+        action: "neutralize",
         claimCategories: metrics.groundingClaimCategories ?? [],
-        claimRisk:       metrics.groundingClaimRisk ?? null,
-        groundingVerdict: gate.verdict ?? null,
-        action:          "neutralize",
-        detectedAt: new Date().toISOString(),
-        quickReplyGroundingFallback: true,
-      }).catch(() => {});
+        claimRisk: metrics.groundingClaimRisk ?? "unknown",
+        verdict: gate.verdict ?? "indeterminate",
+      });
+      if (careVertical === "child") {
+        console.warn("runQuickReply: child unverified claim neutralized", {
+          action: "neutralize",
+          claimRisk: metrics.groundingClaimRisk ?? "unknown",
+        });
+      } else {
+        console.warn("runQuickReply: unverified claim in quick reply — using context fallback", {
+          userId,
+          turnHash,
+          draftHash: hashText(reply),
+          claimCategories: metrics.groundingClaimCategories,
+          claimRisk: metrics.groundingClaimRisk,
+          verdict: gate.verdict,
+        });
+        db.collection("agent_uncertainty_log").add({
+          userId,
+          turnHash,
+          draftHash: hashText(reply),
+          claimCategories: metrics.groundingClaimCategories ?? [],
+          claimRisk:       metrics.groundingClaimRisk ?? null,
+          groundingVerdict: gate.verdict ?? null,
+          action:          "neutralize",
+          detectedAt: new Date().toISOString(),
+          quickReplyGroundingFallback: true,
+        }).catch(() => {});
+      }
       metrics.groundingRewriteApplied = true;
       if (gate.verdict === "indeterminate") metrics.groundingNeutralized = true;
     }
@@ -3959,11 +4564,15 @@ export async function runQuickReply(params: {
   // No extra LLM latency. Fails open for normal text.
   reply = lintMessage(redactPii(reply).text) || "Hey! How's everything going?";
 
-  await saveConversationTurn(phone, text, reply);
+  await saveConversationTurn(phone, text, reply, { careVertical });
   // saveConversationTurn just persisted this reply — skip the transport's
   // outbound-history recorder so the quick-reply turn lands exactly once (U3).
-  await sendMessage(chatId, buildClickableMessage(reply), { skipHistoryRecord: true }).catch(() => {});
-  metrics.historyRolledUp = await maybeRollUpHistory(phone);
+  await sendMessage(chatId, buildClickableMessage(reply), {
+    ...(executionContext ? { executionContext } : {}),
+    skipHistoryRecord: true,
+  }).catch(() => {});
+  metrics.historyRolledUp = await maybeRollUpHistory(phone, careVertical);
+  await Promise.all(quickChildQualityWrites);
   emitTurnMetrics(metrics, { reply });
   return reply;
 }

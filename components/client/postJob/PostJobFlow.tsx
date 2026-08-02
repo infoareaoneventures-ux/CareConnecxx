@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
+// Childcare U11 (plan 2026-07-22-002): the childcare branch of the post-job
+// flow. The vertical is chosen at flow start via the recipient hub context
+// (?vertical=child); the senior flow below is untouched.
+import { ChildcarePostJobFlow } from './ChildcarePostJobFlow';
 import { ClientNavigation } from '../ClientNavigation';
 import { StepIndicator } from '../../ui/StepIndicator';
 import { useCareConnex } from '../../../context/CareConnexContext';
@@ -19,12 +23,21 @@ const TOTAL_STEPS = 6;
 
 export const PostJobFlow: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { currentUser, addToast } = useCareConnex();
+
+  // Childcare U11: explicit vertical switch at flow start. Anything other than
+  // ?vertical=child renders the senior flow byte-identically (parity pinned by
+  // PostJobFlow.childcare.test.tsx).
+  const isChildcareVertical = new URLSearchParams(location.search).get('vertical') === 'child';
 
   const [step, setStep] = useState(0);
   const [data, setData] = useState<JobPostFormData>(INITIAL_FORM_DATA);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedPostId, setSubmittedPostId] = useState<string | null>(null);
+
+  // Childcare branch — after all hooks so the hook order stays stable.
+  if (isChildcareVertical) return <ChildcarePostJobFlow />;
 
   const onChange = (patch: Partial<JobPostFormData>) => setData(prev => ({ ...prev, ...patch }));
   const goTo = (i: number) => setStep(Math.max(0, Math.min(TOTAL_STEPS - 1, i)));

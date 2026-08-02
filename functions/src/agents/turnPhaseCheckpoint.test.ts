@@ -40,6 +40,7 @@ const identity = (over: Partial<SourceTurnIdentity> = {}): SourceTurnIdentity =>
   conversationId: "chat-1",
   messageId: "evt-abc",
   objectiveVersion: 0,
+  careVertical: "senior",
   ...over,
 });
 
@@ -59,12 +60,39 @@ describe("phase checkpoints (U4/R21)", () => {
     expect(loaded!.objectiveId).toBe("obj-1");
   });
 
+  it("U10: a childcare checkpoint round-trips its typed vertical stamp; senior checkpoints carry none", async () => {
+    hoisted.docs.clear();
+    await writePhaseCheckpoint(identity({ careVertical: "child" }), "acted", {
+      completedActionKeys: ["cancel_childcare_booking:x"],
+      careVertical: "child",
+      now,
+    });
+    const loaded = await loadPhaseCheckpoint(identity({ careVertical: "child" }), { now });
+    expect(loaded!.careVertical).toBe("child");
+
+    hoisted.docs.clear();
+    await writePhaseCheckpoint(identity(), "acted", { completedActionKeys: ["a:b"], now });
+    const senior = await loadPhaseCheckpoint(identity(), { now });
+    expect(senior!.careVertical).toBe("senior");
+  });
+
   it("AE21: a different account or channel can never load the checkpoint", async () => {
     hoisted.docs.clear();
     await writePhaseCheckpoint(identity(), "responded", { now });
     expect(await loadPhaseCheckpoint(identity({ principal: "+14085550999" }), { now })).toBeNull();
     expect(await loadPhaseCheckpoint(identity({ channel: "web", principal: "uid-1" }), { now })).toBeNull();
     expect(await loadPhaseCheckpoint(identity({ messageId: "evt-other" }), { now })).toBeNull();
+  });
+
+  it("the same source turn cannot resume across care verticals", async () => {
+    hoisted.docs.clear();
+    await writePhaseCheckpoint(identity({ careVertical: "child" }), "acted", {
+      completedActionKeys: ["child-action"],
+      now,
+    });
+
+    expect(await loadPhaseCheckpoint(identity({ careVertical: "senior" }), { now })).toBeNull();
+    expect((await loadPhaseCheckpoint(identity({ careVertical: "child" }), { now }))?.phase).toBe("acted");
   });
 
   it("an old checkpoint never applies to a newer objective version", async () => {
@@ -119,8 +147,9 @@ describe("phase checkpoints (U4/R21)", () => {
   it("no directive for hydrated-only or action-free checkpoints (fresh turns act normally)", () => {
     const base: PhaseCheckpointDoc = {
       schema: "phase-v1", phase: "hydrated",
-      bindings: { principalHash: "x", channelBindingHash: "y" },
+      bindings: { principalHash: "x", channelBindingHash: "y", verticalBindingHash: "z" },
       objectiveVersion: 0, completedActionKeys: [],
+      careVertical: "senior",
       updatedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 1000).toISOString(),
     };
     expect(buildResumeDirective(null)).toBe("");

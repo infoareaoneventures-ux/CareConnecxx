@@ -1396,6 +1396,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ADMIN ADVANCE QUEUE — written by admin browser, processed by Firestore trigger (Admin SDK)
+    match /adminAdvanceQueue/{docId} {
+      allow create: if isAdmin();
+      allow read, update, delete: if false;
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

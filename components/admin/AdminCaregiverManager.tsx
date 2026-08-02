@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { adminService, dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
-import { functions } from '../../lib/firebase';
+import { db, functions } from '../../lib/firebase';
 import { Caregiver, Appointment } from '../../types';
 
 type Panel = 'profile' | 'appointments' | 'verification';
@@ -89,6 +89,20 @@ export const AdminCaregiverManager: React.FC = () => {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showSkillsDropdown]);
+
+  const advanceCaregiverOnboarding = async (uid: string, step: 'membership' | 'bgcheck') => {
+    try {
+      await db!.collection('adminAdvanceQueue').add({
+        type: step === 'membership' ? 'advance_caregiver_membership' : 'advance_caregiver_bgcheck',
+        uid,
+        createdAt: new Date(),
+        processedAt: null,
+        error: null,
+      });
+    } catch (err) {
+      console.warn(`adminAdvanceQueue write failed — Evia not notified:`, err);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -710,6 +724,7 @@ export const AdminCaregiverManager: React.FC = () => {
                               const patch: any = { membershipPaid: true, membershipStatus: 'active', ...(bgApproved ? { onboardingStatus: 'profile_complete' } : {}) };
                               await adminService.updateCaregiver(selected.uid, patch);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
+                              advanceCaregiverOnboarding(selected.uid, 'membership');
                               showToast('Membership approved', 'success');
                             }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).membershipPaid ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
@@ -735,6 +750,7 @@ export const AdminCaregiverManager: React.FC = () => {
                               const patch: any = { backgroundCheckStatus: 'clear', backgroundCheckComplete: true, verified: true, verificationStatus: 'approved', ...(membershipApproved ? { onboardingStatus: 'profile_complete' } : {}) };
                               await adminService.updateCaregiver(selected.uid, patch);
                               setSelected(p => p ? { ...p, ...patch } as any : p);
+                              advanceCaregiverOnboarding(selected.uid, 'bgcheck');
                               showToast('Background check approved', 'success');
                             }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus === 'clear' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}

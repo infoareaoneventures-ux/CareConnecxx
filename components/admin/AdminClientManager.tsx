@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { dbService, adminService } from '../../services/api';
 import { AdminUser, Appointment } from '../../types';
-import { db } from '../../lib/firebase';
+import { db, functions } from '../../lib/firebase';
 
 type Panel = 'profile' | 'appointments';
 
@@ -216,6 +216,20 @@ export const AdminClientManager: React.FC = () => {
     await batch.commit();
   };
 
+  const advanceClientOnboarding = async (step: 'identity' | 'payment') => {
+    try {
+      await db!.collection('adminAdvanceQueue').add({
+        type: step === 'identity' ? 'advance_client_identity' : 'advance_client_payment',
+        uid: selected!.uid,
+        createdAt: new Date(),
+        processedAt: null,
+        error: null,
+      });
+    } catch (err) {
+      console.warn(`adminAdvanceQueue write failed — Evia not notified:`, err);
+    }
+  };
+
   const handleIdentityOverride = async (approve: boolean) => {
     if (!selected) return;
     try {
@@ -226,6 +240,7 @@ export const AdminClientManager: React.FC = () => {
       patch({ identityCheckStatus: approve ? 'verified' : 'not_started', verified: approve });
       const membershipOk = selected.subscriptionActive || selected.membershipStatus === 'active';
       await setJobPostsActive(selected.uid, approve && !!membershipOk);
+      if (approve) await advanceClientOnboarding('identity');
       showToast(`Identity verification ${approve ? 'approved' : 'revoked'}`, 'success');
     } catch { showToast('Failed to update identity status', 'error'); }
   };
@@ -242,6 +257,7 @@ export const AdminClientManager: React.FC = () => {
       patch({ subscriptionActive: approve, membershipStatus: approve ? 'active' : 'inactive', membershipPaid: approve });
       const identityOk = selected.identityCheckStatus === 'verified';
       await setJobPostsActive(selected.uid, approve && identityOk);
+      if (approve) await advanceClientOnboarding('payment');
       showToast(`Membership ${approve ? 'approved' : 'revoked'}`, 'success');
     } catch { showToast('Failed to update membership status', 'error'); }
   };

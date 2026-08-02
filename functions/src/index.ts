@@ -235,6 +235,9 @@ export { geocodeCaregiverDoc } from './triggers/caregiverGeocode';
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
 
+// ADMIN ADVANCE QUEUE — Firestore trigger; avoids the allUsers IAM callable requirement
+export { processAdminAdvanceQueue } from './triggers/adminAdvanceQueue';
+
 // MATCH PATTERNS — U7 (plan 2026-07-18-001, R36/KTD14): hired/rejected
 // aggregates are restricted to funnel/offline analytics and may not feed
 // frontend ranking prompts. The callable keeps its shape (frontend is

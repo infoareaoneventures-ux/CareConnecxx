@@ -1137,6 +1137,12 @@ export async function handleOnboardingStep(
           "Here's a fresh link for the quick 30-second identity check:", { throttled: true })) return;
       }
       const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
+      if (liveIdentityFact.includes("VERIFIED")) {
+        // Identity cleared but step never advanced (webhook missed or admin override
+        // callable unreachable). Drive the same path as the Stripe Identity webhook.
+        await advanceOnboardingStep(phone, "identity", "");
+        return;
+      }
       const msgIdentity = await generateCaraMessage({
         audience: "family",
         context: `The family member just texted: "${text}". ` + (liveIdentityFact ? `${liveIdentityFact} ` : "") +
@@ -1173,6 +1179,17 @@ export async function handleOnboardingStep(
       // resendGateLink declined = payment landed while we were replying — the
       // live fact below grounds the confirmation.
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
+      if (liveClientPayFact.includes("WENT THROUGH")) {
+        // Payment landed but step never advanced (webhook missed or admin override
+        // callable unreachable). Drive the same path as the Stripe webhook.
+        const subId = (session as any).stripeSubscriptionId as string | undefined;
+        if (subId) {
+          await advanceOnboardingStep(phone, "payment", subId);
+        } else {
+          await advanceOnboardingStep(phone, "admin_payment_override", "");
+        }
+        return;
+      }
       const clientPayNudge = await generateCaraMessage({
         audience: "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
@@ -1341,6 +1358,12 @@ export async function handleOnboardingStep(
           "Here's your background-check link:", { throttled: true })) return;
       }
       const liveBgFact = await buildLiveBgcheckFact(session);
+      if (liveBgFact.includes("CLEARED")) {
+        // Check cleared but step never advanced (Checkr webhook missed or admin
+        // override callable unreachable). Drive the same path as the Checkr webhook.
+        await advanceOnboardingStep(phone, "background_check", "clear");
+        return;
+      }
       const msgBgcheck = await generateCaraMessage({
         audience: "caregiver",
         context: `The caregiver just texted: "${text}". ` + (liveBgFact ? `${liveBgFact} ` : "") +
@@ -3049,15 +3072,9 @@ async function handleCaregiverResendMembership(
     membershipPaid = !!((freshMembershipData as any)?.caregiverSubscriptionId);
   } catch { /* fail-soft: treat as not paid → resend link as before */ }
   if (membershipPaid) {
-    const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_membership(phone, session);
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "caregiver",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: (liveFact ? `${liveFact} ` : "") +
-        "Their membership payment already went through. Warmly confirm it's done and that you'll take it from here — do NOT ask them to pay or tap any link again.",
-      fallback: "Good news — your membership payment already came through! You're all set on that; I'll take it from here.",
-      maxTokens: 80,
-    }));
+    // Payment landed but step never advanced (webhook missed or admin override
+    // callable unreachable). Drive the same path as the Stripe webhook.
+    await advanceOnboardingStep(phone, "membership", "");
     return false;
   }
   // LINK-keyword caller with this window's bypass already spent (checked AFTER
@@ -4538,6 +4555,116 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       }
       // (caregiver_awaiting_identity forwarding removed — U12, R17: the retired
       // step no longer exists; caregivers never receive an identity task.)
+      break;
+    }
+
+    // Admin manually approved identity — same as the Stripe webhook path but
+    // without requiring a verification session ID. Only advances if the session
+    // is actually parked at client_awaiting_identity.
+    case "admin_identity_override": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("identity"),
+      });
+      const step = session.onboardingStep ?? "";
+      if (step === "client_awaiting_identity") {
+        let uid = session.userId as string | undefined;
+        if (!uid) {
+          uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
+          if (uid) await updateSession(phone, { userId: uid });
+        }
+        if (uid) {
+          await db.collection("users").doc(uid).set({
+            uid,
+            identityCheckStatus: "verified",
+            identityVerifiedAt:  admin.firestore.FieldValue.serverTimestamp(),
+            phone,
+            updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        await sendMessage(chatId,
+          session.preferredLanguage === "es"
+            ? "¡Tu verificación de identidad se aprobó — estás verificado! ✅"
+            : "Your identity check just cleared — you're verified! ✅"
+        );
+        await updateSession(phone, { onboardingStep: "client_send_payment" });
+        await handleClientSendPayment(phone, chatId, session);
+      }
+      break;
+    }
+
+    // Admin manually approved membership — advances without a Stripe subscription ID.
+    // Only advances if the session is parked at client_send_payment or client_awaiting_payment.
+    case "admin_payment_override": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("payment"),
+      });
+      const payStep = session.onboardingStep ?? "";
+      if (payStep === "client_send_payment" || payStep === "client_awaiting_payment") {
+        let uid = session.userId as string | undefined;
+        if (!uid) {
+          uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
+          if (uid) await updateSession(phone, { userId: uid });
+        }
+        if (uid) {
+          await db.collection("users").doc(uid).set({
+            uid,
+            membershipStatus:   "active",
+            subscriptionActive: true,
+            phone,
+            onboardingProgress: { identityVerified: true, membershipActive: true },
+            updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+        const d = session.onboardingData ?? {};
+        await persistClientCareRecords(uid, phone, d, { allowAnonIntake: true });
+        await presentPrefilledJobPost(phone, chatId, session);
+      }
+      break;
+    }
+
+    // Admin manually approved caregiver membership — advances without Stripe subscription.
+    case "admin_caregiver_membership_override": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("membership"),
+      });
+      const memStep = session.onboardingStep ?? "";
+      if (memStep === "caregiver_send_membership" || memStep === "caregiver_awaiting_membership") {
+        let uid = (session.userId ?? session.caregiverId) as string | undefined;
+        if (!uid) {
+          uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
+        }
+        if (uid) {
+          await db.collection("caregivers").doc(uid).set({ uid, phone, membershipPaid: true }, { merge: true });
+          await db.collection("users").doc(uid).set({ membershipStatus: "active", subscriptionActive: true, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        }
+        await updateSession(phone, { onboardingStep: "caregiver_send_bgcheck" });
+        await sendMessage(chatId, await generateCaraMessage({
+          audience: "caregiver",
+          language: session.preferredLanguage === "es" ? "es" : "en",
+          context: "The caregiver's membership was just confirmed. ONE short warm line acknowledging it — you're about to send the background-check step right after, so don't explain it here.",
+          fallback: "Membership confirmed — thank you!",
+          maxTokens: 40,
+        }));
+        await handleCaregiverSendBgcheck(phone, chatId, session);
+      }
+      break;
+    }
+
+    // Admin manually approved caregiver background check — advances without Checkr webhook.
+    case "admin_caregiver_bgcheck_override": {
+      await db.collection("agent_sessions").doc(phone).update({
+        processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("background_check"),
+      });
+      const bgStep = session.onboardingStep ?? "";
+      if (bgStep === "caregiver_awaiting_bgcheck" || bgStep === "caregiver_send_bgcheck" || bgStep === "caregiver_awaiting_bgcheck_consent") {
+        await updateSession(phone, { onboardingStep: "caregiver_send_stripe_connect" });
+        const firstName = (((session.onboardingData ?? {}).name ?? "") as string).split(" ")[0];
+        await sendMessage(chatId,
+          `🎉 Great news${firstName ? `, ${firstName}` : ""} — your background check came back clear. ` +
+          `You're officially approved to be on Evia, and families can now book you!`
+        );
+        await handleCaregiverSendStripeConnect(phone, chatId, session);
+      }
       break;
     }
 

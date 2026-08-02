@@ -32,7 +32,7 @@ export const createVideoInterviewRequest = functions.https.onCall(async (data, c
 
   const jobId = typeof data?.jobId === "string" && data.jobId.trim() ? data.jobId.trim() : undefined;
   if (jobId) {
-    const job = await db.collection("jobs").doc(jobId).get();
+    const job = await db.collection("job_posts").doc(jobId).get();
     const ownerId = job.data()?.clientId ?? job.data()?.userId ?? job.data()?.createdBy;
     if (!job.exists || ownerId !== clientId) {
       throw new functions.https.HttpsError("permission-denied", "The selected job does not belong to this client");

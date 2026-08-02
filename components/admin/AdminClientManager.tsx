@@ -24,6 +24,14 @@ interface ClientRow extends AdminUser {
   membershipStatus?: string;
   membershipPaid?: boolean;
   approvedBy?: string;
+  // intake fields merged from clientIntakes/{uid}
+  intakeStatus?: string;
+  recipientName?: string;
+  relationship?: string;
+  careTypes?: string[];
+  schedule?: string;
+  startDate?: string;
+  budget?: string;
 }
 
 type ConfirmAction = 'ban' | 'unban' | null;
@@ -51,17 +59,49 @@ export const AdminClientManager: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
+  const mergeIntake = (base: ClientRow, intake: Record<string, any>): ClientRow => ({
+    ...base,
+    name: base.name || (base as any).firstName || intake.contactName || '',
+    email: base.email || intake.email || '',
+    address: base.address || intake.streetAddress || '',
+    city: base.city || intake.city || '',
+    state: base.state || intake.state || '',
+    zipCode: base.zipCode || intake.zipCode || '',
+    intakeStatus: intake.status,
+    recipientName: intake.recipientName || intake.seniorName || '',
+    relationship: intake.relationship || '',
+    careTypes: intake.careTypes || intake.services || [],
+    schedule: intake.schedule || intake.preferredSchedule || '',
+    startDate: intake.startDate || '',
+    budget: intake.budget || intake.hourlyBudget || '',
+  });
+
   const load = async () => {
     setLoading(true);
     try {
       const all = await dbService.getAllUsers();
-      setClients(all.filter(u => u.userType === 'client') as ClientRow[]);
+      const clients = all.filter(u => u.userType === 'client') as ClientRow[];
+
+      // Merge clientIntakes data for each client so names/contact info show up
+      if (db && clients.length > 0) {
+        const intakeSnaps = await Promise.all(
+          clients.map(c => db!.collection('clientIntakes').doc(c.uid).get().catch(() => null))
+        );
+        const merged = clients.map((c, i) => {
+          const snap = intakeSnaps[i];
+          if (snap?.exists) return mergeIntake(c, snap.data() as Record<string, any>);
+          return { ...c, name: c.name || (c as any).firstName || '' };
+        });
+        setClients(merged);
+      } else {
+        setClients(clients.map(c => ({ ...c, name: c.name || (c as any).firstName || '' })));
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const openClient = (c: ClientRow) => {
+  const openClient = async (c: ClientRow) => {
     setSelected(c);
     setForm({ name: c.name, email: c.email, phone: c.phone, address: c.address, city: c.city, state: c.state, zipCode: c.zipCode });
     setEditing(false);
@@ -72,6 +112,18 @@ export const AdminClientManager: React.FC = () => {
     setSuspendReason('');
     setSuspendDays(7);
     setNotifyMsg('');
+
+    // Fetch clientIntakes doc if not already merged
+    if (db && !c.intakeStatus) {
+      try {
+        const snap = await db.collection('clientIntakes').doc(c.uid).get();
+        if (snap.exists) {
+          const merged = mergeIntake(c, snap.data() as Record<string, any>);
+          setSelected(merged);
+          setForm({ name: merged.name, email: merged.email, phone: merged.phone, address: merged.address, city: merged.city, state: merged.state, zipCode: merged.zipCode });
+        }
+      } catch { /* non-fatal */ }
+    }
   };
 
   const loadAppointments = async (clientId: string) => {
@@ -169,9 +221,9 @@ export const AdminClientManager: React.FC = () => {
     try {
       await adminService.updateClient(selected.uid, {
         identityCheckStatus: approve ? 'verified' : 'not_started',
-        ...(approve ? { verified: true } : {}),
+        verified: approve,
       } as any);
-      patch({ identityCheckStatus: approve ? 'verified' : 'not_started', ...(approve ? { verified: true } : {}) });
+      patch({ identityCheckStatus: approve ? 'verified' : 'not_started', verified: approve });
       const membershipOk = selected.subscriptionActive || selected.membershipStatus === 'active';
       await setJobPostsActive(selected.uid, approve && !!membershipOk);
       showToast(`Identity verification ${approve ? 'approved' : 'revoked'}`, 'success');
@@ -219,8 +271,9 @@ export const AdminClientManager: React.FC = () => {
   };
 
   const filtered = clients.filter(c => {
+    const displayName = c.name || (c as any).firstName || '';
     const matchSearch = !search ||
-      c.name?.toLowerCase().includes(search.toLowerCase()) ||
+      displayName.toLowerCase().includes(search.toLowerCase()) ||
       c.email?.toLowerCase().includes(search.toLowerCase()) ||
       c.phone?.includes(search);
     const matchStatus =
@@ -278,10 +331,10 @@ export const AdminClientManager: React.FC = () => {
             <button key={c.uid} onClick={() => openClient(c)}
               className={`w-full text-left flex items-center gap-3 px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors ${selected?.uid === c.uid ? 'bg-primary-50 border-l-2 border-l-primary-500' : ''}`}>
               <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                <span className="text-primary-700 font-bold text-sm">{c.name?.charAt(0)?.toUpperCase() || '?'}</span>
+                <span className="text-primary-700 font-bold text-sm">{(c.name || (c as any).firstName)?.charAt(0)?.toUpperCase() || '?'}</span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-slate-900 text-sm truncate">{c.name}</p>
+                <p className="font-medium text-slate-900 text-sm truncate">{c.name || (c as any).firstName}</p>
                 <p className="text-xs text-slate-400 truncate">{c.email}</p>
               </div>
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor(c)}`}>{statusLabel(c)}</span>
@@ -302,10 +355,10 @@ export const AdminClientManager: React.FC = () => {
           <div className="bg-white border-b border-slate-200 px-5 py-4 flex items-center gap-3 shrink-0">
             <button onClick={() => setSelected(null)} className="lg:hidden p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
             <div className="w-11 h-11 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-lg shrink-0">
-              {selected.name?.charAt(0)?.toUpperCase() || '?'}
+              {(selected.name || (selected as any).firstName)?.charAt(0)?.toUpperCase() || '?'}
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="font-bold text-slate-900 truncate">{selected.name}</h2>
+              <h2 className="font-bold text-slate-900 truncate">{selected.name || (selected as any).firstName}</h2>
               <p className="text-sm text-slate-500 truncate">{selected.email}</p>
             </div>
             <span className={`text-sm font-medium px-3 py-1 rounded-full shrink-0 ${statusColor(selected)}`}>{statusLabel(selected)}</span>
@@ -367,8 +420,8 @@ export const AdminClientManager: React.FC = () => {
                   <h3 className="font-semibold text-slate-900 mb-3">Account</h3>
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      ['Joined', selected.createdAt ? new Date(selected.createdAt).toLocaleDateString() : 'Unknown'],
-                      ['Subscription', (selected as any).subscriptionStatus || 'N/A'],
+                      ['Joined', selected.createdAt ? (() => { try { const d = new Date(selected.createdAt); return isNaN(d.getTime()) ? 'Unknown' : d.toLocaleDateString(); } catch { return 'Unknown'; } })() : 'Unknown'],
+                      ['Subscription', (selected as any).subscriptionActive ? 'Active' : ((selected as any).subscriptionStatus || 'N/A')],
                       ['Caregivers', (selected as any).assignedCaregiverIds?.length ?? 0],
                     ].map(([label, val]) => (
                       <div key={label} className="bg-slate-50 rounded-lg p-3">
@@ -378,6 +431,51 @@ export const AdminClientManager: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                {/* Care Needs */}
+                {(selected.recipientName || selected.careTypes?.length || selected.schedule) && (
+                  <div className="bg-white rounded-xl border border-slate-200 p-5">
+                    <h3 className="font-semibold text-slate-900 mb-3">Care Needs</h3>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      {selected.recipientName && (
+                        <div className="col-span-2">
+                          <p className="text-xs text-slate-400 mb-0.5">Care recipient</p>
+                          <p className="text-slate-900">{selected.recipientName}{selected.relationship ? ` (${selected.relationship})` : ''}</p>
+                        </div>
+                      )}
+                      {selected.careTypes?.length ? (
+                        <div className="col-span-2">
+                          <p className="text-xs text-slate-400 mb-0.5">Care types</p>
+                          <p className="text-slate-900">{selected.careTypes.join(', ')}</p>
+                        </div>
+                      ) : null}
+                      {selected.schedule && (
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Schedule</p>
+                          <p className="text-slate-900">{selected.schedule}</p>
+                        </div>
+                      )}
+                      {selected.startDate && (
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Start date</p>
+                          <p className="text-slate-900">{selected.startDate}</p>
+                        </div>
+                      )}
+                      {selected.budget && (
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Budget</p>
+                          <p className="text-slate-900">{selected.budget}</p>
+                        </div>
+                      )}
+                      {selected.intakeStatus && (
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Intake status</p>
+                          <p className="text-slate-900 capitalize">{selected.intakeStatus}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Field Overrides */}
                 <div className="bg-white rounded-xl border border-slate-200 p-5">

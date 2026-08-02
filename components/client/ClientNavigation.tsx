@@ -30,12 +30,16 @@ export const ClientNavigation: React.FC = () => {
   const [avatarOpen, setAvatarOpen] = React.useState(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [helpOpen, setHelpOpen] = React.useState(false);
+  const [findCareOpen, setFindCareOpen] = React.useState(false);
+  const [myCareOpen, setMyCareOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<any>(null);
   const [profilePhotoUrl, setProfilePhotoUrl] = React.useState<string | null>(null);
   const caraUnread = useCaraUnread();
 
   const avatarRef = React.useRef<HTMLDivElement>(null);
   const helpRef = React.useRef<HTMLDivElement>(null);
+  const findCareRef = React.useRef<HTMLDivElement>(null);
+  const myCareRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const user = authService.getCurrentUser();
@@ -60,6 +64,8 @@ export const ClientNavigation: React.FC = () => {
       const t = e.target as Node;
       if (avatarRef.current && !avatarRef.current.contains(t)) setAvatarOpen(false);
       if (helpRef.current && !helpRef.current.contains(t)) setHelpOpen(false);
+      if (findCareRef.current && !findCareRef.current.contains(t)) setFindCareOpen(false);
+      if (myCareRef.current && !myCareRef.current.contains(t)) setMyCareOpen(false);
     };
     document.addEventListener('mousedown', handler);
     document.addEventListener('touchstart', handler);
@@ -115,22 +121,63 @@ export const ClientNavigation: React.FC = () => {
             <span className="text-xl font-display font-bold text-ink-900">Evia</span>
           </div>
 
-          {/* Desktop nav — flat centered tabs (tomo-style) */}
+          {/* Desktop nav */}
           <div className="hidden md:flex flex-1 items-center justify-center gap-1">
-            {DESKTOP_TABS.map(tab => (
-              <button
-                key={tab.path}
-                onClick={() => navigate(tab.path)}
-                className={tabBtn(tab.routes.some(r => location.pathname.startsWith(r)))}
-              >
-                {tab.icon}<span>{tab.label}</span>
-                {(tab.badge ?? 0) > 0 && (
-                  <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
-                    {tab.badge! > 9 ? '9+' : tab.badge}
-                  </span>
-                )}
+            {/* Chat */}
+            <button onClick={() => navigate('/client/chat')} className={tabBtn(location.pathname.startsWith('/client/chat'))}>
+              <MessageCircle className="w-4 h-4" /><span>Chat</span>
+              {caraUnread > 0 && (
+                <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
+                  {caraUnread > 9 ? '9+' : caraUnread}
+                </span>
+              )}
+            </button>
+
+            {/* Find Care — dropdown */}
+            <div className="relative" ref={findCareRef}>
+              <button onClick={() => setFindCareOpen(o => !o)} className={tabBtn(isFindCareActive)}>
+                <Search className="w-4 h-4" /><span>Find Care</span><ChevronDown className="w-3 h-3 ml-0.5" />
               </button>
-            ))}
+              {findCareOpen && (
+                <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                  {[
+                    { icon: <Search className="w-4 h-4" />, label: 'Browse Caregivers', path: '/client/find-caregivers' },
+                    { icon: <Briefcase className="w-4 h-4" />, label: 'Care Requests', path: '/client/posts' },
+                  ].map(item => (
+                    <button key={item.path} onClick={() => { navigate(item.path); setFindCareOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${location.pathname.startsWith(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                      {item.icon}<span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* My Care — dropdown */}
+            <div className="relative" ref={myCareRef}>
+              <button onClick={() => setMyCareOpen(o => !o)} className={tabBtn(isMyCareActive)}>
+                <Heart className="w-4 h-4" /><span>My Care</span><ChevronDown className="w-3 h-3 ml-0.5" />
+              </button>
+              {myCareOpen && (
+                <div className="absolute top-full left-0 mt-1 w-44 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                  {[
+                    { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
+                    { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
+                    { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
+                  ].map(item => (
+                    <button key={item.path} onClick={() => { navigate(item.path); setMyCareOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${location.pathname.startsWith(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                      {item.icon}<span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Calendar */}
+            <button onClick={() => navigate('/client/calendar')} className={tabBtn(location.pathname.startsWith('/client/calendar'))}>
+              <Calendar className="w-4 h-4" /><span>Calendar</span>
+            </button>
           </div>
 
           {/* Right side: Messages + Bell + Avatar grouped together */}

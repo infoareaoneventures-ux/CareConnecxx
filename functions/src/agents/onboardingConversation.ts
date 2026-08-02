@@ -2048,6 +2048,44 @@ export async function persistClientCareRecords(
       updatedAt: new Date().toISOString(),
     }, { merge: true });
 
+    // job_postings/{uid} parity write — the web CarePlan page reads careRecipientFirstName
+    // from this doc to build the recipient tabs. PostJobFlow writes it the same way;
+    // Evia must too so SMS-onboarded clients see their recipient when they log into the web.
+    // Never overwrite if the web flow already set it.
+    try {
+      const jpRef = db.collection("job_postings").doc(uid);
+      const jpSnap = await jpRef.get();
+      const jpData = (jpSnap.exists ? jpSnap.data() : {}) as Record<string, unknown>;
+      if (!jpData.careRecipientFirstName) {
+        const nameParts = seniorName.trim().split(/\s+/);
+        await jpRef.set({
+          careRecipientFirstName: nameParts[0] || seniorName,
+          careRecipientLastName:  nameParts.slice(1).join(" ") || "",
+          relationship,
+          ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
+        }, { merge: true });
+      }
+      // Additional recipients (households with multiple care recipients)
+      const allRecips = allCareRecipients(d);
+      for (const r of allRecips.slice(1)) {
+        const rParts = r.name.trim().split(/\s+/);
+        const entry = {
+          firstName:    rParts[0] || r.name,
+          lastName:     rParts.slice(1).join(" ") || "",
+          relationship: r.relationship || "",
+          age:          String(r.age || ""),
+        };
+        if (entry.firstName === jpData.careRecipientFirstName &&
+            entry.lastName  === (jpData.careRecipientLastName || "")) continue;
+        await jpRef.set(
+          { additionalRecipients: admin.firestore.FieldValue.arrayUnion(entry) },
+          { merge: true }
+        );
+      }
+    } catch (err) {
+      console.error("persistClientCareRecords: job_postings parity write failed (non-fatal):", err);
+    }
+
     // senior_profiles/{uid} parity write for the PRIMARY recipient —
     // CarePlan, matching, and the family dashboard read this doc (web
     // signup creates it; Evia must too). The account holder's identity

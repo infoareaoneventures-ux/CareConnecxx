@@ -21,7 +21,17 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
    useEffect(() => {
       if (!currentUser?.uid || !db) return;
       const unsub = db.collection('caregivers').doc(currentUser.uid).onSnapshot(snap => {
-         if (snap.exists) setProfile({ uid: snap.id, ...snap.data() });
+         if (!snap.exists) return;
+         const cgData = { uid: snap.id, ...snap.data() } as any;
+         // lat/lng may live in the users doc for accounts created before server-side geocoding
+         // — merge it in so distance filtering works the same as getUser()
+         if (cgData.latitude == null && cgData.lat == null) {
+            db!.collection('users').doc(currentUser.uid).get()
+               .then(uSnap => setProfile({ ...(uSnap.exists ? uSnap.data() : {}), ...cgData }))
+               .catch(() => setProfile(cgData));
+         } else {
+            setProfile(cgData);
+         }
       }, () => {
          dbService.getUser(currentUser.uid).then(p => { if (p) setProfile(p); }).catch(() => {});
       });

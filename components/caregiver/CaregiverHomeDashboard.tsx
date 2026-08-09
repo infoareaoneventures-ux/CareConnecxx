@@ -9,7 +9,7 @@ import {
 import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
-import { authService, shiftHoursService, dbService } from '../../services/api';
+import { authService, shiftHoursService, dbService, normalizeJobPost } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { CaregiverCareRequestsCard } from './CaregiverCareRequestsCard';
@@ -77,7 +77,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   // Data
   const [bookingRequests, setBookingRequests] = useState<any[]>([]);
   const [bookingsLoaded, setBookingsLoaded] = useState(false);
-  const [openJobs, setOpenJobs] = useState<any[]>([]);
+  const [rawJobs, setRawJobs] = useState<any[]>([]);
+  const [appliedJobIds, setAppliedJobIds] = useState<Set<string>>(new Set());
   const [jobsLoaded, setJobsLoaded] = useState(false);
   const [allShifts, setAllShifts] = useState<any[]>([]);
   const [shiftHours, setShiftHours] = useState<any[]>([]);
@@ -110,43 +111,49 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [uid]);
 
-  // Prefetch jobs in parallel with bookings — exclude already-applied, sort by proximity
+  // Live jobs listener — same as the Jobs page so radius changes always reflect current data
   useEffect(() => {
-    if (!uid) return;
-    const cgLat = (profile as any).latitude ?? (profile as any).lat;
-    const cgLng = (profile as any).longitude ?? (profile as any).lng;
-    const hasLocation = cgLat != null && cgLng != null;
+    if (!uid || !db) return;
+    const unsub = db.collection('job_posts')
+      .where('status', '==', 'open')
+      .orderBy('createdAt', 'desc')
+      .onSnapshot(snap => {
+        setRawJobs(snap.docs.map(d => normalizeJobPost({ id: d.id, ...d.data() })));
+        setJobsLoaded(true);
+      }, () => {
+        dbService.getOpenJobs().then(all => { setRawJobs(all); setJobsLoaded(true); }).catch(() => setJobsLoaded(true));
+      });
 
-    const jobsPromise = dbService.getOpenJobs();
-    const appliedPromise = db
-      ? db.collection('job_applications').where('caregiverId', '==', uid).get()
-          .then(snap => new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean)))
-          .catch(() => new Set<string>())
-      : Promise.resolve(new Set<string>());
+    db.collection('job_applications').where('caregiverId', '==', uid).get()
+      .then(snap => setAppliedJobIds(new Set(snap.docs.map(d => (d.data() as any).jobId).filter(Boolean))))
+      .catch(() => {});
 
-    const radius: number = (profile as any).serviceRadius || (profile as any).travelRadius || 0;
-
-    Promise.all([jobsPromise, appliedPromise])
-      .then(([all, appliedIds]: [any[], Set<string>]) => {
-        let filtered = all.filter((j: any) => !appliedIds.has(j.id));
-        if (hasLocation && radius > 0) {
-          filtered = filtered.filter((j: any) => {
-            if (j.lat == null || j.lng == null) return true;
-            return haversine(cgLat, cgLng, j.lat, j.lng) <= radius;
-          });
-        }
-        if (hasLocation) {
-          filtered.sort((a: any, b: any) => {
-            const dA = a.lat != null && a.lng != null ? haversine(cgLat, cgLng, a.lat, a.lng) : Infinity;
-            const dB = b.lat != null && b.lng != null ? haversine(cgLat, cgLng, b.lat, b.lng) : Infinity;
-            return dA - dB;
-          });
-        }
-        setOpenJobs(filtered.slice(0, 4));
-      })
-      .catch(() => {})
-      .finally(() => setJobsLoaded(true));
+    return unsub;
   }, [uid]);
+
+  // Filter + sort inline so it re-runs whenever profile (radius/location) changes
+  const cgLat = (profile as any).latitude ?? (profile as any).lat ?? null;
+  const cgLng = (profile as any).longitude ?? (profile as any).lng ?? null;
+  const hasLocation = cgLat != null && cgLng != null;
+  const radius: number = (profile as any).serviceRadius || (profile as any).travelRadius || 0;
+
+  const openJobs = (() => {
+    let filtered = rawJobs.filter((j: any) => !appliedJobIds.has(j.id));
+    if (hasLocation && radius > 0) {
+      filtered = filtered.filter((j: any) => {
+        if (j.lat == null || j.lng == null) return true;
+        return haversine(cgLat, cgLng, j.lat, j.lng) <= radius;
+      });
+    }
+    if (hasLocation) {
+      filtered.sort((a: any, b: any) => {
+        const dA = a.lat != null && a.lng != null ? haversine(cgLat, cgLng, a.lat, a.lng) : Infinity;
+        const dB = b.lat != null && b.lng != null ? haversine(cgLat, cgLng, b.lat, b.lng) : Infinity;
+        return dA - dB;
+      });
+    }
+    return filtered.slice(0, 4);
+  })();
 
   // Shift hours
   useEffect(() => {

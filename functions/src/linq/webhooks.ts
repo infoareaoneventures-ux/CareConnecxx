@@ -1117,14 +1117,18 @@ const handleInboundInner = traceable(
       // Name typed on the /start web form (if any). When present, we pre-seed it into
       // onboardingData and route to the confirm step so Evia greets by name and asks
       // them to confirm — instead of asking "What's your name?" from scratch.
-      const webName = (webSessionData.name as string | undefined)?.trim() || "";
+      const webName      = (webSessionData.name      as string | undefined)?.trim() || "";
+      const webFirstName = (webSessionData.firstName as string | undefined)?.trim() || "";
+      const webLastName  = (webSessionData.lastName  as string | undefined)?.trim() || "";
       const firstStep = webName
         ? (webRole === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
         : (webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
-      // Caregiver flow keys the name as `name`; client flow keys it as `firstName`
-      // (matches the fields the respective ask-name handlers write).
+      // Caregiver flow keys the name as `name`; client flow keys firstName (and
+      // lastName when present) — matches the fields the ask-name handlers write.
       const seededOnboardingData = webName
-        ? (webRole === "caregiver" ? { name: webName } : { firstName: webName })
+        ? (webRole === "caregiver"
+            ? { name: webName }
+            : { firstName: webFirstName || webName, ...(webLastName ? { lastName: webLastName } : {}) })
         : undefined;
 
       // Returning user — phone already linked to an account WITH real onboarding

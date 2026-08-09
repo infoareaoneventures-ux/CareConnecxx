@@ -105,9 +105,8 @@ import { useAppointmentForCallout } from './hooks/useCaregiverCallout';
 const PublicOnlyRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { authResolved, currentUser } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
-  // Chat is the signed-in home surface (tomo-style)
-  if (currentUser?.userType === 'client') return <Navigate to="/client/chat" replace />;
-  if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/chat" replace />;
+  if (currentUser?.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  if (currentUser?.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
   if (currentUser?.userType === 'admin') return <Navigate to="/admin" replace />;
   return element;
 };

@@ -13,22 +13,43 @@ import {
 } from "./onboardingContract";
 import { buildCaregiverOnboardingDirective } from "./caregiverOnboardingDirective";
 
-// Human-readable label for each CLIENT field, used in the known/missing
-// checklist. Caregiver labels live in caregiverOnboardingDirective.ts — the
-// caregiver role delegates to that module below.
+// Human-readable label for each CLIENT field — mirrors the web wizard's 14-step
+// sequence so the SMS conversation asks the same questions in the same order.
+// Caregiver labels live in caregiverOnboardingDirective.ts.
 const FIELD_LABEL: Record<string, string> = {
-  firstName:   "the family member's first name (who you're talking to)",
-  seniorName:  "who they're caring for — the senior's name and the relationship",
-  age:         "the senior's age",
-  careNeeds:   "what kind of help the senior needs day to day",
-  city:        "the city (and zip if they give it) where care is needed",
-  daysPerWeek: "how many days a week care is needed",
-  timeOfDay:   "what time of day care is needed (mornings, afternoons, etc.)",
-  zipCode:     "the zip code where care is needed",
-  hoursPerDay: "how many hours per day",
-  relationship:"the family member's relationship to the senior",
-  conditions:  "any diagnoses or conditions the senior has",
+  // Step 2
+  careFrequency:  "how often care is needed — occasional (a few times/month), part-time (1–4 days/week), or full-time (5+ days/week)",
+  // Step 3
+  city:           "the city where care is needed",
+  zipCode:        "the zip code where care is needed",
+  street:         "the street address (optional — ask if they want to share it)",
+  state:          "the state",
+  // Step 5
+  startDate:      "when they'd like care to start (e.g. 'ASAP', 'next Monday', 'June 1')",
+  selectedDays:   "which days of the week — save as an array e.g. ['MON','WED','FRI'] or ['MON','TUE','WED','THU','FRI']",
+  timeOfDay:      "what time of day — morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–12am), or overnight",
+  // Step 8
+  relationship:   "the family member's relationship to the person needing care (e.g. daughter, son, spouse)",
+  // Step 9
+  seniorName:     "the first and last name of the person who needs care",
+  age:            "their age",
   additionalRecipients: "every OTHER person needing care when it's more than one (e.g. both mom and dad) — [{name, relationship, age}]",
+  // Step 10
+  emergencyContactName:         "the emergency contact's full name",
+  emergencyContactPhone:        "the emergency contact's phone number",
+  emergencyContactRelationship: "the emergency contact's relationship (e.g. son, neighbor)",
+  // Step 11
+  careNeeds:      "what kind of help is needed day to day (e.g. companionship, meals, bathing, medication reminders, transportation)",
+  conditions:     "any diagnoses or conditions (e.g. Alzheimer's, Parkinson's) — optional",
+  // Step 12
+  rate:           "what they'd like to pay per hour — a number or 'flexible'",
+  paymentMethod:  "how they plan to pay the caregiver — cash, Venmo, Zelle, or credit card",
+  // Step 13
+  jobDescription: "a short free-text description of the care situation (optional but helpful for caregivers)",
+  // Collected throughout
+  firstName:      "the family member's first name (the person texting)",
+  hoursPerDay:    "how many hours per day",
+  daysPerWeek:    "how many days per week (derived from selectedDays if available)",
 };
 
 function labelFor(field: string): string {
@@ -82,32 +103,45 @@ export function buildOnboardingDirective(
       `you ask here gets buried under the match cards that follow.`;
 
   return [
-    `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text. Your job this`,
-    `conversation is to collect the items below, naturally, like a real care coordinator who`,
-    `leads a conversation — never a form.`,
+    `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text, following the`,
+    `same steps as the Evia web setup wizard. Your job is to collect the items below`,
+    `naturally, like a real care coordinator — never a form, one question at a time.`,
     ``,
     `ALREADY KNOWN:`,
     knownLines,
     ``,
-    `STILL NEEDED (one at a time, in roughly this order):`,
+    `STILL NEEDED (collect in roughly this wizard order):`,
     missingLines,
+    ``,
+    `WIZARD QUESTION ORDER (follow this sequence, skip anything already known):`,
+    `  1. How often care is needed (occasional / part-time / full-time)`,
+    `  2. Where care is needed — city (and zip if they offer it)`,
+    `  3. When to start + which specific days + time of day`,
+    `  4. Their relationship to the person needing care`,
+    `  5. The senior's name and age (+ anyone else needing care)`,
+    `  6. Emergency contact — name, phone, and their relationship`,
+    `  7. What kind of help is needed day to day`,
+    `  8. What they'd like to pay per hour`,
+    `  9. (Optional) A short description they'd like caregivers to see`,
+    ` 10. The family member's own first name (if not already collected)`,
     ``,
     `HOW TO TALK:`,
     `  - You are mid-conversation. You already greeted them. NEVER greet again, never re-introduce yourself, never open with "Hi"/"Hey <name>". Reply directly.`,
-    `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately, don't ask them to confirm it and don't move on without saving it.`,
-    `  - Acknowledge what they just said before you ask the next thing. Reflect the story`,
-    `    back when it's heavy ("so she's alone mornings while you work") — then ask.`,
+    `  - EVERY turn: first call save_onboarding_field for whatever they just told you, THEN reply. A short or one-word answer to your last question IS that field's value — save it immediately.`,
+    `  - Acknowledge what they just said before you ask the next thing. Reflect the story back when it's heavy — then ask.`,
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
-    `  - When you ask what kind of help is needed, weave two or three natural examples of what our caregivers do into the question so the family knows what's possible — companionship, meals, help bathing or getting dressed, rides to appointments, errands, light housekeeping, medication reminders (e.g. "what would help her most day to day — company and meals, or more hands-on help like bathing and getting dressed?"). Vary which examples you pick, keep it inside one conversational sentence, never a list. All care is NON-MEDICAL — never offer nursing or medical services.`,
+    `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
+    `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
+    `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services.`,
+    `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
+    `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
-    `  - ONLY the items in STILL NEEDED are required. Never ask for anything not on that list (zip, exact address, budget, etc. are optional) — never hold up the signup for an optional detail.`,
-    `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time in a different way, then move to the next needed item — never ask the same question more than twice.`,
-    `  - Figure out WHO is who: the first name you collect is the ${audience} you're texting. If they first tell you who NEEDS care (e.g. "my mom", "her name is Jane") before giving their own name, that name is the senior's — save it as the senior, not as the ${audience}.`,
-    `  - SELF-CARE: if they're looking for care for THEMSELVES (they say "for me"/"for myself", or relationship is already "self"), the senior IS the person texting. Save relationship as "self" and seniorName the same as their own name, NEVER ask who they're caring for, and speak to them directly — "you", never "your loved one" and never their name in the third person.`,
-    `  - MULTIPLE LOVED ONES: if care is for more than one person ("both my parents", "mom and dad"), save the FIRST person as seniorName/relationship/age and EVERYONE else with save_onboarding_field("additionalRecipients", [{name, relationship, age}]). Collect each person's name and age; acknowledge you'll set things up for all of them. The account stays under the family member texting you.`,
-    `  - Don't get stuck on the ${audience}'s OWN name. If they haven't given it, collect the other items first and ask for their name near the end — never re-ask it every turn, and never treat an answer to a different question (a city, an age, a need) as their name.`,
-    `  - No chatbot phrasing. Never say "I'm here to help", "how can I help you today", "specific questions or concerns", and never call yourself an "AI assistant" or "AI care assistant". Never stall with "give me a moment" / "I'm pulling it up" — you have everything you need; just reply.`,
-    `  - Voice memos work here: they can tap-and-hold to send one instead of typing. Offer this ONCE per conversation, warmly and in your own words (e.g. "if typing it all out is a pain, just send me a voice memo — I'll listen") — the first time you ask an open-ended question (who they're caring for, what help is needed), or sooner if their replies look effortful (very short fragments, heavy typos). Check the conversation: if you've already offered it, never repeat it.`,
+    `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time differently, then move on — never ask the same question more than twice.`,
+    `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.`,
+    `  - SELF-CARE: if care is for themselves, save relationship as "self" and seniorName the same as firstName — never ask who they're caring for.`,
+    `  - MULTIPLE LOVED ONES: first person → seniorName/relationship/age; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, age}]).`,
+    `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,
+    `  - Voice memos: offer ONCE warmly if their replies look effortful — "if typing is a pain, you can tap-and-hold to send a voice memo." Never repeat the offer.`,
     ``,
     `WHAT TO DO THIS TURN:`,
     `  ${action}`,

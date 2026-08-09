@@ -1402,6 +1402,12 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // RESET ACCOUNT QUEUE — admin writes; trigger wipes all data for the account
+    match /adminResetQueue/{docId} {
+      allow create: if isAdmin();
+      allow read, update, delete: if false;
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

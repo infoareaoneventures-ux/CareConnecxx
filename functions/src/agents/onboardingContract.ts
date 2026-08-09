@@ -68,8 +68,26 @@ export function isFieldFilled(value: unknown): boolean {
 // pushOnboardingDataToZep all read daysPerWeek/timeOfDay/careNeeds/zipCode/city —
 // never a single "schedule" object). The loop must collect these exact keys or a
 // completed signup produces an empty job post after payment.
+// Mirror of the web ClientJobPostingWizard 14-step sequence. Required fields
+// are the minimum to create a functional job post; allowed fields are the full
+// set the wizard collects, so Evia can mirror the same questions over SMS.
 export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
-  "firstName", "seniorName", "age", "careNeeds", "city", "daysPerWeek", "timeOfDay",
+  // Step 2 — care frequency
+  "careFrequency",
+  // Step 3 — location
+  "city",
+  // Step 5 — schedule
+  "startDate", "selectedDays", "timeOfDay",
+  // Step 8/9 — who
+  "relationship", "seniorName", "age",
+  // Step 10 — emergency contact (at minimum a name + phone)
+  "emergencyContactName", "emergencyContactPhone",
+  // Step 11 — care needs
+  "careNeeds",
+  // Step 12 — rate
+  "rate",
+  // Collection always ends with the family member's own name
+  "firstName",
 ];
 
 export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
@@ -78,19 +96,21 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
 ];
 
 // Fields the loop is allowed to write via save_onboarding_field — the required
-// set plus the optional/derived fields each flow legitimately captures. A write
-// to anything outside this set is rejected so the model can't invent keys.
+// set plus the optional/derived fields the wizard also captures.
 export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CLIENT_REQUIRED_FIELDS,
-  "relationship", "conditions", "zipCode", "hoursPerDay",
-  "startDate", "preferences", "budget",
-  // Multi-recipient household ("both mom and dad"): every care recipient after
-  // the first — [{name, relationship, age?}]. Finalization fans these out into
-  // recipientPlans, household senior_profiles docs, and job_postings.
+  // Additional wizard fields (optional but collected when offered)
+  "conditions", "zipCode", "hoursPerDay", "daysPerWeek",
+  "street", "state", "neighborhood",
+  "emergencyContactRelationship",
+  "paymentMethod",
+  "jobDescription",
+  "petsInHome", "smokingHousehold",
+  "careRecipientLastName", "lastName",
+  // Backward-compat / absorber fields kept from the pre-wizard contract
+  "preferences", "budget", "schedule",
+  // Multi-recipient household
   "additionalRecipients",
-  // Free-text schedule phrase the absorber may capture alongside the
-  // structured daysPerWeek/timeOfDay (kept for intake display).
-  "schedule",
 ]);
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([

@@ -40,6 +40,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
   const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
   const [agreed, setAgreed] = useState(false);
   const [name, setName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
   const [phoneInput, setPhoneInput] = useState('');
   const [e164, setE164] = useState<string | null>(null);
@@ -112,8 +113,10 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       await confirmationRef.current.confirm(code);
       // Phone Auth succeeded — caller now has a Firebase token bound to this phone.
       const create = functions.httpsCallable('v1-createWebOnboardingSession');
-      const cleanName = sanitizeName(name).slice(0, 80);
-      const resp = await create({ phone: e164, role, name: cleanName, consentText: CONSENT_VERSION, referralId });
+      const cleanFirst = sanitizeName(name).slice(0, 80);
+      const cleanLast = sanitizeName(lastName).slice(0, 80);
+      const cleanName = cleanLast ? `${cleanFirst} ${cleanLast}` : cleanFirst;
+      const resp = await create({ phone: e164, role, name: cleanName, firstName: cleanFirst, lastName: cleanLast || undefined, consentText: CONSENT_VERSION, referralId });
       const data = resp.data as { linqPhone?: string };
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);
@@ -175,6 +178,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           tone={tone}
           name={name}
           setName={setName}
+          lastName={lastName}
+          setLastName={setLastName}
           onSubmit={() => setStep('phone')}
           onBack={() => setStep('consent')}
         />
@@ -461,9 +466,11 @@ const NameEntry: React.FC<{
   tone: 'dark' | 'light';
   name: string;
   setName: (v: string) => void;
+  lastName: string;
+  setLastName: (v: string) => void;
   onSubmit: () => void;
   onBack: () => void;
-}> = ({ role, tone, name, setName, onSubmit, onBack }) => {
+}> = ({ role, tone, name, setName, lastName, setLastName, onSubmit, onBack }) => {
   const trimmed = name.trim();
   const isValid = trimmed.length > 0;
   const onSubmitForm = (e: React.FormEvent) => { e.preventDefault(); if (isValid) onSubmit(); };
@@ -474,16 +481,27 @@ const NameEntry: React.FC<{
           <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em] text-center">What&rsquo;s your name?</h2>
           <p className="text-ink-600 text-sm text-center">So Evia knows who she&rsquo;s talking to.</p>
         </div>
-        <input
-          type="text"
-          autoFocus
-          maxLength={80}
-          autoComplete="given-name"
-          placeholder="Your first name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
-        />
+        <div className="flex gap-3">
+          <input
+            type="text"
+            autoFocus
+            maxLength={80}
+            autoComplete="given-name"
+            placeholder="First name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
+          />
+          <input
+            type="text"
+            maxLength={80}
+            autoComplete="family-name"
+            placeholder="Last name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            className="w-full bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
+          />
+        </div>
         <button
           type="submit"
           disabled={!isValid}
@@ -502,19 +520,30 @@ const NameEntry: React.FC<{
         <p className="text-ink-600 text-base">
           {role === 'caregiver'
             ? "So Evia can greet you properly when you text her."
-            : "So Evia knows who she’s helping when you text her."}
+            : "So Evia knows who she's helping when you text her."}
         </p>
       </div>
-      <input
-        type="text"
-        autoFocus
-        maxLength={80}
-        autoComplete="given-name"
-        placeholder="Your first name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="w-full bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg"
-      />
+      <div className="flex gap-3">
+        <input
+          type="text"
+          autoFocus
+          maxLength={80}
+          autoComplete="given-name"
+          placeholder="First name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg"
+        />
+        <input
+          type="text"
+          maxLength={80}
+          autoComplete="family-name"
+          placeholder="Last name"
+          value={lastName}
+          onChange={(e) => setLastName(e.target.value)}
+          className="w-full bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg"
+        />
+      </div>
       <button
         type="submit"
         disabled={!isValid}

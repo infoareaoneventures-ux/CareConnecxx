@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, User, Phone, Mail, MapPin, Calendar, Ban, CheckCircle,
-  Edit2, Save, X, AlertCircle, Bell, Clock, RefreshCw, Users,
+  Edit2, Save, X, AlertCircle, Bell, Clock, RefreshCw, Users, RotateCcw,
 } from 'lucide-react';
 import { dbService, adminService } from '../../services/api';
 import { AdminUser, Appointment } from '../../types';
@@ -34,7 +34,7 @@ interface ClientRow extends AdminUser {
   budget?: string;
 }
 
-type ConfirmAction = 'ban' | 'unban' | null;
+type ConfirmAction = 'ban' | 'unban' | 'reset' | null;
 
 export const AdminClientManager: React.FC = () => {
   const [clients, setClients] = useState<ClientRow[]>([]);
@@ -169,6 +169,23 @@ export const AdminClientManager: React.FC = () => {
       patch({ isBanned: false });
       showToast(`${selected.name} unbanned`, 'success');
     } catch { showToast('Failed to unban user', 'error'); }
+    finally { setConfirmAction(null); }
+  };
+
+  const handleReset = async () => {
+    if (!selected) return;
+    try {
+      await db!.collection('adminResetQueue').add({
+        type: 'reset_account',
+        uid: selected.uid,
+        phone: selected.phone ?? '',
+        role: 'client',
+        createdAt: new Date(),
+      });
+      showToast(`Reset queued for ${selected.name} — data will be wiped in seconds`, 'success');
+      setSelected(null);
+      setClients(cs => cs.filter(c => c.uid !== selected.uid));
+    } catch { showToast('Failed to queue reset', 'error'); }
     finally { setConfirmAction(null); }
   };
 
@@ -593,6 +610,9 @@ export const AdminClientManager: React.FC = () => {
                         <Ban className="w-4 h-4" /> Ban
                       </button>
                     )}
+                    <button onClick={() => setConfirmAction('reset')} className="flex items-center gap-1.5 px-3 py-2 text-sm border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50">
+                      <RotateCcw className="w-4 h-4" /> Reset Account
+                    </button>
                   </div>
 
                   {/* Notify form */}
@@ -632,7 +652,7 @@ export const AdminClientManager: React.FC = () => {
                   )}
 
                   {/* Ban / Unban confirm */}
-                  {confirmAction && (
+                  {(confirmAction === 'ban' || confirmAction === 'unban') && (
                     <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                       <p className="text-sm text-red-700 mb-2 font-medium">
                         {confirmAction === 'ban' ? `Ban ${selected.name}? They will lose all access.` : `Unban ${selected.name}?`}
@@ -643,6 +663,20 @@ export const AdminClientManager: React.FC = () => {
                           onClick={confirmAction === 'ban' ? handleBan : handleUnban}
                           className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg font-medium hover:bg-red-700">
                           {confirmAction === 'ban' ? 'Confirm Ban' : 'Confirm Unban'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reset Account confirm */}
+                  {confirmAction === 'reset' && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                      <p className="text-sm text-purple-800 mb-1 font-medium">Reset {selected.name}?</p>
+                      <p className="text-xs text-purple-700 mb-2">This permanently deletes their Auth account, all Firestore docs, conversation history, and Zep memory. Use for test accounts only.</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => setConfirmAction(null)} className="px-3 py-1 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-white">Cancel</button>
+                        <button onClick={handleReset} className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700">
+                          Confirm Reset
                         </button>
                       </div>
                     </div>

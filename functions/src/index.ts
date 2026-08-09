@@ -238,6 +238,9 @@ export { aiProxy } from "./aiProxy";
 // ADMIN ADVANCE QUEUE — Firestore trigger; avoids the allUsers IAM callable requirement
 export { processAdminAdvanceQueue } from './triggers/adminAdvanceQueue';
 
+// RESET ACCOUNT QUEUE — Firestore trigger; wipes all data for a test account
+export { processResetAccountQueue } from './triggers/resetAccountQueue';
+
 // MATCH PATTERNS — U7 (plan 2026-07-18-001, R36/KTD14): hired/rejected
 // aggregates are restricted to funnel/offline analytics and may not feed
 // frontend ranking prompts. The callable keeps its shape (frontend is
@@ -359,15 +362,15 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const consent = (data.consentText as string | undefined) ?? "v1.0";
   const referralId = (data.referralId as string | undefined)?.trim();
   const rawName = (data.name as string | undefined) ?? "";
+  const cleanStr = (s: string) => Array.from(s)
+    .filter((ch) => { const code = ch.charCodeAt(0); return code >= 32 && code !== 127; })
+    .join("").replace(/\s+/g, " ").trim().slice(0, 80) || undefined;
   // Keep printable chars only, collapse whitespace, bound length. Empty/blank →
   // undefined so the webhook's name-present check (and the legacy "ask name"
   // fallback) stays clean. Safe to persist and to interpolate into a greeting.
-  const name = Array.from(rawName)
-    .filter((ch) => { const code = ch.charCodeAt(0); return code >= 32 && code !== 127; })
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80) || undefined;
+  const name = cleanStr(rawName);
+  const firstName = cleanStr((data.firstName as string | undefined) ?? "");
+  const lastName  = cleanStr((data.lastName  as string | undefined) ?? "");
 
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
@@ -399,7 +402,9 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     role,
     phone,
     consentText: consent,
-    ...(name ? { name } : {}),
+    ...(name      ? { name }      : {}),
+    ...(firstName ? { firstName } : {}),
+    ...(lastName  ? { lastName }  : {}),
     ...(referralId && role === "caregiver" ? { referralId } : {}),
     status:      "awaiting_inbound",
     createdAt:   admin.firestore.Timestamp.fromDate(now),

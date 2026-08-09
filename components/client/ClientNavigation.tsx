@@ -5,7 +5,6 @@ import {
   ChevronDown, LogOut, Settings, CreditCard, Crown,
   Users, FileText, CalendarCheck,
   Briefcase, X, MoreHorizontal, HelpCircle, Mail,
-  MessageCircle,
 } from 'lucide-react';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { BloomMark } from '../ui/BloomMark';
@@ -13,7 +12,6 @@ import { BloomMark } from '../ui/BloomMark';
 const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers', '/client/posts', '/client/post-job'];
 import { authService, dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
-import { useCaraUnread } from '../../hooks/useCaraUnread';
 
 const MY_CARE_ROUTES = [
   '/client/care-plan',
@@ -31,10 +29,10 @@ export const ClientNavigation: React.FC = () => {
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [helpOpen, setHelpOpen] = React.useState(false);
   const [findCareOpen, setFindCareOpen] = React.useState(false);
+  const [mobileFindCareOpen, setMobileFindCareOpen] = React.useState(false);
   const [myCareOpen, setMyCareOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<any>(null);
   const [profilePhotoUrl, setProfilePhotoUrl] = React.useState<string | null>(null);
-  const caraUnread = useCaraUnread();
 
   const avatarRef = React.useRef<HTMLDivElement>(null);
   const helpRef = React.useRef<HTMLDivElement>(null);
@@ -96,15 +94,6 @@ export const ClientNavigation: React.FC = () => {
     setAvatarOpen(false);
   };
 
-  // Flat centered tabs — each navigates to its family's primary page; the
-  // family's sub-pages stay reachable from the dashboard hub and More drawer.
-  const DESKTOP_TABS: Array<{ label: string; icon: React.ReactNode; path: string; routes: string[]; badge?: number }> = [
-    { label: 'Chat', icon: <MessageCircle className="w-4 h-4" />, path: '/client/chat', routes: ['/client/chat'], badge: caraUnread },
-    { label: 'Find Care', icon: <Search className="w-4 h-4" />, path: '/client/find-caregivers', routes: FIND_CARE_ROUTES },
-    { label: 'My Care', icon: <Heart className="w-4 h-4" />, path: '/client/care-plan', routes: MY_CARE_ROUTES },
-    { label: 'Calendar', icon: <Calendar className="w-4 h-4" />, path: '/client/calendar', routes: ['/client/calendar'] },
-  ];
-
   const displayName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Account';
   const initials = displayName.charAt(0).toUpperCase();
 
@@ -123,16 +112,6 @@ export const ClientNavigation: React.FC = () => {
 
           {/* Desktop nav */}
           <div className="hidden md:flex flex-1 items-center justify-center gap-1">
-            {/* Chat */}
-            <button onClick={() => navigate('/client/chat')} className={tabBtn(location.pathname.startsWith('/client/chat'))}>
-              <MessageCircle className="w-4 h-4" /><span>Chat</span>
-              {caraUnread > 0 && (
-                <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary-600 text-white text-[10px] font-bold flex items-center justify-center">
-                  {caraUnread > 9 ? '9+' : caraUnread}
-                </span>
-              )}
-            </button>
-
             {/* Find Care — dropdown */}
             <div className="relative" ref={findCareRef}>
               <button onClick={() => setFindCareOpen(o => !o)} className={tabBtn(isFindCareActive)}>
@@ -263,16 +242,45 @@ export const ClientNavigation: React.FC = () => {
         </div>
       </div>
 
+      {/* Mobile Find Care mini-sheet — only when More drawer is closed */}
+      {mobileFindCareOpen && !moreOpen && (
+        <div className="md:hidden fixed inset-0 z-50" onClick={() => setMobileFindCareOpen(false)}>
+          <div className="absolute inset-0 bg-black/20" />
+          <div className="absolute bottom-[57px] left-4 right-4 bg-white rounded-2xl shadow-xl overflow-hidden"
+            onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => { setMobileFindCareOpen(false); navigate('/client/find-caregivers'); }}
+              className="w-full flex items-center gap-3 px-4 py-4 text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors border-b border-gray-100"
+            >
+              <Search className="w-4 h-4 text-primary-600" /><span>Browse Caregivers</span>
+            </button>
+            <button
+              onClick={() => { setMobileFindCareOpen(false); navigate('/client/posts'); }}
+              className="w-full flex items-center gap-3 px-4 py-4 text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors"
+            >
+              <Briefcase className="w-4 h-4 text-primary-600" /><span>Care Requests</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Mobile bottom nav */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t hairline bg-paper-50 safe-area-pb">
         <div className="flex justify-around py-1">
+          {/* Find Care — opens mini-sheet */}
+          <button
+            onClick={() => { setMoreOpen(false); setMobileFindCareOpen(o => !o); }}
+            className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs transition-colors ${
+              isFindCareActive || mobileFindCareOpen ? 'text-ink-900 font-semibold' : 'text-ink-600 font-medium'
+            }`}>
+            <Search className="w-5 h-5" />
+            <span>Find Care</span>
+          </button>
           {([
-            { icon: <MessageCircle className="w-5 h-5" />, label: 'Chat', path: '/client/chat', exact: false, badge: caraUnread },
-            { icon: <Search className="w-5 h-5" />, label: 'Find Care', path: '/client/find-caregivers', exact: false },
             { icon: <Heart className="w-5 h-5" />, label: 'My Care', path: '/client/care-plan', exact: false },
             { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/client/calendar', exact: false },
           ] as Array<{ icon: React.ReactNode; label: string; path: string; exact: boolean; badge?: number }>).map(item => (
-            <button key={item.path} onClick={() => { setMoreOpen(false); navigate(item.path); }}
+            <button key={item.path} onClick={() => { setMoreOpen(false); setMobileFindCareOpen(false); navigate(item.path); }}
               className={`relative flex flex-col items-center gap-0.5 px-3 py-2 text-xs transition-colors ${
                 (item.exact ? location.pathname === item.path : location.pathname.startsWith(item.path))
                   ? 'text-ink-900 font-semibold'
@@ -305,77 +313,67 @@ export const ClientNavigation: React.FC = () => {
         <div className="md:hidden fixed inset-0 z-40" onClick={() => setMoreOpen(false)}>
           <div className="absolute inset-0 bg-black/30" />
           <div
-            className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-xl pb-safe"
+            className="absolute bottom-[57px] left-0 right-0 bg-white rounded-t-2xl shadow-xl max-h-[80vh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
-            {/* Handle */}
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 rounded-full bg-gray-300" />
-            </div>
-            <div className="flex items-center justify-between px-4 pb-2 pt-1">
-              <span className="text-base font-semibold text-gray-900">Menu</span>
-              <button onClick={() => setMoreOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-
-            {/* Care Requests CTA */}
-            <div className="px-4 pb-3">
-              <button
-                onClick={() => { setMoreOpen(false); navigate('/client/posts'); }}
-                className="w-full flex items-center justify-center gap-2 bg-primary-600 text-white text-sm font-semibold py-3 rounded-xl shadow-sm"
-              >
-                <Briefcase className="w-4 h-4" />
-                Care Requests
-              </button>
-            </div>
-
-            <div className="border-t border-gray-100 mx-4" />
-
-
-            {/* My Care section */}
-            <div className="px-4 pt-1 pb-1">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">My Care</p>
-              {[
-                { icon: <MessageSquare className="w-4 h-4" />, label: 'Messages', path: '/client/inbox' },
-                { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
-                { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
-                { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
-              ].map(item => (
-                <button key={item.path}
-                  onClick={() => { setMoreOpen(false); navigate(item.path); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                    isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
-                  }`}>
-                  {item.icon}<span>{item.label}</span>
+            {/* Handle + header — fixed */}
+            <div className="flex-shrink-0">
+              <div className="flex justify-center pt-3 pb-1">
+                <div className="w-10 h-1 rounded-full bg-gray-300" />
+              </div>
+              <div className="flex items-center justify-between px-4 pb-2 pt-1">
+                <span className="text-base font-semibold text-gray-900">Menu</span>
+                <button onClick={() => setMoreOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                  <X className="w-4 h-4 text-gray-500" />
                 </button>
-              ))}
+              </div>
             </div>
 
-            <div className="border-t border-gray-100 mx-4 mt-1" />
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto">
+              {/* My Care section */}
+              <div className="px-4 pt-1 pb-1">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">My Care</p>
+                {[
+                  { icon: <MessageSquare className="w-4 h-4" />, label: 'Messages', path: '/client/inbox' },
+                  { icon: <FileText className="w-4 h-4" />, label: 'Care Plan', path: '/client/care-plan' },
+                  { icon: <Users className="w-4 h-4" />, label: 'Care Team', path: '/client/my-care-team' },
+                  { icon: <CalendarCheck className="w-4 h-4" />, label: 'Bookings', path: '/client/bookings' },
+                ].map(item => (
+                  <button key={item.path}
+                    onClick={() => { setMoreOpen(false); navigate(item.path); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                      isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
+                    }`}>
+                    {item.icon}<span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
 
-            {/* Account section */}
-            <div className="px-4 pt-2 pb-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">Account</p>
-              {[
-                { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
-                { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
-                { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
-                { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
-              ].map(item => (
-                <button key={item.path}
-                  onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                    isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
-                  }`}>
-                  {item.icon}<span>{item.label}</span>
-                </button>
-              ))}
+              <div className="border-t border-gray-100 mx-4 mt-1" />
+
+              {/* Account section */}
+              <div className="px-4 pt-2 pb-4">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide px-3 py-1.5">Account</p>
+                {[
+                  { icon: <Settings className="w-4 h-4" />, label: 'Account Settings', path: '/client/account' },
+                  { icon: <CreditCard className="w-4 h-4" />, label: 'Payments', path: '/client/payments' },
+                  { icon: <Crown className="w-4 h-4" />, label: 'Membership', path: '/client/membership' },
+                  { icon: <HelpCircle className="w-4 h-4" />, label: 'Help & Support', path: 'mailto:support@eviacares.com' },
+                ].map(item => (
+                  <button key={item.path}
+                    onClick={() => { setMoreOpen(false); item.path.startsWith('mailto:') ? (window.location.href = item.path) : navigate(item.path); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                      isActive(item.path) ? 'text-primary-600 bg-primary-50' : 'text-gray-700 hover:bg-gray-50'
+                    }`}>
+                    {item.icon}<span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="border-t border-gray-100 mx-4" />
-
-            <div className="px-4 pt-2 pb-6">
+            {/* Sign Out — sticky footer, always visible */}
+            <div className="flex-shrink-0 border-t border-gray-100 px-4 pt-2 pb-safe pb-4">
               <button
                 onClick={async () => { setMoreOpen(false); await handleLogout(); }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"

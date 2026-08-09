@@ -2063,11 +2063,20 @@ export async function persistClientCareRecords(
         updatedAt:    new Date().toISOString(),
       };
     }
+    // Emergency contact collected over SMS — same shape the web wizard writes
+    const ecName  = (d.emergencyContactName  as string | undefined) ?? "";
+    const ecPhone = (d.emergencyContactPhone as string | undefined) ?? "";
+    const ecRel   = (d.emergencyContactRelationship as string | undefined) ?? "";
+    const emergencyContacts = (ecName || ecPhone)
+      ? [{ id: "sms", name: ecName, phone: ecPhone, relation: ecRel, isPrimary: true }]
+      : undefined;
+
     await db.collection("carePlans").doc(uid).set({
       clientId: uid,
       phone,
       recipientPlans,
       locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
+      ...(emergencyContacts ? { emergencyContacts } : {}),
       updatedAt: new Date().toISOString(),
     }, { merge: true });
 
@@ -4932,31 +4941,36 @@ function mapTimeOfDayToSlots(tod: string): string[] {
 // Derive a ready-to-post job draft from the intake we ALREADY collected, so the
 // client confirms once instead of re-answering schedule/needs/budget after paying.
 function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unknown> {
-  const daysPerWeek = Number(d.daysPerWeek ?? 0);
-  const frequency   = daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : "occasional";
   const conditions  = (Array.isArray(d.conditions) ? d.conditions : []) as string[];
   const careNeeds   = (Array.isArray(d.careNeeds)  ? d.careNeeds  : []) as string[];
   const heavy       = [...conditions, ...careNeeds].join(" ").toLowerCase();
   const careLevel   = /dementia|alzheimer|medical|wound|catheter|feeding|insulin/.test(heavy)
     ? "intensive"
     : (careNeeds.length || conditions.length) ? "moderate" : "light";
-  const budgetMax   = Number(d.budgetMax ?? 0);
-  const budgetMin   = Number(d.budgetMin ?? 0);
-  const hourlyRate: number | string = budgetMax || budgetMin || "flexible";
+
+  // careFrequency from wizard/SMS takes precedence over derived-from-count
+  const careFrequency = d.careFrequency as string | undefined;
+  const selectedDays  = Array.isArray(d.selectedDays) ? d.selectedDays as string[] : [];
+  const daysPerWeek   = selectedDays.length || Number(d.daysPerWeek ?? 0);
+  const frequency     = careFrequency ?? (daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : "occasional");
+
+  // rate from wizard/SMS takes precedence over budget fields
+  const rawRate = d.rate ?? d.budgetMax ?? d.budgetMin;
+  const hourlyRate: number | string = rawRate ? (typeof rawRate === "number" ? rawRate : String(rawRate) === "flexible" ? "flexible" : Number(rawRate) || "flexible") : "flexible";
+
   return {
     jobStartDate:     (d.startDate as string) || "ASAP",
     jobFrequency:     frequency,
-    jobDays:          [],
-    // Intake collects a days-per-week COUNT, not named days — jobDays stays
-    // empty, so pass the count through or job_posts ships daysPerWeek: 0.
+    jobDays:          selectedDays.length ? selectedDays : [],
     jobDaysPerWeek:   daysPerWeek,
     jobTimeOfDay:     mapTimeOfDayToSlots((d.timeOfDay as string) ?? ""),
     jobCareNeeds:     careNeeds.length ? careNeeds : conditions,
     jobCareLevel:     careLevel,
     jobHourlyRate:    hourlyRate,
-    jobPaymentMethod: "card",
-    petsInHome:       false,
-    smokingHousehold: false,
+    jobPaymentMethod: (d.paymentMethod as string) || "card",
+    jobDescription:   (d.jobDescription as string) || "",
+    petsInHome:       d.petsInHome === true,
+    smokingHousehold: d.smokingHousehold === true,
   };
 }
 

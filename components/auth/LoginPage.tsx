@@ -103,12 +103,12 @@ export const AuthLoginPage: React.FC = () => {
       // which renders the "Meet Evia" get-set-up state instead of bouncing
       // straight into the signup wizard.
       const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
-      let dest = '/client/chat';
+      let dest = '/client/dashboard';
       if (uid) {
         const profile = await dbService.getUser(uid).catch(() => null);
         // AdminUser types userType as client|caregiver; admin lives in the raw doc.
         const userType = profile?.userType as string | undefined;
-        if (userType === 'caregiver') dest = '/caregiver/chat';
+        if (userType === 'caregiver') dest = '/caregiver/dashboard';
         else if (userType === 'admin') dest = '/admin';
       }
       navigate(dest, { replace: true });

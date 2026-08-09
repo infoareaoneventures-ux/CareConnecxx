@@ -7372,6 +7372,28 @@ async function executeToolCall(
       // would orphan from the completion record). See onboardingContract notes.
       const snap = await ref.get();
       const data = (snap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+      // Incremental client collection mirror: push each collected field to the
+      // final Firestore collections (clientIntakes/{uid}, carePlans/{uid},
+      // senior_profiles/{uid}, job_postings/{uid}) the moment it's saved —
+      // same pattern as the caregiver doc mirror in mergeOnboardingData.
+      // Non-fatal: the authoritative batch write at collection-complete
+      // (persistClientCareRecords) is the ground truth; this just keeps the
+      // web dashboard populated mid-flow so a client who stalls after giving
+      // their name and city still sees their data if they open the webapp.
+      if (role === "client") {
+        const sessData = snap.data() ?? {};
+        // userId is set at collection-complete (ensureWebAccount); webOnboardingUid
+        // is set at session creation for web-path clients (OTP on /start).
+        // Either gives us a uid to write to; cold-SMS clients have neither and will
+        // get the full write at handleClientShowCaregivers instead.
+        const userId = (sessData.userId ?? sessData.webOnboardingUid) as string | undefined;
+        if (userId) {
+          const { persistClientCareRecords } = await import("../agents/onboardingConversation");
+          persistClientCareRecords(userId, phone as string, data, {}).catch((err) =>
+            console.error("save_onboarding_field: client incremental mirror failed (non-fatal):", err)
+          );
+        }
+      }
       // Service-area gate (Santa Clara County only). When a location field is
       // saved, check coverage. Out → record a waitlist lead, park the session, and
       // tell the model to decline. need_zip → ask for a ZIP to confirm.

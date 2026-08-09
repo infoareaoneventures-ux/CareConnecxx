@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Star, Shield, Edit2, Save, X, Ban, CheckCircle, Clock,
   Bell, RefreshCw, AlertCircle, Calendar, Tag, ChevronDown, ChevronUp,
-  Users, FileText, ExternalLink, Car,
+  Users, FileText, ExternalLink, Car, RotateCcw,
 } from 'lucide-react';
 import { adminService, dbService } from '../../services/api';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
@@ -10,7 +10,7 @@ import { db, functions } from '../../lib/firebase';
 import { Caregiver, Appointment } from '../../types';
 
 type Panel = 'profile' | 'appointments' | 'verification';
-type ModerationAction = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'notify' | null;
+type ModerationAction = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'notify' | 'reset' | null;
 type ToastState = { msg: string; type: 'success' | 'error' } | null;
 
 const SKILLS_OPTIONS = [
@@ -253,6 +253,28 @@ export const AdminCaregiverManager: React.FC = () => {
       showToast(`${selected.name} unbanned`, 'success');
     } catch {
       showToast('Failed to unban caregiver', 'error');
+    } finally {
+      setModerating(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!selected) return;
+    setModerating(true);
+    try {
+      await db!.collection('adminResetQueue').add({
+        type: 'reset_account',
+        uid: selected.uid,
+        phone: selected.phone ?? '',
+        role: 'caregiver',
+        createdAt: new Date(),
+      });
+      showToast(`Reset queued for ${selected.name} — data will be wiped in seconds`, 'success');
+      setSelected(null);
+      setCaregivers(prev => prev.filter(c => c.uid !== selected.uid));
+      setModerationAction(null);
+    } catch {
+      showToast('Failed to queue reset', 'error');
     } finally {
       setModerating(false);
     }
@@ -624,6 +646,18 @@ export const AdminCaregiverManager: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Inline reset confirm */}
+                  {moderationAction === 'reset' && (
+                    <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-xl space-y-3">
+                      <p className="text-sm font-medium text-purple-800">Reset {selected.name}?</p>
+                      <p className="text-sm text-purple-700">Permanently deletes their Auth account, all Firestore docs, conversation history, and Zep memory. Use for test accounts only.</p>
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setModerationAction(null)} className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-white">Cancel</button>
+                        <button onClick={handleReset} disabled={moderating} className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50">{moderating ? 'Resetting…' : 'Confirm Reset'}</button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Inline unsuspend confirm */}
                   {moderationAction === 'unsuspend' && (
                     <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl space-y-3">
@@ -661,6 +695,9 @@ export const AdminCaregiverManager: React.FC = () => {
                         <Ban className="w-4 h-4" /> Ban
                       </button>
                     )}
+                    <button onClick={() => setModerationAction(moderationAction === 'reset' ? null : 'reset')} className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-purple-300 text-purple-700 hover:bg-purple-50 transition-colors">
+                      <RotateCcw className="w-4 h-4" /> Reset Account
+                    </button>
                   </div>
                 </div>
               </>

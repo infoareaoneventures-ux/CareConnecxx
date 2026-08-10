@@ -55,9 +55,16 @@ export const AuthLoginPage: React.FC = () => {
     return () => clearTimeout(t);
   }, [resendCountdown]);
 
+  // ALLOWLIST: remove before public launch
+  const ALLOWED_PHONES = new Set(['+14086370269', '+14087261330', '+14088745451', '+14086370483']);
+
   const sendCode = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!isValid || !auth) return;
+    if (!ALLOWED_PHONES.has(`${countryCode}${digits}`)) {
+      setError("Evia is currently in private testing. Your number is not on the access list.");
+      return;
+    }
     setError('');
     setLoading(true);
     try {

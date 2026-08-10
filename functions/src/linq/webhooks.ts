@@ -36,6 +36,7 @@ import {
   handleCaregiverPermissionsReply,
 } from "../agents/permissionsConversation";
 import { detectCrisis, isLikelyRealCrisis, classifyCrisisMultilingual } from "../safety/crisisDetector";
+import { isPhoneAllowed } from "../config/phoneAllowlist";
 import { cancelTriggerIfUserReplied } from "../triggers/triggerEngine";
 import { logCrisisDetected } from "../observability/auditLog";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
@@ -510,6 +511,13 @@ async function handlePendingConsentReply(
       chatId,
     }).catch(() => {/* non-critical */});
   }
+  // Mark the user as LINQ-connected so the client gate lets them in
+  if (session.userId) {
+    await db.collection("users").doc(session.userId).set(
+      { eviaConnected: true, eviaConnectedAt: admin.firestore.Timestamp.now() },
+      { merge: true }
+    ).catch(() => {/* non-critical */});
+  }
 
   await initializeZepOnFirstContact(phone).catch((err) =>
     console.error("Zep init failed (pending consent opt-in):", err)
@@ -870,6 +878,9 @@ const handleInboundInner = traceable(
 
   if (!phone || !chatId) return;
 
+  // ALLOWLIST: remove before public launch
+  if (!isPhoneAllowed(phone)) return;
+
   // Collect text from all text-type parts (handles multi-part messages).
   // Non-text parts (sticker, audio, media) have no value — detect media-only messages.
   const inboundParts = (ev.data?.parts ?? []) as Array<Record<string, unknown>>;
@@ -1186,6 +1197,14 @@ const handleInboundInner = traceable(
         connectedAt: admin.firestore.Timestamp.now(),
         chatId,
       }).catch(() => {/* non-critical */});
+      // Mark the user as LINQ-connected so the client gate lets them in
+      const webUid = webSessionData.uid ?? null;
+      if (webUid) {
+        await db.collection("users").doc(webUid).set(
+          { eviaConnected: true, eviaConnectedAt: admin.firestore.Timestamp.now() },
+          { merge: true }
+        ).catch(() => {/* non-critical */});
+      }
 
       await initializeZepOnFirstContact(phone).catch((err) =>
         console.error("Zep init failed (web bridge):", err)

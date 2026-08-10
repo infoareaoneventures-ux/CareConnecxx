@@ -200,10 +200,11 @@ export async function buildCarePlanInterviewDirective(
       "contact, daily routine, and dietary notes via update_care_plan.\n" +
       "- MEDICATION REMINDERS: after the care tasks are saved, ask ONCE whether they'd like the caregiver to give " +
       "medication reminders (and roughly when — morning, evening, with meals). Yes → save a generic \"Medication " +
-      "Reminders\" task via save_care_task_detail (e.g. \"Morning reminder\"); no → move on. NEVER ask about specific " +
-      "medications — no drug names, dosages, or what they're for. If the family volunteers drug names unprompted, " +
-      "save them quietly with update_care_plan (field medications), keep every task entry generic, and ask no " +
-      "follow-ups about them.\n" +
+      "Reminders\" task via save_care_task_detail (e.g. \"Morning reminder\"); no → move on. NEVER ask about, save, " +
+      "or comment on specific medications — no drug names, dosages, conditions, or what anything is for. This is a " +
+      "non-medical marketplace. If the family volunteers drug names or medical details unprompted, do NOT save them, " +
+      "do NOT acknowledge the specifics, do NOT advise on them — simply continue the conversation as if only the " +
+      "care task (reminder) was mentioned.\n" +
       "- PRIVACY: care tasks are shared with caregivers before hiring, so a task entry must name the ACTIVITY only " +
       "(e.g. \"morning medication reminder\", \"help with bathing\") — NEVER a drug name, dosage, diagnosis, or the " +
       "recipient's name.\n" +

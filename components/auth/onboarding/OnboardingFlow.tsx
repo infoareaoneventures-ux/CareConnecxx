@@ -78,8 +78,16 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
 
   // ─── Step actions ───────────────────────────────────────────────────────────
 
+  // ALLOWLIST: remove before public launch
+  const ALLOWED_PHONES = new Set(['+14086370269', '+14087261330', '+14088745451', '+14086370483']);
+
   const sendCode = async (resending = false) => {
     if (!isValidPhone || loading || !auth) return;
+    const phoneE164 = normalizeE164(countryCode, digits);
+    if (!ALLOWED_PHONES.has(phoneE164)) {
+      setError("Evia is currently in private testing. Your number is not on the access list.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

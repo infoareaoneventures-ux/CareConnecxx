@@ -4,6 +4,7 @@ import {
   MEMORY_FINGERPRINT_KEY_NAME,
   MEMORY_FINGERPRINT_KEY_SECRET,
 } from "./memory/fingerprintKey";
+import { isPhoneAllowed } from "./config/phoneAllowlist";
 
 // Initialize Admin globally if not already done
 if (!admin.apps.length) {
@@ -374,6 +375,10 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
 
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
+  }
+  // ALLOWLIST: remove before public launch
+  if (!isPhoneAllowed(phone)) {
+    throw new functions.https.HttpsError("permission-denied", "Evia is currently in private testing. Your number is not on the access list.");
   }
   if (referralId && !/^[A-Za-z0-9_-]{1,128}$/.test(referralId)) {
     throw new functions.https.HttpsError("invalid-argument", "Invalid referral link.");

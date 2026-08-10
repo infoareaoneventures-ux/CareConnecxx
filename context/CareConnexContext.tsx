@@ -20,6 +20,7 @@ export interface AuthenticatedUser {
     userType: 'client' | 'caregiver' | 'admin';
     isVerified?: boolean;
     phone?: string;
+    eviaConnected?: boolean;
 }
 
 export type AuthRecoveryKind = 'offline' | 'unauthenticated' | 'unauthorized' | 'unavailable';
@@ -337,6 +338,7 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                     userType: nextType,
                     isVerified: (data.verified as boolean | undefined) ?? prev.isVerified,
                     phone: (data.phone as string | undefined) ?? prev.phone,
+                    eviaConnected: (data as any).eviaConnected ?? prev.eviaConnected,
                 };
             });
         });

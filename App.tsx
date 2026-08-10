@@ -25,6 +25,7 @@ const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
 const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
 const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
+const ClientConnectPage = lazy(() => import('./components/client/ClientConnectPage').then(m => ({ default: m.ClientConnectPage })));
 const ClientProfile = lazy(() => import('./components/ClientProfile').then(module => ({ default: module.ClientProfile })));
 const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
@@ -116,6 +117,17 @@ const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => 
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (!currentUser.eviaConnected) return <Navigate to="/client/connect" replace />;
+  return element;
+};
+
+// Auth-only wrapper for /client/connect — checks login but NOT eviaConnected (avoids redirect loop)
+const ClientAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { currentUser, authResolved } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+  if (!currentUser) return <Navigate to="/login" replace />;
+  if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
+  if (currentUser.eviaConnected) return <Navigate to="/client/dashboard" replace />;
   return element;
 };
 
@@ -336,6 +348,7 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/login" element={<Navigate to="/login" replace />} />
           <Route path="/caregiver/forgot-password" element={<Navigate to="/login" replace />} />
 
+          <Route path="/client/connect" element={<ClientAuthRoute element={<ClientConnectPage />} />} />
           <Route path="/client/dashboard" element={<ClientRoute element={<ClientDashboard onNavigate={handleNavigation} />} />} />
           <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />
           <Route path="/client/payments" element={<ClientRoute element={<Payments />} />} />

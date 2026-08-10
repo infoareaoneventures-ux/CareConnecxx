@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, CheckCircle, Loader2, Upload, Sparkles,
   User, Heart, ChevronDown, ChevronUp, Lightbulb, FileText, X,
@@ -9,10 +9,7 @@ import { blocksToWeeklySlots } from '../../services/availabilityService';
 import { AddToastFunction } from '../../types';
 import {
   PRIMARY_SERVICES,
-  ADDITIONAL_SERVICES,
   EXPERIENCE_LEVELS,
-  TIME_BLOCKS,
-  DAYS,
   JOB_TYPES,
   MAX_CLIENTS_OPTIONS,
   WRITING_IDEAS,
@@ -22,13 +19,18 @@ import {
 interface WizardProps {
   uid: string;
   firstName: string;
-  city: string;
-  state: string;
+  city?: string;
+  state?: string;
   onComplete: () => void;
   onShowToast: AddToastFunction;
 }
 
 interface WizardForm {
+  locationStreet: string;
+  locationCity: string;
+  locationState: string;
+  locationZip: string;
+  email: string;
   profilePhoto: { file: File | null; preview: string | null };
   jobTypes: string[];
   weeklyAvailability: Record<string, string[]>;
@@ -47,13 +49,19 @@ const cleanData = (data: Record<string, any>): Record<string, any> =>
   Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined && v !== ''));
 
 export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
-  uid, firstName, city, state, onComplete, onShowToast,
+  uid, firstName, onComplete, onShowToast,
 }) => {
   const [step, setStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   const blobUrlsRef = useRef<Set<string>>(new Set());
 
   const [form, setForm] = useState<WizardForm>({
+    locationStreet: '',
+    locationCity: '',
+    locationState: '',
+    locationZip: '',
+    email: '',
     profilePhoto: { file: null, preview: null },
     jobTypes: [],
     weeklyAvailability: {
@@ -71,6 +79,49 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     bio: '',
   });
 
+  // Load existing profile on mount — pre-fill fields and restore saved wizard step
+  useEffect(() => {
+    let cancelled = false;
+    (dbService.getUser(uid) as Promise<any>).then((profile: any) => {
+      if (cancelled || !profile) { setIsInitializing(false); return; }
+      const p = profile as any;
+      const loadedServices: string[] = Array.isArray(p.skills)
+        ? p.skills
+        : Array.isArray(p.services) ? p.services : [];
+      setForm(prev => ({
+        ...prev,
+        locationStreet:      p.street        || '',
+        locationCity:        p.city          || '',
+        locationState:       p.state         || '',
+        locationZip:         p.zipCode       || '',
+        email:               p.email         || '',
+        bio:                 p.bio           || '',
+        hourlyRate:          p.hourlyRate    ? String(p.hourlyRate)    : '',
+        rateFor2Seniors:     p.rateForTwo    ? String(p.rateForTwo)    : '',
+        rateFor3PlusSeniors: p.rateForThree  ? String(p.rateForThree)  : '',
+        maxClients:          p.maxClients    ? String(p.maxClients)    : '',
+        serviceRadius:       p.serviceRadius ? String(p.serviceRadius) : '10',
+        selectedServices:    loadedServices,
+        yearsExperience:     p.yearsExperience || p.experience || '',
+        jobTypes:            Array.isArray(p.jobTypes) ? p.jobTypes : [],
+        profilePhoto:        p.photo ? { file: null, preview: p.photo } : prev.profilePhoto,
+      }));
+      // Restore saved wizard step
+      if (p.wizardStep) {
+        const hasTransport = loadedServices.includes('Transportation');
+        const restoredSteps = [
+          'welcome', 'location', 'email', 'photo', 'availability', 'services',
+          ...(hasTransport ? ['transport-docs'] : []),
+          'rates', 'bio', 'done',
+        ];
+        const idx = restoredSteps.indexOf(p.wizardStep as string);
+        if (idx > 0) setStep(idx + 1);
+      }
+      setIsInitializing(false);
+    }).catch(() => setIsInitializing(false));
+    return () => { cancelled = true; };
+  }, [uid]);
+
   const updateField = (field: string, value: any) => {
     setForm(prev => ({ ...prev, [field]: value }));
     if (field === 'profilePhoto' && value.preview) blobUrlsRef.current.add(value.preview);
@@ -78,7 +129,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
 
   const hasTransportation = form.selectedServices.includes('Transportation');
   const stepsArr = [
-    'welcome', 'photo', 'availability', 'services',
+    'welcome', 'location', 'email', 'photo', 'availability', 'services',
     ...(hasTransportation ? ['transport-docs'] : []),
     'rates', 'bio', 'done',
   ];
@@ -88,16 +139,49 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const next = () => setStep(s => Math.min(s + 1, totalSteps));
   const back = () => setStep(s => Math.max(s - 1, 1));
 
+  const handleSaveLocation = async () => {
+    if (!form.locationZip.trim() || form.locationZip.length < 5) { onShowToast('Please enter a valid zip code', 'error'); return; }
+    if (!form.locationCity.trim()) { onShowToast('Please enter your city', 'error'); return; }
+    setIsLoading(true);
+    try {
+      await dbService.updateUser('caregivers', uid, cleanData({
+        street:     form.locationStreet.trim() || undefined,
+        city:       form.locationCity.trim(),
+        state:      form.locationState.trim() || undefined,
+        zipCode:    form.locationZip.trim(),
+        wizardStep: 'email',
+      }) as any);
+      next();
+    } catch { onShowToast('Failed to save location. Please try again.', 'error'); }
+    finally { setIsLoading(false); }
+  };
+
+  const handleSaveEmail = async () => {
+    const email = form.email.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      onShowToast('Please enter a valid email address', 'error'); return;
+    }
+    setIsLoading(true);
+    try {
+      await dbService.updateUser('caregivers', uid, { email, wizardStep: 'photo' } as any);
+      next();
+    } catch { onShowToast('Failed to save email. Please try again.', 'error'); }
+    finally { setIsLoading(false); }
+  };
+
   const handleSavePhoto = async () => {
-    if (!form.profilePhoto.file) { next(); return; }
+    if (!form.profilePhoto.file) {
+      dbService.updateUser('caregivers', uid, { wizardStep: 'availability' } as any).catch(() => {});
+      next();
+      return;
+    }
     setIsLoading(true);
     try {
       const doc = await documentUploadService.uploadDocument(uid, form.profilePhoto.file, 'profilePhoto');
-      await dbService.updateUser('caregivers', uid, { photo: doc.url } as any);
+      await dbService.updateUser('caregivers', uid, { photo: doc.url, wizardStep: 'availability' } as any);
       next();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to upload photo. Please try again.';
-      onShowToast(msg, 'error');
+      onShowToast(err?.message || 'Failed to upload photo. Please try again.', 'error');
     } finally { setIsLoading(false); }
   };
 
@@ -108,6 +192,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       await dbService.updateUser('caregivers', uid, cleanData({
         weeklyAvailability: blocksToWeeklySlots(form.weeklyAvailability),
         jobTypes: form.jobTypes,
+        wizardStep: 'services',
       }) as any);
       next();
     } catch { onShowToast('Failed to save availability. Please try again.', 'error'); }
@@ -123,16 +208,23 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
     }
     setIsLoading(true);
     try {
+      const nextStep = form.selectedServices.includes('Transportation') ? 'transport-docs' : 'rates';
       await dbService.updateUser('caregivers', uid, cleanData({
         primaryServices: form.selectedServices.map(name => ({ name, yearsExperience: form.yearsExperience })),
         skills: form.selectedServices,
         services: form.selectedServices,
         yearsExperience: form.yearsExperience,
         experience: form.yearsExperience,
+        wizardStep: nextStep,
       }) as any);
       next();
     } catch { onShowToast('Failed to save services. Please try again.', 'error'); }
     finally { setIsLoading(false); }
+  };
+
+  const handleTransportDocsNext = async () => {
+    await dbService.updateUser('caregivers', uid, { wizardStep: 'rates' } as any).catch(() => {});
+    next();
   };
 
   const handleSaveRates = async () => {
@@ -144,6 +236,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       const rateData: Record<string, any> = {
         hourlyRate: rate,
         serviceRadius: parseInt(form.serviceRadius) || 10,
+        wizardStep: 'bio',
       };
       if (form.rateFor2Seniors) rateData.rateForTwo = parseInt(form.rateFor2Seniors);
       if (form.rateFor3PlusSeniors) rateData.rateForThree = parseInt(form.rateFor3PlusSeniors);
@@ -165,7 +258,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
         onboardingStep: 2,
         onboardingStatus: 'profile_complete',
         verificationStatus: 'profile_complete',
-        location: [city, state].filter(Boolean).join(', ') || undefined,
+        location: [form.locationCity, form.locationState].filter(Boolean).join(', ') || undefined,
       }) as any);
       next();
     } catch { onShowToast('Failed to save bio. Please try again.', 'error'); }
@@ -175,6 +268,16 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
   const progressPct = Math.round(((step - 1) / (totalSteps - 1)) * 100);
   const isColoredStep = step === 1 || step === totalSteps;
   const cardBg = isColoredStep ? 'bg-indigo-600' : 'bg-white';
+
+  if (isInitializing) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl flex items-center justify-center p-12">
+          <Loader2 size={32} className="animate-spin text-indigo-500" />
+        </div>
+      </div>
+    );
+  }
 
   const renderStep = () => {
     switch (currentStepId) {
@@ -206,6 +309,21 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
           </div>
         );
 
+      // ── Location ─────────────────────────────────────────────────────────
+      case 'location':
+        return <LocationStep
+          street={form.locationStreet} city={form.locationCity}
+          state={form.locationState} zip={form.locationZip}
+          onChange={updateField} onNext={handleSaveLocation} isLoading={isLoading}
+        />;
+
+      // ── Email ─────────────────────────────────────────────────────────────
+      case 'email':
+        return <EmailStep
+          email={form.email} onChange={updateField}
+          onNext={handleSaveEmail} isLoading={isLoading}
+        />;
+
       // ── Photo ────────────────────────────────────────────────────────────
       case 'photo':
         return <PhotoStep
@@ -231,7 +349,7 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
 
       // ── Transportation Documents (conditional) ───────────────────────────
       case 'transport-docs':
-        return <TransportDocStep uid={uid} onNext={next} onShowToast={onShowToast} />;
+        return <TransportDocStep uid={uid} onNext={handleTransportDocsNext} onShowToast={onShowToast} />;
 
       // ── Rates ────────────────────────────────────────────────────────────
       case 'rates':
@@ -310,6 +428,130 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
           {renderStep()}
         </div>
       </div>
+    </div>
+  );
+};
+
+// ─── Location Step ─────────────────────────────────────────────────────────────
+
+const LocationStep: React.FC<{
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  onChange: (field: string, value: string) => void;
+  onNext: () => void;
+  isLoading: boolean;
+}> = ({ street, city, state, zip, onChange, onNext, isLoading }) => {
+  const [lookingUp, setLookingUp] = useState(false);
+
+  // Auto-populate city + state from zip
+  useEffect(() => {
+    if (zip.length !== 5) return;
+    setLookingUp(true);
+    fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zip}&country=us&format=json&limit=1`, {
+      headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' },
+    })
+      .then(r => r.json())
+      .then((arr: any[]) => {
+        if (arr[0]?.display_name) {
+          const parts = arr[0].display_name.split(', ');
+          if (parts.length >= 3) {
+            onChange('locationCity', parts[0]);
+            onChange('locationState', parts[1]);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLookingUp(false));
+  }, [zip]);
+
+  const lineInput = "w-full py-3 text-slate-800 placeholder-slate-400 border-b border-slate-200 focus:outline-none focus:border-indigo-500 bg-transparent text-sm transition-colors";
+
+  return (
+    <div className="flex flex-col gap-1">
+      <h2 className="text-xl font-bold text-slate-800 text-center mb-4">Where are you located?</h2>
+
+      <input
+        type="text"
+        placeholder="Street address"
+        value={street}
+        onChange={e => onChange('locationStreet', e.target.value)}
+        className={lineInput}
+      />
+      <input
+        type="text"
+        inputMode="numeric"
+        placeholder="Zip code"
+        value={zip}
+        maxLength={5}
+        onChange={e => onChange('locationZip', e.target.value.replace(/\D/g, ''))}
+        className={lineInput}
+      />
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="City"
+          value={city}
+          onChange={e => onChange('locationCity', e.target.value)}
+          className={lineInput}
+        />
+        {lookingUp && <Loader2 size={14} className="animate-spin text-slate-400 absolute right-0 top-3.5" />}
+      </div>
+      <input
+        type="text"
+        placeholder="State"
+        value={state}
+        onChange={e => onChange('locationState', e.target.value)}
+        className={lineInput}
+      />
+
+      <button
+        onClick={onNext}
+        disabled={isLoading || !zip.trim() || !city.trim()}
+        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mt-6"
+      >
+        {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Next'}
+      </button>
+    </div>
+  );
+};
+
+// ─── Email Step ────────────────────────────────────────────────────────────────
+
+const EmailStep: React.FC<{
+  email: string;
+  onChange: (field: string, value: string) => void;
+  onNext: () => void;
+  isLoading: boolean;
+}> = ({ email, onChange, onNext, isLoading }) => {
+  const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  return (
+    <div className="flex flex-col gap-4">
+      <h2 className="text-xl font-bold text-slate-800 text-center">Your email address</h2>
+      <p className="text-sm text-slate-500 text-center">
+        Used for background check results and important account updates.
+      </p>
+
+      <div>
+        <label className="block text-sm font-semibold text-slate-800 mb-1.5">Email</label>
+        <input
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={e => onChange('email', e.target.value)}
+          className="w-full px-4 py-3 rounded-2xl border-2 border-slate-200 text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 text-sm"
+          autoComplete="email"
+        />
+      </div>
+
+      <button
+        onClick={onNext}
+        disabled={isLoading || !isValid}
+        className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 mt-1"
+      >
+        {isLoading ? <><Loader2 size={16} className="animate-spin" />Saving…</> : 'Continue'}
+      </button>
     </div>
   );
 };
@@ -400,7 +642,7 @@ const AvailabilityStep: React.FC<{
   onNext: () => void;
   isLoading: boolean;
   onShowToast: AddToastFunction;
-}> = ({ jobTypes, weeklyAvailability, neverAvailable, onChange, onNext, isLoading, onShowToast }) => {
+}> = ({ jobTypes, weeklyAvailability, onChange, onNext, isLoading, onShowToast }) => {
   const [activeDays, setActiveDays] = useState<string[]>([]);
   const [activeTimes, setActiveTimes] = useState<string[]>([]);
 
@@ -707,8 +949,6 @@ const TransportDocStep: React.FC<{
       onShowToast('Upload failed. Please try again.', 'error');
     }
   };
-
-  const uploadedCount = TRANSPORT_DOCS.filter(d => status[d.type] === 'done').length;
 
   return (
     <div className="flex flex-col gap-4">

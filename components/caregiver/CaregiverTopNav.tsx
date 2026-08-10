@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageSquare, Home, Calendar, Briefcase,
   BookOpen, Settings, X, MoreHorizontal, LogOut, User,
-  Users, Wallet, HelpCircle, Mail, MessageCircle,
+  Users, Wallet, HelpCircle, Mail,
 } from 'lucide-react';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { authService } from '../../services/api';
@@ -11,7 +11,6 @@ import { CaregiverUserMenu } from './CaregiverUserMenu';
 import { NotificationDropdown } from '../ui/NotificationDropdown';
 import { BloomMark } from '../ui/BloomMark';
 import { useUnreadMessageCount } from '../../hooks/useUnreadMessageCount';
-import { useCaraUnread } from '../../hooks/useCaraUnread';
 import type { Caregiver } from '../../types';
 
 const BOOKINGS_ROUTES = ['/caregiver/bookings', '/caregiver/families'];
@@ -29,7 +28,6 @@ export const CaregiverTopNav: React.FC = () => {
   const { caregiverProfile: profile } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const unreadMessages = useUnreadMessageCount(currentUser?.uid ?? null);
-  const caraUnread = useCaraUnread();
   const [moreOpen, setMoreOpen] = useState(false);
 
   const path = location.pathname;
@@ -50,7 +48,7 @@ export const CaregiverTopNav: React.FC = () => {
   if (AUTH_PATHS.includes(path)) {
     return (
       <header className="sticky top-0 z-40 bg-paper-50/90 backdrop-blur border-b hairline">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
       </header>
     );
   }
@@ -59,7 +57,7 @@ export const CaregiverTopNav: React.FC = () => {
     <>
       {/* Top nav — logo always visible, desktop links hidden on mobile */}
       <header className="sticky top-0 z-40 bg-paper-50/90 backdrop-blur border-b hairline">
-        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} caraUnread={caraUnread} />
+        <DesktopNav profile={profile} isActive={isActive} navigate={navigate} unreadMessages={unreadMessages} />
       </header>
 
       {/* Mobile bottom nav */}
@@ -67,7 +65,6 @@ export const CaregiverTopNav: React.FC = () => {
         <div className="flex justify-around py-1">
           {([
             { icon: <Home className="w-5 h-5" />, label: 'Home', path: '/caregiver/dashboard' },
-            { icon: <MessageCircle className="w-5 h-5" />, label: 'Chat', path: '/caregiver/chat', badge: caraUnread },
             { icon: <Briefcase className="w-5 h-5" />, label: 'Jobs', path: '/caregiver/jobs' },
             { icon: <Calendar className="w-5 h-5" />, label: 'Calendar', path: '/caregiver/calendar' },
           ] as Array<{ icon: React.ReactNode; label: string; path: string; badge?: number }>).map(item => (
@@ -166,8 +163,7 @@ const DesktopNav: React.FC<{
   isActive: (p: string) => boolean;
   navigate: (path: string) => void;
   unreadMessages: number;
-  caraUnread: number;
-}> = ({ profile, isActive, navigate, unreadMessages, caraUnread }) => {
+}> = ({ profile, isActive, navigate, unreadMessages }) => {
   const [helpOpen, setHelpOpen] = useState(false);
   const helpRef = useRef<HTMLDivElement>(null);
 
@@ -189,7 +185,6 @@ const DesktopNav: React.FC<{
   // Flat centered tabs — Bookings covers its family (My Families reachable
   // from the bookings page and the mobile More drawer).
   const DESKTOP_TABS: Array<{ label: string; icon: React.ReactNode; path: string; active: boolean; badge?: number }> = [
-    { label: 'Chat', icon: <MessageCircle className="w-4 h-4" />, path: '/caregiver/chat', active: isActive('/caregiver/chat'), badge: caraUnread },
     { label: 'Jobs', icon: <Briefcase className="w-4 h-4" />, path: '/caregiver/jobs', active: isActive('/caregiver/jobs') },
     { label: 'Bookings', icon: <BookOpen className="w-4 h-4" />, path: '/caregiver/bookings', active: BOOKINGS_ROUTES.some(r => isActive(r)) },
     { label: 'Calendar', icon: <Calendar className="w-4 h-4" />, path: '/caregiver/calendar', active: isActive('/caregiver/calendar') },

@@ -154,7 +154,7 @@ export interface Caregiver {
   infoRequestNotes?: string;
   infoRequestedAt?: string;
   reviewNotes?: string;
-  onboardingStatus?: 'incomplete' | 'complete';
+  onboardingStatus?: 'incomplete' | 'complete' | 'profile_complete';
   documents?: CaregiverDocuments;
   backgroundCheckData?: {
     // SECURITY: We NEVER store full SSN in our database

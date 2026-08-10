@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import { auth, functions, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../../../lib/firebase';
@@ -36,6 +36,7 @@ function formatDisplay(val: string): string {
 
 export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => {
   const device = useDeviceClass();
+  const navigate = useNavigate();
   const [role, setRole] = useState<OnboardingRole | null>(initialRole ?? null);
   const [step, setStep] = useState<Step>(initialRole ? 'consent' : 'role');
   const [agreed, setAgreed] = useState(false);
@@ -62,6 +63,22 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       setStep('connected');
     }
   }, [step, sessionState.status]);
+
+  // If user is already authenticated but hasn't connected yet, send them to the
+  // connect page for their role instead of restarting the onboarding wizard.
+  useEffect(() => {
+    const user = auth?.currentUser;
+    if (!user) return;
+    user.getIdTokenResult().then(token => {
+      const userType = token.claims.userType as string | undefined;
+      // eviaConnected is on the Firestore users doc, not the token — use sessionStorage
+      // as a signal: if linqPhone is there, they completed OTP and are at the handoff.
+      const hasLinqPhone = (() => { try { return !!sessionStorage.getItem('evia_linq_phone'); } catch { return false; } })();
+      if (!hasLinqPhone) return;
+      if (userType === 'caregiver') { navigate('/caregiver/connect', { replace: true }); return; }
+      if (userType === 'client')    { navigate('/client/connect',    { replace: true }); return; }
+    }).catch(() => {});
+  }, [navigate]);
 
   // Resend cooldown timer
   useEffect(() => {
@@ -128,6 +145,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       const data = resp.data as { linqPhone?: string };
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);
+      // Persist so CaregiverDashboard can show the handoff screen if they refresh before texting
+      try { sessionStorage.setItem('evia_linq_phone', data.linqPhone); } catch {}
       setStep('handoff');
     } catch (err: any) {
       const msg = err?.code === 'auth/invalid-verification-code' || err?.code === 'auth/code-expired'

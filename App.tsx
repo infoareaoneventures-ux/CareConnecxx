@@ -26,11 +26,11 @@ const AdminView = lazy(() => import('./components/AdminView').then(module => ({ 
 const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
 const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
 const ClientConnectPage = lazy(() => import('./components/client/ClientConnectPage').then(m => ({ default: m.ClientConnectPage })));
+const CaregiverConnectPage = lazy(() => import('./components/caregiver/CaregiverConnectPage').then(m => ({ default: m.CaregiverConnectPage })));
 const ClientProfile = lazy(() => import('./components/ClientProfile').then(module => ({ default: module.ClientProfile })));
 const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
 const InboxView = lazy(() => import('./components/InboxView').then(module => ({ default: module.InboxView })));
-const CaraChatPage = lazy(() => import('./components/chat/CaraChat'));
 const StripeCallback = lazy(() => import('./components/StripeCallback').then(module => ({ default: module.StripeCallback })));
 const PaymentSuccess = lazy(() => import('./components/PaymentSuccess').then(module => ({ default: module.PaymentSuccess })));
 const PaymentCancel = lazy(() => import('./components/PaymentCancel').then(module => ({ default: module.PaymentCancel })));
@@ -50,6 +50,8 @@ const CaregiverPayoutPage = lazy(() => import('./components/caregiver/CaregiverP
 const CaregiverPaymentsPage = lazy(() => import('./components/caregiver/CaregiverPaymentsPage').then(module => ({ default: module.CaregiverPaymentsPage })));
 const PublicCaregiverProfile = lazy(() => import('./components/caregiver/PublicCaregiverProfile').then(module => ({ default: module.PublicCaregiverProfile })));
 const PostJobFlow = lazy(() => import('./components/client/postJob/PostJobFlow').then(module => ({ default: module.PostJobFlow })));
+const CaregiverOnboardingWizard = lazy(() => import('./components/caregiver/CaregiverOnboardingWizard').then(m => ({ default: m.CaregiverOnboardingWizard })));
+const ClientJobPostingWizard = lazy(() => import('./components/client/ClientJobPostingWizard').then(m => ({ default: m.ClientJobPostingWizard })));
 const PostsPage = lazy(() => import('./components/client/PostsPage').then(module => ({ default: module.PostsPage })));
 const TrustAndSafetyPage = lazy(() => import('./components/TrustAndSafetyPage').then(module => ({ default: module.TrustAndSafetyPage })));
 const FamilyFAQ = lazy(() => import('./components/FamilyFAQ').then(module => ({ default: module.FamilyFAQ })));
@@ -119,7 +121,16 @@ const ClientRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => 
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'caregiver') return <Navigate to="/caregiver/dashboard" replace />;
   if (!currentUser.eviaConnected) return <Navigate to="/client/connect" replace />;
-  return element;
+  return (
+    <>
+      {element}
+      {currentUser.jobPostingCompleted !== true && (
+        <Suspense fallback={null}>
+          <ClientJobPostingWizard uid={currentUser.uid} onComplete={() => {}} />
+        </Suspense>
+      )}
+    </>
+  );
 };
 
 // Auth-only wrapper for /client/connect — checks login but NOT eviaConnected (avoids redirect loop)
@@ -133,10 +144,36 @@ const ClientAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 };
 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
+  const { currentUser, authResolved, caregiverProfile, addToast } = useCareConnex();
+  if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
+  if (!currentUser) return <Navigate to="/login" replace />;
+  if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  if (!currentUser.eviaConnected) return <Navigate to="/caregiver/connect" replace />;
+  const showWizard = caregiverProfile !== null && caregiverProfile.onboardingStatus !== 'profile_complete';
+  return (
+    <>
+      {element}
+      {showWizard && (
+        <Suspense fallback={null}>
+          <CaregiverOnboardingWizard
+            uid={currentUser.uid}
+            firstName={(caregiverProfile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
+            onComplete={() => {}}
+            onShowToast={addToast}
+          />
+        </Suspense>
+      )}
+    </>
+  );
+};
+
+// Auth-only wrapper for /caregiver/connect — no eviaConnected check (avoids redirect loop)
+const CaregiverAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { currentUser, authResolved } = useCareConnex();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
+  if (currentUser.eviaConnected) return <Navigate to="/caregiver/dashboard" replace />;
   return element;
 };
 
@@ -350,6 +387,7 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/forgot-password" element={<Navigate to="/login" replace />} />
 
           <Route path="/client/connect" element={<ClientAuthRoute element={<ClientConnectPage />} />} />
+          <Route path="/caregiver/connect" element={<CaregiverAuthRoute element={<CaregiverConnectPage />} />} />
           <Route path="/client/dashboard" element={<ClientRoute element={<ClientDashboard onNavigate={handleNavigation} />} />} />
           <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />
           <Route path="/client/payments" element={<ClientRoute element={<Payments />} />} />
@@ -384,10 +422,7 @@ const AppContent: React.FC = () => {
             }}
           />} />} />
 
-          <Route path="/client/chat" element={<ClientRoute element={<CaraChatPage />} />} />
-
           <Route path="/caregiver/dashboard" element={<CaregiverRoute element={<CaregiverDashboard onNavigate={handleNavigation} />} />} />
-          <Route path="/caregiver/chat" element={<CaregiverRoute element={<CaraChatPage />} />} />
           <Route path="/caregiver/profile" element={<CaregiverRoute element={<CaregiverProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/inbox" element={<CaregiverRoute element={<InboxView userType="caregiver" onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/caregiver/calendar" element={<CaregiverRoute element={<CaregiverCalendarPage onNavigate={handleNavigation} />} />} />

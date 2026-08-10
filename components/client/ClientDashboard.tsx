@@ -23,7 +23,6 @@ import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
-import { ClientJobPostingWizard } from './ClientJobPostingWizard';
 
 
 interface ClientDashboardProps {
@@ -162,8 +161,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [todayBookingTab, setTodayBookingTab] = useState<'active' | 'upcoming'>('upcoming');
   const [ivFilter, setIvFilter] = useState<'pending' | 'accepted' | 'completed'>('pending');
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
-  const [showSetupWizard, setShowSetupWizard] = useState(false);
-
   const currentUser = authService.getCurrentUser();
   const { gate, Modals: GateModals, membershipActive, identityVerified } = useAccessGates();
   const hasActiveBooking = activeCareTeam.length > 0;
@@ -339,11 +336,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const userDoc = await db.collection('users').doc(currentUser.uid).get();
             const userData = userDoc.data() as any;
             // Show setup wizard for clients who haven't completed it yet.
-            // jobPostingCompleted is set by the wizard and by the SMS flow
-            // (persistClientCareRecords). Skip for clients who came via SMS
-            // and already have intake data.
-            const setupDone = userData?.jobPostingCompleted === true || !!intakeLocal;
-            if (!setupDone) setShowSetupWizard(true);
             const savedIds: string[] = userData?.savedCaregiverIds || [];
             if (savedIds.length > 0) {
               const snap = await db.collection('publicCaregiverProfiles')
@@ -499,15 +491,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           <Loader2 className="w-10 h-10 text-[var(--color-primary-600)] animate-spin" />
         </div>
       </>
-    );
-  }
-
-  if (showSetupWizard && currentUser?.uid) {
-    return (
-      <ClientJobPostingWizard
-        uid={currentUser.uid}
-        onComplete={() => setShowSetupWizard(false)}
-      />
     );
   }
 

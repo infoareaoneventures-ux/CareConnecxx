@@ -383,8 +383,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       case 2:
         return (
           <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-bold text-slate-800 text-center">When do you need care?</h2>
-            <p className="text-sm font-semibold text-slate-700 mt-1">How often do you need this care?</p>
+            <h2 className="text-xl font-bold text-slate-800 text-center">How often do you need care?</h2>
             <div className="flex flex-col gap-2">
               {[
                 { val: 'specific', label: 'Occasional', sub: '', icon: <Calendar className="w-5 h-5 text-indigo-500" /> },

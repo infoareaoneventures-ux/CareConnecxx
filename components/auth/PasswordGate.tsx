@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { BloomMark } from '../ui/BloomMark';
 
 const STORAGE_KEY = 'evia_beta_access';
 const PASSWORD = import.meta.env.VITE_SITE_PASSWORD as string | undefined;
@@ -30,11 +29,8 @@ export const PasswordGate: React.FC<{ children: React.ReactNode }> = ({ children
       <div className="w-full max-w-sm space-y-8">
 
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-paper-100 border hairline flex items-center justify-center mx-auto">
-            <BloomMark className="w-6 h-6 text-ink-900" />
-          </div>
           <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
-          <p className="text-ink-500 text-sm">Private beta — enter access code to continue</p>
+          <p className="text-ink-500 text-sm">Enter access code to continue</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

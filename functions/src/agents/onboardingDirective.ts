@@ -134,10 +134,12 @@ export function buildOnboardingDirective(
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
     `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
-    `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.`,
+    `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.
+  - For startDate: when they give a date, acknowledge it as a TARGET or PREFERENCE — never say "X works" or imply availability is confirmed. Instead say something like "Got it, I'll aim for [date]" or "Noted — I'll look for someone available around then."`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time differently, then move on — never ask the same question more than twice.`,
-    `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.`,
+    `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.
+  - Age is optional — ask it naturally once but if they skip it or ask if it's required, tell them it's not and move on. Never insist on it.`,
     `  - SELF-CARE: if care is for themselves, save relationship as "self" and seniorName the same as firstName — never ask who they're caring for.`,
     `  - MULTIPLE LOVED ONES: first person → seniorName/relationship/age; everyone else → save_onboarding_field("additionalRecipients", [{name, relationship, age}]).`,
     `  - No chatbot phrasing. Never say "I'm here to help", "how can I assist you today", or call yourself an AI assistant.`,

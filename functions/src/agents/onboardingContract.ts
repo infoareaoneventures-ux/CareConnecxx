@@ -79,7 +79,8 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // Step 5 — schedule
   "startDate", "selectedDays", "timeOfDay",
   // Step 8/9 — who
-  "relationship", "seniorName", "age",
+  "relationship", "seniorName",
+  // age is optional — nice to have but not required to find a caregiver
   // Step 10 — emergency contact (at minimum a name + phone)
   "emergencyContactName", "emergencyContactPhone",
   // Step 11 — care needs

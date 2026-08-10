@@ -62,10 +62,15 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     // Fetch a wider window than we show (15 vs 5): the seed filter runs
     // post-fetch, so a small limit could be consumed entirely by seeded docs
     // and starve real caregivers ranked just past it.
+    // Mirror the dashboard's visibility contract: onboardingStatus='profile_complete'
+    // AND verificationStatus='approved' — same pool clients see in FindCaregivers.
+    // verificationStatus is set automatically by Checkr on a 'clear' result;
+    // admin only intervenes on 'consider' exceptions.
     const localSnap = input.city
       ? await db
           .collection("caregivers")
-          .where("status", "==", "active")
+          .where("onboardingStatus", "==", "profile_complete")
+          .where("verificationStatus", "==", "approved")
           .where("city", "==", input.city)
           .limit(15)
           .get()
@@ -86,7 +91,11 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
       });
     }
 
-    const widerSnap = await db.collection("caregivers").where("status", "==", "active").limit(15).get();
+    const widerSnap = await db.collection("caregivers")
+      .where("onboardingStatus", "==", "profile_complete")
+      .where("verificationStatus", "==", "approved")
+      .limit(15)
+      .get();
     const widerCaregivers = widerSnap.docs
       .map(doc => ({ ...doc.data(), id: doc.id }))
       .filter(c => !isSeededCaregiver(c))

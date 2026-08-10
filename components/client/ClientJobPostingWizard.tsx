@@ -51,7 +51,7 @@ interface Props {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 14;
+const TOTAL_STEPS = 15;
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const TIME_OPTIONS = [
   { value: 'morning',   label: 'Morning',   sub: '6am–12pm' },
@@ -101,6 +101,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   const [customAddressOpen, setCustomAddressOpen] = useState(false);
   const [zipLooking, setZipLooking] = useState(false);
   const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [homeAddress, setHomeAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
+  const [homeZipLooking, setHomeZipLooking] = useState(false);
+  const homeZipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [form, setForm] = useState<WizardForm>({
     careFrequency: '',
@@ -167,6 +170,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           const city   = d.city    || '';
           const state  = d.state   || '';
           setClientAddress({ street, zipCode: zip, city, state });
+          setHomeAddress({ street, zipCode: zip, city, state });
           if (!zip) setCustomAddressOpen(true);
           setForm(f => ({ ...f, street: street || f.street, zipCode: zip || f.zipCode, city: city || f.city, state: state || f.state }));
         }
@@ -175,9 +179,9 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     load();
   }, []);
 
-  // Rotate examples on step 13
+  // Rotate examples on step 14
   useEffect(() => {
-    if (step !== 13) return;
+    if (step !== 14) return;
     const id = setInterval(() => setExampleIdx(i => (i + 1) % JOB_DESCRIPTION_EXAMPLES.length), 4000);
     return () => clearInterval(id);
   }, [step]);
@@ -221,6 +225,45 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       return { ...f, additionalRecipients: updated };
     });
 
+  const handleHomeZip = (raw: string) => {
+    const val = raw.replace(/\D/g, '').slice(0, 5);
+    setHomeAddress(a => ({ ...a, zipCode: val, city: '', state: '' }));
+    if (homeZipTimerRef.current) clearTimeout(homeZipTimerRef.current);
+    if (val.length === 5) {
+      setHomeZipLooking(true);
+      homeZipTimerRef.current = setTimeout(async () => {
+        try {
+          const res = await fetch(`https://api.zippopotam.us/us/${val}`);
+          if (res.ok) {
+            const json = await res.json();
+            const place = json.places?.[0];
+            if (place) {
+              setHomeAddress(a => ({ ...a, city: place['place name'] || '', state: place['state abbreviation'] || '' }));
+            }
+          }
+        } catch { /* best effort */ }
+        setHomeZipLooking(false);
+      }, 400);
+    } else {
+      setHomeZipLooking(false);
+    }
+  };
+
+  const handleSaveHomeAddress = () => {
+    if (db && homeAddress.zipCode) {
+      db.collection('users').doc(uid).update({
+        street: homeAddress.street,
+        zipCode: homeAddress.zipCode,
+        city: homeAddress.city,
+        state: homeAddress.state,
+      }).catch(console.error);
+    }
+    setClientAddress(homeAddress);
+    setCustomAddressOpen(false);
+    setForm(f => ({ ...f, street: homeAddress.street, zipCode: homeAddress.zipCode, city: homeAddress.city, state: homeAddress.state }));
+    next();
+  };
+
   const handleCustomZip = (raw: string) => {
     const val = raw.replace(/\D/g, '').slice(0, 5);
     update('zipCode', val);
@@ -252,14 +295,15 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
   const canAdvance = (): boolean => {
     if (step === 2) return !!form.careFrequency;
-    if (step === 3) return customAddressOpen
+    if (step === 3) return homeAddress.street.trim().length > 0 && homeAddress.zipCode.trim().length >= 5;
+    if (step === 4) return customAddressOpen
       ? form.zipCode.trim().length >= 5
       : clientAddress.zipCode.trim().length >= 5;
-    if (step === 5) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
-    if (step === 9) return form.careRecipientFirstName.trim().length > 0;
-    if (step === 10) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
-    if (step === 11) return form.careNeeds.length > 0;
-    if (step === 12) return !!form.paymentMethod && !!form.rate && (form.rate ?? 0) > 0;
+    if (step === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
+    if (step === 10) return form.careRecipientFirstName.trim().length > 0;
+    if (step === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
+    if (step === 12) return form.careNeeds.length > 0;
+    if (step === 13) return !!form.paymentMethod && !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
 
@@ -293,7 +337,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
   // ── Shared layout ────────────────────────────────────────────────────────
 
-  const isColoredStep = [1, 4, 6, 14].includes(step);
+  const isColoredStep = [1, 5, 7, 15].includes(step);
 
   const cardBg = isColoredStep ? 'bg-indigo-600' : 'bg-white';
   const textPrimary = isColoredStep ? 'text-white' : 'text-slate-800';
@@ -372,8 +416,63 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 3: Location ─────────────────────────────────────────────────
+      // ── Step 3: Your Home Address ────────────────────────────────────────
       case 3:
+        return (
+          <div className="flex flex-col gap-4">
+            <h2 className="text-xl font-bold text-slate-800 text-center">
+              What's your home address?
+            </h2>
+            <p className="text-slate-500 text-sm text-center -mt-2">
+              We'll use this to find caregivers near you.
+            </p>
+            <div className="flex flex-col gap-3">
+              <input
+                type="text"
+                placeholder="Street address"
+                value={homeAddress.street}
+                onChange={e => setHomeAddress(a => ({ ...a, street: e.target.value }))}
+                className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
+              />
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Zip code"
+                  value={homeAddress.zipCode}
+                  onChange={e => handleHomeZip(e.target.value)}
+                  className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent pr-7"
+                />
+                {homeZipLooking && (
+                  <Loader2 size={14} className="animate-spin text-indigo-400 absolute right-1 top-3" />
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="City"
+                value={homeAddress.city}
+                onChange={e => setHomeAddress(a => ({ ...a, city: e.target.value }))}
+                className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
+              />
+              <input
+                type="text"
+                placeholder="State"
+                value={homeAddress.state}
+                onChange={e => setHomeAddress(a => ({ ...a, state: e.target.value }))}
+                className="w-full border-b border-slate-200 py-2.5 text-slate-800 placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500 bg-transparent"
+              />
+            </div>
+            <button
+              onClick={handleSaveHomeAddress}
+              disabled={!canAdvance()}
+              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-1"
+            >
+              Next
+            </button>
+          </div>
+        );
+
+      // ── Step 4: Location ─────────────────────────────────────────────────
+      case 4:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -466,8 +565,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 4: Transition – Details ─────────────────────────────────────
-      case 4:
+      // ── Step 5: Transition – Details ─────────────────────────────────────
+      case 5:
         return (
           <div className="flex flex-col items-center text-center gap-6 py-4">
             <h2 className="text-2xl font-bold text-white">
@@ -488,8 +587,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 5: Schedule ─────────────────────────────────────────────────
-      case 5:
+      // ── Step 6: Schedule ─────────────────────────────────────────────────
+      case 6:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -608,8 +707,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 6: Transition – Family ───────────────────────────────────────
-      case 6:
+      // ── Step 7: Transition – Family ───────────────────────────────────────
+      case 7:
         return (
           <div className="flex flex-col items-center text-center gap-6 py-4">
             <h2 className="text-2xl font-bold text-white">
@@ -639,8 +738,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 7: Profile Photo ────────────────────────────────────────────
-      case 7:
+      // ── Step 8: Profile Photo ────────────────────────────────────────────
+      case 8:
         return (
           <div className="flex flex-col items-center gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -671,8 +770,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 8: Relationship ─────────────────────────────────────────────
-      case 8:
+      // ── Step 9: Relationship ─────────────────────────────────────────────
+      case 9:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -711,8 +810,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 9: Care Recipient Details ──────────────────────────────────
-      case 9:
+      // ── Step 10: Care Recipient Details ──────────────────────────────────
+      case 10:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -853,8 +952,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 10: Emergency Contact ───────────────────────────────────────
-      case 10:
+      // ── Step 11: Emergency Contact ───────────────────────────────────────
+      case 11:
         return (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col items-center gap-2 mb-1">
@@ -923,8 +1022,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 11: Care Needs ──────────────────────────────────────────────
-      case 11:
+      // ── Step 12: Care Needs ──────────────────────────────────────────────
+      case 12:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center">
@@ -991,8 +1090,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 12: Rate ────────────────────────────────────────────────────
-      case 12:
+      // ── Step 13: Rate ────────────────────────────────────────────────────
+      case 13:
         return (
           <div className="flex flex-col gap-5">
             <h2 className="text-xl font-bold text-slate-800 text-center">Set your rate</h2>
@@ -1056,8 +1155,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 13: Job Description ─────────────────────────────────────────
-      case 13:
+      // ── Step 14: Job Description ─────────────────────────────────────────
+      case 14:
         return (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-bold text-slate-800 text-center leading-snug">
@@ -1110,8 +1209,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           </div>
         );
 
-      // ── Step 14: Completion ──────────────────────────────────────────────
-      case 14:
+      // ── Step 15: Completion ──────────────────────────────────────────────
+      case 15:
         return (
           <div className="flex flex-col items-center text-center gap-5 py-4">
             <div className="w-16 h-16 rounded-full bg-teal-400/20 flex items-center justify-center">

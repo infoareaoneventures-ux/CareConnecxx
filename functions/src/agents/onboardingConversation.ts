@@ -5126,9 +5126,11 @@ async function handleJobAskStart(
 async function handleJobAskFrequency(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
   const startDate = await parseWithClaude(
-    "Extract a start date from this message. If the user says 'ASAP' or similar, return 'ASAP'. " +
-    "Otherwise return the date in YYYY-MM-DD format if possible, or a plain text description. Reply with just the date value.",
+    `Today's date is ${today}. Extract a start date from this message. If the user says 'ASAP' or similar, return 'ASAP'. ` +
+    "If they say a relative date like 'tomorrow', 'next Monday', 'in 2 weeks', resolve it to an actual date. " +
+    "Return the date in YYYY-MM-DD format. Reply with just the date value, nothing else.",
     text
   );
   await mergeOnboardingData(phone, { jobStartDate: startDate !== "__parse_error__" ? startDate : text.trim() });

@@ -2036,9 +2036,16 @@ export async function persistClientCareRecords(
   const relationship = (d.relationship ?? "") as string;
   const city         = (d.city         ?? "") as string;
   const zipCode      = (d.zipCode      ?? "") as string;
+  const street       = (d.street       ?? "") as string;
+  const state        = (d.state        ?? "") as string;
   const conditions   = (d.conditions   ?? []) as string[];
   const careNeeds    = (d.careNeeds    ?? []) as string[];
   const seniorAge    = d.age as number | undefined;
+  // Home address (account holder) — may differ from care address
+  const homeStreet   = (d.homeStreet  as string | undefined) || street;
+  const homeCity     = (d.homeCity    as string | undefined) || city;
+  const homeZipCode  = (d.homeZipCode as string | undefined) || zipCode;
+  const homeState    = (d.homeState   as string | undefined) || state;
 
   if (uid) {
     // One plan entry per care recipient (primary + any additional — "both
@@ -2075,29 +2082,70 @@ export async function persistClientCareRecords(
       clientId: uid,
       phone,
       recipientPlans,
-      locationPool: [{ city, zipCode, primary: true, ...(hasCoords ? { lat, lng } : {}) }],
+      locationPool: [{ city, zipCode, ...(street ? { street } : {}), ...(state ? { state } : {}), primary: true, ...(hasCoords ? { lat, lng } : {}) }],
       ...(emergencyContacts ? { emergencyContacts } : {}),
       updatedAt: new Date().toISOString(),
     }, { merge: true });
 
-    // job_postings/{uid} parity write — the web CarePlan page reads careRecipientFirstName
-    // from this doc to build the recipient tabs. PostJobFlow writes it the same way;
-    // Evia must too so SMS-onboarded clients see their recipient when they log into the web.
-    // Never overwrite if the web flow already set it.
+    // Write home address to users/{uid} — same as wizard step 3 writes.
+    // homeCity/homeZipCode are the account holder's address; care address may differ.
+    if (homeCity || homeZipCode) {
+      await db.collection("users").doc(uid).set({
+        city:    homeCity,
+        zipCode: homeZipCode,
+        ...(homeStreet ? { street: homeStreet } : {}),
+        ...(homeState  ? { state:  homeState  } : {}),
+      }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
+    }
+
+    // job_postings/{uid} full parity write — mirrors what the web wizard writes
+    // so SMS-onboarded clients see a complete job post when they log in.
     try {
-      const jpRef = db.collection("job_postings").doc(uid);
+      const jpRef  = db.collection("job_postings").doc(uid);
       const jpSnap = await jpRef.get();
       const jpData = (jpSnap.exists ? jpSnap.data() : {}) as Record<string, unknown>;
-      if (!jpData.careRecipientFirstName) {
-        const nameParts = seniorName.trim().split(/\s+/);
-        await jpRef.set({
-          careRecipientFirstName: nameParts[0] || seniorName,
-          careRecipientLastName:  nameParts.slice(1).join(" ") || "",
-          relationship,
-          ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
-        }, { merge: true });
+      const derived   = deriveJobDataFromIntake(d);
+      const nameParts = seniorName.trim().split(/\s+/);
+      const jpWrite: Record<string, unknown> = {
+        clientId:  uid,
+        phone,
+        // Care recipient
+        careRecipientFirstName: nameParts[0] || seniorName,
+        careRecipientLastName:  nameParts.slice(1).join(" ") || "",
+        relationship,
+        ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
+        // Care address
+        city,
+        zipCode,
+        ...(street ? { street } : {}),
+        ...(state  ? { state  } : {}),
+        // Care needs
+        careNeeds,
+        careLevel: derived.jobCareLevel as string,
+        // Schedule
+        careFrequency: derived.jobFrequency as string,
+        startDate:     (d.startDate as string) || "ASAP",
+        selectedDays:  Array.isArray(d.selectedDays) ? d.selectedDays : (derived.jobDays as string[]),
+        daysFlexible:  d.daysFlexible === true,
+        daysPerWeek:   Number(derived.jobDaysPerWeek) || 0,
+        timeOfDay:     derived.jobTimeOfDay as string[],
+        // Rate & payment
+        rate:          derived.jobHourlyRate,
+        rateFlexible:  derived.jobHourlyRate === "flexible",
+        paymentMethod: derived.jobPaymentMethod as string,
+        // Household preferences
+        petsInHome:       derived.petsInHome as boolean,
+        smokingHousehold: derived.smokingHousehold as boolean,
+        jobDescription:   derived.jobDescription as string,
+        // Meta
+        status: "active",
+        source: "cara_sms",
+      };
+      if (!jpData.createdAt) {
+        jpWrite.createdAt = admin.firestore.FieldValue.serverTimestamp();
       }
-      // Additional recipients (households with multiple care recipients)
+      await jpRef.set(jpWrite, { merge: true });
+      // Additional recipients
       const allRecips = allCareRecipients(d);
       for (const r of allRecips.slice(1)) {
         const rParts = r.name.trim().split(/\s+/);
@@ -2107,15 +2155,15 @@ export async function persistClientCareRecords(
           relationship: r.relationship || "",
           age:          String(r.age || ""),
         };
-        if (entry.firstName === jpData.careRecipientFirstName &&
-            entry.lastName  === (jpData.careRecipientLastName || "")) continue;
+        if (entry.firstName === jpWrite.careRecipientFirstName &&
+            entry.lastName  === (jpWrite.careRecipientLastName || "")) continue;
         await jpRef.set(
           { additionalRecipients: admin.firestore.FieldValue.arrayUnion(entry) },
           { merge: true }
         );
       }
     } catch (err) {
-      console.error("persistClientCareRecords: job_postings parity write failed (non-fatal):", err);
+      console.error("persistClientCareRecords: job_postings full write failed (non-fatal):", err);
     }
 
     // senior_profiles/{uid} parity write for the PRIMARY recipient —

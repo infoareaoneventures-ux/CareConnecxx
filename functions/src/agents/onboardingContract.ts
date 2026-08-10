@@ -112,6 +112,8 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "preferences", "budget", "schedule",
   // Multi-recipient household
   "additionalRecipients",
+  // Home address (account holder's address — distinct from care address)
+  "homeStreet", "homeCity", "homeZipCode", "homeState",
 ]);
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([

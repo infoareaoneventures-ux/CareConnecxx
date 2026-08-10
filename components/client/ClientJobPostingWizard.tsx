@@ -366,7 +366,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               <div>
                 <p className="text-white font-semibold text-sm">Safety is our top priority</p>
                 <p className="text-indigo-200 text-xs mt-1">
-                  Every caregiver on CareConnex is background checked and their profile is reviewed by our Trust & Safety team.
+                  Every caregiver on Evia is background checked and their profile is reviewed by our Trust & Safety team.
                 </p>
               </div>
             </div>
@@ -422,9 +422,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <h2 className="text-xl font-bold text-slate-800 text-center">
               What's your home address?
             </h2>
-            <p className="text-slate-500 text-sm text-center -mt-2">
-              We'll use this to find caregivers near you.
-            </p>
             <div className="flex flex-col gap-3">
               <input
                 type="text"

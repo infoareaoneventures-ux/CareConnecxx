@@ -82,6 +82,7 @@ import { Home, Settings, MessageSquare, ClipboardList, Loader2, RefreshCw, LogOu
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CareConnexProvider, useCareConnex } from './context/CareConnexContext';
+import { PasswordGate } from './components/auth/PasswordGate';
 
 
 // Push Notifications
@@ -495,11 +496,13 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <ErrorBoundary>
-      <CareConnexProvider>
-        <AppContent />
-      </CareConnexProvider>
-    </ErrorBoundary>
+    <PasswordGate>
+      <ErrorBoundary>
+        <CareConnexProvider>
+          <AppContent />
+        </CareConnexProvider>
+      </ErrorBoundary>
+    </PasswordGate>
   );
 };
 

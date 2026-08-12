@@ -1,26 +1,67 @@
 import React, { useState } from 'react';
+import { db } from '../../lib/firebase';
 
+// The access code's hash lives in Firestore (config/sitePassword — hash+salt
+// only, never the plaintext) instead of being compiled into the JS bundle.
+// VITE_-prefixed vars are baked into the client bundle in plain text, which is
+// how the previous client-side comparison leaked the password to anyone
+// opening devtools. This flag is just a public on/off switch; it carries no
+// secret. Verification happens entirely client-side against the public hash —
+// this is a soft beta wall, not a security boundary, so a determined visitor
+// could still brute-force the hash offline; it just isn't handed to them for free.
 const STORAGE_KEY = 'evia_beta_access';
-const PASSWORD = import.meta.env.VITE_SITE_PASSWORD as string | undefined;
+const UNLOCK_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const GATE_ENABLED = import.meta.env.VITE_SITE_PASSWORD_GATE_ENABLED === 'true';
+
+function hasValidStoredUnlock(): boolean {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return false;
+  const unlockedAt = Number(raw);
+  return Number.isFinite(unlockedAt) && Date.now() - unlockedAt < UNLOCK_TTL_MS;
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+let cachedSaltHash: { salt: string; hash: string } | null = null;
+async function fetchSaltHash(): Promise<{ salt: string; hash: string } | null> {
+  if (cachedSaltHash) return cachedSaltHash;
+  if (!db) return null;
+  const snap = await db.collection('config').doc('sitePassword').get();
+  const data = snap.data() as { salt?: string; hash?: string } | undefined;
+  if (!data?.salt || !data?.hash) return null;
+  cachedSaltHash = { salt: data.salt, hash: data.hash };
+  return cachedSaltHash;
+}
 
 export const PasswordGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [unlocked, setUnlocked] = useState(() => {
-    if (!PASSWORD) return true;
-    return localStorage.getItem(STORAGE_KEY) === PASSWORD;
-  });
+  const [unlocked, setUnlocked] = useState(() => !GATE_ENABLED || hasValidStoredUnlock());
   const [input, setInput] = useState('');
   const [error, setError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   if (unlocked) return <>{children}</>;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (input === PASSWORD) {
-      localStorage.setItem(STORAGE_KEY, PASSWORD!);
+    if (!input || submitting) return;
+    setSubmitting(true);
+    setError(false);
+    try {
+      const saltHash = await fetchSaltHash();
+      if (!saltHash) throw new Error('access code unavailable');
+      const attemptHash = await sha256Hex(saltHash.salt + input);
+      if (attemptHash !== saltHash.hash) throw new Error('incorrect code');
+      localStorage.setItem(STORAGE_KEY, String(Date.now()));
       setUnlocked(true);
-    } else {
+    } catch {
       setError(true);
       setInput('');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -45,10 +86,10 @@ export const PasswordGate: React.FC<{ children: React.ReactNode }> = ({ children
           {error && <p className="text-red-500 text-sm text-center">Incorrect code — try again</p>}
           <button
             type="submit"
-            disabled={!input}
+            disabled={!input || submitting}
             className="w-full py-3.5 btn-depth-primary rounded-full disabled:opacity-30 disabled:cursor-not-allowed font-semibold text-[15px]"
           >
-            Continue →
+            {submitting ? 'Checking…' : 'Continue →'}
           </button>
         </form>
 

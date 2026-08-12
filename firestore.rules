@@ -79,6 +79,18 @@ service cloud.firestore {
     }
     
     // ==========================================
+    // SITE PASSWORD GATE
+    // ==========================================
+    // Public read-only access to the salted hash backing the private-beta
+    // access screen (see components/auth/PasswordGate.tsx). Only the hash and
+    // salt live here — never the password itself — so a public read is safe;
+    // the doc is written manually via the Firebase Console, never by clients.
+    match /config/sitePassword {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ==========================================
     // USERS COLLECTION
     // ==========================================
     match /users/{userId} {

@@ -101,6 +101,12 @@ export const CAREGIVER_REQUIRED_FIELDS: readonly string[] = [
 export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...CLIENT_REQUIRED_FIELDS,
   // Additional wizard fields (optional but collected when offered)
+  // age was dropped from CLIENT_REQUIRED_FIELDS on purpose (commit c62fbaf,
+  // "age is optional") but that also removed it from ALLOWED_FIELDS as an
+  // unintended side effect, since ALLOWED = REQUIRED + this extras list —
+  // save_onboarding_field("age", ...) was silently rejected ever since even
+  // though onboardingDirective.ts still instructs the model to ask for it.
+  "age",
   "conditions", "zipCode", "hoursPerDay", "daysPerWeek",
   "street", "state", "neighborhood",
   "emergencyContactRelationship",

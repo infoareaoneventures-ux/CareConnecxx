@@ -19,9 +19,11 @@ import {
 
 describe("onboardingContract", () => {
   it("client required fields are the flat keys downstream consumers read", () => {
-    expect(CLIENT_REQUIRED_FIELDS).toEqual(
-      ["firstName", "seniorName", "age", "careNeeds", "city", "daysPerWeek", "timeOfDay"],
-    );
+    expect(CLIENT_REQUIRED_FIELDS).toEqual([
+      "careFrequency", "city", "startDate", "selectedDays", "timeOfDay",
+      "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
+      "careNeeds", "rate", "firstName",
+    ]);
   });
 
   it("caregiver required fields match the caregiver step parse targets", () => {
@@ -38,29 +40,41 @@ describe("onboardingContract", () => {
 
   describe("missingRequiredFields (the complete_collection gate)", () => {
     it("empty client data → every required field missing", () => {
-      expect(missingRequiredFields("client", {})).toEqual(
-        ["firstName", "seniorName", "age", "careNeeds", "city", "daysPerWeek", "timeOfDay"],
-      );
+      expect(missingRequiredFields("client", {})).toEqual([
+        "careFrequency", "city", "startDate", "selectedDays", "timeOfDay",
+        "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
+        "careNeeds", "rate", "firstName",
+      ]);
     });
 
     it("fully-filled client data → nothing missing (handoff allowed)", () => {
       const data = {
-        firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"],
-        city: "Austin", daysPerWeek: 5, timeOfDay: "mornings",
+        careFrequency: "part_time", city: "Austin",
+        startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
+        relationship: "daughter", seniorName: "Dorothy",
+        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
+        careNeeds: ["bathing"], rate: 26, firstName: "Imran",
       };
       expect(missingRequiredFields("client", data)).toEqual([]);
     });
 
     it("partial client data → only the unfilled fields, in flow order", () => {
-      const data = { firstName: "Imran", seniorName: "Dorothy" };
-      expect(missingRequiredFields("client", data)).toEqual(
-        ["age", "careNeeds", "city", "daysPerWeek", "timeOfDay"],
-      );
+      const data = { careFrequency: "part_time", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
+      expect(missingRequiredFields("client", data)).toEqual([
+        "startDate", "selectedDays", "timeOfDay", "emergencyContactName",
+        "emergencyContactPhone", "careNeeds", "rate", "firstName",
+      ]);
     });
 
     it("treats empty string / zero / empty array as unfilled (isFieldFilled)", () => {
-      const data = { firstName: "  ", seniorName: "Dorothy", age: 0, careNeeds: ["meds"], city: "Austin", daysPerWeek: 3, timeOfDay: [] };
-      expect(missingRequiredFields("client", data)).toEqual(["firstName", "age", "timeOfDay"]);
+      const data = {
+        careFrequency: "part_time", city: "Austin",
+        startDate: "2026-09-01", selectedDays: ["MON"], timeOfDay: [],
+        relationship: "daughter", seniorName: "Dorothy",
+        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
+        careNeeds: ["bathing"], rate: 0, firstName: "  ",
+      };
+      expect(missingRequiredFields("client", data)).toEqual(["timeOfDay", "rate", "firstName"]);
     });
 
     it("caregiver gate checks the caregiver set", () => {

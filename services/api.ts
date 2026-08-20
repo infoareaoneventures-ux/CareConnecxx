@@ -3783,11 +3783,19 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     });
 
     // Best-effort writes — don't block wizard completion if they fail
+    // name/needs are the canonical Senior fields (types.ts) — read by the
+    // dashboard, ClientProfile, and the AI matching engine. careNeeds/
+    // firstName/lastName are kept too (also valid Senior fields) but were
+    // previously the ONLY fields written here, so a web-onboarded client's
+    // care needs never showed up anywhere that reads the canonical `needs`.
+    const recipientName = [clean.careRecipientFirstName, clean.careRecipientLastName].filter(Boolean).join(' ');
     const profileUpdate: Record<string, any> = {
         careNeeds: clean.careNeeds,
+        needs: clean.careNeeds,
         scheduleNeeded: clean.selectedDays,
         zipCode: clean.zipCode,
     };
+    if (recipientName) profileUpdate.name = recipientName;
     if (clean.city && clean.state) profileUpdate.location = `${clean.city}, ${clean.state}`;
     if (clean.careRecipientFirstName) profileUpdate.firstName = clean.careRecipientFirstName;
     if (clean.careRecipientLastName)  profileUpdate.lastName  = clean.careRecipientLastName;

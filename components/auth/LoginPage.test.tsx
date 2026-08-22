@@ -34,6 +34,10 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 
+// Private-beta gate — these tests exercise login routing, not the beta
+// allowlist, so the fixture phone (4085551234) always passes it.
+vi.mock('../../utils/phoneAllowlist', () => ({ isPhoneAllowed: () => true }));
+
 import { AuthLoginPage } from './LoginPage';
 
 const enterPhoneAndSend = async () => {
@@ -58,19 +62,19 @@ describe('AuthLoginPage', () => {
     hoisted.getUser.mockResolvedValue({ userType: 'client' });
   });
 
-  it('routes a client to the chat tab after OTP', async () => {
+  it('routes a client to the dashboard after OTP', async () => {
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/chat', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/dashboard', { replace: true }));
   });
 
-  it('routes a caregiver to the caregiver chat tab', async () => {
+  it('routes a caregiver to the caregiver dashboard', async () => {
     hoisted.getUser.mockResolvedValue({ userType: 'caregiver' });
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/caregiver/chat', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/caregiver/dashboard', { replace: true }));
   });
 
   it('routes an admin to /admin', async () => {
@@ -81,12 +85,12 @@ describe('AuthLoginPage', () => {
     await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/admin', { replace: true }));
   });
 
-  it('routes a user with NO profile doc to the chat tab (Meet-Evia state), never a signup bounce', async () => {
+  it('routes a user with NO profile doc to the client dashboard, never a signup bounce', async () => {
     hoisted.getUser.mockResolvedValue(null);
     render(<AuthLoginPage />);
     await enterPhoneAndSend();
     await enterOtp();
-    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/chat', { replace: true }));
+    await waitFor(() => expect(hoisted.navigate).toHaveBeenCalledWith('/client/dashboard', { replace: true }));
   });
 
   it('recovers from a failed send: fresh verifier, retry succeeds', async () => {

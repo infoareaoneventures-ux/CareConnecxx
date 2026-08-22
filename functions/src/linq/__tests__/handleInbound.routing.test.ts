@@ -104,6 +104,10 @@ vi.mock("firebase-admin", () => ({
   firestore: hoisted.firestoreFn,
 }));
 
+// Private-beta gate (functions/src/config/phoneAllowlist.ts) — these tests pin
+// routing behavior, not the beta allowlist, so every fixture phone passes it.
+vi.mock("../../config/phoneAllowlist", () => ({ isPhoneAllowed: vi.fn(() => true) }));
+
 // ── Linq client + messaging ──────────────────────────────────────────────────
 const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m1" }));
 const sendToPhone = vi.fn(async (..._a: any[]) => ({ message_id: "m2" }));
@@ -1158,8 +1162,10 @@ describe("caregiver onboarding agent-loop flag routing", () => {
 // A checkpoint on a GATE step still resumes through the scripted runner.
 describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
   const COMPLETE_CLIENT = {
-    firstName: "Sarah", seniorName: "Dorothy", age: 82,
-    careNeeds: ["companionship"], city: "San Jose", daysPerWeek: 3, timeOfDay: "mornings",
+    firstName: "Sarah", seniorName: "Dorothy", age: 82, relationship: "daughter",
+    careNeeds: ["companionship"], city: "San Jose", timeOfDay: "mornings",
+    careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+    emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000", rate: 25,
   };
 
   function seedCheckpoint(step: string, data: Record<string, unknown>, userType = "client") {

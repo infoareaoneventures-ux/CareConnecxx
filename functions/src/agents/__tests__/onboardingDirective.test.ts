@@ -13,9 +13,9 @@ describe("buildOnboardingDirective", () => {
   it("client mid-collection lists only the unfilled fields and instructs save_onboarding_field", () => {
     const d = buildOnboardingDirective("client", { firstName: "Imran" });
     expect(d).toContain("save_onboarding_field");
-    expect(d).toContain("the senior's age");
-    expect(d).toContain("what kind of help the senior needs");
-    expect(d).toContain("how many days a week");
+    expect(d).toContain("the first and last name of the person who needs care");
+    expect(d).toContain("what kind of help is needed day to day");
+    expect(d).toContain("which days of the week");
     // firstName is known → shown as known, not as still-needed
     expect(d).toMatch(/already have it[\s\S]*first name|first name[\s\S]*already have it/i);
   });
@@ -24,6 +24,9 @@ describe("buildOnboardingDirective", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"],
       city: "Austin", daysPerWeek: 5, timeOfDay: "mornings",
+      careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+      relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
+      rate: 25,
     });
     expect(d).toContain("complete_collection");
     expect(d).toContain("all required fields collected");
@@ -45,8 +48,8 @@ describe("buildOnboardingDirective", () => {
   it("offers the voice-memo option once, never repeated", () => {
     const d = buildOnboardingDirective("client", {}).toLowerCase();
     expect(d).toContain("voice memo");
-    expect(d).toContain("once per conversation");
-    expect(d).toContain("never repeat it");
+    expect(d).toContain("offer once");
+    expect(d).toContain("never repeat the offer");
   });
 
   it("handles self-seekers: senior = sender, direct address, never asks who they're caring for", () => {
@@ -61,7 +64,7 @@ describe("buildOnboardingDirective", () => {
     const d = buildOnboardingDirective("client", {}).toLowerCase();
     expect(d).toContain("multiple loved ones");
     expect(d).toContain("additionalrecipients");
-    expect(d).toContain("more than one");
+    expect(d).toContain("everyone else");
   });
 
   it("contains no chatbot phrasing except inside a 'never say' prohibition", () => {

@@ -7,15 +7,24 @@ let localDocs: Array<{ data: () => Record<string, unknown> }> = [];
 let widerDocs: Array<{ data: () => Record<string, unknown> }> = [];
 
 vi.mock("firebase-admin", () => {
-  const firestore = () => ({
-    collection: () => ({
-      where: () => ({
-        where: () => ({
-          limit: () => ({ get: async () => ({ empty: localDocs.length === 0, docs: localDocs }) }),
-        }),
-        limit: () => ({ get: async () => ({ empty: widerDocs.length === 0, docs: widerDocs }) }),
-      }),
+  // Chainable query-builder mock: .where() can be called an arbitrary number of
+  // times (each call just returns the same shape again, recording nothing since
+  // the tests only care about the total filter count). The action's "local"
+  // query chains 3 .where()s (onboardingStatus, verificationStatus, city) before
+  // .limit().get(); its "wider" fallback chains only 2 (no city filter). Decide
+  // which fixture to serve based on the accumulated where() count at the point
+  // .limit().get() resolves.
+  const buildQuery = (whereCount: number): any => ({
+    where: () => buildQuery(whereCount + 1),
+    limit: () => ({
+      get: async () => {
+        const docs = whereCount >= 3 ? localDocs : widerDocs;
+        return { empty: docs.length === 0, docs };
+      },
     }),
+  });
+  const firestore = () => ({
+    collection: () => buildQuery(0),
   });
   return {
     __esModule: true,

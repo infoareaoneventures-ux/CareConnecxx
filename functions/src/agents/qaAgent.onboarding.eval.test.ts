@@ -433,7 +433,12 @@ describe("onboarding eval graders (pure, no spend)", () => {
     const grade = gradeOnboardingTranscript({
       replies: ["Got it — who are we caring for?", "And how old is Jane?", "What city?", "Perfect, that's everything — setting you up now."],
       perTurnSendCounts: [1, 1, 1, 1],
-      finalData: { firstName: "Imran", seniorName: "Jane", age: 82, careNeeds: ["bathing"], city: "Austin", daysPerWeek: 3, timeOfDay: "mornings" },
+      finalData: {
+        firstName: "Imran", seniorName: "Jane", age: 82, careNeeds: ["bathing"],
+        city: "Austin", daysPerWeek: 3, timeOfDay: "mornings",
+        careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+        relationship: "son", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000", rate: 25,
+      },
       role: "client",
       completeFiredWith: [],
     });
@@ -506,6 +511,9 @@ describe("eval harness tool engine (no spend)", () => {
     for (const [fieldName, fieldValue] of [
       ["seniorName", "Jane"], ["age", 82], ["careNeeds", ["bathing", "meals"]],
       ["city", "Austin"], ["daysPerWeek", 3], ["timeOfDay", "mornings"],
+      ["careFrequency", "part_time"], ["startDate", "2026-08-01"],
+      ["selectedDays", ["Mon", "Wed", "Fri"]], ["relationship", "son"],
+      ["emergencyContactName", "Jane Doe"], ["emergencyContactPhone", "+15551230000"], ["rate", 25],
     ] as Array<[string, unknown]>) {
       await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue }, false);
     }

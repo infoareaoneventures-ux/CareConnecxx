@@ -184,7 +184,7 @@ describe("buildCarePlanInterviewDirective", () => {
   it("asks about reminders (not drugs); routine asked once; dietary volunteer-only", async () => {
     const d = await buildCarePlanInterviewDirective(CLIENT, { seniorName: "Rose" });
     expect(d).toMatch(/ask ONCE whether they'd like the caregiver to give medication reminders/i);
-    expect(d).toMatch(/NEVER ask about specific medications/i);
+    expect(d).toMatch(/NEVER ask about, save, or comment on specific medications/i);
     expect(d).toMatch(/NEVER a drug name/i);
     expect(d).toMatch(/ask ONCE[\s\S]*daily routine/i);
     expect(d).toMatch(/NEVER ask about routine a second time/i);

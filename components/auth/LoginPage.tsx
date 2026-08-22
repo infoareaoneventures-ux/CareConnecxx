@@ -4,6 +4,7 @@ import { auth, getOrCreateRecaptchaVerifier, clearRecaptchaVerifier } from '../.
 import { dbService } from '../../services/api';
 import type firebase from 'firebase/compat/app';
 import { BloomMark } from '../ui/BloomMark';
+import { isPhoneAllowed } from '../../utils/phoneAllowlist';
 
 type Step = 'phone' | 'otp';
 
@@ -55,13 +56,10 @@ export const AuthLoginPage: React.FC = () => {
     return () => clearTimeout(t);
   }, [resendCountdown]);
 
-  // ALLOWLIST: remove before public launch
-  const ALLOWED_PHONES = new Set(['+14086370269', '+14087261330', '+14088745451', '+14086370483']);
-
   const sendCode = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!isValid || !auth) return;
-    if (!ALLOWED_PHONES.has(`${countryCode}${digits}`)) {
+    if (!isPhoneAllowed(`${countryCode}${digits}`)) {
       setError("Evia is currently in private testing. Your number is not on the access list.");
       return;
     }
@@ -105,9 +103,8 @@ export const AuthLoginPage: React.FC = () => {
     setLoading(true);
     try {
       const cred = await confirmation.confirm(code);
-      // Role-aware landing on the Chat tab — chat is the home surface
-      // (tomo-style). A brand-new account with no profile also lands on chat,
-      // which renders the "Meet Evia" get-set-up state instead of bouncing
+      // Role-aware landing on the dashboard. A brand-new account with no
+      // profile also lands on the client dashboard instead of bouncing
       // straight into the signup wizard.
       const uid = cred?.user?.uid ?? auth?.currentUser?.uid;
       let dest = '/client/dashboard';

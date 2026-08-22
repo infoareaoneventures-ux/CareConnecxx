@@ -264,6 +264,17 @@ export const dbService = {
         }
     },
 
+    // Beta access-code hash (config/sitePassword — hash+salt only, never the
+    // plaintext). Public read-only doc; see PasswordGate.tsx for the client-side
+    // verification flow this backs.
+    getSitePasswordHash: async (): Promise<{ salt: string; hash: string } | null> => {
+        if (!isConfigured || !db) return null;
+        const snap = await db.collection('config').doc('sitePassword').get();
+        const data = snap.data() as { salt?: string; hash?: string } | undefined;
+        if (!data?.salt || !data?.hash) return null;
+        return { salt: data.salt, hash: data.hash };
+    },
+
     getUser: async (uid: string): Promise<AdminUser | null> => {
         if (isConfigured && db) {
             try {

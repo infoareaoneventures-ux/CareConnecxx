@@ -5,7 +5,6 @@ import {
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
 import { dbService, createJobPosting } from '../../services/api';
-import { db } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -142,11 +141,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   // Pre-fill address and name from users doc
   useEffect(() => {
     const load = async () => {
-      const fdb = db;
-      if (!fdb) return;
       try {
-        const snap = await fdb.collection('users').doc(uid).get();
-        const d = snap.data() as any;
+        const d = await dbService.getUser(uid) as any;
         if (d) {
           // Prefer dedicated fields; fall back to splitting combined `name`.
           // Guard: if firstName somehow contains the full name (space present)
@@ -250,8 +246,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   };
 
   const handleSaveHomeAddress = () => {
-    if (db && homeAddress.zipCode) {
-      db.collection('users').doc(uid).update({
+    if (homeAddress.zipCode) {
+      dbService.updateUser('users', uid, {
         street: homeAddress.street,
         zipCode: homeAddress.zipCode,
         city: homeAddress.city,

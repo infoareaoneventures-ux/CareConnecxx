@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { db } from '../../lib/firebase';
+import { dbService } from '../../services/api';
 
 // The access code's hash lives in Firestore (config/sitePassword — hash+salt
 // only, never the plaintext) instead of being compiled into the JS bundle.
@@ -29,11 +29,9 @@ async function sha256Hex(text: string): Promise<string> {
 let cachedSaltHash: { salt: string; hash: string } | null = null;
 async function fetchSaltHash(): Promise<{ salt: string; hash: string } | null> {
   if (cachedSaltHash) return cachedSaltHash;
-  if (!db) return null;
-  const snap = await db.collection('config').doc('sitePassword').get();
-  const data = snap.data() as { salt?: string; hash?: string } | undefined;
-  if (!data?.salt || !data?.hash) return null;
-  cachedSaltHash = { salt: data.salt, hash: data.hash };
+  const saltHash = await dbService.getSitePasswordHash();
+  if (!saltHash) return null;
+  cachedSaltHash = saltHash;
   return cachedSaltHash;
 }
 

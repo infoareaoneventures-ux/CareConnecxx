@@ -54,7 +54,6 @@ import { writePhaseCheckpoint, loadPhaseCheckpoint, buildResumeDirective, TURN_L
 import type { SourceTurnIdentity } from "./turnSourceKey";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import { getMarketRateText } from "../utils/marketRateRange";
-import { carePlanInterviewPending, buildCarePlanInterviewDirective, maybeCompleteCarePlanInterview } from "./carePlanInterview";
 import { detectFrustrationSignals, detectAgentSelfRepeat } from "./frustrationSignals";
 import {
   HUMAN_HANDOFF_COPY,
@@ -423,7 +422,7 @@ async function buildClientCoreContext(
   if (plan) {
     const planLines: string[] = [];
     const fmt = (v: unknown) => Array.isArray(v) ? v.join("; ") : String(v);
-    for (const field of ["medications", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes"]) {
+    for (const field of ["careNeeds", "notes"]) {
       if (plan[field] && (!Array.isArray(plan[field]) || plan[field].length)) {
         planLines.push(`  - ${field}: ${fmt(plan[field])}`);
       }
@@ -2255,28 +2254,9 @@ export async function runQaAgent(params: {
       "Step 1 — On your FIRST reply this mode is active, call get_care_plan to pull the current care plan, and combine it with the senior profile and learned facts already in your context above. " +
       "Step 2 — Summarize what's on file in ONE short, warm prose sentence (e.g. \"I have Anita, 78, in Gilroy, needing help with bathing and meds.\") and end with ONE open question (\"Is any of that wrong?\" or \"What should we update?\"). Never invent a city or detail you can't see in the context. " +
       "Step 3 — Wait for the family to name what's wrong. When they do, read the proposed change back in plain English (\"Got it — updating her name to Anita. Confirm?\") and wait for an explicit yes before calling the update tool. " +
-      "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for medications, careNeeds, dietary, special instructions — passing recipientFirstName whenever the household cares for more than one person. Use update_memory_file for durable narrative facts (personality, routines, family). " +
+      "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for careNeeds. Use update_memory_file for durable narrative facts (personality, routines, family). " +
       "Step 5 — After each successful patch, ask if there's anything else to fix (ONE question). When the family says \"that's it\", \"all good\", \"nothing else\", or equivalent, keep the closing reply warm and short. " +
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
-  }
-
-  // CARE PLAN INTERVIEW (2026-07-15) — post-onboarding clients with an
-  // incomplete care plan get a standing per-turn goal: finish the plan (task
-  // detail + medications + emergency contact) so caregivers know exactly what
-  // care is needed. Founder decisions: everything interrupts, the interview
-  // re-asserts each turn, completion is computed from data (never model-
-  // asserted — maybeCompleteCarePlanInterview post-turn). Directive is grounded
-  // in LIVE completeness so filled fields are never re-asked. Gated on the
-  // CARE_PLAN_INTERVIEW_ENABLED kill switch inside carePlanInterviewPending;
-  // fail-soft "" on any read error (normal turn, re-asserts next turn).
-  const interviewActive =
-    !onboardingMode && userType !== "caregiver" && !shadowMode &&
-    carePlanInterviewPending(session as Record<string, unknown> | undefined);
-  if (interviewActive && userId) {
-    systemPrompt += await buildCarePlanInterviewDirective(
-      userId,
-      session as Record<string, unknown> | undefined,
-    );
   }
 
   // ONBOARDING MODE (U3) — the agent loop is driving conversational field
@@ -2478,18 +2458,6 @@ export async function runQaAgent(params: {
       } catch (err) {
         console.warn("toolPacks selection failed (non-fatal, legacy surface kept)", err instanceof Error ? err.message : err);
       }
-    }
-    // Care-plan interview: the save tools must survive the per-intent filter —
-    // a family answering "she takes lisinopril" mid-match-question would
-    // otherwise land on a turn whose intent filtered update_care_plan out,
-    // and the answer would be acknowledged but never saved.
-    if (interviewActive && activeTools.length !== baseTools.length) {
-      const CARE_PLAN_INTERVIEW_TOOLS = new Set(["get_care_plan", "update_care_plan", "save_care_task_detail"]);
-      const present = new Set(activeTools.map(t => t.name));
-      activeTools = [
-        ...activeTools,
-        ...baseTools.filter(t => CARE_PLAN_INTERVIEW_TOOLS.has(t.name) && !present.has(t.name)),
-      ];
     }
     if (activeTools.length !== baseTools.length) {
       console.info("qaAgent: tool surface filtered", {
@@ -3525,17 +3493,6 @@ export async function runQaAgent(params: {
       const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
       await fulfillNarratedLinkPromise({ phone, chatId, reply, userType }).catch((err) =>
         console.error("qaAgent: link-promise net failed", err));
-    }
-
-    // Care-plan interview completion — data-driven, checked AFTER this turn's
-    // tool writes landed and the family's reply already went out (no latency
-    // cost to them). The claim is transactional inside, so webhook retries and
-    // racing turns can't double-fire the job-post enrichment or the engaged-
-    // caregiver follow-up. Awaited (not fire-and-forget): the follow-up sends
-    // must finish before this function invocation ends.
-    if (interviewActive && !skipSend && !shadowMode) {
-      await maybeCompleteCarePlanInterview(phone, session as Record<string, unknown> | undefined)
-        .catch((err) => console.error("qaAgent: care-plan completion check failed", err));
     }
 
     // A real answer went out — clear any open "I'll get back to you"

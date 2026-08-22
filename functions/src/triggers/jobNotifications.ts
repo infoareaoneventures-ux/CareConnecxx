@@ -385,9 +385,8 @@ export async function handleJobResponse(
     pendingJobId:                     jobId,
   } as any);
 
-  // Record the interest on the notification doc — "engaged" caregivers
-  // (interested or applied) are the ones who get the care-plan follow-up when
-  // the family finishes their plan (carePlanInterview, 2026-07-15).
+  // Record the interest on the notification doc — status feeds
+  // notifyFamilyIfAllDeclined's "has everyone notified responded" check.
   await db.collection("job_notifications")
     .where("phone", "==", phone)
     .where("jobId", "==", jobId)

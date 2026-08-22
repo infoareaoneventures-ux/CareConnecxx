@@ -361,6 +361,28 @@ async function ensureCaregiverCoords(
   return { ...d, lat: coords.lat, lng: coords.lng };
 }
 
+// Client-side twin of ensureCaregiverCoords — SMS clients type a city/zip and
+// (unlike a shared pin) never had coordinates persisted anywhere, so
+// carePlans.locationPool and the caregiver-preview scoring had no real
+// distance to work with. Geocodes the CARE address (falls back to the home
+// address) once and persists it the same way, so both the care-plan write and
+// the caregiver preview downstream benefit from the same coordinates.
+async function ensureClientCoords(
+  phone: string, d: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (typeof d.lat === "number" && typeof d.lng === "number") return d;
+  const city    = (d.city as string | undefined)    || (d.homeCity as string | undefined);
+  const zipCode = (d.zipCode as string | undefined)  || (d.homeZipCode as string | undefined);
+  const state   = (d.state as string | undefined)    || (d.homeState as string | undefined);
+  const coords = await geocodeCityOrZip(city, zipCode, state).catch(() => null);
+  if (!coords) return d;
+  await db.collection("agent_sessions").doc(phone).update({
+    "onboardingData.lat": coords.lat,
+    "onboardingData.lng": coords.lng,
+  }).catch((err) => console.error("ensureClientCoords: session persist failed (non-fatal):", err));
+  return { ...d, lat: coords.lat, lng: coords.lng };
+}
+
 // ── Gate-step profile updates (2026-07-15) ────────────────────────────────────
 // A caregiver parked at an awaiting/gate step who volunteers new profile info
 // ("I can do transportation as well") used to get a context-free re-nudge and
@@ -2295,10 +2317,11 @@ async function handleClientShowCaregivers(
   session: AgentSession,
   opts: { withIntro?: boolean } = {},
 ): Promise<void> {
-  const d          = (session as any).onboardingData ?? {};
+  let d            = (session as any).onboardingData ?? {};
   const city       = (d.city       as string) ?? "";
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
+  const needsTransportation = careNeeds.some((t) => /transport/i.test(t));
 
   // Intake is confirmed — this family is a real lead. Create their webapp
   // account NOW (Auth user + users/{uid} seed), not at the payment webhook, so
@@ -2307,6 +2330,12 @@ async function handleClientShowCaregivers(
     const uid = await ensureWebAccount(phone, "client", (d.firstName as string) ?? "");
     if (uid) (session as any).userId = uid;
   }
+
+  // Geocode BEFORE persisting so both carePlans.locationPool and the
+  // caregiver-preview scoring below get real coordinates — SMS clients type a
+  // city/zip and (unlike a shared pin) never had coordinates persisted
+  // anywhere, so proximity-based preview scoring had nothing to work with.
+  d = await ensureClientCoords(phone, d).catch(() => d);
 
   // …and persist the confirmed intake as real care records NOW (carePlans,
   // senior_profiles, clientIntakes) so the webapp shows the care recipient
@@ -2320,7 +2349,11 @@ async function handleClientShowCaregivers(
   let preview: Awaited<ReturnType<typeof runGetCaregiverPreviewAction>>;
   try {
     preview = await runGetCaregiverPreviewAction(
-      { city, seniorName, careNeeds },
+      {
+        city, seniorName, careNeeds, needsTransportation,
+        ...(typeof d.lat === "number" && typeof d.lng === "number" ? { lat: d.lat as number, lng: d.lng as number } : {}),
+        ...(Array.isArray(d.selectedDays) && d.selectedDays.length ? { schedule: d.selectedDays as string[] } : {}),
+      },
       { caller: "sms_agent", role: "client", phone, chatId },
     );
   } catch (err) {

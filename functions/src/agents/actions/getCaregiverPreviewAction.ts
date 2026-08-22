@@ -3,6 +3,7 @@ import { z } from "zod";
 import { defineCaraAction } from "../actionNative/defineCaraAction";
 import { runCaraAction } from "../actionNative/runCaraAction";
 import type { CaraActionContext } from "../actionNative/caraActionTypes";
+import { scoreAndRankCaregivers } from "../caregiverMatchScoring";
 
 const db = admin.firestore();
 
@@ -10,6 +11,13 @@ const caregiverPreviewInputSchema = z.object({
   city: z.string().optional().default(""),
   seniorName: z.string().optional().default("your loved one"),
   careNeeds: z.array(z.string()).optional().default([]),
+  // When lat/lng are present, powers real distance + skills/availability
+  // scoring — the same logic as the website dashboard's Nearby Caregivers
+  // widget — instead of the plain exact-city-string match below.
+  lat: z.number().optional(),
+  lng: z.number().optional(),
+  schedule: z.array(z.string()).optional(),
+  needsTransportation: z.boolean().optional().default(false),
 });
 
 const caregiverPreviewItemSchema = z.object({
@@ -59,6 +67,14 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
   publicAllowed: false,
   allowedRoles: ["client", "admin", "system"],
   run: async input => {
+    // Real coordinates unlock the same distance + skills/availability scoring
+    // the website dashboard's Nearby Caregivers widget uses, instead of the
+    // plain exact-city-string match below (kept as the fallback for callers
+    // that don't have coordinates yet).
+    if (input.lat != null && input.lng != null) {
+      return runScoredCaregiverPreview(input as CaregiverPreviewInput & { lat: number; lng: number });
+    }
+
     // Fetch a wider window than we show (15 vs 5): the seed filter runs
     // post-fetch, so a small limit could be consumed entirely by seeded docs
     // and starve real caregivers ranked just past it.
@@ -115,6 +131,55 @@ export async function runGetCaregiverPreviewAction(
   ctx: CaraActionContext,
 ): Promise<CaregiverPreviewOutput> {
   return runCaraAction(getCaregiverPreviewCaraAction, input, ctx);
+}
+
+/**
+ * Real distance + skills/availability scoring (mirrors the website dashboard's
+ * Nearby Caregivers widget — hooks/useNearbyCaregiversWithScores.ts, ported
+ * for the backend in caregiverMatchScoring.ts). Primary pass applies the same
+ * hard filters the dashboard does (25mi radius / caregiver's own service
+ * radius / transport docs if needed); if that finds nobody, a relaxed backup
+ * pass re-ranks the SAME candidate pool with those filters dropped (still
+ * sorted by skills → availability → rating → distance) rather than falling
+ * back to an unordered "just grab whoever's active" query.
+ */
+async function runScoredCaregiverPreview(
+  input: CaregiverPreviewInput & { lat: number; lng: number },
+): Promise<CaregiverPreviewOutput> {
+  const snap = await db.collection("caregivers")
+    .where("onboardingStatus", "==", "profile_complete")
+    .limit(100)
+    .get();
+  const rawDocs = snap.docs
+    .map(doc => ({ id: doc.id, data: { ...doc.data(), id: doc.id } }))
+    .filter(({ data }) => !isSeededCaregiver(data));
+
+  const scoreOpts = {
+    clientLocations: [{ lat: input.lat, lng: input.lng }],
+    clientCareNeeds: input.careNeeds,
+    clientSchedule: input.schedule,
+    needsTransportation: input.needsTransportation,
+  };
+
+  const primary = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, maxDistance: 25, applyHardFilters: true });
+  if (primary.length > 0) {
+    return buildCaregiverPreviewResult({
+      caregivers: primary.map(c => c.data),
+      widened: false,
+      city: input.city,
+      seniorName: input.seniorName,
+      careNeeds: input.careNeeds,
+    });
+  }
+
+  const backup = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, applyHardFilters: false });
+  return buildCaregiverPreviewResult({
+    caregivers: backup.map(c => c.data),
+    widened: backup.length > 0,
+    city: input.city,
+    seniorName: input.seniorName,
+    careNeeds: input.careNeeds,
+  });
 }
 
 export function buildCaregiverPreviewResult(opts: {

@@ -126,6 +126,10 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "caregiversNeeded",
   // Ongoing vs. specific end date — matches wizard step 6's toggle + date field
   "ongoing", "endDate",
+  // Whether the selected days are flexible — asked alongside selectedDays/
+  // timeOfDay (step 5) but was missing from this list, so save_onboarding_field
+  // silently rejected it and it always came out false regardless of the answer.
+  "daysFlexible",
 ]);
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([

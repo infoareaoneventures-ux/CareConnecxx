@@ -12,7 +12,6 @@ import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDisco
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
-import { carePlanInterviewPending } from "../agents/carePlanInterview";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { isConvergenceFlipped } from "../config/featureFlags";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
@@ -1861,12 +1860,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // anything ambiguous falls through to runQaAgent below. A degraded
     // classification (classifier error → guessed QUESTION) never qualifies —
     // the full agent path with its supervisor is the fail-safe.
-    // Care-plan interview (2026-07-15): while the interview is pending the
-    // bypass is disabled — a bare "thanks" must still reach the full loop so
-    // the interview directive can steer back to the next missing item
-    // (founder: everything interrupts, the interview re-asserts every turn).
-    if (intent === "QUESTION" && !intentDegraded && isTrivialQuickReply(text) &&
-        !carePlanInterviewPending(session as unknown as Record<string, unknown>)) {
+    if (intent === "QUESTION" && !intentDegraded && isTrivialQuickReply(text)) {
       const quickReply = await runQuickReply({
         text,
         phone,

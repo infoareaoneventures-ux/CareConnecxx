@@ -108,17 +108,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     status: "shipped",
   },
   {
-    id: "client-save-care-task-detail",
-    actor: "client",
-    action: "Record per-recipient day-to-day care tasks by category (care-plan interview / Step3CareNeeds parity)",
-    webSurface: "components/client/postJob/Step3CareNeeds.tsx",
-    collection: "carePlans",
-    tool: "save_care_task_detail",
-    promptActor: "client",
-    status: "shipped",
-    notes: "Added 2026-07-15 with the post-payment care-plan interview; writes recipientPlans.{key}.careNeedDetails in the exact shape CarePlan.tsx renders.",
-  },
-  {
     id: "client-add-family-member",
     actor: "client",
     action: "Add a member to the family group",

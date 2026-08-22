@@ -76,11 +76,11 @@ const ALWAYS_CONFIRM = new Set<string>([
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
-// the caregiver reads, not data that drives clinical decisions. Everything
-// else on the care plan (medications, careNeeds, doctorContacts,
-// specialInstructions — and any future/unknown field, fail-safe) is clinical
-// and MUST round-trip an explicit family confirmation before it changes.
-const CARE_PLAN_NOTE_FIELDS = new Set(["notes", "dietaryNotes"]);
+// the caregiver reads, not data that changes what care is being requested.
+// Everything else on the care plan (careNeeds, emergencyContacts, accessCodes
+// — and any future/unknown field, fail-safe) MUST round-trip an explicit
+// family confirmation before it changes.
+const CARE_PLAN_NOTE_FIELDS = new Set(["notes"]);
 
 // Tools whose risk depends on an argument value. The predicate inspects the
 // input and returns true when this specific call is irreversible.
@@ -90,10 +90,10 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // Rejecting an applicant is irreversible (caregiver sees the decline).
   // Accept is also high-stakes but happens via a separate hire flow.
   respond_to_job_application: (input) => input.decision === "reject",
-  // Clinical care-plan edits (medications, careNeeds, etc.) require
-  // confirmation — a wrong medication entry is a patient-safety incident.
-  // Note-like fields skip the gate so "add a note that mom prefers tea"
-  // doesn't need a confirmation round-trip.
+  // Care-plan edits that change what's requested (careNeeds, emergency
+  // contacts, access codes) require confirmation. Note-like fields skip the
+  // gate so "add a note that mom prefers tea" doesn't need a confirmation
+  // round-trip.
   update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
   // U9: approving a timesheet via the agent loop releases payment to the caregiver
   // — gate the approve path. Disputing is reversible (goes to admin review) and

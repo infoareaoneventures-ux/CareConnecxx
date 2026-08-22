@@ -134,21 +134,19 @@ describe("isHighRisk", () => {
     expect(isHighRisk("respond_to_job_application", { applicationId: "x", decision: "accept" })).toBe(false);
   });
 
-  it("requires confirmation for clinical update_care_plan fields", () => {
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "medications",         value: ["Lisinopril 10mg"], action: "append" })).toBe(true);
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "careNeeds",           value: ["mobility"],        action: "set"    })).toBe(true);
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "doctorContacts",      value: ["Dr. Chen"],        action: "append" })).toBe(true);
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "specialInstructions", value: "never leave alone", action: "set"    })).toBe(true);
+  it("requires confirmation for update_care_plan fields that change what's requested", () => {
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "careNeeds",         value: ["mobility"], action: "set"    })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "emergencyContacts", value: [{ name: "Sam" }], action: "append" })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "accessCodes",       value: "1234", action: "set" })).toBe(true);
   });
 
   it("fails safe when update_care_plan field is missing or unknown", () => {
     expect(isHighRisk("update_care_plan", { clientId: "c1" })).toBe(true);
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "allergies", value: ["penicillin"], action: "append" })).toBe(true);
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "medications", value: ["penicillin"], action: "append" })).toBe(true);
   });
 
-  it("does NOT gate harmless note-like update_care_plan fields", () => {
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "notes",        value: "Prefers tea in the morning", action: "set" })).toBe(false);
-    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "dietaryNotes", value: "No dairy at dinner",         action: "set" })).toBe(false);
+  it("does NOT gate the harmless note-like update_care_plan field", () => {
+    expect(isHighRisk("update_care_plan", { clientId: "c1", field: "notes", value: "Prefers tea in the morning", action: "set" })).toBe(false);
   });
 });
 

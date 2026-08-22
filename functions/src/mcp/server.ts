@@ -1028,38 +1028,18 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_care_plan",
     description:
-      "Update the care plan for a senior. Use when the family reports a change: new medication, updated dosage, new diagnosis, dietary change, or special instructions. " +
+      "Update the household-level care plan for a senior — care needs, general notes, emergency contacts, or home access codes. " +
+      "This is a non-medical marketplace: never solicit or record medications, diagnoses, or other medical details. " +
       "Always confirm the change with the family before calling. Tell them what you're updating.",
     input_schema: {
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", description: "Which field to update: 'medications', 'diagnoses', 'careNeeds', 'dietaryNotes', 'doctorContacts', 'specialInstructions', 'notes', 'emergencyContacts', 'dailyRoutine', 'accessCodes', 'dietaryRestrictions', 'medicationsConfirmedNone' (boolean — family explicitly said there are no medications), or 'emergencyContactDeclined' (boolean — family explicitly declined to give one)" },
-        value:    { description: "The new value. For array fields (medications, diagnoses, careNeeds, doctorContacts, emergencyContacts, dailyRoutine), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}. dailyRoutine items: {time, description, category: meal|medication|activity|hygiene}." },
+        field:    { type: "string", description: "Which field to update: 'careNeeds', 'notes', 'emergencyContacts', or 'accessCodes'" },
+        value:    { description: "The new value. For array fields (careNeeds, emergencyContacts), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}." },
         action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
-        recipientFirstName: { type: "string", description: "First name of the care recipient this fact is about. REQUIRED whenever the household cares for more than one person and the field is medications, diagnoses, dailyRoutine, dietaryRestrictions, dietaryNotes, specialInstructions, or doctorContacts — it keeps each person's care data separate. Omit for single-recipient households and for household-level fields (emergencyContacts, accessCodes)." },
       },
       required: ["clientId", "field", "value", "action"],
-    },
-  },
-  {
-    name: "save_care_task_detail",
-    description:
-      "Save the specific day-to-day care tasks a care recipient needs, grouped by care category — used during the " +
-      "care-plan interview and whenever a family describes concrete care work. Categories: Personal Care, Mobility " +
-      "Assistance, Meal Preparation, Medication Reminders, Transportation, Companionship, Light Housekeeping, " +
-      "Dementia / Memory Care. Example taskDetail: {\"Personal Care\": [\"Bathing\", \"Dressing\"], \"Transportation\": " +
-      "[\"Doctor appointments\"]}. Merges with what's already saved — safe to call as each answer arrives. " +
-      "PRIVACY: these tasks are shown to caregivers before hiring — each task names the ACTIVITY only, NEVER a drug " +
-      "name, dosage, diagnosis, or the recipient's name (record medications with update_care_plan instead).",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId:           { type: "string", description: "The client's user ID" },
-        recipientFirstName: { type: "string", description: "First name of the care recipient these tasks are for. Omit when there is only one recipient." },
-        taskDetail:         { type: "object", description: "Map of care category → array of specific tasks the family described, in their words mapped onto the standard categories." },
-      },
-      required: ["clientId", "taskDetail"],
     },
   },
   {
@@ -4679,103 +4659,22 @@ async function executeToolCall(
     }
 
     if (name === "update_care_plan") {
-      const { clientId, field, value, action, recipientFirstName } = input as {
+      const { clientId, field, value, action } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove";
-        recipientFirstName?: string;
       };
-      // emergencyContacts/dailyRoutine/accessCodes/dietaryRestrictions are the
-      // web Care Plan tab's fields — same doc since the 2026-07-12 cutover, so
-      // Evia can manage everything the family can edit on the web (parity).
-      // medicationsConfirmedNone / emergencyContactDeclined (2026-07-15): the
-      // care-plan interview needs "asked, and the answer was none/declined" to
-      // be distinguishable from "not asked yet" — an empty array can't say that.
-      const ALLOWED_FIELDS = ["medications", "diagnoses", "careNeeds", "dietaryNotes", "doctorContacts", "specialInstructions", "notes", "emergencyContacts", "dailyRoutine", "accessCodes", "dietaryRestrictions", "medicationsConfirmedNone", "emergencyContactDeclined"];
+      // Household-level only — this is a non-medical marketplace, so medical
+      // fields (medications, diagnoses, dietary/routine detail, doctor
+      // contacts) were removed (2026-08-22) along with the post-payment
+      // care-plan interview that used to solicit them; the website never had
+      // an equivalent feature for any of it. emergencyContacts/accessCodes are
+      // the web Care Plan tab's fields — same doc since the 2026-07-12
+      // cutover, so Evia can manage what the family can edit on the web.
+      const ALLOWED_FIELDS = ["careNeeds", "notes", "emergencyContacts", "accessCodes"];
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }
       const ref = db.collection("care_plans").doc(clientId);
       const nowIso = new Date().toISOString();
-
-      // Multi-recipient scoping (2026-07-16): person-specific facts land in the
-      // recipientMedical map (keyed by recipientPlanKey, same doc) so a couple's
-      // medications/routine never merge. The account-level field stays the
-      // HOUSEHOLD UNION — every legacy reader (in-shift med prompts, briefings,
-      // web normalizeCarePlan) keeps working unchanged. emergencyContacts and
-      // accessCodes are deliberately household-level, never scoped.
-      const RECIPIENT_SCOPED_FIELDS = ["medications", "diagnoses", "dailyRoutine", "dietaryRestrictions", "dietaryNotes", "specialInstructions", "doctorContacts", "medicationsConfirmedNone"];
-      const ARRAY_SCOPED = new Set(["medications", "diagnoses", "dailyRoutine", "dietaryRestrictions", "doctorContacts"]);
-      const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
-      let unscopedNote: string | undefined;
-
-      if (multiRecipientScopingEnabled() && RECIPIENT_SCOPED_FIELDS.includes(field)) {
-        const { resolveRecipientKey } = await import("../agents/careRecipients");
-        const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
-        const planKeys = Object.keys((webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
-
-        if (recipientFirstName) {
-          const res = resolveRecipientKey(planKeys, recipientFirstName);
-          if (res.ok) {
-            const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-            const canonSnap = await ref.get();
-            const recipientMedical = (canonSnap.data()?.recipientMedical ?? {}) as Record<string, Record<string, unknown>>;
-            const entry = recipientMedical[res.key] ?? {};
-
-            let nextVal: unknown;
-            if (ARRAY_SCOPED.has(field)) {
-              const list = Array.isArray(entry[field]) ? [...(entry[field] as unknown[])] : [];
-              if (action === "append") {
-                if (!list.some((v) => sameValue(v, value))) list.push(value);
-                nextVal = list;
-              } else if (action === "remove") {
-                nextVal = list.filter((v) => !sameValue(v, value));
-              } else {
-                nextVal = Array.isArray(value) ? value : [value];
-              }
-            } else {
-              nextVal = value; // scalar fields: set semantics whatever the action
-            }
-
-            await ref.set({
-              recipientMedical: {
-                [res.key]: {
-                  [field]: nextVal,
-                  name: String(recipientFirstName).trim().split(" ")[0],
-                  updatedAt: nowIso,
-                },
-              },
-              updatedAt: nowIso,
-            }, { merge: true });
-
-            // Household-union mirror (array fields only — scalars stay per-person;
-            // a person-specific note must never overwrite the household one).
-            if (ARRAY_SCOPED.has(field)) {
-              if (action === "append") {
-                await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
-              } else if (action === "remove") {
-                // Only shrink the union when NO other recipient still has the value
-                // (John also takes Aspirin → removing Mary's must not hide his).
-                const othersStillHaveIt = Object.entries(recipientMedical).some(([k, e]) =>
-                  k !== res.key && Array.isArray(e[field]) && (e[field] as unknown[]).some((v) => sameValue(v, value)));
-                if (!othersStillHaveIt) {
-                  await ref.set({ [field]: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
-                }
-              } else {
-                // set: additive union only — replacing one person's list must never
-                // drop another person's (or legacy unattributed) household values.
-                const arr = (Array.isArray(value) ? value : [value]).filter((v) => v !== undefined && v !== null);
-                if (arr.length) {
-                  await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(...arr) }, { merge: true });
-                }
-              }
-            }
-            return { success: true, updated: field, action, scoped: true, recipient: res.key };
-          }
-        } else if (planKeys.length > 1) {
-          // Never block a live flow on a missing name — write account-level and
-          // nudge so the model self-corrects next turn.
-          unscopedNote = `Saved at the household level. This family has ${planKeys.length} care recipients — pass recipientFirstName to attribute ${field} to one person.`;
-        }
-      }
 
       if (action === "append") {
         await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
@@ -4784,73 +4683,7 @@ async function executeToolCall(
       } else {
         await ref.set({ [field]: value, updatedAt: nowIso }, { merge: true });
       }
-      return { success: true, updated: field, action, ...(unscopedNote ? { scoped: false, note: unscopedNote } : {}) };
-    }
-
-    if (name === "save_care_task_detail") {
-      const { clientId, recipientFirstName, taskDetail } = input as {
-        clientId: string; recipientFirstName?: string; taskDetail: Record<string, unknown>;
-      };
-      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      if (!taskDetail || typeof taskDetail !== "object" || Array.isArray(taskDetail)) {
-        return toolError("INVALID_INPUT", "taskDetail must be an object mapping care category → array of tasks");
-      }
-      // Normalize: keep only categories whose value is a non-empty array of strings.
-      const clean: Record<string, string[]> = {};
-      for (const [category, tasks] of Object.entries(taskDetail)) {
-        const cat = String(category).trim();
-        if (!cat || !Array.isArray(tasks)) continue;
-        const list = tasks.map((t) => String(t).trim()).filter(Boolean);
-        if (list.length) clean[cat] = list;
-      }
-      if (!Object.keys(clean).length) return toolError("INVALID_INPUT", "taskDetail contained no usable category → tasks entries");
-
-      const { resolveRecipientKey } = await import("../agents/careRecipients");
-      const planRef  = db.collection("carePlans").doc(clientId);
-      const planSnap = await planRef.get();
-      const plans    = (planSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-      const planKeys = Object.keys(plans);
-
-      // Resolve which recipient this detail belongs to (shared resolver): named
-      // recipient first, else the sole existing plan, else it can't resolve.
-      const resolution = resolveRecipientKey(planKeys, recipientFirstName);
-      if (!resolution.ok) {
-        return resolution.reason === "ambiguous"
-          ? toolError("INVALID_INPUT",
-              `This family has ${planKeys.length} care recipients — pass recipientFirstName to say whose tasks these are.`)
-          : toolError("INVALID_INPUT", "No care recipient on file yet — pass recipientFirstName.");
-      }
-      const key = resolution.key;
-
-      // Merge ADDITIVELY with what's saved: per-category task union, and the
-      // category list unions into careNeeds (the match-keyword source).
-      const existing       = (plans[key] ?? {}) as Record<string, unknown>;
-      const existingDetail = (existing.careNeedDetails ?? {}) as Record<string, unknown>;
-      const mergedDetail: Record<string, string[]> = {};
-      for (const [cat, tasks] of Object.entries(existingDetail)) {
-        if (Array.isArray(tasks)) mergedDetail[cat] = tasks.map(String);
-      }
-      for (const [cat, tasks] of Object.entries(clean)) {
-        mergedDetail[cat] = [...new Set([...(mergedDetail[cat] ?? []), ...tasks])];
-      }
-      const mergedNeeds = [...new Set([
-        ...(Array.isArray(existing.careNeeds) ? (existing.careNeeds as unknown[]).map(String) : []),
-        ...Object.keys(mergedDetail),
-      ])];
-
-      await planRef.set({
-        clientId,
-        recipientPlans: {
-          [key]: {
-            ...(recipientFirstName && !existing.name ? { name: String(recipientFirstName) } : {}),
-            careNeedDetails: mergedDetail,
-            careNeeds:       mergedNeeds,
-            updatedAt:       new Date().toISOString(),
-          },
-        },
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      return { success: true, recipient: key, categories: Object.keys(clean) };
+      return { success: true, updated: field, action };
     }
 
     // ── New write tools ────────────────────────────────────────────────────────

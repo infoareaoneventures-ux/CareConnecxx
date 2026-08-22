@@ -24,16 +24,6 @@ export function timesheetAutoApprovalEnabled(): boolean {
   return process.env.TIMESHEET_AUTO_APPROVAL_ENABLED === "true";
 }
 
-// Post-payment care-plan interview (2026-07-15). After a family finishes
-// onboarding, Evia interviews them to build the full care plan (task detail per
-// recipient, medications, emergency contact) so caregivers know exactly what
-// care is needed. Ships DARK until a fresh-number E2E through payment → interview
-// → engaged-caregiver follow-up has run in prod. Reversible by clearing the env
-// var — no data migration. See docs on the care-plan interview wave.
-export function carePlanInterviewEnabled(): boolean {
-  return process.env.CARE_PLAN_INTERVIEW_ENABLED === "true";
-}
-
 // Multi-recipient household scoping (2026-07-16). Default ON — this is a KILL
 // switch, not a launch gate: off ("false") reverts update_care_plan /
 // request_booking / create_care_journal_entry to their pre-wave account-level

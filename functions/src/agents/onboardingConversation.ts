@@ -48,6 +48,7 @@ import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboard
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
+import { buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
@@ -2082,7 +2083,7 @@ export async function persistClientCareRecords(
       clientId: uid,
       phone,
       recipientPlans,
-      locationPool: [{ city, zipCode, ...(street ? { street } : {}), ...(state ? { state } : {}), primary: true, ...(hasCoords ? { lat, lng } : {}) }],
+      locationPool: [buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number } : undefined)],
       ...(emergencyContacts ? { emergencyContacts } : {}),
       updatedAt: new Date().toISOString(),
     }, { merge: true });
@@ -2098,70 +2099,18 @@ export async function persistClientCareRecords(
       }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
     }
 
-    // job_postings/{uid} full parity write — mirrors what the web wizard writes
+    // job_postings/{uid} full parity write — same shape the web wizard writes
+    // (clientJobPostingContract.ts is the single definition both channels use)
     // so SMS-onboarded clients see a complete job post when they log in.
     try {
       const jpRef  = db.collection("job_postings").doc(uid);
       const jpSnap = await jpRef.get();
       const jpData = (jpSnap.exists ? jpSnap.data() : {}) as Record<string, unknown>;
-      const derived   = deriveJobDataFromIntake(d);
-      const nameParts = seniorName.trim().split(/\s+/);
-      const jpWrite: Record<string, unknown> = {
-        clientId:  uid,
-        phone,
-        // Care recipient
-        careRecipientFirstName: nameParts[0] || seniorName,
-        careRecipientLastName:  nameParts.slice(1).join(" ") || "",
-        relationship,
-        ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
-        // Care address
-        city,
-        zipCode,
-        ...(street ? { street } : {}),
-        ...(state  ? { state  } : {}),
-        // Care needs
-        careNeeds,
-        careLevel: derived.jobCareLevel as string,
-        // Schedule
-        careFrequency: derived.jobFrequency as string,
-        startDate:     (d.startDate as string) || "ASAP",
-        selectedDays:  Array.isArray(d.selectedDays) ? d.selectedDays : (derived.jobDays as string[]),
-        daysFlexible:  d.daysFlexible === true,
-        daysPerWeek:   Number(derived.jobDaysPerWeek) || 0,
-        timeOfDay:     derived.jobTimeOfDay as string[],
-        // Rate & payment
-        rate:          derived.jobHourlyRate,
-        rateFlexible:  derived.jobHourlyRate === "flexible",
-        paymentMethod: derived.jobPaymentMethod as string,
-        // Household preferences
-        petsInHome:       derived.petsInHome as boolean,
-        smokingHousehold: derived.smokingHousehold as boolean,
-        jobDescription:   derived.jobDescription as string,
-        // Meta
-        status: "active",
-        source: "cara_sms",
-      };
+      const jpWrite: Record<string, unknown> = { ...buildJobPostingsDoc(uid, phone, d) };
       if (!jpData.createdAt) {
         jpWrite.createdAt = admin.firestore.FieldValue.serverTimestamp();
       }
       await jpRef.set(jpWrite, { merge: true });
-      // Additional recipients
-      const allRecips = allCareRecipients(d);
-      for (const r of allRecips.slice(1)) {
-        const rParts = r.name.trim().split(/\s+/);
-        const entry = {
-          firstName:    rParts[0] || r.name,
-          lastName:     rParts.slice(1).join(" ") || "",
-          relationship: r.relationship || "",
-          age:          String(r.age || ""),
-        };
-        if (entry.firstName === jpWrite.careRecipientFirstName &&
-            entry.lastName  === (jpWrite.careRecipientLastName || "")) continue;
-        await jpRef.set(
-          { additionalRecipients: admin.firestore.FieldValue.arrayUnion(entry) },
-          { merge: true }
-        );
-      }
     } catch (err) {
       console.error("persistClientCareRecords: job_postings full write failed (non-fatal):", err);
     }
@@ -2176,7 +2125,9 @@ export async function persistClientCareRecords(
       name:      seniorName,
       ...(seniorAge !== undefined ? { age: seniorAge } : {}),
       ...(relationship ? { relationship } : {}),
-      needs:     careNeeds,
+      // Wizard-parity fields (careNeeds/scheduleNeeded/imageUrl) — the web
+      // wizard's createJobPosting writes these same names alongside `needs`.
+      ...buildSeniorProfileWizardFields(d),
       diagnoses: conditions,
       // Web Senior type requires location (city string); preference fields
       // feed the matching engine and the family dashboard.
@@ -3129,9 +3080,21 @@ async function handleCaregiverResendMembership(
     membershipPaid = !!((freshMembershipData as any)?.caregiverSubscriptionId);
   } catch { /* fail-soft: treat as not paid → resend link as before */ }
   if (membershipPaid) {
-    // Payment landed but step never advanced (webhook missed or admin override
-    // callable unreachable). Drive the same path as the Stripe webhook.
-    await advanceOnboardingStep(phone, "membership", "");
+    // Payment landed — confirm it, never re-blast the checkout link or jump
+    // straight to the next gate's link in the same breath (U9: "do NOT ask
+    // them to pay or tap any link again"). If the step itself never advanced
+    // (webhook missed), that's a stuck-session repair for the admin override
+    // path (adminAdvanceQueue → advanceOnboardingStep), not something this
+    // reply should trigger silently.
+    const liveFact = await LIVE_GATE_FACT_BUILDERS.caregiver_awaiting_membership(phone, session);
+    await sendMessage(chatId, await generateCaraMessage({
+      audience: "caregiver",
+      language: session.preferredLanguage === "es" ? "es" : "en",
+      context: (liveFact ? `${liveFact} ` : "") +
+        "Their membership payment already went through. Warmly confirm it's done and that you'll take it from here — do NOT ask them to pay or tap any link again.",
+      fallback: "Good news — your membership payment already came through! You're all set on that; I'll take it from here.",
+      maxTokens: 80,
+    }));
     return false;
   }
   // LINK-keyword caller with this window's bypass already spent (checked AFTER
@@ -3378,6 +3341,9 @@ async function handleInboundMedia(
   if (step === "caregiver_send_documents" || step === "caregiver_awaiting_documents") {
     return handleInboundDocument(phone, chatId, media);
   }
+  if (collectionStepsForRole("client").includes(step)) {
+    return handleInboundClientRecipientPhoto(phone, chatId, media);
+  }
   // Not a file-collecting step. Acknowledge warmly and steer back to the task.
   if (step === "client_awaiting_identity") {
     await sendMessage(chatId,
@@ -3391,6 +3357,31 @@ async function handleInboundMedia(
     "Got your file, thank you! I'm not at that step just yet — let's finish what we " +
     "were on and I'll ask for anything I need. What were you going to say?"
   );
+}
+
+// Client onboarding, step 8 of the wizard equivalent (photo of the care
+// recipient — completely optional). Unlike the caregiver's identity photo,
+// there's no face/quality gate here — any image they send is accepted as-is,
+// same as the wizard's AvatarUpload having no verification step either.
+async function handleInboundClientRecipientPhoto(
+  phone:  string,
+  chatId: string,
+  media:  InboundMediaPart
+): Promise<void> {
+  try {
+    const dl  = await downloadMedia(media);
+    const url = await storeInboundMedia({
+      phone, kind: "image", buffer: dl.buffer,
+      content_type: dl.content_type, ext: dl.ext,
+    });
+    await mergeOnboardingData(phone, { careRecipientPhotoURL: url });
+    await sendMessage(chatId, "Got it — that's a lovely photo, thank you! 📸");
+  } catch (err) {
+    console.error("handleInboundClientRecipientPhoto failed", { phone, err: (err as Error)?.message });
+    await sendMessage(chatId,
+      "I had trouble opening that photo — no worries, we can skip it and add one later."
+    );
+  }
 }
 
 async function handleInboundProfilePhoto(

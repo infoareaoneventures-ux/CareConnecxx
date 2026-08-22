@@ -3,6 +3,7 @@ import { notifyAreaCaregivers } from "../triggers/jobNotifications";
 import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
 import { buildWebJobPostDoc } from "./jobPostContract";
 import { geocodeZip, geocodeCity } from "../utils/geocode";
+import { buildJobPostingsDoc, buildCarePlanLocationEntry } from "./clientJobPostingContract";
 
 const db = admin.firestore();
 
@@ -84,33 +85,10 @@ export async function buildAndSaveJobPost(params: {
   let coords = await geocodeZip(zipCode);
   if (!coords) coords = await geocodeCity(city, stateHint);
 
-  // ── job_postings/{uid} — client's own record ──────────────────────────────
-  const jobPostingDoc = {
-    clientId:               uid,
-    careRecipientFirstName: firstName,
-    careRecipientName:      seniorName,
-    ...(seniorAge !== undefined ? { careRecipientAge: String(seniorAge) } : {}),
-    relationship,
-    ...(additionalRecipients.length ? { additionalRecipients } : {}),
-    recipientsCount,
-    title,
-    description,
-    city,
-    zipCode,
-    location:   { city, zipCode, ...(coords ?? {}) },
-    schedule:   { startDate, frequency, days, timeOfDay, daysPerWeek: days.length || Number(jobData.jobDaysPerWeek ?? 0) },
-    careNeeds,
-    careLevel,
-    hourlyRate,
-    paymentMethod,
-    petsInHome,
-    smokingHousehold,
-    status:     "open",
-    postedAt:   admin.firestore.FieldValue.serverTimestamp(),
-    source:     "cara",
-    phone,
-  };
-
+  // ── job_postings/{uid} — client's own record, in the wizard's exact shape ──
+  // (clientJobPostingContract.ts is the single definition both the web wizard
+  // and Evia's finalization write are locked to — see the parity test.)
+  const jobPostingDoc = buildJobPostingsDoc(uid, phone, onboardingData);
   await db.collection("job_postings").doc(uid).set(jobPostingDoc, { merge: true });
 
   // ── carePlans/{uid} — full care plan with recipient details ───────────────
@@ -137,18 +115,23 @@ export async function buildAndSaveJobPost(params: {
     clientId: uid,
     phone,
     recipientPlans,
-    locationPool: [
-      {
-        city,
-        zipCode,
-        petsInHome,
-        smokingHousehold,
-        primary: true,
-        ...(coords ?? {}),
-      },
-    ],
+    locationPool: [buildCarePlanLocationEntry(onboardingData, coords ?? undefined)],
+    // Finalizing the job post over SMS is Evia's equivalent of the wizard's
+    // final "Submit" — stamp the same review marker the web Care Plan page
+    // sets, so useOnboardingProgress.ts's completeness check is satisfied for
+    // SMS clients (this field is never set on the web wizard's own path today —
+    // a separate, known gap on the website side, out of scope here).
+    carePlanReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: new Date().toISOString(),
   }, { merge: true });
+
+  // users/{uid}.jobPostingCompleted — the same flag the web wizard sets at
+  // Submit, so an SMS-onboarded client never sees the ClientJobPostingWizard
+  // overlay if they later open the website (App.tsx's ClientRoute checks it).
+  await db.collection("users").doc(uid).set({
+    jobPostingCompleted: true,
+  }, { merge: true }).catch((err) =>
+    console.error("[buildAndSaveJobPost] users.jobPostingCompleted write failed (non-fatal):", err));
 
   // ── job_posts/{uid} — public listing in the WEB JobPost contract ───────────
   // Keyed by the client uid, NOT an autoId: the clientIntakes onCreate trigger

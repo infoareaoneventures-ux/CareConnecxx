@@ -120,6 +120,12 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "additionalRecipients",
   // Home address (account holder's address — distinct from care address)
   "homeStreet", "homeCity", "homeZipCode", "homeState",
+  // Care recipient photo — optional, matches wizard step 8 (ClientJobPostingWizard.tsx)
+  "careRecipientPhotoURL",
+  // How many caregivers needed — matches wizard step 10's counter (default 1, up to 4)
+  "caregiversNeeded",
+  // Ongoing vs. specific end date — matches wizard step 6's toggle + date field
+  "ongoing", "endDate",
 ]);
 
 export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
@@ -199,6 +205,8 @@ const NUMERIC_FIELD_RANGE: Record<string, [number, number]> = {
   daysPerWeek: [1, 7],
   hoursPerDay: [1, 24],
   age:         [1, 120],
+  // Matches the wizard's counter cap (ClientJobPostingWizard.tsx step 10).
+  caregiversNeeded: [1, 4],
 };
 
 /**

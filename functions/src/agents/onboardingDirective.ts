@@ -68,6 +68,19 @@ function labelFor(field: string): string {
   return FIELD_LABEL[field] ?? field;
 }
 
+// Optional wizard-order items — NOT in CLIENT_REQUIRED_FIELDS, so they never
+// show up in the "STILL NEEDED" list, and complete_collection is allowed to
+// fire the instant required fields are done regardless of these. Tracked
+// separately here so the completion gate can still ask about them at least
+// once — otherwise the model treats "optional for the family" as "optional
+// for me to ask," and silently skips straight to finishing (observed live:
+// photo, pets/smoking, caregiversNeeded, ongoing/endDate, and jobDescription
+// all got dropped this way in the same test conversation).
+const OPTIONAL_ORDER_ITEMS: readonly string[] = [
+  "careRecipientPhotoURL", "ongoing", "caregiversNeeded",
+  "petsInHome", "smokingHousehold", "paymentMethod", "jobDescription",
+];
+
 /**
  * Build the onboarding system-prompt block for the given role and the data
  * collected so far. Returns "" when there is nothing left to collect AND the
@@ -101,13 +114,28 @@ export function buildOnboardingDirective(
   // Only the client reaches this point (caregiver delegated above).
   const audience = "family member";
 
+  const optionalNotYetAddressed = OPTIONAL_ORDER_ITEMS.filter((f) => data[f] === undefined);
+  const optionalGateLine = optionalNotYetAddressed.length
+    ? `HOLD ON BEFORE FINISHING: even once every item above is collected, you have NOT yet ` +
+      `brought up ${optionalNotYetAddressed.map(labelFor).join("; ")} — these are optional for ` +
+      `the FAMILY to skip, but that does not mean YOU skip asking. Check your own messages in ` +
+      `this conversation: if you have never once mentioned one of these, ask about it now, ` +
+      `before calling complete_collection. Only call complete_collection once you have brought ` +
+      `up every numbered item in the wizard order at least once (asked-and-answered, ` +
+      `volunteered, or explicitly declined) — not the instant the required fields alone are done.`
+    : ``;
+
   const action = missing.length
     ? `Ask for the SINGLE most natural next missing item — usually the first one listed. ` +
       `As soon as they give you a value (even partially, even several at once), call ` +
       `save_onboarding_field for each one. Then look at what's still missing and continue. ` +
-      `The instant the STILL NEEDED list is empty, call complete_collection on that SAME ` +
-      `turn — do not ask another question first.`
-    : `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
+      `Once the STILL NEEDED list is empty, do NOT immediately call complete_collection — ` +
+      `first check whether you've also brought up every OPTIONAL item in the wizard order below ` +
+      `(photo, ongoing/end date, how many caregivers needed, pets/smoking, payment method, ` +
+      `description). Only once ALL numbered items — required and optional — have been ` +
+      `addressed at least once should you call complete_collection, on that same turn.`
+    : optionalGateLine ||
+      `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
       `else this turn, then send ONE short warm line saying you've got what you need and you're ` +
       `pulling up caregivers near them now (that promise is safe — their matches are sent ` +
       `automatically right after your message). Keep it to one sentence, do NOT list fields back ` +
@@ -133,15 +161,21 @@ export function buildOnboardingDirective(
     `  1. How often care is needed (occasional / part-time / full-time)`,
     `  2. Their home address — street, zip, city, state (ask: "What's your home address?")`,
     `  3. Is care at the same address? — if YES: save homeCity→city, homeZipCode→zipCode, homeStreet→street, homeState→state too; if NO: ask for the care address separately`,
-    `  4. When to start + which specific days + whether it's ongoing/has an end date + whether days are flexible + time of day`,
-    `  5. Whether they'd like to share a photo of the person needing care — ask ONCE, make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
-    `  6. Their relationship to the person needing care`,
-    `  7. The senior's name and age, anyone else needing care ("both mom and dad"), and — lightly, most people say 1 — how many caregivers they think they'll need`,
-    `  8. Emergency contact — name, phone, and their relationship`,
-    `  9. What kind of help is needed day to day, plus whether there are pets or smoking in the home`,
-    ` 10. What they'd like to pay per hour, and how they plan to pay (cash or card)`,
-    ` 11. (Optional) A short description they'd like caregivers to see`,
-    ` 12. The family member's own first name (if not already collected)`,
+    `  4. When to start`,
+    `  5. Whether it's ongoing with no end date, or has a specific end date (optional, but ASK — most families say ongoing)`,
+    `  6. Which specific days + whether days are flexible + time of day`,
+    `  7. Whether they'd like to share a photo of the person needing care (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
+    `  8. Their relationship to the person needing care`,
+    `  9. The senior's name and age, and anyone else needing care ("both mom and dad")`,
+    ` 10. How many caregivers they think they'll need (optional, but ASK — lightly, most people say 1)`,
+    ` 11. Emergency contact — name, phone, and their relationship`,
+    ` 12. What kind of help is needed day to day`,
+    ` 13. Whether there are pets or smoking in the home (optional, but ASK both — not just pets)`,
+    ` 14. What they'd like to pay per hour, and how they plan to pay (cash or card)`,
+    ` 15. A short description they'd like caregivers to see (optional, but ASK)`,
+    ` 16. The family member's own first name (if not already collected)`,
+    ``,
+    `Items marked "optional" are optional for the FAMILY to skip — never for you to skip asking. Ask every numbered item at least once, even the optional ones, before you're done.`,
     ``,
     `HOW TO TALK:`,
     `  - You are mid-conversation. You already greeted them. NEVER greet again, never re-introduce yourself, never open with "Hi"/"Hey <name>". Reply directly.`,
@@ -151,11 +185,12 @@ export function buildOnboardingDirective(
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
     `  - PHOTO: ask once, warmly, whether they'd like to share a photo of the person needing care — make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
-    `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services. In the same turn or the next, also ask lightly whether there are pets in the home or anyone smokes (petsInHome, smokingHousehold) — a caregiver detail, not a big deal either way.`,
+    `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services.`,
+    `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
     `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.
-  - For startDate: when they give a date, acknowledge it as a TARGET or PREFERENCE — never say "X works" or imply availability is confirmed. Instead say something like "Got it, I'll aim for [date]" or "Noted — I'll look for someone available around then."
-  - After the start date, ask lightly whether this is ongoing care or has a set end date (e.g. "and is this ongoing, or is there an end date already — like recovering from surgery?"). Most families say ongoing — save ongoing:true and skip endDate. Only if they name a specific end date, save ongoing:false plus endDate.`,
+  - For startDate: when they give a date, acknowledge it as a TARGET or PREFERENCE — never say "X works" or imply availability is confirmed. Instead say something like "Got it, I'll aim for [date]" or "Noted — I'll look for someone available around then."`,
+    `  - Ongoing/end date is step 5, its OWN question right after start date — don't skip it just because startDate is answered (e.g. "and is this ongoing, or is there an end date already — like recovering from surgery?"). Most families say ongoing — save ongoing:true and skip endDate. Only if they name a specific end date, save ongoing:false plus endDate.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,
     `  - Don't loop. If you've asked for the same item once and still don't have it, ask ONE more time differently, then move on — never ask the same question more than twice.`,
     `  - Figure out WHO is who: if they first name who NEEDS care (e.g. "my mom Jane") before their own name, that name is the senior's — save as seniorName, not firstName.

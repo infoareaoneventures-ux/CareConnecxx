@@ -1758,8 +1758,8 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
-      context: `Evia just corrected the client's name to ${correctedName}. Briefly acknowledge the fix, then ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
-      fallback: `Got it — thanks, ${correctedName}. Who are we caring for?`,
+      context: `Evia just corrected the client's name to ${correctedName}. Briefly acknowledge the fix, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
+      fallback: `Got it — thanks, ${correctedName}. How often do you need care — occasional, part-time, or full-time?`,
       maxTokens: 80,
     });
     await sendMessage(chatId, msg);
@@ -1779,8 +1779,8 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
-      context: `The client just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge the name in a couple of warm words, then ask who they're looking for care for (name and relationship, e.g. "my mom Dorothy").`,
-      fallback: `Lovely to meet you, ${seeded}. Who are we caring for?`,
+      context: `The client just confirmed ${seeded} is the name they go by. You already greeted them one message ago — this is mid-conversation, so do NOT greet again and do NOT open with "Hi"/"Hey"/"Hello". Acknowledge the name in a couple of warm words, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
+      fallback: `Lovely to meet you, ${seeded}. How often do you need care — occasional, part-time, or full-time?`,
       maxTokens: 80,
     });
     await sendMessage(chatId, msg);
@@ -2098,6 +2098,17 @@ export async function persistClientCareRecords(
         ...(homeState  ? { state:  homeState  } : {}),
       }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
     }
+
+    // jobPostingCompleted — same flag + same TIMING the wizard's own "Submit"
+    // sets it (before Identity/Membership, not after payment). This function
+    // runs at intake-confirm, the true equivalent moment to the wizard's
+    // Submit; App.tsx's ClientRoute checks this flag before showing the
+    // ClientJobPostingWizard overlay, so an SMS client mid-flow shouldn't see
+    // it once they've reached this point.
+    await db.collection("users").doc(uid).set({
+      jobPostingCompleted: true,
+    }, { merge: true }).catch((err) =>
+      console.error("persistClientCareRecords: jobPostingCompleted write failed (non-fatal):", err));
 
     // job_postings/{uid} full parity write — same shape the web wizard writes
     // (clientJobPostingContract.ts is the single definition both channels use)
@@ -2442,8 +2453,10 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
       pricePart +
       `and for that Evia coordinates everything for ${seniorName} — scheduling, weekly summaries, and keeping ` +
       `the whole family in the loop. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
-      `already set up, and do NOT mention sending any link. END with one clear yes/no question asking if ` +
-      `they'd like to get set up (e.g. "Want me to get you set up?").`,
+      `already set up, and do NOT mention sending any link. Membership is what lets the family actually message ` +
+      `and book one of the caregivers just shown — do NOT say or imply that matching only starts once membership ` +
+      `is active, that would contradict the real matches you just sent them. END with one clear yes/no question ` +
+      `asking if they'd like to get set up (e.g. "Want me to get you set up?").`,
     fallback:
       `Evia is ${priceLabel || "one simple monthly membership"} — I coordinate everything for ${seniorName}: ` +
       `scheduling, weekly summaries, and keeping your whole family in the loop. Want me to get you set up?`,

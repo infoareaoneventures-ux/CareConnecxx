@@ -1507,6 +1507,31 @@ async function handleVerifyPhone(
 
 // ── ask_role ──────────────────────────────────────────────────────────────────
 
+// One phone, one role, locked at whichever role was picked first — the same
+// "never overwrite an existing userType" rule already used by ensureWebAccount
+// and createWebOnboardingSession. This check catches a conflict at the very
+// first question instead of only at the very end of a full caregiver setup
+// (see the users/{uid} parity write guard a few hundred lines down for the
+// defense-in-depth version of the same rule).
+async function findConflictingRoleAccount(
+  phone: string,
+  claimedRole: "client" | "caregiver",
+): Promise<{ userId: string; role: "client" | "caregiver" } | null> {
+  const snap = await db.collection("users").where("phone", "==", phone).limit(5).get();
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (data.userType !== "client" && data.userType !== "caregiver") continue;
+    const role = data.userType as "client" | "caregiver";
+    if (role === claimedRole) continue;
+    const seniorIds = (data.seniorIds as string[] | undefined) ?? [];
+    const hasSeniorProgress = !!(data.seniorId as string | undefined) || seniorIds.length > 0;
+    const cgDoc = role === "caregiver" ? await db.collection("caregivers").doc(doc.id).get().catch(() => null) : null;
+    const hasRealProgress = role === "client" ? hasSeniorProgress : !!cgDoc?.exists;
+    if (hasRealProgress) return { userId: doc.id, role };
+  }
+  return null;
+}
+
 async function handleAskRole(phone: string, chatId: string, text: string, session?: AgentSession): Promise<void> {
   const raw = await parseWithClaude(
     'The user was just asked: "Are you looking for care for a loved one, or are you a caregiver yourself?" ' +
@@ -1522,6 +1547,35 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     text
   );
   const emotionalDirective = (session as any)?._emotionalDirective as string | undefined;
+
+  const claimedRole: "client" | "caregiver" | null =
+    raw === "caregiver" ? "caregiver" : (raw === "client" || raw === "self") ? "client" : null;
+  if (claimedRole) {
+    const conflict = await findConflictingRoleAccount(phone, claimedRole);
+    if (conflict) {
+      await updateSession(phone, {
+        userId:         conflict.userId,
+        userType:       conflict.role,
+        onboardingStep: "complete",
+      });
+      const msgConflict = await generateCaraMessage({
+        audience: conflict.role === "caregiver" ? "caregiver" : "family",
+        context: `This phone number is already registered with us as a ${conflict.role} account, but they just said ` +
+          `they're looking for ${claimedRole === "caregiver" ? "caregiver work" : "care for a loved one or themselves"} ` +
+          `instead — a mismatch with the existing account. Warmly clarify that this number is already set up as a ` +
+          `${conflict.role}, and ask what they'd like help with using that existing account. Do NOT start a new signup ` +
+          `or ask any onboarding questions.`,
+        fallback: conflict.role === "caregiver"
+          ? "Looks like this number's already set up with us as a caregiver — want help with that account instead of starting a new signup?"
+          : "Looks like this number's already set up with us as a family/client account — want help with that account instead of starting a new signup?",
+        maxTokens: 90,
+        emotionalDirective,
+      });
+      await sendMessage(chatId, msgConflict);
+      return;
+    }
+  }
+
   if (raw === "self") {
     // Senior seeking care for THEMSELVES — the texter IS the care recipient.
     // Pre-fill relationship (and senior name when known) so no step ever asks
@@ -4847,10 +4901,28 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       // users/{uid} parity write — the web dashboard, admin tools, and booking
       // flows read users/{uid} (userType, name, phone) for caregivers too.
+      // Never flip an existing role: if this uid already has a client account
+      // with real progress (a seniorId on file), this same phone finishing a
+      // caregiver setup must not silently overwrite userType to "caregiver" —
+      // that's what corrupted the account into "confused which role" bugs.
+      // (ensureWebAccount and createWebOnboardingSession already guard this the
+      // same way; this write site was the one unconditional exception.)
       if (authUid) {
+        const existingUserSnap = await db.collection("users").doc(authUid).get().catch(() => null);
+        const existingUserData = existingUserSnap?.data() as Record<string, unknown> | undefined;
+        const existingSeniorIds = (existingUserData?.seniorIds as string[] | undefined) ?? [];
+        const hasConflictingClientProgress =
+          existingUserData?.userType === "client" &&
+          (!!(existingUserData?.seniorId as string | undefined) || existingSeniorIds.length > 0);
+        if (hasConflictingClientProgress) {
+          console.error(
+            `caregiver finalize: refusing to overwrite users/${authUid}.userType — ` +
+            `already a client account with real progress for phone ${phone}`
+          );
+        }
         await db.collection("users").doc(authUid).set({
           uid:        authUid,
-          userType:   "caregiver",
+          ...(hasConflictingClientProgress ? {} : { userType: "caregiver" }),
           name:       (d.name ?? null) as string | null,
           phone,
           email:      (d.email ?? null) as string | null,

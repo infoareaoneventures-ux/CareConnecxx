@@ -20,7 +20,8 @@ import {
 describe("onboardingContract", () => {
   it("client required fields are the flat keys downstream consumers read", () => {
     expect(CLIENT_REQUIRED_FIELDS).toEqual([
-      "careFrequency", "city", "startDate", "selectedDays", "timeOfDay",
+      "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
+      "startDate", "selectedDays", "timeOfDay",
       "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
       "careNeeds", "rate", "firstName",
     ]);
@@ -41,7 +42,8 @@ describe("onboardingContract", () => {
   describe("missingRequiredFields (the complete_collection gate)", () => {
     it("empty client data → every required field missing", () => {
       expect(missingRequiredFields("client", {})).toEqual([
-        "careFrequency", "city", "startDate", "selectedDays", "timeOfDay",
+        "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
+        "startDate", "selectedDays", "timeOfDay",
         "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
         "careNeeds", "rate", "firstName",
       ]);
@@ -49,7 +51,20 @@ describe("onboardingContract", () => {
 
     it("fully-filled client data → nothing missing (handoff allowed)", () => {
       const data = {
-        careFrequency: "part_time", city: "Austin",
+        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: true,
+        city: "Austin", zipCode: "78701",
+        startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
+        relationship: "daughter", seniorName: "Dorothy",
+        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
+        careNeeds: ["bathing"], rate: 26, firstName: "Imran",
+      };
+      expect(missingRequiredFields("client", data)).toEqual([]);
+    });
+
+    it("treats an explicit sameAsHomeAddress:false as filled, not missing", () => {
+      const data = {
+        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: false,
+        city: "Austin", zipCode: "78702",
         startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
         relationship: "daughter", seniorName: "Dorothy",
         emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
@@ -59,16 +74,17 @@ describe("onboardingContract", () => {
     });
 
     it("partial client data → only the unfilled fields, in flow order", () => {
-      const data = { careFrequency: "part_time", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
+      const data = { careFrequency: "part_time", homeZipCode: "78701", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
       expect(missingRequiredFields("client", data)).toEqual([
-        "startDate", "selectedDays", "timeOfDay", "emergencyContactName",
+        "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "timeOfDay", "emergencyContactName",
         "emergencyContactPhone", "careNeeds", "rate", "firstName",
       ]);
     });
 
     it("treats empty string / zero / empty array as unfilled (isFieldFilled)", () => {
       const data = {
-        careFrequency: "part_time", city: "Austin",
+        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: true,
+        city: "Austin", zipCode: "78701",
         startDate: "2026-09-01", selectedDays: ["MON"], timeOfDay: [],
         relationship: "daughter", seniorName: "Dorothy",
         emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
@@ -142,6 +158,34 @@ describe("onboardingContract", () => {
     it("leaves non-jobType fields and non-string values untouched", () => {
       expect(normalizeOnboardingFieldValue("city", "Full time")).toBe("Full time");
       expect(normalizeOnboardingFieldValue("jobType", 40)).toBe(40);
+    });
+  });
+
+  // 2026-08-22: a live SMS test saved relationship:"child" for "it's for my
+  // parent" — never wrong data, but not the website's canonical enum either
+  // (ClientJobPostingWizard.tsx step 9: myself/parent/spouse/other), which
+  // CarePlan.tsx's duplicate-recipient guard exact-matches against.
+  describe("normalizeOnboardingFieldValue — relationship canonicalization", () => {
+    it("maps parent-indicating freeform values to the canonical 'parent'", () => {
+      for (const v of ["daughter", "son", "child", "mother", "mom", "father", "dad"]) {
+        expect(normalizeOnboardingFieldValue("relationship", v)).toBe("parent");
+      }
+    });
+    it("maps spouse-indicating freeform values to the canonical 'spouse'", () => {
+      for (const v of ["wife", "husband", "partner"]) {
+        expect(normalizeOnboardingFieldValue("relationship", v)).toBe("spouse");
+      }
+    });
+    it("leaves Evia's internal 'self' sentinel untouched (not the website enum)", () => {
+      expect(normalizeOnboardingFieldValue("relationship", "self")).toBe("self");
+    });
+    it("passes already-canonical parent/spouse/other through unchanged", () => {
+      for (const v of ["parent", "spouse", "other"]) {
+        expect(normalizeOnboardingFieldValue("relationship", v)).toBe(v);
+      }
+    });
+    it("maps anything unrecognized to 'other' rather than leaving a raw string", () => {
+      expect(normalizeOnboardingFieldValue("relationship", "her caretaker")).toBe("other");
     });
   });
 

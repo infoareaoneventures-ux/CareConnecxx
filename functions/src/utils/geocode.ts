@@ -22,6 +22,34 @@ export async function geocodeZip(zipCode: string): Promise<{ lat: number; lng: n
   return null;
 }
 
+// Zip → city/state lookup (2026-08-22) — mirrors ClientJobPostingWizard.tsx's
+// handleHomeZip/handleCustomZip exactly (same api.zippopotam.us call, same
+// `place['place name']`/`place['state abbreviation']` fields), so the SMS
+// side derives city/state from a zip the identical way the website does,
+// instead of asking the family for a city (or letting a model extraction
+// guess one from a street name — the live bug this closes: a street named
+// "Campbell Ave" got mistaken for the city "Campbell").
+export interface ZipPlace { lat: number; lng: number; city: string; state: string }
+
+export async function lookupZipPlace(zipCode: string): Promise<ZipPlace | null> {
+  if (!zipCode || zipCode.length !== 5) return null;
+  try {
+    const resp = await axios.get(`https://api.zippopotam.us/us/${zipCode}`, { timeout: 5000 });
+    const place = resp.data?.places?.[0];
+    if (place?.latitude && place?.longitude) {
+      return {
+        lat:   parseFloat(place.latitude),
+        lng:   parseFloat(place.longitude),
+        city:  place["place name"] ?? "",
+        state: place["state abbreviation"] ?? "",
+      };
+    }
+  } catch {
+    // Non-critical — caller proceeds without auto-populated city/state.
+  }
+  return null;
+}
+
 // City-name fallback (OpenStreetMap Nominatim — free, no key). The
 // conversational intake captures a CITY ("Santa Clara") but usually no ZIP.
 // State defaults to California (service area is Santa Clara County) when the

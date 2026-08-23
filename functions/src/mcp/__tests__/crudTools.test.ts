@@ -317,3 +317,53 @@ describe("save_onboarding_field jobType canonicalization (Fix 3)", () => {
     expect(persistedJobType()).toBe("seasonal-ish");
   });
 });
+
+// Zip → city/state auto-derivation (2026-08-22): a client's zipCode save must
+// deterministically derive city/state via the same zippopotam.us lookup the
+// website wizard uses — never left to the model to extract/guess a city from
+// free text (the live bug this closes: "Campbell Ave" mistaken for the city
+// "Campbell").
+vi.mock("../../utils/geocode", () => ({
+  lookupZipPlace: vi.fn(async (zip: string) =>
+    zip === "95008" ? { lat: 37.28, lng: -121.95, city: "Campbell", state: "CA" } : null),
+}));
+
+describe("save_onboarding_field zip → city/state auto-derivation", () => {
+  const PHONE = "+15555550002";
+  beforeEach(() => { hoisted.reset(); });
+
+  const onboardingData = () =>
+    hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData ?? {};
+
+  it("derives city/state from a valid zip for the care address", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "zipCode", fieldValue: "95008",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().zipCode).toBe("95008");
+    expect(onboardingData().city).toBe("Campbell");
+    expect(onboardingData().state).toBe("CA");
+  });
+
+  it("derives homeCity/homeState from homeZipCode", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "homeZipCode", fieldValue: "95008",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().homeZipCode).toBe("95008");
+    expect(onboardingData().homeCity).toBe("Campbell");
+    expect(onboardingData().homeState).toBe("CA");
+  });
+
+  it("saves the zip even when the lookup can't resolve a place (fail-soft)", async () => {
+    // homeZipCode (not zipCode) to avoid the unrelated service-area gate, which
+    // fires only on city/zipCode and would reject an unrecognized zip on its
+    // own terms — this test is purely about the geocode-lookup fail-soft path.
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "homeZipCode", fieldValue: "00000",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().homeZipCode).toBe("00000");
+    expect(onboardingData().homeCity).toBeUndefined();
+  });
+});

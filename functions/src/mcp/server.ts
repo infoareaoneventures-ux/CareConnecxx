@@ -1156,8 +1156,12 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Signal that you've collected every required onboarding field. It re-checks the required " +
       "set: if anything is still missing it returns the missing list and does NOT advance (keep " +
-      "collecting). If complete, it hands off to the next setup step (payment / uploads) and you " +
-      "should tell the user what's next in your own voice. Call ONLY when you believe collection is done.",
+      "collecting). If complete (client role), a real caregiver-match preview is sent as a SEPARATE " +
+      "message right after this one — so your own closing message must NEVER say or imply that " +
+      "matching/searching for caregivers only starts once membership is paid (that directly " +
+      "contradicts the real match the family is about to see). Frame membership as what lets them " +
+      "message and book someone like the match you're about to show, not as what unlocks matching " +
+      "itself. Call ONLY when you believe collection is done.",
     input_schema: {
       type: "object",
       properties: {
@@ -7192,6 +7196,41 @@ async function executeToolCall(
           console.error("save_onboarding_field bio skip classification error:", err);
           return toolError("UNAVAILABLE", "Couldn't process that bio preference right now - ask the caregiver to share a short bio or confirm they want to skip it.");
         }
+      }
+      // Zip → city/state auto-derivation (2026-08-22) — mirrors the website
+      // wizard's zippopotam.us lookup exactly, so the model is never asked (or
+      // trusted) to extract a city from free text. Closes a live bug: a street
+      // named "Campbell Ave" got mistaken for the city "Campbell" when the
+      // model parsed a combined "what's your address" answer. City/state are
+      // ALWAYS overwritten from a valid zip, matching the wizard's own
+      // behavior of re-deriving them whenever the zip changes.
+      if (role === "client" && fieldName === "zipCode" && typeof normalizedValue === "string") {
+        const { lookupZipPlace } = await import("../utils/geocode");
+        const place = await lookupZipPlace(normalizedValue).catch(() => null);
+        if (place?.city) onboardingDataPatch = { ...onboardingDataPatch, city: place.city, state: place.state };
+      }
+      // "Is care at the same address?" confirmation (2026-08-22) — a live test
+      // showed this question skipped entirely, with the model silently
+      // assuming same-address and never asking. Now a required, explicitly
+      // saved field; answering true auto-mirrors the already-collected home
+      // fields into the care-address fields, matching the wizard's own
+      // homeCity→city/homeZipCode→zipCode/homeStreet→street/homeState→state
+      // copy (WIZARD QUESTION ORDER item 3).
+      if (role === "client" && fieldName === "sameAsHomeAddress" && normalizedValue === true) {
+        const existingSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const existing = (existingSnap.data()?.onboardingData ?? {}) as Record<string, unknown>;
+        onboardingDataPatch = {
+          ...onboardingDataPatch,
+          ...(existing.homeStreet   ? { street: existing.homeStreet }   : {}),
+          ...(existing.homeCity     ? { city:   existing.homeCity }     : {}),
+          ...(existing.homeZipCode  ? { zipCode: existing.homeZipCode } : {}),
+          ...(existing.homeState    ? { state:  existing.homeState }    : {}),
+        };
+      }
+      if (role === "client" && fieldName === "homeZipCode" && typeof normalizedValue === "string") {
+        const { lookupZipPlace } = await import("../utils/geocode");
+        const place = await lookupZipPlace(normalizedValue).catch(() => null);
+        if (place?.city) onboardingDataPatch = { ...onboardingDataPatch, homeCity: place.city, homeState: place.state };
       }
       const ref  = db.collection("agent_sessions").doc(phone as string);
       await ref.set({ onboardingData: onboardingDataPatch }, { merge: true });

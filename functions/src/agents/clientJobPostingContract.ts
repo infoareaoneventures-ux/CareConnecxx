@@ -12,7 +12,7 @@
 // (buildAndSaveJobPost), which both call into here instead of shaping their
 // own copies.
 
-import { allCareRecipients, normalizeAdditionalRecipients } from "./careRecipients";
+import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
 
 // ── Care level ────────────────────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     adultsCount: 1 + extraRecipients.length,
     caregiversNeeded: (d.caregiversNeeded as number) || 1,
     additionalRecipients,
-    relationship: (d.relationship as string) || undefined,
+    relationship: toWebsiteRelationship(d.relationship as string | undefined),
     emergencyFirstName: emergencyFirstName || undefined,
     emergencyLastName: emergencyLastName || undefined,
     emergencyPhone: (d.emergencyContactPhone as string) || undefined,

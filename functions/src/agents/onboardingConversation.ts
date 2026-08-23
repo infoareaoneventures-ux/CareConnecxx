@@ -47,7 +47,7 @@ import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
-import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
+import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho, toWebsiteRelationship } from "./careRecipients";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
@@ -1603,6 +1603,11 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
     // Pre-fill relationship (and senior name when known) so no step ever asks
     // "who are you caring for", and every reply speaks to them directly.
     const knownName = (session?.onboardingData?.firstName as string | undefined)?.trim();
+    // "self" is Evia's OWN internal sentinel (checked throughout
+    // onboardingSteps.client.ts/qaAgent.ts/careRecipients.ts for self-referential
+    // voice/logic) — NOT the same value space as the website's relationship enum
+    // (myself/parent/spouse/other). The translation to "myself" happens at the
+    // website-facing write boundary (clientJobPostingContract.ts), not here.
     await mergeOnboardingData(phone, {
       relationship: "self",
       ...(knownName ? { seniorName: knownName } : {}),
@@ -2110,7 +2115,7 @@ export async function persistClientCareRecords(
   const hasCoords = lat !== undefined && lng !== undefined;
 
   const seniorName   = (d.seniorName   ?? "") as string;
-  const relationship = (d.relationship ?? "") as string;
+  const relationship = toWebsiteRelationship(d.relationship as string | undefined) ?? "";
   const city         = (d.city         ?? "") as string;
   const zipCode      = (d.zipCode      ?? "") as string;
   const street       = (d.street       ?? "") as string;
@@ -2269,7 +2274,7 @@ export async function persistClientCareRecords(
     userId:      uid ?? null,
     firstName:   d.firstName,
     seniorName:  d.seniorName,
-    relationship: d.relationship,
+    relationship: toWebsiteRelationship(d.relationship as string | undefined),
     age:         d.age,
     careNeeds:   d.careNeeds,
     conditions:  d.conditions,

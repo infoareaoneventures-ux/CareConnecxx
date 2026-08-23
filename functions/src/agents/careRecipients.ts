@@ -14,6 +14,19 @@ export interface CareRecipient {
   age?:          number;
 }
 
+// Evia's internal "self" sentinel (checked throughout onboardingSteps.client.ts/
+// qaAgent.ts for self-referential voice/logic — the texter IS the care
+// recipient) is NOT the website wizard's relationship enum value. The wizard
+// (ClientJobPostingWizard.tsx step 9) uses "myself" for exactly this case —
+// translate at the boundary, every time onboardingData.relationship reaches a
+// website-facing document (job_postings, carePlans.recipientPlans,
+// clientIntakes). Every other value (parent/spouse/other) is already shared
+// vocabulary and passes through unchanged.
+export function toWebsiteRelationship(value: string | undefined | null): string | undefined {
+  if (!value) return undefined;
+  return value === "self" ? "myself" : value;
+}
+
 // Mirrors components/CarePlan.tsx getKey (and PostJobFlow's key builder):
 // `${first.toLowerCase()}_${(last || 'noname').toLowerCase()}` with whitespace
 // collapsed to _ and Firestore-field-path-hostile chars stripped.
@@ -118,10 +131,11 @@ export function describeWhoIsWho(d: Record<string, unknown>): string {
 // first, then additional ones — primary excluded from dupes by key.
 export function allCareRecipients(d: Record<string, unknown>): CareRecipient[] {
   const primaryName = String(d.seniorName ?? "").trim();
+  const websiteRelationship = toWebsiteRelationship(d.relationship ? String(d.relationship) : undefined);
   const primary: CareRecipient[] = primaryName
     ? [{
         name: primaryName,
-        ...(d.relationship ? { relationship: String(d.relationship) } : {}),
+        ...(websiteRelationship ? { relationship: websiteRelationship } : {}),
         ...(typeof d.age === "number" && d.age > 0 ? { age: d.age } : {}),
       }]
     : [];

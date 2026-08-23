@@ -74,8 +74,22 @@ export function isFieldFilled(value: unknown): boolean {
 export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // Step 2 — care frequency
   "careFrequency",
-  // Step 3 — location
-  "city",
+  // Step 3 — home address zip is required so the backend can deterministically
+  // derive homeCity/homeState from it — matching the wizard, which requires the
+  // zip and never lets the family type a city at all.
+  "homeZipCode",
+  // Step 3b — the "is care at the same address?" confirmation must be an
+  // explicit saved answer, not an assumption nothing can verify (2026-08-22: a
+  // live test showed this question skipped entirely — the model silently
+  // treated care as being at the home address without ever asking). When true,
+  // save_onboarding_field mirrors home* fields into these on save.
+  "sameAsHomeAddress",
+  // city/zipCode are required (not just city) so the backend can
+  // deterministically derive city/state from zip — matching the wizard, which
+  // requires the zip and never lets the family type a city at all (2026-08-22:
+  // asking a free-form "what's your address" let a model extraction mistake a
+  // street name for a city — "Campbell Ave" as the city "Campbell").
+  "city", "zipCode",
   // Step 5 — schedule
   "startDate", "selectedDays", "timeOfDay",
   // Step 8/9 — who
@@ -107,7 +121,7 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   // save_onboarding_field("age", ...) was silently rejected ever since even
   // though onboardingDirective.ts still instructs the model to ask for it.
   "age",
-  "conditions", "zipCode", "hoursPerDay", "daysPerWeek",
+  "conditions", "hoursPerDay", "daysPerWeek",
   "street", "state", "neighborhood",
   "emergencyContactRelationship",
   "paymentMethod",
@@ -118,8 +132,9 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "preferences", "budget", "schedule",
   // Multi-recipient household
   "additionalRecipients",
-  // Home address (account holder's address — distinct from care address)
-  "homeStreet", "homeCity", "homeZipCode", "homeState",
+  // Home address (account holder's address — distinct from care address).
+  // homeZipCode is required (see CLIENT_REQUIRED_FIELDS); the rest are allowed.
+  "homeStreet", "homeCity", "homeState",
   // Care recipient photo — optional, matches wizard step 8 (ClientJobPostingWizard.tsx)
   "careRecipientPhotoURL",
   // How many caregivers needed — matches wizard step 10's counter (default 1, up to 4)
@@ -183,16 +198,41 @@ const JOB_TYPE_CANON: Record<string, string> = {
   "as needed": "occasional", "prn": "occasional", "per diem": "occasional",
 };
 
+// Evia's own internal relationship vocabulary for onboardingData — NOT the
+// same value space as the website's wizard enum (myself/parent/spouse/other).
+// "self" is a special sentinel checked throughout onboardingSteps.client.ts/
+// qaAgent.ts/careRecipients.ts for self-referential voice and logic (the texter
+// IS the care recipient) — it is set only via the dedicated self-care branch in
+// handleAskRole, never via this canonicalizer. Every OTHER value describes the
+// texter's relation to someone ELSE needing care ("I'm her daughter" → the
+// recipient is a parent), canonicalized here so a raw "daughter"/"child"/"son"
+// doesn't reach carePlans/senior_profiles unmapped — see toWebsiteRelationship
+// in clientJobPostingContract.ts for the translation into the website's enum.
+const RELATIONSHIP_CANON: Record<string, string> = {
+  "parent": "parent", "mother": "parent", "mom": "parent", "father": "parent",
+  "dad": "parent", "daughter": "parent", "son": "parent", "child": "parent",
+  "spouse": "spouse", "wife": "spouse", "husband": "spouse", "partner": "spouse",
+};
+
 // Canonicalize an already-extracted enum-ish field value before it is persisted
 // ("Full time" → "full_time"). NOT intent parsing of free-form user text — it
 // canonicalizes a constrained value the model already resolved into a field, the
 // same class as the absorber's JOB_TYPES validation and email-format regex (both
 // allowed by the LLM-parsing rule). Unknown non-empty values pass through
-// unchanged so downstream data is never silently dropped; the caller logs them.
+// unchanged so downstream data is never silently dropped; the caller logs them —
+// EXCEPT relationship, which maps anything unrecognized (other than the "self"
+// sentinel, left untouched) to "other" rather than leaving a raw string the
+// website's exact-match checks would never recognize.
 export function normalizeOnboardingFieldValue(fieldName: string, value: unknown): unknown {
   if (fieldName === "jobType" && typeof value === "string") {
     const key = value.trim().toLowerCase().replace(/[\s_-]+/g, " ").trim();
     return JOB_TYPE_CANON[key] ?? value;
+  }
+  if (fieldName === "relationship" && typeof value === "string") {
+    const key = value.trim().toLowerCase();
+    if (key === "self") return "self";
+    if (key === "parent" || key === "spouse" || key === "other") return key;
+    return RELATIONSHIP_CANON[key] ?? "other";
   }
   if (fieldName in NUMERIC_FIELD_RANGE) {
     const n = coerceNumericOnboardingField(fieldName, value);

@@ -69,4 +69,11 @@ describe("allCareRecipients", () => {
   it("empty data yields []", () => {
     expect(allCareRecipients({})).toEqual([]);
   });
+  // Evia's internal "self" sentinel (self-referential voice/logic) must be
+  // translated to the website wizard's "myself" before reaching a
+  // website-facing document — see toWebsiteRelationship.
+  it("translates the internal 'self' sentinel to the website's 'myself'", () => {
+    expect(allCareRecipients({ seniorName: "Dorothy", relationship: "self" }))
+      .toEqual([{ name: "Dorothy", relationship: "myself" }]);
+  });
 });

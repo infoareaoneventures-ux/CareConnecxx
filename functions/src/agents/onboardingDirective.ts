@@ -25,6 +25,7 @@ const FIELD_LABEL: Record<string, string> = {
   homeCity:       "the city where the account holder lives",
   homeState:      "the account holder's home state (2-letter abbreviation)",
   // Step 3b — care address (same as home, or different)
+  sameAsHomeAddress: "whether care is needed at the SAME address as the account holder's home — save true or false; this must be its own explicit question, never assumed",
   city:           "the city where care is needed",
   zipCode:        "the zip code where care is needed",
   street:         "the street address where care is needed",
@@ -38,7 +39,7 @@ const FIELD_LABEL: Record<string, string> = {
   // Step 8 — photo (optional)
   careRecipientPhotoURL: "a photo of the person needing care — completely optional",
   // Step 9
-  relationship:   "the family member's relationship to the person needing care (e.g. daughter, son, spouse)",
+  relationship:   "the family member's relationship to the person needing care — parent (they said 'my mom/dad/mother/father' etc.), spouse (wife/husband/partner), or other; save whatever word they used, it gets canonicalized automatically",
   // Step 10
   seniorName:     "the first and last name of the person who needs care",
   age:            "their age",
@@ -140,7 +141,11 @@ export function buildOnboardingDirective(
       `pulling up caregivers near them now (that promise is safe — their matches are sent ` +
       `automatically right after your message). Keep it to one sentence, do NOT list fields back ` +
       `like a form, do NOT ask ANY question, and do NOT announce what you'll ask next — anything ` +
-      `you ask here gets buried under the match cards that follow.`;
+      `you ask here gets buried under the match cards that follow. NEVER say anything like "next ` +
+      `step is membership payment" or "once that's active I can move you into matching" — a real ` +
+      `caregiver match is coming in the very next message, so that framing is a direct, visible ` +
+      `contradiction the family will see seconds later. Membership is what lets them message/book ` +
+      `the match they're about to see — it does not gate whether matching happens at all.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text, following the`,
@@ -159,8 +164,8 @@ export function buildOnboardingDirective(
     `frequency), save it and skip asking for it again — never re-ask something`,
     `they already told you, and never jump ahead to a later item on your own:`,
     `  1. How often care is needed (occasional / part-time / full-time)`,
-    `  2. Their home address — street, zip, city, state (ask: "What's your home address?")`,
-    `  3. Is care at the same address? — if YES: save homeCity→city, homeZipCode→zipCode, homeStreet→street, homeState→state too; if NO: ask for the care address separately`,
+    `  2. Their home address — ask for the street address AND the 5-digit zip code together (e.g. "What's your home address, including zip code?"). The zip code is REQUIRED — city and state are derived automatically from it the moment it's saved, so NEVER ask what city they're in and NEVER guess a city yourself from a street name (a street called "Campbell Ave" is not the city Campbell — always get the zip and let it resolve the city).`,
+    `  3. Is care at the same address? — this is its OWN required question, ask it explicitly ("Is care needed at that same address?") and save the answer via save_onboarding_field("sameAsHomeAddress", true or false) — NEVER assume same-address just because you already have the home address, and never skip straight to asking about schedule. If YES: saving true auto-copies the home address into the care address for you — do not also manually re-ask city/zip. If NO: ask for the care street address and zip code the same way as step 2 (zip required, city/state auto-derived — never asked, never guessed).`,
     `  4. When to start`,
     `  5. Whether it's ongoing with no end date, or has a specific end date (optional, but ASK — most families say ongoing)`,
     `  6. Which specific days + whether days are flexible + time of day`,

@@ -31,7 +31,11 @@ const WIZARD_JOB_POSTINGS_FIELDS = [
   "careFrequency",
   "street", "zipCode", "city", "state",
   "startDate", "endDate", "ongoing", "daysFlexible", "selectedDays", "timeOfDay",
-  "photoURL",
+  // Renamed from "photoURL" (Hamse, 2026-08-23): the signup photo is the
+  // ACCOUNT HOLDER's own photo (mirrored to users/{uid} by the caller), and
+  // only lands on this recipient-facing field when relationship is "myself"
+  // — see the dedicated describe block below.
+  "careRecipientPhotoURL",
   "careRecipientFirstName", "careRecipientLastName", "careRecipientAge",
   "adultsCount", "caregiversNeeded", "additionalRecipients",
   "relationship",
@@ -97,6 +101,18 @@ describe("clientJobPostingContract — parity with the web wizard's job_postings
       street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95111",
       petsInHome: true, smokingHousehold: false, primary: true,
     });
+  });
+
+  it("careRecipientPhotoURL is set only for self-care (relationship 'myself') — otherwise the recipient's photo is set later via CarePlan", () => {
+    const selfDoc = buildJobPostingsDoc("uid-1", "+1", {
+      relationship: "self", careRecipientPhotoURL: "https://example.com/photo.jpg",
+    });
+    expect(selfDoc.careRecipientPhotoURL).toBe("https://example.com/photo.jpg");
+
+    const otherDoc = buildJobPostingsDoc("uid-1", "+1", {
+      relationship: "daughter", careRecipientPhotoURL: "https://example.com/photo.jpg",
+    });
+    expect(otherDoc.careRecipientPhotoURL).toBeUndefined();
   });
 
   it("sanity check: the excluded field list is still accurate (fails loudly if the wizard starts collecting neighborhood)", () => {

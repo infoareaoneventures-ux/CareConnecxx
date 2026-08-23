@@ -3784,14 +3784,30 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         } catch { /* best effort — wizard saves without coords if geocoding fails */ }
     }
 
+    // Signup-time photo is the ACCOUNT HOLDER's own photo (same semantics as
+    // AccountSettings.tsx's "your photo") — NOT automatically the care
+    // recipient's. It only becomes the recipient's photo (careRecipientPhotoURL,
+    // the field CarePlan.tsx actually reads) when the client IS the recipient;
+    // otherwise the recipient's own photo gets set later via CarePlan's own
+    // per-recipient upload. Excluded from the generic `clean` spread below so
+    // it never lands under the ambiguous raw `photoURL` key on job_postings
+    // (Hamse, 2026-08-23).
+    const { photoURL, ...cleanForJobPosting } = clean;
+
     // Critical write — throw if this fails
     await db.collection('job_postings').doc(uid).set({
-        ...clean,
+        ...cleanForJobPosting,
         clientId: uid,
         status: 'active',
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         ...(lat !== null && lng !== null ? { lat, lng } : {}),
+        ...(photoURL && clean.relationship === 'myself' ? { careRecipientPhotoURL: photoURL } : {}),
     });
+
+    if (photoURL) {
+        await db.collection('users').doc(uid).set({ photoURL }, { merge: true }).catch(() => {});
+        try { await firebase.auth().currentUser?.updateProfile({ photoURL }); } catch { /* best effort */ }
+    }
 
     // Best-effort writes — don't block wizard completion if they fail
     // name/needs are the canonical Senior fields (types.ts) — read by the
@@ -3811,7 +3827,6 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
     if (clean.careRecipientFirstName) profileUpdate.firstName = clean.careRecipientFirstName;
     if (clean.careRecipientLastName)  profileUpdate.lastName  = clean.careRecipientLastName;
     if (clean.adultsCount) profileUpdate.adultsCount = clean.adultsCount;
-    if (clean.photoURL) profileUpdate.imageUrl = clean.photoURL;
     if (clean.careRecipientAge) profileUpdate.age = parseInt(clean.careRecipientAge, 10) || undefined;
     if (clean.relationship) profileUpdate.relationship = clean.relationship;
 

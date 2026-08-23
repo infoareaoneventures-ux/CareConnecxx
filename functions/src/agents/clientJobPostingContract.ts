@@ -88,7 +88,13 @@ export interface ClientJobPostingsDoc {
   street?: string; zipCode?: string; city?: string; state?: string; neighborhood?: string;
   startDate: string; endDate?: string; ongoing: boolean; daysFlexible: boolean;
   selectedDays: string[]; timeOfDay: string[];
-  photoURL?: string;
+  // The signup-time photo is the ACCOUNT HOLDER's own photo (mirrored to
+  // users/{uid} by the caller) — it only becomes the care RECIPIENT's photo
+  // here when the client IS the recipient (relationship "myself"). This is
+  // the exact field CarePlan.tsx reads for the primary recipient's photo;
+  // otherwise the recipient's own photo is set later via CarePlan's own
+  // per-recipient upload (Hamse, 2026-08-23).
+  careRecipientPhotoURL?: string;
   careRecipientFirstName?: string; careRecipientLastName?: string; careRecipientAge?: string;
   adultsCount: number; caregiversNeeded: number;
   additionalRecipients: Array<{ firstName: string; lastName: string; age?: string; relationship?: string }>;
@@ -126,6 +132,9 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
   const ecName = (d.emergencyContactName ?? "") as string;
   const { first: emergencyFirstName, last: emergencyLastName } = splitName(ecName);
 
+  const relationship = toWebsiteRelationship(d.relationship as string | undefined);
+  const photoURL = (d.careRecipientPhotoURL as string) || undefined;
+
   return {
     careFrequency: mapCareFrequencyToWizardValue(d.careFrequency),
     street: (d.street as string) || undefined,
@@ -138,14 +147,14 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     daysFlexible: d.daysFlexible === true,
     selectedDays: Array.isArray(d.selectedDays) ? d.selectedDays as string[] : [],
     timeOfDay: mapTimeOfDayToWizardValues(d.timeOfDay),
-    photoURL: (d.careRecipientPhotoURL as string) || undefined,
+    careRecipientPhotoURL: relationship === "myself" ? photoURL : undefined,
     careRecipientFirstName: careRecipientFirstName || undefined,
     careRecipientLastName: careRecipientLastName || undefined,
     careRecipientAge: seniorAge !== undefined ? String(seniorAge) : undefined,
     adultsCount: 1 + extraRecipients.length,
     caregiversNeeded: (d.caregiversNeeded as number) || 1,
     additionalRecipients,
-    relationship: toWebsiteRelationship(d.relationship as string | undefined),
+    relationship,
     emergencyFirstName: emergencyFirstName || undefined,
     emergencyLastName: emergencyLastName || undefined,
     emergencyPhone: (d.emergencyContactPhone as string) || undefined,
@@ -202,16 +211,18 @@ export interface SeniorProfileWizardFields {
   careNeeds: string[];
   needs: string[];
   scheduleNeeded: string[];
-  imageUrl?: string;
 }
 
+// imageUrl deliberately NOT written here — senior_profiles.imageUrl is a dead
+// field nothing reads (CarePlan.tsx reads job_postings.careRecipientPhotoURL
+// instead, see buildJobPostingsDoc above). Matches the website wizard fix of
+// the same date.
 export function buildSeniorProfileWizardFields(d: Record<string, unknown>): SeniorProfileWizardFields {
   const careNeeds = (Array.isArray(d.careNeeds) ? d.careNeeds : []) as string[];
   return {
     careNeeds,
     needs: careNeeds,
     scheduleNeeded: Array.isArray(d.selectedDays) ? d.selectedDays as string[] : [],
-    imageUrl: (d.careRecipientPhotoURL as string) || undefined,
   };
 }
 

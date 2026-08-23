@@ -2218,6 +2218,19 @@ export async function persistClientCareRecords(
       }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
     }
 
+    // Signup-time photo is the ACCOUNT HOLDER's own photo — same semantics as
+    // AccountSettings.tsx's "your photo", not automatically the care
+    // recipient's (Hamse, 2026-08-23). Mirrored here regardless of who the
+    // care is for; buildJobPostingsDoc separately mirrors it onto the
+    // recipient-facing careRecipientPhotoURL field only when relationship is
+    // "myself" (self-care) — see clientJobPostingContract.ts.
+    const acctPhotoURL = (d.careRecipientPhotoURL as string | undefined) || undefined;
+    if (acctPhotoURL) {
+      await db.collection("users").doc(uid).set({ photoURL: acctPhotoURL }, { merge: true })
+        .catch((err) => console.error("persistClientCareRecords: users photo write failed (non-fatal):", err));
+      await admin.auth().updateUser(uid, { photoURL: acctPhotoURL }).catch(() => { /* best effort, matches AccountSettings.tsx */ });
+    }
+
     // jobPostingCompleted — same flag + same TIMING the wizard's own "Submit"
     // sets it (before Identity/Membership, not after payment). This function
     // runs at intake-confirm, the true equivalent moment to the wizard's

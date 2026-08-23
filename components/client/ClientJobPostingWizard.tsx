@@ -743,7 +743,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               size="lg"
               userId={uid}
               storageFolder="clients"
-              ariaLabel="Upload care recipient photo"
+              ariaLabel="Upload your photo"
             />
             {!form.photoURL && (
               <button

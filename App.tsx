@@ -283,7 +283,7 @@ const AppContent: React.FC = () => {
       case 'caregiver-families': navigate('/caregiver/families'); break;
       case 'caregiver-settings': navigate('/caregiver/settings'); break;
       case 'caregiver-transactions': navigate('/caregiver/payments'); break;
-      case 'caregiver-payout': navigate('/caregiver/payments'); break;
+      case 'caregiver-payout': navigate('/caregiver/payments?tab=payouts'); break;
       case 'admin': navigate('/admin'); break;
       case 'stripe-callback': navigate('/stripe/callback'); break;
       case 'payment-success': navigate('/payment/success'); break;

@@ -1445,7 +1445,14 @@ export const CaregiverPaymentsPage: React.FC = () => {
   const navigate = useNavigate();
   const uid = currentUser?.uid ?? '';
 
-  const [tab, setTab] = useState<Tab>('timesheets');
+  // Deep-linkable via ?tab=payouts|timesheets|membership — the "Set up payouts"
+  // checklist CTA (CaregiverOnboardingDashboard.tsx) sends caregivers straight
+  // here rather than making them find the tab themselves.
+  const initialTab = (() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return (t === 'payouts' || t === 'timesheets' || t === 'membership') ? t : 'timesheets';
+  })();
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [tsFilter, setTsFilter] = useState<'unsubmitted' | 'pending' | 'history'>('unsubmitted');
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));

@@ -90,10 +90,13 @@ export const AdminCaregiverManager: React.FC = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [showSkillsDropdown]);
 
-  const advanceCaregiverOnboarding = async (uid: string, step: 'membership' | 'bgcheck') => {
+  const advanceCaregiverOnboarding = async (uid: string, step: 'membership' | 'bgcheck' | 'stripe_connect') => {
     try {
+      const type = step === 'membership' ? 'advance_caregiver_membership'
+        : step === 'bgcheck' ? 'advance_caregiver_bgcheck'
+        : 'advance_caregiver_stripe_connect';
       await db!.collection('adminAdvanceQueue').add({
-        type: step === 'membership' ? 'advance_caregiver_membership' : 'advance_caregiver_bgcheck',
+        type,
         uid,
         createdAt: new Date(),
         processedAt: null,
@@ -800,6 +803,41 @@ export const AdminCaregiverManager: React.FC = () => {
                               showToast('Background check revoked', 'success');
                             }}
                             className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).backgroundCheckStatus !== 'clear' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                          >Revoked</button>
+                        </div>
+                      </div>
+                      {/* Payout setup (Stripe Connect) — Approved dual-writes the
+                          real parent+private/payout fields via adminAdvanceQueue
+                          (client writes to private/payout are denied by
+                          firestore.rules, same as background check PII) and
+                          fires the same stripe_connect finalize task the real
+                          Stripe webhook uses. Revoked only patches the parent
+                          mirror for quick admin testing — it does not clear
+                          private/payout, since forcing a caregiver's actual
+                          Stripe account back to "not connected" isn't a real
+                          admin action the way revoking membership/background
+                          approval is. */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-slate-700">Payout setup (Stripe Connect)</span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              const patch: any = { payoutsEnabled: true, chargesEnabled: true, stripeOnboardingComplete: true };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              advanceCaregiverOnboarding(selected.uid, 'stripe_connect');
+                              showToast('Payout setup approved', 'success');
+                            }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${(selected as any).payoutsEnabled && (selected as any).chargesEnabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-green-50'}`}
+                          >Approved</button>
+                          <button
+                            onClick={async () => {
+                              const patch: any = { payoutsEnabled: false, chargesEnabled: false, stripeOnboardingComplete: false };
+                              await adminService.updateCaregiver(selected.uid, patch);
+                              setSelected(p => p ? { ...p, ...patch } as any : p);
+                              showToast('Payout setup revoked', 'success');
+                            }}
+                            className={`text-xs px-3 py-1 rounded-lg font-medium border transition-colors ${!((selected as any).payoutsEnabled && (selected as any).chargesEnabled) ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}
                           >Revoked</button>
                         </div>
                       </div>

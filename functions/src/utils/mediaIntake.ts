@@ -25,6 +25,7 @@
 
 import axios from "axios";
 import * as admin from "firebase-admin";
+import { randomUUID } from "crypto";
 
 export type InboundMediaKind = "image" | "document";
 
@@ -341,16 +342,23 @@ export async function storeInboundMedia(params: {
   const safePhone = params.phone.replace(/[^0-9]/g, "");
   const path      = `${folder}/${safePhone}_${Date.now()}.${params.ext}`;
 
+  // Download-token URL (same technique as uploadOnboardingFile in
+  // onboardingAgent.ts): readable regardless of storage.rules, no IAM
+  // signBlob needed — unlike getSignedUrl(), which requires the runtime
+  // service account to have iam.serviceAccounts.signBlob on itself. That
+  // permission was missing in prod (found 2026-08-23 via a live-testing
+  // incident: every texted photo/document failed at this exact call with
+  // "Permission 'iam.serviceAccounts.signBlob' denied"), so this switches to
+  // the technique that never needed that grant in the first place, rather
+  // than depending on an IAM change.
   const bucket = admin.storage().bucket();
-  const file   = bucket.file(path);
-  await file.save(params.buffer, {
+  const downloadToken = randomUUID();
+  await bucket.file(path).save(params.buffer, {
     contentType: params.content_type,
     resumable:   false,
+    metadata: { metadata: { firebaseStorageDownloadTokens: downloadToken } },
   });
 
-  const ttlDaysRaw = Number(process.env.MEDIA_SIGNED_URL_TTL_DAYS ?? "7");
-  const ttlDays = Number.isFinite(ttlDaysRaw) && ttlDaysRaw > 0 && ttlDaysRaw <= 30 ? ttlDaysRaw : 7;
-  const expires = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
-  const [url] = await file.getSignedUrl({ action: "read", expires });
-  return url;
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}` +
+    `/o/${encodeURIComponent(path)}?alt=media&token=${downloadToken}`;
 }

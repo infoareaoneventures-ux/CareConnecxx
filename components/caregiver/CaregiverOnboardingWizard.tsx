@@ -88,6 +88,18 @@ export const CaregiverOnboardingWizard: React.FC<WizardProps> = ({
       const loadedServices: string[] = Array.isArray(p.skills)
         ? p.skills
         : Array.isArray(p.services) ? p.services : [];
+      // Backfill name onto caregivers/{uid} — /start's web form (and Firebase
+      // Auth displayName) already captured it into users/{uid}, and getUser()
+      // merges that in here, but this wizard never wrote it back to the
+      // caregivers doc itself. FindCaregivers.tsx reads only the caregivers
+      // doc (via its publicCaregiverProfiles projection) and drops any
+      // caregiver with no name/firstName/lastName at all, so without this a
+      // caregiver who reaches this recovery wizard never appears anywhere.
+      const mergedName = (p.name as string | undefined)?.trim()
+        || [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
+      if (mergedName) {
+        dbService.updateUser('caregivers', uid, { name: mergedName } as any).catch(() => {});
+      }
       setForm(prev => ({
         ...prev,
         locationStreet:      p.street        || '',
@@ -444,26 +456,35 @@ const LocationStep: React.FC<{
   isLoading: boolean;
 }> = ({ street, city, state, zip, onChange, onNext, isLoading }) => {
   const [lookingUp, setLookingUp] = useState(false);
+  const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-populate city + state from zip
+  // Auto-populate city + state from zip — same api.zippopotam.us lookup the
+  // client wizard (ClientJobPostingWizard.tsx) and the backend agent
+  // (utils/geocode.ts's lookupZipPlace) use. This used to call Nominatim and
+  // split its free-text display_name by comma, which isn't reliably
+  // "City, State, ..." — for zip 95134 it put the zip itself in the city
+  // field and a neighborhood name ("North San Jose") in the state field.
+  // zippopotam.us returns structured {place name, state abbreviation} fields.
   useEffect(() => {
     if (zip.length !== 5) return;
+    if (zipTimerRef.current) clearTimeout(zipTimerRef.current);
     setLookingUp(true);
-    fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zip}&country=us&format=json&limit=1`, {
-      headers: { 'Accept-Language': 'en', 'User-Agent': 'Evia/1.0' },
-    })
-      .then(r => r.json())
-      .then((arr: any[]) => {
-        if (arr[0]?.display_name) {
-          const parts = arr[0].display_name.split(', ');
-          if (parts.length >= 3) {
-            onChange('locationCity', parts[0]);
-            onChange('locationState', parts[1]);
+    zipTimerRef.current = setTimeout(() => {
+      fetch(`https://api.zippopotam.us/us/${zip}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then((json: any) => {
+          const place = json?.places?.[0];
+          if (place) {
+            onChange('locationCity', place['place name'] || '');
+            onChange('locationState', place['state abbreviation'] || '');
           }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLookingUp(false));
+        })
+        .catch(() => {})
+        .finally(() => setLookingUp(false));
+    }, 400);
+    return () => {
+      if (zipTimerRef.current) clearTimeout(zipTimerRef.current);
+    };
   }, [zip]);
 
   const lineInput = "w-full py-3 text-slate-800 placeholder-slate-400 border-b border-slate-200 focus:outline-none focus:border-indigo-500 bg-transparent text-sm transition-colors";

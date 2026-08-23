@@ -188,6 +188,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("Classify their message")) return wantsLink; // wantsGateLinkResend
     if (prompt.includes("Classify the reply")) return awaitingKind;
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
+    if (prompt.includes("warm human-feeling care coordinator")) return "Here's a helpful answer."; // answerQuestionMidFlow
     if (prompt.includes("confirm or edit")) return intakeConfirmIntent;
     if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
     return stepAnswer;
@@ -727,6 +728,21 @@ describe("client care records + payment mirror", () => {
     await handleOnboardingStep(PHONE, CHAT, "I'm her daughter, not her spouse", session);
 
     expect(stored().onboardingData.relationship).toBe("parent");
+  });
+
+  it("client_confirm_intake: a mid-flow question is answered, not swallowed by the generic edit fallback", async () => {
+    const session = seed("client_confirm_intake", { ...CLIENT_DATA },
+      { userType: "client", userId: CLIENT_UID });
+    questionMode = true;
+
+    await handleOnboardingStep(PHONE, CHAT, "what is the address I gave you", session);
+
+    const text = sentMessages.map((m) => JSON.stringify(m.text)).join("\n");
+    expect(text).toMatch(/helpful answer/i); // the mocked answerQuestionMidFlow response
+    expect(text).toMatch(/does that all look right|say yes/i); // re-asked, not a canned "tell me what to change"
+    expect(text).not.toMatch(/tell me what to change/i);
+    expect(stored().onboardingStep).toBe("client_confirm_intake");
+    expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false);
   });
 
   it("client_confirm_intake: confirming proceeds to persist care records and show caregivers", async () => {

@@ -2078,6 +2078,16 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
 }
 
 async function handleClientConfirmIntake(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  // Mid-flow question (e.g. "what address did I give you?") — answer it, then
+  // re-ask for confirmation instead of falling through to the generic
+  // "tell me what to change" line, which never actually answers the question.
+  const confirmQuestion = `Evia sent the family a summary of their care request and asked: "Did I get that right?"`;
+  if (await isQuestionOrOther(text, confirmQuestion)) {
+    const answer = await answerQuestionMidFlow(text, session, phone);
+    await sendMessage(chatId, answer);
+    await sendMessage(chatId, "Does that all look right? Say yes and I'll show you who can help, or tell me what to fix.");
+    return;
+  }
   const intent = await parseWithClaude(
     '"yes", "yep", "correct", "looks good", "that\'s right", "go", "perfect" → confirm. ' +
     'Anything that corrects/changes a detail, or says no → edit. Reply with exactly one word: confirm or edit.',

@@ -120,7 +120,7 @@ describe("getCaregiverPreviewAction", () => {
       widerDocs = [];
 
       const result = await getCaregiverPreviewCaraAction.run(
-        { city: "San Jose", seniorName: "Mom", careNeeds: [] },
+        { city: "San Jose", seniorName: "Mom", careNeeds: [], needsTransportation: false },
         ctx,
       );
 
@@ -137,7 +137,7 @@ describe("getCaregiverPreviewAction", () => {
       widerDocs = [toDoc(SEEDED_CAREGIVER), toDoc(REAL_CAREGIVER)];
 
       const result = await getCaregiverPreviewCaraAction.run(
-        { city: "Bakersfield", seniorName: "Mom", careNeeds: [] },
+        { city: "Bakersfield", seniorName: "Mom", careNeeds: [], needsTransportation: false },
         ctx,
       );
 
@@ -153,7 +153,7 @@ describe("getCaregiverPreviewAction", () => {
       widerDocs = [toDoc(SEEDED_CAREGIVER)];
 
       const result = await getCaregiverPreviewCaraAction.run(
-        { city: "Bakersfield", seniorName: "Mom", careNeeds: [] },
+        { city: "Bakersfield", seniorName: "Mom", careNeeds: [], needsTransportation: false },
         ctx,
       );
 
@@ -170,7 +170,7 @@ describe("getCaregiverPreviewAction", () => {
       widerDocs = [];
 
       const result = await getCaregiverPreviewCaraAction.run(
-        { city: "San Jose", seniorName: "Mom", careNeeds: [] },
+        { city: "San Jose", seniorName: "Mom", careNeeds: [], needsTransportation: false },
         ctx,
       );
 

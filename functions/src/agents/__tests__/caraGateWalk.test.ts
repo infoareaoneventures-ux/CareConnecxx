@@ -177,6 +177,8 @@ let questionMode = false;   // isQuestionOrOther → YES when true
 let stepAnswer   = "";      // raw value the current step's parse prompt returns
 let awaitingKind = "other"; // classifyAwaitingReply verdict at awaiting steps
 let wantsLink    = "NO";    // wantsGateLinkResend verdict (identity/stripe/bgcheck resend gate)
+let intakeConfirmIntent  = "confirm"; // handleClientConfirmIntake's confirm-vs-edit classification
+let intakeCorrectionJson = "{}";      // extractIntakeCorrections' extracted-fields JSON
 vi.mock("../../utils/openaiClient", () => ({
   quickComplete: vi.fn(async (prompt: string) => {
     if (prompt.includes("You are extracting onboarding details from one message")) return "{}";
@@ -186,11 +188,13 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("Classify their message")) return wantsLink; // wantsGateLinkResend
     if (prompt.includes("Classify the reply")) return awaitingKind;
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
+    if (prompt.includes("confirm or edit")) return intakeConfirmIntent;
+    if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
     return stepAnswer;
   }),
 }));
 
-import { handleOnboardingStep, advanceOnboardingStep, confirmBgcheckConsent, persistClientCareRecords } from "../onboardingConversation";
+import { handleOnboardingStep, advanceOnboardingStep, confirmBgcheckConsent, persistClientCareRecords, continueAfterClientCollection } from "../onboardingConversation";
 import { runOnboardingDryRun } from "../onboardingDryRun";
 import { quickComplete } from "../../utils/openaiClient";
 
@@ -230,6 +234,8 @@ beforeEach(() => {
   stepAnswer = "";
   awaitingKind = "other";
   wantsLink = "NO";
+  intakeConfirmIntent = "confirm";
+  intakeCorrectionJson = "{}";
   stripeSpies.accountsCreate.mockClear();
   stripeSpies.accountLinksCreate.mockClear();
   stripeSpies.checkoutCreate.mockClear();
@@ -629,6 +635,11 @@ describe("client care records + payment mirror", () => {
     const plan = hoisted.docState.get(`carePlans/${CLIENT_UID}`);
     expect(plan?.clientId).toBe(CLIENT_UID);
     expect(Object.keys(plan?.recipientPlans ?? {})).toHaveLength(2); // Margaret + Frank
+    // Same review marker the website's "Looks good" button sets — stamped here
+    // because persistClientCareRecords now only runs after the family has
+    // explicitly confirmed their intake summary (client_confirm_intake), not
+    // the instant collection completes.
+    expect(plan?.carePlanReviewedAt).toBeTruthy();
 
     const senior = hoisted.docState.get(`senior_profiles/${CLIENT_UID}`);
     expect(senior?.name).toBe("Margaret");
@@ -671,6 +682,62 @@ describe("client care records + payment mirror", () => {
     // Care records re-persisted with the final data.
     expect(hoisted.docState.get(`clientIntakes/${CLIENT_UID}`)?.recipientName).toBe("Margaret");
     expect(hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.clientId).toBe(CLIENT_UID);
+  });
+
+  // 2026-08-22: the site's Care Plan confirmation ("Looks good") happens
+  // before Identity/Membership — the SMS side used to jump straight from
+  // collection to showing caregivers with no equivalent confirmation moment
+  // at all. continueAfterClientCollection now routes into the existing
+  // (previously-unwired) client_confirm_intake step instead of calling
+  // handleClientShowCaregivers directly.
+  it("continueAfterClientCollection sends the intake summary and parks at client_confirm_intake, without showing caregivers yet", async () => {
+    seed("client_ask_needs", { ...CLIENT_DATA, rate: 26 }, { userType: "client", userId: CLIENT_UID });
+    await continueAfterClientCollection(PHONE, CHAT);
+
+    expect(stored().onboardingStep).toBe("client_confirm_intake");
+    const last = sentMessages.map((m) => JSON.stringify(m.text)).join("\n");
+    expect(last).toMatch(/did i get that right|say yes/i);
+    // Caregivers/care-records only happen after explicit confirmation — this
+    // call alone must not have persisted anything to carePlans yet.
+    expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false);
+  });
+
+  it("client_confirm_intake: a correction updates the field, re-sends the summary, and does not show caregivers yet", async () => {
+    const session = seed("client_confirm_intake", { ...CLIENT_DATA, rate: 20 },
+      { userType: "client", userId: CLIENT_UID });
+    intakeConfirmIntent = "edit";
+    intakeCorrectionJson = '{"rate":30}';
+
+    await handleOnboardingStep(PHONE, CHAT, "actually make it $30/hr", session);
+
+    expect(stored().onboardingData.rate).toBe(30);
+    expect(stored().onboardingStep).toBe("client_confirm_intake"); // still parked, re-asking
+    const text = sentMessages.map((m) => JSON.stringify(m.text)).join("\n");
+    expect(text).toMatch(/updated/i);
+    expect(text).toMatch(/did i get that right|say yes/i); // summary re-sent
+    expect(hoisted.docState.has(`carePlans/${CLIENT_UID}`)).toBe(false);
+  });
+
+  it("client_confirm_intake: a relationship correction is canonicalized the same way save_onboarding_field would", async () => {
+    const session = seed("client_confirm_intake", { ...CLIENT_DATA },
+      { userType: "client", userId: CLIENT_UID });
+    intakeConfirmIntent = "edit";
+    intakeCorrectionJson = '{"relationship":"daughter"}';
+
+    await handleOnboardingStep(PHONE, CHAT, "I'm her daughter, not her spouse", session);
+
+    expect(stored().onboardingData.relationship).toBe("parent");
+  });
+
+  it("client_confirm_intake: confirming proceeds to persist care records and show caregivers", async () => {
+    const session = seed("client_confirm_intake", { ...CLIENT_DATA, rate: 26 },
+      { userType: "client", userId: CLIENT_UID });
+    intakeConfirmIntent = "confirm";
+
+    await handleOnboardingStep(PHONE, CHAT, "yes that's right", session);
+
+    expect(hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.clientId).toBe(CLIENT_UID);
+    expect(hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.carePlanReviewedAt).toBeTruthy();
   });
 });
 

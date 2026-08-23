@@ -565,6 +565,8 @@ export const MCP_TOOLS: McpTool[] = [
     name: "send_caregiver_message",
     description:
       "Send a message to a caregiver on behalf of the family. Use when the family asks you to relay something to the caregiver. " +
+      "Delivers by text AND posts into the same chat thread the family sees in their website Inbox, so a caregiver's reply " +
+      "(sent via send_client_message) shows up there too, not just in this SMS conversation. " +
       "Tell the family what you're sending before you call this tool.",
     input_schema: {
       type: "object",
@@ -1698,7 +1700,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "send_client_message",
     description:
-      "Send a message to a client on behalf of a caregiver. Tell the caregiver what you're sending before calling.",
+      "Send a message to a client on behalf of a caregiver. Delivers by text AND posts into the same chat thread the " +
+      "family sees in their website Inbox, so this shows up as a real reply there, not just in this SMS conversation. " +
+      "Tell the caregiver what you're sending before calling.",
     input_schema: {
       type: "object",
       properties: {
@@ -3993,10 +3997,33 @@ async function executeToolCall(
         if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
         const cgPhone = cgSnap.data()?.phone as string | undefined;
         if (!cgPhone) return toolError("NOT_FOUND", "Caregiver phone not on file");
+        const caregiverName = (cgSnap.data()?.name as string | undefined) ?? "";
         const { trySend } = await import("../utils/toolNotify");
         const notification = await trySend(cgPhone, `Message from family: ${message as string}`, "mcp:send_caregiver_message");
+        // Also land the message in the same persisted chatRooms thread the
+        // website's Inbox reads from (FindCaregivers.tsx's openChat) — the SMS
+        // alone left no visible, two-way thread for the family to see replies
+        // in. Fail-soft: a thread-write hiccup must never block the SMS relay,
+        // which is the guaranteed-delivery path. Requires clientId, which is
+        // optional on this tool's input — skip silently if it's absent.
+        if (clientId) {
+          try {
+            const clientSnap = await db.collection("users").doc(clientId as string).get();
+            const clientName = (clientSnap.data()?.name as string | undefined)
+              ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
+            const { relayIntoSharedChatThread } = await import("../utils/chatThread");
+            await relayIntoSharedChatThread({
+              clientId: clientId as string, clientName,
+              caregiverId: caregiverId as string, caregiverName,
+              senderId: clientId as string, senderName: clientName,
+              text: message as string,
+            });
+          } catch (err) {
+            console.error("send_caregiver_message: chatRooms thread write failed (SMS still sent):", err);
+          }
+        }
         logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => {});
-        return { success: true, sent: notification.sent, caregiverName: cgSnap.data()?.name ?? "", notification };
+        return { success: true, sent: notification.sent, caregiverName, notification };
       }
 
       case "request_location": {
@@ -6144,6 +6171,22 @@ async function executeToolCall(
       const cgName = cgData?.name ?? "Your caregiver";
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
+      // Also land the message in the same persisted chatRooms thread the
+      // website's Inbox reads from — see send_caregiver_message for the other
+      // direction. Fail-soft: never block the SMS relay on a thread-write hiccup.
+      try {
+        const clientName = (clientSnap.data()?.name as string | undefined)
+          ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
+        const { relayIntoSharedChatThread } = await import("../utils/chatThread");
+        await relayIntoSharedChatThread({
+          clientId: resolvedClientId, clientName,
+          caregiverId: caregiverId as string, caregiverName: cgName as string,
+          senderId: caregiverId as string, senderName: cgName as string,
+          text: message as string,
+        });
+      } catch (err) {
+        console.error("send_client_message: chatRooms thread write failed (SMS still sent):", err);
+      }
       logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, sent: notification.sent, sentTo: resolvedClientId, notification };
     }

@@ -55,10 +55,11 @@ vi.mock("firebase-admin", () => ({
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
   firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
     FieldValue: {
-      arrayUnion:  (...v: any[]) => ({ __arrayUnion: v }),
-      arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
-      increment:   (n: number) => ({ __increment: n }),
-      delete:      () => ({ __delete: true }),
+      arrayUnion:      (...v: any[]) => ({ __arrayUnion: v }),
+      arrayRemove:     (...v: any[]) => ({ __arrayRemove: v }),
+      increment:       (n: number) => ({ __increment: n }),
+      delete:          () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
   }),
 }));
@@ -174,6 +175,53 @@ describe("communication tools", () => {
       expect(r.success).toBe(true);
       expect(r.sent).toBe(false);
       expect(r.notification.sent).toBe(false);
+    });
+  });
+
+  // 2026-08-22: both directions used to ONLY fire a one-way SMS, with no
+  // visible thread for the family to see a caregiver's reply (or vice versa).
+  // Both now also post into chatRooms/{roomId}/messages — the same collection
+  // FindCaregivers.tsx's openChat() reads from — so a relayed message shows up
+  // in the real, two-way website Inbox thread, not just this SMS conversation.
+  describe("shared chatRooms thread relay", () => {
+    it("send_caregiver_message posts into chatRooms/{sortedIds}/messages", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("users/c1", { name: "Sarah", phone: "+15555550100" });
+      const roomId = ["c1", "cg1"].sort().join("_");
+      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      const roomSets = hoisted.sets.filter((s) => s.path === `chatRooms/${roomId}`);
+      expect(roomSets.length).toBeGreaterThan(0);
+      const messageSets = hoisted.sets.filter((s) => s.path.startsWith(`chatRooms/${roomId}/messages/`));
+      expect(messageSets).toHaveLength(1);
+      expect(messageSets[0].data).toMatchObject({
+        senderId: "c1", senderName: "Sarah", text: "she napped well", type: "text",
+      });
+    });
+
+    it("send_client_message posts into the same chatRooms thread as the caregiver sender", async () => {
+      hoisted.collState.set("appointments", [
+        { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
+      ]);
+      hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+      const roomId = ["c1", "cg1"].sort().join("_");
+      const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "on my way", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      const messageSets = hoisted.sets.filter((s) => s.path.startsWith(`chatRooms/${roomId}/messages/`));
+      expect(messageSets).toHaveLength(1);
+      expect(messageSets[0].data).toMatchObject({
+        senderId: "cg1", senderName: "Alice", text: "on my way", type: "text",
+      });
+    });
+
+    it("send_caregiver_message still sends the SMS even if the thread write fails to resolve names", async () => {
+      // No users/c1 doc seeded — clientName resolves to "", but the tool must
+      // not fail or skip the SMS relay over it.
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.sent).toBe(true);
     });
   });
 });

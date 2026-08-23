@@ -49,7 +49,7 @@ import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewActio
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho, toWebsiteRelationship } from "./careRecipients";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
-import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField } from "./onboardingContract";
+import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
 import {
@@ -1989,8 +1989,14 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
       ? (d.careNeeds as string[]).join(", ")
       : "";
   const loc   = [d.city, d.zipCode].filter(Boolean).join(" ");
-  const days  = d.daysPerWeek ? `${d.daysPerWeek} day${Number(d.daysPerWeek) === 1 ? "" : "s"}/week` : "";
-  const tod   = (d.timeOfDay as string) || "";
+  // selectedDays (array, e.g. ['MON','WED','FRI']) is the current loop field —
+  // daysPerWeek is a legacy/caregiver-side field that the client loop no
+  // longer writes, so reading only daysPerWeek silently dropped schedule info
+  // from this summary for every loop-collected signup.
+  const days  = Array.isArray(d.selectedDays) && (d.selectedDays as string[]).length
+    ? (d.selectedDays as string[]).join("/")
+    : d.daysPerWeek ? `${d.daysPerWeek} day${Number(d.daysPerWeek) === 1 ? "" : "s"}/week` : "";
+  const tod   = Array.isArray(d.timeOfDay) ? (d.timeOfDay as string[]).join("/") : (d.timeOfDay as string) || "";
   const sched = [days, tod].filter(Boolean).join(", ");
   const start = (d.startDate as string) || "";
   const prefs = (d.caregiverPreferences as Record<string, unknown> | undefined) ?? {};
@@ -1999,10 +2005,16 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   if (prefs.language) prefBits.push(`${prefs.language}-speaking`);
   if (prefs.driving)  prefBits.push("can drive");
   if (prefs.other)    prefBits.push(String(prefs.other));
+  // rate (a number, or the string "flexible") is the current loop field —
+  // budget.{min,max} is the legacy shape the client loop no longer writes.
   const b = (d.budget as { min?: number; max?: number } | undefined) ?? {};
-  const budget = (b.min || b.max)
-    ? (b.min === b.max ? `$${b.max}/hr` : `$${b.min}–${b.max}/hr`)
-    : "";
+  const budget = typeof d.rate === "number"
+    ? `$${d.rate}/hr`
+    : typeof d.rate === "string" && d.rate
+      ? d.rate
+      : (b.min || b.max)
+        ? (b.min === b.max ? `$${b.max}/hr` : `$${b.min}–${b.max}/hr`)
+        : "";
 
   const pieces: string[] = [];
   // Multi-recipient household: name everyone so the family can catch a missed
@@ -2033,7 +2045,11 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
   const raw = await parseWithClaude(
     "The family is correcting their care intake. Extract ONLY the fields they're changing; omit the rest. " +
     "Return raw JSON with any of: {\"seniorName\":\"\",\"age\":0,\"careNeeds\":[],\"conditions\":[],\"city\":\"\"," +
-    "\"zipCode\":\"\",\"daysPerWeek\":0,\"timeOfDay\":\"\",\"hoursPerDay\":0,\"startDate\":\"\",\"budget\":{\"min\":0,\"max\":0}}. " +
+    "\"zipCode\":\"\",\"selectedDays\":[],\"timeOfDay\":\"\",\"startDate\":\"\",\"rate\":0,\"relationship\":\"\"," +
+    "\"emergencyContactName\":\"\",\"emergencyContactPhone\":\"\",\"firstName\":\"\"," +
+    "\"daysPerWeek\":0,\"hoursPerDay\":0,\"budget\":{\"min\":0,\"max\":0}}. " +
+    "selectedDays is an array of uppercase 3-letter day codes e.g. ['MON','WED','FRI']. rate is a number, " +
+    "or the string \"flexible\" if they say that. relationship is one of: myself, parent, spouse, other. " +
     "Only include a field if they clearly changed it.",
     text
   ).catch(() => "{}");
@@ -2049,7 +2065,11 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
         const bv = v as { min?: number; max?: number };
         if (!bv.min && !bv.max) continue;
       }
-      out[k] = v;
+      // relationship must go through the same canonicalization
+      // save_onboarding_field applies (daughter/son/child/mother/etc. →
+      // parent, wife/husband/partner → spouse) — this edit path writes
+      // directly via mergeOnboardingData, bypassing that tool entirely.
+      out[k] = k === "relationship" ? normalizeOnboardingFieldValue("relationship", v) : v;
     }
     return out;
   } catch {
@@ -2166,6 +2186,13 @@ export async function persistClientCareRecords(
       recipientPlans,
       locationPool: [buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number } : undefined)],
       ...(emergencyContacts ? { emergencyContacts } : {}),
+      // Same review marker the website's "Looks good" button sets on
+      // CarePlan.tsx. The wizard's version is a single end-of-form glance;
+      // over SMS the family already confirmed every field conversationally,
+      // one at a time, as they answered — that IS the review, so it's stamped
+      // here automatically rather than adding a redundant extra "does this
+      // look right?" turn right after they just finished answering everything.
+      carePlanReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: new Date().toISOString(),
     }, { merge: true });
 
@@ -2424,16 +2451,21 @@ async function handleClientShowCaregivers(
 
 // Proactive post-collection handoff for the agent loop. When the loop calls
 // complete_collection it only advances the cursor to the first gate step — the
-// next phase (show caregivers → paywall, or the honest no-supply hold) is
+// next phase (a plain-text summary confirmation, matching the website's Care
+// Plan review step, which happens before Identity/Membership there too) is
 // webhook-passive and would otherwise wait for an inbound that never comes (the
 // family was just told their part is done). The webhook calls this the moment
 // collection completes so Evia continues in the SAME turn instead of going silent.
+// The reply to this summary is handled by handleClientConfirmIntake (routed at
+// step client_confirm_intake), which only calls handleClientShowCaregivers —
+// and stamps carePlans.carePlanReviewedAt, inside persistClientCareRecords —
+// once the family has explicitly confirmed, not the instant collection ends.
 export async function continueAfterClientCollection(phone: string, chatId: string): Promise<void> {
   const snap = await db.collection("agent_sessions").doc(phone).get();
   if (!snap.exists) return;
-  // withIntro:false — the agent loop's closing line (directive: "pulling up
-  // caregivers near you now") is the gallery's header; don't stack a second one.
-  await handleClientShowCaregivers(phone, chatId, snap.data() as AgentSession, { withIntro: false });
+  const session = snap.data() as AgentSession;
+  await updateSession(phone, { onboardingStep: "client_confirm_intake" });
+  await sendClientIntakeSummary(chatId, session);
 }
 
 // When a caregiver activates, re-engage families we honestly held (awaitingSupply)

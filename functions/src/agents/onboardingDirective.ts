@@ -138,14 +138,15 @@ export function buildOnboardingDirective(
     : optionalGateLine ||
       `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
       `else this turn, then send ONE short warm line saying you've got what you need and you're ` +
-      `pulling up caregivers near them now (that promise is safe — their matches are sent ` +
-      `automatically right after your message). Keep it to one sentence, do NOT list fields back ` +
-      `like a form, do NOT ask ANY question, and do NOT announce what you'll ask next — anything ` +
-      `you ask here gets buried under the match cards that follow. NEVER say anything like "next ` +
-      `step is membership payment" or "once that's active I can move you into matching" — a real ` +
-      `caregiver match is coming in the very next message, so that framing is a direct, visible ` +
-      `contradiction the family will see seconds later. Membership is what lets them message/book ` +
-      `the match they're about to see — it does not gate whether matching happens at all.`;
+      `about to read it back to confirm everything's right (a separate message with the full ` +
+      `summary and a confirmation question follows automatically right after yours — do NOT ` +
+      `also list the fields back yourself, and do NOT promise caregivers yet, that comes only ` +
+      `after they confirm the summary — matching the website's own Care Plan review step, which ` +
+      `also happens before caregivers/membership). Keep it to one sentence, do NOT ask ANY ` +
+      `question, and do NOT announce what you'll ask next. NEVER say anything like "next step is ` +
+      `membership payment" or "once that's active I can move you into matching" here or anywhere ` +
+      `else in this flow — membership is what lets them message/book a caregiver once matched, it ` +
+      `does not gate whether matching happens at all.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text, following the`,

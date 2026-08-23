@@ -11,7 +11,7 @@ import { db } from '../../lib/firebase';
 import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
 import { paymentMethodLabel } from '../../types';
-import { getClientBillingPortalUrl } from '../../services/stripeService';
+import { getClientBillingPortalUrl, getClientPaymentMethodStatus } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 
 type Tab = 'timesheets' | 'payment-method';
@@ -562,8 +562,12 @@ export const Payments: React.FC = () => {
   const [reportFrom, setReportFrom] = useState('');
   const [reportTo, setReportTo] = useState('');
 
-  // Payment method state
+  // Payment method state. stripeCustomerId only tells you a Stripe customer
+  // record exists (written the moment checkout STARTS, before any card is
+  // entered) — hasValidCard is a live Stripe check for whether a real,
+  // charge-able card is actually attached, and is what the UI displays.
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const [hasValidCard, setHasValidCard] = useState<boolean | null>(null);
   const [loadingCard, setLoadingCard] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
 
@@ -579,15 +583,22 @@ export const Payments: React.FC = () => {
     return () => unsub();
   }, [user?.uid]);
 
-  // Fetch Stripe customer status — stored in customers/{uid} by checkout
+  // stripeCustomerId (Firestore, fast — used only to decide "Add a card" vs
+  // "Manage payment method" / redirect-to-membership vs open-portal) and
+  // hasValidCard (live Stripe check — used for the actual "Card connected" /
+  // "No card on file" status shown to the client) load in parallel; the UI
+  // waits for both so it never flashes a stale/wrong state.
   useEffect(() => {
     if (!user || !db) { setLoadingCard(false); return; }
-    db.collection('customers').doc(user.uid).get()
-      .then(snap => {
-        setStripeCustomerId(snap.data()?.stripeCustomerId || null);
-      })
-      .catch(() => {})
-      .finally(() => setLoadingCard(false));
+    let active = true;
+    Promise.allSettled([
+      db.collection('customers').doc(user.uid).get()
+        .then(snap => { if (active) setStripeCustomerId(snap.data()?.stripeCustomerId || null); }),
+      getClientPaymentMethodStatus()
+        .then(status => { if (active) setHasValidCard(status.hasCard); })
+        .catch(() => { if (active) setHasValidCard(false); }),
+    ]).finally(() => { if (active) setLoadingCard(false); });
+    return () => { active = false; };
   }, [user?.uid]);
 
   // Filter rows by date
@@ -967,7 +978,7 @@ export const Payments: React.FC = () => {
                 </div>
 
                 <div className="px-6 pb-6">
-                  {stripeCustomerId ? (
+                  {hasValidCard ? (
                     <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 mb-4">
                       <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shrink-0">
                         <CreditCard className="w-5 h-5 text-white" />
@@ -1002,7 +1013,7 @@ export const Payments: React.FC = () => {
                     {portalLoading
                       ? <Loader2 className="w-4 h-4 animate-spin" />
                       : <ExternalLink className="w-4 h-4" />}
-                    {stripeCustomerId ? 'Manage payment method' : 'Add a card'}
+                    {hasValidCard ? 'Manage payment method' : 'Add a card'}
                   </button>
                 </div>
 

@@ -301,6 +301,25 @@ export const getCaregiverBillingPortalUrl = (): Promise<string> =>
 export const getClientBillingPortalUrl = (): Promise<string> =>
   createBillingPortalSession('/client/payments');
 
+export interface PaymentMethodStatus {
+  hasCard: boolean;
+  brand?: string | null;
+  last4?: string | null;
+}
+
+// Live check against Stripe — NOT the same as customers/{uid}.stripeCustomerId
+// existing, which is set the moment checkout starts, before any card is
+// entered. See functions/src/stripe.ts's getPaymentMethodStatus for why.
+export const getClientPaymentMethodStatus = async (): Promise<PaymentMethodStatus> => {
+  if (!auth) throw new Error('Auth not initialized');
+  const user = auth.currentUser;
+  if (!user) throw new Error('User must be logged in');
+  const fns = getFunctions();
+  const fn = httpsCallable<Record<string, never>, PaymentMethodStatus>(fns, 'v1-getPaymentMethodStatus');
+  const res = await fn({});
+  return res.data;
+};
+
 // Stripe service object for backward compatibility
 export const stripeService = {
   getStripe,

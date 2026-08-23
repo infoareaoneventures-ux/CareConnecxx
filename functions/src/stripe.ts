@@ -1167,6 +1167,53 @@ export const getSubscriptionDetails = functions.https.onCall(async (data, contex
 });
 
 /**
+ * Live check of whether the client actually has a usable payment method on
+ * file — NOT the same as customers/{uid}.stripeCustomerId existing, which
+ * gets written the moment checkout STARTS, before any card is entered. A
+ * client who abandons checkout before submitting a card, or whose card was
+ * later removed via the Billing Portal, would still have a stripeCustomerId
+ * in Firestore with no actual charge-able card. This asks Stripe directly,
+ * live, every call — no webhook/trigger needed, this is purely a read for
+ * whoever is looking at the Payments page right now (Hamse, 2026-08-23).
+ */
+export const getPaymentMethodStatus = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  const userId = context.auth.uid;
+
+  try {
+    const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
+    const customerId = customerDoc.data()?.stripeCustomerId as string | undefined;
+    if (!customerId) return { hasCard: false };
+
+    const customer = await stripe.customers.retrieve(customerId, {
+      expand: ['invoice_settings.default_payment_method'],
+    });
+    if (customer.deleted) return { hasCard: false };
+
+    let pm = customer.invoice_settings?.default_payment_method as Stripe.PaymentMethod | string | null | undefined;
+    if (!pm || typeof pm === 'string') {
+      // No default set on the customer — fall back to whether ANY card is
+      // attached at all (e.g. attached during checkout but never explicitly
+      // set as default).
+      const methods = await stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 });
+      pm = methods.data[0];
+    }
+    if (!pm || typeof pm === 'string') return { hasCard: false };
+
+    return {
+      hasCard: true,
+      brand: pm.card?.brand ?? null,
+      last4: pm.card?.last4 ?? null,
+    };
+  } catch (error) {
+    console.error('Error getting payment method status:', error);
+    throw new functions.https.HttpsError('internal', 'Failed to get payment method status');
+  }
+});
+
+/**
  * Cancel subscription
  */
 export const cancelSubscription = functions.https.onCall(async (data, context) => {

@@ -52,6 +52,7 @@ import { buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWiza
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
+import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 import {
   GATE_LINK_KEYWORD_TARGETS,
   gateLinkBypassConsumed,
@@ -5742,7 +5743,29 @@ async function answerQuestionMidFlow(text: string, session: AgentSession, phone:
   // Everything they've already told us — without this, a recall question
   // ("what zip did I share?") hits the anti-invention rules with an empty
   // context and produces a grounded-sounding denial (Hamse, 2026-07-17).
-  const sharedProfile = describeSharedProfile(session);
+  // Canonical-wins (U6): once an account exists, the signup snapshot above can
+  // be stale — edited later on the website or by an admin — so a live read of
+  // the real profile takes precedence, same rule the main qaAgent loop already
+  // follows for its own context-building. Fail-soft: a lookup error just
+  // leaves the snapshot as the only source, same as before this fix.
+  let canonicalProfile: Record<string, unknown> | null = null;
+  if (session.userId) {
+    try {
+      if (session.userType === "caregiver") {
+        const cgDoc = await db.collection("caregivers").doc(session.userId).get();
+        canonicalProfile = cgDoc.exists ? (cgDoc.data() as Record<string, unknown>) : null;
+      } else {
+        // senior_profiles is keyed by session.seniorId when one has been
+        // assigned (multi-recipient households), otherwise by the client's
+        // own uid — persistClientCareRecords writes the primary recipient's
+        // doc at senior_profiles/{clientUid}.
+        const seniorId = ((session as any).seniorId as string | undefined) || session.userId;
+        const { profile } = await getSeniorProfileWithSource(seniorId, db);
+        canonicalProfile = profile;
+      }
+    } catch { /* fail-soft — snapshot facts still apply */ }
+  }
+  const sharedProfile = describeSharedProfile(session, canonicalProfile);
   let stepFacts = STEP_QUESTION_FACTS[step];
   // The static STEP_QUESTION_FACTS describe the PROCESS; without the user's
   // actual live state a status question ("did my payment go through?", "where's

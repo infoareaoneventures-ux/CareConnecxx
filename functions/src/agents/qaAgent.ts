@@ -365,10 +365,15 @@ async function buildClientCoreContext(
   // its "Name (mother)" format misread — "mother" is the RECIPIENT's relation
   // to the account holder). describeWhoIsWho covers both correctly.
   const sd = (session as any)?.onboardingData ?? {};
+  // Canonical-wins (U6): senior (the freshly-read senior_profiles doc, fetched
+  // moments before this call) must take precedence over the possibly-stale
+  // signup snapshot — this inverted precedence let a name/relationship
+  // correction made on the website keep getting overridden by the old
+  // session value indefinitely.
   const whoIsWho = describeWhoIsWho({
     ...sd,
-    seniorName:   sd.seniorName ?? senior?.name,
-    relationship: sd.relationship ?? senior?.relationship,
+    seniorName:   senior?.name ?? sd.seniorName,
+    relationship: senior?.relationship ?? sd.relationship,
   });
   if (whoIsWho) parts.push(whoIsWho);
 
@@ -3704,7 +3709,7 @@ export async function runQuickReply(params: {
 
   // Pre-fetch lightweight context in parallel — used to make greetings smart.
   // Each loader is wrapped so a single failure doesn't break the reply.
-  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts] = await Promise.all([
+  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts, cgProfile] = await Promise.all([
     getConversationHistory(phone).catch(() => []),
     userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
     userType === "client"
@@ -3740,6 +3745,14 @@ export async function runQuickReply(params: {
     userType === "caregiver" && caregiverId
       ? import("./caregiverBriefing").then((m) => m.describeCaregiverAccountStatus(caregiverId)).catch(() => "")
       : Promise.resolve(""),
+    // Live caregivers/{id} doc — canonical source for describeSharedProfile's
+    // caregiver branch, same canonical-wins rule the client branch already
+    // gets via seniorProfile above (which is always null on a caregiver turn).
+    userType === "caregiver" && caregiverId
+      ? db.collection("caregivers").doc(caregiverId).get()
+          .then(s => s.exists ? (s.data() as Record<string, unknown>) : null)
+          .catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   metrics.contextLoadMs = Date.now() - metrics.startedAt;
@@ -3797,7 +3810,9 @@ export async function runQuickReply(params: {
   // signup snapshot fills gaps but can never contradict newer canonical fields.
   const sharedProfile = describeSharedProfile(
     session as { userType?: unknown; onboardingData?: Record<string, unknown> } | undefined,
-    seniorProfile as Record<string, unknown> | null,
+    userType === "caregiver"
+      ? (cgProfile as Record<string, unknown> | null)
+      : (seniorProfile as Record<string, unknown> | null),
   );
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [

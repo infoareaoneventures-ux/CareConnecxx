@@ -88,28 +88,36 @@ export function describeSharedProfile(
   const facts: string[] = [];
 
   if (userType === "caregiver") {
-    const name = String(d.name ?? "").trim();
+    // Canonical-wins (U6), same rule the client branch below already follows —
+    // this branch used to ignore canonicalProfile entirely, so a caregiver's
+    // own facts (name, rate, availability, etc.) could go stale for the
+    // lifetime of their account instead of just during signup.
+    const canon = (canonicalProfile ?? {}) as Record<string, unknown>;
+    const name = String(canon.name ?? d.name ?? "").trim();
     if (name) facts.push(`name: ${name}`);
-    const loc = describeLocation(d);
+    const canonLoc = describeLocation({ city: canon.city, zipCode: canon.zipCode });
+    const loc = canonLoc || describeLocation(d);
     if (loc) facts.push(`location: ${loc}`);
-    const years = d.yearsExperience;
+    const years = canon.yearsExperience ?? canon.experience ?? d.yearsExperience;
     if (typeof years === "number" && years > 0) facts.push(`experience: ${years} year${years === 1 ? "" : "s"}`);
-    const specialties = asList(d.specialties) || asList(d.services) || asList(d.skills);
+    const specialties = asList(canon.specializations) || asList(canon.specialties) || asList(canon.skills)
+      || asList(d.specialties) || asList(d.services) || asList(d.skills);
     if (specialties) facts.push(`specialties: ${specialties}`);
-    const avail = describeAvailability(d.availability);
+    const avail = describeAvailability(canon.weeklyAvailability ?? canon.availability) || describeAvailability(d.availability);
     if (avail) facts.push(`availability: ${avail}`);
-    const jobType = String(d.jobType ?? "").trim().replace(/_/g, "-");
+    const jobType = asList(canon.jobTypes) || String(d.jobType ?? "").trim().replace(/_/g, "-");
     if (jobType) facts.push(`work type: ${jobType}`);
-    const rate = d.hourlyRate;
+    const rate = canon.hourlyRate ?? d.hourlyRate;
     if (typeof rate === "number" && rate > 0) facts.push(`rate: $${rate}/hr`);
-    const email = String(d.email ?? "").trim();
+    const email = String(canon.email ?? d.email ?? "").trim();
     if (email) facts.push(`email: ${email}`);
-    const languages = asList(d.languages);
+    const languages = asList(canon.languages) || asList(d.languages);
     if (languages) facts.push(`languages: ${languages}`);
-    const certs = asList(d.certifications);
+    const certs = asList(canon.certifications) || asList(d.certifications);
     if (certs) facts.push(`certifications: ${certs}`);
-    if (d.canDrive !== undefined && !declined(d.canDrive)) {
-      facts.push(`can drive: ${String(d.canDrive) === "true" || d.canDrive === true || String(d.canDrive) === "yes" ? "yes" : "no"}`);
+    const canDrive = canon.canDrive !== undefined ? canon.canDrive : d.canDrive;
+    if (canDrive !== undefined && !declined(canDrive)) {
+      facts.push(`can drive: ${String(canDrive) === "true" || canDrive === true || String(canDrive) === "yes" ? "yes" : "no"}`);
     }
   } else {
     // Client/family — who's-who first (mandatory whenever a client name is

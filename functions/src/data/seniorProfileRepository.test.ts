@@ -103,11 +103,18 @@ describe("U6 source scan — one read order for Evia senior context", () => {
     expect([...src.matchAll(/\bgetSeniorProfile\s*\(/g)].length).toBeGreaterThanOrEqual(3); // def + full + quick
   });
 
-  it("quick path pins the signup snapshot beneath the canonical profile", () => {
+  it("quick path pins the signup snapshot beneath the canonical profile, for both roles", () => {
     const src = read("agents/qaAgent.ts");
     // describeSharedProfile must receive the canonical profile so the signup
-    // snapshot cannot contradict newer canonical fields (KTD12 / authority order).
-    expect(src).toMatch(/describeSharedProfile\(\s*session[^)]*,\s*seniorProfile/);
+    // snapshot cannot contradict newer canonical fields (KTD12 / authority
+    // order) — seniorProfile on the client side, cgProfile (a live
+    // caregivers/{id} read) on the caregiver side. Bounded, non-greedy match
+    // to the call's closing paren so this doesn't accidentally match unrelated
+    // later code.
+    const call = src.match(/describeSharedProfile\(\s*session[\s\S]*?\);/);
+    expect(call).toBeTruthy();
+    expect(call![0]).toMatch(/\bseniorProfile\b/);
+    expect(call![0]).toMatch(/\bcgProfile\b/);
   });
 
   it("Linq prefetch writer caches the repository read (canonical-first with legacy fallback)", () => {

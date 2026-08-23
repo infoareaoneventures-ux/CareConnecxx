@@ -174,9 +174,36 @@ describe("describeSharedProfile — canonical profile pinning", () => {
     expect(bare).toContain("Rosie");
   });
 
-  it("caregiver briefings ignore the canonical senior profile entirely", () => {
-    const withCanon = describeSharedProfile(HAMSE, { name: "Mary", location: "Sacramento" });
-    expect(withCanon).toBe(describeSharedProfile(HAMSE));
-    expect(withCanon).not.toContain("Sacramento");
+  // Caregiver canonical profile is a live caregivers/{id} doc (name, city,
+  // zipCode, hourlyRate, etc.) — NOT a senior_profiles shape. It used to be
+  // ignored entirely for caregivers (a real bug: a caregiver's own corrected
+  // name/rate/availability could go stale for the account's whole lifetime);
+  // it now follows the same canonical-wins rule the client branch already has.
+  it("canonical caregiver fields win over the stale signup snapshot", () => {
+    const withCanon = describeSharedProfile(HAMSE, {
+      name: "Hamse M.", city: "San Jose", zipCode: "95110", hourlyRate: 32,
+    });
+    expect(withCanon).toContain("name: Hamse M.");
+    expect(withCanon).toContain("San Jose (ZIP 95110)");
+    expect(withCanon).toContain("rate: $32/hr");
+    expect(withCanon).not.toContain("Hamse mahad");
+    expect(withCanon).not.toContain("ZIP 95130");
+    expect(withCanon).not.toContain("$27/hr");
+  });
+
+  it("snapshot still fills caregiver fields the canonical profile does not carry", () => {
+    // Canonical carries only the name — specialties/availability/rate/email
+    // still come from the signup snapshot (fill, don't override).
+    const brief = describeSharedProfile(HAMSE, { name: "Hamse M." });
+    expect(brief).toContain("name: Hamse M.");
+    expect(brief).toContain("ZIP 95130");
+    expect(brief).toContain("Companionship");
+    expect(brief).toContain("rate: $27/hr");
+  });
+
+  it("without a canonical profile the caregiver snapshot is unchanged", () => {
+    const bare = describeSharedProfile(HAMSE);
+    expect(bare).toBe(describeSharedProfile(HAMSE, null));
+    expect(bare).toContain("name: Hamse mahad");
   });
 });

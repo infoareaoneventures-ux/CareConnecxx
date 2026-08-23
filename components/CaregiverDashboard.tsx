@@ -47,6 +47,20 @@ export const CaregiverDashboard: React.FC<CaregiverDashboardProps> = ({ onNaviga
       return unsub;
    }, [currentUser?.uid]);
 
+   // Payout fields (stripeAccountId/payoutsEnabled/chargesEnabled) live on the
+   // owner-only private/payout subdoc, not the caregivers/{uid} doc the
+   // onSnapshot above watches — fetch and merge separately, same pattern
+   // CaregiverPaymentsPage.tsx already uses. Needed by CaregiverProgressCard's
+   // "Payout Setup" onboarding step (Hamse, 2026-08-23).
+   useEffect(() => {
+      if (!currentUser?.uid) return;
+      let active = true;
+      dbService.getOwnCaregiverPayoutFields(currentUser.uid)
+         .then(payout => { if (active) setProfile((prev: any) => prev ? { ...prev, ...payout } : prev); })
+         .catch(() => {});
+      return () => { active = false; };
+   }, [currentUser?.uid]);
+
    // No profile doc yet — show wizard if they've already texted Evia, handoff screen if not
    if (docMissing && !profile) {
       if (currentUser?.eviaConnected && currentUser?.uid) {

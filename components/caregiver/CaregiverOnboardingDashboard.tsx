@@ -50,7 +50,14 @@ export const CaregiverProgressCard: React.FC<{
   const services: string[] = (p.services || p.skills || []) as string[];
   const needsTransportDocs = services.includes('Transportation');
   const transportDocsValid = needsTransportDocs ? hasValidTransportDocs(profile) : false;
-  const isApproved = membershipActive && bgApprovedFull && (!needsTransportDocs || transportDocsValid);
+  // Payout fields live on the owner-only private/payout subdoc — caller must
+  // merge dbService.getOwnCaregiverPayoutFields(uid) into `profile` (same
+  // pattern CaregiverPaymentsPage.tsx already uses) for this to be accurate.
+  // Required now: cash is being phased out platform-wide, so every caregiver
+  // needs a connected payout account regardless of whether they currently
+  // accept credit cards (Hamse, 2026-08-23).
+  const payoutsSetUp = !!(p.payoutsEnabled && p.chargesEnabled);
+  const isApproved = membershipActive && bgApprovedFull && payoutsSetUp && (!needsTransportDocs || transportDocsValid);
   // Field-driven Profile completeness: Evia mirrors each SMS-collected field to
   // caregivers/{uid} as it's collected, but only stamps onboardingStatus
   // 'profile_complete' at the very last (Stripe Connect) step — so gating this
@@ -77,12 +84,20 @@ export const CaregiverProgressCard: React.FC<{
   const transportDocStatuses = needsTransportDocs ? ['driversLicense', 'insurance', 'registration'].map(k => getDocStatus(k)) : [];
   const transportNeedsAction = needsTransportDocs && (transportDocStatuses.includes('missing') || transportDocStatuses.includes('rejected'));
 
+  // Order: Profile -> Membership -> Background Check -> Payout Setup ->
+  // Transport Docs. Payout Setup sits AFTER background check (matching
+  // Evia's own SMS order exactly — she only sends the Stripe Connect link
+  // once the background check clears) and BEFORE transport docs (a slow,
+  // conditional admin-review step that only applies to some caregivers,
+  // whereas payout setup is universal and fast — no reason to make everyone
+  // wait behind an optional review step for it).
   const activeStep = !profileComplete ? 1
     : !hasPaid ? 2
     : (!checkrInitiated && !bgApprovedFull) ? 3
-    : transportNeedsAction ? 5
     : !bgApprovedFull ? 4
-    : 5;
+    : !payoutsSetUp ? 5
+    : transportNeedsAction ? 6
+    : 6;
 
   // CTA card content
   let cardTitle = '';
@@ -149,11 +164,13 @@ export const CaregiverProgressCard: React.FC<{
     };
   } else if (activeStep === 4) {
     cardTitle = 'Background check in progress';
-    cardDesc = needsTransportDocs
-      ? 'Your background check and transport document review are both underway. We\'ll notify you once everything clears.'
-      : 'Your background check is underway — we\'ll notify you once it clears.';
+    cardDesc = 'Your background check is underway — we\'ll notify you once it clears.';
     cardVariant = 'info';
   } else if (activeStep === 5) {
+    cardTitle = 'Set up your payout account';
+    cardDesc = 'Connect a bank account through Stripe so you can get paid for completed visits — takes about 5 minutes.';
+    cardCta = { label: 'Set up payouts', onClick: () => onNavigate('caregiver-payout') };
+  } else if (activeStep === 6) {
     const anyDocRejected = transportDocStatuses.includes('rejected');
     const anyDocMissing = transportDocStatuses.includes('missing');
     if (anyDocRejected) {
@@ -177,6 +194,7 @@ export const CaregiverProgressCard: React.FC<{
     { label: 'Profile', done: profileComplete, inProgress: !profileComplete },
     { label: 'Membership', done: hasPaid, inProgress: !hasPaid && profileComplete },
     { label: 'Background Check', done: bgApprovedFull, inProgress: bgCheckInProgress },
+    { label: 'Payout Setup', done: payoutsSetUp, inProgress: bgApprovedFull && !payoutsSetUp },
     ...(needsTransportDocs ? [{ label: 'Transport Docs', done: transportDocsValid, inProgress: !transportDocsValid && !transportDocStatuses.includes('missing') }] : []),
   ];
 

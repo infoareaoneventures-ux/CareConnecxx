@@ -9,6 +9,12 @@ interface ProfileApprovalBannerProps {
     verificationStatus?: Caregiver['verificationStatus'];
     onboardingStatus?: string;
     backgroundCheckData?: { checkrCandidateId?: string };
+    backgroundCheckStatus?: string;
+    // Payout fields live on the owner-only private/payout subdoc — caller
+    // must fetch it separately (dbService.getOwnCaregiverPayoutFields) and
+    // merge it in, same as CaregiverPaymentsPage.tsx already does.
+    payoutsEnabled?: boolean;
+    chargesEnabled?: boolean;
   };
   onViewChecklist?: () => void;
   hasEngagement?: boolean;
@@ -59,22 +65,40 @@ export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ pr
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
         <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />
         <p className="text-sm text-blue-900 flex-1">
-          <span className="font-semibold">Step 3 of 3 — Your profile is under review.</span>
+          <span className="font-semibold">Step 4 of 4 — Your profile is under review.</span>
         </p>
       </div>
     );
   }
 
   const checkrInitiated = !!profile.backgroundCheckData?.checkrCandidateId;
+  const backgroundCheckCleared = profile.backgroundCheckStatus === 'clear';
+  const payoutsSetUp = !!(profile.payoutsEnabled && profile.chargesEnabled);
   const onboardingStatus = profile.onboardingStatus as string | undefined;
   const profileComplete = onboardingStatus === 'profile_complete' || onboardingStatus === 'submitted';
+
+  // Background check clears independently of verificationStatus — that field
+  // only reaches 'submitted' once Stripe Connect ALSO finishes (see
+  // onboardingConversation.ts's stripe_connect finalize step). Without this
+  // check, a caregiver who cleared their background check but hasn't finished
+  // payouts would incorrectly still see "Background check underway" below.
+  if (backgroundCheckCleared && !payoutsSetUp) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
+        <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />
+        <p className="text-sm text-blue-900 flex-1">
+          <span className="font-semibold">Step 3 of 4 — Set up your payout account</span> to finish approval.
+        </p>
+      </div>
+    );
+  }
 
   if (checkrInitiated) {
     return (
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
         <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />
         <p className="text-sm text-blue-900 flex-1">
-          <span className="font-semibold">Step 2 of 3 — Background check underway.</span> We'll notify you when complete.
+          <span className="font-semibold">Step 2 of 4 — Background check underway.</span> We'll notify you when complete.
         </p>
       </div>
     );
@@ -85,7 +109,7 @@ export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ pr
       <div className="bg-primary-50 border border-primary-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
         <Info className="w-5 h-5 text-primary-600 flex-shrink-0" />
         <p className="text-sm text-primary-900 flex-1">
-          <span className="font-semibold">Step 1 of 3 — Complete your profile</span> to continue.
+          <span className="font-semibold">Step 1 of 4 — Complete your profile</span> to continue.
         </p>
       </div>
     );
@@ -95,7 +119,7 @@ export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ pr
     <div className="bg-primary-50 border border-primary-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
       <Info className="w-5 h-5 text-primary-600 flex-shrink-0" />
       <p className="text-sm text-primary-900 flex-1">
-        <span className="font-semibold">Step 2 of 3 — Start your background check</span> to get approved.
+        <span className="font-semibold">Step 2 of 4 — Start your background check</span> to get approved.
       </p>
     </div>
   );

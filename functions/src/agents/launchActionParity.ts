@@ -231,17 +231,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     notes: "Parity audit 2026-07-06: agent mirror of v1-retryShiftPayment — resets payment_failed → approved so the charge trigger re-fires. Owner-scoped; naturally idempotent (a replay finds status !== payment_failed).",
   },
   {
-    id: "client-update-booking-payment-method",
-    actor: "client",
-    action: "Switch a confirmed booking's payment method (credit ↔ cash/venmo/zelle)",
-    webSurface: "n/a",
-    collection: "appointments",
-    tool: "update_booking_payment_method",
-    promptActor: "client",
-    status: "shipped",
-    notes: "Parity audit 2026-07-06: the v1-updateBookingPaymentMethod callable had NO UI caller (reverse orphan) — this action is agent-first. Same guards as the callable: owner only, status 'confirmed', not yet started.",
-  },
-  {
     id: "client-create-reminder",
     actor: "client",
     action: "Create a care reminder",
@@ -644,17 +633,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     promptActor: "caregiver",
     status: "shipped",
     notes: "Read primitive over the collection request_shift_swap/accept_shift_swap write: the caller's own requests plus unexpired open offers from peers.",
-  },
-  {
-    id: "caregiver-confirm-cash-received",
-    actor: "caregiver",
-    action: "Confirm cash payment received for an approved shift",
-    webSurface: "components/caregiver/CaregiverPaymentsPage.tsx",
-    collection: "shiftHours",
-    tool: "confirm_cash_received",
-    promptActor: "caregiver",
-    status: "shipped",
-    notes: "Mirror of services/api.ts confirmCashReceived: caregiver-owned cash shift, approved/auto_approved -> paid (paidMethod:'cash'). Idempotent on retry (already-paid returns no-op success).",
   },
 
   // ── Family (R1/R3 — secondary members) ─────────────────────────────────────

@@ -79,7 +79,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
   retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
-  update_booking_payment_method: ["billing", "booking"], // parity 2026-07-06: agent mirror of v1-updateBookingPaymentMethod
   request_instant_payout:   ["billing"],
   respond_to_shift_hour_correction: ["billing"],
   get_payout_history:       ["billing"],
@@ -162,7 +161,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   cancel_interview:       ["booking"],
   list_blocked_users:     ["messaging"],
   list_shift_swaps:       ["booking", "scheduling", "messaging"],
-  confirm_cash_received:  ["billing"],
 
   // ── memory_search (memory files, web actions, credentials) ──────────────
   read_memory_file:   ["memory_search"],
@@ -353,10 +351,10 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // message relays (family/caregiver believe a message was delivered)
   "send_caregiver_message", "send_client_message",
   // CRUD/parity gap closures (agent-native audit 2026-07) — falsely reporting
-  // an archive, member edit, interview cancel, memory delete, or cash
-  // confirmation as done would be believed and acted on.
+  // an archive, member edit, interview cancel, or memory delete as done
+  // would be believed and acted on.
   "archive_senior_profile", "update_family_member", "cancel_interview",
-  "delete_memory_file", "confirm_cash_received",
+  "delete_memory_file",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */

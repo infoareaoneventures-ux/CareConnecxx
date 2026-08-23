@@ -58,7 +58,6 @@ export async function buildAndSaveJobPost(params: {
   const days           = (jobData.jobDays          ?? []) as string[];
   const timeOfDay      = (jobData.jobTimeOfDay     ?? []) as string[];
   const hourlyRate     = jobData.jobHourlyRate;
-  const paymentMethod  = (jobData.jobPaymentMethod ?? "card") as string;
   const description    = (jobData.jobDescription   ?? "") as string;
   const petsInHome     = (jobData.petsInHome        ?? false) as boolean;
   const smokingHousehold = (jobData.smokingHousehold ?? false) as boolean;
@@ -153,7 +152,6 @@ export async function buildAndSaveJobPost(params: {
     daysPerWeek:     Number(jobData.jobDaysPerWeek ?? 0),
     timeOfDay,
     hourlyRate:      hourlyRate as number | string | undefined,
-    paymentMethod,
     city,
     zipCode,
     lat:             coords?.lat ?? null,

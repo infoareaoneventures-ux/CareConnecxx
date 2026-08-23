@@ -1237,7 +1237,6 @@ export async function handleOnboardingStep(
     case "job_ask_environment":  return handleJobAskEnvironment(phone, chatId, text, session);
     case "job_ask_rate":         return handleJobAskRate(phone, chatId, text, session);
     case "job_ask_pay_method":   return handleJobAskPayMethod(phone, chatId, text, session);
-    case "job_ask_description":  return handleJobAskDescription(phone, chatId, text, session);
     case "job_confirm_post":     return handleJobConfirmPost(phone, chatId, text, session);
     case "caregiver_confirm_name":    return handleCaregiverConfirmName(phone, chatId, text, session, service);
     // caregiver_ask_name … caregiver_ask_bio: deleted (loop-only) — the agent loop
@@ -5574,35 +5573,18 @@ async function handleJobAskPayMethod(
     if (!isNaN(n) && n >= 5 && n <= 200) hourlyRate = n;
   }
   const rateLabel = hourlyRate === "flexible" ? "flexible rate" : `$${hourlyRate}/hr`;
-  await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate });
-  await updateSession(phone, { onboardingStep: "job_ask_description" });
-  await sendMessage(chatId,
-    `${rateLabel} — sounds good! How will you pay the caregiver — card through the platform, cash, Venmo, or Zelle?`
-  );
-}
-
-async function handleJobAskDescription(
-  phone: string, chatId: string, text: string, session: AgentSession
-): Promise<void> {
-  if (await isQuestionOrOther(text, "How will you pay the caregiver? Card, Cash, Venmo, or Zelle")) {
-    const answer = await answerQuestionMidFlow(text, session, phone);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "So — how will you pay the caregiver? Card, cash, Venmo, or Zelle?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    '"1", card, credit, debit, stripe = card. "2", cash, direct, hand = cash. ' +
-    '"3", venmo = venmo. "4", zelle = zelle. ' +
-    'Reply with exactly one of: card, cash, venmo, zelle',
-    text
-  );
-  const paymentMethod = ["cash", "venmo", "zelle"].includes(raw) ? raw : "card";
-  const payLabel = paymentMethod === "card" ? "Card" : paymentMethod === "cash" ? "Cash" : paymentMethod === "venmo" ? "Venmo" : "Zelle";
   const d = session.onboardingData ?? {};
-  await mergeOnboardingData(phone, { jobPaymentMethod: paymentMethod });
+  // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every job is
+  // paid by card now, so this no longer asks; jobPaymentMethod is kept at its
+  // "card" default (see deriveJobDataFromIntake) purely for downstream code
+  // that still reads the field (buildAndSaveJobPost/paymentMethodLabel), not
+  // because there's a real choice. Skips straight to the description
+  // question — job_ask_description (which used to ask "how will you pay"
+  // and parse the answer) is gone; nothing else referenced that step name.
+  await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate });
   await updateSession(phone, { onboardingStep: "job_confirm_post" });
   await sendMessage(chatId,
-    `${payLabel} — perfect! Last step: in 1–3 sentences, describe a typical day of care for ` +
+    `${rateLabel} — sounds good! Last step: in 1–3 sentences, describe a typical day of care for ` +
     `${(d.seniorName as string) ?? "your loved one"}. What should a caregiver know?`
   );
 }

@@ -29,7 +29,6 @@ export interface WebJobPostInput {
   daysPerWeek?:     number;                  // count fallback when days unnamed
   timeOfDay?:       string[];                // morning | afternoon | evening | overnight
   hourlyRate?:      number | string;         // number, or "flexible"
-  paymentMethod?:   string;                  // "card" (Evia legacy) | cash | venmo | zelle | credit
   city?:            string;
   state?:           string;
   zipCode?:         string;
@@ -56,9 +55,10 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     ? p.hourlyRate : 0;
   const rateFlexible = numericRate === 0;
 
-  // Web enums: paymentMethod 'credit' (Evia said "card"); jobFrequency
-  // hyphenated (the board's pill map already handles 'occasional').
-  const paymentMethod = p.paymentMethod === "card" ? "credit" : p.paymentMethod;
+  // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every job
+  // is paid by card now, regardless of what (if anything) a caller passes.
+  // jobFrequency hyphenated (the board's pill map already handles 'occasional').
+  const paymentMethod = "credit";
   const jobFrequency  = p.frequency ? p.frequency.replace(/_/g, "-") : undefined;
 
   const locationStr = [p.city, p.state, p.zipCode].filter(Boolean).join(", ");
@@ -81,7 +81,7 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     ...(days.length      ? { daysOfWeek: days }   : {}),
     ...(timeOfDay.length ? { timeOfDay }          : {}),
     ...(jobFrequency     ? { jobFrequency }       : {}),
-    ...(paymentMethod    ? { paymentMethod }      : {}),
+    paymentMethod,
     location:     locationStr,
     ...(p.city    ? { city: p.city }       : {}),
     ...(p.state   ? { state: p.state }     : {}),

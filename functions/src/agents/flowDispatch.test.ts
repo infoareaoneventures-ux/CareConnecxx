@@ -30,7 +30,11 @@ describe("jobPostingFlow.resolveJobStep (U13 — linear)", () => {
     expect(resolveJobStep(mid)).toBe("jp_ask_environment");
     // petsInHome:false must count as collected (boolean), not re-ask.
     expect(resolveJobStep({ ...mid, petsInHome: false })).toBe("jp_ask_rate");
-    const full = { ...mid, petsInHome: false, jobHourlyRate: 25, jobPaymentMethod: "credit", jobDescription: "Daytime care" };
+    // jp_ask_pay_method was removed from the field order (cash/Venmo/Zelle
+    // removed platform-wide, 2026-08-23) — rate now hands off straight to
+    // description.
+    expect(resolveJobStep({ ...mid, petsInHome: false, jobHourlyRate: 25 })).toBe("jp_ask_description");
+    const full = { ...mid, petsInHome: false, jobHourlyRate: 25, jobDescription: "Daytime care" };
     expect(resolveJobStep(full)).toBe("jp_confirm_post");
   });
 });

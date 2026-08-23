@@ -27,7 +27,6 @@ const JP_STEP_ORDER: Array<{ step: string; field: string }> = [
   { step: "jp_ask_care_level",  field: "jobCareLevel" },
   { step: "jp_ask_environment", field: "petsInHome" },
   { step: "jp_ask_rate",        field: "jobHourlyRate" },
-  { step: "jp_ask_pay_method",  field: "jobPaymentMethod" },
   { step: "jp_ask_description", field: "jobDescription" },
 ];
 const JP_POST_COLLECTION_STEP = "jp_confirm_post";
@@ -193,7 +192,6 @@ export async function handleJobPostingStep(
     case "jp_ask_care_level":  return handleJpAskCareLevel(phone, chatId, text, session);
     case "jp_ask_environment": return handleJpAskEnvironment(phone, chatId, text, session);
     case "jp_ask_rate":        return handleJpAskRate(phone, chatId, text, session);
-    case "jp_ask_pay_method":  return handleJpAskPayMethod(phone, chatId, text, session);
     case "jp_ask_description": return handleJpAskDescription(phone, chatId, text, session);
     case "jp_confirm_post":    return handleJpConfirmPost(phone, chatId, text, session);
     default:
@@ -444,34 +442,17 @@ async function handleJpAskRate(
   const rate = parseFloat(raw);
   const jobHourlyRate = isNaN(rate) ? 0 : rate;
   const rateLabel = jobHourlyRate > 0 ? `$${jobHourlyRate}/hr` : "flexible rate";
-  await mergeJobData(phone, { jobHourlyRate });
-  await updateJobStep(phone, "jp_ask_pay_method");
-  await sendMessage(chatId,
-    `${rateLabel} — sounds good! How would you prefer to pay — card (processed through Evia), or cash?`
-  );
-}
-
-async function handleJpAskPayMethod(
-  phone: string, chatId: string, text: string, session: AgentSession
-): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "So — how would you prefer to pay? Card through Evia, or cash?");
-    return;
-  }
-  const raw = await parseWithClaude(
-    '"1", card, credit, debit, online, Evia = card. "2", cash, in person = cash. ' +
-    'Reply with exactly one of: card, cash',
-    text
-  );
-  const payMethod = ["card", "cash"].includes(raw) ? raw : "card";
-  const methodLabel = payMethod === "cash" ? "Cash" : "Card";
-  await mergeJobData(phone, { jobPaymentMethod: payMethod });
+  // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every job is
+  // paid by card now, so this no longer asks; jobPaymentMethod is kept at its
+  // "card" default (see buildJobSummary) purely for downstream code that
+  // still reads the field. Skips straight to the description question —
+  // jp_ask_pay_method (which used to ask "how would you prefer to pay" and
+  // parse the answer) is gone; removed from JP_STEP_ORDER too.
+  await mergeJobData(phone, { jobHourlyRate, jobPaymentMethod: "card" });
   await updateJobStep(phone, "jp_ask_description");
   const name = seniorFirstName(session);
   await sendMessage(chatId,
-    `${methodLabel} — perfect! Last question: can you briefly describe a typical care day for ${name}?\n\n` +
+    `${rateLabel} — sounds good! Last question: can you briefly describe a typical care day for ${name}?\n\n` +
     "(A sentence or two is great — this helps caregivers understand the role)"
   );
 }

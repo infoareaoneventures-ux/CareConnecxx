@@ -62,7 +62,9 @@ const NEW_AGENT_NATIVE_TOOLS = [
 ];
 
 // Client-side money tools added by the 2026-07-06 parity audit.
-const NEW_CLIENT_MONEY_TOOLS = ["retry_shift_payment", "update_booking_payment_method"];
+// update_booking_payment_method was removed along with cash itself
+// (Hamse, 2026-08-23) — every booking is charged by card now.
+const NEW_CLIENT_MONEY_TOOLS = ["retry_shift_payment"];
 
 describe("action parity (U3)", () => {
   it("registers the new agent-native tools in MCP_TOOLS and the caregiver subset", () => {

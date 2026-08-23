@@ -56,7 +56,6 @@ const FIELD_LABEL: Record<string, string> = {
   smokingHousehold: "whether anyone in the household smokes",
   // Step 12
   rate:           "what they'd like to pay per hour — a number or 'flexible'",
-  paymentMethod:  "how they plan to pay the caregiver — cash, Venmo, Zelle, or credit card",
   // Step 13
   jobDescription: "a short free-text description of the care situation (optional but helpful for caregivers)",
   // Collected throughout
@@ -79,7 +78,7 @@ function labelFor(field: string): string {
 // all got dropped this way in the same test conversation).
 const OPTIONAL_ORDER_ITEMS: readonly string[] = [
   "careRecipientPhotoURL", "ongoing", "caregiversNeeded",
-  "petsInHome", "smokingHousehold", "paymentMethod", "jobDescription",
+  "petsInHome", "smokingHousehold", "jobDescription",
 ];
 
 /**
@@ -177,7 +176,7 @@ export function buildOnboardingDirective(
     ` 11. Emergency contact — name, phone, and their relationship`,
     ` 12. What kind of help is needed day to day`,
     ` 13. Whether there are pets or smoking in the home (optional, but ASK both — not just pets)`,
-    ` 14. What they'd like to pay per hour, and how they plan to pay (cash or card)`,
+    ` 14. What they'd like to pay per hour`,
     ` 15. A short description they'd like caregivers to see (optional, but ASK)`,
     ` 16. The family member's own first name (if not already collected)`,
     ``,

@@ -15,7 +15,6 @@ import { AIMatchScore } from '../services/aiMatchingService';
 import { dbService } from '../services/api';
 import { logMatchSignal } from '../services/matchFeedback';
 import { ClientNavigation } from './client/ClientNavigation';
-import { CreditCardBadge } from './shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 import { useAccessGates } from '../hooks/useAccessGates';
 import { useCareConnex } from '../context/CareConnexContext';
@@ -978,8 +977,6 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
               <span className="text-sm font-medium text-slate-500 ml-1.5">({caregiver.reviewCount || 0})</span>
             </div>
 
-            <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
-            
             <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />
           </div>
         </div>

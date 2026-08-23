@@ -15,7 +15,6 @@ import { shiftHoursService, dbService } from '../../services/api';
 import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
-import { isOfflinePaymentMethod, paymentMethodLabel } from '../../types';
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -427,131 +426,11 @@ const ReviewRespondModal: React.FC<{
 const PendingShiftRow: React.FC<{
   row: ShiftRow;
   onRespond: (action: 'accept' | 'counter_propose', counter?: { startTime: string; endTime: string; note?: string; lineItems?: LineItem[] }) => void;
-  onConfirmCash: () => void;
-}> = ({ row, onRespond, onConfirmCash }) => {
+}> = ({ row, onRespond }) => {
   // All hooks must be declared before any early returns
-  const [confirming,        setConfirming]        = React.useState(false);
   const [pendingOpen,       setPendingOpen]       = React.useState(false);
   const [reviewOpen,        setReviewOpen]        = React.useState(false);
   const [showDetailModal,   setShowDetailModal]   = React.useState(false);
-
-  // Offline shift (cash/Venmo/Zelle) approved by client — caregiver must confirm receipt
-  if (isOfflinePaymentMethod(row.paymentMethod) && (row.status === 'approved' || row.status === 'auto_approved')) {
-    const dispStart = row.finalStartTime   ? new Date(row.finalStartTime)   : row.submittedStartTime ? new Date(row.submittedStartTime) : null;
-    const dispEnd   = row.finalEndTime     ? new Date(row.finalEndTime)     : row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
-    const hours     = dispStart && dispEnd
-      ? (dispEnd.getTime() - dispStart.getTime()) / 3_600_000
-      : (row.finalTotalHours ?? row.submittedTotalHours ?? 0);
-    const basePay   = hours * (row.payRate ?? 0);
-    const hasExtras = row.lineItems && row.lineItems.length > 0;
-    const gross     = row.grossPay ?? basePay;
-    return (
-      <div className="bg-white rounded-2xl border border-green-300 overflow-hidden">
-        {/* Header — same Col/Divider layout as every other row */}
-        <div
-          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-green-50 transition-colors select-none bg-green-50"
-          onClick={() => setPendingOpen(o => !o)}
-        >
-          <Col label="Date"     value={dispStart ? fmtDate(dispStart) : '—'} className="shrink-0 w-[58px]" />
-          <Divider />
-          <Col label="In"       value={dispStart ? fmtTime(dispStart) : '—'} className="shrink-0 w-[88px]" />
-          <Divider />
-          <Col label="Out"      value={dispEnd   ? fmtTime(dispEnd)   : '—'} className="shrink-0 w-[88px]" />
-          <Divider />
-          <Col label="Duration" value={fmtDuration(hours)}                   className="shrink-0 w-[62px]" />
-          <Divider />
-          <Col label="Pay"      value={`$${gross.toFixed(2)}`} highlight      className="shrink-0 w-[60px]" />
-          <Divider />
-          <Col label="Method"   value="Cash"                                  className="shrink-0 w-[46px]" />
-          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-            {row.loggedManually && (
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 whitespace-nowrap">Logged</span>
-            )}
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap bg-green-100 text-green-700 border-green-300">
-              Awaiting confirmation
-            </span>
-            {pendingOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-          </div>
-        </div>
-
-        {/* Expanded section */}
-        {pendingOpen && (
-          <div className="border-t-2 border-slate-200 bg-slate-50 px-4 py-3 space-y-3">
-
-            <div className="divide-y divide-slate-200 text-xs border border-slate-200 rounded-xl overflow-hidden">
-              {row.payRate != null && (
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-slate-400">Rate</span>
-                  <span className="font-medium text-slate-700">${row.payRate}/hr</span>
-                </div>
-              )}
-              {dispStart && dispEnd && (
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-slate-400">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
-                  <span className="font-medium text-slate-700">
-                    {fmtDateTime(dispStart)} – {fmtDateTime(dispEnd)}
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-400">Total hours</span>
-                <span className="font-medium text-slate-700">{fmtDuration(hours)}</span>
-              </div>
-              {hasExtras ? (
-                <>
-                  <div className="flex items-center justify-between px-3 py-2">
-                    <span className="text-slate-400">Base pay</span>
-                    <span className="font-medium text-slate-700">${basePay.toFixed(2)}</span>
-                  </div>
-                  {row.lineItems!.map((li, i) => (
-                    <div key={i} className="flex items-center justify-between px-3 py-2">
-                      <span className="text-slate-400">
-                        {li.type === 'custom' ? (li.label || 'Custom') : li.label}
-                        {li.note ? ` · ${li.note}` : ''}
-                      </span>
-                      <span className="font-medium text-slate-700">+${li.amount.toFixed(2)}</span>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
-                    <span className="font-semibold text-slate-700">Total</span>
-                    <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-slate-400">Gross pay</span>
-                  <span className="font-bold text-slate-900">${gross.toFixed(2)}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowDetailModal(true)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                View shift
-              </button>
-              <button
-                disabled={confirming}
-                onClick={async () => {
-                  setConfirming(true);
-                  try { await onConfirmCash(); } finally { setConfirming(false); }
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors"
-              >
-                {confirming ? 'Confirming…' : `Confirm ${paymentMethodLabel(row.paymentMethod).toLowerCase() === 'cash' ? 'cash' : paymentMethodLabel(row.paymentMethod)} received`}
-              </button>
-            </div>
-          </div>
-        )}
-        {showDetailModal && (
-          <ShiftDetailModal shiftId={row.appointmentId} onClose={() => setShowDetailModal(false)} />
-        )}
-      </div>
-    );
-  }
 
   if (row.status === 'caregiver_counter_proposed') {
     const counterGross = row.counterGrossPay ?? (
@@ -1470,7 +1349,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
   // still be settling, so the two can differ.
   const [instantBalance, setInstantBalance] = useState<number | null>(null);
   const [fetchingBalance, setFetchingBalance] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   // Membership tab state
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
@@ -1567,14 +1445,10 @@ export const CaregiverPaymentsPage: React.FC = () => {
   }, [completedShifts, shiftRows]);
 
   const pendingRows = shiftRows.filter(r =>
-    ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) ||
-    // cash approved shifts that need caregiver cash confirmation
-    (isOfflinePaymentMethod(r.paymentMethod) && (r.status === 'approved' || r.status === 'auto_approved'))
+    ['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status)
   );
   const historyRows = shiftRows.filter(r =>
-    !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status) &&
-    // exclude cash-approved shifts waiting for confirmation — they still belong in Pending
-    !(isOfflinePaymentMethod(r.paymentMethod) && (r.status === 'approved' || r.status === 'auto_approved'))
+    !['pending_client_review', 'correction_proposed', 'caregiver_counter_proposed', 'payment_failed'].includes(r.status)
   );
   const actionCount = submittableShifts.length + pendingRows.length;
 
@@ -1673,15 +1547,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
     }
   };
 
-  const handleConfirmCash = async (row: ShiftRow) => {
-    try {
-      await shiftHoursService.confirmCashReceived(row.appointmentId);
-      addToast('Payment confirmed — shift marked paid', 'success');
-    } catch (e: any) {
-      addToast(e?.message || 'Failed to confirm payment receipt', 'error');
-    }
-  };
-
   const handlePayout = async () => {
     try {
       const result = await requestInstantPayout();
@@ -1757,20 +1622,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
       addToast(e?.message || 'The Approved Driver add-on is unavailable right now. Please try again later.', 'error');
     } finally {
       setBecomingDriver(false);
-    }
-  };
-
-  const toggleAcceptsCreditCards = async (next: boolean) => {
-    if (!uid || !profile) return;
-    setSaving(true);
-    try {
-      await dbService.updateUser('caregivers', uid, { acceptsCreditCards: next } as any);
-      setProfile({ ...profile, acceptsCreditCards: next });
-      addToast(next ? 'Credit card bookings enabled' : 'Credit card bookings disabled', 'success');
-    } catch {
-      addToast('Failed to update', 'error');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1999,7 +1850,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
                         {visible.map(row => (
                           <PendingShiftRow key={row.id} row={row}
                             onRespond={(action, counter) => handleRespondToCorrection(row, action, counter)}
-                            onConfirmCash={() => handleConfirmCash(row)}
                           />
                         ))}
                         {hidden > 0 && !isExpanded && <button onClick={() => toggleGroup(gkey)} className="w-full text-xs text-primary-600 hover:text-primary-800 font-medium py-1.5 text-center">Show more</button>}
@@ -2171,24 +2021,6 @@ export const CaregiverPaymentsPage: React.FC = () => {
               <p className="mt-3 text-xs text-slate-400 flex items-center gap-1">
                 <Lock className="w-3 h-3" /> Secured by Stripe
               </p>
-            </div>
-
-            {/* Credit card bookings toggle */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-start gap-4">
-              <button
-                onClick={() => toggleAcceptsCreditCards(!profile?.acceptsCreditCards)}
-                disabled={saving}
-                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 mt-0.5 ${profile?.acceptsCreditCards ? 'bg-primary-500' : 'bg-slate-300'}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${profile?.acceptsCreditCards ? 'translate-x-5' : ''}`} />
-              </button>
-              <div>
-                <p className="font-semibold text-slate-900">Accept credit card bookings</p>
-                <p className="text-sm text-slate-500 mt-0.5">
-                  When off, families can only pay in cash. Accepting cards significantly increases the
-                  jobs you see and your profile visibility.
-                </p>
-              </div>
             </div>
 
             {/* Payout schedule info */}

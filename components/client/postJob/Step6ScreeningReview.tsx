@@ -4,7 +4,6 @@ import {
   StepProps,
   TIME_OF_DAY_OPTIONS,
   CARE_LEVEL_OPTIONS,
-  PAYMENT_OPTIONS,
 } from './types';
 
 const MAX_SCREENING = 5;
@@ -69,7 +68,6 @@ export const Step6ScreeningReview: React.FC<Step6Props> = ({
 
   const locationSummary = [data.streetAddress, data.city, `${data.state} ${data.zipCode}`.trim()].filter(Boolean).join(', ');
   const careLevelLabel = CARE_LEVEL_OPTIONS.find(o => o.value === data.careLevel)?.label || '—';
-  const paymentLabel = PAYMENT_OPTIONS.find(o => o.value === data.paymentMethod)?.label || '—';
   const rateSummary = data.rateFlexible ? 'Rate depends on experience' : `$${data.rate}/hr`;
 
   const householdBits: string[] = [];
@@ -142,7 +140,7 @@ export const Step6ScreeningReview: React.FC<Step6Props> = ({
             value={<>{data.careTypes.join(', ') || '—'} · <span className="text-slate-500">{careLevelLabel}</span></>}
             onEdit={() => onEditStep(2)}
           />
-          <Row label="Rate & payment" value={`${rateSummary} · ${paymentLabel}`} onEdit={() => onEditStep(3)} />
+          <Row label="Rate & payment" value={`${rateSummary} · Credit Card`} onEdit={() => onEditStep(3)} />
           <Row label="Details" value={data.description || '—'} onEdit={() => onEditStep(4)} />
         </div>
       </div>

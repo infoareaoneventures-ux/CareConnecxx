@@ -40,7 +40,9 @@ interface BookingFormData {
   confirmedDates: string[];
   recipientsCount: 1 | 2 | 3 | 4;
   rate: number;
-  paymentMethod: 'credit' | 'cash' | 'venmo' | 'zelle';
+  // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
+  // booking is charged by card now, so this is no longer a real choice.
+  paymentMethod: 'credit';
   description: string;
   streetAddress: string;
   address2: string;
@@ -883,22 +885,6 @@ const DetailsStep: React.FC<{
               </select>
             </div>
             {rateBelowMin && <p className="text-xs text-red-600 mt-1">Minimum allowed rate: ${minRate}/hr</p>}
-          </Field>
-
-          <Field label="Payment method">
-            <div className="flex flex-wrap items-center gap-5">
-              {([['credit', 'Credit Card'], ['cash', 'Cash'], ['venmo', 'Venmo'], ['zelle', 'Zelle']] as const).map(([method, label]) => (
-                <label key={method} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={form.paymentMethod === method}
-                    onChange={() => onChange(prev => ({ ...prev, paymentMethod: method }))}
-                    className="accent-teal-600"
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
           </Field>
 
           <div className="grid grid-cols-2 gap-3">

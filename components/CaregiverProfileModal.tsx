@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Star, MapPin, Shield, CheckCircle, Heart, CreditCard, ChevronUp, ChevronDown, Zap, MessageSquare, Calendar } from 'lucide-react';
+import { X, Star, MapPin, Shield, CheckCircle, Heart, ChevronUp, ChevronDown, Zap, MessageSquare, Calendar } from 'lucide-react';
 import { Caregiver } from '../types';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
@@ -360,11 +360,6 @@ export const CaregiverProfileModal: React.FC<CaregiverProfileModalProps> = ({
                     {bgClear && (
                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 whitespace-nowrap">
                         <Shield className="w-4 h-4 text-teal-500" /> Background check
-                      </div>
-                    )}
-                    {(caregiver as any).acceptsCreditCards && (
-                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 whitespace-nowrap">
-                        <CreditCard className="w-4 h-4 text-blue-500" /> Accepts credit cards
                       </div>
                     )}
                   </div>

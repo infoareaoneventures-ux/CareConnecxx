@@ -273,12 +273,15 @@ export interface Caregiver {
 // --- JOB BOARD TYPES ---
 export type JobTimeOfDay = 'morning' | 'afternoon' | 'evening' | 'overnight';
 export type JobCareLevel = 'light' | 'moderate' | 'intensive';
-// 'credit' is charged through the platform (Stripe); cash/venmo/zelle are
-// offline — the client pays the caregiver directly and the caregiver confirms
-// receipt to close out the shift.
-export type JobPaymentMethod = 'cash' | 'venmo' | 'zelle' | 'credit';
-export const paymentMethodLabel = (m?: string | null): string => m === 'cash' ? 'Cash' : m === 'venmo' ? 'Venmo' : m === 'zelle' ? 'Zelle' : 'Credit Card';
-export const isOfflinePaymentMethod = (m?: string | null): boolean => m === 'cash' || m === 'venmo' || m === 'zelle';
+// Cash/Venmo/Zelle (offline payment) removed platform-wide (Hamse,
+// 2026-08-23) — every booking is now charged through Stripe. These helpers
+// are kept as degenerate no-op forms (mirroring functions/src/billing/
+// paymentMethods.ts) rather than deleted, since call sites across the app
+// still branch on them; making them always say "credit, not offline"
+// correctly cascades the removal through that existing branching logic.
+export type JobPaymentMethod = 'credit';
+export const paymentMethodLabel = (_m?: string | null): string => 'Credit Card';
+export const isOfflinePaymentMethod = (_m?: string | null): boolean => false;
 
 export interface JobPost {
   id: string;

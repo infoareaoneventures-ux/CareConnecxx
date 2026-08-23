@@ -1,44 +1,41 @@
 /**
- * Payment-method vocabulary shared by every billing rail (2026-07-06).
+ * Payment-method vocabulary shared by every billing rail.
  *
- * Clients choose per booking/job how the caregiver is paid:
- *  - "credit"  — charged through Stripe; grossPay transfers to the caregiver's
- *                Connect balance and auto-pays out on Stripe's daily schedule.
- *  - OFFLINE ("cash" | "venmo" | "zelle") — the client pays the caregiver
- *                directly. No Stripe charge or transfer fires; the shift is
- *                closed out when the caregiver confirms receipt
- *                (confirmCashReceived callable / confirm_cash_received tool).
+ * Cash/Venmo/Zelle (offline payment — the client pays the caregiver directly,
+ * no Stripe charge/transfer, closed out via a manual confirmation step) was
+ * removed platform-wide (Hamse, 2026-08-23). Every booking is now charged
+ * through Stripe. These functions are kept as degenerate no-op forms — always
+ * resolving to "credit," never offline — rather than deleted outright,
+ * because many call sites across both the frontend and backend branch on
+ * them (skip-the-Stripe-charge gates, display copy, icon choices, filter
+ * buckets); making the shared source of truth always say "not offline"
+ * correctly cascades through every one of those call sites' existing
+ * branching logic without needing to touch each one individually. The
+ * genuinely dead code (the confirm_cash_received tool, the
+ * updateBookingPaymentMethod/confirmCashReceived callables, the payment-
+ * method choice UI) was deleted outright, not left behind a flag.
  *
- * Historic data only contains 'cash' | 'credit' (plus legacy 'digital' |
- * 'either' collapsed to 'credit' by migratePaymentMethods), so normalization
- * must default every unknown value to 'credit' — the charging rail — never to
- * an offline method.
+ * Historic data may still contain 'cash' (plus legacy 'digital'/'either'),
+ * which is why normalization must still collapse any raw persisted value —
+ * old or new — onto 'credit'.
  */
 
-export const OFFLINE_PAYMENT_METHODS = ["cash", "venmo", "zelle"] as const;
+export const OFFLINE_PAYMENT_METHODS = [] as const;
 export type OfflinePaymentMethod = (typeof OFFLINE_PAYMENT_METHODS)[number];
-export type PaymentMethod = OfflinePaymentMethod | "credit";
+export type PaymentMethod = "credit";
 
-export function isOfflinePaymentMethod(value: unknown): value is OfflinePaymentMethod {
-    return typeof value === "string" &&
-        (OFFLINE_PAYMENT_METHODS as readonly string[]).includes(value.toLowerCase().trim());
+export function isOfflinePaymentMethod(_value: unknown): _value is OfflinePaymentMethod {
+    return false;
 }
 
-/** Collapse any raw persisted/user value onto the canonical enum. Unknowns
- *  (including legacy 'card'/'digital'/'either'/null) become 'credit'. */
-export function normalizePaymentMethod(raw: unknown): PaymentMethod {
-    if (typeof raw !== "string") return "credit";
-    const v = raw.toLowerCase().trim();
-    return isOfflinePaymentMethod(v) ? (v as OfflinePaymentMethod) : "credit";
+/** Collapse any raw persisted/user value onto the canonical enum. Cash is
+ *  gone, so everything — including legacy 'cash'/'card'/'digital'/'either'/
+ *  null — becomes 'credit'. */
+export function normalizePaymentMethod(_raw: unknown): PaymentMethod {
+    return "credit";
 }
 
-/** Display label, e.g. for notifications: "cash" → "cash", "venmo" → "Venmo". */
-export function paymentMethodLabel(method: unknown): string {
-    const m = normalizePaymentMethod(method);
-    switch (m) {
-        case "venmo": return "Venmo";
-        case "zelle": return "Zelle";
-        case "cash": return "cash";
-        default: return "card";
-    }
+/** Display label, e.g. for notifications. Always "card" now. */
+export function paymentMethodLabel(_method: unknown): string {
+    return "card";
 }

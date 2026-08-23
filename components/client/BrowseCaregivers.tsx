@@ -10,7 +10,6 @@ import { authService } from '../../services/api';
 import { db } from '../../lib/firebase';
 import { logMatchSignal } from '../../services/matchFeedback';
 import { ClientNavigation } from './ClientNavigation';
-import { CreditCardBadge } from '../shared/CreditCardBadge';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
@@ -304,9 +303,6 @@ export const BrowseCaregivers: React.FC = () => {
                   <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
                   <p className="text-sm text-gray-500">Caregiver</p>
                   <div className="mt-1">{renderStars(caregiver.rating)}</div>
-                  <div className="mt-2">
-                    <CreditCardBadge show={!!(caregiver as any).acceptsCreditCards} />
-                  </div>
                   <CaregiverVerificationBadges verified={(caregiver as any).verified} backgroundCheckStatus={(caregiver as any).backgroundCheckStatus} className="mt-2" />
                 </div>
 

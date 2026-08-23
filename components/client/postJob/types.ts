@@ -42,7 +42,7 @@ export interface JobPostFormData {
   // Step 4: Rate & Payment
   rate: number | undefined;
   rateFlexible: boolean;
-  paymentMethod: JobPaymentMethod | '';
+  paymentMethod: JobPaymentMethod;
 
   // Step 5: Describe
   title: string;
@@ -80,7 +80,7 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
 
   rate: undefined,
   rateFlexible: false,
-  paymentMethod: '',
+  paymentMethod: 'credit',
 
   title: '',
   description: '',
@@ -118,11 +118,4 @@ export const CARE_LEVEL_OPTIONS: Array<{ value: JobCareLevel; label: string; des
   { value: 'light', label: 'Light', description: 'Companionship, light housekeeping, reminders' },
   { value: 'moderate', label: 'Moderate', description: 'Hands-on help with mobility, meals, hygiene' },
   { value: 'intensive', label: 'Intensive', description: 'Full personal care, dementia, or medical needs' },
-];
-
-export const PAYMENT_OPTIONS: Array<{ value: JobPaymentMethod; label: string; description: string }> = [
-  { value: 'credit', label: 'Credit card', description: 'Charged automatically when hours are approved' },
-  { value: 'cash', label: 'Cash', description: 'Pay caregiver directly in cash' },
-  { value: 'venmo', label: 'Venmo', description: 'Pay caregiver directly via Venmo' },
-  { value: 'zelle', label: 'Zelle', description: 'Pay caregiver directly via Zelle' },
 ];

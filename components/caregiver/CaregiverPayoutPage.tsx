@@ -19,7 +19,6 @@ const FAQS: Array<{ q: string; a: string }> = [
 export const CaregiverPayoutPage: React.FC = () => {
   const { currentUser, addToast, setMembershipModalOpen } = useCareConnex();
   const [profile, setProfile] = useState<Caregiver | null>(null);
-  const [saving, setSaving] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   // Profile = users+caregivers merge PLUS the owner-only private/payout
@@ -68,20 +67,6 @@ export const CaregiverPayoutPage: React.FC = () => {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.stripeAccountId]);
-
-  const toggleAcceptsCreditCards = async (next: boolean) => {
-    if (!currentUser?.uid || !profile) return;
-    setSaving(true);
-    try {
-      await dbService.updateUser('caregivers', currentUser.uid, { acceptsCreditCards: next } as any);
-      setProfile({ ...profile, acceptsCreditCards: next });
-      addToast(next ? 'Credit card bookings enabled' : 'Credit card bookings disabled', 'success');
-    } catch {
-      addToast('Failed to update', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const hasAccount = !!profile?.stripeAccountId;
   const fullyEnabled = !!(profile?.payoutsEnabled && profile?.chargesEnabled);
@@ -141,23 +126,6 @@ export const CaregiverPayoutPage: React.FC = () => {
               )}
 
               <p className="mt-3 text-xs text-slate-400 flex items-center gap-1"><Lock className="w-3 h-3" /> Secured by Stripe</p>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-start gap-4">
-              <button
-                onClick={() => toggleAcceptsCreditCards(!profile?.acceptsCreditCards)}
-                disabled={saving}
-                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${profile?.acceptsCreditCards ? 'bg-primary-500' : 'bg-slate-300'}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${profile?.acceptsCreditCards ? 'translate-x-5' : ''}`} />
-              </button>
-              <div>
-                <p className="font-semibold text-slate-900 mb-1">Accept credit card bookings</p>
-                <p className="text-sm text-slate-600">
-                  Turning this feature off means families can only pay you in cash. Since many families prefer paying by card,
-                  your job opportunities will be very limited and your profile will appear less frequently in search results.
-                </p>
-              </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5">

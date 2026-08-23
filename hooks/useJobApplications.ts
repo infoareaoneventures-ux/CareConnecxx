@@ -215,16 +215,8 @@ export const jobApplicationService = {
   ): Promise<string> {
     if (!db) throw new Error('Database not initialized');
 
-    // Credit-only job posts block cash-only caregivers from applying.
     const jobSnap = await getDoc(doc(db, 'job_posts', jobId));
-    const jobData = jobSnap.exists() ? jobSnap.data() : {};
-    if (jobData?.paymentMethod === 'credit') {
-      const caregiverSnap = await getDoc(doc(db, 'caregivers', caregiverData.caregiverId));
-      const acceptsCreditCards = caregiverSnap.exists() ? caregiverSnap.data()?.acceptsCreditCards : undefined;
-      if (acceptsCreditCards === false) {
-        throw new Error('This job requires credit card payment. Enable "Accepts credit cards" in your profile to apply.');
-      }
-    }
+    const jobData: any = jobSnap.exists() ? jobSnap.data() : {};
 
     // Check if already applied
     const existingQuery = query(

@@ -13,7 +13,7 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { dbService } from '../../services/api';
 import { auth, db } from '../../lib/firebase';
 import firebase from '../../lib/firebase';
-import { JobPost, isOfflinePaymentMethod } from '../../types';
+import { JobPost } from '../../types';
 
 type MainTab = 'posts' | 'interviews';
 type PostsFilter = 'open' | 'closed';
@@ -175,7 +175,7 @@ export const PostsPage: React.FC = () => {
     dayShiftTimes: Record<string, Array<{ label: string; start: string; end: string }>>;
     agreedRate: number | null;
     paymentMethod: string;
-  }>({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
+  }>({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: 'credit' });
   const [editingBookingDetails, setEditingBookingDetails] = useState(false);
   const [scheduleConfirmed, setScheduleConfirmed] = useState(false);
   const [schedulePrePopulated, setSchedulePrePopulated] = useState(false);
@@ -498,7 +498,7 @@ export const PostsPage: React.FC = () => {
     setSchedulePrePopulated(false);
     setCgWeeklyAvail({});
     setCgBookedSlots({});
-    setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: true, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
+    setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: true, dayShiftTimes: {}, agreedRate: null, paymentMethod: 'credit' });
     if (!currentUser?.uid || !db) { setLoadingCarePlan(false); return; }
     try {
       // Only pre-fill from a previous booking when it's a genuine resend (declined/cancelled)
@@ -638,10 +638,9 @@ export const PostsPage: React.FC = () => {
           })
         ),
         agreedRate: prevBookingData?.rate ?? null,
-        paymentMethod: (() => {
-          const raw = (prevBookingData?.paymentMethod || (postForDraft as any)?.paymentMethod || '').toLowerCase();
-          return isOfflinePaymentMethod(raw) ? raw : raw === 'card' || raw === 'credit' ? 'credit' : '';
-        })(),
+        // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
+        // booking is paid by card now, so there's nothing left to choose.
+        paymentMethod: 'credit',
         selectedAddress: prevBookingData?.address || '',
         note: prevBookingData?.notes || '',
         lifestyleNotes: prevBookingData?.lifestylePreferences || lifestyleNotes,
@@ -730,10 +729,8 @@ export const PostsPage: React.FC = () => {
         jobTitle: interview.jobTitle || post?.title || '',
         address: bookingDraft.selectedAddress || loadedPlan?.primaryAddress || (post ? [post.city, post.state, post.zipCode].filter(Boolean).join(', ') : ''),
         rate: bookingDraft.agreedRate ?? post?.rate ?? null,
-        paymentMethod: (() => {
-          const raw = (bookingDraft.paymentMethod || (post as any)?.paymentMethod || '').toLowerCase();
-          return isOfflinePaymentMethod(raw) ? raw : raw ? 'credit' : null;
-        })(),
+        // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23).
+        paymentMethod: 'credit',
         careNeeds: [...new Set(Object.values(bookingDraft.recipientDrafts).flatMap(rd => rd.careNeeds))],
         careRecipients: selectedRecipients,
         lifestylePreferences: bookingDraft.lifestyleNotes,
@@ -806,7 +803,7 @@ export const PostsPage: React.FC = () => {
       // Notification handled by onBookingRequestWrite Cloud Function
 
       setSendBookingFor(null);
-      setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: '' });
+      setBookingDraft({ note: '', selectedRecipientKeys: [], recipientDrafts: {}, lifestyleNotes: [], selectedAddress: '', emergencyContactFirstName: '', emergencyContactLastName: '', emergencyContactPhone: '', emergencyContactRelation: '', shiftStartDate: '', shiftEndDate: '', shiftOngoing: false, dayShiftTimes: {}, agreedRate: null, paymentMethod: 'credit' });
       addToast(isResend ? 'Booking request resent!' : 'Booking request sent!', 'success');
     } catch (err: any) {
       console.error('handleSendBooking error:', err);
@@ -1360,9 +1357,8 @@ export const PostsPage: React.FC = () => {
         const ABBR_TO_FULL: Record<string, string> = { Sun:'sunday', Mon:'monday', Tue:'tuesday', Wed:'wednesday', Thu:'thursday', Fri:'friday', Sat:'saturday' };
         const hasCgAvail = Object.keys(cgWeeklyAvail).length > 0;
 
-        const saveIsDisabled = !d.agreedRate || !d.paymentMethod || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
+        const saveIsDisabled = !d.agreedRate || !d.selectedAddress || noScheduleDays || daysWithMissingTimes.length > 0;
         const saveTip = !d.agreedRate ? 'Enter agreed rate to save'
-          : !d.paymentMethod ? 'Select a payment method to save'
           : !d.selectedAddress ? 'Select a care location to save'
           : noScheduleDays ? 'Add at least one day with shift times'
           : daysWithMissingTimes.length > 0 ? `Set start & end time for: ${daysWithMissingTimes.join(', ')}`
@@ -1468,23 +1464,10 @@ export const PostsPage: React.FC = () => {
                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none">/hr</span>
                               </div>
                             </div>
-                            <div>
-                              <p className="text-xs font-semibold text-slate-500 mb-1.5">Payment method</p>
-                              <div className="flex gap-2">
-                                {([{ value: 'cash', label: 'Cash' }, { value: 'credit', label: 'Card' }] as const).map(({ value, label }) => (
-                                  <button key={value} type="button"
-                                    onClick={() => upd({ paymentMethod: d.paymentMethod === value ? '' : value })}
-                                    className={`text-xs px-4 py-1.5 rounded-full border transition-colors ${d.paymentMethod === value ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
-                                    {label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
                           </div>
                         ) : d.agreedRate ? (
                           <div className="flex items-center gap-3">
                             <p className="text-sm font-bold text-green-700">${d.agreedRate}/hr</p>
-                            {d.paymentMethod && <span className="text-xs bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-full font-medium">via {d.paymentMethod}</span>}
                           </div>
                         ) : (
                           <p className="text-xs text-amber-600">Enter the agreed rate — click <strong>Edit</strong> above</p>
@@ -2246,7 +2229,7 @@ export const PostsPage: React.FC = () => {
                 <button
                   onClick={() => handleSendBooking(sendBookingFor, '')}
                   disabled={sendingBooking || loadingCarePlan || editingBookingDetails
-                    || !bookingDraft.agreedRate || !bookingDraft.paymentMethod || !bookingDraft.selectedAddress
+                    || !bookingDraft.agreedRate || !bookingDraft.selectedAddress
                     || Object.keys(bookingDraft.dayShiftTimes).some(day => !(bookingDraft.dayShiftTimes[day] || []).some(b => b.start && b.end))
                     || (schedulePrePopulated && !scheduleConfirmed && Object.keys(bookingDraft.dayShiftTimes).some(day => (bookingDraft.dayShiftTimes[day] || []).some(b => b.start && b.end)))}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"

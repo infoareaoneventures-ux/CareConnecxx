@@ -119,7 +119,12 @@ export const WhatsNext: React.FC<WhatsNextProps> = ({
           daysOfWeek: w.selectedDays || [],
           rate: w.rate || 0,
           rateFlexible: !w.rate,
-          paymentMethod: w.paymentMethod || 'cash',
+          // Cash/Venmo/Zelle removed platform-wide (Hamse, 2026-08-23) — every
+          // job is paid by card now. This used to default to 'cash', the
+          // opposite of every other write path's 'credit' default, which
+          // meant a job could silently go out cash-only if Evia's free-form
+          // intake loop completed without ever asking about payment method.
+          paymentMethod: 'credit',
           careLevel: w.careLevel || 'moderate',
         }, uid).catch(() => {});
       }).catch(() => {});

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Firestore harness + server-import mocks mirror reactToMessage.test.ts (the
-// set server.ts needs to import cleanly). Covers the two client money tools
-// added by the 2026-07-06 parity audit: retry_shift_payment (agent mirror of
-// v1-retryShiftPayment) and update_booking_payment_method (agent mirror of
-// v1-updateBookingPaymentMethod). Both are money-touching and owner-scoped, so
-// the guards below are the safety contract.
+// set server.ts needs to import cleanly). Covers retry_shift_payment (agent
+// mirror of v1-retryShiftPayment, added by the 2026-07-06 parity audit) — a
+// money-touching, owner-scoped tool, so the guards below are the safety
+// contract. update_booking_payment_method (also from that audit) was removed
+// along with cash/Venmo/Zelle platform-wide (Hamse, 2026-08-23) — there's
+// nothing left to switch a booking's payment method to or from.
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
@@ -138,48 +139,5 @@ describe("get_billing_summary tool (canonical field split, R7)", () => {
     expect(paymentWhere).toMatchObject({ field: "userId", op: "==", value: CLIENT });
     // The old bug: invoices filtered by userId. Guard against regression.
     expect(hoisted.wheres.some(w => w.path === "invoices" && w.field === "userId")).toBe(false);
-  });
-});
-
-describe("update_booking_payment_method tool", () => {
-  beforeEach(() => hoisted.reset());
-
-  const future = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  it("rejects an unknown payment method", async () => {
-    const r = await handleToolCall("update_booking_payment_method", { appointmentId: APPT, clientId: CLIENT, paymentMethod: "bitcoin" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("INVALID_INPUT");
-  });
-
-  it("refuses when the booking belongs to a different client", async () => {
-    hoisted.docState.set(`appointments/${APPT}`, { clientId: OTHER, status: "confirmed", isoDate: future() });
-    const r = await handleToolCall("update_booking_payment_method", { appointmentId: APPT, clientId: CLIENT, paymentMethod: "credit" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("PERMISSION_DENIED");
-    expect(hoisted.updates).toHaveLength(0);
-  });
-
-  it("refuses when the booking is not confirmed", async () => {
-    hoisted.docState.set(`appointments/${APPT}`, { clientId: CLIENT, status: "completed", isoDate: future() });
-    const r = await handleToolCall("update_booking_payment_method", { appointmentId: APPT, clientId: CLIENT, paymentMethod: "credit" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("INVALID_INPUT");
-  });
-
-  it("refuses when the booking has already started", async () => {
-    hoisted.docState.set(`appointments/${APPT}`, { clientId: CLIENT, status: "confirmed", isoDate: "2020-01-01T00:00:00.000Z" });
-    const r = await handleToolCall("update_booking_payment_method", { appointmentId: APPT, clientId: CLIENT, paymentMethod: "credit" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("INVALID_INPUT");
-  });
-
-  it("switches an upcoming confirmed booking to an offline method", async () => {
-    hoisted.docState.set(`appointments/${APPT}`, { clientId: CLIENT, status: "confirmed", isoDate: future() });
-    const r = await handleToolCall("update_booking_payment_method", { appointmentId: APPT, clientId: CLIENT, paymentMethod: "venmo" }) as any;
-    expect(r.success).toBe(true);
-    expect(r.paymentMethod).toBe("venmo");
-    const upd = hoisted.updates.find(u => u.path === `appointments/${APPT}`);
-    expect(upd?.data).toMatchObject({ paymentMethod: "venmo" });
   });
 });

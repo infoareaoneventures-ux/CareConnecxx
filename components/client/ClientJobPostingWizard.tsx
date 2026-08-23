@@ -39,7 +39,12 @@ interface WizardForm {
   smokingHousehold: boolean;
   rate?: number;
   rateFlexible: boolean;
-  paymentMethod: string;
+  // Cash removed platform-wide (Hamse, 2026-08-23) — every job is paid by
+  // card now, so this is no longer a real choice. Also fixes a pre-existing
+  // inconsistency: this field used to store 'credit_card' while every other
+  // write path (BookingFlow.tsx, PostsPage.tsx, the backend's
+  // normalizePaymentMethod default) uses 'credit'.
+  paymentMethod: 'credit';
   jobDescription: string;
 }
 
@@ -134,7 +139,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     smokingHousehold: false,
     rate: undefined,
     rateFlexible: false,
-    paymentMethod: '',
+    paymentMethod: 'credit',
     jobDescription: '',
   });
 
@@ -299,7 +304,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     if (step === 10) return form.careRecipientFirstName.trim().length > 0;
     if (step === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
     if (step === 12) return form.careNeeds.length > 0;
-    if (step === 13) return !!form.paymentMethod && !!form.rate && (form.rate ?? 0) > 0;
+    if (step === 13) return !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
 
@@ -1102,29 +1107,6 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
                   className="w-full pl-8 pr-14 py-3 border-2 border-slate-200 rounded-xl text-lg font-semibold text-slate-900 focus:outline-none focus:border-indigo-500"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">/hr</span>
-              </div>
-            </div>
-
-            {/* Payment method */}
-            <div>
-              <p className="text-sm font-semibold text-slate-700 mb-2">Payment method</p>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { value: 'credit_card', label: 'Credit card' },
-                  { value: 'cash', label: 'Cash' },
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => update('paymentMethod', opt.value)}
-                    className={`text-left px-4 py-3 rounded-xl border-2 transition-all ${
-                      form.paymentMethod === opt.value
-                        ? 'border-indigo-500 bg-indigo-50'
-                        : 'border-slate-200 bg-white hover:border-indigo-300'
-                    }`}
-                  >
-                    <p className="font-semibold text-slate-800 text-sm">{opt.label}</p>
-                  </button>
-                ))}
               </div>
             </div>
 

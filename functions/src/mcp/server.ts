@@ -18,7 +18,6 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
-import { normalizePaymentMethod, isOfflinePaymentMethod } from "../billing/paymentMethods";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
@@ -763,7 +762,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_job_post",
     description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, paymentMethod: { type: "string", description: "'card' (charged through the platform) or an offline method paid directly to the caregiver: 'cash', 'venmo', 'zelle'" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
+    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, careTypes: { type: "array", items: { type: "string" } }, frequency: { type: "string", description: "e.g. 'weekly', 'one-time'" }, days: { type: "array", items: { type: "string" } }, timeOfDay: { type: "array", items: { type: "string" } }, hourlyRate: { type: "number" }, city: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" } }, required: ["clientId", "careTypes", "hourlyRate"] },
   },
   {
     name: "list_proactive_drafts",
@@ -1692,7 +1691,6 @@ export const MCP_TOOLS: McpTool[] = [
         startDate:    { type: "string", description: "New start date YYYY-MM-DD" },
         daysOfWeek:   { type: "array", items: { type: "string" }, description: "New days array" },
         timeOfDay:    { type: "array", items: { type: "string" }, description: "New time-of-day array" },
-        paymentMethod:{ type: "string", enum: ["card","cash","venmo","zelle"], description: "New payment method — card is charged through the platform; cash/Venmo/Zelle are paid directly to the caregiver" },
       },
       required: ["jobId", "clientId"],
     },
@@ -1950,26 +1948,6 @@ export const MCP_TOOLS: McpTool[] = [
         clientId:      { type: "string", description: "The client's user ID (ownership check)" },
       },
       required: ["appointmentId", "clientId"],
-    },
-  },
-  {
-    name: "update_booking_payment_method",
-    description:
-      "Switch how an upcoming confirmed booking is paid: credit (charged through Stripe) or an offline " +
-      "method the family pays the caregiver directly (cash, venmo, zelle). Only allowed before the " +
-      "booking starts. Confirm the new method with the family before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        appointmentId: { type: "string", description: "The appointment ID of the confirmed, not-yet-started booking" },
-        clientId:      { type: "string", description: "The client's user ID (ownership check)" },
-        paymentMethod: {
-          type: "string",
-          enum: ["credit", "cash", "venmo", "zelle"],
-          description: "The new payment method",
-        },
-      },
-      required: ["appointmentId", "clientId", "paymentMethod"],
     },
   },
   {
@@ -2554,21 +2532,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId"],
     },
   },
-  {
-    name: "confirm_cash_received",
-    description:
-      "Caregiver confirms they received an offline payment (cash, Venmo, or Zelle) for an approved shift. Marks the " +
-      "shift-hours record paid. Only works for offline-payment shifts whose hours are already approved. Confirm the " +
-      "shift with the caregiver before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string", description: "The caregiver's Firestore document ID" },
-        appointmentId: { type: "string", description: "The appointment/shiftHours document ID the payment was for" },
-      },
-      required: ["caregiverId", "appointmentId"],
-    },
-  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -2638,7 +2601,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "list_interviews",
   "cancel_interview",
   "list_shift_swaps",
-  "confirm_cash_received",
   // Unified work-in-progress view (agentic-reliability wave 2026-07)
   "get_work_in_progress",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
@@ -2688,7 +2650,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "create_caregiver_referral",
   "get_shifts",
   "get_caregiver_availability",
-  "confirm_cash_received",
   "list_shift_swaps",
   // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
   "request_checkr_verification",
@@ -5279,7 +5240,7 @@ async function executeToolCall(
     }
 
     if (name === "create_job_post") {
-      const { clientId, careTypes, frequency, days, timeOfDay, hourlyRate, paymentMethod, city, startDate } = input as Record<string, unknown>;
+      const { clientId, careTypes, frequency, days, timeOfDay, hourlyRate, city, startDate } = input as Record<string, unknown>;
       if (!clientId || !Array.isArray(careTypes) || careTypes.length === 0 || hourlyRate == null) {
         return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), and hourlyRate are required");
       }
@@ -5300,7 +5261,6 @@ async function executeToolCall(
         days:          daysArr,
         timeOfDay:     todArr,
         hourlyRate:    hourlyRate as number | string,
-        paymentMethod: (paymentMethod ?? undefined) as string | undefined,
         city:          (city ?? undefined) as string | undefined,
         intakeId:      ref.id,
       }));
@@ -6097,7 +6057,7 @@ async function executeToolCall(
 
     // ── edit_job_post ───────────────────────────────────────────────────────
     if (name === "edit_job_post") {
-      const { jobId, clientId, rate, description, startDate, daysOfWeek, timeOfDay, paymentMethod } = input as Record<string, unknown>;
+      const { jobId, clientId, rate, description, startDate, daysOfWeek, timeOfDay } = input as Record<string, unknown>;
       if (!jobId || !clientId) return toolError("INVALID_INPUT", "jobId and clientId are required");
       const jpSnap = await db.collection("job_posts").doc(jobId as string).get();
       if (!jpSnap.exists) return toolError("NOT_FOUND", "Job post not found");
@@ -6110,7 +6070,6 @@ async function executeToolCall(
       if (startDate   != null)  upd.startDate     = startDate;
       if (daysOfWeek  != null)  upd["schedule.days"] = daysOfWeek;
       if (timeOfDay   != null)  upd["schedule.timeOfDay"] = timeOfDay;
-      if (paymentMethod != null) upd.paymentMethod = paymentMethod;
       await jpSnap.ref.update(upd);
       await db.collection("job_postings").doc(clientId as string).set({ ...upd, clientId }, { merge: true });
       logAudit({ eventType: "job_post_edited", userId: clientId as string, data: { source: "mcp:edit_job_post", jobId, fields: Object.keys(upd) } }).catch(() => {});
@@ -7076,52 +7035,6 @@ async function executeToolCall(
           "The payment is being retried now. Tell the family you've re-run it and you'll let them know if it " +
           "fails again — do NOT promise it succeeded; the charge happens asynchronously. If it fails again, " +
           "send get_payment_update_link so they can fix their card.",
-      };
-    }
-
-    // ── update_booking_payment_method ───────────────────────────────────────
-    // Agent mirror of the v1-updateBookingPaymentMethod callable
-    // (paymentMethods.ts): same guards — owner only, confirmed status, not yet
-    // started — so the two paths can never diverge on what's allowed.
-    if (name === "update_booking_payment_method") {
-      const { appointmentId, clientId, paymentMethod } = input as Record<string, unknown>;
-      const { OFFLINE_PAYMENT_METHODS } = await import("../billing/paymentMethods");
-      const validMethods = ["credit", ...OFFLINE_PAYMENT_METHODS];
-      if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
-      if (!validMethods.includes(paymentMethod as string)) {
-        return toolError("INVALID_INPUT", `paymentMethod must be one of: ${validMethods.join(", ")}`);
-      }
-
-      const ref  = db.collection("appointments").doc(appointmentId as string);
-      const snap = await ref.get();
-      if (!snap.exists) return toolError("NOT_FOUND", "Appointment not found.");
-      const appt = snap.data()!;
-      if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This booking doesn't belong to this family.");
-      if (appt.status !== "confirmed") {
-        return toolError("INVALID_INPUT", "Payment method can only be changed on a confirmed booking that hasn't started.");
-      }
-      // "Already started" in PACIFIC wall-clock terms — `new Date("YYYY-MM-DD")`
-      // is UTC midnight = 5pm PT the EVENING BEFORE, which blocked families
-      // from changing payment method the night before the visit.
-      const { parseScheduledTimeMs: parseStartMs } = await import("../utils/scheduledTime");
-      const startIso = appt.isoDate || appt.date;
-      const startRef = appt.startTime
-        ? `${String(appt.date)}T${String(appt.startTime).slice(0, 5)}:00`
-        : String(startIso ?? "");
-      if (startIso && parseStartMs(startRef) <= Date.now()) {
-        return toolError("INVALID_INPUT", "That booking has already started — the payment method can't be changed now.");
-      }
-
-      await ref.update({ paymentMethod, updatedAt: nowIso });
-      logAudit({ eventType: "booking_payment_method_updated", userId: clientId as string, data: { source: "mcp:update_booking_payment_method", appointmentId, paymentMethod } }).catch(() => {});
-      const offline = paymentMethod !== "credit";
-      return {
-        success: true,
-        appointmentId,
-        paymentMethod,
-        guidance: offline
-          ? `Confirm the switch to the family and remind them they'll pay the caregiver directly by ${paymentMethod}; the caregiver confirms receipt after the visit.`
-          : "Confirm the switch to the family — this visit will be charged to their card on file.",
       };
     }
 
@@ -8340,36 +8253,6 @@ async function executeToolCall(
         .filter(s => !s.expiresAt || String(s.expiresAt) > nowIso)
         .slice(0, 10);
       return { success: true, myRequests, openOffers, count: myRequests.length + openOffers.length };
-    }
-
-    // ── confirm_cash_received ───────────────────────────────────────────────
-    // Mirror of the web's confirmCashReceived (services/api.ts): caregiver-owned
-    // offline shift (cash/Venmo/Zelle), approved/auto_approved → paid. Idempotent
-    // on SMS retry — an already-paid shift returns a no-op success, never a
-    // double transition. (Tool name keeps "cash" for prompt/contract stability.)
-    if (name === "confirm_cash_received") {
-      const { caregiverId: ccCgId, appointmentId: ccApptId } = input as Record<string, unknown>;
-      if (!ccCgId || !ccApptId) return toolError("INVALID_INPUT", "caregiverId and appointmentId are required");
-      const shiftRef  = db.collection("shiftHours").doc(ccApptId as string);
-      const shiftSnap = await shiftRef.get();
-      if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours record not found");
-      const shift = shiftSnap.data()!;
-      if (shift.caregiverId !== ccCgId) return toolError("PERMISSION_DENIED", "Only the caregiver on this shift can confirm payment receipt");
-      if (!isOfflinePaymentMethod(shift.paymentMethod)) return toolError("INVALID_INPUT", "This shift is not an offline (cash/Venmo/Zelle) payment");
-      if (shift.status === "paid") return { success: true, alreadyPaid: true, appointmentId: ccApptId };
-      if (shift.status !== "approved" && shift.status !== "auto_approved") {
-        return toolError("INVALID_INPUT", `Shift hours must be approved before confirming payment (current status: ${shift.status})`);
-      }
-      const ccMethod = normalizePaymentMethod(shift.paymentMethod);
-      await shiftRef.update({
-        status:          "paid",
-        paidMethod:      ccMethod,
-        paidAt:          nowIso,
-        cashConfirmedAt: nowIso,
-        updatedAt:       nowIso,
-      });
-      logAudit({ eventType: "cash_payment_confirmed", userId: ccCgId as string, data: { source: "mcp:confirm_cash_received", appointmentId: ccApptId, method: ccMethod } }).catch(() => {});
-      return { success: true, paid: true, method: ccMethod, appointmentId: ccApptId };
     }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);

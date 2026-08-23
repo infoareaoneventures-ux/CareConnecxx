@@ -695,8 +695,10 @@ service cloud.firestore {
     // ==========================================
     // SHIFT HOURS COLLECTION (per-appointment)
     // Doc id === appointmentId for idempotent submits.
-    // State transitions happen via Cloud Functions (admin SDK).
-    // Exception: caregiver can confirm cash receipt directly (approved → paid).
+    // State transitions happen via Cloud Functions (admin SDK) only.
+    // Cash/Venmo/Zelle (and the caregiver-direct cash-confirm exception this
+    // collection used to carry) were removed platform-wide (Hamse,
+    // 2026-08-23) — every shift is now settled by Stripe via the Admin SDK.
     // ==========================================
     match /shiftHours/{appointmentId} {
       allow read: if isAuthenticated() && (
@@ -710,18 +712,7 @@ service cloud.firestore {
       // client and amount that the scheduled payment rail later processes.
       allow create: if false;
 
-      // Admin can update anything.
-      // Caregiver may confirm cash receipt: approved/auto_approved → paid,
-      // restricted to only the 5 confirmation fields.
-      allow update: if isAdmin() || (
-        isAuthenticated() &&
-        resource.data.caregiverId == request.auth.uid &&
-        resource.data.paymentMethod in ['cash', 'venmo', 'zelle'] &&
-        (resource.data.status == 'approved' || resource.data.status == 'auto_approved') &&
-        request.resource.data.status == 'paid' &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'paidMethod', 'paidAt', 'cashConfirmedAt', 'updatedAt'])
-      );
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 

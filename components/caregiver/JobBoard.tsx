@@ -117,7 +117,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [filterPayMax, setFilterPayMax] = useState<number | ''>('');
     const [filterTimeOfDay, setFilterTimeOfDay] = useState<string[]>([]);
     const [filterDays, setFilterDays] = useState<string[]>([]);
-    const [filterPaymentMethod, setFilterPaymentMethod] = useState<'' | 'cash' | 'credit'>('');
     const [filterSeniorsCount, setFilterSeniorsCount] = useState<string[]>([]);
     const [filterCareTypes, setFilterCareTypes] = useState<string[]>([]);
 
@@ -394,7 +393,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         filterPayMax !== '',
         filterTimeOfDay.length > 0,
         filterDays.length > 0,
-        filterPaymentMethod !== '',
         filterSeniorsCount.length > 0,
         filterCareTypes.length > 0,
     ].filter(Boolean).length;
@@ -405,7 +403,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         setFilterPayMax('');
         setFilterTimeOfDay([]);
         setFilterDays([]);
-        setFilterPaymentMethod('');
         setFilterSeniorsCount([]);
         setFilterCareTypes([]);
     };
@@ -428,7 +425,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             const jDays: string[] = Array.isArray((job as any).daysOfWeek) ? (job as any).daysOfWeek : [];
             if (!filterDays.some(d => jDays.some((jd: string) => jd.toLowerCase().startsWith(d.toLowerCase())))) return false;
         }
-        if (filterPaymentMethod !== '' && (job as any).paymentMethod !== filterPaymentMethod) return false;
         if (filterSeniorsCount.length > 0) {
             const count = (job as any).recipientsCount ?? 1;
             const matches = filterSeniorsCount.some(s => {
@@ -531,18 +527,6 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                     {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
                         <button key={d} onClick={() => toggleChip(filterDays, setFilterDays, d)} className={CHIP(filterDays.includes(d))}>
                             {d}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Payment method */}
-            <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Payment Method</label>
-                <div className="flex gap-1.5">
-                    {([['cash', 'Cash'], ['credit', 'Card']] as const).map(([v, label]) => (
-                        <button key={v} onClick={() => setFilterPaymentMethod(prev => prev === v ? '' : v)} className={CHIP(filterPaymentMethod === v)}>
-                            {label}
                         </button>
                     ))}
                 </div>

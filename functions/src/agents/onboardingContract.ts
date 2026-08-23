@@ -124,7 +124,6 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "conditions", "hoursPerDay", "daysPerWeek",
   "street", "state", "neighborhood",
   "emergencyContactRelationship",
-  "paymentMethod",
   "jobDescription",
   "petsInHome", "smokingHousehold",
   "careRecipientLastName", "lastName",

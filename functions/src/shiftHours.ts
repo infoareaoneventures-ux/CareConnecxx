@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
 import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billing/config';
-import { normalizePaymentMethod, isOfflinePaymentMethod, paymentMethodLabel } from './billing/paymentMethods';
+import { isOfflinePaymentMethod } from './billing/paymentMethods';
 import { TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 import { timesheetAutoApprovalEnabled } from './config/featureFlags';
 import { createValidatedShiftHours, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
@@ -900,20 +900,6 @@ export const onShiftHoursApproved = functions
       return null;
     }
 
-    if (isOfflinePaymentMethod(after.paymentMethod)) {
-      // Offline shifts (cash/Venmo/Zelle): client has approved — notify caregiver
-      // to confirm receipt. We do NOT mark paid here; caregiver must call
-      // confirmCashReceived to close it out.
-      await pushNotification(
-        after.caregiverId,
-        'shift_hours_cash_pending_confirmation',
-        'Client approved your hours',
-        `Confirm you received $${(after.grossPay || 0).toFixed(2)} via ${paymentMethodLabel(after.paymentMethod)} from ${after.clientName || 'the client'}.`,
-        { appointmentId: context.params.appointmentId }
-      );
-      return null;
-    }
-
     await processShiftPayment(context.params.appointmentId, after);
     return null;
   });
@@ -1252,70 +1238,9 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
   }
 }
 
-/**
- * Caregiver confirms they received cash payment for an approved cash shift.
- * Moves status from approved/auto_approved → paid and notifies both parties.
- */
-export const confirmCashReceived = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
-  }
-  const { appointmentId } = data as { appointmentId: string };
-  if (!appointmentId) {
-    throw new functions.https.HttpsError('invalid-argument', 'appointmentId is required');
-  }
-
-  const ref = db.collection('shiftHours').doc(appointmentId);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Shift hours record not found');
-  }
-
-  const shift = snap.data()!;
-
-  if (shift.caregiverId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Only the caregiver can confirm cash receipt');
-  }
-
-  if (!isOfflinePaymentMethod(shift.paymentMethod)) {
-    throw new functions.https.HttpsError('failed-precondition', 'Shift is not an offline (cash/Venmo/Zelle) payment');
-  }
-
-  if (shift.status !== 'approved' && shift.status !== 'auto_approved') {
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      `Shift must be approved to confirm — current status: ${shift.status}`
-    );
-  }
-
-  const now = nowIso();
-  const method = normalizePaymentMethod(shift.paymentMethod);
-  const methodLabel = paymentMethodLabel(method);
-  await ref.update({
-    status: 'paid' as ShiftHoursStatus,
-    paidMethod: method,
-    paidAt: now,
-    cashConfirmedAt: now,   // field name kept for existing readers; set for all offline methods
-    updatedAt: now,
-  });
-
-  await pushNotification(
-    shift.caregiverId,
-    'shift_hours_paid',
-    'Payment confirmed',
-    `${shift.finalTotalHours}h · $${(shift.grossPay || 0).toFixed(2)} marked as received via ${methodLabel}.`,
-    { appointmentId }
-  );
-  await pushNotification(
-    shift.clientId,
-    'shift_hours_paid',
-    'Hours settled',
-    `${shift.caregiverName}'s ${shift.finalTotalHours}h ${methodLabel} shift is confirmed paid.`,
-    { appointmentId }
-  );
-
-  return { success: true };
-});
+// confirmCashReceived (caregiver confirms receipt of an offline cash/Venmo/
+// Zelle payment) was removed along with cash itself (Hamse, 2026-08-23) —
+// every shift is now settled by Stripe, so there's nothing left to confirm.
 
 /**
  * Approve shift hours on behalf of the client via iMessage reply.

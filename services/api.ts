@@ -3516,43 +3516,10 @@ export const shiftHoursService = {
         return res.data as { success: boolean; error?: string };
     },
 
-    updateBookingPaymentMethod: async (appointmentId: string, paymentMethod: 'cash' | 'venmo' | 'zelle' | 'credit') => {
-        if (!isConfigured || !functions) throw new Error('Firebase not configured');
-        const fn = functions.httpsCallable('v1-updateBookingPaymentMethod');
-        const res = await fn({ appointmentId, paymentMethod });
-        return res.data as { success: boolean };
-    },
-
-    // Caregiver confirms receipt of an offline payment (cash, Venmo, or Zelle).
-    // Name kept for existing callers; covers all offline methods.
-    confirmCashReceived: async (appointmentId: string) => {
-        if (!isConfigured || !db) throw new Error('Firebase not configured');
-        const uid = auth?.currentUser?.uid;
-        if (!uid) throw new Error('Must be signed in');
-
-        const ref = db.collection('shiftHours').doc(appointmentId);
-        const snap = await ref.get();
-        if (!snap.exists) throw new Error('Shift hours record not found');
-
-        const shift = snap.data()!;
-        const method = (shift.paymentMethod || '').toLowerCase();
-        if (shift.caregiverId !== uid)
-            throw new Error('Only the caregiver can confirm payment receipt');
-        if (!['cash', 'venmo', 'zelle'].includes(method))
-            throw new Error('Shift is not an offline (cash/Venmo/Zelle) payment');
-        if (shift.status !== 'approved' && shift.status !== 'auto_approved')
-            throw new Error(`Shift must be approved first (current: ${shift.status})`);
-
-        const now = new Date().toISOString();
-        await ref.update({
-            status: 'paid',
-            paidMethod: method,
-            paidAt: now,
-            cashConfirmedAt: now,
-            updatedAt: now,
-        });
-        return { success: true };
-    },
+    // updateBookingPaymentMethod / confirmCashReceived (switch a booking
+    // between credit/cash/venmo/zelle, and caregiver-confirm an offline
+    // receipt) were removed along with cash itself (Hamse, 2026-08-23) —
+    // every booking is charged by card now.
 
     subscribeForCaregiver: (caregiverId: string, cb: (rows: any[]) => void) => {
         if (!isConfigured || !db) { cb([]); return () => {}; }

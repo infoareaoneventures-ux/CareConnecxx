@@ -3546,7 +3546,7 @@ export const shiftHoursService = {
     subscribeForAdmin: (cb: (rows: any[]) => void) => {
         if (!isConfigured || !db) { cb([]); return () => {}; }
         return db.collection('shiftHours')
-            .where('status', 'in', ['disputed_admin_review', 'payment_failed'])
+            .where('status', 'in', ['disputed_admin_review', 'payment_failed', 'requires_admin_review'])
             .orderBy('submittedAt', 'desc')
             .onSnapshot(snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     },

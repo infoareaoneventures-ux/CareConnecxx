@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { shiftHoursService } from '../../services/api';
+import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
+import { shiftHoursService, dbService } from '../../services/api';
 
 function toLocal(iso: string): string {
   const d = new Date(iso);
@@ -32,6 +32,11 @@ export const AdminShiftHoursMediation: React.FC = () => {
 
   const disputed = rows.filter(r => r.status === 'disputed_admin_review');
   const failed = rows.filter(r => r.status === 'payment_failed');
+  // Not a client/caregiver disagreement — a system-side snag (e.g. the
+  // approval-notice couldn't be confirmed delivered after retries, or the
+  // submission came from an unverified source). Nothing to arbitrate, so
+  // this just needs a one-click approve using the hours as submitted.
+  const needsReview = rows.filter(r => r.status === 'requires_admin_review');
 
   const resolve = async () => {
     if (!resolveTarget) return;
@@ -59,6 +64,18 @@ export const AdminShiftHoursMediation: React.FC = () => {
       setMsg(res.success ? 'Retry succeeded' : (res.error || 'Retry failed'));
     } catch (e: any) {
       setMsg(e?.message || 'Retry failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const approveAsSubmitted = async (row: any) => {
+    setBusy(row.id);
+    try {
+      await dbService.adminResolveDispute(row.appointmentId, 'approve');
+      setMsg('Approved');
+    } catch (e: any) {
+      setMsg(e?.message || 'Failed');
     } finally {
       setBusy(null);
     }
@@ -139,6 +156,37 @@ export const AdminShiftHoursMediation: React.FC = () => {
                   className="px-3 py-1.5 rounded-lg border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
                 >
                   Retry now
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-purple-500" />
+          Needs review ({needsReview.length})
+        </h3>
+        {needsReview.length === 0 ? (
+          <div className="bg-white rounded-xl border border-slate-200 p-6 text-sm text-slate-500 text-center">Nothing needs review.</div>
+        ) : (
+          <div className="space-y-2">
+            {needsReview.map(r => (
+              <div key={r.id} className="bg-white rounded-xl border border-purple-200 p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-slate-900">{r.caregiverName} × {r.clientName}</p>
+                  <p className="text-sm text-slate-600">{r.submittedTotalHours}h · ${r.grossPay?.toFixed(2) || '—'}</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {new Date(r.submittedStartTime).toLocaleString()} → {new Date(r.submittedEndTime).toLocaleString()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => approveAsSubmitted(r)}
+                  disabled={busy === r.id}
+                  className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-sm font-medium disabled:opacity-50"
+                >
+                  {busy === r.id ? 'Approving…' : 'Approve as submitted'}
                 </button>
               </div>
             ))}

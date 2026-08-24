@@ -5,7 +5,7 @@ import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billi
 import { isOfflinePaymentMethod } from './billing/paymentMethods';
 import { TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 import { timesheetAutoApprovalEnabled } from './config/featureFlags';
-import { createValidatedShiftHours, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
+import { createValidatedShiftHours, createValidatedShiftHoursFromShift, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
 import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
 import { ShiftBillingPolicyError } from './billing/shiftBillingPolicy';
 import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem } from './billing/shiftBillingAmounts';
@@ -152,7 +152,8 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
   const lineItems: ShiftLineItem[] = sanitizeShiftLineItems(rawLineItems);
 
   let appointmentId = shiftId;
-  let appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
+  let useLegacyShiftPath = false;
+  const appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
   if (!appointmentSnap.exists) {
     const legacyShiftSnap = await db.collection('shifts').doc(shiftId).get();
     if (!legacyShiftSnap.exists) {
@@ -162,33 +163,44 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     if (legacyShift.caregiverId !== context.auth.uid) {
       throw new functions.https.HttpsError('permission-denied', 'Not your shift');
     }
-    appointmentId = typeof legacyShift.appointmentId === 'string' ? legacyShift.appointmentId : '';
-    if (!appointmentId) {
-      await legacyShiftSnap.ref.update({
-        billingStatus: 'requires_admin_review',
-        billingReviewReason: 'missing_appointment_link',
-        billingReviewRequestedAt: nowIso(),
-      });
-      throw new functions.https.HttpsError(
-        'failed-precondition',
-        'This legacy visit needs billing review before hours can be submitted',
-      );
-    }
-    appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
-    if (!appointmentSnap.exists) {
-      throw new functions.https.HttpsError('failed-precondition', 'The linked appointment could not be verified');
+    const linkedAppointmentId = typeof legacyShift.appointmentId === 'string' ? legacyShift.appointmentId : '';
+    if (linkedAppointmentId) {
+      // A real link exists (rare for this pipeline, but respect it if present)
+      // — validate against the linked appointment as usual.
+      appointmentId = linkedAppointmentId;
+      const linkedSnap = await db.collection('appointments').doc(linkedAppointmentId).get();
+      if (!linkedSnap.exists) {
+        throw new functions.https.HttpsError('failed-precondition', 'The linked appointment could not be verified');
+      }
+    } else {
+      // No appointments doc exists for this shift and never has — this is the
+      // website's own booking_requests -> shiftGenerator.ts pipeline, which
+      // has never written an appointmentId (restored capability, Hamse
+      // 2026-08-24 — see createValidatedShiftHoursFromShift). Submit directly
+      // off the shift doc's own fields instead of requiring a linked
+      // appointment.
+      useLegacyShiftPath = true;
     }
   }
 
   try {
-    const result = await createValidatedShiftHours({
-      appointmentId,
-      actorUid: context.auth.uid,
-      submittedStartTime: startTime,
-      submittedEndTime: endTime,
-      source: 'web',
-      lineItems,
-    });
+    const result = useLegacyShiftPath
+      ? await createValidatedShiftHoursFromShift({
+          shiftId,
+          actorUid: context.auth.uid,
+          submittedStartTime: startTime,
+          submittedEndTime: endTime,
+          source: 'web',
+          lineItems,
+        })
+      : await createValidatedShiftHours({
+          appointmentId,
+          actorUid: context.auth.uid,
+          submittedStartTime: startTime,
+          submittedEndTime: endTime,
+          source: 'web',
+          lineItems,
+        });
     return {
       success: true,
       shiftId,

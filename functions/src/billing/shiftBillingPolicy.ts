@@ -58,6 +58,12 @@ export function evaluateShiftBillingPolicy(input: {
     basePayCents,
     lineItemsTotalCents,
     grossPayCents,
-    requiresExplicitApproval: grossPayCents > EXPLICIT_APPROVAL_THRESHOLD_CENTS,
+    // A line item (mileage, supplies, a custom fee) is an uncapped,
+    // caregiver-declared amount — unlike the base hours, which are bounded by
+    // the scheduled shift. Requiring explicit approval whenever one is present
+    // (not just past the dollar threshold) keeps the 24h auto-approve/
+    // auto-accept safety nets from ever silently charging an unreviewed extra
+    // charge (Hamse, 2026-08-23).
+    requiresExplicitApproval: grossPayCents > EXPLICIT_APPROVAL_THRESHOLD_CENTS || lineItemsTotalCents > 0,
   };
 }

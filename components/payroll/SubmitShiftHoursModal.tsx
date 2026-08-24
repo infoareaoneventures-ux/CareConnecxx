@@ -94,6 +94,10 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
   const basePay = shift.rate ? totalHours * shift.rate : null;
   const lineItemsTotal = lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0);
   const grandTotal    = basePay != null ? basePay + lineItemsTotal : null;
+  // Additional charges skip the 24h auto-approve fallback (Hamse, 2026-08-23)
+  // — an uncapped, caregiver-declared amount shouldn't be able to silently
+  // charge the client just because they didn't check the app in time.
+  const hasLineItems = lineItems.some(li => li.amount > 0);
 
   // ── line item helpers ──
 
@@ -308,7 +312,9 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
           <p className="text-xs text-slate-500">
             {isOffline
               ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client will approve your hours for the record; payment is made directly.`
-              : 'Payment method: Credit. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.'}
+              : hasLineItems
+                ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Since you added an additional charge, the client needs to review and approve this manually — there's no automatic approval for submissions with extra charges.`
+                : `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.`}
           </p>
         </div>
 

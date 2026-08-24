@@ -8,7 +8,7 @@ import { timesheetAutoApprovalEnabled } from './config/featureFlags';
 import { createValidatedShiftHours, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
 import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
 import { ShiftBillingPolicyError } from './billing/shiftBillingPolicy';
-import { resolveShiftBillableAmount } from './billing/shiftBillingAmounts';
+import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem } from './billing/shiftBillingAmounts';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
 
 export { sanitizeShiftLineItems } from './billing/shiftBillingAmounts';
@@ -128,12 +128,28 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('invalid-argument', 'shiftId, startTime and endTime are required');
   }
 
+  // Additional charges are allowed through now (Hamse, 2026-08-23) — they used
+  // to be rejected outright here, discarding the base hours too. Server-side
+  // validation mirrors the modal's own client-side checks (never trust
+  // client-only validation for money data); sanitizeShiftLineItems then
+  // produces the safe shape createValidatedShiftHours persists. Presence of
+  // any line item forces requiresExplicitApproval (shiftBillingPolicy.ts) —
+  // the client must explicitly approve, no 24h auto-approve fallback.
   if (Array.isArray(rawLineItems) && rawLineItems.length > 0) {
-    throw new functions.https.HttpsError(
-      'invalid-argument',
-      'Additional line items require billing review and cannot be submitted here',
-    );
+    const missingType = rawLineItems.find((li) => !li?.type);
+    if (missingType) {
+      throw new functions.https.HttpsError('invalid-argument', 'Please select a type for each additional charge');
+    }
+    const missingAmount = rawLineItems.find((li) => !(Number(li?.amount) > 0));
+    if (missingAmount) {
+      throw new functions.https.HttpsError('invalid-argument', 'Please enter an amount for each additional charge');
+    }
+    const missingCustomLabel = rawLineItems.find((li) => li?.type === 'custom' && !String(li?.label ?? '').trim());
+    if (missingCustomLabel) {
+      throw new functions.https.HttpsError('invalid-argument', 'Please enter a label for each Custom charge');
+    }
   }
+  const lineItems: ShiftLineItem[] = sanitizeShiftLineItems(rawLineItems);
 
   let appointmentId = shiftId;
   let appointmentSnap = await db.collection('appointments').doc(appointmentId).get();
@@ -171,6 +187,7 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
       submittedStartTime: startTime,
       submittedEndTime: endTime,
       source: 'web',
+      lineItems,
     });
     return {
       success: true,

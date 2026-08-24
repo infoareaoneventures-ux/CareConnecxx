@@ -3,6 +3,11 @@ import { resolveShiftBillableAmount, shiftEndFromHours } from "./shiftBillingAmo
 
 describe("resolveShiftBillableAmount", () => {
   it("returns one canonical cents and dollars calculation for a legal correction", () => {
+    // requiresExplicitApproval is true here because a line item is present
+    // (mileage) — not the dollar threshold. Any line item, however small,
+    // forces explicit approval (Hamse, 2026-08-23) so the auto-approve/
+    // auto-accept safety nets never silently resolve an uncapped,
+    // caregiver-declared amount.
     expect(resolveShiftBillableAmount({
       startTime: "2026-07-13T09:00:00.000Z",
       endTime: "2026-07-13T15:00:00.000Z",
@@ -16,7 +21,7 @@ describe("resolveShiftBillableAmount", () => {
       basePay: 180,
       lineItemsTotal: 12.35,
       grossPay: 192.35,
-      requiresExplicitApproval: false,
+      requiresExplicitApproval: true,
     });
   });
 

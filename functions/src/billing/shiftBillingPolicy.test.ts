@@ -43,4 +43,28 @@ describe("evaluateShiftBillingPolicy", () => {
       bookedRateDollars: 110,
     })).toThrow("cannot exceed $2500.00");
   });
+
+  // Additional charges (mileage, supplies, a custom fee) are an uncapped,
+  // caregiver-declared amount — presence alone must require explicit approval
+  // regardless of the dollar total, so the 24h auto-approve/auto-accept
+  // safety nets never silently resolve one (Hamse, 2026-08-23).
+  it("requires explicit approval whenever any line item is present, even for a tiny amount", () => {
+    const result = evaluateShiftBillingPolicy({
+      startTime: "2026-07-12T09:00:00.000Z",
+      endTime: "2026-07-12T09:05:00.000Z",
+      bookedRateDollars: 20,
+      approvedLineItemsTotalCents: 100, // $1.00
+    });
+    expect(result.requiresExplicitApproval).toBe(true);
+    expect(result.lineItemsTotalCents).toBe(100);
+    expect(result.grossPayCents).toBeGreaterThan(100);
+  });
+
+  it("does NOT require explicit approval for a small submission with no line items", () => {
+    expect(evaluateShiftBillingPolicy({
+      startTime: "2026-07-12T09:00:00.000Z",
+      endTime: "2026-07-12T13:00:00.000Z",
+      bookedRateDollars: 20,
+    }).requiresExplicitApproval).toBe(false);
+  });
 });

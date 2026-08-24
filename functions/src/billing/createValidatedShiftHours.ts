@@ -4,6 +4,7 @@ import { apptStartMs } from "../utils/scheduledTime";
 import { normalizePaymentMethod } from "./paymentMethods";
 import { BILLING_CURRENCY } from "./config";
 import { evaluateShiftBillingPolicy } from "./shiftBillingPolicy";
+import { ShiftLineItem } from "./shiftBillingAmounts";
 
 const db = admin.firestore();
 
@@ -47,6 +48,7 @@ export async function createValidatedShiftHours(input: {
   submittedStartTime: string;
   submittedEndTime: string;
   source: "web" | "mcp" | "care_note" | "agent" | "recurring";
+  lineItems?: ShiftLineItem[];
 }): Promise<{
   appointmentId: string;
   status: string;
@@ -105,10 +107,16 @@ export async function createValidatedShiftHours(input: {
     }
 
     const bookedRate = Number(appointment.rate ?? appointment.hourlyRate);
+    const lineItems = input.lineItems ?? [];
+    const approvedLineItemsTotalCents = lineItems.reduce(
+      (total, lineItem) => total + Math.round(lineItem.amount * 100),
+      0,
+    );
     const policy = evaluateShiftBillingPolicy({
       startTime: input.submittedStartTime,
       endTime: input.submittedEndTime,
       bookedRateDollars: bookedRate,
+      approvedLineItemsTotalCents,
     });
     const trustedAppointment = appointment.billingAuthority === BILLING_AUTHORITY_VERSION;
     const status = trustedAppointment ? "pending_client_review" : "requires_admin_review";
@@ -133,8 +141,8 @@ export async function createValidatedShiftHours(input: {
       submittedStartTime: input.submittedStartTime,
       submittedEndTime: input.submittedEndTime,
       submittedTotalHours: policy.totalHours,
-      lineItems: [],
-      lineItemsTotal: 0,
+      lineItems,
+      lineItemsTotal: policy.lineItemsTotalCents / 100,
       basePay: policy.basePayCents / 100,
       grossPay: policy.grossPayCents / 100,
       amountCents: policy.grossPayCents,
@@ -161,7 +169,7 @@ export async function createValidatedShiftHours(input: {
         date: appointment.date ?? null,
         totalHours: policy.totalHours,
         bookedRate,
-        lineItems: [],
+        lineItems,
         grossPayCents: policy.grossPayCents,
       },
       state: trustedAppointment ? "pending" : "requires_admin_review",

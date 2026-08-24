@@ -280,7 +280,7 @@ export type JobCareLevel = 'light' | 'moderate' | 'intensive';
 // still branch on them; making them always say "credit, not offline"
 // correctly cascades the removal through that existing branching logic.
 export type JobPaymentMethod = 'credit';
-export const paymentMethodLabel = (_m?: string | null): string => 'Credit Card';
+export const paymentMethodLabel = (_m?: string | null): string => 'Card';
 export const isOfflinePaymentMethod = (_m?: string | null): boolean => false;
 
 export interface JobPost {

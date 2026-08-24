@@ -15,6 +15,7 @@ import { shiftHoursService, dbService } from '../../services/api';
 import { checkOnboardingStatus, requestInstantPayout, getPayoutBalance, getSubscriptionStatus, getCaregiverBillingPortalUrl, createMvrAddonCheckout } from '../../services/stripeService';
 import { db } from '../../lib/firebase';
 import type { Caregiver } from '../../types';
+import { paymentMethodLabel } from '../../types';
 
 // ── types ───────────────────────────────────────────────────────────────────
 
@@ -443,9 +444,7 @@ const PendingShiftRow: React.FC<{
     const ctrEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
     const ctrHours = row.submittedTotalHours ?? 0;
     const stripPay = row.grossPay ?? 0;
-    const method   = row.paymentMethod
-      ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
-      : '—';
+    const method   = row.paymentMethod ? paymentMethodLabel(row.paymentMethod) : '—';
     // Original submission values for the HOURS receipt
     const origBasePay = row.basePay ?? (row.submittedTotalHours != null && row.payRate ? Math.round(row.submittedTotalHours * row.payRate * 100) / 100 : null);
     const origGross   = row.grossPay ?? origBasePay;
@@ -569,7 +568,7 @@ const PendingShiftRow: React.FC<{
     const stripEnd   = row.submittedEndTime   ? new Date(row.submittedEndTime)   : null;
     const stripHours = row.submittedTotalHours ?? 0;
     const stripPay   = origGross ?? 0;
-    const method     = row.paymentMethod ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1) : '—';
+    const method     = row.paymentMethod ? paymentMethodLabel(row.paymentMethod) : '—';
 
     return (
       <>
@@ -696,9 +695,7 @@ const PendingShiftRow: React.FC<{
   const basePay   = hours * (row.payRate ?? 0);
   const hasExtras = row.lineItems && row.lineItems.length > 0;
   const gross     = row.grossPay ?? basePay;
-  const method    = row.paymentMethod
-    ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
-    : '—';
+  const method    = row.paymentMethod ? paymentMethodLabel(row.paymentMethod) : '—';
   const autoAt    = row.autoApproveAt
     ? new Date(row.autoApproveAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : '';
@@ -827,9 +824,7 @@ const HistoryShiftRow: React.FC<{ row: ShiftRow }> = ({ row }) => {
   const hasExtras = row.lineItems && row.lineItems.length > 0;
   // Use stored grossPay (includes line items) if available, otherwise compute from hours
   const gross = row.grossPay ?? basePay;
-  const method = row.paymentMethod
-    ? row.paymentMethod.charAt(0).toUpperCase() + row.paymentMethod.slice(1)
-    : '—';
+  const method = row.paymentMethod ? paymentMethodLabel(row.paymentMethod) : '—';
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -1208,7 +1203,7 @@ const SubmittableShiftCard: React.FC<{
         <div className="w-px h-8 bg-slate-100 shrink-0" />
         <Col
           label="Method"
-          value={shift.paymentMethod ? shift.paymentMethod.charAt(0).toUpperCase() + shift.paymentMethod.slice(1) : '—'}
+          value={shift.paymentMethod ? paymentMethodLabel(shift.paymentMethod) : '—'}
           className="shrink-0 w-[46px]"
         />
 

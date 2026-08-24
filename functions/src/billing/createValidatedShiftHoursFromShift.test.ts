@@ -165,15 +165,46 @@ describe("createValidatedShiftHoursFromShift", () => {
     })).rejects.toThrow(/not completed/);
   });
 
-  it("rejects submitted hours outside the shift's own scheduled window", async () => {
+  it("allows hours outside the shift's own scheduled window, but forces explicit approval instead of a hard rejection", async () => {
     seedCompletedShift();
-    await expect(createValidatedShiftHoursFromShift({
+    const result = await createValidatedShiftHoursFromShift({
       shiftId: SHIFT_ID,
       actorUid: CAREGIVER,
       submittedStartTime: "2026-08-24T14:00:00.000Z", // well before the 16:30 scheduled start
       submittedEndTime: "2026-08-25T01:00:00.000Z", // 18:00 PDT
       source: "web",
-    })).rejects.toThrow(/scheduled window/);
+    });
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.requiresExplicitApproval).toBe(true);
+    const doc = hoisted.docState.get(`shiftHours/${SHIFT_ID}`);
+    expect(doc.autoApproveAt).toBeNull();
+  });
+
+  it("allows clocking in up to 15 minutes early / out 15 minutes late (grace period)", async () => {
+    seedCompletedShift();
+    const result = await createValidatedShiftHoursFromShift({
+      shiftId: SHIFT_ID,
+      actorUid: CAREGIVER,
+      submittedStartTime: "2026-08-24T23:20:00.000Z", // 16:20 PDT — 10 min before the 16:30 start
+      submittedEndTime: "2026-08-25T01:10:00.000Z", // 18:10 PDT — 10 min after the 18:00 end
+      source: "web",
+    });
+    expect(result.alreadyExisted).toBe(false);
+  });
+
+  it("still requires explicit approval for clocking in more than 15 minutes early, rather than rejecting", async () => {
+    seedCompletedShift();
+    const result = await createValidatedShiftHoursFromShift({
+      shiftId: SHIFT_ID,
+      actorUid: CAREGIVER,
+      submittedStartTime: "2026-08-24T23:00:00.000Z", // 16:00 PDT — 30 min before the 16:30 start
+      submittedEndTime: "2026-08-25T01:00:00.000Z",
+      source: "web",
+    });
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.requiresExplicitApproval).toBe(true);
+    const doc = hoisted.docState.get(`shiftHours/${SHIFT_ID}`);
+    expect(doc.autoApproveAt).toBeNull();
   });
 
   it("is idempotent on retry with the same interval", async () => {

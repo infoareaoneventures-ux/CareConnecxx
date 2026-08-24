@@ -116,6 +116,15 @@ const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg
   payment_failed:            { label: 'Payment Failed',     color: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200' },
 };
 
+// Needs Review also carries the "sent and waiting on someone else" states
+// (correction_proposed — client already proposed a correction, caregiver
+// hasn't responded yet; disputed_admin_review — escalated, waiting on admin)
+// so those shifts stay visible instead of disappearing until they resolve.
+const NEEDS_REVIEW_STATUSES: ShiftHoursStatus[] = [
+  'pending_client_review', 'caregiver_counter_proposed', 'payment_failed',
+  'correction_proposed', 'disputed_admin_review',
+];
+
 const HISTORY_ACTION_LABEL: Record<string, string> = {
   submitted:           'Submitted by caregiver',
   proposed_correction: 'Client proposed correction',
@@ -635,7 +644,7 @@ export const Payments: React.FC = () => {
   }, [reportedRows]);
 
   const filteredRows = useMemo(() => {
-    if (statusFilter === 'needs-review') return rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed');
+    if (statusFilter === 'needs-review') return rows.filter(r => NEEDS_REVIEW_STATUSES.includes(r.status));
     return showReport && (reportFrom || reportTo) ? reportedRows : historyRows;
   }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
 
@@ -747,7 +756,7 @@ export const Payments: React.FC = () => {
             {/* Status filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
-                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => r.status === 'pending_client_review' || r.status === 'caregiver_counter_proposed' || r.status === 'payment_failed').length },
+                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => NEEDS_REVIEW_STATUSES.includes(r.status)).length },
                 { id: 'history',      label: 'History',      count: historyRows.length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
                 <button
@@ -833,9 +842,13 @@ export const Payments: React.FC = () => {
                 <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3">
                   <Clock className="w-6 h-6 text-slate-400" />
                 </div>
-                <p className="font-semibold text-slate-700 mb-1">No timesheets yet</p>
+                <p className="font-semibold text-slate-700 mb-1">
+                  {statusFilter === 'history' ? 'No completed shifts yet' : 'No timesheets yet'}
+                </p>
                 <p className="text-sm text-slate-400">
-                  When a caregiver completes a shift and submits their hours, they'll appear here for your review.
+                  {statusFilter === 'history'
+                    ? 'Approved and paid shifts will appear here.'
+                    : "When a caregiver completes a shift and submits their hours, they'll appear here for your review."}
                 </p>
               </div>
             ) : (

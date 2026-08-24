@@ -6,7 +6,6 @@ import { ViewType, Caregiver, ClientIntakeData, Senior, paymentMethodLabel } fro
 import { dbService, authService, normalizeJobPost } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
-import { CaraActivityFeed } from './CaraActivityFeed';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
 import { ClientNavigation } from './ClientNavigation';
@@ -984,8 +983,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               </div>
             </div>
 
-            {/* Evia Activity — transparency feed of what Evia did (U9) */}
-            {currentUser?.uid && <CaraActivityFeed ownerUid={currentUser.uid} />}
+            {/* Evia Activity feed removed for now (Hamse, 2026-08-23) — every
+                message_sent entry shows the same generic "Evia sent a message
+                to your care team" line regardless of whether the care team
+                had anyone to receive it, which reads as inaccurate. Revisit
+                once the feed can reflect real delivery. */}
 
             {/* Pending care changes — live shift swaps (U7); hidden when none */}
             <PendingSwapsPanel

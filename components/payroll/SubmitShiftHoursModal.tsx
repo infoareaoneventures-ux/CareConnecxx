@@ -69,6 +69,37 @@ function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: str
   };
 }
 
+// Mirrors the server's grace-window check (functions/src/billing/createValidatedShiftHours.ts)
+// closely enough for this preview text — a browser-local reading of the
+// scheduled HH:MM strings, not byte-identical TZ handling, but this is only
+// ever advisory copy; the server is the actual authority either way.
+const SCHEDULE_GRACE_MS = 15 * 60 * 1000;
+
+function parseHHMM(time: string): { h: number; m: number } | null {
+  const m = time.trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  if (m[3] === 'PM' && hour < 12) hour += 12;
+  if (m[3] === 'AM' && hour === 12) hour = 0;
+  if (hour > 23 || Number(m[2]) > 59) return null;
+  return { h: hour, m: Number(m[2]) };
+}
+
+function scheduledWindowMs(shift: CompletedShift): { start: number; end: number } | null {
+  if (!shift.date || !shift.startTime || !shift.endTime) return null;
+  const start = parseHHMM(shift.startTime);
+  const end = parseHHMM(shift.endTime);
+  if (!start || !end) return null;
+  const startDate = new Date(`${shift.date}T00:00:00`);
+  startDate.setHours(start.h, start.m, 0, 0);
+  const endDate = new Date(`${shift.date}T00:00:00`);
+  endDate.setHours(end.h, end.m, 0, 0);
+  const startMs = startDate.getTime();
+  let endMs = endDate.getTime();
+  if (endMs <= startMs) endMs += 24 * 60 * 60 * 1000;
+  return { start: startMs, end: endMs };
+}
+
 function fmtDuration(hours: number): string {
   const totalSecs = Math.round(hours * 3600);
   const h = Math.floor(totalSecs / 3600);
@@ -98,6 +129,19 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
   // — an uncapped, caregiver-declared amount shouldn't be able to silently
   // charge the client just because they didn't check the app in time.
   const hasLineItems = lineItems.some(li => li.amount > 0);
+  // Clocking in/out more than 15 minutes off the scheduled window gets the
+  // same treatment (Hamse, 2026-08-24) — the server never blocks a real
+  // submission for this, but it does require the client to explicitly
+  // approve rather than letting it auto-approve after 24 hours.
+  const scheduledWindow = useMemo(() => scheduledWindowMs(shift), [shift]);
+  const isOutsideScheduledWindow = useMemo(() => {
+    if (!scheduledWindow) return false;
+    const s = new Date(startIso).getTime();
+    const e = new Date(endIso).getTime();
+    if (!isFinite(s) || !isFinite(e)) return false;
+    return s < scheduledWindow.start - SCHEDULE_GRACE_MS || e > scheduledWindow.end + SCHEDULE_GRACE_MS;
+  }, [scheduledWindow, startIso, endIso]);
+  const needsExplicitApproval = hasLineItems || isOutsideScheduledWindow;
 
   // ── line item helpers ──
 
@@ -312,8 +356,8 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
           <p className="text-xs text-slate-500">
             {isOffline
               ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client will approve your hours for the record; payment is made directly.`
-              : hasLineItems
-                ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Since you added an additional charge, the client needs to review and approve this manually — there's no automatic approval for submissions with extra charges.`
+              : needsExplicitApproval
+                ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. The client needs to review and approve this manually — there's no automatic approval for ${hasLineItems ? 'submissions with extra charges' : "hours that don't match the scheduled time"}.`
                 : `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.`}
           </p>
         </div>

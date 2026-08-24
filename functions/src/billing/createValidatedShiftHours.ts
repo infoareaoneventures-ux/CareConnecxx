@@ -10,6 +10,15 @@ const db = admin.firestore();
 
 export const BILLING_AUTHORITY_VERSION = "server-v1" as const;
 
+// A caregiver clocking in a little early or clocking out a little late
+// shouldn't get rejected outright — 15 minutes each side covers realistic
+// early-arrival/late-departure timing without loosening the check enough to
+// stop catching genuinely mismatched submissions (Hamse, 2026-08-24). Applied
+// only at the reject-decision comparisons below, not inside bookedWindowMillis
+// itself — that function's raw {start,end} is also used elsewhere (e.g.
+// distinguishing an overnight window) where widening it would be wrong.
+const SUBMISSION_GRACE_MS = 15 * 60 * 1000;
+
 export class ValidatedShiftHoursError extends Error {
   constructor(
     public readonly code: "not_found" | "forbidden" | "not_billable" | "outside_booked_window" | "conflict",
@@ -99,12 +108,20 @@ export async function createValidatedShiftHours(input: {
       };
     }
 
+    // A caregiver running early/late doesn't get blocked outright (Hamse,
+    // 2026-08-24) — real worked hours always go through. Beyond the grace
+    // window (or with no derivable scheduled window at all), it's treated the
+    // same way a line item already is: forces requiresExplicitApproval below
+    // instead of the normal 24h auto-approve, so the client — who can already
+    // see the scheduled window next to the actual clocked times on the review
+    // screen — has to actually look at it rather than never being blocked or
+    // silently auto-approved either way.
     const bookedWindow = bookedWindowMillis(appointment);
     const submittedStart = new Date(input.submittedStartTime).getTime();
     const submittedEnd = new Date(input.submittedEndTime).getTime();
-    if (!bookedWindow || submittedStart < bookedWindow.start || submittedEnd > bookedWindow.end) {
-      throw new ValidatedShiftHoursError("outside_booked_window", "Submitted hours must stay within the booked appointment window");
-    }
+    const outsideScheduledWindow = !bookedWindow
+      || submittedStart < bookedWindow.start - SUBMISSION_GRACE_MS
+      || submittedEnd   > bookedWindow.end   + SUBMISSION_GRACE_MS;
 
     const bookedRate = Number(appointment.rate ?? appointment.hourlyRate);
     const lineItems = input.lineItems ?? [];
@@ -118,10 +135,11 @@ export async function createValidatedShiftHours(input: {
       bookedRateDollars: bookedRate,
       approvedLineItemsTotalCents,
     });
+    const requiresExplicitApproval = policy.requiresExplicitApproval || outsideScheduledWindow;
     const trustedAppointment = appointment.billingAuthority === BILLING_AUTHORITY_VERSION;
     const status = trustedAppointment ? "pending_client_review" : "requires_admin_review";
     const submittedAt = new Date().toISOString();
-    const autoApproveAt = trustedAppointment && !policy.requiresExplicitApproval ? autoApproveAtIso() : null;
+    const autoApproveAt = trustedAppointment && !requiresExplicitApproval ? autoApproveAtIso() : null;
 
     transaction.create(shiftHoursRef, {
       id: input.appointmentId,
@@ -146,7 +164,7 @@ export async function createValidatedShiftHours(input: {
       basePay: policy.basePayCents / 100,
       grossPay: policy.grossPayCents / 100,
       amountCents: policy.grossPayCents,
-      requiresExplicitApproval: policy.requiresExplicitApproval,
+      requiresExplicitApproval,
       billingAuthority: trustedAppointment ? BILLING_AUTHORITY_VERSION : "unverified",
       billingSource: input.source,
       approvalNoticeState: trustedAppointment ? "pending" : "not_required",
@@ -190,7 +208,7 @@ export async function createValidatedShiftHours(input: {
       appointmentId: input.appointmentId,
       status,
       alreadyExisted: false,
-      requiresExplicitApproval: policy.requiresExplicitApproval,
+      requiresExplicitApproval,
       totalHours: policy.totalHours,
       grossPayCents: policy.grossPayCents,
     };
@@ -268,12 +286,15 @@ export async function createValidatedShiftHoursFromShift(input: {
       };
     }
 
+    // Same "never block real hours, just require explicit approval when
+    // something's outside the grace window" treatment as the appointments
+    // path above (Hamse, 2026-08-24).
     const bookedWindow = bookedWindowMillis(shift);
     const submittedStart = new Date(input.submittedStartTime).getTime();
     const submittedEnd = new Date(input.submittedEndTime).getTime();
-    if (!bookedWindow || submittedStart < bookedWindow.start || submittedEnd > bookedWindow.end) {
-      throw new ValidatedShiftHoursError("outside_booked_window", "Submitted hours must stay within the shift's scheduled window");
-    }
+    const outsideScheduledWindow = !bookedWindow
+      || submittedStart < bookedWindow.start - SUBMISSION_GRACE_MS
+      || submittedEnd   > bookedWindow.end   + SUBMISSION_GRACE_MS;
 
     const bookedRate = Number(shift.rate);
     const lineItems = input.lineItems ?? [];
@@ -287,12 +308,13 @@ export async function createValidatedShiftHoursFromShift(input: {
       bookedRateDollars: bookedRate,
       approvedLineItemsTotalCents,
     });
+    const requiresExplicitApproval = policy.requiresExplicitApproval || outsideScheduledWindow;
     // Shifts are 100% server-generated by onBookingAccepted — never
     // client-created — so unlike appointments there's no "unverified source"
     // case to gate on; always trusted.
     const status = "pending_client_review";
     const submittedAt = new Date().toISOString();
-    const autoApproveAt = !policy.requiresExplicitApproval ? autoApproveAtIso() : null;
+    const autoApproveAt = !requiresExplicitApproval ? autoApproveAtIso() : null;
 
     transaction.create(shiftHoursRef, {
       id: input.shiftId,
@@ -315,7 +337,7 @@ export async function createValidatedShiftHoursFromShift(input: {
       basePay: policy.basePayCents / 100,
       grossPay: policy.grossPayCents / 100,
       amountCents: policy.grossPayCents,
-      requiresExplicitApproval: policy.requiresExplicitApproval,
+      requiresExplicitApproval,
       billingAuthority: BILLING_AUTHORITY_VERSION,
       billingSource: "web_legacy_shift",
       approvalNoticeState: "pending",
@@ -359,7 +381,7 @@ export async function createValidatedShiftHoursFromShift(input: {
       appointmentId: input.shiftId,
       status,
       alreadyExisted: false,
-      requiresExplicitApproval: policy.requiresExplicitApproval,
+      requiresExplicitApproval,
       totalHours: policy.totalHours,
       grossPayCents: policy.grossPayCents,
     };

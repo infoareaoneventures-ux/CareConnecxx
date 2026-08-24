@@ -588,7 +588,7 @@ async function detectCorrection(text: string): Promise<{ field: string; value: s
 // Creates (or finds) the Firebase Auth account for this phone and returns its
 // uid — the canonical doc ID for caregivers/{uid} and users/{uid} (Evia/web
 // data contract: Evia must write where the web reads, and the web is uid-keyed).
-async function createFirebaseAuthAccount(phone: string, displayName: string): Promise<string | null> {
+export async function createFirebaseAuthAccount(phone: string, displayName: string): Promise<string | null> {
   // U10: account creation is irreversible — never create a real Auth user in a
   // dry-run. Return a synthetic uid so downstream parity logic still flows.
   if (isOnboardingDryRun()) {
@@ -628,6 +628,7 @@ async function ensureWebAccount(
   phone: string,
   role: "client" | "caregiver",
   displayName: string,
+  lastName?: string,
 ): Promise<string | null> {
   if (isOnboardingDryRun()) {
     recordSideEffect("ensureWebAccount", { phone, role });
@@ -647,6 +648,9 @@ async function ensureWebAccount(
       ...(displayName
         ? (role === "client" ? { firstName: displayName } : { name: displayName })
         : {}),
+      // lastName is a real client field (web /start parity) — caregivers stay
+      // on a single `name` string, matching how the rest of the app reads them.
+      ...(role === "client" && lastName ? { lastName } : {}),
       ...(snap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -1826,7 +1830,20 @@ export async function drivePostCollectionHandoff(
 // question; a different name is captured as a correction; a bare "no" routes back to
 // the normal ask-name step. Only reached when a name rode in on the web bridge.
 async function handleClientConfirmName(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  const seeded = (session.onboardingData?.firstName as string | undefined) ?? "";
+  const seeded     = (session.onboardingData?.firstName as string | undefined) ?? "";
+  const seededLast = (session.onboardingData?.lastName  as string | undefined) ?? undefined;
+
+  // Website parity: the site creates the webapp account the moment the phone
+  // is verified (before intake even starts) — a cold-SMS account already
+  // exists bare (Auth only, no name) by the time this handler runs (see the
+  // consent-gate in linq/webhooks.ts). Attach the now-confirmed name to it
+  // right here rather than waiting for intake to finish, so a mid-conversation
+  // drop-off still leaves behind a real, loggable-into account.
+  const attachAccount = async (first: string, last?: string): Promise<void> => {
+    if (session.userId) return;
+    const uid = await ensureWebAccount(phone, "client", first, last);
+    if (uid) (session as any).userId = uid;
+  };
 
   // Parse the confirmation FIRST. The old order ran the question-detector
   // before parsing, so direct answers like "yes" or "Anahi is fine" were
@@ -1834,13 +1851,17 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
   const kind = await parseNameConfirmation(seeded, text);
 
   if (kind.kind === "corrected") {
-    const correctedName = kind.correctedName;
-    await mergeOnboardingData(phone, { firstName: correctedName });
+    // Website parity: split "First Last" the same way client_ask_name does,
+    // instead of writing the whole correction into firstName.
+    const [correctedFirst, ...correctedRest] = (kind.correctedName ?? "").trim().split(/\s+/);
+    const correctedLast = correctedRest.join(" ") || undefined;
+    await mergeOnboardingData(phone, { firstName: correctedFirst, ...(correctedLast ? { lastName: correctedLast } : {}) });
+    await attachAccount(correctedFirst, correctedLast);
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
-      context: `Evia just corrected the client's name to ${correctedName}. Briefly acknowledge the fix, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
-      fallback: `Got it — thanks, ${correctedName}. How often do you need care — occasional, part-time, or full-time?`,
+      context: `Evia just corrected the client's name to ${correctedFirst}. Briefly acknowledge the fix, then ask how often they need care — occasional (a few times a month), part-time (1-4 days/week), or full-time (5+ days/week). This is the FIRST question of the wizard's question order — do not ask about the senior's name or relationship yet, that comes later.`,
+      fallback: `Got it — thanks, ${correctedFirst}. How often do you need care — occasional, part-time, or full-time?`,
       maxTokens: 80,
     });
     await sendMessage(chatId, msg);
@@ -1857,6 +1878,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
 
   if (kind.kind === "confirmed") {
     // Confirmed — keep the seeded name and move to the senior question.
+    await attachAccount(seeded, seededLast);
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
@@ -1882,6 +1904,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
       return;
     }
     // Already re-asked once — accept the seeded name and continue.
+    await attachAccount(seeded, seededLast);
     await updateSession(phone, { onboardingStep: "client_ask_senior" });
     const msg = await generateCaraMessage({
       audience: "family",
@@ -1895,6 +1918,7 @@ async function handleClientConfirmName(phone: string, chatId: string, text: stri
   // Substantive non-name message (e.g. they jumped ahead and described who
   // needs care). Accept the seeded name and hand this turn to the agent loop —
   // it owns collection now — so nothing they typed is lost or re-asked (2e).
+  await attachAccount(seeded, seededLast);
   await updateSession(phone, { onboardingStep: "client_ask_senior" });
   return dispatchOnboardingToLoop(phone, chatId, text,
     { ...session, onboardingStep: "client_ask_senior" } as AgentSession, "client");
@@ -2382,7 +2406,7 @@ async function handleClientShowCaregivers(
   // account NOW (Auth user + users/{uid} seed), not at the payment webhook, so
   // even a paywall drop-off can log into the web app with phone OTP.
   if (!session.userId) {
-    const uid = await ensureWebAccount(phone, "client", (d.firstName as string) ?? "");
+    const uid = await ensureWebAccount(phone, "client", (d.firstName as string) ?? "", d.lastName as string | undefined);
     if (uid) (session as any).userId = uid;
   }
 
@@ -2757,12 +2781,27 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
   const sess = session ?? ({ onboardingData: {} } as AgentSession);
   const seeded = (sess.onboardingData?.name as string | undefined) ?? "";
 
+  // Website parity: a cold-SMS account already exists bare (Auth only) by the
+  // time this handler runs (see the consent-gate in linq/webhooks.ts) — attach
+  // the now-confirmed name right here instead of waiting for the photo/bg-check
+  // gate, mirroring ensureCaregiverDocForOnboarding's existing "create the
+  // moment collection completes" logic, just moved to the start of collection.
+  const attachAccount = async (name: string): Promise<void> => {
+    await ensureCaregiverDocForOnboarding(phone).catch((err) =>
+      console.error("[handleCaregiverConfirmName] account pre-create failed (non-fatal):", err));
+    if (!sess.userId) {
+      const uid = await ensureWebAccount(phone, "caregiver", name);
+      if (uid) (sess as any).userId = uid;
+    }
+  };
+
   // Parse the confirmation FIRST — same ordering fix as handleClientConfirmName.
   const kind = await parseNameConfirmation(seeded, text);
 
   if (kind.kind === "corrected") {
     const correctedName = kind.correctedName;
     await mergeOnboardingData(phone, { name: correctedName });
+    await attachAccount(correctedName ?? "");
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
@@ -2781,6 +2820,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
   }
 
   if (kind.kind === "confirmed") {
+    await attachAccount(seeded);
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
@@ -2806,6 +2846,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
       return;
     }
     // Already re-asked once — accept the seeded name and continue.
+    await attachAccount(seeded);
     await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
     const msg = await generateCaraMessage({
       audience: "caregiver",
@@ -2819,6 +2860,7 @@ async function handleCaregiverConfirmName(phone: string, chatId: string, text: s
   // Substantive non-name message (e.g. they jumped ahead with the work they
   // want or the areas they cover). Accept the seeded name and hand this turn to
   // the agent loop — it owns collection now — so nothing is lost or re-asked (2e).
+  await attachAccount(seeded);
   await updateSession(phone, { onboardingStep: "caregiver_ask_location" });
   return dispatchOnboardingToLoop(phone, chatId, text,
     { ...sess, onboardingStep: "caregiver_ask_location" } as AgentSession, "caregiver");

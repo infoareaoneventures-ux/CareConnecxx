@@ -21,6 +21,7 @@ import {
   continueAfterClientCollection,
   absorbClientFields,
   drivePostCollectionHandoff,
+  createFirebaseAuthAccount,
 } from "../agents/onboardingConversation";
 import { absorbCaregiverFields } from "../agents/caregiverFieldAbsorber";
 import { runQaAgent } from "../agents/qaAgent";
@@ -404,32 +405,19 @@ async function createSecondaryMemberSession(
 // (founder policy: consent decisions are explicit-binary). On YES it records
 // consent and hands the user off to the same conversational flow the web
 // bridge provides (returning-user greeting or name-first onboarding).
-async function handlePendingConsentReply(
-  phone:   string,
-  chatId:  string,
-  session: AgentSession,
-  text:    string,
-): Promise<void> {
+// Shared explicit-binary consent classification (STOP always wins; otherwise
+// yes/no/other via LLM per CLAUDE.md — no keyword intent matching). Used by
+// both handlePendingConsentReply (web-signup) and handleColdConsentReply
+// (cold-inbound), which differ only in what happens AFTER a "yes".
+async function classifyConsentReply(text: string): Promise<"stop" | "yes" | "no" | "other"> {
   const norm = text.trim().toUpperCase();
   const stopWords = new Set(["STOP", "UNSUBSCRIBE", "QUIT", "END", "OPTOUT"]);
-  const lang: "en" | "es" = (session as any).preferredLanguage === "es" ? "es" : "en";
+  if (stopWords.has(norm)) return "stop";
 
-  // Carrier STOP protocol always wins.
-  if (stopWords.has(norm)) {
-    await optOutPhoneNumber(phone);
-    // TCPA opt-out confirmation must land reliably — force SMS, never iMessage.
-    await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
-    return;
-  }
-
-  // Explicit-binary consent classification: agreement / refusal / other.
-  // LLM-parsed per CLAUDE.md (no keyword intent matching); strict YES is the
-  // fail-safe if the parse call itself fails.
-  let verdict: "yes" | "no" | "other" = "other";
   try {
     const { parseWithClaude } = await import("../utils/parseWithClaude");
     const raw = await parseWithClaude(
-      "The person was asked to reply YES to consent to receiving care-update text messages. " +
+      "The person was asked to reply YES to continue and consent to text messages. " +
       "Classify their reply. Clear agreement (\"yes\", \"yes please\", \"sure\", \"ok\", \"sounds good\", \"sí\") → yes. " +
       "Clear refusal (\"no\", \"no thanks\", \"don't text me\") → no. " +
       "Anything else — a question, a name, an unrelated message — → other. " +
@@ -437,13 +425,25 @@ async function handlePendingConsentReply(
       text,
     );
     const v = String(raw ?? "").trim().toLowerCase();
-    verdict = v === "yes" || v === "no" ? v : "other";
+    return v === "yes" || v === "no" ? v : "other";
   } catch {
-    verdict = (norm === "YES" || norm === "SI" || norm === "SÍ") ? "yes" : "other";
+    return (norm === "YES" || norm === "SI" || norm === "SÍ") ? "yes" : "other";
   }
+}
 
-  if (verdict === "no") {
+async function handlePendingConsentReply(
+  phone:   string,
+  chatId:  string,
+  session: AgentSession,
+  text:    string,
+): Promise<void> {
+  const lang: "en" | "es" = (session as any).preferredLanguage === "es" ? "es" : "en";
+  const verdict = await classifyConsentReply(text);
+
+  // Carrier STOP protocol always wins.
+  if (verdict === "stop" || verdict === "no") {
     await optOutPhoneNumber(phone);
+    // TCPA opt-out confirmation must land reliably — force SMS, never iMessage.
     await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
     return;
   }
@@ -547,6 +547,66 @@ async function handlePendingConsentReply(
     maxTokens: 120,
   });
   await sendMessage(chatId, welcome);
+}
+
+// ── Pending cold-inbound consent reply ───────────────────────────────────────
+// The cold-inbound branch below gates behind an explicit YES (Terms/Privacy +
+// SMS consent) before creating anything — mirroring the website, which
+// requires the "I agree to the terms" checkbox before Firebase Phone Auth
+// ever runs. Unlike handlePendingConsentReply (web-signup — role and uid
+// already known), role isn't known yet here, so YES only creates a BARE
+// Firebase Auth account (no users/{uid} doc) and hands off to the existing
+// ask_role question; the name-confirm handlers attach role/name to that same
+// account a few turns later (onboardingConversation.ts).
+async function handleColdConsentReply(
+  phone:   string,
+  chatId:  string,
+  session: AgentSession,
+  text:    string,
+  service: LinqService,
+  lang:    "en" | "es",
+): Promise<void> {
+  const verdict = await classifyConsentReply(text);
+
+  if (verdict === "stop" || verdict === "no") {
+    await optOutPhoneNumber(phone);
+    await sendMessage(chatId, tr.opt_out_confirmation(lang), { preferredService: "SMS" });
+    return;
+  }
+
+  if (verdict === "other") {
+    // Max ONE re-ask, then go quiet (deny-by-default) — same policy as the
+    // web-signup consent gate.
+    const reasks = ((session as any).consentReaskCount as number | undefined) ?? 0;
+    if (reasks >= 1) return;
+    await db.collection("agent_sessions").doc(phone)
+      .update({ consentReaskCount: reasks + 1 }).catch(() => {});
+    await sendMessage(chatId, lang === "es"
+      ? "Antes de continuar, responde SÍ para aceptar los Términos y la Política de Privacidad de Evia en eviacares.com — o STOP para cancelar."
+      : "Before we continue, reply YES to agree to Evia's Terms and Privacy Policy at eviacares.com — or STOP to opt out.");
+    return;
+  }
+
+  // ── YES: bare account first, then the same role question cold-inbound
+  // already asks today. No users/{uid} doc yet — role and name are unknown.
+  const uid = await createFirebaseAuthAccount(phone, "").catch(() => null);
+  await db.collection("agent_sessions").doc(phone).update({
+    optedIn:        true,
+    optedInAt:      new Date().toISOString(),
+    optedOut:       false,
+    onboardingStep: "ask_role",
+    ...(uid ? { userId: uid } : {}),
+  });
+
+  await initializeZepOnFirstContact(phone).catch((err) =>
+    console.error("Zep init failed (cold consent opt-in):", err)
+  );
+
+  if (service === "iMessage") await startTyping(chatId).catch(() => {});
+  const roleQuestion = lang === "es"
+    ? "¿Buscas cuidado para un ser querido, o eres cuidador?"
+    : "Are you looking for care for a loved one, or are you a caregiver yourself?";
+  await sendMessage(chatId, roleQuestion);
 }
 
 // Ask which senior the phone is texting about, naming the actual candidates.
@@ -1284,16 +1344,19 @@ const handleInboundInner = traceable(
 
     // No web session and no prior history — a cold inbound. Phone verification
     // happens on the WEBSITE (Firebase Phone Auth) before createWebOnboardingSession,
-    // not over SMS — so we do NOT gate the thread behind an OTP. Lead with a proper
-    // Evia intro and start onboarding right here in the thread; the inbound number
-    // is the conversation identity.
+    // not over SMS — so we do NOT gate the thread behind an OTP. We DO gate it
+    // behind explicit consent, though (Hamse, 2026-08-23): the website requires
+    // the "I agree to the terms" checkbox before anything happens, and a cold
+    // text was previously treated as implied consent with no Terms/Privacy
+    // link ever shown. handleColdConsentReply owns the actual role/name
+    // handoff once they reply YES.
     await db.collection("agent_sessions").doc(phone).set({
       chatId,
       phone,
       service,
       userType:       null,
-      onboardingStep: "ask_role",
-      optedIn:        true,
+      onboardingStep: "cold_awaiting_consent",
+      optedIn:        false,
       optedOut:       false,
       preferredLanguage,
       createdAt:      new Date().toISOString(),
@@ -1306,18 +1369,14 @@ const handleInboundInner = traceable(
     );
 
     if (service === "iMessage") await startTyping(chatId).catch(() => {});
-    // LAUNCH: conversational automation disclosure REMOVED by explicit founder
-    // decision 2026-07-02 (risk accepted — see AGENT_NATIVE_EXCLUSIONS.md R15
-    // addendum). Web signup subtitle + honest-answer-if-asked rule remain the
-    // disclosure surfaces. Counsel to revisit.
-    const coldIntro = preferredLanguage === "es"
-      ? "Hola — soy Evia, tu coordinadora de cuidado. Ayudo a las familias a encontrar cuidadores de confianza " +
-        "con verificación de antecedentes — y a los cuidadores a encontrar trabajo — todo aquí por mensaje.\n\n" +
-        "¿Buscas cuidado para un ser querido, o eres cuidador?"
-      : "Hi — I'm Evia, your care coordinator. I help families find trusted, background-checked caregivers — " +
-        "and help caregivers find work — all right here by text.\n\n" +
-        "Are you looking for care for a loved one, or are you a caregiver yourself?";
-    await sendMessage(chatId, coldIntro);
+    const consentAsk = preferredLanguage === "es"
+      ? "Hola — soy Evia, tu coordinadora de cuidado.\n\n" +
+        "Responde SÍ para continuar — al responder, aceptas los Términos y la Política de Privacidad de Evia en eviacares.com. " +
+        "Pueden aplicar tarifas de mensajes y datos. Responde STOP para cancelar."
+      : "Hi — I'm Evia, your care coordinator.\n\n" +
+        "Reply YES to continue — by texting back you agree to Evia's Terms and Privacy Policy at eviacares.com. " +
+        "Msg & data rates may apply. Reply STOP to opt out.";
+    await sendMessage(chatId, consentAsk);
     // Share contact card AFTER the first outbound message — Linq requires at least
     // one outbound message in history before the share endpoint accepts the call.
     if (service === "iMessage") shareContactCard(chatId).catch(() => {/* non-critical */});
@@ -1396,6 +1455,18 @@ const handleInboundInner = traceable(
       await sendMessage(chatId, tr.opt_in_welcome_back(lang), { preferredService: "SMS" });
       return;
     }
+    return;
+  }
+
+  // ── Pending cold-inbound consent (this session's own consent gate) ─────────
+  // Distinguished from the web-signup case below by onboardingStep — the
+  // auth-trigger-seeded session never sets one. The reply IS the consent
+  // answer; role isn't known yet, so this hands off to ask_role on YES rather
+  // than assuming "client" the way the web-signup handler does.
+  if (session.optedIn === false && session.onboardingStep === "cold_awaiting_consent") {
+    await stopTyping(chatId).catch(() => {});
+    const coldLang = languageFromSession(session as unknown as Record<string, unknown>);
+    await handleColdConsentReply(phone, chatId, session, text, service as LinqService, coldLang);
     return;
   }
 

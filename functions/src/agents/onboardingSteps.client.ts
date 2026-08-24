@@ -49,17 +49,22 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
     client_ask_name: {
       id: "client_ask_name",
       parsePrompt:
-        "Extract only the first name from this message. Reply with just the first name, nothing else. If you cannot find a name, reply: unknown",
+        "Extract the person's full name as given (first and last, if a last name was shared). Reply with just their name as typed, nothing else. If you cannot find a name, reply: unknown",
       parse(raw, session) {
         const safeName = (!raw || raw === "__parse_error__" || raw === "unknown") ? "there" : raw;
         if (safeName === "there") return null; // re-ask: "didn't catch your name"
+        // Website parity: the /start form has separate First/Last name boxes —
+        // split the same way here so a full name shared over SMS lands on the
+        // same firstName/lastName fields, not just firstName.
+        const [firstName, ...rest] = safeName.trim().split(/\s+/);
+        const lastName = rest.join(" ") || undefined;
         // Self-seeker (set at the role step): the sender IS the care recipient —
-        // mirror their name into the senior slot so "who are you caring for" is
-        // never asked.
+        // mirror their FIRST name into the senior slot so "who are you caring
+        // for" is never asked.
         if ((session.onboardingData?.relationship as string) === "self") {
-          return { firstName: safeName, seniorName: safeName };
+          return { firstName, ...(lastName ? { lastName } : {}), seniorName: firstName };
         }
-        return { firstName: safeName };
+        return { firstName, ...(lastName ? { lastName } : {}) };
       },
       nextStep: (session) =>
         (session.onboardingData?.relationship as string) === "self"

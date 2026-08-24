@@ -425,9 +425,17 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     if (!userData.userType) {
       userPatch.userType = role;
     }
-    if (name) {
-      if (role === "caregiver") userPatch.name = name;
-      else userPatch.firstName = name;
+    if (role === "caregiver") {
+      // Caregivers stay on one combined `name` field everywhere in the app
+      // (profile page, admin, matching) — no separate firstName/lastName.
+      if (name) userPatch.name = name;
+    } else {
+      // Bug fix: this used to always write the COMBINED "First Last" string
+      // (`name`) into `firstName`, and never wrote `lastName` at all — the
+      // web /start form collects both, but the last name was silently
+      // dropped. Prefer the real split fields when the form sent them.
+      if (firstName || name) userPatch.firstName = firstName || name;
+      if (lastName) userPatch.lastName = lastName;
     }
     await userRef.set(userPatch, { merge: true });
     // Auth displayName backfill: Firebase Phone Auth creates the user with NO

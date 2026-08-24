@@ -180,6 +180,10 @@ vi.mock("../../agents/onboardingConversation", () => ({
   // the handoff proceeds without patching session.caregiverId - the __RESUME__
   // routing under test is unaffected.
   ensureCaregiverDocForOnboarding: vi.fn(async () => null),
+  // Cold-consent bare account creation — null = no uid resolved, so the
+  // cold-inbound consent-gate tests assert on onboardingStep/optedIn without
+  // depending on a real Firebase Auth mock.
+  createFirebaseAuthAccount: vi.fn(async () => null),
 }));
 
 const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));
@@ -535,6 +539,83 @@ describe("pending TCPA consent (optedIn:false, web-signup auth trigger)", () => 
     parseWithClaude.mockResolvedValueOnce("yes");
     await handleInbound(makeEvent("YES"));
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: true });
+  });
+});
+
+// A truly cold text — no agent_sessions doc, no web_onboarding_sessions bridge
+// — now gates behind explicit consent (Terms/Privacy + SMS) before anything
+// else happens, mirroring the website's "I agree to the terms" checkbox.
+// Role is never known at this point, so YES hands off to ask_role rather than
+// assuming a role the way the web-signup consent handler does.
+describe("cold inbound (no prior session) — consent gate", () => {
+  function seedColdConsentSession(overrides: Record<string, unknown> = {}) {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      chatId: CHAT,
+      service: "SMS",
+      userType: null,
+      onboardingStep: "cold_awaiting_consent",
+      optedOut: false,
+      optedIn: false,
+      ...overrides,
+    });
+  }
+
+  it("a truly cold text gets a consent ask, not the role question", async () => {
+    await handleInbound(makeEvent("Hey"));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        false,
+      onboardingStep: "cold_awaiting_consent",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const sent = String(sendMessage.mock.calls[0][1]);
+    expect(sent).toContain("eviacares.com");
+    expect(sent).not.toContain("caregiver yourself");
+    expect(classifyIntentDetailed).not.toHaveBeenCalled();
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("YES opts in and asks role (not a hardcoded client assumption)", async () => {
+    seedColdConsentSession();
+    parseWithClaude.mockResolvedValueOnce("yes");
+    await handleInbound(makeEvent("Yes please"));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      onboardingStep: "ask_role",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0][1])).toContain("caregiver yourself");
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("STOP during cold consent opts out (carrier protocol wins)", async () => {
+    seedColdConsentSession();
+    await handleInbound(makeEvent("STOP"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("refusal opts out instead of silently staying pending", async () => {
+    seedColdConsentSession();
+    parseWithClaude.mockResolvedValueOnce("no");
+    await handleInbound(makeEvent("no thanks"));
+    expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("non-answer gets ONE re-ask, then goes quiet (deny-by-default)", async () => {
+    seedColdConsentSession();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("who is this?"));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ consentReaskCount: 1 });
+
+    sendMessage.mockClear();
+    parseWithClaude.mockResolvedValueOnce("other");
+    await handleInbound(makeEvent("hello?"));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 });
 

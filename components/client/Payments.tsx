@@ -23,6 +23,7 @@ type ShiftHoursStatus =
   | 'approved'
   | 'auto_approved'
   | 'disputed_admin_review'
+  | 'requires_admin_review'
   | 'paid'
   | 'payment_failed';
 
@@ -112,17 +113,20 @@ const STATUS_CONFIG: Record<ShiftHoursStatus, { label: string; color: string; bg
   approved:                  { label: 'Approved',           color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
   auto_approved:             { label: 'Auto-Approved',      color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
   disputed_admin_review:     { label: 'Under Review',       color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
+  requires_admin_review:     { label: 'Under Review',       color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
   paid:                      { label: 'Paid',               color: 'text-green-700',   bg: 'bg-green-50',   border: 'border-green-200' },
   payment_failed:            { label: 'Payment Failed',     color: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200' },
 };
 
 // Needs Review also carries the "sent and waiting on someone else" states
 // (correction_proposed — client already proposed a correction, caregiver
-// hasn't responded yet; disputed_admin_review — escalated, waiting on admin)
-// so those shifts stay visible instead of disappearing until they resolve.
+// hasn't responded yet; disputed_admin_review — escalated, waiting on admin;
+// requires_admin_review — a billing/notice step failed and needs our team,
+// e.g. a stuck payout or an approval notice that couldn't be delivered) so
+// those shifts stay visible instead of disappearing until they resolve.
 const NEEDS_REVIEW_STATUSES: ShiftHoursStatus[] = [
   'pending_client_review', 'caregiver_counter_proposed', 'payment_failed',
-  'correction_proposed', 'disputed_admin_review',
+  'correction_proposed', 'disputed_admin_review', 'requires_admin_review',
 ];
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
@@ -509,6 +513,14 @@ const ShiftRow: React.FC<{
               <AlertCircle className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
               <p className="text-xs text-purple-700 font-medium">
                 This dispute has been escalated to our team and will be resolved within 48 hours.
+              </p>
+            </div>
+          )}
+          {row.status === 'requires_admin_review' && (
+            <div className="flex items-start gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-purple-700 font-medium">
+                Our team needs to take a closer look at this one before it can be processed. No action needed from you right now.
               </p>
             </div>
           )}

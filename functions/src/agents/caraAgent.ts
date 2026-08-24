@@ -47,6 +47,14 @@ export interface AgentOutput {
   preferredService?: LinqService;
   /** Internal receipt hook for durable workflows that must correlate provider status. */
   onTransportReceipt?: (messageId: string) => void | Promise<void>;
+  // A transport failure normally gets silently dead-lettered into Linq's own
+  // generic redelivery queue (sendMessage returns as if nothing failed). That
+  // doubles delivery for a caller like the billing-approval-notice outbox that
+  // ALSO runs its own outer retry loop — Linq's queue redelivers once, the
+  // caller's own retry redelivers again, both unaware of each other. Set this
+  // for any caller with its own idempotent outer retry so a transport failure
+  // throws back to it instead, leaving exactly one system owning retry.
+  noQueueOnFailure?: boolean;
 }
 
 // ── ExecutionTask — returned by Interaction Agent, consumed by Execution Agent ──
@@ -308,7 +316,10 @@ export async function sendViaInteractionAgent(
   // buildClickableMessage so any URLs become structured Linq link parts —
   // otherwise iMessage won't auto-link URLs that lost their https:// scheme.
   const chunks = splitMessage(safe);
-  const sendOpts = output.preferredService ? { preferredService: output.preferredService } : {};
+  const sendOpts = {
+    ...(output.preferredService ? { preferredService: output.preferredService } : {}),
+    ...(output.noQueueOnFailure ? { _noQueue: true } : {}),
+  };
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await new Promise<void>(r => setTimeout(r, 1000));
     const receipt = await sendMessage(targetChatId, buildClickableMessage(chunks[i]), sendOpts);

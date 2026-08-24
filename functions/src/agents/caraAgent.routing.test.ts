@@ -108,4 +108,21 @@ describe("sendViaInteractionAgent source-agent routing", () => {
       { preferredService: "SMS" },
     );
   });
+
+  it("passes _noQueue to sendMessage when the caller owns its own retry (noQueueOnFailure)", async () => {
+    await sendViaInteractionAgent(PHONE, {
+      content: "Basra Yousuf submitted 1h for today ($20).",
+      urgency: "standard",
+      sourceAgent: "billing_approval_notice",
+      canDrop: false,
+      preferredService: "SMS" as any,
+      noQueueOnFailure: true,
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "private-chat",
+      expect.stringContaining("Basra Yousuf"),
+      { preferredService: "SMS", _noQueue: true },
+    );
+  });
 });

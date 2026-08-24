@@ -122,6 +122,11 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
       sourceAgent: "billing_approval_notice",
       canDrop: false,
       preferredService: "SMS",
+      // This outbox already owns its own idempotent retry schedule (below) —
+      // a transport failure must throw back to it (caught below, see
+      // moveToRetryOrReview) rather than also get dead-lettered into Linq's
+      // own generic redelivery queue, which would send this notice twice.
+      noQueueOnFailure: true,
       onTransportReceipt: (messageId) => { providerMessageIds.push(messageId); },
     });
     if (!sent || providerMessageIds.length === 0) {

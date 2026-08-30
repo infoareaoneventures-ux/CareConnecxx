@@ -57,10 +57,11 @@ vi.mock("firebase-admin", () => ({
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
   firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
     FieldValue: {
-      arrayUnion:  (...v: any[]) => ({ __arrayUnion: v }),
-      arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
-      increment:   (n: number) => ({ __increment: n }),
-      delete:      () => ({ __delete: true }),
+      arrayUnion:      (...v: any[]) => ({ __arrayUnion: v }),
+      arrayRemove:     (...v: any[]) => ({ __arrayRemove: v }),
+      increment:       (n: number) => ({ __increment: n }),
+      delete:          () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
   }),
 }));
@@ -120,8 +121,31 @@ describe("safety tools", () => {
     it("arrayRemoves target", async () => {
       const r = await handleToolCall("unblock_user", { userId: "u1", targetUserId: "u2" }) as any;
       expect(r.success).toBe(true);
-      const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.blockedUsers).toEqual({ __arrayRemove: ["u2"] });
+      const userSets = hoisted.sets.filter(s => s.path === "users/u1");
+      expect(userSets[0]?.data.blockedUsers).toEqual({ __arrayRemove: ["u2"] });
+    });
+
+    it("also cleans up the blockedUserProfiles map entry the site's own unblockUser clears", async () => {
+      const r = await handleToolCall("unblock_user", { userId: "u1", targetUserId: "u2" }) as any;
+      expect(r.success).toBe(true);
+      const userSets = hoisted.sets.filter(s => s.path === "users/u1");
+      const profileClear = userSets.find(s => "blockedUserProfiles.u2" in s.data);
+      expect(profileClear?.data["blockedUserProfiles.u2"]).toEqual({ __delete: true });
+    });
+
+    it("hides the shared chat thread (messagesCutoff/deletedAt) when a room exists", async () => {
+      const roomId = ["u1", "u2"].sort().join("_");
+      hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["u1", "u2"] });
+      const r = await handleToolCall("unblock_user", { userId: "u1", targetUserId: "u2" }) as any;
+      expect(r.success).toBe(true);
+      const roomSet = hoisted.sets.find(s => s.path === `chatRooms/${roomId}`);
+      expect(roomSet?.data["messagesCutoff.u1"]).toBeTruthy();
+      expect(roomSet?.data["deletedAt.u1"]).toBeTruthy();
+    });
+
+    it("does not fail when no chat room exists between the two users", async () => {
+      const r = await handleToolCall("unblock_user", { userId: "u1", targetUserId: "u2" }) as any;
+      expect(r.success).toBe(true);
     });
   });
 
@@ -147,9 +171,15 @@ describe("safety tools", () => {
       expect(r.success).toBe(true);
       expect(r.reported).toBe(true);
       expect(r.followUpWindow).toBe("24h");
+      // Shape must match the website's own report doc (components/InboxView.tsx's
+      // handleReportSubmit) — reportedBy/reportedUser/reason/details, no status
+      // field (the admin list defaults a missing status to "new" client-side).
       const report = hoisted.adds.find(a => a.path === "reports");
-      expect(report?.data.category).toBe("harassment");
-      expect(report?.data.status).toBe("open");
+      expect(report?.data.reportedBy).toBe("u1");
+      expect(report?.data.reportedUser).toBe("u2");
+      expect(report?.data.reason).toBe("Harassment");
+      expect(report?.data.details).toBe("Sent abusive messages");
+      expect(report?.data.status).toBeUndefined();
       const alert = hoisted.adds.find(a => a.path === "admin_alerts");
       expect(alert?.data.type).toBe("user_reported");
     });
@@ -163,7 +193,21 @@ describe("safety tools", () => {
       }) as any;
       expect(r.success).toBe(true);
       const report = hoisted.adds.find(a => a.path === "reports");
-      expect((report?.data.description as string).length).toBeLessThanOrEqual(2000);
+      expect((report?.data.details as string).length).toBeLessThanOrEqual(2000);
+    });
+
+    it("resolves reportedUserName from the target's users doc and maps safety_concern into details (no site-side equivalent reason)", async () => {
+      hoisted.docState.set("users/u2", { name: "Alice Caregiver" });
+      const r = await handleToolCall("report_user", {
+        userId: "u1", targetUserId: "u2",
+        category: "safety_concern", description: "Left the client unattended",
+        _confirmedActionId: "test",
+      }) as any;
+      expect(r.success).toBe(true);
+      const report = hoisted.adds.find(a => a.path === "reports");
+      expect(report?.data.reportedUserName).toBe("Alice Caregiver");
+      expect(report?.data.reason).toBe("Other");
+      expect(report?.data.details).toBe("[Safety concern] Left the client unattended");
     });
   });
 });

@@ -33,6 +33,62 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("all required fields collected");
   });
 
+  // 2026-08-24 fix: additionalRecipients had a label but was never in the
+  // tracked optional-items list, so it had zero nudge to ever be asked —
+  // unlike the website wizard, which always shows this question (Step 10,
+  // right before "how many caregivers needed").
+  it("nudges additionalRecipients before finishing, ordered right before caregiversNeeded", () => {
+    const d = buildOnboardingDirective("client", {
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      homeZipCode: "78701", sameAsHomeAddress: true,
+      city: "Austin", zipCode: "78701", timeOfDay: "mornings",
+      careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+      relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
+      rate: 25,
+      // caregiversNeeded already answered, but additionalRecipients isn't —
+      // should still be nudged even though a LATER optional item is done.
+      caregiversNeeded: 1,
+    });
+    expect(d).toContain("every OTHER person needing care");
+    expect(d).toContain("HOLD ON BEFORE FINISHING");
+  });
+
+  it("stops nudging additionalRecipients once it's been answered", () => {
+    const d = buildOnboardingDirective("client", {
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      homeZipCode: "78701", sameAsHomeAddress: true,
+      city: "Austin", zipCode: "78701", timeOfDay: "mornings",
+      careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+      relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
+      rate: 25,
+      additionalRecipients: [], careRecipientPhotoURL: "x", ongoing: true, caregiversNeeded: 1,
+      petsInHome: false, smokingHousehold: false, jobDescription: "x",
+      age: 82, emergencyContactRelationship: "friend", daysFlexible: false,
+    });
+    expect(d).not.toContain("every OTHER person needing care");
+    expect(d).not.toContain("HOLD ON BEFORE FINISHING");
+  });
+
+  // 2026-08-24: age, emergencyContactRelationship, and daysFlexible had labels
+  // but were never in the tracked list, so they had zero nudge to ever be asked.
+  it("nudges age, emergencyContactRelationship, and daysFlexible before finishing", () => {
+    const d = buildOnboardingDirective("client", {
+      firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
+      homeZipCode: "78701", sameAsHomeAddress: true,
+      city: "Austin", zipCode: "78701", timeOfDay: "mornings",
+      careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
+      relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
+      rate: 25,
+      additionalRecipients: [], careRecipientPhotoURL: "x", ongoing: true, caregiversNeeded: 1,
+      petsInHome: false, smokingHousehold: false, jobDescription: "x",
+      // age/emergencyContactRelationship/daysFlexible deliberately left unset
+    });
+    expect(d).toContain("HOLD ON BEFORE FINISHING");
+    expect(d).toContain("their age");
+    expect(d).toContain("the emergency contact's relationship");
+    expect(d).toContain("whether their days are flexible");
+  });
+
   it("caregiver role uses the caregiver checklist, not the client one", () => {
     const d = buildOnboardingDirective("caregiver", { name: "Maria" });
     expect(d).toContain("hourly rate");

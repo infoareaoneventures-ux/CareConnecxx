@@ -351,7 +351,7 @@ vi.mock("../../utils/language", () => ({
   t: new Proxy({}, { get: (_t, prop) => () => `[${String(prop)}]` }),
 }));
 
-import { handleInbound, userHasRealOnboardingProgress } from "../webhooks";
+import { handleInbound, userHasRealOnboardingProgress, resolvePrimarySeniorId } from "../webhooks";
 
 const PHONE = "+15550001111";
 const CHAT  = "chat-1";
@@ -1614,5 +1614,42 @@ describe("userHasRealOnboardingProgress", () => {
     expect(await userHasRealOnboardingProgress("uid-4", {
       uid: "uid-4", userType: "caregiver", name: "Imran",
     })).toBe(true);
+  });
+
+  // 2026-08-24 fix: a client who finished the website wizard has
+  // jobPostingCompleted:true but no seniorId/seniorIds for the PRIMARY
+  // recipient (only additional household recipients append to seniorIds) —
+  // without this, texting Evia for the first time after finishing the wizard
+  // looked identical to a brand-new signup and restarted the whole conversation.
+  it("client with jobPostingCompleted:true (website wizard finished, no seniorId yet) → true", async () => {
+    expect(await userHasRealOnboardingProgress("uid-5", {
+      uid: "uid-5", userType: "client", jobPostingCompleted: true,
+    })).toBe(true);
+  });
+
+  it("client with jobPostingCompleted:false → false", async () => {
+    expect(await userHasRealOnboardingProgress("uid-6", {
+      uid: "uid-6", userType: "client", jobPostingCompleted: false,
+    })).toBe(false);
+  });
+});
+
+// resolvePrimarySeniorId — getSeniorProfile("") returns null with zero
+// context, so this must never resolve to "" for a client with real progress.
+describe("resolvePrimarySeniorId", () => {
+  it("prefers the explicit seniorId when set", () => {
+    expect(resolvePrimarySeniorId("uid-1", { seniorId: "s1", seniorIds: ["s2"] })).toBe("s1");
+  });
+
+  it("falls back to the first seniorIds entry", () => {
+    expect(resolvePrimarySeniorId("uid-1", { seniorIds: ["s2", "s3"] })).toBe("s2");
+  });
+
+  it("falls back to the client's own uid for a wizard-only client (senior_profiles/{uid})", () => {
+    expect(resolvePrimarySeniorId("uid-1", { jobPostingCompleted: true })).toBe("uid-1");
+  });
+
+  it("resolves to empty string when there's genuinely no progress at all", () => {
+    expect(resolvePrimarySeniorId("uid-1", {})).toBe("");
   });
 });

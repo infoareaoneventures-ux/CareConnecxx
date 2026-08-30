@@ -12,12 +12,13 @@ const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
   const updates: Array<{ path: string; data: any }> = [];
 
-  const makeDocRef = (path: string) => ({
+  const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
     path,
     get: vi.fn(async () => ({ exists: docState.has(path), data: () => docState.get(path), ref: makeDocRef(path) })),
     update: vi.fn(async (data: any) => { updates.push({ path, data }); docState.set(path, { ...(docState.get(path) ?? {}), ...data }); }),
     set: vi.fn(async (data: any, opts?: any) => { docState.set(path, opts?.merge ? { ...(docState.get(path) ?? {}), ...data } : data); }),
+    collection: (name: string) => makeCollRef(`${path}/${name}`),
   });
 
   const wheres: Array<{ path: string; field: string; op: string; value: any }> = [];

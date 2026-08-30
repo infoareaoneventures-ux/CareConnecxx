@@ -2012,7 +2012,11 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
     : Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
       ? (d.careNeeds as string[]).join(", ")
       : "";
-  const loc   = [d.city, d.zipCode].filter(Boolean).join(" ");
+  // Full street address (2026-08-24), not just city+zip — a wrong house number
+  // or street name is a real, consequential mistake (a caregiver can't find
+  // the door), unlike city/zip alone confirming just the general area.
+  const loc   = [d.street as string | undefined, [d.city, d.zipCode].filter(Boolean).join(" ")]
+    .filter(Boolean).join(", ");
   // selectedDays (array, e.g. ['MON','WED','FRI']) is the current loop field —
   // daysPerWeek is a legacy/caregiver-side field that the client loop no
   // longer writes, so reading only daysPerWeek silently dropped schedule info
@@ -2673,6 +2677,19 @@ async function handleClientPlanReply(
     return;
   }
 
+  // Live check: skip a redundant Identity link if the client already
+  // verified — most likely via the website, which Evia otherwise has no way
+  // to know about before unconditionally minting a brand-new Stripe Identity
+  // session and asking them to redo a check they already passed.
+  if (session.userId) {
+    const identitySnap = await db.collection("users").doc(session.userId as string).get().catch(() => null);
+    if (identitySnap?.exists && identitySnap.data()?.identityCheckStatus === "verified") {
+      await updateSession(phone, { onboardingStep: "client_send_payment" });
+      await handleClientSendPayment(phone, chatId, session);
+      return;
+    }
+  }
+
   // Confirmed → ensure a price is stored, then send the identity link.
   const d = session.onboardingData ?? {};
   let priceId = (d.selectedPlanPriceId as string) ?? "";
@@ -2715,6 +2732,22 @@ async function handleClientPlanReply(
 
 export async function handleClientSendPayment(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const d    = session.onboardingData ?? {};
+
+  // Live check: skip a redundant/duplicate Stripe Checkout session if the
+  // client is already an active member — most likely paid via the website,
+  // which Evia otherwise has no way to know about before unconditionally
+  // sending a second checkout link (real risk of a second subscription/charge).
+  // Matches the website's own gate (hooks/useAccessGates.tsx): active OR trialing.
+  if (session.userId) {
+    const memberSnap = await db.collection("users").doc(session.userId as string).get().catch(() => null);
+    const md = memberSnap?.exists ? memberSnap.data() : null;
+    const alreadyActive = md?.subscriptionActive === true || md?.membershipStatus === "active" || md?.membershipStatus === "trialing";
+    if (alreadyActive) {
+      await updateSession(phone, { onboardingStep: "complete" });
+      await sendMessage(chatId, "Looks like your membership is already active — you're all set! I'll keep finding great caregiver matches for you.");
+      return;
+    }
+  }
 
   const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
   const priceId   = ((d.selectedPlanPriceId as string) || resolveClientPriceId()).trim();
@@ -3561,10 +3594,12 @@ async function handleInboundMedia(
   );
 }
 
-// Client onboarding, step 8 of the wizard equivalent (photo of the care
-// recipient — completely optional). Unlike the caregiver's identity photo,
-// there's no face/quality gate here — any image they send is accepted as-is,
-// same as the wizard's AvatarUpload having no verification step either.
+// Client onboarding, step 8 of the wizard equivalent — the ACCOUNT HOLDER's
+// own photo (same as AccountSettings.tsx's "your photo"), not the care
+// recipient's, unless they're the same person (see persistClientCareRecords
+// above) — completely optional either way. Unlike the caregiver's identity
+// photo, there's no face/quality gate here — any image they send is accepted
+// as-is, same as the wizard's AvatarUpload having no verification step either.
 async function handleInboundClientRecipientPhoto(
   phone:  string,
   chatId: string,

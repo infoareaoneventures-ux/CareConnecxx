@@ -1110,8 +1110,38 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   // Caregiver webapp reads the caregivers doc — surfaces the "Membership
-  // canceled" card with the reactivate CTA.
-  await mirrorMembershipToCaregiverDoc(userId, 'canceled');
+  // canceled" card with the reactivate CTA. Returns false for clients (no doc).
+  const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'canceled');
+
+  // Proactively text via Evia — this used to be silent (in-app notice only),
+  // so a client/caregiver whose membership fully lapsed had no way to find
+  // out unless they happened to open the website. Mirrors the same dunning
+  // pattern handleInvoicePaymentFailed already uses.
+  try {
+    const sessionSnap = await admin.firestore()
+      .collection("agent_sessions")
+      .where("userId", "==", userId)
+      .where("optedOut", "==", false)
+      .limit(1)
+      .get();
+    if (!sessionSnap.empty) {
+      const phone = sessionSnap.docs[0].id;
+      const billingUrl = appLink(isCaregiverMember ? "/caregiver/membership" : "/client/membership");
+      const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+      await sendViaInteractionAgent(phone, {
+        content:
+          "Your Evia membership has been cancelled. " +
+          `You can reactivate anytime at ${billingUrl} — reply HELP if you need a hand.`,
+        urgency:     "immediate",
+        sourceAgent: "billing",
+        canDrop:     false,
+        // Billing/legal notice — force SMS for reliable delivery, never iMessage.
+        preferredService: "SMS",
+      });
+    }
+  } catch (err) {
+    console.error(`handleSubscriptionDeleted: failed to notify ${userId}:`, err);
+  }
 
   await admin.firestore().collection('users').doc(userId).collection('notifications').add({
     userId,

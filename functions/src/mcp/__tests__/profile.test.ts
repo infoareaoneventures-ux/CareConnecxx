@@ -157,13 +157,38 @@ describe("profile tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("updates name + address and lists the changed fields", async () => {
+    it("updates name + address using the site's own field names (displayName/street/city/location)", async () => {
       const r = await handleToolCall("update_user_profile", {
         userId: "u1", firstName: "Bob", address: "123 Main", city: "NYC",
       }) as any;
       expect(r.success).toBe(true);
-      expect(r.updated).toEqual(expect.arrayContaining(["firstName", "address", "city"]));
+      // Matches components/client/AccountSettings.tsx exactly — a combined
+      // displayName (never separate firstName/lastName) and street/city/
+      // location/careLocation (never address/zip) for address fields.
+      expect(r.updated).toEqual(expect.arrayContaining(["displayName", "street", "city", "location", "careLocation"]));
+      expect(r.updated).not.toContain("firstName");
+      expect(r.updated).not.toContain("address");
+      const userSet = hoisted.sets.find(s => s.path === "users/u1");
+      expect(userSet?.data.displayName).toBe("Bob");
+      expect(userSet?.data.street).toBe("123 Main");
+      expect(userSet?.data.city).toBe("NYC");
       expect(r.phoneChangeRequested).toBe(false);
+    });
+
+    it("keeps the existing last name when only firstName is updated", async () => {
+      hoisted.docState.set("users/u1", { displayName: "Bob Smith" });
+      const r = await handleToolCall("update_user_profile", { userId: "u1", firstName: "Robert" }) as any;
+      expect(r.success).toBe(true);
+      const userSet = hoisted.sets.find(s => s.path === "users/u1");
+      expect(userSet?.data.displayName).toBe("Robert Smith");
+    });
+
+    it("writes photoURL (not photoUrl) matching the site's photo field", async () => {
+      const r = await handleToolCall("update_user_profile", { userId: "u1", photoUrl: "https://example.com/p.jpg" }) as any;
+      expect(r.success).toBe(true);
+      const userSet = hoisted.sets.find(s => s.path === "users/u1");
+      expect(userSet?.data.photoURL).toBe("https://example.com/p.jpg");
+      expect(userSet?.data.photoUrl).toBeUndefined();
     });
 
     it("stores phone as pendingPhone (does not overwrite live phone)", async () => {

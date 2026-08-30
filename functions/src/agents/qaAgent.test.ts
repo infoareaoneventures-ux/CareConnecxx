@@ -3,6 +3,10 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 const qaHarness = vi.hoisted(() => {
   const writes: Array<{ collection: string; id?: string; data: Record<string, unknown> }> = [];
   const sessionData: Record<string, unknown> = {};
+  // Mutable box (not a plain `let`) so buildClientCoreContext tests can seed a
+  // carePlans doc per-test without needing a new shared mock — additive only,
+  // every other test leaves this null and sees the same exists:false as before.
+  const carePlansState: { doc: Record<string, unknown> | null } = { doc: null };
 
   const makeChain = (collection = "", id?: string): any => ({
     collection: (name: string) => makeChain(name),
@@ -11,8 +15,8 @@ const qaHarness = vi.hoisted(() => {
     orderBy: () => makeChain(collection, id),
     limit: () => makeChain(collection, id),
     get: async () => ({
-      exists: collection === "agent_sessions" && Boolean(id),
-      data: () => collection === "agent_sessions" ? sessionData : {},
+      exists: (collection === "agent_sessions" && Boolean(id)) || (collection === "carePlans" && carePlansState.doc !== null),
+      data: () => collection === "agent_sessions" ? sessionData : (collection === "carePlans" ? carePlansState.doc : {}),
       empty: true,
       docs: [],
       ref: makeChain(collection, id),
@@ -31,6 +35,7 @@ const qaHarness = vi.hoisted(() => {
     firestore,
     writes,
     sessionData,
+    carePlansState,
     detectAndStageFactChange: vi.fn(async (..._args: unknown[]) => ({ kind: "not_correction" })),
     factChangeAckCopy: vi.fn((..._args: unknown[]) => null),
     findTombstonedRestatement: vi.fn(async (..._args: unknown[]) => null),
@@ -113,6 +118,7 @@ import {
   buildClientSystemPrompt,
   buildCaregiverSystemPrompt,
   buildCaregiverCoreContext,
+  buildClientCoreContext,
   isTrivialQuickReply,
   MEMORY_SOURCE_PRIORITY_POLICY,
   WARMTH_REFLECTION_OPENERS,
@@ -551,6 +557,57 @@ describe("buildCaregiverCoreContext", () => {
     expect(out).toContain("account paused.");
     expect(out).not.toContain("SKILLS AND EXPERIENCE");
     expect(out).not.toContain("WEEKLY AVAILABILITY");
+  });
+});
+
+// 2026-08-24 fix: this used to read a completely different, disconnected
+// collection (care_plans, snake_case) than the website's real carePlans
+// (camelCase, components/CarePlan.tsx), and treated careNeeds/notes as flat
+// top-level fields instead of nested per-recipient under recipientPlans.{key}
+// — so the auto-injected "CARE PLAN (full, on file)" context Evia gets every
+// turn never actually reflected anything a real client had on file.
+describe("buildClientCoreContext", () => {
+  beforeEach(() => { qaHarness.carePlansState.doc = null; });
+
+  it("reads the real carePlans collection (not care_plans) and surfaces nested per-recipient careNeeds/notes", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: {
+        mary_smith: { name: "Mary Smith", careNeeds: ["Mobility Assistance", "Medication Reminders"], notes: "Prefers tea in the morning" },
+      },
+    };
+    const out = await buildClientCoreContext("client-1", { name: "Mary Smith" }, {});
+    expect(out).toContain("CARE PLAN (full, on file)");
+    expect(out).toContain("Mary Smith");
+    expect(out).toContain("careNeeds: Mobility Assistance; Medication Reminders");
+    expect(out).toContain("notes: Prefers tea in the morning");
+  });
+
+  it("lists every recipient's plan when a household has more than one", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: {
+        mary_smith: { name: "Mary Smith", careNeeds: ["Mobility Assistance"] },
+        john_smith: { name: "John Smith", notes: "Uses a walker" },
+      },
+    };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("Mary Smith");
+    expect(out).toContain("careNeeds: Mobility Assistance");
+    expect(out).toContain("John Smith");
+    expect(out).toContain("notes: Uses a walker");
+  });
+
+  it("omits the care plan section entirely when no carePlans doc exists", async () => {
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).not.toContain("CARE PLAN");
+  });
+
+  it("falls back to a name derived from the recipientPlans key when the entry has no name field", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: { jane_doe: { careNeeds: ["Personal Care"] } },
+    };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("jane doe");
+    expect(out).toContain("careNeeds: Personal Care");
   });
 });
 

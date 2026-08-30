@@ -78,13 +78,20 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     // Fetch a wider window than we show (15 vs 5): the seed filter runs
     // post-fetch, so a small limit could be consumed entirely by seeded docs
     // and starve real caregivers ranked just past it.
+    // Read from the SAME collection the website's own caregiver-matching
+    // surfaces read from (publicCaregiverProfiles, the filtered/projected
+    // copy of caregivers — hooks/useNearbyCaregiversWithScores.ts,
+    // components/FindCaregivers.tsx) instead of a separate query against the
+    // raw caregivers collection, so a caregiver who's hidden from the site is
+    // hidden from this preview too, automatically — no separate visibility
+    // check needed here since the projection trigger already excludes them.
     // Mirror the dashboard's visibility contract: onboardingStatus='profile_complete'
     // AND verificationStatus='approved' — same pool clients see in FindCaregivers.
     // verificationStatus is set automatically by Checkr on a 'clear' result;
     // admin only intervenes on 'consider' exceptions.
     const localSnap = input.city
       ? await db
-          .collection("caregivers")
+          .collection("publicCaregiverProfiles")
           .where("onboardingStatus", "==", "profile_complete")
           .where("verificationStatus", "==", "approved")
           .where("city", "==", input.city)
@@ -107,7 +114,7 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
       });
     }
 
-    const widerSnap = await db.collection("caregivers")
+    const widerSnap = await db.collection("publicCaregiverProfiles")
       .where("onboardingStatus", "==", "profile_complete")
       .where("verificationStatus", "==", "approved")
       .limit(15)
@@ -146,7 +153,8 @@ export async function runGetCaregiverPreviewAction(
 async function runScoredCaregiverPreview(
   input: CaregiverPreviewInput & { lat: number; lng: number },
 ): Promise<CaregiverPreviewOutput> {
-  const snap = await db.collection("caregivers")
+  // publicCaregiverProfiles — see the comment on the exact-city query above.
+  const snap = await db.collection("publicCaregiverProfiles")
     .where("onboardingStatus", "==", "profile_complete")
     .limit(100)
     .get();

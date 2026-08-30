@@ -352,7 +352,9 @@ export const MEMORY_SOURCE_PRIORITY_POLICY = [
 // get_care_team) to bound exposure. Re-record this in AGENT_NATIVE_EXCLUSIONS.md
 // when U1 lands. Honors KTD-8's latency budget: at most 3 extra parallel reads
 // (care_plans doc, users doc, one appointments query — no per-caregiver fetches).
-async function buildClientCoreContext(
+// Exported for unit tests (buildCaregiverCoreContext's mirror below follows
+// the same pattern).
+export async function buildClientCoreContext(
   userId: string,
   senior: any,
   session: any,
@@ -383,7 +385,10 @@ async function buildClientCoreContext(
 
   const today = businessTodayStr();
   const [planSnap, userSnap, apptSnap] = await Promise.all([
-    db.collection("care_plans").doc(userId).get().catch(() => null),
+    // carePlans (camelCase) is the real, website-facing collection
+    // (components/CarePlan.tsx) — care_plans (snake_case) is a completely
+    // different, disconnected collection nothing on the site ever writes to.
+    db.collection("carePlans").doc(userId).get().catch(() => null),
     db.collection("users").doc(userId).get().catch(() => null),
     db.collection("appointments")
       .where("clientId", "==", userId)
@@ -422,17 +427,25 @@ async function buildClientCoreContext(
     if (roster) parts.push(`CARE TEAM: ${roster}.`);
   }
 
-  // Full care plan (per PHI policy above).
+  // Full care plan (per PHI policy above). Real shape is per-recipient —
+  // carePlans/{uid}.recipientPlans.{key}.{careNeeds,notes} (CarePlan.tsx's
+  // getKey), not flat top-level fields — a household can have more than one
+  // care recipient, so this lists every recipient's plan, labeled by name.
   const plan = planSnap?.exists ? (planSnap.data() as Record<string, any>) : null;
-  if (plan) {
-    const planLines: string[] = [];
+  const recipientPlans = (plan?.recipientPlans ?? {}) as Record<string, Record<string, any>>;
+  if (Object.keys(recipientPlans).length) {
     const fmt = (v: unknown) => Array.isArray(v) ? v.join("; ") : String(v);
-    for (const field of ["careNeeds", "notes"]) {
-      if (plan[field] && (!Array.isArray(plan[field]) || plan[field].length)) {
-        planLines.push(`  - ${field}: ${fmt(plan[field])}`);
+    const blocks: string[] = [];
+    for (const [key, recipientPlan] of Object.entries(recipientPlans)) {
+      const label = String(recipientPlan?.name ?? key.replace(/_/g, " ")).trim();
+      const lines: string[] = [];
+      for (const field of ["careNeeds", "notes"]) {
+        const v = recipientPlan?.[field];
+        if (v && (!Array.isArray(v) || v.length)) lines.push(`    - ${field}: ${fmt(v)}`);
       }
+      if (lines.length) blocks.push(`  ${label}:\n${lines.join("\n")}`);
     }
-    if (planLines.length) parts.push(`CARE PLAN (full, on file):\n${planLines.join("\n")}`);
+    if (blocks.length) parts.push(`CARE PLAN (full, on file):\n${blocks.join("\n")}`);
   }
 
   return parts.length ? parts.join("\n") : "";

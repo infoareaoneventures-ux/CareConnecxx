@@ -35,9 +35,16 @@ const FIELD_LABEL: Record<string, string> = {
   ongoing:        "whether care is ongoing with no end date, or has a specific end date — most families say ongoing",
   endDate:        "the end date, only if care is NOT ongoing (e.g. temporary/short-term care)",
   selectedDays:   "which days of the week — save as an array e.g. ['MON','WED','FRI'] or ['MON','TUE','WED','THU','FRI']",
+  daysFlexible:   "whether their days are flexible (the wizard's own toggle: 'My days are flexible') — save true or false",
   timeOfDay:      "what time of day — morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–12am), or overnight",
-  // Step 8 — photo (optional)
-  careRecipientPhotoURL: "a photo of the person needing care — completely optional",
+  // Step 8 — photo (optional). Despite the field name (kept for the backend
+  // persistence contract — see onboardingConversation.ts's persistClientCareRecords),
+  // the wizard's own Step 8 asks for the ACCOUNT HOLDER's own photo (the
+  // person you're texting with), same as their Account Settings profile
+  // picture — NOT a photo of the person needing care. It only doubles as the
+  // care recipient's photo too when they're the same person (relationship
+  // is "myself"). Ask for the right one.
+  careRecipientPhotoURL: "a photo of THEMSELVES — the family member you're texting with, for their own account profile picture. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Completely optional.",
   // Step 9
   relationship:   "the family member's relationship to the person needing care — parent (they said 'my mom/dad/mother/father' etc.), spouse (wife/husband/partner), or other; save whatever word they used, it gets canonicalized automatically",
   // Step 10
@@ -76,9 +83,18 @@ function labelFor(field: string): string {
 // for me to ask," and silently skips straight to finishing (observed live:
 // photo, pets/smoking, caregiversNeeded, ongoing/endDate, and jobDescription
 // all got dropped this way in the same test conversation).
+// additionalRecipients, age, emergencyContactRelationship, daysFlexible
+// (2026-08-24): all had a FIELD_LABEL entry but were never added to this
+// tracked list, so they had zero nudge to ever be asked. Order below now
+// matches the wizard's real step sequence throughout (was previously out of
+// order — photo/Step 8 listed before ongoing/Step 6).
 const OPTIONAL_ORDER_ITEMS: readonly string[] = [
-  "careRecipientPhotoURL", "ongoing", "caregiversNeeded",
-  "petsInHome", "smokingHousehold", "jobDescription",
+  "ongoing", "daysFlexible",             // Step 6
+  "careRecipientPhotoURL",               // Step 8
+  "age", "additionalRecipients", "caregiversNeeded", // Step 10
+  "emergencyContactRelationship",        // Step 11
+  "petsInHome", "smokingHousehold",      // Step 12
+  "jobDescription",                      // Step 14
 ];
 
 /**

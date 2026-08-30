@@ -55,11 +55,29 @@ export async function relayIntoSharedChatThread(opts: {
     imageUrl:   null,
   });
 
-  await roomRef.set({
+  // Mirrors chatService.ts's sendMessage exactly: clear deletedAt for BOTH
+  // participants (not just the sender) so a new message always resurfaces the
+  // conversation for whichever side had soft-deleted it — previously only the
+  // sender's deletedAt was cleared, so a message relayed after the RECIPIENT
+  // soft-deleted the conversation went silently missing from their inbox.
+  // Preserve any existing deletedAt as messagesCutoff so pre-deletion messages
+  // stay hidden (InboxView.tsx reads this to filter history on resurface).
+  const roomData = roomSnap.data() ?? {};
+  const existingDeletedAt = (roomData as any).deletedAt ?? {};
+  const existingCutoff = (roomData as any).messagesCutoff ?? {};
+  const toMs = (ts: any) => ts?.toMillis?.() ?? (ts?.seconds ? ts.seconds * 1000 : 0);
+
+  const roomUpdate: Record<string, unknown> = {
     lastMessage:          text,
     lastMessageTime:      nowIso,
     lastMessageTimestamp: admin.firestore.FieldValue.serverTimestamp(),
     [`unreadCount.${recipientId}`]: admin.firestore.FieldValue.increment(1),
-    [`deletedAt.${senderId}`]:      admin.firestore.FieldValue.delete(),
-  }, { merge: true });
+  };
+  for (const uid of participants) {
+    roomUpdate[`deletedAt.${uid}`] = admin.firestore.FieldValue.delete();
+    if (existingDeletedAt[uid] && (!existingCutoff[uid] || toMs(existingDeletedAt[uid]) > toMs(existingCutoff[uid]))) {
+      roomUpdate[`messagesCutoff.${uid}`] = existingDeletedAt[uid];
+    }
+  }
+  await roomRef.set(roomUpdate, { merge: true });
 }

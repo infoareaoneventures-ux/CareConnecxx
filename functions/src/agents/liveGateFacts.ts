@@ -233,7 +233,14 @@ export async function buildLiveClientPaymentFact(phone: string, session: AgentSe
     let landed = !!((s as any).stripeSubscriptionId || (s as any).stripeCustomerId);
     if (!landed && s.userId) {
       const u = await db.collection("users").doc(s.userId).get();
-      if (u.exists && u.data()?.membershipStatus === "active") landed = true;
+      // Matches the website's own gate exactly (hooks/useAccessGates.tsx):
+      // active OR trialing OR subscriptionActive — this only checked
+      // "active" before, so a trialing subscription (not used by Evia's own
+      // checkout today, but a real value the shared webhook can still write)
+      // would have under-reported "hasn't landed" while the site already
+      // showed the client unlocked.
+      const ud = u.exists ? u.data() : null;
+      if (ud?.subscriptionActive === true || ud?.membershipStatus === "active" || ud?.membershipStatus === "trialing") landed = true;
     }
     if (landed) {
       return "LIVE STATUS RIGHT NOW: their membership payment WENT THROUGH — do NOT ask them to pay again or tap " +

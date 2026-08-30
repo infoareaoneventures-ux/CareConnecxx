@@ -74,6 +74,11 @@ function parseLocalDate(s: string): Date {
 
 export function hasValidTransportDocs(profile: Record<string, unknown> | null | undefined): boolean {
   if (!profile) return false;
+  // publicCaregiverProfiles precomputes this at projection-write time
+  // (publicCaregiverProfile.ts) instead of exposing raw document data — when
+  // reading that collection, trust the precomputed flag directly rather than
+  // looking for a `documents` field that was deliberately never copied there.
+  if (typeof profile.hasValidTransportDocs === "boolean") return profile.hasValidTransportDocs;
   const services: string[] = [
     ...((profile.skills as string[]) || []),
     ...((profile.services as string[]) || []),

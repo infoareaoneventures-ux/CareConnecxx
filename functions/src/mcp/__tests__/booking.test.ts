@@ -152,6 +152,10 @@ describe("booking tools", () => {
     // Confirmed-action gate (U12) now validates _confirmedActionId against a real
     // pending doc; seed one matching the cancel_appointment bypass calls below.
     hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+    // request_booking now gates on identity/membership (mirrors the website's
+    // own paywall) — default client c1 to verified+active so the existing
+    // booking-domain tests below keep exercising booking logic, not the gate.
+    hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
   });
 
   describe("cancel_appointment", () => {
@@ -516,6 +520,26 @@ describe("booking tools", () => {
       expect(noClient._toolError).toBe(true);
       const noPhone = await handleToolCall("request_booking", { ...baseInput, phone: "" }) as any;
       expect(noPhone._toolError).toBe(true);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    // 2026-08-24: mirrors the website's own paywall (hooks/useAccessGates.tsx
+    // `gate('booking', ...)`) — was entirely ungated here before.
+    it("blocks when identity is not verified", async () => {
+      hoisted.docState.set("users/c1", { membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("IDENTITY_REQUIRED");
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("blocks when membership is not active", async () => {
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified" });
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("MEMBERSHIP_REQUIRED");
       expect(createBookingTask).not.toHaveBeenCalled();
     });
   });

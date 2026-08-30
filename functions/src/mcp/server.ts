@@ -66,7 +66,7 @@ const db = admin.firestore();
 // READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
 // `quote_booking`, and reusable by the committing `request_booking` path.
 // Shared literal union for structured tool failures (see toolError below).
-type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN";
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED";
 
 type BookingQuoteResult =
   | { ok: false; code: ToolErrorCode; message: string }
@@ -1039,6 +1039,7 @@ export const MCP_TOOLS: McpTool[] = [
         field:    { type: "string", description: "Which field to update: 'careNeeds', 'notes', 'emergencyContacts', or 'accessCodes'" },
         value:    { description: "The new value. For array fields (careNeeds, emergencyContacts), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}." },
         action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
+        recipientFirstName: { type: "string", description: "For 'careNeeds'/'notes' only, when the household has more than one care recipient — the first name of who this update is about (optional; omit if there's only one)" },
       },
       required: ["clientId", "field", "value", "action"],
     },
@@ -1265,7 +1266,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_senior_profile",
     description:
-      "Update specific fields on the senior's profile — emergency contact, physician, diagnoses, or allergies. " +
+      "Update specific fields on the senior's profile — diagnoses or allergies. " +
+      "For emergency contact info, use update_care_plan (field: 'emergencyContacts') instead — that's the field the website's Care Plan page actually reads. " +
       "Confirm before calling.",
     input_schema: {
       type: "object",
@@ -1274,7 +1276,7 @@ export const MCP_TOOLS: McpTool[] = [
         clientId: { type: "string", description: "The client's user ID" },
         field: {
           type: "string",
-          enum: ["emergencyContactName","emergencyContactPhone","primaryPhysicianName","primaryPhysicianPhone","diagnoses","allergies"],
+          enum: ["diagnoses","allergies"],
           description: "Which field to update",
         },
         value:  { description: "New value. String for contact/physician fields; string for array append/remove." },
@@ -1749,7 +1751,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        status:   { type: "string", enum: ["open","filled","closed","all"], description: "Filter by status (default: all)" },
+        status:   { type: "string", enum: ["open","filled","cancelled","all"], description: "Filter by status (default: all)" },
       },
       required: ["clientId"],
     },
@@ -2825,6 +2827,30 @@ function toolError(code: ToolErrorCode, message: string) {
   return { _toolError: true, success: false, code, message };
 }
 
+// Mirrors the website's own paywall (hooks/useAccessGates.tsx `gate(action, ...)`)
+// exactly — identity verification first, then an active membership — for the
+// SAME three action types the site gates: message, booking, interview. General
+// browsing/Q&A was never gated on the site either, so this is deliberately NOT
+// called from read-only or conversational paths, only these three action tools.
+async function checkClientAccessGate(
+  clientId: string | undefined,
+  action: "message" | "booking" | "interview",
+): Promise<ReturnType<typeof toolError> | null> {
+  if (!clientId) return toolError("PERMISSION_DENIED", "Cannot verify who this is for — clientId is required.");
+  const clientSnap = await db.collection("users").doc(clientId).get();
+  const clientData = clientSnap.data() ?? {};
+  if (clientData.identityCheckStatus !== "verified") {
+    return toolError("IDENTITY_REQUIRED", `This family needs to complete identity verification before ${action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview"} — send them the identity verification link.`);
+  }
+  const membershipActive = clientData.subscriptionActive === true
+    || clientData.membershipStatus === "active"
+    || clientData.membershipStatus === "trialing";
+  if (!membershipActive) {
+    return toolError("MEMBERSHIP_REQUIRED", `This family's membership isn't active — they need an active membership before ${action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview"}. Offer to send the membership payment link.`);
+  }
+  return null;
+}
+
 // Ownership gate for senior PHI reads. The owning client is recorded on
 // senior_profiles as `userId` (new direct-onboarding docs) OR `clientId` (the
 // household back-reference written by migrateSeniorsToHousehold — those docs
@@ -3340,7 +3366,12 @@ async function executeToolCall(
         logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_billing_summary" } }).catch(() => {});
         const userId = input.userId as string;
         const [subSnap, invoiceSnap, paymentsSnap, userSnap] = await Promise.all([
-          db.collection("subscriptions").doc(userId).get(),
+          // The real subscription doc lives under customers/{uid}/subscriptions
+          // (Stripe webhook writer, stripe.ts) — a top-level `subscriptions`
+          // collection is never written by anything, so this always returned
+          // null. Mirrors the same lookup cancel_subscription/reactivate_subscription
+          // already use.
+          db.collection("customers").doc(userId).collection("subscriptions").limit(1).get(),
           // Invoices are keyed by clientId (= the client's uid) per the canonical
           // invoicing.ts writer; querying userId returned nothing. Payments keep
           // userId, matching the Stripe writer (R7). Reuses the existing
@@ -3360,7 +3391,7 @@ async function executeToolCall(
         const userDoc = userSnap.data() ?? {};
         return {
           success: true,
-          subscription: subSnap.data() ?? null,
+          subscription: subSnap.docs[0]?.data() ?? null,
           membershipStatus: (userDoc.membershipStatus ?? userDoc.subscriptionStatus ?? "unknown") as string,
           recentInvoices: invoiceSnap.docs.map((d) => d.data()),
           recentPayments: paymentsSnap.docs.map((d) => {
@@ -3499,6 +3530,10 @@ async function executeToolCall(
         // quote primitive below, so the two paths can never diverge.
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
         if (!phone)    return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        // Mirrors the website's own paywall for the same 'booking' action
+        // (hooks/useAccessGates.tsx) — was entirely ungated here before.
+        const gateError = await checkClientAccessGate(clientId as string, "booking");
+        if (gateError) return gateError;
 
         // Commit via the SAME primitive quote_booking exposes (U9b): the duration,
         // rate, and caregiver name the family approved in the quote and the values
@@ -3954,6 +3989,8 @@ async function executeToolCall(
       case "send_caregiver_message": {
         const { caregiverId, message, clientId } = input;
         if (!caregiverId || !message) return toolError("INVALID_INPUT", "caregiverId and message are required");
+        const gateError = await checkClientAccessGate(clientId as string | undefined, "message");
+        if (gateError) return gateError;
         const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
         if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
         const cgPhone = cgSnap.data()?.phone as string | undefined;
@@ -4645,14 +4682,19 @@ async function executeToolCall(
 
     if (name === "get_care_plan") {
       const { clientId } = input as { clientId: string };
-      const snap = await db.collection("care_plans").doc(clientId).get();
+      // carePlans (camelCase) is the real, website-facing collection
+      // (components/CarePlan.tsx) — care_plans (snake_case, the previous
+      // literal here) is a completely different, disconnected collection
+      // nothing on the site ever reads or writes.
+      const snap = await db.collection("carePlans").doc(clientId).get();
       if (!snap.exists) return { success: true, carePlan: null, message: "No care plan on file yet." };
       return { success: true, carePlan: snap.data() };
     }
 
     if (name === "update_care_plan") {
-      const { clientId, field, value, action } = input as {
+      const { clientId, field, value, action, recipientFirstName } = input as {
         clientId: string; field: string; value: unknown; action: "set" | "append" | "remove";
+        recipientFirstName?: string;
       };
       // Household-level only — this is a non-medical marketplace, so medical
       // fields (medications, diagnoses, dietary/routine detail, doctor
@@ -4665,15 +4707,37 @@ async function executeToolCall(
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }
-      const ref = db.collection("care_plans").doc(clientId);
+      // carePlans (camelCase) — see get_care_plan above for why this matters.
+      const ref = db.collection("carePlans").doc(clientId);
       const nowIso = new Date().toISOString();
 
+      // careNeeds/notes are per-care-recipient on the real doc
+      // (recipientPlans.{key}.careNeeds / .notes, CarePlan.tsx's getKey) —
+      // not flat top-level fields like emergencyContacts/accessCodes are.
+      // Writing them flat created a stray field the site never reads.
+      let fieldPath = field;
+      if (field === "careNeeds" || field === "notes") {
+        const { resolveRecipientKey } = await import("../agents/careRecipients");
+        const snap = await ref.get();
+        const planKeys = Object.keys((snap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
+        const res = resolveRecipientKey(planKeys, recipientFirstName);
+        if (!res.ok) {
+          return {
+            success: false,
+            error: res.reason === "ambiguous"
+              ? "This household has more than one care recipient — say which one (recipientFirstName) before I update this."
+              : "I don't have a care recipient on file yet to attach this to.",
+          };
+        }
+        fieldPath = `recipientPlans.${res.key}.${field}`;
+      }
+
       if (action === "append") {
-        await ref.set({ [field]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
+        await ref.set({ [fieldPath]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
       } else if (action === "remove") {
-        await ref.set({ [field]: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
+        await ref.set({ [fieldPath]: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
       } else {
-        await ref.set({ [field]: value, updatedAt: nowIso }, { merge: true });
+        await ref.set({ [fieldPath]: value, updatedAt: nowIso }, { merge: true });
       }
       return { success: true, updated: field, action };
     }
@@ -5020,8 +5084,12 @@ async function executeToolCall(
     if (name === "update_senior_profile") {
       const { seniorId, clientId, field, value, action } = input as Record<string, unknown>;
       if (!seniorId || !clientId || !field || value == null || !action) return toolError("INVALID_INPUT", "seniorId, clientId, field, value, and action are required");
-      const ALLOWED = new Set(["emergencyContactName","emergencyContactPhone","primaryPhysicianName","primaryPhysicianPhone","diagnoses","allergies"]);
-      const ARRAY_F = new Set(["diagnoses","allergies"]);
+      // emergencyContactName/Phone/primaryPhysicianName/Phone were removed
+      // (2026-08-24) — nothing on the website or in onboarding ever read or
+      // wrote those fields; the real emergency-contact data lives in
+      // carePlans.emergencyContacts (see update_care_plan).
+      const ALLOWED = new Set(["diagnoses","allergies"]);
+      const ARRAY_F = ALLOWED;
       if (!ALLOWED.has(field as string)) return toolError("INVALID_INPUT", `Field '${field}' is not updatable. Allowed: ${[...ALLOWED].join(", ")}`);
       if (!ARRAY_F.has(field as string) && (action === "arrayUnion" || action === "arrayRemove")) return toolError("INVALID_INPUT", `Field '${field}' is scalar — use action 'set'`);
       const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
@@ -5335,7 +5403,23 @@ async function executeToolCall(
       if (app.clientId !== clientId) return toolError("PERMISSION_DENIED", "Application does not belong to this client");
       if (app.status !== "pending") return toolError("INVALID_INPUT", `Application already decided: ${app.status}`);
       await appSnap2.ref.update({ status: decision === "accept" ? "accepted" : "rejected", decidedAt: nowIso, decisionMessage: decMsg ?? "" });
-      if (decision === "accept") await db.collection("job_posts").doc(app.jobId as string).update({ status: "filled" }).catch(() => {});
+      if (decision === "accept") {
+        // Matches the website's own acceptApplication exactly (useJobApplications.ts) —
+        // a single-hire model: mark the post filled (with filledAt, like the site)
+        // AND reject every other still-pending application for the same job, so a
+        // caregiver whose application Evia already accepted for the family doesn't
+        // stay listed as "pending" forever on the site.
+        await db.collection("job_posts").doc(app.jobId as string).update({ status: "filled", filledAt: nowIso }).catch(() => {});
+        const otherPending = await db.collection("job_applications")
+          .where("jobId", "==", app.jobId)
+          .where("status", "==", "pending")
+          .get();
+        await Promise.all(
+          otherPending.docs
+            .filter((d) => d.id !== applicationId)
+            .map((d) => d.ref.update({ status: "rejected", updatedAt: nowIso }).catch(() => {}))
+        );
+      }
       const cgSessSnap = await db.collection("agent_sessions").where("userId", "==", app.caregiverId).limit(1).get();
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_session" };
       if (!cgSessSnap.empty) {
@@ -5852,6 +5936,10 @@ async function executeToolCall(
     if (name === "schedule_interview") {
       const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = input as Record<string, unknown>;
       if (!clientId || !caregiverId || !preferredDate || !preferredTime) return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
+      // Mirrors the website's own paywall for the same 'interview' action
+      // (hooks/useAccessGates.tsx) — was entirely ungated here before.
+      const gateError = await checkClientAccessGate(clientId as string, "interview");
+      if (gateError) return gateError;
 
       // preferredDate/preferredTime are the client's wall-clock time — store a
       // timezone-aware instant (naive strings parse as UTC on GCF and shift
@@ -6032,7 +6120,9 @@ async function executeToolCall(
       const limit10 = Math.min((input.limit as number) ?? 5, 20);
       const invSnap = await db.collection("shiftHours")
         .where("clientId", "==", clientId)
-        .where("status", "in", ["approved", "paid"])
+        // auto_approved (24h no-response auto-approve) is how most real shifts
+        // resolve — omitting it left the client's own history mostly empty.
+        .where("status", "in", ["approved", "auto_approved", "paid"])
         .orderBy("submittedAt", "desc")
         .limit(limit10)
         .get();
@@ -6064,14 +6154,29 @@ async function executeToolCall(
       const jp = jpSnap.data()!;
       if (jp.clientId !== clientId) return toolError("PERMISSION_DENIED", "This job post does not belong to you");
       if (jp.status !== "open") return toolError("INVALID_INPUT", `Cannot edit a job post with status '${jp.status}'`);
+      // job_posts is flat (services/api.ts's createJobPost: rate/daysOfWeek/
+      // timeOfDay, no nested `schedule` object and no `hourlyRate`) — writing
+      // the nested shape below meant an edit made through Evia never showed
+      // up on the site's own listing.
       const upd: Record<string, unknown> = { updatedAt: nowIso };
-      if (rate        != null)  upd.hourlyRate    = rate;
+      if (rate        != null)  upd.rate          = rate;
       if (description != null)  upd.description   = (description as string).slice(0, 500);
       if (startDate   != null)  upd.startDate     = startDate;
-      if (daysOfWeek  != null)  upd["schedule.days"] = daysOfWeek;
-      if (timeOfDay   != null)  upd["schedule.timeOfDay"] = timeOfDay;
+      if (daysOfWeek  != null)  upd.daysOfWeek    = daysOfWeek;
+      if (timeOfDay   != null)  upd.timeOfDay     = timeOfDay;
       await jpSnap.ref.update(upd);
-      await db.collection("job_postings").doc(clientId as string).set({ ...upd, clientId }, { merge: true });
+      // job_postings (the onboarding-contract mirror, clientJobPostingContract.ts)
+      // uses ITS OWN different field names for two of these — jobDescription
+      // (not description) and selectedDays (not daysOfWeek) — rate/startDate/
+      // timeOfDay happen to match. Spreading `upd` as-is would silently write
+      // the wrong keys there too.
+      const postingsUpd: Record<string, unknown> = { updatedAt: nowIso, clientId };
+      if (rate        != null) postingsUpd.rate          = rate;
+      if (description != null) postingsUpd.jobDescription = upd.description;
+      if (startDate   != null) postingsUpd.startDate      = startDate;
+      if (daysOfWeek  != null) postingsUpd.selectedDays   = daysOfWeek;
+      if (timeOfDay   != null) postingsUpd.timeOfDay      = timeOfDay;
+      await db.collection("job_postings").doc(clientId as string).set(postingsUpd, { merge: true });
       logAudit({ eventType: "job_post_edited", userId: clientId as string, data: { source: "mcp:edit_job_post", jobId, fields: Object.keys(upd) } }).catch(() => {});
       return { success: true, jobId, updatedFields: Object.keys(upd).filter(k => k !== "updatedAt") };
     }
@@ -6228,9 +6333,16 @@ async function executeToolCall(
           id:             d.id,
           title:          data.summary ?? `Care job — ${(data.careTypes as string[] ?? []).slice(0,2).join(", ")}`,
           status:         data.status,
+          // The doc has always had this field — it just never made it into
+          // the response, so a client asking Evia their own posted rate had
+          // no live answer available.
+          rate:           data.rate,
           applicantCount: data.applicantCount ?? 0,
           createdAt:      data.createdAt,
-          schedule:       data.schedule,
+          // job_posts is flat — there's no nested `schedule` object (see
+          // edit_job_post above), so this always returned undefined.
+          daysOfWeek:     data.daysOfWeek,
+          timeOfDay:      data.timeOfDay,
         };
       });
       return { success: true, jobs, total: jobs.length };
@@ -6244,8 +6356,12 @@ async function executeToolCall(
       if (!jpSnap.exists) return toolError("NOT_FOUND", "Job post not found");
       const jp = jpSnap.data()!;
       if (jp.clientId !== clientId) return toolError("PERMISSION_DENIED", "This job post does not belong to you");
-      if (jp.status === "closed" || jp.status === "cancelled") return toolError("INVALID_INPUT", "Job post is already closed");
-      await jpSnap.ref.update({ status: "closed", closedAt: nowIso });
+      // Matches the website's own cancelJobPost exactly (services/api.ts) — the
+      // real status value is `cancelled`, not `closed` (which nothing ever
+      // wrote); "already closed" means any non-"open" status, same as the
+      // site's own Open/Closed tab split (PostsPage.tsx: closed = status !== 'open').
+      if (jp.status !== "open") return toolError("INVALID_INPUT", "Job post is already closed");
+      await jpSnap.ref.update({ status: "cancelled", updatedAt: nowIso });
       logAudit({ eventType: "job_post_cancelled", userId: clientId as string, data: { source: "mcp:cancel_job_post", jobId } }).catch(() => {});
       return { success: true, jobId };
     }
@@ -7260,14 +7376,20 @@ async function executeToolCall(
     if (name === "get_invoice_details") {
       const { clientId: invClientId, invoiceId: invId } = input as Record<string, string | undefined>;
       if (!invClientId) return toolError("INVALID_INPUT", "clientId is required");
+      // Real per-shift billing lives in shiftHours (same collection
+      // get_invoice_history reads and hands its own doc ids back as
+      // "invoiceId") — `invoices` is a separate, admin-only manual-invoicing
+      // collection that's essentially always empty for a real client, so this
+      // always 404'd before.
       let invDocs: admin.firestore.DocumentSnapshot[];
       if (invId) {
-        const doc = await db.collection("invoices").doc(invId).get();
-        invDocs = doc.exists ? [doc] : [];
+        const doc = await db.collection("shiftHours").doc(invId).get();
+        invDocs = (doc.exists && doc.data()?.clientId === invClientId) ? [doc] : [];
       } else {
-        const q = await db.collection("invoices")
+        const q = await db.collection("shiftHours")
           .where("clientId", "==", invClientId)
-          .orderBy("createdAt", "desc")
+          .where("status", "in", ["approved", "auto_approved", "paid"])
+          .orderBy("submittedAt", "desc")
           .limit(1)
           .get();
         invDocs = q.docs;
@@ -7276,12 +7398,13 @@ async function executeToolCall(
       const invoice = invDocs[0].data()!;
       return {
         invoiceId:     invDocs[0].id,
-        invoiceNumber: invoice.invoiceNumber,
+        caregiverName: invoice.caregiverName,
+        date:          invoice.date,
         status:        invoice.status,
-        total:         invoice.total ?? invoice.amount,
+        hours:         invoice.finalTotalHours ?? invoice.submittedTotalHours,
+        total:         invoice.grossPay ?? (Number(invoice.amountCents ?? 0) / 100),
         lineItems:     invoice.lineItems ?? [],
-        carePeriod:    invoice.carePeriod,
-        createdAt:     invoice.createdAt,
+        createdAt:     invoice.submittedAt,
       };
     }
 
@@ -7484,14 +7607,45 @@ async function executeToolCall(
     if (name === "update_user_profile") {
       const { userId, firstName, lastName, phone, address, city, state, zip, photoUrl } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
+
+      // Match the website's own field names exactly (components/client/AccountSettings.tsx):
+      // it combines first/last into ONE `displayName` (never separate firstName/
+      // lastName), writes address as `street`/`zipCode` (not `address`/`zip`) plus
+      // a derived `location` ("City, State Zip") and legacy `careLocation` object,
+      // and the photo field is `photoURL` (capital URL). Writing the old,
+      // incompatible field names meant every edit made through Evia was invisible
+      // on the site.
+      const touchesName    = firstName != null || lastName != null;
+      const touchesAddress = address != null || city != null || state != null || zip != null;
+      let existing: Record<string, unknown> = {};
+      if (touchesName || touchesAddress) {
+        const existingSnap = await db.collection("users").doc(userId as string).get();
+        existing = existingSnap.data() ?? {};
+      }
+
       const patch: Record<string, unknown> = { updatedAt: nowIso };
-      if (firstName != null) patch.firstName = firstName;
-      if (lastName  != null) patch.lastName  = lastName;
-      if (address   != null) patch.address   = address;
-      if (city      != null) patch.city      = city;
-      if (state     != null) patch.state     = state;
-      if (zip       != null) patch.zip       = zip;
-      if (photoUrl  != null) patch.photoUrl  = photoUrl;
+      if (touchesName) {
+        const currentDisplay = (existing.displayName as string | undefined)
+          ?? (existing.firstName as string | undefined) ?? (existing.name as string | undefined) ?? "";
+        const [curFirst, ...curRest] = currentDisplay.split(" ");
+        const newFirst = (firstName as string | undefined) ?? curFirst ?? "";
+        const newLast  = (lastName as string | undefined) ?? curRest.join(" ");
+        patch.displayName = `${newFirst} ${newLast}`.trim();
+      }
+      let finalStreet = "", finalCity = "", finalState = "", finalZip = "";
+      if (touchesAddress) {
+        finalStreet = (address as string | undefined) ?? (existing.street as string | undefined) ?? "";
+        finalCity   = (city    as string | undefined) ?? (existing.city   as string | undefined) ?? "";
+        finalState  = (state   as string | undefined) ?? (existing.state  as string | undefined) ?? "";
+        finalZip    = (zip     as string | undefined) ?? (existing.zipCode as string | undefined) ?? "";
+        if (address != null) patch.street  = address;
+        if (city    != null) patch.city    = city;
+        if (state   != null) patch.state   = state;
+        if (zip     != null) patch.zipCode = zip;
+        patch.location = `${finalCity}, ${finalState} ${finalZip}`.trim();
+        patch.careLocation = { address: finalStreet, zip: finalZip, city: finalCity, state: finalState };
+      }
+      if (photoUrl  != null) patch.photoURL = photoUrl;
       // Phone changes trigger a re-verification — store as pendingPhone rather
       // than the live phone so the existing OTP flow can run before swapping.
       let phoneChangeRequested = false;
@@ -7508,16 +7662,16 @@ async function executeToolCall(
       }
       await db.collection("users").doc(userId as string).set(patch, { merge: true });
       // If address fields touched and this is a single-senior household, mirror
-      // to the senior profile too.
-      if (address != null || city != null || state != null || zip != null) {
+      // to the senior profile too — the Senior type only has `zipCode` and a
+      // composite `location` string, no separate street/city/state fields.
+      if (touchesAddress) {
         const seniorSnap = await db.collection("senior_profiles").where("userId", "==", userId).limit(2).get();
         if (seniorSnap.size === 1) {
-          const seniorPatch: Record<string, unknown> = { updatedAt: nowIso };
-          if (address != null) seniorPatch.address = address;
-          if (city    != null) seniorPatch.city    = city;
-          if (state   != null) seniorPatch.state   = state;
-          if (zip     != null) seniorPatch.zip     = zip;
-          await seniorSnap.docs[0].ref.set(seniorPatch, { merge: true }).catch(() => {});
+          await seniorSnap.docs[0].ref.set({
+            updatedAt: nowIso,
+            zipCode:   finalZip,
+            location:  patch.location,
+          }, { merge: true }).catch(() => {});
         }
       }
       logAudit({ eventType: "profile_updated", userId: userId as string, data: { source: "mcp:update_user_profile", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
@@ -7652,10 +7806,35 @@ async function executeToolCall(
     if (name === "unblock_user") {
       const { userId, targetUserId } = input as Record<string, unknown>;
       if (!userId || !targetUserId) return toolError("INVALID_INPUT", "userId and targetUserId are required");
-      await db.collection("users").doc(userId as string).set({
+      // Mirrors the website's own unblockUser (context/CareConnexContext.tsx)
+      // exactly: split arrayRemove + a nested-field delete into two writes
+      // (mixing those sentinels in one call can reject), clean up the
+      // blockedUserProfiles map entry block_user wrote, and hide the shared
+      // chat thread until a new message arrives (same messagesCutoff/deletedAt
+      // treatment as a manual conversation delete) — previously only
+      // blockedUsers was cleared, so an Evia-initiated unblock still showed
+      // the target as blocked on the website.
+      const userRef = db.collection("users").doc(userId as string);
+      await userRef.set({
         blockedUsers: admin.firestore.FieldValue.arrayRemove(targetUserId),
         updatedAt: nowIso,
       }, { merge: true });
+      await userRef.set({
+        [`blockedUserProfiles.${targetUserId}`]: admin.firestore.FieldValue.delete(),
+      }, { merge: true }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
+      try {
+        const roomId = [userId, targetUserId].sort().join("_");
+        const roomRef = db.collection("chatRooms").doc(roomId as string);
+        const roomSnap = await roomRef.get();
+        if (roomSnap.exists) {
+          await roomRef.set({
+            [`messagesCutoff.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
+            [`deletedAt.${userId}`]:      admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+        }
+      } catch {
+        // chatRoom update failing should not block the unblock itself
+      }
       logAudit({ eventType: "user_unblocked", userId: userId as string, data: { source: "mcp:unblock_user", targetUserId } }).catch(() => {});
       return { success: true, unblocked: true };
     }
@@ -7668,14 +7847,34 @@ async function executeToolCall(
       if (!ALLOWED_CATEGORIES.has(category as string)) {
         return toolError("INVALID_INPUT", `category must be one of: ${[...ALLOWED_CATEGORIES].join(", ")}`);
       }
+      // Match the website's own report shape exactly (components/InboxView.tsx's
+      // handleReportSubmit) — different field names (reportedBy/reportedUser/
+      // reportedUserName/reason/details), `reason` is one of its fixed
+      // human-readable labels (not this tool's machine enum), a Timestamp
+      // createdAt (not an ISO string), and it never writes `status` at all
+      // (the admin list defaults a missing status to "new" client-side).
+      // Writing our own incompatible shape meant SMS-filed reports showed as
+      // "Unknown user" and never appeared as new in the admin queue.
+      const REASON_LABELS: Record<string, string> = {
+        harassment: "Harassment",
+        scam: "Spam or scam",
+        inappropriate_content: "Inappropriate behavior",
+        safety_concern: "Other", // no direct site equivalent — kept in details below
+        other: "Other",
+      };
+      const reportedUserSnap = await db.collection("users").doc(targetUserId as string).get();
+      const reportedUserName = (reportedUserSnap.data()?.name as string | undefined)
+        ?? (reportedUserSnap.data()?.displayName as string | undefined) ?? "";
+      const details = category === "safety_concern"
+        ? `[Safety concern] ${(description as string).slice(0, 2000)}`
+        : (description as string).slice(0, 2000);
       const reportRef = await db.collection("reports").add({
-        reporterId:    userId,
-        targetUserId,
-        category,
-        description:   (description as string).slice(0, 2000),
-        source:        "cara_sms",
-        status:        "open",
-        createdAt:     nowIso,
+        reportedBy:       userId,
+        reportedUser:     targetUserId,
+        reportedUserName,
+        reason:           REASON_LABELS[category as string],
+        details,
+        createdAt:        admin.firestore.FieldValue.serverTimestamp(),
       });
       db.collection("admin_alerts").add({
         type:        "user_reported",

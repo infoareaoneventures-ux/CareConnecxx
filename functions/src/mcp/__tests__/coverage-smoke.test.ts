@@ -523,9 +523,9 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_care_plan returns empty when no plan", async () => {
-    hoisted.collState.set("care_plans", []);
     const r = await handleToolCall("get_care_plan", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
+    expect(r.carePlan).toBeNull();
   });
 
   // ── Subscription / billing ───────────────────────────────────────────────
@@ -690,6 +690,7 @@ describe("MCP tool smoke coverage", () => {
       expect(typeof cancel.notification.sent).toBe("boolean");
 
       // send_caregiver_message
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       const sendCg = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(typeof sendCg.notification.sent).toBe("boolean");

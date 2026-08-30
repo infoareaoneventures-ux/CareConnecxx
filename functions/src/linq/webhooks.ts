@@ -141,7 +141,32 @@ export async function userHasRealOnboardingProgress(
   const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
   if ((userData.seniorId as string | undefined) || seniorIds.length > 0) return true;
   const cg = await db.collection("caregivers").doc(userId).get().catch(() => null);
-  return !!cg?.exists;
+  if (cg?.exists) return true;
+  // A client who finished the website wizard has jobPostingCompleted:true
+  // (services/api.ts's createJobPosting) with no seniorId/seniorIds set for
+  // the PRIMARY recipient (only additional household recipients append to
+  // seniorIds) — without this check, texting Evia for the first time after
+  // finishing the wizard looked identical to a brand-new signup, and Evia
+  // restarted the entire onboarding conversation, re-collecting (and
+  // overwriting) data the website already saved. persistClientCareRecords
+  // (the SMS-side equivalent) sets the exact same flag at the same moment.
+  return userData.jobPostingCompleted === true;
+}
+
+// Resolves the primary care recipient's seniorId for a returning client.
+// getSeniorProfile("") returns null with zero context, so this must never
+// resolve to an empty string for a client userHasRealOnboardingProgress
+// already confirmed has real progress. A client who only finished the
+// website wizard (jobPostingCompleted:true) has neither seniorId nor
+// seniorIds set for their PRIMARY recipient — the wizard's own
+// senior_profiles write uses the client's own uid as the doc id (the "old
+// 1:1 model" services/api.ts's getSeniorProfile already falls back to), so
+// that's the correct id to resolve to here too.
+export function resolvePrimarySeniorId(userId: string, userData: Record<string, unknown>): string {
+  const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
+  return (userData.seniorId as string | undefined)
+    || seniorIds[0]
+    || (userData.jobPostingCompleted === true ? userId : "");
 }
 
 async function isRateLimited(phone: string): Promise<boolean> {
@@ -485,8 +510,7 @@ async function handlePendingConsentReply(
   // seniorId: the auth trigger seeds it as the client's own uid — correct it to
   // the real senior for returning users, and clear it for fresh onboarding
   // (matches the session shapes the web bridge writes).
-  const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-  const seniorId  = (userData.seniorId as string | undefined) ?? seniorIds[0] ?? "";
+  const seniorId  = resolvePrimarySeniorId(session.userId as string, userData);
   await db.collection("agent_sessions").doc(phone).update({
     optedIn:   true,
     optedInAt: now,
@@ -1215,8 +1239,7 @@ const handleInboundInner = traceable(
       if (isReturning) {
         const userDoc   = userQuery.docs[0];
         const userData  = userDoc.data();
-        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+        const seniorId  = resolvePrimarySeniorId(userDoc.id, userData);
 
         await db.collection("agent_sessions").doc(phone).set({
           chatId,
@@ -1974,8 +1997,7 @@ const handleInboundInner = traceable(
       const userData  = userDoc.data();
       const userId    = userDoc.id;
       if (await userHasRealOnboardingProgress(userId, userData)) {
-        const seniorIds = (userData.seniorIds as string[] | undefined) ?? [];
-        const seniorId  = (userData.seniorId  as string | undefined) ?? seniorIds[0] ?? "";
+        const seniorId  = resolvePrimarySeniorId(userId, userData);
         await db.collection("agent_sessions").doc(phone).update({
           userId,
           seniorId,

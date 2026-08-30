@@ -144,23 +144,62 @@ describe("communication tools", () => {
   });
 
   describe("send_caregiver_message", () => {
+    // Mirrors the website's own paywall (hooks/useAccessGates.tsx `gate('message', ...)`):
+    // identity verification, then an active membership, before a family can message
+    // a caregiver at all.
+    const seedVerifiedClient = (fields: Record<string, unknown> = {}) => {
+      hoisted.docState.set("users/c1", {
+        identityCheckStatus: "verified",
+        membershipStatus: "active",
+        ...fields,
+      });
+    };
+
     it("requires caregiverId + message", async () => {
       const r = await handleToolCall("send_caregiver_message", {}) as any;
       expect(r._toolError).toBe(true);
     });
 
+    it("blocks when identity is not verified", async () => {
+      hoisted.docState.set("users/c1", { membershipStatus: "active" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("IDENTITY_REQUIRED");
+      expect(trySend).not.toHaveBeenCalled();
+    });
+
+    it("blocks when membership is not active", async () => {
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("MEMBERSHIP_REQUIRED");
+      expect(trySend).not.toHaveBeenCalled();
+    });
+
+    it("blocks when clientId is missing entirely", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
+    });
+
     it("returns NOT_FOUND if caregiver doc missing", async () => {
+      seedVerifiedClient();
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "ghost", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
     });
 
     it("returns NOT_FOUND if caregiver has no phone", async () => {
+      seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { name: "Alice" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r._toolError).toBe(true);
     });
 
     it("sends and returns notification status", async () => {
+      seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
@@ -169,6 +208,7 @@ describe("communication tools", () => {
     });
 
     it("surfaces notification failure", async () => {
+      seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
@@ -186,7 +226,7 @@ describe("communication tools", () => {
   describe("shared chatRooms thread relay", () => {
     it("send_caregiver_message posts into chatRooms/{sortedIds}/messages", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
-      hoisted.docState.set("users/c1", { name: "Sarah", phone: "+15555550100" });
+      hoisted.docState.set("users/c1", { name: "Sarah", phone: "+15555550100", identityCheckStatus: "verified", membershipStatus: "active" });
       const roomId = ["c1", "cg1"].sort().join("_");
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
@@ -216,8 +256,10 @@ describe("communication tools", () => {
     });
 
     it("send_caregiver_message still sends the SMS even if the thread write fails to resolve names", async () => {
-      // No users/c1 doc seeded — clientName resolves to "", but the tool must
-      // not fail or skip the SMS relay over it.
+      // users/c1 has no `name` — clientName resolves to "", but the tool must
+      // not fail or skip the SMS relay over it. (identity/membership fields
+      // are still required to pass the gate above.)
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);

@@ -84,6 +84,16 @@ describe("hasValidTransportDocs", () => {
       documents: { ...approvedDocs, registration: { status: "approved", expirationDate: "2000-01-01" } },
     })).toBe(false);
   });
+
+  // 2026-08-24: publicCaregiverProfiles precomputes this at projection-write
+  // time instead of exposing raw document data — a reader of that collection
+  // has no `documents` field at all, so the precomputed flag must be trusted
+  // directly rather than falling through to a `documents`-based computation
+  // that would always resolve false.
+  it("trusts a precomputed hasValidTransportDocs flag when present (publicCaregiverProfiles shape)", () => {
+    expect(hasValidTransportDocs({ hasValidTransportDocs: true })).toBe(true);
+    expect(hasValidTransportDocs({ hasValidTransportDocs: false, skills: ["Transportation"], documents: approvedDocs })).toBe(false);
+  });
 });
 
 describe("scoreAndRankCaregivers", () => {

@@ -12,6 +12,7 @@
  */
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { hasValidTransportDocs } from "./agents/caregiverMatchScoring";
 
 const db = admin.firestore();
 
@@ -34,8 +35,16 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
       "photo", "imageUrl", "profilePhoto", "photoURL",
       "lookingFor", "preferredSchedule", "isApprovedDriver", "travelRadius", "serviceRadius",
       "lat", "lng", "latitude", "longitude",
+      // Internal test-data marker (scripts/seed-test-caregivers.cjs) — not
+      // sensitive, but must pass through so isSeededCaregiver() still works
+      // for any consumer reading this projection instead of raw caregivers.
+      "__seedTag",
     ),
     location: [cg.city, cg.state].filter(value => typeof value === "string" && value).join(", "),
+    // A precomputed yes/no signal, never the raw document data (background
+    // check files, license scans) — this doc is meant to be publicly
+    // readable, so the underlying documents themselves must never land here.
+    hasValidTransportDocs: hasValidTransportDocs(cg),
   };
 }
 

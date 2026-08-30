@@ -215,6 +215,18 @@ describe("buildLiveClientPaymentFact", () => {
     store.users.set("u1", { membershipStatus: "incomplete" });
     expect(await buildLiveClientPaymentFact(PHONE, sess())).toContain("hasn't come through yet");
   });
+  // 2026-08-24 fix: matches the website's own gate exactly (hooks/useAccessGates.tsx) —
+  // active OR trialing OR subscriptionActive, not just membershipStatus==="active".
+  it("says WENT THROUGH for a trialing subscription (matches the website's own gate)", async () => {
+    fresh({ userId: "u1" });
+    store.users.set("u1", { membershipStatus: "trialing" });
+    expect(await buildLiveClientPaymentFact(PHONE, sess())).toContain("WENT THROUGH");
+  });
+  it("says WENT THROUGH when subscriptionActive is true even if membershipStatus lags", async () => {
+    fresh({ userId: "u1" });
+    store.users.set("u1", { subscriptionActive: true, membershipStatus: "incomplete" });
+    expect(await buildLiveClientPaymentFact(PHONE, sess())).toContain("WENT THROUGH");
+  });
 });
 
 describe("buildLiveClientIdentityFact", () => {

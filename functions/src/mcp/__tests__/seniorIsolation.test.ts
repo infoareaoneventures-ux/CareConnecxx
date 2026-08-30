@@ -135,12 +135,18 @@ describe("senior data isolation (update_senior_profile)", () => {
     expect(r.code).toBe("NOT_FOUND");
   });
 
-  it("rejects array actions on scalar fields", async () => {
+  // 2026-08-24: emergencyContactName/Phone/primaryPhysicianName/Phone were
+  // removed — nothing on the website or in onboarding ever read/wrote those
+  // fields; real emergency-contact data lives in carePlans.emergencyContacts
+  // (update_care_plan), not here.
+  it("rejects the removed emergencyContactName field (no site/onboarding writer ever used it)", async () => {
     hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
     const r = await handleToolCall("update_senior_profile", {
-      seniorId: "s1", clientId: "c1", field: "emergencyContactName", value: "Bob", action: "arrayUnion",
+      seniorId: "s1", clientId: "c1", field: "emergencyContactName", value: "Bob", action: "set",
     }) as any;
     expect(r._toolError).toBe(true);
+    expect(r.code).toBe("INVALID_INPUT");
+    expect(r.message).toMatch(/not updatable/);
   });
 });
 

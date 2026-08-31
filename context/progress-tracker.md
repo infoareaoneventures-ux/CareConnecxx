@@ -206,7 +206,7 @@ post-deploy. The flip is reversible if they regress.
 
 ## In Progress
 
-- None active. Pick the top "Next Up" item as a single verified unit.
+- **Evia/site page-by-page parity audit (ongoing, 2026-08-30/31).** Method: for each client-facing page, trace the page's real Firestore reads/writes, compare against Evia's equivalent MCP tools/triggers, and fix any gap so Evia and the website produce identical data. Pages done so far: Browse Caregivers, Care Requests, My Bookings, Calendar, Care Plan, My Care Team (all committed, pushed, deployed — see Completed). **Next page: Messages/Inbox** (`eviacares.com/client/inbox` — conversation list under "My Care Team", per-caregiver chat threads) — not yet started.
 
 ## Next Up (ranked "make-it-releasable" backlog)
 

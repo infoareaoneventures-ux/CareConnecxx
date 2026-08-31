@@ -4,6 +4,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { businessTodayStr, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -24,12 +25,13 @@ export const sendClientThirtyMinReminders = functions.pubsub
     // Firestore `!=` excludes docs where the field is ABSENT, and appointments
     // are created without this flag, so the query would silently skip every
     // never-reminded appointment. Filter the already-sent ones in code instead.
-    const snap = await db.collection("appointments")
-      .where("date",                            "==", today)
-      .where("status",                          "==", "confirmed")
-      .get();
+    const docs = await queryVisitsMerged({
+      dateOp: "==", dateValue: today,
+      apptStatuses: ["confirmed"],
+      shiftStatuses: ["scheduled"],
+    });
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt    = doc.data();
       const apptId  = doc.id;
       if (appt.clientThirtyMinReminderSent === true) continue;
@@ -54,12 +56,12 @@ export const sendClientThirtyMinReminders = functions.pubsub
         const cgSnap      = await db.collection("caregivers").doc(caregiverId).get();
         const cgName      = (cgSnap.data()?.name ?? "your caregiver") as string;
         const cgFirstName = cgName.split(" ")[0];
-        const seniorName  = (appt.seniorName ?? appt.clientName ?? "your loved one") as string;
+        const seniorName  = visitSeniorName(appt);
         const lang        = (sessionSnap.data() as any)?.preferredLanguage === "es" ? "es" : "en";
         // R11: ground who's who — the visit is for the care recipient, not the reader.
         const whoIsWho = describeWhoIsWho({
           ...((sessionSnap.data() as any)?.onboardingData ?? {}),
-          seniorName: (sessionSnap.data() as any)?.onboardingData?.seniorName ?? appt.seniorName ?? appt.clientName,
+          seniorName: (sessionSnap.data() as any)?.onboardingData?.seniorName ?? seniorName,
         });
 
         const message = await generateCaraMessage({

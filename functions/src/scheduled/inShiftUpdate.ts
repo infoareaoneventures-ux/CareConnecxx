@@ -11,6 +11,7 @@ import {
   LADDER_INTERVAL_MIN,
   type AwaitingInShiftUpdate,
 } from "./inShiftUpdatePolicy";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -132,12 +133,13 @@ export const sendInShiftUpdates = functions.pubsub
     const nowMs = Date.now();
     const nowMinutes = businessNowMinutes();
 
-    const snap = await db.collection("appointments")
-      .where("status", "==", "in-progress")
-      .get();
+    const docs = await queryVisitsMerged({
+      apptStatuses: ["in-progress"],
+      shiftStatuses: ["in-progress"],
+    });
 
     // completedAt is set by handleDone — filter in-memory (Firestore can't query absent fields)
-    const activeAppts = snap.docs.filter(doc => !doc.data().completedAt);
+    const activeAppts = docs.filter(doc => !doc.data().completedAt);
 
     for (const apptDoc of activeAppts) {
       const appt = apptDoc.data();
@@ -168,7 +170,7 @@ export const sendInShiftUpdates = functions.pubsub
 
         const clientId = (appt.clientId ?? "") as string;
         const seniorId = (appt.seniorId ?? clientId) as string;
-        const seniorFirstName = ((appt.clientName ?? appt.seniorName ?? "your client") as string).split(" ")[0];
+        const seniorFirstName = visitSeniorName(appt, "your client").split(" ")[0];
 
         const anchorMs = resolveAnchorMs(appt);
         const scheduledEndMs = resolveScheduledEndMs(appt, anchorMs);

@@ -4,6 +4,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { apptStartMs, businessTodayStr, businessTomorrowStr } from "../utils/scheduledTime";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -20,16 +21,17 @@ export const upcomingVisitReminder = functions.pubsub
     // filter to the 90-minute window in code.
     // NOTE: no `.where("preVisitReminderSent","!=",true)` — Firestore `!=`
     // excludes docs missing the field. Filter already-sent in code instead.
-    const snap = await db.collection("appointments")
-      .where("status", "==", "confirmed")
-      .where("date",   "in", [businessTodayStr(), businessTomorrowStr()])
-      .get();
+    const docs = await queryVisitsMerged({
+      dateOp: "in", dateValue: [businessTodayStr(), businessTomorrowStr()],
+      apptStatuses: ["confirmed"],
+      shiftStatuses: ["scheduled"],
+    });
 
-    if (snap.empty) return;
+    if (docs.length === 0) return;
 
-    console.log(`[upcomingVisitReminder] Scanning ${snap.size} confirmed visits for the 90-min window`);
+    console.log(`[upcomingVisitReminder] Scanning ${docs.length} confirmed visits for the 90-min window`);
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt = doc.data();
       if (appt.preVisitReminderSent === true) continue;
       const startMs = apptStartMs(appt.date, appt.startTime ?? appt.time);
@@ -46,11 +48,11 @@ export const upcomingVisitReminder = functions.pubsub
 
         const cgName    = (appt.caregiverName ?? "Your caregiver") as string;
         const time      = (appt.startTime    ?? appt.time ?? "") as string;
-        const seniorName = (appt.seniorName ?? appt.clientName ?? "") as string;
+        const seniorName = visitSeniorName(appt, "");
         // R11: ground who's who — the visit is for the care recipient, not the reader.
         const whoIsWho = describeWhoIsWho({
           ...((session.onboardingData ?? {}) as Record<string, unknown>),
-          seniorName: (session.onboardingData as any)?.seniorName ?? appt.seniorName ?? appt.clientName,
+          seniorName: (session.onboardingData as any)?.seniorName ?? seniorName,
         });
 
         const reminderMsg = await generateCaraMessage({

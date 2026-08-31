@@ -55,6 +55,11 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   initiate_client_swap:         ["booking", "scheduling", "messaging"],
   withdraw_job_application:     ["booking"],
   respond_to_booking_request:   ["booking", "messaging"],
+  // Booking-pipeline parity (2026-08-30): booking_requests/shifts/booking_amendments
+  // cancel/resend/amendment tools, mirroring My Bookings + Calendar.
+  manage_booking:                ["booking"],
+  request_schedule_amendment:    ["booking", "scheduling"],
+  respond_to_schedule_amendment: ["booking", "scheduling"],
 
   // ── scheduling ───────────────────────────────────────────────────────────
   get_recurring_schedule:        ["scheduling"],
@@ -159,6 +164,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_family_member:   ["messaging"],
   list_interviews:        ["booking"],
   cancel_interview:       ["booking"],
+  complete_interview:     ["booking"],
   list_blocked_users:     ["messaging"],
   list_shift_swaps:       ["booking", "scheduling", "messaging"],
 
@@ -330,7 +336,8 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "manage_recurring_schedule", "modify_recurring_schedule", "initiate_client_swap",
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
-  "respond_to_job_application", "apply_to_job", "edit_job_post", "cancel_job_post",
+  "complete_interview", "respond_to_job_application", "apply_to_job",
+  "create_job_post", "edit_job_post", "cancel_job_post",
   // shifts
   "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
@@ -355,6 +362,11 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // would be believed and acted on.
   "archive_senior_profile", "update_family_member", "cancel_interview",
   "delete_memory_file",
+  // Booking-pipeline parity (2026-08-30) — cancelling/resending a booking or
+  // visit, or accepting/declining a schedule amendment, is exactly the kind
+  // of mutation a family/caregiver would believe happened if we falsely
+  // reported success.
+  "manage_booking", "request_schedule_amendment", "respond_to_schedule_amendment",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */

@@ -118,8 +118,10 @@ vi.mock("../approvalHandler", () => ({
 }));
 
 const finalizeAcceptedBooking = vi.fn().mockResolvedValue(undefined);
+const writeConfirmedShifts = vi.fn().mockResolvedValue(undefined);
 vi.mock("../bookingExecutor", () => ({
   finalizeAcceptedBooking: (...args: unknown[]) => finalizeAcceptedBooking(...args),
+  writeConfirmedShifts:    (...args: unknown[]) => writeConfirmedShifts(...args),
 }));
 
 const runMatchingForClient = vi.fn().mockResolvedValue(undefined);
@@ -146,7 +148,16 @@ function seedBookingOffer(overrides: Record<string, unknown> = {}) {
   hoisted.docState.set(`agent_sessions/${CG_PHONE}`, { chatId: "chat-cg", pendingShiftOfferId: "offer1" });
   hoisted.docState.set("agent_sessions/+15555550100", { chatId: "chat-family", userId: "c1" });
   hoisted.docState.set("appointments/a1", { status: "pending_caregiver_confirmation", clientId: "c1", caregiverId: "cg1" });
-  hoisted.docState.set("agent_tasks/task1", { status: "pending_caregiver_confirmation" });
+  // Real booking record now lives in booking_requests, resolved via the
+  // agent_tasks doc's bookingRequestId — appointments/a1 above is kept only
+  // for the swap/time_change tests, which are unrelated to this path.
+  hoisted.docState.set("agent_tasks/task1", {
+    status: "pending_caregiver_confirmation", bookingRequestId: "br1",
+    clientId: "c1", caregiverId: "cg1", caregiverName: "Alice",
+    appointments: [{ date: "2026-06-20", startTime: "09:00", endTime: "12:00", durationHours: 3 }],
+    hourlyRate: 25,
+  });
+  hoisted.docState.set("booking_requests/br1", { status: "pending", clientId: "c1", caregiverId: "cg1", caregiverName: "Alice", clientName: "A Family" });
 }
 
 describe("createShiftOffer", () => {
@@ -196,26 +207,33 @@ describe("handleShiftOfferReply", () => {
     expect(hoisted.docState.get("shift_offers/offer1").status).toBe("pending");
   });
 
-  it("YES on a booking offer confirms appointments, flips the task, and finalizes", async () => {
+  it("YES on a booking offer accepts booking_requests, writes real shifts, flips the task, and finalizes", async () => {
     seedBookingOffer();
     classifyApproval.mockResolvedValueOnce("YES");
     const r = await handleShiftOfferReply({ phone: CG_PHONE, chatId: "chat-cg", text: "yes" });
     expect(r).toBe("handled");
     expect(hoisted.docState.get("shift_offers/offer1").status).toBe("accepted");
-    expect(hoisted.docState.get("appointments/a1").status).toBe("confirmed");
+    expect(hoisted.docState.get("booking_requests/br1").status).toBe("accepted");
+    expect(writeConfirmedShifts).toHaveBeenCalledWith(
+      "br1",
+      expect.objectContaining({ caregiverId: "cg1" }),
+      "A Family",
+      null,
+      null,
+    );
+    // appointments/a1 is untouched — the real record is booking_requests/shifts now
+    expect(hoisted.docState.get("appointments/a1").status).toBe("pending_caregiver_confirmation");
     expect(hoisted.docState.get("agent_tasks/task1").status).toBe("approved");
     expect(finalizeAcceptedBooking).toHaveBeenCalledWith("task1", "+15555550100");
   });
 
-  it("NO on a booking offer cancels appointments and offers the family alternatives", async () => {
+  it("NO on a booking offer declines booking_requests and offers the family alternatives", async () => {
     seedBookingOffer();
     classifyApproval.mockResolvedValueOnce("NO");
     const r = await handleShiftOfferReply({ phone: CG_PHONE, chatId: "chat-cg", text: "no" });
     expect(r).toBe("handled");
     expect(hoisted.docState.get("shift_offers/offer1").status).toBe("declined");
-    const appt = hoisted.docState.get("appointments/a1");
-    expect(appt.status).toBe("cancelled");
-    expect(appt.cancellationReason).toBe("declined_by_caregiver");
+    expect(hoisted.docState.get("booking_requests/br1").status).toBe("declined");
     expect(hoisted.docState.get("agent_tasks/task1").status).toBe("declined_by_caregiver");
     expect(runMatchingForClient).toHaveBeenCalled();
     expect(finalizeAcceptedBooking).not.toHaveBeenCalled();
@@ -282,7 +300,7 @@ describe("handleShiftOfferReply", () => {
     expect(r).toBe("handled");
     expect(classifyApproval).not.toHaveBeenCalled(); // never classified — expiry wins
     expect(hoisted.docState.get("shift_offers/offer1").status).toBe("expired");
-    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled");
+    expect(hoisted.docState.get("booking_requests/br1").status).toBe("cancelled");
   });
 
   it("single-fire: a second YES after resolution does not re-execute", async () => {
@@ -312,6 +330,6 @@ describe("expireShiftOffers", () => {
     expect(n).toBe(1);
     expect(hoisted.docState.get("shift_offers/offer1").status).toBe("expired");
     expect(hoisted.docState.get("shift_offers/offer2").status).toBe("pending");
-    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled");
+    expect(hoisted.docState.get("booking_requests/br1").status).toBe("cancelled");
   });
 });

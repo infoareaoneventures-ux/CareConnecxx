@@ -26,8 +26,14 @@ export async function requestShiftTimeChange(params: {
   newEndTime:    string;
 }): Promise<TimeChangeResult> {
   const { appointmentId, clientId, newDate, newStartTime, newEndTime } = params;
-  const apptRef  = db.collection("appointments").doc(appointmentId);
-  const apptSnap = await apptRef.get();
+  // Dual-lookup — the visit may live in appointments (old bookings) or shifts
+  // (new ones written by writeConfirmedShifts, 2026-08-30 pipeline).
+  let apptRef  = db.collection("appointments").doc(appointmentId);
+  let apptSnap = await apptRef.get();
+  if (!apptSnap.exists) {
+    apptRef  = db.collection("shifts").doc(appointmentId);
+    apptSnap = await apptRef.get();
+  }
   if (!apptSnap.exists) return { ok: false, status: "failed", reason: "appointment_not_found" };
   const appt = apptSnap.data()!;
 

@@ -23,6 +23,7 @@ const hoisted = vi.hoisted(() => {
       updates.push({ path, data });
       docState.set(path, { ...(docState.get(path) ?? {}), ...data });
     }),
+    collection: (sub: string) => makeCollRef(`${path}/${sub}`),
   });
 
   const makeCollRef = (path: string): any => {
@@ -50,10 +51,11 @@ vi.mock("firebase-admin", () => ({
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
   firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
     FieldValue: {
-      arrayUnion:  (...v: any[]) => ({ __arrayUnion: v }),
-      arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
-      increment:   (n: number) => ({ __increment: n }),
-      delete:      () => ({ __delete: true }),
+      arrayUnion:      (...v: any[]) => ({ __arrayUnion: v }),
+      arrayRemove:     (...v: any[]) => ({ __arrayRemove: v }),
+      increment:       (n: number) => ({ __increment: n }),
+      delete:          () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
   }),
 }));

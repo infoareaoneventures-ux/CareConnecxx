@@ -5,13 +5,13 @@ const db = admin.firestore();
 
 const ALL_DAYS_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function normDay(day: string): string {
+export function normDay(day: string): string {
   // Normalize 'MON' / 'monday' / 'Mon' → 'Mon' to match ALL_DAYS_ORDER
   const d = day.trim();
   return d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase();
 }
 
-function nextOccurrenceOnOrAfter(fromDate: string, dayName: string): string {
+export function nextOccurrenceOnOrAfter(fromDate: string, dayName: string): string {
   const target = ALL_DAYS_ORDER.indexOf(normDay(dayName));
   if (target === -1) return fromDate;
   const base = new Date(fromDate + 'T12:00:00');
@@ -20,7 +20,7 @@ function nextOccurrenceOnOrAfter(fromDate: string, dayName: string): string {
   return base.toISOString().split('T')[0];
 }
 
-function addDays(dateStr: string, days: number): string {
+export function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + 'T12:00:00');
   d.setDate(d.getDate() + days);
   return d.toISOString().split('T')[0];

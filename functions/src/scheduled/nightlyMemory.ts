@@ -10,6 +10,7 @@ import {
   TERMINAL_MEMORY_SYNC_STATUS,
 } from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
+import { queryVisitsMerged } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -225,18 +226,18 @@ export async function analyzeBookingPatterns(): Promise<void> {
     .toISOString()
     .slice(0, 10);
 
-  // Get all clients with completed appointments in the last 30 days
-  const apptSnap = await db
-    .collection("appointments")
-    .where("status", "==", "completed")
-    .where("date", ">=", thirtyDaysAgo)
-    .get();
+  // Get all clients with completed visits in the last 30 days (either pipeline)
+  const apptDocs = await queryVisitsMerged({
+    dateOp: ">=", dateValue: thirtyDaysAgo,
+    apptStatuses: ["completed"],
+    shiftStatuses: ["completed"],
+  });
 
-  if (apptSnap.empty) return;
+  if (apptDocs.length === 0) return;
 
   // Group by clientId
   const byClient: Record<string, { day: number; status: string }[]> = {};
-  for (const doc of apptSnap.docs) {
+  for (const doc of apptDocs) {
     const d = doc.data();
     const clientId = d.clientId as string;
     if (!clientId || !d.date) continue;
@@ -245,14 +246,15 @@ export async function analyzeBookingPatterns(): Promise<void> {
     byClient[clientId].push({ day: dayOfWeek, status: d.status });
   }
 
-  // Also get cancelled appointments in the same window
-  const cancelSnap = await db
-    .collection("appointments")
-    .where("status", "in", ["cancelled_by_client", "cancelled"])
-    .where("date", ">=", thirtyDaysAgo)
-    .get();
+  // Also get cancelled visits in the same window (either pipeline — shifts
+  // use a single "cancelled" status with cancelledBy distinguishing who)
+  const cancelDocs = await queryVisitsMerged({
+    dateOp: ">=", dateValue: thirtyDaysAgo,
+    apptStatuses: ["cancelled_by_client", "cancelled"],
+    shiftStatuses: ["cancelled"],
+  });
 
-  for (const doc of cancelSnap.docs) {
+  for (const doc of cancelDocs) {
     const d = doc.data();
     const clientId = d.clientId as string;
     if (!clientId || !d.date) continue;

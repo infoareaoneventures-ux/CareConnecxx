@@ -125,7 +125,17 @@ export type AuditEventType =
   | "journal_comment_edited"
   // U8 review callable (plan 2026-07-18-001)
   | "proactive_draft_approved"
-  | "proactive_draft_rejected";
+  | "proactive_draft_rejected"
+  // Evia booking-pipeline parity (2026-08-30): shifts/booking_requests now
+  // mirror the website's own collections, so these mirror its actions too.
+  | "booking_request_cancelled"
+  | "shift_cancelled"
+  | "booking_resent"
+  | "amendment_cancelled"
+  | "amendment_requested"
+  | "amendment_declined"
+  | "amendment_accepted"
+  | "interview_completed";
 
 export interface AuditEvent {
   eventType: AuditEventType;

@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Verifies parity fixes (2026-08-24) between Evia's job-post tools and the
-// website's own job_posts / job_postings / job_applications writers
-// (services/api.ts's createJobPost/cancelJobPost, hooks/useJobApplications.ts's
-// acceptApplication) — edit_job_post/cancel_job_post/respond_to_job_application
-// used to write field names and status values the site never reads.
+// Verifies parity fixes between Evia's job-post tools and the website's own
+// job_posts / job_postings / job_applications writers (services/api.ts's
+// createJobPost/cancelJobPost) — edit_job_post/cancel_job_post used to write
+// field names and status values the site never reads. respond_to_job_application
+// (2026-08-30) used to copy useJobApplications.ts's acceptApplication, which is
+// DEAD CODE never called from any live component — the real site path from
+// "applied" to "hired" is schedule an interview → interview completes → the
+// client sends a booking (PostsPage.tsx's handleSendBooking).
 
 const hoisted = vi.hoisted(() => {
   const docState  = new Map<string, any>();
@@ -165,24 +168,57 @@ describe("list_client_jobs", () => {
 describe("respond_to_job_application", () => {
   beforeEach(() => hoisted.reset());
 
-  it("on accept: marks the post filled (with filledAt) and rejects every other pending application for the same job (matches useJobApplications.ts's acceptApplication)", async () => {
+  // 2026-08-30 fix: the website has NO direct "accept this applicant" action —
+  // useJobApplications.ts's acceptApplication (mark filled + reject others) is
+  // DEAD CODE, never called from any live component. The only real path from
+  // "applied" to "hired" is schedule an interview → interview completes →
+  // client sends a booking (PostsPage.tsx's handleSendBooking). "Accept" now
+  // requests an interview instead of short-circuiting to filled.
+  it("on accept: requests an interview (video_interviews at status 'requested') instead of marking the job filled", async () => {
     hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
     hoisted.docState.set("job_posts/" + JOB_ID, { clientId: CLIENT, status: "open" });
-    hoisted.collState.set("job_applications", [
-      { id: "app_2", jobId: JOB_ID, status: "pending" },
-      { id: "app_3", jobId: JOB_ID, status: "pending" },
-    ]);
+    hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", subscriptionActive: true, name: "A Family" });
+    hoisted.docState.set("caregivers/cg1", { name: "Alice" });
 
-    const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "accept" }) as any;
+    const r = await handleToolCall("respond_to_job_application", {
+      applicationId: "app_1", clientId: CLIENT, decision: "accept",
+      preferredDate: "2026-09-01", preferredTime: "14:00",
+    }) as any;
     expect(r.success).toBe(true);
+    expect(r.interviewId).toBeTruthy();
 
-    const jobUpdate = hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`);
-    expect(jobUpdate?.data.status).toBe("filled");
-    expect(jobUpdate?.data.filledAt).toBeTruthy();
+    // job_posts is untouched at accept-time — it only ever closes later,
+    // when a booking is actually accepted (site-side onBookingAccepted).
+    expect(hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`)).toBeUndefined();
 
-    const otherRejected = hoisted.updates.filter(u => u.path === "job_applications/app_2" || u.path === "job_applications/app_3");
-    expect(otherRejected).toHaveLength(2);
-    expect(otherRejected.every(u => u.data.status === "rejected")).toBe(true);
+    // job_applications keeps status:'pending' — only linking the interview —
+    // so the applicant doesn't vanish from the website's Applicants panel,
+    // which filters on status=='pending'.
+    const appUpdate = hoisted.updates.find(u => u.path === "job_applications/app_1");
+    expect(appUpdate?.data.status).toBeUndefined();
+    expect(appUpdate?.data.interviewId).toBe(r.interviewId);
+
+    const ivSet = hoisted.sets.find(s => s.path === `video_interviews/${r.interviewId}`);
+    expect(ivSet?.data).toMatchObject({ clientId: CLIENT, caregiverId: "cg1", applicationId: "app_1", status: "requested" });
+    expect(ivSet?.data.callUrl).toBeUndefined();
+  });
+
+  it("on accept: requires preferredDate/preferredTime", async () => {
+    hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
+    const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "accept" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("INVALID_INPUT");
+  });
+
+  it("on accept: blocked by the same identity/membership gate as schedule_interview", async () => {
+    hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
+    hoisted.docState.set(`users/${CLIENT}`, {}); // no identity, no membership
+    const r = await handleToolCall("respond_to_job_application", {
+      applicationId: "app_1", clientId: CLIENT, decision: "accept",
+      preferredDate: "2026-09-01", preferredTime: "14:00",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("IDENTITY_REQUIRED");
   });
 
   it("on reject: does not touch the job post or other applications", async () => {

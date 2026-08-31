@@ -1,0 +1,247 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Booking-pipeline parity (2026-08-30): the website's My Bookings / Calendar
+// pages let a family cancel a pending request, cancel a whole booking, cancel
+// a single visit, resend a declined/cancelled request, and request/accept a
+// schedule amendment — none of which Evia could do before. These tests lock
+// in the new manage_booking / request_schedule_amendment /
+// respond_to_schedule_amendment tools against the exact site write shapes.
+
+const hoisted = vi.hoisted(() => {
+  const docState  = new Map<string, any>();
+  const collState = new Map<string, any[]>();
+  const sets:    Array<{ path: string; data: any }> = [];
+  const updates: Array<{ path: string; data: any }> = [];
+
+  const makeDocRef = (path: string): any => ({
+    id: path.split("/").pop(),
+    path,
+    get: vi.fn(async () => ({ exists: docState.has(path), data: () => docState.get(path), ref: makeDocRef(path) })),
+    set: vi.fn(async (data: any) => { sets.push({ path, data }); docState.set(path, data); }),
+    update: vi.fn(async (data: any) => {
+      updates.push({ path, data });
+      docState.set(path, { ...(docState.get(path) ?? {}), ...data });
+    }),
+  });
+
+  const makeCollRef = (path: string): any => {
+    const ref: any = {};
+    ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? `auto-${sets.length}`}`);
+    ref.where   = (..._a: any[]) => ref;
+    ref.limit   = (..._a: any[]) => ref;
+    ref.orderBy = (..._a: any[]) => ref;
+    ref.get = vi.fn(async () => {
+      const items = collState.get(path) ?? [];
+      return {
+        empty: items.length === 0,
+        size:  items.length,
+        docs:  items.map((d: any) => ({ id: d.id, data: () => d, ref: makeDocRef(`${path}/${d.id}`) })),
+      };
+    });
+    return ref;
+  };
+
+  const makeBatch = () => ({
+    update: (ref: any, data: any) => {
+      updates.push({ path: ref.path, data });
+      docState.set(ref.path, { ...(docState.get(ref.path) ?? {}), ...data });
+    },
+    set: (ref: any, data: any) => { sets.push({ path: ref.path, data }); docState.set(ref.path, data); },
+    commit: vi.fn(async () => undefined),
+  });
+
+  return {
+    docState, collState, sets, updates,
+    collectionMock: vi.fn((p: string) => makeCollRef(p)),
+    reset: () => { docState.clear(); collState.clear(); sets.length = 0; updates.length = 0; },
+  };
+});
+
+vi.mock("firebase-admin", () => {
+  const makeBatch = () => ({
+    update: (ref: any, data: any) => {
+      hoisted.updates.push({ path: ref.path, data });
+      hoisted.docState.set(ref.path, { ...(hoisted.docState.get(ref.path) ?? {}), ...data });
+    },
+    set: (ref: any, data: any) => { hoisted.sets.push({ path: ref.path, data }); hoisted.docState.set(ref.path, data); },
+    commit: vi.fn(async () => undefined),
+  });
+  const firestoreFn = () => ({ collection: hoisted.collectionMock, batch: makeBatch });
+  return {
+    __esModule: true,
+    default: { firestore: firestoreFn },
+    firestore: Object.assign(firestoreFn, {
+      FieldValue: { delete: () => ({ __delete: true }) },
+    }),
+  };
+});
+
+vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
+vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
+vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn().mockResolvedValue("sent") }));
+
+import { handleToolCall } from "../server";
+
+const CLIENT = "client_1";
+const CAREGIVER = "cg_1";
+
+describe("manage_booking", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("cancel_pending_request cancels a pending booking_requests doc and its negotiation", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "pending", agentTaskId: "task1" });
+    hoisted.docState.set("agent_tasks/task1", { status: "awaiting_caregiver" });
+    hoisted.collState.set("shift_offers", [{ id: "off1", agentTaskId: "task1", status: "pending", caregiverPhone: "+15551234567" }]);
+
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_request", bookingRequestId: "br1" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "booking_requests/br1")?.data.status).toBe("cancelled");
+    expect(hoisted.updates.find(u => u.path === "agent_tasks/task1")?.data.status).toBe("cancelled_by_client");
+    expect(hoisted.updates.find(u => u.path === "shift_offers/off1")?.data.status).toBe("cancelled");
+  });
+
+  it("cancel_pending_request refuses a booking that already has a caregiver's YES", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "accepted" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_request", bookingRequestId: "br1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("INVALID_INPUT");
+  });
+
+  it("cancel_whole_booking bulk-cancels every scheduled shift and the booking_requests doc", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "accepted", caregiverId: CAREGIVER });
+    hoisted.collState.set("shifts", [
+      { id: "s1", bookingRequestId: "br1", status: "scheduled" },
+      { id: "s2", bookingRequestId: "br1", status: "scheduled" },
+    ]);
+    hoisted.docState.set(`caregivers/${CAREGIVER}`, { phone: "+15551234567" });
+
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_whole_booking", bookingRequestId: "br1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.shiftsCancelled).toBe(2);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ status: "cancelled", bulkCancelled: true });
+    expect(hoisted.updates.find(u => u.path === "shifts/s2")?.data).toMatchObject({ status: "cancelled", bulkCancelled: true });
+    expect(hoisted.updates.find(u => u.path === "booking_requests/br1")?.data.status).toBe("cancelled");
+  });
+
+  it("cancel_whole_booking rejects a booking belonging to a different client", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: "other_client", status: "accepted" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_whole_booking", bookingRequestId: "br1" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("cancel_visit cancels a single shift and leaves siblings untouched", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_visit", shiftId: "s1" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ status: "cancelled", cancelledBy: "client" });
+  });
+
+  it("cancel_visit refuses a visit that isn't scheduled anymore", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "completed" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_visit", shiftId: "s1" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("resend_booking flips a declined booking back to pending with isResend:true", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "declined", caregiverId: CAREGIVER });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "resend_booking", bookingRequestId: "br1" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "booking_requests/br1");
+    expect(update?.data).toMatchObject({ status: "pending", isResend: true });
+  });
+
+  it("resend_booking refuses a booking that's still pending", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "pending" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "resend_booking", bookingRequestId: "br1" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("cancel_pending_amendment cancels a pending booking_amendments doc", async () => {
+    hoisted.docState.set("booking_amendments/am1", { clientId: CLIENT, status: "pending" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_amendment", amendmentId: "am1" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "booking_amendments/am1")?.data.status).toBe("cancelled");
+  });
+
+  it("rejects an unknown action", async () => {
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "not_a_real_action" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+});
+
+describe("request_schedule_amendment", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("writes a booking_amendments doc matching the site's add_recurring_days shape", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, clientName: "A Family", caregiverId: CAREGIVER, caregiverName: "Alice" });
+    hoisted.docState.set(`caregivers/${CAREGIVER}`, { phone: "+15551234567" });
+
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, date: "2026-09-07", startTime: "14:00", endTime: "16:00",
+    }) as any;
+    expect(r.success).toBe(true);
+    const set = hoisted.sets.find(s => s.path.startsWith("booking_amendments/"));
+    expect(set?.data).toMatchObject({
+      bookingRequestId: "br1", clientId: CLIENT, caregiverId: CAREGIVER,
+      status: "pending", type: "add_recurring_days",
+      startDate: "2026-09-07", endDate: "2026-09-07", ongoing: false,
+    });
+    expect(Object.keys(set?.data.newDays)).toHaveLength(1);
+  });
+
+  it("rejects a booking belonging to a different client", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: "other_client" });
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, date: "2026-09-07", startTime: "14:00", endTime: "16:00",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+  });
+});
+
+describe("respond_to_schedule_amendment", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("decline just marks the amendment declined — no shifts created", async () => {
+    hoisted.docState.set("booking_amendments/am1", { caregiverId: CAREGIVER, status: "pending" });
+    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "decline" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "booking_amendments/am1")?.data.status).toBe("declined");
+    expect(hoisted.sets.some(s => s.path.startsWith("shifts/"))).toBe(false);
+  });
+
+  it("accept for a one-off (non-ongoing) amendment creates exactly one linked shift", async () => {
+    hoisted.docState.set("booking_amendments/am1", {
+      caregiverId: CAREGIVER, status: "pending", bookingRequestId: "br1",
+      newDays: { Mon: [{ start: "14:00", end: "16:00" }] },
+      startDate: "2026-09-07", endDate: "2026-09-07", ongoing: false,
+    });
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", address: "123 Main St" });
+
+    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "accept" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.shiftsCreated).toBe(1);
+    const shiftSet = hoisted.sets.find(s => s.path.startsWith("shifts/"));
+    expect(shiftSet?.data).toMatchObject({
+      clientId: CLIENT, caregiverId: CAREGIVER, bookingRequestId: "br1",
+      status: "scheduled", startTime: "14:00", endTime: "16:00",
+    });
+    expect(hoisted.updates.find(u => u.path === "booking_amendments/am1")?.data.status).toBe("accepted");
+  });
+
+  it("rejects an amendment belonging to a different caregiver", async () => {
+    hoisted.docState.set("booking_amendments/am1", { caregiverId: "other_cg", status: "pending" });
+    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "accept" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("refuses to re-decide an amendment that's already been responded to", async () => {
+    hoisted.docState.set("booking_amendments/am1", { caregiverId: CAREGIVER, status: "accepted" });
+    const r = await handleToolCall("respond_to_schedule_amendment", { amendmentId: "am1", caregiverId: CAREGIVER, decision: "decline" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+});

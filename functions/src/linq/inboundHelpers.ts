@@ -1,7 +1,5 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "./client";
-import { canonicalApptFields } from "../utils/appointmentDoc";
-import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 const db = admin.firestore();
 
@@ -25,6 +23,7 @@ export async function handleRecurringConfirm(
     hourlyRate:    number;
     seniorName?:   string; // multi-recipient booking passthrough (bookingExecutor)
     recipientKey?: string;
+    bookingRequestId?: string; // links back to the booking_requests doc to update
   } | undefined;
 
   if (!pending) {
@@ -34,82 +33,50 @@ export async function handleRecurringConfirm(
     return;
   }
 
-  const clientId   = session.userId ?? phone;
-  // The booking's attributed recipient wins over the account's primary senior —
-  // a recurring schedule born from "book for John" must stay John's.
-  const seniorName = pending.seniorName
-    ?? (session as any).onboardingData?.seniorName ?? (session as any).seniorName ?? "";
-  const today      = new Date().toISOString().split("T")[0];
-  const now        = new Date().toISOString();
-
-  const { generateRecurringDates } = await import("../scheduled/recurringScheduler");
-  const dates = generateRecurringDates(today, pending.days, 4);
-
-  if (dates.length === 0) {
-    await sendMessage(chatId, "I couldn't generate dates for that schedule — the days may not be valid. Let me know if you'd like to try again.");
+  if (!pending.bookingRequestId) {
+    // Should never happen for a booking made under the current pipeline
+    // (bookingExecutor.ts always stamps bookingRequestId onto this flag) —
+    // fail soft rather than silently drop the family's "yes."
+    await sendMessage(chatId, "I wasn't able to find that booking to make it recurring — text me and I'll help set it up fresh.");
     await db.collection("agent_sessions").doc(phone).update({
       awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
+      pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
     }).catch(() => {});
     return;
   }
 
-  const scheduleRef = db.collection("recurring_schedules").doc();
-  const batch       = db.batch();
+  const today = new Date().toISOString().split("T")[0];
 
-  batch.set(scheduleRef, {
-    clientId,
-    caregiverId:      pending.caregiverId,
-    caregiverName:    pending.caregiverName,
-    clientPhone:      phone,
-    seniorName,
-    ...(pending.recipientKey ? { recipientKey: pending.recipientKey } : {}),
-    days:             pending.days,
-    startTime:        pending.startTime,
-    endTime:          pending.endTime,
-    durationHours:    pending.durationHours,
-    hourlyRate:       pending.hourlyRate,
-    status:           "active",
-    startDate:        today,
-    weeksBookedAhead: 4,
-    lastExtendedAt:   now,
-    createdAt:        now,
-  });
-
-  for (const { date } of dates) {
-    const apptRef = db.collection("appointments").doc();
-    batch.set(apptRef, {
-      clientId,
-      caregiverId:         pending.caregiverId,
-      caregiverName:       pending.caregiverName,
-      seniorName:          seniorName || null,
-      ...(pending.recipientKey ? { recipientKey: pending.recipientKey } : {}),
-      date,
-      startTime:           pending.startTime,
-      endTime:             pending.endTime,
-      durationHours:       pending.durationHours,
-      hourlyRate:          pending.hourlyRate,
-      ...canonicalApptFields({ startTime: pending.startTime, durationHours: pending.durationHours, hourlyRate: pending.hourlyRate }),
-      status:              "confirmed",
-      billingAuthority:    BILLING_AUTHORITY_VERSION,
-      recurringScheduleId: scheduleRef.id,
-      humanApproved:       true,
-      createdByAgent:      true,
-      createdAt:           now,
-    });
+  // Update the SAME booking_requests doc this booking already created —
+  // schedule.ongoing + dayShiftTimes is the site's own real recurring-booking
+  // mechanism (confirmed: the website has no separate recurring-schedule
+  // collection). From here the site's own generateRollingShifts daily job
+  // takes over generating future shifts automatically — no Evia-side
+  // generation needed for this case (contrast with writeConfirmedShifts,
+  // which handles the initial, often-irregular one-off dates directly).
+  const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> = {};
+  for (const day of pending.days) {
+    dayShiftTimes[day] = [{ start: pending.startTime, end: pending.endTime }];
   }
 
-  await batch.commit();
+  await db.collection("booking_requests").doc(pending.bookingRequestId).update({
+    schedule: {
+      ongoing:   true,
+      startDate: today,
+      endDate:   null,
+      dayShiftTimes,
+    },
+  });
 
   await db.collection("agent_sessions").doc(phone).update({
     awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
     pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-    activeRecurringScheduleId:     scheduleRef.id,
   }).catch(() => {});
 
   const schedDesc = `${pending.days.join("/")}s ${pending.startTime}–${pending.endTime}`;
   await sendMessage(chatId,
-    `Set up! ${pending.caregiverName} is booked every ${schedDesc} for the next 4 weeks — ` +
-    `and I'll keep extending it automatically.\n\n` +
-    `To pause or stop anytime, just text me PAUSE SCHEDULE or CANCEL SCHEDULE.`
+    `Set up! ${pending.caregiverName} is booked every ${schedDesc}, ongoing — ` +
+    `I'll keep you posted as each visit comes up.\n\n` +
+    `To stop anytime, just text me to cancel the booking.`
   );
 }

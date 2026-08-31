@@ -459,6 +459,47 @@ describe("booking tools", () => {
       expect(arg.appointments[0].durationHours).toBe(8);
     });
 
+    // Job/interview linkage (2026-08-30, Care Requests parity): booking right
+    // after an interview should carry the same jobId/jobTitle/interviewId the
+    // website's handleSendBooking stamps, and mark the caregiver's application
+    // accepted — without ever blocking the booking if the lookup fails.
+    it("passing interviewId resolves jobId/jobTitle/applicationId onto createBookingTask", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
+      hoisted.docState.set("job_posts/job1", { title: "Weekend companionship" });
+
+      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.interviewId).toBe("iv1");
+      expect(arg.jobId).toBe("job1");
+      expect(arg.jobTitle).toBe("Weekend companionship");
+      expect(arg.applicationId).toBe("app1");
+    });
+
+    it("an interviewId that doesn't belong to this client/caregiver books unlinked instead of failing", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("video_interviews/iv1", { clientId: "someone_else", caregiverId: "cg1", applicationId: "app1" });
+
+      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.jobId).toBeUndefined();
+      expect(arg.jobTitle).toBeUndefined();
+      expect(arg.applicationId).toBeUndefined();
+    });
+
+    it("booking with no interviewId at all stays unlinked (direct/matching-flow booking)", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      const r = await handleToolCall("request_booking", baseInput) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.interviewId).toBeUndefined();
+      expect(arg.jobId).toBeUndefined();
+      expect(arg.applicationId).toBeUndefined();
+    });
+
     it("rejects an unknown caregiver BEFORE any booking write (shared NOT_FOUND)", async () => {
       const r = await handleToolCall("request_booking", baseInput) as any; // no caregiver doc seeded
       expect(r._toolError).toBe(true);

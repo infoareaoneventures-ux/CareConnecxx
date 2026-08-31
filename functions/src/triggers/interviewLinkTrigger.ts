@@ -23,9 +23,11 @@ const db = admin.firestore();
 //     transition-based, so a missed event is repaired by the next write
 //   - delivery is tracked per-recipient (linkDelivery.client / .caregiver);
 //     a re-fired event completes only what is missing, never re-sends
-//   - the MCP schedule_interview tool writes callUrl + its own delivery
-//     markers + a fresh claim in the create payload, so the create event
-//     no-ops here instead of racing the tool
+//   - the MCP schedule_interview tool writes new requests as "requested" (the
+//     same not-yet-agreed status the website's own request flow uses), so
+//     this trigger's link/reminder pass — and the Meet-link/reminder texts it
+//     sends — only ever fires once respond_to_interview_request moves the
+//     doc into "confirmed", exactly like a website caregiver clicking Accept
 //
 // SECURITY: never log callUrl/icsUrl values — OPEN links are joinable by
 // anyone who holds them. Log interview doc IDs only.

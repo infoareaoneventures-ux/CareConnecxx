@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { gateOptionalSend } from "./engineGate";
+import { queryVisitsMerged } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -38,14 +39,15 @@ export const checkCaregiverInactivity = functions.pubsub
       try {
         // ── 14-day inactivity check ───────────────────────────────────────────
 
-        const recent14Snap = await db.collection("appointments")
-          .where("caregiverId", "==", cgId)
-          .where("status", "in", ["completed", "in-progress"])
-          .where("date", ">=", fourteenDaysAgo)
-          .limit(1)
-          .get();
+        const recent14Docs = await queryVisitsMerged({
+          dateOp: ">=", dateValue: fourteenDaysAgo,
+          extraWhere: [["caregiverId", "==", cgId]],
+          apptStatuses: ["completed", "in-progress"],
+          shiftStatuses: ["completed", "in-progress"],
+          limit: 1,
+        });
 
-        if (recent14Snap.empty) {
+        if (recent14Docs.length === 0) {
           // No activity in last 14 days — send nudge if not already sent within 7 days
           const lastNudge = cg.lastInactivityNudgeSentAt as string | undefined;
           if (!lastNudge || lastNudge < sevenDaysAgo) {
@@ -157,14 +159,15 @@ export const checkCaregiverInactivity = functions.pubsub
 
           // ── 30-day inactivity check ─────────────────────────────────────────
 
-          const recent30Snap = await db.collection("appointments")
-            .where("caregiverId", "==", cgId)
-            .where("status", "in", ["completed", "in-progress"])
-            .where("date", ">=", thirtyDaysAgo)
-            .limit(1)
-            .get();
+          const recent30Docs = await queryVisitsMerged({
+            dateOp: ">=", dateValue: thirtyDaysAgo,
+            extraWhere: [["caregiverId", "==", cgId]],
+            apptStatuses: ["completed", "in-progress"],
+            shiftStatuses: ["completed", "in-progress"],
+            limit: 1,
+          });
 
-          if (recent30Snap.empty) {
+          if (recent30Docs.length === 0) {
             const last30dAlert = cg.lastInactivity30dAlertAt as string | undefined;
             if (!last30dAlert || last30dAlert < thirtyDaysAgoTs) {
               await db.collection("admin_alerts").add({

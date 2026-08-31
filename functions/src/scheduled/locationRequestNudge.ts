@@ -56,6 +56,23 @@ export const sendLocationRequestNudges = functions.pubsub
       if (Number.isNaN(sentAtMs) || now - sentAtMs < NUDGE_AFTER_MS) continue;
 
       try {
+        // Live check (2026-08-30 fix): the marker above is only ever cleared
+        // by an SMS reply (a pin or a typed city/zip). If the user instead
+        // supplied their address through the WEBSITE in the meantime — the
+        // account's own zipCode/city is already set — this would otherwise
+        // wrongly nudge "still need your location" for something already on
+        // file. Only applies once the session is linked to a real account.
+        const userId = (data as { userId?: string }).userId;
+        if (userId) {
+          const userSnap = await db.collection("users").doc(userId).get();
+          const ud = userSnap.data() as { zipCode?: string; zip?: string; city?: string } | undefined;
+          if (ud?.zipCode || ud?.zip || ud?.city) {
+            await doc.ref.update({ pendingLocationRequest: admin.firestore.FieldValue.delete() })
+              .catch(() => {/* non-critical */});
+            continue;
+          }
+        }
+
         // U8 engine gate (KTD15): optional nudge — submit as a PolicyCandidate
         // instead of sending directly. A lost pass re-enters on the next 15-min
         // run: nudgeSent is only flipped below, after an allowed pass.

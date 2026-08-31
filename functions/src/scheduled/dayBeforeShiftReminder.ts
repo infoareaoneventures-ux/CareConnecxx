@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTomorrowStr } from "../utils/scheduledTime";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -26,12 +27,13 @@ export const sendDayBeforeShiftReminders = functions.pubsub
     // NOTE: no `.where("dayBeforeConfirmSent","!=",true)` — Firestore `!=` excludes
     // docs missing the field (appointments are created without it), so it would
     // skip every never-reminded shift. Filter already-sent in code.
-    const snap = await db.collection("appointments")
-      .where("date",                 "==", tomorrowStr)
-      .where("status",               "in", ["confirmed", "pending_caregiver_confirmation"])
-      .get();
+    const docs = await queryVisitsMerged({
+      dateOp: "==", dateValue: tomorrowStr,
+      apptStatuses: ["confirmed", "pending_caregiver_confirmation"],
+      shiftStatuses: ["scheduled"],
+    });
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt        = doc.data();
       const apptId      = doc.id;
       if (appt.dayBeforeConfirmSent === true) continue;
@@ -49,7 +51,7 @@ export const sendDayBeforeShiftReminders = functions.pubsub
         if (!cgSessionSnap.exists || (cgSessionSnap.data() as any)?.optedOut) continue;
 
         const cgFirstName   = ((cgData?.name ?? "there") as string).split(" ")[0];
-        const seniorName    = (appt.clientName ?? appt.seniorName ?? "your client") as string;
+        const seniorName    = visitSeniorName(appt, "your client");
         const startTime     = (appt.startTime ?? appt.time ?? "") as string;
         const address       = (appt.address ?? appt.location ?? "") as string;
 

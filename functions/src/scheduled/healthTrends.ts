@@ -28,7 +28,11 @@ interface HealthTrend {
 async function load90Days(seniorId: string, userId: string) {
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [journalSnap, apptSnap, seniorSnap] = await Promise.all([
+  // appointments uses `isoDate` (full ISO string); shifts (2026-08-30 pipeline)
+  // has no such field, only a plain `date` (YYYY-MM-DD) — both are compared
+  // against the same date-only cutoff, so the two queries stay separate rather
+  // than going through queryVisitsMerged (which assumes one shared field name).
+  const [journalSnap, apptSnap, shiftSnap, seniorSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .where("timestamp", ">=", ninetyDaysAgo)
@@ -40,12 +44,17 @@ async function load90Days(seniorId: string, userId: string) {
       .where("isoDate", ">=", ninetyDaysAgo.slice(0, 10))
       .limit(100)
       .get(),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("date", ">=", ninetyDaysAgo.slice(0, 10))
+      .limit(100)
+      .get(),
     db.collection("senior_profiles").doc(seniorId).get(),
   ]);
 
   return {
     journal:    journalSnap.docs.map(d => d.data()),
-    appts:      apptSnap.docs.map(d => d.data()),
+    appts:      [...apptSnap.docs, ...shiftSnap.docs].map(d => d.data()),
     seniorName: seniorSnap.data()?.name ?? "Senior",
     seniorNeeds: seniorSnap.data()?.needs ?? [],
   };

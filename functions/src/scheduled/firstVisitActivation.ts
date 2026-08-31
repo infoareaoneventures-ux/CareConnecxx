@@ -74,11 +74,15 @@ export const sendFirstVisitActivation = functions.pubsub
         const clientId = (s.userId ?? "") as string;
         if (!clientId) continue;
 
-        const apptSnap = await db.collection("appointments")
-          .where("clientId", "==", clientId)
-          .limit(1)
-          .get();
-        const hasBooked = !apptSnap.empty;
+        // "Ever booked anything" — no status filter (even a cancelled visit
+        // means they've engaged with booking before), so this checks
+        // existence directly rather than going through queryVisitsMerged
+        // (which requires a status list).
+        const [apptSnap, shiftSnap] = await Promise.all([
+          db.collection("appointments").where("clientId", "==", clientId).limit(1).get(),
+          db.collection("shifts").where("clientId", "==", clientId).limit(1).get(),
+        ]);
+        const hasBooked = !apptSnap.empty || !shiftSnap.empty;
 
         if (!shouldNudgeFirstVisit({
           onboardingComplete: true,

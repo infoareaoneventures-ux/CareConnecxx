@@ -47,8 +47,13 @@ export async function buildWowContextForClient(
   session: Record<string, unknown>,
   now:     Date,
 ): Promise<WowContext> {
-  const apptSnap = await db.collection("appointments").where("clientId", "==", userId).get().catch(() => null);
-  const appts = apptSnap ? apptSnap.docs.map((d) => d.data()) : [];
+  // No status filter — the full history feeds "first visit"/"completed count"
+  // moments, so both pipelines are queried unfiltered and merged.
+  const [apptSnap, shiftSnap] = await Promise.all([
+    db.collection("appointments").where("clientId", "==", userId).get().catch(() => null),
+    db.collection("shifts").where("clientId", "==", userId).get().catch(() => null),
+  ]);
+  const appts = [...(apptSnap?.docs ?? []), ...(shiftSnap?.docs ?? [])].map((d) => d.data());
   const completed = appts.filter((a) => a.status === "completed");
   const completedSorted = [...completed].sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")));
   const firstDate = completedSorted[0]?.date;
@@ -73,7 +78,7 @@ export async function buildWowContextForClient(
     firstVisitAt,
     completedVisits:    completed.length,
     recentEvents:       appts
-      .filter((a) => a.status === "confirmed" || a.status === "completed")
+      .filter((a) => a.status === "confirmed" || a.status === "scheduled" || a.status === "completed")
       .map((a) => ({
         type:      a.status === "completed" ? "visit_completed" as const : "booking_confirmed" as const,
         timestamp: String(a.confirmedAt ?? a.date ?? now.toISOString()),

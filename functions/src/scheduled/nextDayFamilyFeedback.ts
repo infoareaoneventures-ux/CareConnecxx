@@ -20,6 +20,7 @@ import {
   evaluateWeeklyFamilyBudget,
   type WeeklyBudgetTally,
 } from "./proactiveBudget";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -37,14 +38,15 @@ export const sendNextDayFamilyFeedback = functions.pubsub
     const nowIso = new Date().toISOString();
     const yesterdayStr = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const snap = await db.collection("appointments")
-      .where("date", "==", yesterdayStr)
-      .where("status", "==", "completed")
-      .limit(500)
-      .get();
+    const docs = await queryVisitsMerged({
+      dateOp: "==", dateValue: yesterdayStr,
+      apptStatuses: ["completed"],
+      shiftStatuses: ["completed"],
+      limit: 500,
+    });
 
     let sent = 0;
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt = doc.data();
       try {
         if (appt.nextDayFeedbackSent === true) continue; // per-shift dedupe
@@ -66,11 +68,11 @@ export const sendNextDayFamilyFeedback = functions.pubsub
         );
         if (!budget.allowed) continue;
 
-        const seniorName = (appt.clientName ?? appt.seniorName ?? "your loved one") as string;
+        const seniorName = visitSeniorName(appt);
         // R11: ground who's who — the visit was for the care recipient, not the reader.
         const whoIsWho = describeWhoIsWho({
           ...((session.onboardingData ?? {}) as Record<string, unknown>),
-          seniorName: (session.onboardingData as any)?.seniorName ?? appt.clientName ?? appt.seniorName,
+          seniorName: (session.onboardingData as any)?.seniorName ?? seniorName,
         });
         const message = await generateCaraMessage({
           audience: "family",
@@ -115,5 +117,5 @@ export const sendNextDayFamilyFeedback = functions.pubsub
       }
     }
 
-    console.log(`[nextDayFamilyFeedback] ${snap.size} completed-yesterday shifts, ${sent} prompts sent`);
+    console.log(`[nextDayFamilyFeedback] ${docs.length} completed-yesterday shifts, ${sent} prompts sent`);
   });

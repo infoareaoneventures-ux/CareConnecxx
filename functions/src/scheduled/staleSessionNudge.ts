@@ -140,6 +140,26 @@ export const sendStaleSessionNudges = functions.pubsub
       if (!session.chatId) continue;
 
       try {
+        // Live check (2026-08-30 fix): a client who finished the real thing
+        // via the WEBSITE — not through this SMS conversation — still has a
+        // stale, incomplete onboardingStep on this session doc forever, since
+        // nothing here ever re-syncs it. Without this check this job wrongly
+        // told a client who'd already finished on the site "you're almost
+        // there, just tell us who needs care." Only clients have an
+        // independent website path (caregiver onboarding is SMS-only per
+        // CLAUDE.md), so this only applies when userType isn't "caregiver."
+        if (session.userType !== "caregiver" && session.userId) {
+          const userSnap = await db.collection("users").doc(session.userId as string).get();
+          if (userSnap.exists) {
+            const { userHasRealOnboardingProgress } = await import("../linq/webhooks");
+            if (await userHasRealOnboardingProgress(session.userId as string, userSnap.data()!)) {
+              // Self-heal so this session stops surfacing here every day.
+              await doc.ref.update({ onboardingStep: "complete" });
+              continue;
+            }
+          }
+        }
+
         // U8 engine gate (KTD15): this 48h stale nudge is an OPTIONAL
         // discretionary send — the engine decides per recipient per pass. A
         // lost pass re-enters naturally on the next daily run. (The stuck-step

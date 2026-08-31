@@ -7,8 +7,6 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
-import { canonicalApptFields } from "../utils/appointmentDoc";
-import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
 async function hasConflict(
   caregiverId: string,
@@ -16,10 +14,14 @@ async function hasConflict(
   startTime: string,
   endTime: string
 ): Promise<boolean> {
-  const snap = await db.collection("appointments")
+  // Checks the caregiver's real, already-confirmed schedule (shifts) rather
+  // than appointments — confirmed bookings live in shifts now (see
+  // writeConfirmedShifts below); this is also more accurate than checking
+  // other in-flight negotiations.
+  const snap = await db.collection("shifts")
     .where("caregiverId", "==", caregiverId)
     .where("date", "==", date)
-    .where("status", "in", ["confirmed", "in-progress", "pending_caregiver_confirmation"])
+    .where("status", "in", ["scheduled", "in-progress"])
     .get();
   return snap.docs.some((doc) => {
     const d = doc.data();
@@ -36,7 +38,7 @@ interface BookingAppointment {
   durationHours: number;
 }
 
-interface BookingTask {
+export interface BookingTask {
   type:                  "booking_confirmation" | "cancellation_confirmation" | "rebook_confirmation";
   clientId:              string;
   clientPhone:           string;
@@ -50,11 +52,66 @@ interface BookingTask {
   expiresAt:             string;
   createdAt:             string;
   agentTaskId?:          string;
+  bookingRequestId?:     string;
   isEmergencyReplacement?: boolean;
   // Multi-recipient attribution (2026-07-16) — only stamped when the household
   // has 2+ care recipients; absent = the household's sole recipient (fail-soft).
   recipientName?:        string;
   recipientKey?:         string;
+  // Job/interview linkage (2026-08-30) — only stamped when this booking follows
+  // a job-post application + interview, matching PostsPage.tsx's handleSendBooking
+  // (which stamps jobId/jobTitle/interviewId on booking_requests and flips the
+  // application to 'accepted'). Absent for a direct/matching-flow booking.
+  jobId?:                string;
+  jobTitle?:             string;
+  interviewId?:          string;
+  applicationId?:        string;
+}
+
+// Writes the real, per-date `shifts` docs once a booking is truly confirmed —
+// called from executeBookings' no-caregiver-phone fallback (immediately) and
+// from shiftOffer.ts's onOfferAccepted (once the caregiver replies YES).
+// Matches the exact shape the website's own safety-net writer produces
+// (Schedule.tsx's generateMissingShifts) rather than trusting the site's
+// weekly-pattern generator, which can't safely represent Evia's often-
+// irregular date lists.
+export async function writeConfirmedShifts(
+  bookingRequestId: string,
+  task: BookingTask,
+  clientName: string,
+  seniorName: string | null,
+  address: string | null,
+): Promise<void> {
+  const cgSnap = await db.collection("caregivers").doc(task.caregiverId).get();
+  const cgData = cgSnap.data() ?? {};
+  const caregiverPhotoURL = (cgData.profilePhoto ?? cgData.photoURL ?? cgData.photo ?? null) as string | null;
+
+  const batch = db.batch();
+  for (const appt of task.appointments) {
+    const ref = db.collection("shifts").doc();
+    batch.set(ref, {
+      clientId:            task.clientId,
+      clientName,
+      caregiverId:         task.caregiverId,
+      caregiverName:       task.caregiverName,
+      caregiverPhotoURL,
+      status:              "scheduled",
+      address:             address ?? "",
+      rate:                task.hourlyRate ?? null,
+      paymentMethod:       "credit",
+      notes:               "",
+      careRecipients:      seniorName ? [{ name: seniorName }] : [],
+      ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
+      bookingRequestId,
+      recurringWeekly:     false,
+      tasksCompleted:      [],
+      date:                appt.date,
+      startTime:           appt.startTime,
+      endTime:             appt.endTime,
+      createdAt:           admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
 }
 
 export async function executeBookings(taskId: string, clientPhone: string): Promise<void> {
@@ -158,74 +215,80 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     }
   }
 
-  // Idempotency guard: if Cloud Functions retries this invocation after a partial commit,
-  // agentTaskId is already on every appointment written in the first attempt — skip if found.
-  // Appointments are written pending_caregiver_confirmation, so reset the task to that state.
-  const existingAppts = await db.collection("appointments")
+  // Idempotency guard: if this invocation is retried after a partial commit,
+  // a booking_requests doc is already linked via agentTaskId on the first
+  // attempt — skip if found. Reset the task to the matching in-flight status.
+  const existingBookingReq = await db.collection("booking_requests")
     .where("agentTaskId", "==", taskId)
     .limit(1)
     .get();
-  if (!existingAppts.empty) {
+  if (!existingBookingReq.empty) {
     await taskRef.update({ status: "pending_caregiver_confirmation", humanApproved: true }).catch(() => {});
     return;
   }
 
-  // Fetched before the write so the appointment docs carry the display names
-  // the webapp and notification triggers read (clientName/seniorName).
+  // Fetched before the write so the booking_requests doc carries the display
+  // names the webapp and notification triggers read (clientName/seniorName).
   const [caregiverSnapForOffer, clientSnapForOffer] = await Promise.all([
     db.collection("caregivers").doc(task.caregiverId).get(),
     db.collection("users").doc(task.clientId).get(),
   ]);
   const offerClientName = (clientSnapForOffer.data()?.name as string | undefined) || undefined;
-  // Hoisted above the batch so appointment docs carry the recipient display name
-  // (task.recipientName from a multi-recipient booking wins; else the primary).
+  const offerClientData = clientSnapForOffer.data() ?? {};
+  const offerAddress = [offerClientData.street, offerClientData.city, offerClientData.state, offerClientData.zipCode]
+    .filter(Boolean).join(", ") || null;
+  // Hoisted above the write so the booking_requests doc carries the recipient
+  // display name (task.recipientName from a multi-recipient booking wins;
+  // else the primary).
   const offerSeniorName = task.recipientName
     ?? clientSnapForOffer.data()?.seniorName
     ?? (clientSnapForOffer.data()?.senior as { name?: string } | undefined)?.name
     ?? null;
 
-  // Write each appointment — this is the ONLY place appointments are written by the agent.
-  // Family approval does NOT confirm the visit: the caregiver must accept the shift offer
-  // first (see shiftOffer.ts), so everything is written pending_caregiver_confirmation.
+  // Write ONE booking_requests doc — the site's own real booking shape
+  // (matches PostsPage.tsx's handleSendBooking), not a per-date appointments
+  // doc. `schedule` is deliberately left empty: Evia's dates are often
+  // irregular and don't fit the site's weekly dayShiftTimes pattern, and the
+  // site's own shift-generator no-ops safely on an empty schedule — the real
+  // shifts docs get written directly by writeConfirmedShifts() once the
+  // caregiver actually confirms (see shiftOffer.ts's onOfferAccepted), or
+  // immediately below for the no-phone fallback. Family approval does NOT
+  // confirm the visit: the caregiver must accept the shift offer first, so
+  // this is written status:'pending' — the exact status a website-sent
+  // booking starts at too.
+  const bookingRequestRef = db.collection("booking_requests").doc();
   const batch = db.batch();
-  const apptRefs: admin.firestore.DocumentReference[] = [];
-
-  for (const appt of task.appointments) {
-    const ref = db.collection("appointments").doc();
-    apptRefs.push(ref);
-    batch.set(ref, {
-      clientId:           task.clientId,
-      caregiverId:        task.caregiverId,
-      caregiverName:      task.caregiverName,
-      ...(offerClientName ? { clientName: offerClientName } : {}),
-      ...(offerSeniorName ? { seniorName: offerSeniorName } : {}),
-      ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
-      date:               appt.date,
-      startTime:          appt.startTime,
-      endTime:            appt.endTime,
-      durationHours:      appt.durationHours,
-      ...(typeof task.hourlyRate === "number" ? { hourlyRate: task.hourlyRate } : {}),
-      ...canonicalApptFields({
-        startTime:     appt.startTime,
-        durationHours: appt.durationHours,
-        hourlyRate:    task.hourlyRate,
-        cost:          typeof task.hourlyRate === "number"
-          ? undefined
-          : task.totalCost / Math.max(task.appointments.length, 1),
-      }),
-      status:             "pending_caregiver_confirmation",
-      caregiverConfirmed: false,
-      createdByAgent:     true,
-      billingAuthority:   BILLING_AUTHORITY_VERSION,
-      agentTaskId:        taskId,
-      humanApproved:      true,
-      approvedAt:         now,
-      createdAt:          now,
-    });
-  }
-
-  batch.update(taskRef, { status: "pending_caregiver_confirmation", humanApproved: true, approvedAt: now });
+  batch.set(bookingRequestRef, {
+    clientId:      task.clientId,
+    clientName:    offerClientName ?? "",
+    caregiverId:   task.caregiverId,
+    caregiverName: task.caregiverName,
+    ...(offerAddress ? { address: offerAddress } : {}),
+    ...(offerSeniorName ? { seniorName: offerSeniorName } : {}),
+    ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
+    ...(task.jobId ? { jobId: task.jobId } : {}),
+    ...(task.jobTitle ? { jobTitle: task.jobTitle } : {}),
+    ...(task.interviewId ? { interviewId: task.interviewId } : {}),
+    rate:          task.hourlyRate ?? null,
+    paymentMethod: "credit",
+    notes:         "",
+    status:        "pending",
+    isResend:      false,
+    agentTaskId:   taskId,
+    createdAt:     now,
+  });
+  batch.update(taskRef, { status: "pending_caregiver_confirmation", humanApproved: true, approvedAt: now, bookingRequestId: bookingRequestRef.id });
   await batch.commit();
+
+  // Matches handleSendBooking's immediate side effect on the website: sending
+  // the booking marks the caregiver's application accepted right away, not
+  // once they later confirm the visit itself.
+  if (task.applicationId) {
+    await db.collection("job_applications").doc(task.applicationId).update({
+      status:     "accepted",
+      acceptedAt: now,
+    }).catch(() => {});
+  }
 
   // Send the caregiver a YES/NO shift offer. Confirmation, family notification,
   // and payment setup all happen in finalizeAcceptedBooking() once they accept.
@@ -243,10 +306,9 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       createdAt:     now,
       resolved:      false,
     }).catch(() => {});
-    const confirmBatch = db.batch();
-    for (const ref of apptRefs) confirmBatch.update(ref, { status: "confirmed" });
-    confirmBatch.update(taskRef, { status: "approved" });
-    await confirmBatch.commit();
+    await bookingRequestRef.update({ status: "accepted" });
+    await writeConfirmedShifts(bookingRequestRef.id, task, offerClientName ?? "", offerSeniorName, offerAddress);
+    await taskRef.update({ status: "approved" });
     await finalizeAcceptedBooking(taskId, clientPhone);
     return;
   }
@@ -264,7 +326,10 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     caregiverPhone: offerCgPhone,
     clientId:       task.clientId,
     clientPhone,
-    appointmentIds: apptRefs.map((r) => r.id),
+    // No appointment doc refs exist yet — the "booking" kind resolves via
+    // agentTaskId instead (agent_tasks carries bookingRequestId + the real
+    // appointments[] dates; writeConfirmedShifts() reads both once accepted).
+    appointmentIds: [],
     agentTaskId:    taskId,
     summary:        offerSummary,
     offerMessage:
@@ -370,6 +435,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
           caregiverName: task.caregiverName,
           ...(task.recipientName ? { seniorName: task.recipientName } : {}),
           ...(task.recipientKey  ? { recipientKey: task.recipientKey } : {}),
+          ...(task.bookingRequestId ? { bookingRequestId: task.bookingRequestId } : {}),
           days:          [dayOfWeek],
           startTime:     firstAppt.startTime,
           endTime:       firstAppt.endTime,
@@ -457,6 +523,10 @@ export async function createBookingTask(params: {
   isEmergencyReplacement?: boolean;
   recipientName?:         string;
   recipientKey?:          string;
+  jobId?:                 string;
+  jobTitle?:              string;
+  interviewId?:           string;
+  applicationId?:         string;
 }): Promise<string> {
   // Canonical eligibility gate — only profile_complete + approved caregivers
   // are bookable (covers pending/failed background checks, adverse actions,
@@ -504,6 +574,10 @@ export async function createBookingTask(params: {
     ...(params.isEmergencyReplacement && { isEmergencyReplacement: true }),
     ...(params.recipientName ? { recipientName: params.recipientName } : {}),
     ...(params.recipientKey  ? { recipientKey:  params.recipientKey }  : {}),
+    ...(params.jobId         ? { jobId:         params.jobId }         : {}),
+    ...(params.jobTitle      ? { jobTitle:      params.jobTitle }      : {}),
+    ...(params.interviewId   ? { interviewId:   params.interviewId }   : {}),
+    ...(params.applicationId ? { applicationId: params.applicationId } : {}),
   });
   return ref.id;
 }

@@ -1,6 +1,8 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { writeUserNotification } from '../notifications/userNotification';
+import { sendToPhone } from '../linq/client';
+import { sendViaInteractionAgent } from '../agents/caraAgent';
 
 const db = admin.firestore();
 
@@ -15,6 +17,37 @@ async function addNotification(
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 }
+
+// Single source of truth for "tell the other party by text" on the
+// booking_requests/shifts/booking_amendments pipeline (2026-08-30) — fires
+// for a write from EITHER the website or Evia, since this is a plain
+// Firestore trigger. Evia's own MCP tools deliberately do NOT also send this
+// text themselves (see manage_booking / request_schedule_amendment) — doing
+// it here instead of in every caller is what keeps a cancellation made
+// through Evia from producing two texts for one event.
+// sendViaInteractionAgent (Evia's own voice, DND/opt-out/supervisor-checked)
+// with a plain sendToPhone fallback — matches onAppointmentUpdated's own
+// send pattern for the legacy collection, rather than a raw unchecked text.
+async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
+  const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
+  const phone = snap?.data()?.phone as string | undefined;
+  if (!phone) return;
+  await sendViaInteractionAgent(phone, {
+    content: message, urgency: 'standard', sourceAgent: 'notification_trigger', canDrop: true,
+  }).catch(() => sendToPhone(phone, message)).catch((err) =>
+    console.error('[notificationTriggers] notifyCaregiverByText failed:', err));
+}
+
+async function notifyClientByText(clientId: string, message: string): Promise<void> {
+  const snap = await db.collection('users').doc(clientId).get().catch(() => null);
+  const phone = snap?.data()?.phone as string | undefined;
+  if (!phone) return;
+  await sendViaInteractionAgent(phone, {
+    content: message, urgency: 'standard', sourceAgent: 'notification_trigger', canDrop: true,
+  }).catch(() => sendToPhone(phone, message)).catch((err) =>
+    console.error('[notificationTriggers] notifyClientByText failed:', err));
+}
+
 
 // ── video_interviews ────────────────────────────────────────────────────────
 // Handles: new request → caregiver, accept → client, decline → other party,
@@ -46,6 +79,8 @@ export const onVideoInterviewWrite = functions.firestore
           body: `${after.clientName} requested an interview on ${displayTime}.`,
           data: { interviewId: context.params.interviewId },
         });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'A family'} requested an interview with you on ${displayTime}. Reply here to accept or propose a different time.`);
         return;
       }
 
@@ -120,6 +155,10 @@ export const onJobApplicationCreate = functions.firestore
         body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
         data: { applicationId: context.params.applicationId, jobId: data.jobId },
       });
+      // Single source of truth for this text — apply_to_job (mcp/server.ts)
+      // deliberately does not also send it, to avoid a double text when a
+      // caregiver applies through Evia.
+      await notifyClientByText(data.clientId, "A caregiver applied to your job post. Text 'show applications' to review.");
     } catch (err) {
       console.error('[onJobApplicationCreate] error:', err);
     }
@@ -150,6 +189,14 @@ export const onBookingRequestWrite = functions.firestore
           body: `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`,
           data: { bookingId: context.params.bookingId },
         });
+        // Evia-negotiated bookings (agentTaskId set) already get a richer
+        // YES/NO shift-offer text from createShiftOffer — sending this generic
+        // one too would double-text. Only a pure website-created booking (no
+        // agentTaskId) has nothing else telling the caregiver by phone.
+        if (!after.agentTaskId) {
+          await notifyCaregiverByText(after.caregiverId,
+            `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request. Check the app to respond.`);
+        }
         return;
       }
 
@@ -163,16 +210,25 @@ export const onBookingRequestWrite = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} is unable to accept your booking request.`,
           data: { bookingId: context.params.bookingId },
         });
+        // Same reasoning as above — an Evia-negotiated decline already texts
+        // the family from shiftOffer.ts's onOfferNotAccepted.
+        if (!after.agentTaskId) {
+          await notifyClientByText(after.clientId,
+            `${after.caregiverName || 'Your caregiver'} isn't able to accept that booking request.`);
+        }
       }
 
       // Cancelled → notify caregiver
       if (statusAfter === 'cancelled' && after.caregiverId) {
+        const noun = statusBefore === 'accepted' ? 'booking' : 'booking request';
         await addNotification(after.caregiverId, {
           type: 'booking_cancelled',
           title: 'Booking Cancelled',
-          body: `${after.clientName || 'A client'} cancelled their booking${statusBefore === 'accepted' ? '' : ' request'}.`,
+          body: `${after.clientName || 'A client'} cancelled their ${noun}.`,
           data: { bookingId: context.params.bookingId },
         });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'A client'} cancelled their ${noun}. Sorry for the inconvenience.`);
       }
     } catch (err) {
       console.error('[onBookingRequestWrite] error:', err);
@@ -207,6 +263,12 @@ export const onBookingAmendmentWrite = functions.firestore
             : `${after.clientName || 'Your client'} wants to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
         });
+        // Single source of truth for this text — request_schedule_amendment
+        // (mcp/server.ts) deliberately does not also send it, to avoid a
+        // double text when a family requests this through Evia.
+        await notifyCaregiverByText(after.caregiverId, isOneDay
+          ? `${after.clientName || 'A family'} would like to add a visit on ${after.startDate}. Reply here to accept or decline.`
+          : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule. Reply here to accept or decline.`);
         return;
       }
 
@@ -221,6 +283,8 @@ export const onBookingAmendmentWrite = functions.firestore
           body: `${after.caregiverName} accepted your request to add ${days} to your regular schedule.`,
           data: { amendmentId: context.params.amendmentId },
         });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} accepted your request to add ${days} to the schedule.`);
       }
 
       // Declined → notify client
@@ -231,6 +295,8 @@ export const onBookingAmendmentWrite = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} is unable to accept your schedule change request.`,
           data: { amendmentId: context.params.amendmentId },
         });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} isn't able to accept that schedule change request.`);
       }
 
       // Cancelled → notify caregiver
@@ -241,6 +307,8 @@ export const onBookingAmendmentWrite = functions.firestore
           body: `${after.clientName || 'A client'} cancelled their change request.`,
           data: { amendmentId: context.params.amendmentId },
         });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'A client'} withdrew that schedule-change request — no need to respond.`);
       }
     } catch (err) {
       console.error('[onBookingAmendmentWrite] error:', err);
@@ -300,7 +368,12 @@ export const onShiftStatusChanged = functions.firestore
             : `${after.caregiverName || 'Your caregiver'} can't make the extra visit${fmtDate}.`,
           data: { shiftId },
         });
-      // Caregiver started shift → notify client
+        await notifyClientByText(after.clientId, accepted
+          ? `${after.caregiverName || 'Your caregiver'} confirmed your extra visit${fmtDate}.`
+          : `${after.caregiverName || 'Your caregiver'} can't make the extra visit${fmtDate}.`);
+      // Caregiver started shift → notify client (parity with onAppointmentUpdated's
+      // arrival ping — start_shift/complete_shift never message the family
+      // themselves, so this trigger is the only place this text comes from).
       } else if (after.status === 'in-progress' && after.clientId) {
         await addNotification(after.clientId, {
           type: 'shift_started',
@@ -308,6 +381,7 @@ export const onShiftStatusChanged = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} has started your visit.`,
           data: { shiftId: context.params.shiftId },
         });
+        await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} has arrived and started the visit.`);
       } else if (after.status === 'completed' && after.clientId) {
         // Caregiver ended shift → notify client
         await addNotification(after.clientId, {
@@ -316,6 +390,8 @@ export const onShiftStatusChanged = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
           data: { shiftId: context.params.shiftId },
         });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'}'s visit is complete. A care journal entry will be posted shortly.`);
       } else if (after.status === 'cancelled' && !after.bulkCancelled) {
         // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
         // above and already includes the " on <date>" prefix, or '' if no date.)
@@ -337,6 +413,8 @@ export const onShiftStatusChanged = functions.firestore
             body: `${after.clientName || 'A client'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
           });
+          await notifyCaregiverByText(after.caregiverId,
+            `${after.clientName || 'A client'} cancelled the visit${whenText}. Sorry for the inconvenience.`);
         }
       }
     } catch (err) {

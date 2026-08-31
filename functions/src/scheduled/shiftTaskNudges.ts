@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessNowMinutes } from "../utils/scheduledTime";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -120,12 +121,13 @@ export const sendShiftTaskNudges = functions.pubsub
     const nowMinutes = businessNowMinutes();
     const windowEnd  = nowMinutes + 30;
 
-    const snap = await db.collection("appointments")
-      .where("status", "==", "in-progress")
-      .get();
+    const docs = await queryVisitsMerged({
+      apptStatuses: ["in-progress"],
+      shiftStatuses: ["in-progress"],
+    });
 
     // completedAt is set by handleDone — filter in-memory since Firestore can't query for absent fields
-    const activeAppts = snap.docs.filter(doc => !doc.data().completedAt);
+    const activeAppts = docs.filter(doc => !doc.data().completedAt);
 
     for (const apptDoc of activeAppts) {
       const appt  = apptDoc.data();
@@ -175,7 +177,7 @@ export const sendShiftTaskNudges = functions.pubsub
           const medDetail = matched ? ` ${matched.name} ${matched.dosage}` : "";
 
           const cgFirstName = (cgSnap.data()?.name ?? "").split(" ")[0] || "there";
-          const seniorNameForNudge = (appt.clientName ?? appt.seniorName ?? "your client") as string;
+          const seniorNameForNudge = visitSeniorName(appt, "your client");
 
           const content = await generateCaraMessage({
             audience: "caregiver",

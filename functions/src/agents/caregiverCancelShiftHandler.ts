@@ -22,12 +22,23 @@ const db = admin.firestore();
 interface CancelShift {
   index:      number;
   id:         string;
+  coll:       "appointments" | "shifts";
   date:       string;
   time:       string;
   clientName: string;
   clientId:   string;
   seniorName: string;
   startTime:  string;
+}
+
+// shifts docs (booking_requests/shifts pipeline, 2026-08-30) carry
+// careRecipients: [{name}] instead of a top-level seniorName field.
+function seniorNameFor(coll: "appointments" | "shifts", data: FirebaseFirestore.DocumentData): string {
+  if (coll === "shifts") {
+    const recipients = data.careRecipients as Array<{ name?: string }> | undefined;
+    return recipients?.[0]?.name || data.clientName || "the client";
+  }
+  return data.seniorName ?? data.clientName ?? "the client";
 }
 
 async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
@@ -64,15 +75,26 @@ export async function handleCaregiverCancelShift(
   if (step === "identify_shift") {
     // Business-timezone today — UTC hid tonight's shift after 5pm PT
     const today = businessTodayStr();
-    const snap = await db.collection("appointments")
-      .where("caregiverId", "==", caregiverId)
-      .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])
-      .where("date",        ">=", today)
-      .orderBy("date", "asc")
-      .limit(5)
-      .get();
+    // Query both collections — a shift booked via the newer booking_requests/
+    // shifts pipeline (2026-08-30) never appears in `appointments` at all.
+    const [apptSnap, shiftsSnap] = await Promise.all([
+      db.collection("appointments")
+        .where("caregiverId", "==", caregiverId)
+        .where("status",      "in", ["confirmed", "pending_caregiver_confirmation"])
+        .where("date",        ">=", today)
+        .orderBy("date", "asc")
+        .limit(5)
+        .get(),
+      db.collection("shifts")
+        .where("caregiverId", "==", caregiverId)
+        .where("status",      "in", ["scheduled", "in-progress"])
+        .where("date",        ">=", today)
+        .orderBy("date", "asc")
+        .limit(5)
+        .get(),
+    ]);
 
-    if (snap.empty) {
+    if (apptSnap.empty && shiftsSnap.empty) {
       await sendMessage(chatId, await generateCaraMessage({
         audience: "caregiver",
         language: (session.preferredLanguage as string) === "es" ? "es" : "en",
@@ -86,15 +108,21 @@ export async function handleCaregiverCancelShift(
       return;
     }
 
-    const shifts: CancelShift[] = snap.docs.map((d, i) => ({
+    const merged = [
+      ...apptSnap.docs.map(d => ({ doc: d, coll: "appointments" as const })),
+      ...shiftsSnap.docs.map(d => ({ doc: d, coll: "shifts" as const })),
+    ].sort((a, b) => String(a.doc.data().date).localeCompare(String(b.doc.data().date)));
+
+    const shifts: CancelShift[] = merged.slice(0, 5).map(({ doc, coll }, i) => ({
       index:      i + 1,
-      id:         d.id,
-      date:       d.data().date,
-      time:       d.data().time ?? d.data().startTime ?? "",
-      clientName: d.data().clientName ?? "client",
-      clientId:   d.data().clientId,
-      seniorName: d.data().seniorName ?? d.data().clientName ?? "the client",
-      startTime:  d.data().startTime ?? d.data().time ?? "",
+      id:         doc.id,
+      coll,
+      date:       doc.data().date,
+      time:       doc.data().time ?? doc.data().startTime ?? "",
+      clientName: doc.data().clientName ?? "client",
+      clientId:   doc.data().clientId,
+      seniorName: seniorNameFor(coll, doc.data()),
+      startTime:  doc.data().startTime ?? doc.data().time ?? "",
     }));
 
     await db.collection("agent_sessions").doc(caregiverPhone).update({
@@ -138,6 +166,7 @@ export async function handleCaregiverCancelShift(
         cancelStep:       admin.firestore.FieldValue.delete(),
         cancelCandidates: admin.firestore.FieldValue.delete(),
         cancelShiftId:    admin.firestore.FieldValue.delete(),
+        cancelShiftColl:  admin.firestore.FieldValue.delete(),
         cancelShiftDate:  admin.firestore.FieldValue.delete(),
         cancelShiftClientId: admin.firestore.FieldValue.delete(),
         stateExpiresAt:   admin.firestore.FieldValue.delete(),
@@ -176,6 +205,7 @@ export async function handleCaregiverCancelShift(
       // NO — back out, keep candidates so they can pick a different one
       await db.collection("agent_sessions").doc(caregiverPhone).update({
         cancelShiftId:       admin.firestore.FieldValue.delete(),
+        cancelShiftColl:     admin.firestore.FieldValue.delete(),
         cancelShiftDate:     admin.firestore.FieldValue.delete(),
         cancelShiftClientId: admin.firestore.FieldValue.delete(),
       });
@@ -201,6 +231,7 @@ export async function handleCaregiverCancelShift(
 
     await db.collection("agent_sessions").doc(caregiverPhone).update({
       cancelShiftId:       shift.id,
+      cancelShiftColl:     shift.coll,
       cancelShiftDate:     shift.date,
       cancelShiftClientId: shift.clientId,
       stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -229,6 +260,7 @@ export async function handleCaregiverCancelShift(
     const reason = reasonRaw && reasonRaw !== "__parse_error__" ? reasonRaw : "unspecified";
 
     const shiftId   = session.cancelShiftId as string;
+    const shiftColl = (session.cancelShiftColl as string) === "shifts" ? "shifts" : "appointments";
     const shiftDate = session.cancelShiftDate as string;
 
     if (!shiftId) {
@@ -243,6 +275,7 @@ export async function handleCaregiverCancelShift(
         cancelStep:          admin.firestore.FieldValue.delete(),
         cancelCandidates:    admin.firestore.FieldValue.delete(),
         cancelShiftId:       admin.firestore.FieldValue.delete(),
+        cancelShiftColl:     admin.firestore.FieldValue.delete(),
         cancelShiftDate:     admin.firestore.FieldValue.delete(),
         cancelShiftClientId: admin.firestore.FieldValue.delete(),
         cancelReason:        admin.firestore.FieldValue.delete(),
@@ -251,13 +284,14 @@ export async function handleCaregiverCancelShift(
       return;
     }
 
-    // Load the appointment for context
-    const apptSnap = await db.collection("appointments").doc(shiftId).get();
+    // Load the visit for context — shiftColl resolves to whichever
+    // collection this candidate was listed from (see identify_shift above).
+    const apptSnap = await db.collection(shiftColl).doc(shiftId).get();
     const apptData = apptSnap.data() ?? {};
-    const seniorName = (apptData.seniorName ?? apptData.clientName ?? "the client") as string;
+    const seniorName = seniorNameFor(shiftColl, apptData);
 
-    // Mark appointment cancelled
-    await db.collection("appointments").doc(shiftId).update({
+    // Mark the visit cancelled
+    await db.collection(shiftColl).doc(shiftId).update({
       status:              "cancelled",
       cancelledBy:         "caregiver",
       cancelledAt:         new Date().toISOString(),
@@ -271,6 +305,7 @@ export async function handleCaregiverCancelShift(
       cancelStep:          admin.firestore.FieldValue.delete(),
       cancelCandidates:    admin.firestore.FieldValue.delete(),
       cancelShiftId:       admin.firestore.FieldValue.delete(),
+      cancelShiftColl:     admin.firestore.FieldValue.delete(),
       cancelShiftDate:     admin.firestore.FieldValue.delete(),
       cancelShiftClientId: admin.firestore.FieldValue.delete(),
       cancelReason:        admin.firestore.FieldValue.delete(),

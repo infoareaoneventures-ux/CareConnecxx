@@ -167,6 +167,20 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   journal_comment_edited:             { included: false },
   proactive_draft_approved:           { included: false },
   proactive_draft_rejected:           { included: false },
+  // Evia booking-pipeline parity (2026-08-30): family-initiated actions on
+  // booking_requests/shifts/booking_amendments, mirroring the website's own
+  // My Bookings / Calendar actions.
+  booking_request_cancelled:          { included: true,  description: "Evia cancelled your booking request." },
+  shift_cancelled:                    { included: true,  description: "Evia cancelled a visit." },
+  booking_resent:                     { included: true,  description: "Evia resent your booking request." },
+  amendment_requested:                { included: true,  description: "Evia requested a schedule change." },
+  amendment_cancelled:                { included: true,  description: "Evia cancelled your schedule change request." },
+  // amendment_declined/accepted are logged keyed to the CAREGIVER (their
+  // response to the family's request), so — like booking_request_responded —
+  // they can never resolve to the family owner and are excluded.
+  amendment_declined:                 { included: false },
+  amendment_accepted:                 { included: false },
+  interview_completed:                { included: true,  description: "Evia marked an interview as completed." },
 };
 
 /** The static, PII-free description for an included event, or null if excluded. */

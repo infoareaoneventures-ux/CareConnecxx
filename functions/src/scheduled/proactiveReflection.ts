@@ -155,7 +155,12 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
   const journalSince = new Date(now.getTime() - JOURNAL_LOOKBACK_MS).toISOString();
   const ahead        = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [journalSnap, pastSnap, upcomingSnap, billing, seniorSnap, userSnap] = await Promise.all([
+  // appointments uses `isoDate` (full ISO string); shifts (2026-08-30 pipeline)
+  // has no such field, only a plain `date` (YYYY-MM-DD) — queried separately
+  // at day granularity and merged, since queryVisitsMerged assumes one shared
+  // field name across both collections.
+  const todayStr = now.toISOString().slice(0, 10);
+  const [journalSnap, pastApptSnap, pastShiftSnap, upcomingApptSnap, upcomingShiftSnap, billing, seniorSnap, userSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .where("timestamp", ">=", journalSince)
@@ -167,12 +172,24 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
       .where("isoDate", "<=", now.toISOString())
       .where("status", "==", "completed")
       .limit(20).get(),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("date", ">=", since.slice(0, 10))
+      .where("date", "<=", todayStr)
+      .where("status", "==", "completed")
+      .limit(20).get(),
     db.collection("appointments")
       .where("clientId", "==", userId)
       .where("isoDate", ">", now.toISOString())
       .where("isoDate", "<=", ahead)
       .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
       .orderBy("isoDate", "asc").limit(10).get(),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("date", ">=", todayStr)
+      .where("date", "<=", ahead.slice(0, 10))
+      .where("status", "==", "scheduled")
+      .orderBy("date", "asc").limit(10).get(),
     loadBillingSignals(userId, since),
     db.collection("senior_profiles").doc(seniorId).get(),
     db.collection("users").doc(userId).get(),
@@ -180,8 +197,10 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
 
   return {
     journal:    journalSnap.docs.map(d => d.data()),
-    past:       pastSnap.docs.map(d => d.data()),
-    upcoming:   upcomingSnap.docs.map(d => d.data()),
+    past:       [...pastApptSnap.docs, ...pastShiftSnap.docs].map(d => d.data()),
+    upcoming:   [...upcomingApptSnap.docs, ...upcomingShiftSnap.docs]
+      .map(d => d.data())
+      .sort((a, b) => String(a.date ?? a.isoDate ?? "").localeCompare(String(b.date ?? b.isoDate ?? ""))),
     billing:    billing.signals,
     billingUnavailable: billing.unavailable,
     seniorName: (seniorSnap.data()?.name as string | undefined) ?? "your loved one",

@@ -361,6 +361,65 @@ async function handleCaregiverCancellation(
   });
 }
 
+// ── Caregiver cancellation for the newer booking_requests/shifts pipeline ────
+// (2026-08-30) A visit booked via the newer pipeline lives in `shifts`, not
+// `appointments` — onAppointmentUpdated above never fires for it at all, so a
+// caregiver cancelling one triggered no family alert and no replacement
+// search. This trigger reuses the exact same detection + handoff, scoped to
+// JUST the cancellation branch (arrival/confirmed/completed notifications for
+// shifts-based visits are a separate, not-yet-built follow-on).
+export const onShiftUpdated = functions.firestore
+  .document("shifts/{shiftId}")
+  .onUpdate(async (change, context) => {
+    try {
+      const before = change.before.data();
+      const after  = change.after.data();
+
+      if (!after.clientId) return;
+
+      const statusChanged = before.status !== after.status;
+      if (!statusChanged) return;
+
+      const caregiverCancellation =
+        (after.status === "cancelled" && after.cancelledBy === "caregiver") ||
+        ["caregiver_cancelled", "called_out", "caregiver_called_out"].includes(after.status);
+      if (!caregiverCancellation) return;
+
+      const phone = await getClientPhone(after.clientId);
+      if (!phone) return;
+
+      const transitionVersion = String(
+        after.cancellationTransitionVersion ??
+        (change.after as any).updateTime?.toMillis?.() ??
+        context.eventId,
+      );
+      const operationKey = `shift-cancellation:${change.after.id}:v${transitionVersion}`;
+      const claim = await claimExternalSideEffectOperation({
+        operationKey,
+        operationType: "caregiver_cancellation",
+        targetId: change.after.id,
+      });
+      if (!claim) return;
+      try {
+        // handleCaregiverCancellation reads appt.time — shifts store
+        // startTime instead, so normalize before handing off.
+        await handleCaregiverCancellation(
+          change.after.id,
+          { ...after, time: after.time ?? after.startTime },
+          phone,
+          operationKey,
+        );
+        await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
+      } catch (error) {
+        await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
+        throw error;
+      }
+    } catch (err) {
+      console.error("onShiftUpdated error:", err);
+      throw err;
+    }
+  });
+
 // ── onCreate: create chat room when a booking request is sent (interview tab) ─
 
 export const onBookingRequestCreated = functions.firestore

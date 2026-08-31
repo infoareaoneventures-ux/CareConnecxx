@@ -669,14 +669,15 @@ export const runTriggerEngine = functions.pubsub
     const threeHoursAgoMs = nowNoShowMs - 3 * 60 * 60 * 1000;
     const { apptStartMs, businessTodayStr } = await import("../utils/scheduledTime");
 
-    const noShowSnap = await db
-      .collection("appointments")
-      .where("status", "==", "confirmed")
-      .where("date",   "==", businessTodayStr())
-      .limit(200)
-      .get();
+    const { queryVisitsMerged } = await import("../utils/visitQuery");
+    const noShowDocs = await queryVisitsMerged({
+      dateOp: "==", dateValue: businessTodayStr(),
+      apptStatuses: ["confirmed"],
+      shiftStatuses: ["scheduled"],
+      limit: 200,
+    });
 
-    for (const apptDoc of noShowSnap.docs) {
+    for (const apptDoc of noShowDocs) {
       const appt = apptDoc.data();
       if (appt.noShowChecked) continue; // replacement already run
       if (appt.arrivedAt) continue;     // caregiver checked in, not a no-show

@@ -55,6 +55,18 @@ export function isSeededCaregiver(caregiver: RawCaregiver): boolean {
   return Boolean(caregiver && (caregiver as Record<string, unknown>).__seedTag);
 }
 
+// The exact-city and widened-city lookups previously ignored
+// needsTransportation entirely — only the scored (lat/lng) path applied it.
+// hasValidTransportDocs is precomputed on publicCaregiverProfiles at
+// projection-write time (publicCaregiverProfile.ts), so it's queryable
+// directly here without a document read per candidate.
+function applyTransportFilter(
+  query: FirebaseFirestore.Query,
+  needsTransportation: boolean | undefined,
+): FirebaseFirestore.Query {
+  return needsTransportation ? query.where("hasValidTransportDocs", "==", true) : query;
+}
+
 export const getCaregiverPreviewCaraAction = defineCaraAction({
   name: "get_caregiver_preview",
   description: "Read active caregivers and return a short curated preview for client onboarding.",
@@ -90,11 +102,14 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
     // verificationStatus is set automatically by Checkr on a 'clear' result;
     // admin only intervenes on 'consider' exceptions.
     const localSnap = input.city
-      ? await db
-          .collection("publicCaregiverProfiles")
-          .where("onboardingStatus", "==", "profile_complete")
-          .where("verificationStatus", "==", "approved")
-          .where("city", "==", input.city)
+      ? await applyTransportFilter(
+          db
+            .collection("publicCaregiverProfiles")
+            .where("onboardingStatus", "==", "profile_complete")
+            .where("verificationStatus", "==", "approved")
+            .where("city", "==", input.city),
+          input.needsTransportation,
+        )
           .limit(15)
           .get()
       : await emptyQuerySnapshot();
@@ -114,9 +129,12 @@ export const getCaregiverPreviewCaraAction = defineCaraAction({
       });
     }
 
-    const widerSnap = await db.collection("publicCaregiverProfiles")
-      .where("onboardingStatus", "==", "profile_complete")
-      .where("verificationStatus", "==", "approved")
+    const widerSnap = await applyTransportFilter(
+      db.collection("publicCaregiverProfiles")
+        .where("onboardingStatus", "==", "profile_complete")
+        .where("verificationStatus", "==", "approved"),
+      input.needsTransportation,
+    )
       .limit(15)
       .get();
     const widerCaregivers = widerSnap.docs

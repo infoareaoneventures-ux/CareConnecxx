@@ -14,6 +14,7 @@ const store = {
   sessions:   new Map<string, any>(),   // id → session data (drives the "!=" nudge query)
   stuck:      new Map<string, any>(),   // id → session data (drives the "in" stuck-recovery query)
   caregivers: new Map<string, any>(),   // id → caregiver data (backgroundCheckData etc.)
+  users:      new Map<string, any>(),   // id → users doc (the live-progress check reads this)
   updates:    [] as Array<{ id: string; data: any }>, // every .update() payload, in order
 };
 
@@ -26,6 +27,9 @@ vi.mock("firebase-admin", () => {
   const collection = (name: string) => {
     if (name === "caregivers") {
       return { doc: (id: string) => ({ get: async () => ({ exists: store.caregivers.has(id), data: () => store.caregivers.get(id) }) }) };
+    }
+    if (name === "users") {
+      return { doc: (id: string) => ({ get: async () => ({ exists: store.users.has(id), data: () => store.users.get(id) }) }) };
     }
     // agent_sessions
     let lastOp = "";
@@ -80,6 +84,14 @@ vi.mock("../../agents/onboardingConversation", () => ({
   resendStuckStep: (...a: unknown[]) => resendStuckStep(...a),
 }));
 
+// The real userHasRealOnboardingProgress does its own "caregivers" doc read —
+// mocked here so these tests control the verdict directly via the seeded
+// "users" doc's jobPostingCompleted flag, without pulling in all of webhooks.ts.
+vi.mock("../../linq/webhooks", () => ({
+  userHasRealOnboardingProgress: vi.fn(async (_userId: string, userData: Record<string, unknown>) =>
+    Boolean(userData.jobPostingCompleted)),
+}));
+
 import { sendStaleSessionNudges } from "../staleSessionNudge";
 
 const OLD = new Date(Date.now() - 60 * 60 * 60 * 1000).toISOString(); // 60h ago (> 48h stale)
@@ -95,6 +107,7 @@ beforeEach(() => {
   store.sessions.clear();
   store.stuck.clear();
   store.caregivers.clear();
+  store.users.clear();
   store.updates.length = 0;
   genCalls.length = 0;
   sendSpy.mockClear();
@@ -228,5 +241,46 @@ describe("staleSessionNudge grounding", () => {
     await (sendStaleSessionNudges as any)();
 
     expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  // 2026-08-30 fix: a client who already finished via the WEBSITE still had a
+  // stale, incomplete onboardingStep on this session doc forever — this job
+  // wrongly nudged "you're almost there, just tell us who needs care" for
+  // someone who'd already finished days earlier.
+  it("skips and self-heals a CLIENT session whose website progress is already real", async () => {
+    seedSession("+15550009999", {
+      onboardingStep: "client_ask_senior", userType: "client", userId: "client-1",
+      onboardingData: { firstName: "Hamse" },
+    });
+    store.users.set("client-1", { jobPostingCompleted: true });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(store.updates).toContainEqual({ id: "+15550009999", data: { onboardingStep: "complete" } });
+  });
+
+  it("still nudges a CLIENT session with no real website progress", async () => {
+    seedSession("+15550010000", {
+      onboardingStep: "client_ask_senior", userType: "client", userId: "client-2",
+      onboardingData: { firstName: "Dana" },
+    });
+    store.users.set("client-2", { jobPostingCompleted: false });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(store.updates.some((u) => u.id === "+15550010000" && u.data.onboardingStep === "complete")).toBe(false);
+  });
+
+  it("still nudges a CLIENT session with no users doc at all (fail-soft)", async () => {
+    seedSession("+15550011111", {
+      onboardingStep: "client_ask_senior", userType: "client", userId: "client-missing",
+      onboardingData: { firstName: "Kim" },
+    });
+
+    await (sendStaleSessionNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
   });
 });

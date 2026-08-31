@@ -12,6 +12,7 @@ import { describeWhoIsWho } from "../agents/careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { gateOptionalSend } from "./engineGate";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -89,13 +90,14 @@ export const sendMorningBriefings = functions.pubsub
   .onRun(async () => {
     const today = businessTodayStr();
 
-    // Find all confirmed appointments for today
-    const snap = await db.collection("appointments")
-      .where("date",   "==", today)
-      .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
-      .get();
+    // Find all confirmed visits for today (either pipeline)
+    const docs = await queryVisitsMerged({
+      dateOp: "==", dateValue: today,
+      apptStatuses: ["confirmed", "pending_caregiver_confirmation"],
+      shiftStatuses: ["scheduled"],
+    });
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt = doc.data();
       const caregiverId = appt.caregiverId as string;
       if (!caregiverId) continue;
@@ -116,7 +118,7 @@ export const sendMorningBriefings = functions.pubsub
         const senior   = clientSnap.data();
         const carePlan = carePlanSnap.data();
         const cgFirstName  = ((caregiver.name ?? "there") as string).split(" ")[0];
-        const seniorName   = (senior?.seniorName ?? appt.clientName ?? "your client") as string;
+        const seniorName   = (senior?.seniorName as string | undefined) ?? visitSeniorName(appt, "your client");
         const address      = (appt.address ?? appt.location ?? "the client's home") as string;
         const schedule     = `${appt.startTime ?? ""}${appt.endTime ? `–${appt.endTime as string}` : ""}`;
 
@@ -211,7 +213,7 @@ export const sendMorningBriefings = functions.pubsub
     }
 
     // ── Family morning briefings — send to clients with visits today ──────────
-    await sendFamilyMorningBriefings(today, snap.docs).catch(err =>
+    await sendFamilyMorningBriefings(today, docs).catch(err =>
       console.error("[morningBriefing] sendFamilyMorningBriefings error:", err)
     );
 
@@ -232,18 +234,18 @@ export async function checkCaregiverWorkloads(): Promise<void> {
   weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
   const weekStartStr = weekStart.toISOString().slice(0, 10);
 
-  // Get all caregivers with confirmed/completed appointments this week
-  const apptSnap = await db.collection("appointments")
-    .where("status", "in", ["confirmed", "completed", "in-progress"])
-    .where("date",   ">=", weekStartStr)
-    .where("date",   "<=", today)
-    .get();
+  // Get all caregivers with confirmed/completed visits this week (either pipeline)
+  const visitDocs = await queryVisitsMerged({
+    dateOp: ">=", dateValue: weekStartStr, dateUpperBound: today,
+    apptStatuses: ["confirmed", "completed", "in-progress"],
+    shiftStatuses: ["scheduled", "completed", "in-progress"],
+  });
 
-  if (apptSnap.empty) return;
+  if (visitDocs.length === 0) return;
 
   // Sum hours by caregiver
   const hoursById: Record<string, { hours: number; name: string; phone?: string }> = {};
-  for (const doc of apptSnap.docs) {
+  for (const doc of visitDocs) {
     const d = doc.data();
     const cgId   = d.caregiverId as string;
     const cgName = d.caregiverName as string;
@@ -373,7 +375,7 @@ async function sendFamilyMorningBriefings(
       if (!lastBriefingSnap.empty) continue;
 
       const caregiverName = (cgSnap?.data()?.name ?? appt.caregiverName ?? "Your caregiver") as string;
-      const seniorName    = (clientData.seniorName ?? "your loved one") as string;
+      const seniorName    = (clientData.seniorName as string | undefined) ?? visitSeniorName(appt);
       const startTime     = (appt.startTime ?? "") as string;
       const schedule      = startTime ? `at ${startTime}` : "today";
       // R11 (hallucination hardening 2026-07-17): the reader is the account

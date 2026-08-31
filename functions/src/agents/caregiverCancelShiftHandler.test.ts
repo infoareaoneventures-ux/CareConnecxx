@@ -35,6 +35,10 @@ const hoisted = vi.hoisted(() => {
   });
 
   const sessionsGetMock = vi.fn().mockResolvedValue({ empty: true, docs: [] });
+  // shifts (booking_requests/shifts pipeline, 2026-08-30) — empty by default so
+  // pre-existing appointments-only test expectations are unaffected; individual
+  // tests override this to exercise the shifts-merge path.
+  const shiftsQueryGetMock = vi.fn().mockResolvedValue({ empty: true, docs: [] });
 
   // Chainable query mock — used by .where().where().where().orderBy().limit().get()
   const chain: any = {};
@@ -42,6 +46,12 @@ const hoisted = vi.hoisted(() => {
   chain.orderBy  = vi.fn(() => chain);
   chain.limit    = vi.fn(() => chain);
   chain.get      = vi.fn(() => appointmentsQueryGetMock());
+
+  const shiftsChain: any = {};
+  shiftsChain.where   = vi.fn(() => shiftsChain);
+  shiftsChain.orderBy = vi.fn(() => shiftsChain);
+  shiftsChain.limit   = vi.fn(() => shiftsChain);
+  shiftsChain.get     = vi.fn(() => shiftsQueryGetMock());
 
   const sessionsChain: any = {};
   sessionsChain.where = vi.fn(() => sessionsChain);
@@ -53,6 +63,7 @@ const hoisted = vi.hoisted(() => {
   const collectionMock = vi.fn((name: string) => {
     if (name === "agent_sessions") return { ...sessionsChain, doc: docFn };
     if (name === "appointments")   return { doc: docFn, ...chain };
+    if (name === "shifts")         return { doc: docFn, ...shiftsChain };
     return { doc: docFn, add: addMock, ...chain };
   });
 
@@ -67,7 +78,7 @@ const hoisted = vi.hoisted(() => {
   const runEmergencyReplacement = vi.fn().mockResolvedValue(undefined);
 
   return {
-    updateMock, addMock, docGetMock, appointmentsQueryGetMock, sessionsGetMock,
+    updateMock, addMock, docGetMock, appointmentsQueryGetMock, shiftsQueryGetMock, sessionsGetMock,
     sendMessage, sendViaInteractionAgent, parseWithClaude, quickComplete,
     generateCaraMessage, runEmergencyReplacement, collectionMock,
   };
@@ -126,6 +137,7 @@ describe("handleCaregiverCancelShift", () => {
     hoisted.quickComplete.mockReset();
     hoisted.runEmergencyReplacement.mockClear();
     hoisted.sessionsGetMock.mockResolvedValue({ empty: true, docs: [] });
+    hoisted.shiftsQueryGetMock.mockResolvedValue({ empty: true, docs: [] });
     docGetMock.mockResolvedValue({ exists: true, data: () => ({}) });
     appointmentsQueryGetMock.mockResolvedValue({
       empty: false,
@@ -154,6 +166,43 @@ describe("handleCaregiverCancelShift", () => {
     appointmentsQueryGetMock.mockResolvedValueOnce({ empty: true, docs: [] });
     await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "cancel a shift", {}, CHAT);
     expect(sendMessage.mock.calls[0][1]).toMatch(/don't have any upcoming shifts/);
+  });
+
+  // Booking-pipeline parity (2026-08-30): a shift booked via the newer
+  // booking_requests/shifts pipeline never appears in `appointments` at all —
+  // the caregiver must still be able to see and cancel it by texting Evia.
+  it("identify_shift — lists a shifts-pipeline visit (no appointments doc exists at all)", async () => {
+    appointmentsQueryGetMock.mockResolvedValueOnce({ empty: true, docs: [] });
+    hoisted.shiftsQueryGetMock.mockResolvedValueOnce({
+      empty: false,
+      docs: [
+        { id: "shift-9", data: () => ({ date: "2026-06-15", startTime: "10:00", clientName: "Rivera", clientId: "client-9", careRecipients: [{ name: "Ana Rivera" }] }) },
+      ],
+    });
+    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I need to cancel a shift", {}, CHAT);
+    const out = sendMessage.mock.calls[0][1] as string;
+    expect(out).toMatch(/1\..*2026-06-15/);
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      cancelStep:       "confirm_shift",
+      cancelCandidates: expect.stringContaining("shift-9"),
+    }));
+    const stored = JSON.parse(updateMock.mock.calls.find(c => c[0].cancelCandidates)![0].cancelCandidates);
+    expect(stored[0]).toMatchObject({ id: "shift-9", coll: "shifts", seniorName: "Ana Rivera" });
+  });
+
+  it("identify_shift — merges appointments and shifts candidates sorted by date", async () => {
+    appointmentsQueryGetMock.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ id: "appt-1", data: () => ({ date: "2026-06-20", time: "09:00", clientName: "Doe", clientId: "client-1", seniorName: "Linda Doe" }) }],
+    });
+    hoisted.shiftsQueryGetMock.mockResolvedValueOnce({
+      empty: false,
+      docs: [{ id: "shift-9", data: () => ({ date: "2026-06-15", startTime: "10:00", clientName: "Rivera", clientId: "client-9", careRecipients: [{ name: "Ana Rivera" }] }) }],
+    });
+    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "cancel a shift", {}, CHAT);
+    const out = sendMessage.mock.calls[0][1] as string;
+    // The earlier shifts-pipeline visit (06-15) sorts before the appointments one (06-20).
+    expect(out).toMatch(/1\..*2026-06-15[\s\S]*2\..*2026-06-20/);
   });
 
   it("confirm_shift — picks shift number and asks YES/NO", async () => {
@@ -243,6 +292,37 @@ describe("handleCaregiverCancelShift", () => {
     // The Firestore appointment trigger is the sole family alert/replacement owner.
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
     expect(hoisted.runEmergencyReplacement).not.toHaveBeenCalled();
+  });
+
+  it("ask_reason — cancels a shifts-pipeline visit by updating shifts, not appointments", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce("NO")   // isQuestionOrOther
+      .mockResolvedValueOnce("illness"); // reason summary
+
+    docGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ careRecipients: [{ name: "Ana Rivera" }], clientName: "Rivera", startTime: "10:00" }),
+    });
+
+    const session = {
+      cancelStep:          "ask_reason",
+      cancelShiftId:       "shift-9",
+      cancelShiftColl:     "shifts",
+      cancelShiftDate:     "2026-06-15",
+      cancelShiftClientId: "client-9",
+    };
+
+    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      status:             "cancelled",
+      cancelledBy:        "caregiver",
+      cancellationReason: "illness",
+    }));
+    // Acknowledgment used the shifts doc's careRecipients-derived senior name.
+    expect(hoisted.generateCaraMessage).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.stringContaining("Ana Rivera"),
+    }));
   });
 
   it("ask_reason — isQuestionOrOther answers and does NOT cancel", async () => {

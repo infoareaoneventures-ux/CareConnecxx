@@ -17,6 +17,7 @@ import * as admin from "firebase-admin";
 import { sendMessage, getOrCreateSession } from "../linq/client";
 import { classifyApproval } from "./approvalHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
+import type { BookingTask } from "./bookingExecutor";
 
 const db = admin.firestore();
 
@@ -256,34 +257,46 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
   const now = new Date().toISOString();
 
   if (offer.kind === "booking") {
-    // Confirm every appointment in the offer, flip the booking task, then run
-    // the post-confirmation flow (family confirmation, payment setup, etc.).
-    const batch = db.batch();
-    for (const apptId of offer.appointmentIds) {
-      batch.update(db.collection("appointments").doc(apptId), {
-        status:                 "confirmed",
-        caregiverConfirmed:     true,
-        caregiverConfirmedAt:   now,
-      });
-    }
+    // The real booking record is booking_requests/shifts now (not
+    // appointments) — resolved via the linked agent_tasks doc, which carries
+    // both bookingRequestId and the original appointments[] dates.
     if (offer.agentTaskId) {
-      batch.update(db.collection("agent_tasks").doc(offer.agentTaskId), {
+      const { writeConfirmedShifts, finalizeAcceptedBooking } = await import("./bookingExecutor");
+      const taskSnap = await db.collection("agent_tasks").doc(offer.agentTaskId).get();
+      const task = taskSnap.exists ? (taskSnap.data() as BookingTask & { bookingRequestId?: string }) : null;
+      const bookingRequestId = task?.bookingRequestId;
+      if (task && bookingRequestId) {
+        const bookingReqSnap = await db.collection("booking_requests").doc(bookingRequestId).get();
+        const bookingReqData = bookingReqSnap.data() ?? {};
+        await db.collection("booking_requests").doc(bookingRequestId).update({ status: "accepted" });
+        await writeConfirmedShifts(
+          bookingRequestId,
+          task,
+          (bookingReqData.clientName as string) ?? "",
+          (bookingReqData.seniorName as string | undefined) ?? null,
+          (bookingReqData.address as string | undefined) ?? null,
+        );
+      } else {
+        console.error(`shiftOffer: could not resolve booking_requests for agent task ${offer.agentTaskId} (offer ${offerId})`);
+      }
+      await db.collection("agent_tasks").doc(offer.agentTaskId).update({
         status: "approved", caregiverAccepted: true, caregiverAcceptedAt: now,
       });
-    }
-    await batch.commit();
 
-    await sendMessage(caregiverChatId,
-      "You're confirmed! I'll text you the care plan and directions the morning of every visit."
-    ).catch(() => {});
+      await sendMessage(caregiverChatId,
+        "You're confirmed! I'll text you the care plan and directions the morning of every visit."
+      ).catch(() => {});
 
-    if (offer.agentTaskId) {
-      const { finalizeAcceptedBooking } = await import("./bookingExecutor");
       await finalizeAcceptedBooking(offer.agentTaskId, offer.clientPhone).catch((err) =>
         console.error("shiftOffer: finalizeAcceptedBooking failed", { offerId, err })
       );
     } else {
-      // Offers without an agent task (web-originated): just tell the family.
+      // Offers without an agent task (web-originated): just tell both sides —
+      // nothing to write here since there's no linked booking_requests/task
+      // to resolve a real shift from.
+      await sendMessage(caregiverChatId,
+        "You're confirmed! I'll text you the care plan and directions the morning of every visit."
+      ).catch(() => {});
       const chatId = await clientChatId(offer.clientPhone);
       if (chatId) {
         const msg = await generateCaraMessage({
@@ -300,9 +313,14 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
 
   if (offer.kind === "swap") {
     const p = (offer.payload ?? {}) as { date?: string };
+    // Dual-lookup — same pattern as start_shift/complete_shift: the visit
+    // being swapped may live in appointments (old bookings) or shifts (new
+    // ones written by writeConfirmedShifts).
     const batch = db.batch();
     for (const apptId of offer.appointmentIds) {
-      batch.update(db.collection("appointments").doc(apptId), {
+      const apptSnap = await db.collection("appointments").doc(apptId).get();
+      const coll = apptSnap.exists ? "appointments" : "shifts";
+      batch.update(db.collection(coll).doc(apptId), {
         caregiverId:    offer.caregiverId,
         caregiverName:  offer.caregiverName,
         swapNote:       "Client-requested caregiver swap",
@@ -335,7 +353,12 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
   };
   const batch = db.batch();
   for (const apptId of offer.appointmentIds) {
-    batch.update(db.collection("appointments").doc(apptId), {
+    // Dual-lookup — same pattern as the swap branch above: the visit being
+    // moved may live in appointments (old bookings) or shifts (new ones
+    // written by writeConfirmedShifts).
+    const apptSnap = await db.collection("appointments").doc(apptId).get();
+    const coll = apptSnap.exists ? "appointments" : "shifts";
+    batch.update(db.collection(coll).doc(apptId), {
       date:              p.newDate,
       startTime:         p.newStartTime,
       endTime:           p.newEndTime,
@@ -370,23 +393,26 @@ async function onOfferNotAccepted(
   offer: ShiftOffer,
   reason: "declined" | "expired",
 ): Promise<void> {
-  const now = new Date().toISOString();
   const reasonLabel = reason === "declined" ? "declined_by_caregiver" : "offer_expired";
 
   if (offer.kind === "booking") {
-    // Cancel the pending appointments and the task, then offer alternatives.
-    const batch = db.batch();
-    for (const apptId of offer.appointmentIds) {
-      batch.update(db.collection("appointments").doc(apptId), {
-        status:             "cancelled",
-        cancellationReason: reasonLabel,
-        cancelledAt:        now,
-      });
-    }
+    // Cancel the pending booking_requests doc (not appointments — see
+    // onOfferAccepted's "booking" branch for why) and the task, then offer
+    // alternatives. status:'declined' for a caregiver decline matches
+    // CaregiverBookingsPage.tsx's own handleDecline; 'cancelled' for expiry
+    // since nobody explicitly declined.
     if (offer.agentTaskId) {
+      const taskSnap = await db.collection("agent_tasks").doc(offer.agentTaskId).get();
+      const bookingRequestId = taskSnap.exists ? (taskSnap.data() as { bookingRequestId?: string }).bookingRequestId : undefined;
+      const batch = db.batch();
+      if (bookingRequestId) {
+        batch.update(db.collection("booking_requests").doc(bookingRequestId), {
+          status: reason === "declined" ? "declined" : "cancelled",
+        });
+      }
       batch.update(db.collection("agent_tasks").doc(offer.agentTaskId), { status: reasonLabel });
+      await batch.commit();
     }
-    await batch.commit();
 
     // Skip this caregiver in the re-match.
     await db.collection("agent_sessions").doc(offer.clientPhone).update({
@@ -437,7 +463,9 @@ async function onOfferNotAccepted(
   // kind === "time_change" — keep original schedule, clear the pending marker.
   const batch = db.batch();
   for (const apptId of offer.appointmentIds) {
-    batch.update(db.collection("appointments").doc(apptId), {
+    const apptSnap = await db.collection("appointments").doc(apptId).get();
+    const coll = apptSnap.exists ? "appointments" : "shifts";
+    batch.update(db.collection(coll).doc(apptId), {
       pendingTimeChange: admin.firestore.FieldValue.delete(),
     });
   }

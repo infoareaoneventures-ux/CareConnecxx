@@ -51,6 +51,23 @@ export const sendOnboardingReengagement = functions.pubsub
         if (session.optedOut === true) { skipped++; continue; }
         if (!session.chatId) { skipped++; continue; }
 
+        // Live check (2026-08-30 fix): same bug this job shares with
+        // staleSessionNudge.ts — a client who already finished via the
+        // WEBSITE still has a stale, incomplete onboardingStep here forever.
+        // Only clients have an independent website path (caregiver
+        // onboarding is SMS-only per CLAUDE.md).
+        if (session.userType !== "caregiver" && session.userId) {
+          const userSnap = await db.collection("users").doc(session.userId as string).get();
+          if (userSnap.exists) {
+            const { userHasRealOnboardingProgress } = await import("../linq/webhooks");
+            if (await userHasRealOnboardingProgress(session.userId as string, userSnap.data()!)) {
+              await sessionDoc.ref.update({ onboardingStep: "complete" });
+              skipped++;
+              continue;
+            }
+          }
+        }
+
         const lastInboundAt = session.lastInboundAt as string | undefined;
         if (!lastInboundAt) { skipped++; continue; }
         // Must be stale (>= 24h) but not abandoned (< 14d)

@@ -4,6 +4,7 @@ import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { businessTodayStr, businessNowMinutes } from "../utils/scheduledTime";
+import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -44,12 +45,13 @@ export const sendPreShiftFamilyCheckin = functions.pubsub
     // NOTE: no `.where("preShiftCheckinSent","!=",true)` — Firestore `!=` excludes
     // docs missing the field (appointments are created without it), so it would
     // skip every never-checked-in shift. Filter already-sent in code.
-    const snap = await db.collection("appointments")
-      .where("date",                "==", today)
-      .where("status",              "in", ["confirmed", "pending_caregiver_confirmation"])
-      .get();
+    const docs = await queryVisitsMerged({
+      dateOp: "==", dateValue: today,
+      apptStatuses: ["confirmed", "pending_caregiver_confirmation"],
+      shiftStatuses: ["scheduled"],
+    });
 
-    for (const doc of snap.docs) {
+    for (const doc of docs) {
       const appt     = doc.data();
       const apptId   = doc.id;
       if (appt.preShiftCheckinSent === true) continue;
@@ -75,7 +77,7 @@ export const sendPreShiftFamilyCheckin = functions.pubsub
         const clientPhone   = (sessionData.phone ?? sessionDoc.id) as string;
         const caregiverName = (appt.caregiverName ?? "Your caregiver") as string;
         const cgFirstName   = caregiverName.split(" ")[0] || caregiverName;
-        const seniorName    = (appt.clientName ?? appt.seniorName ?? "your loved one") as string;
+        const seniorName    = visitSeniorName(appt);
 
         const clientSnap   = await db.collection("users").doc(clientId).get().catch(() => null);
         const familyFirst  = ((clientSnap?.data()?.displayName ?? clientSnap?.data()?.name ?? "") as string)
@@ -84,7 +86,7 @@ export const sendPreShiftFamilyCheckin = functions.pubsub
         // for the family member being texted.
         const whoIsWho = describeWhoIsWho({
           ...(sessionData.onboardingData ?? {}),
-          seniorName: sessionData.onboardingData?.seniorName ?? appt.clientName ?? appt.seniorName,
+          seniorName: sessionData.onboardingData?.seniorName ?? seniorName,
         });
 
         const message = await generateCaraMessage({

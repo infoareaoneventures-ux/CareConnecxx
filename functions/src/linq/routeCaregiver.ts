@@ -22,6 +22,7 @@ import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
 import { isJobInviteStale, JOB_INVITE_FLAGS, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
+import { getVisitDoc } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -278,8 +279,13 @@ async function handleShiftConfirmation(
   const cgFirstName  = info.caregiverName.split(" ")[0] || "Your caregiver";
   const displayDate  = (info as any).appointmentDisplay || info.appointmentDate;
 
+  // Dual-lookup — dayBeforeShiftReminder.ts/thirtyMinShiftReminder.ts stamp
+  // this pending-confirmation flag for visits in either appointments (old
+  // bookings) or shifts (new ones from the 2026-08-30 pipeline).
+  const visitSnap = await getVisitDoc(info.appointmentId);
+
   if (decision === "CONFIRM") {
-    await db.collection("appointments").doc(info.appointmentId).update({
+    await visitSnap.ref.update({
       caregiverDayBeforeConfirmed:   true,
       caregiverDayBeforeConfirmedAt: new Date().toISOString(),
     });
@@ -320,7 +326,7 @@ async function handleShiftConfirmation(
     }
 
   } else if (decision === "CANCEL") {
-    await db.collection("appointments").doc(info.appointmentId).update({
+    await visitSnap.ref.update({
       caregiverDayBeforeCancelled:   true,
       caregiverDayBeforeCancelledAt: new Date().toISOString(),
     });
@@ -372,9 +378,8 @@ async function handleShiftConfirmation(
     if (clientPhone) {
       (async () => {
         try {
-          const apptSnap = await db.collection("appointments").doc(info.appointmentId).get();
           const appt = {
-            ...(apptSnap.data() || {}),
+            ...(visitSnap.data() || {}),
             caregiverName: info.caregiverName,
             date:          info.appointmentDate,
             time:          info.startTime,

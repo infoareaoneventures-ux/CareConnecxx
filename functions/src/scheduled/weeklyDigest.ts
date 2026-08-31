@@ -21,7 +21,11 @@ async function getWeekData(seniorId: string, userId: string) {
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [journalSnap, pastApptSnap, upcomingSnap, seniorSnap, userSnap] = await Promise.all([
+  // appointments uses `isoDate` (full ISO string); shifts (2026-08-30
+  // pipeline) has no such field, only a plain `date` (YYYY-MM-DD) — queried
+  // separately at day granularity and merged.
+  const todayStr = now.toISOString().slice(0, 10);
+  const [journalSnap, pastApptSnap, pastShiftSnap, upcomingApptSnap, upcomingShiftSnap, seniorSnap, userSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)
       .where("timestamp", ">=", weekAgo)
@@ -35,6 +39,13 @@ async function getWeekData(seniorId: string, userId: string) {
       .where("status", "==", "completed")
       .limit(10)
       .get(),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("date", ">=", weekAgo.slice(0, 10))
+      .where("date", "<=", todayStr)
+      .where("status", "==", "completed")
+      .limit(10)
+      .get(),
     db.collection("appointments")
       .where("clientId", "==", userId)
       .where("isoDate", ">", now.toISOString())
@@ -43,14 +54,24 @@ async function getWeekData(seniorId: string, userId: string) {
       .orderBy("isoDate", "asc")
       .limit(5)
       .get(),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("date", ">=", todayStr)
+      .where("date", "<=", weekAhead.slice(0, 10))
+      .where("status", "==", "scheduled")
+      .orderBy("date", "asc")
+      .limit(5)
+      .get(),
     db.collection("senior_profiles").doc(seniorId).get(),
     db.collection("users").doc(userId).get(),
   ]);
 
   return {
     journal:    journalSnap.docs.map(d => d.data()),
-    pastAppts:  pastApptSnap.docs.map(d => d.data()),
-    upcoming:   upcomingSnap.docs.map(d => d.data()),
+    pastAppts:  [...pastApptSnap.docs, ...pastShiftSnap.docs].map(d => d.data()),
+    upcoming:   [...upcomingApptSnap.docs, ...upcomingShiftSnap.docs]
+      .map(d => d.data())
+      .sort((a, b) => String(a.date ?? a.isoDate ?? "").localeCompare(String(b.date ?? b.isoDate ?? ""))),
     seniorName: seniorSnap.data()?.name ?? "your loved one",
     clientName: userSnap.data()?.firstName ?? userSnap.data()?.name?.split(" ")[0] ?? "there",
   };
@@ -89,7 +110,7 @@ export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData
   const journalContext = buildJournalContext(journal);
 
   const apptContext = upcoming.map(a =>
-    `- ${a.date} at ${a.time} with ${a.caregiverName}`
+    `- ${a.date} at ${a.time ?? a.startTime} with ${a.caregiverName}`
   ).join("\n");
 
   const completedCount = pastAppts.length;

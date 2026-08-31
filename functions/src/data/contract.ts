@@ -114,9 +114,9 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
   booking_requests: {
     path: "booking_requests",
     docId: "auto",
-    caraWrites: false,
+    caraWrites: true,
     webReads: true,
-    notes: "Web-originated booking requests; Evia's equivalent is agent_tasks(type=booking_confirmation) + shift_offers.",
+    notes: "Booking-pipeline redesign (2026-08-30): Evia's request_booking/manage_booking now write real booking_requests docs directly (bookingExecutor.ts, shiftOffer.ts, mcp/server.ts), matching the website's own shape (PostsPage.tsx handleSendBooking) instead of the old parallel appointments-only pipeline.",
   },
   shift_offers: {
     path: "shift_offers",
@@ -272,6 +272,20 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: true,
     notes: "Formal hire request after interview (services/api.ts submitHireRequest; functions matching.ts + mcp/server.ts). Client/caregiver/admin read; coordinator approves.",
+  },
+  hire_decisions: {
+    path: "hire_decisions",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Client's hire/decline decision after an interview (PostsPage.tsx's 'Not Selected'/hire actions; Evia's submit_interview_feedback in mcp/server.ts writes the same record for its interview-outcome flow).",
+  },
+  booking_amendments: {
+    path: "booking_amendments",
+    docId: "auto",
+    caraWrites: true,
+    webReads: true,
+    notes: "Requests to add/change a scheduled day on an accepted booking (the Calendar's '+Request Visit'; caregiver accept/decline in CaregiverBookingsPage.tsx). Evia's request_schedule_amendment/respond_to_schedule_amendment tools (booking-pipeline redesign, 2026-08-30) write the same doc shape.",
   },
   interview_requests: {
     path: "interview_requests",

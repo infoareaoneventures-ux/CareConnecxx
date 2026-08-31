@@ -775,8 +775,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "create_senior_profile",
     description:
-      "Create an ADDITIONAL care recipient (senior) for this family's household. Use when a family says they want to add another parent/relative they care for. " +
-      "Do NOT use to edit the existing senior — use update_senior_profile for that. The new profile is linked to the family automatically.",
+      "Create an ADDITIONAL care recipient (senior) for this family's household — the same as the '+ Add' button on the website's Care Plan page. " +
+      "Use when a family says they want to add another parent/relative they care for. " +
+      "Do NOT use to edit the existing senior — use update_senior_profile for that. The new profile is linked to the family automatically and shows up as a new tab on the Care Plan page.",
     input_schema: {
       type: "object",
       properties: {
@@ -790,6 +791,20 @@ export const MCP_TOOLS: McpTool[] = [
         location:     { type: "string", description: "City or address, if different from the family's." },
       },
       required: ["clientId", "name"],
+    },
+  },
+  {
+    name: "remove_care_recipient",
+    description:
+      "Remove a care recipient from the household — the same as the trash icon on the website's Care Plan page. Permanent; confirm with the family before calling. " +
+      "Cannot remove the only care recipient on the household (there must always be at least one).",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:           { type: "string", description: "Injected automatically — the owning family account." },
+        recipientFirstName: { type: "string", description: "First name of the care recipient to remove." },
+      },
+      required: ["clientId", "recipientFirstName"],
     },
   },
   {
@@ -1123,17 +1138,23 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "update_care_plan",
     description:
-      "Update the household-level care plan for a senior — care needs, general notes, emergency contacts, or home access codes. " +
+      "Update the care plan for a senior — care needs, general notes, lifestyle & preferences, care location, emergency contacts, or home access codes. " +
       "This is a non-medical marketplace: never solicit or record medications, diagnoses, or other medical details. " +
       "Always confirm the change with the family before calling. Tell them what you're updating.",
     input_schema: {
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
-        field:    { type: "string", description: "Which field to update: 'careNeeds', 'notes', 'emergencyContacts', or 'accessCodes'" },
-        value:    { description: "The new value. For array fields (careNeeds, emergencyContacts), pass an array. For string fields, pass a string. emergencyContacts items: {name, relation, phone, isPrimary}." },
-        action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array" },
-        recipientFirstName: { type: "string", description: "For 'careNeeds'/'notes' only, when the household has more than one care recipient — the first name of who this update is about (optional; omit if there's only one)" },
+        field:    { type: "string", description: "Which field to update: 'careNeeds', 'notes', 'lifestyle', 'careLocation', 'emergencyContacts', or 'accessCodes'" },
+        value:    {
+          description:
+            "The new value. For array fields (careNeeds, emergencyContacts), pass an array. For string fields, pass a string. " +
+            "emergencyContacts items: {name, relation, phone, isPrimary}. " +
+            "lifestyle: a partial object of any of {favoriteActivities[], entertainment[], enjoysConversation, prefersQuiet, familyInArea, familyVisitFreq, friendsVisitors, friendsVisitFreq, hasAppointments, appointmentsDetails} — only the keys given are changed, others are left as they were (always action:'set'). " +
+            "careLocation: {street, city, state, zipCode} — replaces the recipient's care address (always action:'set').",
+        },
+        action:   { type: "string", enum: ["set", "append", "remove"], description: "set = replace, append = add to array, remove = remove from array. lifestyle/careLocation only support 'set'." },
+        recipientFirstName: { type: "string", description: "For 'careNeeds'/'notes'/'lifestyle'/'careLocation' only, when the household has more than one care recipient — the first name of who this update is about (optional; omit if there's only one)" },
       },
       required: ["clientId", "field", "value", "action"],
     },
@@ -1719,7 +1740,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_care_team",
     description:
-      "List a client's confirmed/active caregivers — their name, phone, rating, and next scheduled visit.",
+      "List a client's confirmed/active AND past caregivers — name, phone, rating, whether they're currently active, next scheduled visit, and who they're caring for. Matches the website's My Care Team page.",
     input_schema: {
       type: "object",
       properties: {
@@ -5118,13 +5139,25 @@ async function executeToolCall(
 
     if (name === "get_care_plan") {
       const { clientId } = input as { clientId: string };
-      // carePlans (camelCase) is the real, website-facing collection
-      // (components/CarePlan.tsx) — care_plans (snake_case, the previous
-      // literal here) is a completely different, disconnected collection
-      // nothing on the site ever reads or writes.
-      const snap = await db.collection("carePlans").doc(clientId).get();
-      if (!snap.exists) return { success: true, carePlan: null, message: "No care plan on file yet." };
-      return { success: true, carePlan: snap.data() };
+      // carePlans (camelCase) is the real, website-facing collection for
+      // careNeeds/notes/lifestyle/locations (components/CarePlan.tsx's
+      // recipientPlans). Emergency contacts are the one exception (2026-08-31
+      // audit): the website's Care Plan page actually reads/edits its
+      // Emergency Contacts card from the OLDER care_plans (snake_case) doc via
+      // dbService.subscribeToCarePlan/updateCarePlan (services/api.ts) — its
+      // camelCase `carePlans.emergencyContacts` copy (written by the page as a
+      // secondary, redundant write) is never read by anything. Overlay it here
+      // so Evia sees the same contacts the family actually sees.
+      const [snap, legacySnap] = await Promise.all([
+        db.collection("carePlans").doc(clientId).get(),
+        db.collection("care_plans").doc(clientId).get(),
+      ]);
+      if (!snap.exists && !legacySnap.exists) return { success: true, carePlan: null, message: "No care plan on file yet." };
+      const carePlan = { ...(snap.data() ?? {}) };
+      if (legacySnap.exists && Array.isArray(legacySnap.data()?.emergencyContacts)) {
+        carePlan.emergencyContacts = legacySnap.data()!.emergencyContacts;
+      }
+      return { success: true, carePlan };
     }
 
     if (name === "update_care_plan") {
@@ -5136,38 +5169,102 @@ async function executeToolCall(
       // fields (medications, diagnoses, dietary/routine detail, doctor
       // contacts) were removed (2026-08-22) along with the post-payment
       // care-plan interview that used to solicit them; the website never had
-      // an equivalent feature for any of it. emergencyContacts/accessCodes are
-      // the web Care Plan tab's fields — same doc since the 2026-07-12
-      // cutover, so Evia can manage what the family can edit on the web.
-      const ALLOWED_FIELDS = ["careNeeds", "notes", "emergencyContacts", "accessCodes"];
+      // an equivalent feature for any of it.
+      const ALLOWED_FIELDS = ["careNeeds", "notes", "lifestyle", "careLocation", "emergencyContacts", "accessCodes"];
       if (!ALLOWED_FIELDS.includes(field)) {
         return { success: false, error: `Field '${field}' is not updatable. Allowed: ${ALLOWED_FIELDS.join(", ")}` };
       }
-      // carePlans (camelCase) — see get_care_plan above for why this matters.
-      const ref = db.collection("carePlans").doc(clientId);
       const nowIso = new Date().toISOString();
 
-      // careNeeds/notes are per-care-recipient on the real doc
-      // (recipientPlans.{key}.careNeeds / .notes, CarePlan.tsx's getKey) —
-      // not flat top-level fields like emergencyContacts/accessCodes are.
-      // Writing them flat created a stray field the site never reads.
-      let fieldPath = field;
-      if (field === "careNeeds" || field === "notes") {
-        const { resolveRecipientKey } = await import("../agents/careRecipients");
-        const snap = await ref.get();
-        const planKeys = Object.keys((snap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
-        const res = resolveRecipientKey(planKeys, recipientFirstName);
-        if (!res.ok) {
-          return {
-            success: false,
-            error: res.reason === "ambiguous"
-              ? "This household has more than one care recipient — say which one (recipientFirstName) before I update this."
-              : "I don't have a care recipient on file yet to attach this to.",
-          };
+      // emergencyContacts lives on the OLDER care_plans (snake_case) doc — see
+      // get_care_plan above. Everything else is on carePlans (camelCase).
+      if (field === "emergencyContacts") {
+        const legacyRef = db.collection("care_plans").doc(clientId);
+        if (action === "append") {
+          await legacyRef.set({ emergencyContacts: admin.firestore.FieldValue.arrayUnion(value), lastUpdatedBy: "cara", updatedAt: nowIso }, { merge: true });
+        } else if (action === "remove") {
+          await legacyRef.set({ emergencyContacts: admin.firestore.FieldValue.arrayRemove(value), lastUpdatedBy: "cara", updatedAt: nowIso }, { merge: true });
+        } else {
+          await legacyRef.set({ emergencyContacts: value, lastUpdatedBy: "cara", updatedAt: nowIso }, { merge: true });
         }
-        fieldPath = `recipientPlans.${res.key}.${field}`;
+        return { success: true, updated: field, action };
       }
 
+      // carePlans (camelCase) for everything else.
+      const ref = db.collection("carePlans").doc(clientId);
+
+      if (field === "accessCodes") {
+        if (action === "append") {
+          await ref.set({ accessCodes: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
+        } else if (action === "remove") {
+          await ref.set({ accessCodes: admin.firestore.FieldValue.arrayRemove(value) }, { merge: true });
+        } else {
+          await ref.set({ accessCodes: value, updatedAt: nowIso }, { merge: true });
+        }
+        return { success: true, updated: field, action };
+      }
+
+      // careNeeds/notes/lifestyle/careLocation are all per-care-recipient on
+      // the real doc (recipientPlans.{key}.*, CarePlan.tsx's getKey) — resolve
+      // which recipient this update is about.
+      const { resolveRecipientKey } = await import("../agents/careRecipients");
+      const snap = await ref.get();
+      const planKeys = Object.keys((snap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
+      const res = resolveRecipientKey(planKeys, recipientFirstName);
+      if (!res.ok) {
+        return {
+          success: false,
+          error: res.reason === "ambiguous"
+            ? "This household has more than one care recipient — say which one (recipientFirstName) before I update this."
+            : "I don't have a care recipient on file yet to attach this to.",
+        };
+      }
+
+      if (field === "lifestyle") {
+        // Shallow-merge the given keys into the existing lifestyle object first
+        // (so a partial value like {prefersQuiet:true} doesn't wipe out
+        // favoriteActivities etc.), then write it via the SAME dotted-path
+        // convention careNeeds/notes already use below — targets only
+        // recipientPlans.{key}.lifestyle, leaving careNeeds/notes/locations
+        // for this same recipient untouched.
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          return toolError("INVALID_INPUT", "lifestyle requires an object of the fields to change");
+        }
+        const existingLifestyle = ((snap.data()?.recipientPlans as Record<string, any> | undefined)?.[res.key]?.lifestyle ?? {}) as Record<string, unknown>;
+        const merged = { ...existingLifestyle, ...(value as Record<string, unknown>) };
+        await ref.set({ [`recipientPlans.${res.key}.lifestyle`]: merged }, { merge: true });
+        return { success: true, updated: field, action: "set" };
+      }
+
+      if (field === "careLocation") {
+        const loc = value as { street?: string; city?: string; state?: string; zipCode?: string } | undefined;
+        if (!loc?.street || !loc?.zipCode) {
+          return toolError("INVALID_INPUT", "careLocation requires at least street and zipCode");
+        }
+        const { lookupZipPlace } = await import("../utils/geocode");
+        const place = await lookupZipPlace(loc.zipCode).catch(() => null);
+        const locationEntry = {
+          street: loc.street,
+          city:   loc.city ?? place?.city ?? "",
+          state:  loc.state ?? place?.state ?? "",
+          zipCode: loc.zipCode,
+          ...(place ? { lat: place.lat, lng: place.lng } : {}),
+        };
+        // Matches the site's own shape: the recipient's own locations array
+        // (replaced — Evia collects one address at a time, unlike the site's
+        // multi-address picker) plus the shared locationPool the site also
+        // maintains, deduped by street+zip.
+        const existingPool = (snap.data()?.locationPool as Array<{ street?: string; zipCode?: string }> | undefined) ?? [];
+        const alreadyInPool = existingPool.some(l => l.street?.toLowerCase() === locationEntry.street.toLowerCase() && l.zipCode === locationEntry.zipCode);
+        await ref.set({
+          [`recipientPlans.${res.key}.locations`]: [locationEntry],
+          ...(alreadyInPool ? {} : { locationPool: admin.firestore.FieldValue.arrayUnion(locationEntry) }),
+        }, { merge: true });
+        return { success: true, updated: field, action: "set" };
+      }
+
+      // careNeeds / notes
+      const fieldPath = `recipientPlans.${res.key}.${field}`;
       if (action === "append") {
         await ref.set({ [fieldPath]: admin.firestore.FieldValue.arrayUnion(value) }, { merge: true });
       } else if (action === "remove") {
@@ -5662,8 +5759,111 @@ async function executeToolCall(
         createdAt:    nowIso,
         source:       "cara_sms",
       });
-      logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", seniorProfileId: ref.id } }).catch(() => {});
+      // Website-roster parity (2026-08-31 audit): senior_profiles is Evia's own
+      // household model (family group, permissions, care team), but the Care
+      // Plan/Booking pages' actual recipient roster is a COMPLETELY SEPARATE
+      // model — job_postings/{clientId}.careRecipientFirstName + .additionalRecipients[]
+      // — that this tool never touched, so a recipient added via Evia never
+      // showed up as a tab on the site at all. Mirror into that model too,
+      // exactly matching CarePlan.tsx's saveNewRecipient().
+      const [firstName, ...lastParts] = String(seniorName).trim().split(/\s+/);
+      const lastName = lastParts.join(" ");
+      let jobPostingWriteFailed = false;
+      try {
+        const { recipientPlanKey } = await import("../agents/careRecipients");
+        const jobRef = db.collection("job_postings").doc(clientId as string);
+        const jobSnap = await jobRef.get();
+        const jobData = jobSnap.data() ?? {};
+        const isFirstRecipient = !jobData.careRecipientFirstName;
+        if (isFirstRecipient) {
+          await jobRef.set({
+            careRecipientFirstName: firstName,
+            careRecipientLastName:  lastName || "",
+            relationship:           relationship ?? "",
+            careRecipientAge:       age ?? null,
+          }, { merge: true });
+        } else {
+          await jobRef.set({
+            additionalRecipients: admin.firestore.FieldValue.arrayUnion({
+              firstName, lastName: lastName || "", relationship: relationship ?? "", age: age ?? null,
+            }),
+          }, { merge: true });
+        }
+        const key = recipientPlanKey(firstName, lastName);
+        await db.collection("carePlans").doc(clientId as string).set({
+          recipientPlans: { [key]: { careNeeds: [], careNeedDetails: {}, notes: "", locations: [] } },
+        }, { merge: true }).catch(async (err) => {
+          if ((err as { code?: number })?.code === 5 /* NOT_FOUND */) {
+            await db.collection("carePlans").doc(clientId as string).set({ recipientPlans: { [key]: { careNeeds: [], careNeedDetails: {}, notes: "", locations: [] } } });
+          } else {
+            throw err;
+          }
+        });
+      } catch (err) {
+        // Fail soft — the senior_profiles doc (this tool's original purpose)
+        // is already created; don't lose that over a roster-mirror hiccup.
+        jobPostingWriteFailed = true;
+        console.error("[create_senior_profile] job_postings/carePlans mirror failed:", err);
+      }
+      logAudit({ eventType: "senior_profile_created", userId: clientId as string, data: { source: "mcp:create_senior_profile", seniorProfileId: ref.id, jobPostingWriteFailed } }).catch(() => {});
       return { success: true, seniorProfileId: ref.id, message: `Added ${seniorName} to the household.` };
+    }
+
+    if (name === "remove_care_recipient") {
+      const { clientId, recipientFirstName } = input as Record<string, unknown>;
+      if (!clientId || !recipientFirstName) return toolError("INVALID_INPUT", "clientId and recipientFirstName are required");
+      const jobRef = db.collection("job_postings").doc(clientId as string);
+      const jobSnap = await jobRef.get();
+      if (!jobSnap.exists || !jobSnap.data()?.careRecipientFirstName) {
+        return toolError("NOT_FOUND", "No care recipients on file for this household.");
+      }
+      const jobData = jobSnap.data()!;
+      const additional = (jobData.additionalRecipients as Array<Record<string, unknown>> | undefined) ?? [];
+      interface RosterEntry { firstName: unknown; lastName: unknown; relationship: unknown; age: unknown; isPrimary: boolean }
+      const roster: RosterEntry[] = [
+        { firstName: jobData.careRecipientFirstName as string, lastName: (jobData.careRecipientLastName as string) ?? "", relationship: jobData.relationship, age: jobData.careRecipientAge, isPrimary: true },
+        ...additional.map((r) => ({ ...r, isPrimary: false }) as RosterEntry),
+      ];
+      const wanted = String(recipientFirstName).trim().toLowerCase();
+      const matches = roster.filter((r) => String(r.firstName ?? "").trim().toLowerCase() === wanted);
+      if (matches.length === 0) return toolError("NOT_FOUND", `No care recipient named "${recipientFirstName}" on file.`);
+      if (matches.length > 1) return toolError("INVALID_INPUT", `More than one care recipient named "${recipientFirstName}" — this needs to be done on the website.`);
+      if (roster.length === 1) return toolError("INVALID_INPUT", "Can't remove the only care recipient on the household.");
+      const target = matches[0];
+      const archived = { firstName: target.firstName, lastName: target.lastName, relationship: target.relationship, age: target.age, deletedAt: new Date().toISOString() };
+
+      if (target.isPrimary) {
+        const [newPrimary, ...remaining] = additional;
+        if (newPrimary) {
+          await jobRef.update({
+            careRecipientFirstName: newPrimary.firstName,
+            careRecipientLastName:  newPrimary.lastName ?? "",
+            relationship:           newPrimary.relationship ?? "",
+            careRecipientAge:       newPrimary.age ?? null,
+            additionalRecipients:   remaining,
+            deletedRecipients:      admin.firestore.FieldValue.arrayUnion(archived),
+          });
+        } else {
+          await jobRef.update({
+            careRecipientFirstName: admin.firestore.FieldValue.delete(),
+            careRecipientLastName:  admin.firestore.FieldValue.delete(),
+            relationship:           admin.firestore.FieldValue.delete(),
+            careRecipientAge:       admin.firestore.FieldValue.delete(),
+            deletedRecipients:      admin.firestore.FieldValue.arrayUnion(archived),
+          });
+        }
+      } else {
+        const remaining = additional.filter((r) => String(r.firstName ?? "").trim().toLowerCase() !== wanted);
+        await jobRef.update({
+          additionalRecipients: remaining,
+          deletedRecipients:    admin.firestore.FieldValue.arrayUnion(archived),
+        });
+      }
+      // Note: recipientPlans.{key} on carePlans is intentionally left in place,
+      // matching the website's own deleteRecipient() — it orphans the plan data
+      // rather than deleting it (site behavior, not an Evia shortcut).
+      logAudit({ eventType: "senior_profile_archived", userId: clientId as string, data: { source: "mcp:remove_care_recipient", recipientFirstName } }).catch(() => {});
+      return { success: true, removed: target.firstName };
     }
 
     if (name === "delete_review") {
@@ -6496,33 +6696,78 @@ async function executeToolCall(
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       const today = businessTodayStr();
-      const teamSnap = await db.collection("appointments")
-        .where("clientId", "==", clientId)
-        .where("status", "in", ["confirmed", "completed", "in-progress"])
-        .orderBy("date", "desc")
-        .limit(50)
-        .get();
-      const seenCaregivers = new Map<string, { nextShift: string | null; lastSeen: string }>();
-      for (const d of teamSnap.docs) {
-        const appt = d.data();
-        const cid = appt.caregiverId as string;
-        if (!seenCaregivers.has(cid)) {
-          seenCaregivers.set(cid, { nextShift: appt.date >= today ? appt.date : null, lastSeen: appt.date });
-        } else if (appt.date >= today && !seenCaregivers.get(cid)!.nextShift) {
-          seenCaregivers.get(cid)!.nextShift = appt.date;
+
+      // Matches components/client/MyCareTeam.tsx exactly: a caregiver is
+      // "active" only if their booking_requests doc is accepted AND still has
+      // a scheduled shift (a caregiver can be accepted but have no shifts left
+      // if the visits already ran out) — plus the legacy `appointments`
+      // pipeline, merged the same way this session's other reminder/notify
+      // fixes do it, so a caregiver booked either way shows up correctly.
+      const [bookingsSnap, scheduledShiftsSnap, apptSnap] = await Promise.all([
+        db.collection("booking_requests").where("clientId", "==", clientId).limit(100).get(),
+        db.collection("shifts").where("clientId", "==", clientId).where("status", "==", "scheduled").get(),
+        db.collection("appointments").where("clientId", "==", clientId).where("status", "in", ["confirmed", "completed", "in-progress"]).orderBy("date", "desc").limit(50).get(),
+      ]);
+
+      const activeBookingIds = new Set<string>();
+      const nextShiftByBooking = new Map<string, string>();
+      scheduledShiftsSnap.docs.forEach((d) => {
+        const shift = d.data();
+        const bid = shift.bookingRequestId as string | undefined;
+        if (!bid) return;
+        activeBookingIds.add(bid);
+        const existing = nextShiftByBooking.get(bid);
+        if (!existing || (shift.date as string) < existing) nextShiftByBooking.set(bid, shift.date as string);
+      });
+
+      interface TeamEntry { name?: string; caringFor?: string; nextShift: string | null; active: boolean }
+      const active = new Map<string, TeamEntry>();
+      const past   = new Map<string, TeamEntry>();
+
+      bookingsSnap.docs.forEach((doc) => {
+        const b = doc.data();
+        const cid = b.caregiverId as string | undefined;
+        if (!cid) return;
+        const caringFor = Array.isArray(b.careRecipients)
+          ? (b.careRecipients as Array<{ firstName?: string; name?: string }>).map((r) => r.firstName ?? r.name).filter(Boolean).join(", ")
+          : undefined;
+        if (b.status === "accepted" && activeBookingIds.has(doc.id)) {
+          active.set(cid, { name: b.caregiverName, caringFor, nextShift: nextShiftByBooking.get(doc.id) ?? null, active: true });
+        } else if (["cancelled", "declined", "completed"].includes(b.status as string) || (b.status === "accepted" && !activeBookingIds.has(doc.id))) {
+          if (!past.has(cid)) past.set(cid, { name: b.caregiverName, caringFor, nextShift: null, active: false });
         }
-      }
+      });
+
+      // Legacy appointments — same active/past split, only fills in caregivers
+      // the newer pipeline query above didn't already find.
+      apptSnap.docs.forEach((d) => {
+        const appt = d.data();
+        const cid = appt.caregiverId as string | undefined;
+        if (!cid || active.has(cid)) return;
+        const isFuture = (appt.date as string) >= today;
+        if (appt.status !== "completed" && isFuture) {
+          const existing = active.get(cid);
+          active.set(cid, { name: appt.caregiverName, nextShift: !existing?.nextShift || appt.date < existing.nextShift ? appt.date : existing.nextShift, active: true });
+        } else if (!past.has(cid)) {
+          past.set(cid, { name: appt.caregiverName, nextShift: null, active: false });
+        }
+      });
+      // A caregiver active anywhere is never also listed as past.
+      for (const cid of active.keys()) past.delete(cid);
+
+      const entries = [...active.entries(), ...past.entries()].slice(0, 10);
       const careTeam = await Promise.all(
-        [...seenCaregivers.entries()].slice(0, 10).map(async ([cid, meta]) => {
+        entries.map(async ([cid, meta]) => {
           const cgSnap = await db.collection("caregivers").doc(cid).get();
           const cg = cgSnap.data() ?? {};
           return {
             caregiverId: cid,
-            name:        cg.name ?? (`${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Caregiver"),
+            name:        cg.name ?? (`${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || meta.name) ?? "Caregiver",
             phone:       cg.phone ?? null,
             rating:      cg.rating ?? null,
+            active:      meta.active,
             nextShift:   meta.nextShift,
-            lastSeen:    meta.lastSeen,
+            caringFor:   meta.caringFor || null,
           };
         })
       );
@@ -8749,6 +8994,11 @@ async function executeToolCall(
         cancelledAt:  nowIso,
         cancelledBy,
         cancelReason: ciReason ?? null,
+        // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
+        // text the counterpart — this tool already does it below, and the
+        // legacy `interviews` collection has no trigger of its own to rely on
+        // instead, so this manual send can't be removed the way the others were.
+        cancelledViaAgent: true,
       };
       await ivSnap.ref.update(cancelPatch);
       if (twinSnap && twinSnap.data()?.status !== "cancelled") {

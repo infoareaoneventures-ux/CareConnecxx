@@ -198,4 +198,25 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("interview") }));
   });
+
+  it("a website-cancelled interview (no cancelledViaAgent marker) texts the caregiver", async () => {
+    const before = { status: "confirmed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "client" };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
+  });
+
+  it("an Evia-cancelled interview (cancelledViaAgent set by cancel_interview) does NOT get a duplicate text", async () => {
+    const before = { status: "confirmed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "client", cancelledViaAgent: true };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+  });
+
+  it("a website-cancelled interview, caregiver-cancelled direction, texts the client", async () => {
+    const before = { status: "confirmed", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "caregiver" };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
+  });
 });

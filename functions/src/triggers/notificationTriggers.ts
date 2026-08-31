@@ -126,6 +126,11 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.caregiverName} cancelled the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
           });
+          // cancel_interview (mcp/server.ts) already texts this direction
+          // itself and stamps cancelledViaAgent — skip to avoid a double text.
+          if (!after.cancelledViaAgent) {
+            await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} cancelled the scheduled interview.`);
+          }
         } else if (after.caregiverId) {
           // Client cancelled (or unknown)
           await addNotification(after.caregiverId, {
@@ -134,6 +139,9 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.clientName || 'A client'} cancelled the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
           });
+          if (!after.cancelledViaAgent) {
+            await notifyCaregiverByText(after.caregiverId, `${after.clientName || 'A client'} cancelled the scheduled interview.`);
+          }
         }
       }
     } catch (err) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Clock, CreditCard, CheckCircle, AlertTriangle, Loader2, RefreshCw,
-  ChevronDown, ChevronUp, Banknote, ExternalLink,
+  ChevronDown, ChevronUp, ExternalLink,
   AlertCircle, FileDown,
 } from 'lucide-react';
 import { ClientNavigation } from './ClientNavigation';
@@ -10,7 +10,6 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
-import { paymentMethodLabel } from '../../types';
 import { getClientBillingPortalUrl, getClientPaymentMethodStatus } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 
@@ -59,7 +58,7 @@ interface ShiftHoursRow {
   clientId: string;
   clientName: string;
   payRate: number;
-  paymentMethod: 'cash' | 'credit';
+  paymentMethod: 'credit';
   submittedStartTime: string;
   submittedEndTime: string;
   submittedTotalHours: number;
@@ -316,8 +315,8 @@ const ShiftRow: React.FC<{
         <div className="shrink-0 w-[46px]">
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Method</p>
           <div className="flex items-center gap-1 text-xs text-slate-600 mt-0.5">
-            {row.paymentMethod === 'credit' ? <CreditCard className="w-3 h-3" /> : <Banknote className="w-3 h-3" />}
-            <span>{row.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(row.paymentMethod)}</span>
+            <CreditCard className="w-3 h-3" />
+            <span>Card</span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
@@ -1044,7 +1043,7 @@ export const Payments: React.FC = () => {
 
                 <div className="border-t border-slate-100 px-6 py-4 bg-slate-50">
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, your card is automatically charged. For cash payments, the caregiver marks it paid after receiving cash directly from you.
+                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, your card is automatically charged.
                   </p>
                 </div>
               </div>

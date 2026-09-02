@@ -4,7 +4,7 @@ import {
   CalendarDays, Clock, CheckCircle,
   MapPin, MessageSquare, DollarSign, Users,
   TrendingUp, FileText, Heart, Loader2, ChevronRight,
-  Banknote, CreditCard, Lock,
+  CreditCard, Lock,
 } from 'lucide-react';
 import type { Caregiver, AddToastFunction } from '../../types';
 import { db } from '../../lib/firebase';
@@ -180,12 +180,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
     .filter(s => s.status === 'completed' && !submittedShiftIds.has(s.id))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-  // Action items: unsubmitted → correction → confirm cash (client-waiting items excluded)
+  // Action items: unsubmitted → correction (client-waiting items excluded)
   const correctionHours = shiftHours.filter(h => h.status === 'correction_proposed');
-  const confirmCashHours = shiftHours.filter(h =>
-    (h.status === 'approved' || h.status === 'auto_approved') &&
-    (h.paymentMethod || '').toLowerCase() !== 'credit'
-  );
 
   // Build a clientId → photoURL map from all loaded records so older docs without a photo still resolve
   const clientPhotoMap: Record<string, string> = {};
@@ -521,7 +517,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
             <button onClick={() => navigate('/caregiver/payments')} className="text-xs text-primary-600 font-medium hover:underline">View all</button>
           </div>
           {(() => {
-            const hasActions = unsubmittedShifts.length > 0 || correctionHours.length > 0 || confirmCashHours.length > 0;
+            const hasActions = unsubmittedShifts.length > 0 || correctionHours.length > 0;
             if (!hasActions) {
               return (
                 <div className="flex items-center gap-3 p-3 bg-green-50 rounded-xl">
@@ -540,9 +536,9 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
               const d = val && typeof val.toDate === 'function' ? val.toDate() : val ? new Date(val) : null;
               return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
             };
-            // Unified action items: unsubmitted first, then correction, then confirm cash
+            // Unified action items: unsubmitted first, then correction
             const fmtDuration = (hrs: number) => { const s = Math.round(hrs * 3600); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; };
-            type ActionItem = { key: string; clientName: string; clientPhotoURL?: string; clientId?: string; shiftDate: string; startTs: any; endTs: any; hrs: number; pay: number; isCash: boolean; badge: { label: string; color: string; bg: string }; actionLabel: string };
+            type ActionItem = { key: string; clientName: string; clientPhotoURL?: string; clientId?: string; shiftDate: string; startTs: any; endTs: any; hrs: number; pay: number; badge: { label: string; color: string; bg: string }; actionLabel: string };
             const items: ActionItem[] = [
               ...unsubmittedShifts.map(s => {
                 const startTs = s.startedAt ?? null;
@@ -551,19 +547,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                 const endD    = endTs   && typeof endTs.toDate   === 'function' ? endTs.toDate()   : endTs   ? new Date(endTs)   : null;
                 const hrs     = startD && endD ? (endD.getTime() - startD.getTime()) / 3_600_000 : 0;
                 const pay     = hrs * (s.rate ?? 0);
-                const isCash  = (s.paymentMethod || '').toLowerCase() !== 'credit';
-                return { key: s.id, clientName: s.clientName || 'Client', clientPhotoURL: s.clientPhotoURL, clientId: s.clientId, shiftDate: fmtD(s.date ? `${s.date}T00:00` : null), startTs, endTs, hrs, pay, isCash, badge: { label: 'Not Submitted', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' }, actionLabel: 'Submit' };
+                return { key: s.id, clientName: s.clientName || 'Client', clientPhotoURL: s.clientPhotoURL, clientId: s.clientId, shiftDate: fmtD(s.date ? `${s.date}T00:00` : null), startTs, endTs, hrs, pay, badge: { label: 'Not Submitted', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' }, actionLabel: 'Submit' };
               }),
               ...correctionHours.map(h => {
                 const hrs = getShiftHoursDisplay(h);
                 const pay = h.grossPay ?? (hrs * (h.payRate ?? 0));
-                const isCash = (h.paymentMethod || '').toLowerCase() !== 'credit';
-                return { key: h.id, clientName: h.clientName || 'Client', clientPhotoURL: h.clientPhotoURL || clientPhotoMap[h.clientId], clientId: h.clientId, shiftDate: fmtD(h.finalStartTime ?? h.submittedStartTime), startTs: h.finalStartTime ?? h.submittedStartTime, endTs: h.finalEndTime ?? h.submittedEndTime, hrs, pay, isCash, badge: { label: 'Correction Recvd', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' }, actionLabel: 'Respond' };
-              }),
-              ...confirmCashHours.map(h => {
-                const hrs = getShiftHoursDisplay(h);
-                const pay = h.grossPay ?? (hrs * (h.payRate ?? 0));
-                return { key: h.id, clientName: h.clientName || 'Client', clientPhotoURL: h.clientPhotoURL || clientPhotoMap[h.clientId], clientId: h.clientId, shiftDate: fmtD(h.finalStartTime ?? h.submittedStartTime), startTs: h.finalStartTime ?? h.submittedStartTime, endTs: h.finalEndTime ?? h.submittedEndTime, hrs, pay, isCash: true, badge: { label: 'Confirm Cash', color: 'text-green-700', bg: 'bg-green-50 border-green-200' }, actionLabel: 'Confirm Cash' };
+                return { key: h.id, clientName: h.clientName || 'Client', clientPhotoURL: h.clientPhotoURL || clientPhotoMap[h.clientId], clientId: h.clientId, shiftDate: fmtD(h.finalStartTime ?? h.submittedStartTime), startTs: h.finalStartTime ?? h.submittedStartTime, endTs: h.finalEndTime ?? h.submittedEndTime, hrs, pay, badge: { label: 'Correction Recvd', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' }, actionLabel: 'Respond' };
               }),
             ];
             return (
@@ -594,8 +583,8 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                       <div className="flex items-center gap-2 text-xs flex-wrap">
                         {item.hrs > 0 && <><span className="text-slate-500">{fmtDuration(item.hrs)}</span><span className="text-slate-300">·</span></>}
                         <span className="font-semibold text-slate-700">${item.pay.toFixed(2)}</span>
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${item.isCash ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                          {item.isCash ? 'Cash' : 'Card'}
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
+                          Card
                         </span>
                         <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold border ${item.badge.bg} ${item.badge.color}`}>{item.badge.label}</span>
                       </div>
@@ -611,18 +600,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
         {(() => {
           const getAmt = (h: any) => h.grossPay ?? (getShiftHoursDisplay(h) * (h.payRate ?? 0));
           const inReviewHours      = shiftHours.filter((h: any) => ['submitted', 'pending_client_review', 'caregiver_counter_proposed'].includes(h.status));
-          const confirmCashHoursE  = shiftHours.filter((h: any) => ['approved', 'auto_approved'].includes(h.status) && (h.paymentMethod || '').toLowerCase() !== 'credit');
-          const pendingCreditHours = shiftHours.filter((h: any) => ['approved', 'auto_approved'].includes(h.status) && (h.paymentMethod || '').toLowerCase() === 'credit');
+          const pendingCreditHours = shiftHours.filter((h: any) => ['approved', 'auto_approved'].includes(h.status));
           const failedHours        = shiftHours.filter((h: any) => h.status === 'payment_failed');
-          const allOutstanding     = [...inReviewHours, ...correctionHours, ...confirmCashHoursE, ...pendingCreditHours, ...failedHours];
+          const allOutstanding     = [...inReviewHours, ...correctionHours, ...pendingCreditHours, ...failedHours];
           const openCount          = unsubmittedShifts.length + allOutstanding.length;
           const needsActionCount   = unsubmittedShifts.length + correctionHours.length;
-          const confirmCashCount   = confirmCashHoursE.length;
-          const cashRows  = allOutstanding.filter((h: any) => (h.paymentMethod || '').toLowerCase() !== 'credit');
-          const cardRows  = allOutstanding.filter((h: any) => (h.paymentMethod || '').toLowerCase() === 'credit');
-          const cashTotal = cashRows.reduce((s: number, h: any) => s + getAmt(h), 0);
-          const cardTotal = cardRows.reduce((s: number, h: any) => s + getAmt(h), 0);
-          const grandTotal = cashTotal + cardTotal;
+          const grandTotal = allOutstanding.reduce((s: number, h: any) => s + getAmt(h), 0);
           return (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
               <div className="flex items-center justify-between mb-4">
@@ -670,30 +653,13 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         <span className="text-sm font-semibold text-amber-700">{needsActionCount} shift{needsActionCount !== 1 ? 's' : ''}</span>
                       </div>
                     )}
-                    {confirmCashCount > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-500">Pending your confirmation</span>
-                        <span className="text-sm font-semibold text-slate-600">{confirmCashCount} shift{confirmCashCount !== 1 ? 's' : ''}</span>
-                      </div>
-                    )}
                     <div className="h-px bg-slate-200" />
-                    {/* Cash / Card breakdown */}
-                    {cashTotal > 0 && (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                          <Banknote className="w-3.5 h-3.5" /> Cash
-                        </div>
-                        <span className="text-sm font-semibold text-slate-900">${cashTotal.toFixed(2)}</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                        <CreditCard className="w-3.5 h-3.5" /> Card
                       </div>
-                    )}
-                    {cardTotal > 0 && (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                          <CreditCard className="w-3.5 h-3.5" /> Card
-                        </div>
-                        <span className="text-sm font-semibold text-slate-900">${cardTotal.toFixed(2)}</span>
-                      </div>
-                    )}
+                      <span className="text-sm font-semibold text-slate-900">${grandTotal.toFixed(2)}</span>
+                    </div>
                     <div className="h-px bg-slate-200" />
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-semibold text-slate-700">Total outstanding</span>

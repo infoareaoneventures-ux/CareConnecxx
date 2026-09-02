@@ -31,14 +31,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'timesheets' | 'payment-method'>('timesheets');
 
-  // Payment preferences state
-  const [payVenmo, setPayVenmo] = useState('');
-  const [payZelle, setPayZelle] = useState('');
-  const [payCash, setPayCash] = useState(false);
-  const [payOther, setPayOther] = useState('');
-  const [payPrefSaving, setPayPrefSaving] = useState(false);
-  const [payPrefSaved, setPayPrefSaved] = useState(false);
-
   // Shift hours state (per-appointment, replaces weekly timesheets)
   const [shiftRows, setShiftRows] = useState<any[]>([]);
   const [completedShifts, setCompletedShifts] = useState<CompletedShift[]>([]);
@@ -68,43 +60,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
 
   const pendingRows = shiftRows.filter(r => ['pending_client_review', 'correction_proposed'].includes(r.status));
   const historyRows = shiftRows.filter(r => !['pending_client_review', 'correction_proposed'].includes(r.status));
-
-  useEffect(() => {
-    // Load existing payment preferences
-    if (caregiverId && db) {
-      db.collection('caregivers').doc(caregiverId).get()
-        .then(doc => {
-          const prefs = (doc.data() as any)?.paymentPreferences || {};
-          setPayVenmo(prefs.venmo || '');
-          setPayZelle(prefs.zelle || '');
-          setPayCash(!!prefs.cash);
-          setPayOther(prefs.other || '');
-        })
-        .catch(() => {});
-    }
-  }, [caregiverId]);
-
-  const handleSavePayPrefs = async () => {
-    if (!caregiverId || !db) return;
-    setPayPrefSaving(true);
-    try {
-      await db.collection('caregivers').doc(caregiverId).update({
-        paymentPreferences: {
-          ...(payVenmo.trim() && { venmo: payVenmo.trim() }),
-          ...(payZelle.trim() && { zelle: payZelle.trim() }),
-          cash: payCash,
-          ...(payOther.trim() && { other: payOther.trim() }),
-        },
-      });
-      setPayPrefSaved(true);
-      setTimeout(() => setPayPrefSaved(false), 3000);
-      onShowToast?.('Payment preferences saved!', 'success');
-    } catch {
-      onShowToast?.('Failed to save preferences', 'error');
-    } finally {
-      setPayPrefSaving(false);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -240,75 +195,6 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
       {/* Payment Method Tab */}
       {activeTab === 'payment-method' && (
         <div className="space-y-6 animate-slide-in">
-          {/* Payment Preferences — how clients pay YOU */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900">How Clients Pay You</h3>
-              <p className="text-sm text-slate-500 mt-0.5">
-                Families pay you directly after each visit. Set the methods you accept so they know how to send money.
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              {/* Venmo */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Venmo username</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-medium">@</span>
-                  <input
-                    value={payVenmo.replace(/^@/, '')}
-                    onChange={e => setPayVenmo('@' + e.target.value.replace(/^@/, ''))}
-                    placeholder="your-venmo-handle"
-                    className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                  />
-                </div>
-              </div>
-              {/* Zelle */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Zelle (phone or email)</label>
-                <input
-                  value={payZelle}
-                  onChange={e => setPayZelle(e.target.value)}
-                  placeholder="415-555-0100 or you@email.com"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                />
-              </div>
-              {/* Cash toggle */}
-              <div className="flex items-center justify-between py-1">
-                <div>
-                  <p className="text-sm font-medium text-slate-700">Accept cash</p>
-                  <p className="text-xs text-slate-400">Shown on your profile</p>
-                </div>
-                <button
-                  onClick={() => setPayCash(v => !v)}
-                  className={`relative w-11 h-6 rounded-full transition-colors ${payCash ? 'bg-primary-600' : 'bg-slate-300'}`}
-                >
-                  <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${payCash ? 'translate-x-5' : ''}`} />
-                </button>
-              </div>
-              {/* Other */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Other (PayPal, Apple Pay, etc.)</label>
-                <input
-                  value={payOther}
-                  onChange={e => setPayOther(e.target.value)}
-                  placeholder="PayPal @handle, Apple Pay 415-555-0100…"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                />
-              </div>
-              <button
-                onClick={handleSavePayPrefs}
-                disabled={payPrefSaving}
-                className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-colors ${
-                  payPrefSaved
-                    ? 'bg-green-50 border border-green-200 text-green-700'
-                    : 'bg-primary-600 hover:bg-primary-700 text-white'
-                }`}
-              >
-                {payPrefSaved ? '✓ Saved' : payPrefSaving ? 'Saving…' : 'Save Payment Preferences'}
-              </button>
-            </div>
-          </div>
-
           {/* Bank Account (managed via Stripe Connect) */}
           <div className="bg-white rounded-xl border border-[var(--color-neutral-200)] p-6">
             <h3 className="font-bold text-[var(--color-neutral-900)] mb-2">Bank Account</h3>

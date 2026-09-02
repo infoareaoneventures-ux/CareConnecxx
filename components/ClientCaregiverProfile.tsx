@@ -39,7 +39,6 @@ interface CaregiverProfile {
   education?: string;
   verified: boolean;
   backgroundCheckStatus?: string;
-  acceptsCreditCards: boolean;
   hasTransportation: boolean;
   serviceRadius: number;
   weeklyAvailability: Record<string, string[]>;
@@ -76,7 +75,6 @@ function mapRawToProfile(id: string, data: any): CaregiverProfile {
     education: data.education,
     verified: data.verified || false,
     backgroundCheckStatus: data.backgroundCheckStatus,
-    acceptsCreditCards: data.acceptsCreditCards ?? true,
     hasTransportation: hasValidTransportDocs(data),
     serviceRadius: data.serviceRadius ?? 25,
     weeklyAvailability: weeklySlotsToBl(data.weeklyAvailability || {}),

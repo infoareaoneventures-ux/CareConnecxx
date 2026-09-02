@@ -6,7 +6,7 @@ import {
 import { ClientNavigation } from './ClientNavigation';
 import { PlanSelectModal } from './PlanSelectModal';
 import { authService } from '../../services/api';
-import { startIdentityVerification } from '../../services/stripeService';
+import { startIdentityVerification, listenToSubscriptionStatus, hasActiveMembership, SubscriptionStatus } from '../../services/stripeService';
 import firebase, { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 
@@ -82,6 +82,7 @@ export const AccountSettings: React.FC = () => {
   const [zipLookingUp, setZipLookingUp]          = useState(false);
   const [photoURL, setPhotoURL]                  = useState<string | null>(null);
   const [photoUploading, setPhotoUploading]      = useState(false);
+  const [subscription, setSubscription]          = useState<SubscriptionStatus | null>(null);
   const photoInputRef                            = useRef<HTMLInputElement>(null);
 
   // ── Zip → city/state autofill ─────────────────────────────────────────────
@@ -175,6 +176,13 @@ export const AccountSettings: React.FC = () => {
         if (d.identityCheckStatus) setIdentityStatus(d.identityCheckStatus);
       }).catch(() => {});
     }
+
+    // Membership status — mirrors Membership.tsx's own listener exactly
+    // (same collection, same shape) so this row can never drift from what
+    // that page shows. Real subscription state, not the "None" placeholder
+    // this row used to be hardcoded to regardless of billing status.
+    const unsubscribe = listenToSubscriptionStatus(currentUser.uid, setSubscription);
+    return () => unsubscribe();
   }, [navigate]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -354,14 +362,27 @@ export const AccountSettings: React.FC = () => {
                   {joinedDate && <p className="text-xs text-slate-400 mt-0.5">Joined {joinedDate}</p>}
                 </Row>
 
-                {/* Membership */}
+                {/* Membership — mirrors Membership.tsx's own status logic exactly */}
                 <Row label="Membership plan">
-                  <p className="text-sm text-slate-700">
-                    None{' '}
-                    <button onClick={() => setShowPlanModal(true)} className="text-primary-600 hover:underline font-medium">
-                      Add a plan
-                    </button>
-                  </p>
+                  {subscription && hasActiveMembership(subscription) ? (
+                    <p className="text-sm text-slate-700">
+                      <span className="font-semibold text-slate-900">Standard Plan</span>{' '}
+                      <span className="text-slate-400">
+                        · {subscription.cancelAtPeriodEnd ? 'ends' : 'renews'}{' '}
+                        {subscription.currentPeriodEnd?.toLocaleDateString() ?? '—'}
+                      </span>{' '}
+                      <button onClick={() => navigate('/client/membership')} className="text-primary-600 hover:underline font-medium">
+                        Manage
+                      </button>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-slate-700">
+                      None{' '}
+                      <button onClick={() => setShowPlanModal(true)} className="text-primary-600 hover:underline font-medium">
+                        Add a plan
+                      </button>
+                    </p>
+                  )}
                 </Row>
 
                 {/* Identity check */}

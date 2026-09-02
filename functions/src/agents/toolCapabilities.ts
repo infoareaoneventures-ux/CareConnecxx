@@ -344,7 +344,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
   // money
   "cancel_subscription", "reactivate_subscription", "create_refund_request",
-  "request_instant_payout", "retry_shift_payment", "update_booking_payment_method",
+  "request_instant_payout", "retry_shift_payment",
   // people & safety
   "add_family_member", "remove_family_member", "set_block_status",
   // care data

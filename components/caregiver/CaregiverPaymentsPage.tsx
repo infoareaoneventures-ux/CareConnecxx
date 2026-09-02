@@ -55,7 +55,7 @@ interface ShiftRow {
   clientPhotoURL?: string | null;
   caregiverId: string;
   payRate?: number;
-  paymentMethod?: 'cash' | 'credit';
+  paymentMethod?: 'credit';
   submittedStartTime?: string;
   submittedEndTime?: string;
   submittedTotalHours?: number;

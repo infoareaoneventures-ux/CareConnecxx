@@ -237,20 +237,9 @@ export interface Caregiver {
   firstName?: string;
   lastName?: string;
 
-  // Payment Preferences (UrbanSitter model — direct off-platform)
-  paymentPreferences?: {
-    venmo?: string;    // e.g. "@maria-c"
-    zelle?: string;    // phone or email
-    cash?: boolean;
-    other?: string;    // "PayPal @maria", "Apple Pay 415-555-0100", etc.
-  };
-
   // Membership
   membershipStatus?: 'active' | 'trialing' | 'past_due' | 'payment_failed' | 'canceled' | 'inactive' | 'none';
   stripeSubscriptionId?: string;
-
-  // UrbanSitter-style credit acceptance. When false, cannot apply to credit-only job posts.
-  acceptsCreditCards?: boolean;
 
   // Micro-Visit
   acceptsMicroVisits?: boolean;

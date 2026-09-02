@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, Banknote, CreditCard } from 'lucide-react';
+import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
-import { ViewType, Caregiver, ClientIntakeData, Senior, paymentMethodLabel } from '../../types';
+import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService, normalizeJobPost } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
 import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
@@ -1076,7 +1076,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 )}
                               </div>
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · Card</p>
                               )}
                             </div>
                           );
@@ -1181,7 +1181,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                   </div>
                                 )}
                                 {shift.rate != null && (
-                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · {shift.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(shift.paymentMethod)}</p>
+                                  <p className="text-xs font-semibold text-primary-600 mt-1">${shift.rate}/hr · Card</p>
                                 )}
                               </div>
                             </div>
@@ -1212,7 +1212,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
                           : (shift.finalTotalHours ?? shift.submittedTotalHours ?? 0);
                         const pay = shift.grossPay ?? (dispHours * (shift.payRate ?? 0));
-                        const isCash = shift.paymentMethod !== 'credit';
                         const fmtTs = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
                         const shiftDate = startTs ? new Date(startTs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
                         const durationStr = (() => {
@@ -1257,8 +1256,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               {durationStr && <span className="text-slate-500">{durationStr}</span>}
                               {durationStr && <span className="text-slate-300">·</span>}
                               <span className="font-semibold text-slate-700">${pay.toFixed(2)}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${isCash ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                                {isCash ? paymentMethodLabel(shift.paymentMethod) : 'Card'}
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
+                                Card
                               </span>
                               <span className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusCfg.bg} ${statusCfg.color}`}>
                                 {statusCfg.label}
@@ -1296,16 +1295,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                     : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
                   return r.grossPay ?? (hrs * (r.payRate ?? 0));
                 };
-                const cashShifts = unpaidShifts.filter(r => r.paymentMethod !== 'credit');
-                const cardShifts = unpaidShifts.filter(r => r.paymentMethod === 'credit');
-                const cashTotal  = cashShifts.reduce((s, r) => s + shiftAmt(r), 0);
-                const cardTotal  = cardShifts.reduce((s, r) => s + shiftAmt(r), 0);
-                const grandTotal = cashTotal + cardTotal;
+                const grandTotal = unpaidShifts.reduce((s, r) => s + shiftAmt(r), 0);
                 const needsActionCount = unpaidShifts.filter(r =>
                   ['pending_client_review','caregiver_counter_proposed','correction_proposed','payment_failed'].includes(r.status)
-                ).length;
-                const pendingConfirmCount = unpaidShifts.filter(r =>
-                  (r.status === 'approved' || r.status === 'auto_approved') && r.paymentMethod !== 'credit'
                 ).length;
                 return (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
@@ -1335,29 +1327,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               <span className="text-sm font-semibold text-amber-700">{needsActionCount} shift{needsActionCount !== 1 ? 's' : ''}</span>
                             </div>
                           )}
-                          {pendingConfirmCount > 0 && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-slate-500">Pending caregiver confirmation</span>
-                              <span className="text-sm font-semibold text-slate-600">{pendingConfirmCount} shift{pendingConfirmCount !== 1 ? 's' : ''}</span>
-                            </div>
-                          )}
                           <div className="h-px bg-slate-200" />
-                          {cashTotal > 0 && (
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                                <Banknote className="w-3.5 h-3.5" /> Paid directly
-                              </div>
-                              <span className="text-sm font-semibold text-slate-900">${cashTotal.toFixed(2)}</span>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                              <CreditCard className="w-3.5 h-3.5" /> Card
                             </div>
-                          )}
-                          {cardTotal > 0 && (
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5 text-sm text-slate-500">
-                                <CreditCard className="w-3.5 h-3.5" /> Card
-                              </div>
-                              <span className="text-sm font-semibold text-slate-900">${cardTotal.toFixed(2)}</span>
-                            </div>
-                          )}
+                            <span className="text-sm font-semibold text-slate-900">${grandTotal.toFixed(2)}</span>
+                          </div>
                           <div className="h-px bg-slate-200" />
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-semibold text-slate-700">Total outstanding</span>
@@ -1702,7 +1678,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                                 </div>
                               )}
                               {b.rate != null && (
-                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · {b.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(b.paymentMethod)}</p>
+                                <p className="text-sm font-bold text-primary-600">${b.rate}/hr · Card</p>
                               )}
                             </div>
                           </div>

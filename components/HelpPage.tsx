@@ -199,7 +199,7 @@ const caregiversContent = [
     faqs: [
       {
         q: 'How do I get paid?',
-        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe — no action needed, funds typically arrive within 2 business days. Need money sooner? Request a free instant payout from the Payments page (or text PAYOUT to Evia) and it arrives in about 30 minutes. Families paying by cash, Venmo, or Zelle pay you directly — you just confirm receipt in the app.',
+        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe — no action needed, funds typically arrive within 2 business days. Need money sooner? Request a free instant payout from the Payments page (or text PAYOUT to Evia) and it arrives in about 30 minutes.',
       },
       {
         q: 'Does Evia take a cut of my rate?',

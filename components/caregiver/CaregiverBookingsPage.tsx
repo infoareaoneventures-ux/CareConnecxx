@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
-  Loader2, MessageSquare, Star, Banknote, CreditCard, ChevronDown,
+  Loader2, MessageSquare, Star, CreditCard, ChevronDown,
   ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList, Lock,
 } from 'lucide-react';
 import { CaregiverTopNav } from './CaregiverTopNav';
@@ -10,7 +10,6 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { useCaregiverGate } from '../../hooks/useCaregiverGate';
 import { db } from '../../lib/firebase';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
-import { paymentMethodLabel } from '../../types';
 import firebase from '../../lib/firebase';
 import { dbService } from '../../services/api';
 import type { PendingSwap } from '../../services/shiftSwap';
@@ -285,7 +284,6 @@ const RequestCard: React.FC<{
 
         {/* Quick info row */}
         {(() => {
-          const isCard = req.paymentMethod === 'credit' || req.paymentMethod?.toLowerCase() === 'card';
           const dayShiftTimes = req.schedule?.dayShiftTimes;
           const orderedDays = dayShiftTimes
             ? ALL_DAYS_ORDER.filter(d => dayShiftTimes[d]?.some(b => b.start && b.end))
@@ -356,11 +354,9 @@ const RequestCard: React.FC<{
               )}
               {req.rate != null && (
                 <div className="flex items-center gap-2">
-                  {isCard
-                    ? <CreditCard className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    : <Banknote className="w-4 h-4 text-slate-400 flex-shrink-0" />}
+                  <CreditCard className="w-4 h-4 text-slate-400 flex-shrink-0" />
                   <span className="font-semibold text-slate-800">
-                    ${req.rate}/hr · {isCard ? 'Card' : 'Cash'}
+                    ${req.rate}/hr · Card
                   </span>
                   <span className="text-xs text-slate-400">(agreed rate)</span>
                 </div>
@@ -744,10 +740,8 @@ const BookingGroupCard: React.FC<{
         )}
         {base.rate != null && (
           <div className="flex items-center gap-2 text-sm text-slate-700">
-            {base.paymentMethod === 'credit'
-              ? <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
-              : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
-            <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(base.paymentMethod)}</span></span>
+            <CreditCard className="w-4 h-4 text-slate-400 shrink-0" />
+            <span><span className="font-semibold">${base.rate}/hr</span><span className="text-slate-400"> · Card</span></span>
           </div>
         )}
         {base.notes && (

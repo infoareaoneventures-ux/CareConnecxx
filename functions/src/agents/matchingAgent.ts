@@ -23,10 +23,13 @@ import { computeConfidenceScoreFromFields } from "./confidenceScore";
 import { getAppUrl } from "../config/appUrl";
 import { isSeededCaregiver } from "./actions/getCaregiverPreviewAction";
 import { recordCommitment, resolveCommitment } from "./commitmentTracker";
+import { haversineDistanceMiles } from "./caregiverMatchScoring";
+import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { geocodeCityOrZip } from "../utils/geocode";
 
 const db = admin.firestore();
 
-interface CaregiverCandidate {
+export interface CaregiverCandidate {
   id:                       string;
   name:                     string;
   rating?:                  number;
@@ -78,7 +81,7 @@ export function isTemporarilyUnavailable(
 }
 
 /** Compute rule-based signals as a pre-filter before calling Claude. */
-function computeRuleSignals(
+export function computeRuleSignals(
   caregiver: CaregiverCandidate,
   intake: Record<string, unknown>
 ): { ruleScore: number; signals: CandidateSignals } {
@@ -95,11 +98,24 @@ function computeRuleSignals(
 
   const skillsCoverage = computeSkillsCoverage(allSkills, needs);
 
-  // Simple distance proxy from city/zip (no lat/lng in this flow)
+  // Real haversine distance when both sides have coordinates — mirrors
+  // caregiverMatchScoring.ts (the website's own "Nearby Caregivers" logic,
+  // ported byte-identical for backend use elsewhere in this file's sibling
+  // getCaregiverPreviewAction.ts). Found 2026-08-31: this used to be a
+  // city-string/zip-prefix guess ("no lat/lng in this flow") that could rank
+  // — or entirely miss — a real nearby caregiver the website's own distance
+  // math would have surfaced correctly. Falls back to the old city/zip proxy
+  // only when a coordinate is genuinely missing (e.g. geocoding failed).
+  const clientLat = intake.__clientLat as number | undefined;
+  const clientLng = intake.__clientLng as number | undefined;
+  const cgLat = ((caregiver as any).lat ?? (caregiver as any).latitude ?? (caregiver as any).location?.lat) as number | undefined;
+  const cgLng = ((caregiver as any).lng ?? (caregiver as any).longitude ?? (caregiver as any).location?.lng) as number | undefined;
   const cgCity = (caregiver.city ?? "").toLowerCase();
   const cgZip  = ((caregiver as any).zipCode ?? "") as string;
   let distanceMiles: number | undefined;
-  if (cgCity === intakeCity) distanceMiles = 2;
+  if (clientLat != null && clientLng != null && cgLat != null && cgLng != null) {
+    distanceMiles = Math.round(haversineDistanceMiles(clientLat, clientLng, cgLat, cgLng) * 10) / 10;
+  } else if (cgCity === intakeCity) distanceMiles = 2;
   else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3)) distanceMiles = 12;
   else distanceMiles = 22;
 
@@ -258,6 +274,21 @@ export async function runMatchingForClient(
     const zip    = (intake.zipCode ?? "") as string;
     const city   = (intake.city    ?? "") as string;
 
+    // Real coordinates for real distance math (haversine), matching the
+    // website's own "Nearby Caregivers" logic (caregiverMatchScoring.ts) —
+    // found 2026-08-31: this flow used to guess proximity from a city-string/
+    // zip-prefix match, which could miss (or wrongly rank) a caregiver the
+    // website's real distance calculation would have surfaced correctly.
+    // Stashed on `intake` under a double-underscore key so computeRuleSignals
+    // (which takes the same loosely-typed intake object) can read it without
+    // a signature change; failure is non-fatal — falls back to the old
+    // city/zip proxy for this one request rather than blocking matching.
+    const clientLoc = await geocodeCityOrZip(city, zip).catch(() => null);
+    if (clientLoc) {
+      intake.__clientLat = clientLoc.lat;
+      intake.__clientLng = clientLoc.lng;
+    }
+
     // Exclude caregivers the family has already declined
     const rejectedIds: string[] = (session?.rejectedCaregiverIds ?? []) as string[];
     if (!session) {
@@ -274,7 +305,25 @@ export async function runMatchingForClient(
       .get();
 
     const nowIso = new Date().toISOString();
+    // Same bookability rule the website uses everywhere else (onboarding
+    // complete + verification approved) — this flow previously only checked
+    // `status`, which can surface (or hide) caregivers the site itself
+    // wouldn't consider bookable.
+    const eligible = (d: FirebaseFirestore.QueryDocumentSnapshot) => isCaregiverBookable(d.data() as any);
+    const withinRadius = (c: CaregiverCandidate, miles: number): boolean => {
+      const lat = (c as any).lat ?? (c as any).latitude ?? (c as any).location?.lat;
+      const lng = (c as any).lng ?? (c as any).longitude ?? (c as any).location?.lng;
+      if (clientLoc && lat != null && lng != null) {
+        return haversineDistanceMiles(clientLoc.lat, clientLoc.lng, lat, lng) <= miles;
+      }
+      // No coordinates on one side (geocoding failed, or the caregiver doc
+      // predates geocoding) — fall back to the old proxy rather than
+      // silently excluding a candidate we have no real distance for.
+      return c.city?.toLowerCase() === city.toLowerCase() ||
+        !!(c as any).zipCode?.startsWith(zip.slice(0, 3));
+    };
     let caregivers: CaregiverCandidate[] = snap.docs
+      .filter(eligible)
       .map((d) => ({
         id:                     d.id,
         pendingBackgroundCheck: d.data().status === "pending_review",
@@ -285,16 +334,15 @@ export async function runMatchingForClient(
       .filter((c) =>
         !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
         !rejectedIds.includes(c.id) &&
-        !isTemporarilyUnavailable(c as any, nowIso) && (
-          c.city?.toLowerCase() === city.toLowerCase() ||
-          (c as any).zipCode?.startsWith(zip.slice(0, 3))
-        )
+        !isTemporarilyUnavailable(c as any, nowIso) &&
+        withinRadius(c, 25)
       );
 
     if (caregivers.length === 0) {
-      // Broader search if local returns nothing (still respecting rejections
-      // and the paused/opted-out availability filter)
+      // Broader search if local returns nothing (still respecting rejections,
+      // bookability, and the paused/opted-out availability filter)
       caregivers = snap.docs
+        .filter(eligible)
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
         .filter((c) =>
           !isSeededCaregiver(c as unknown as Record<string, unknown>) &&

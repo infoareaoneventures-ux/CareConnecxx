@@ -57,6 +57,7 @@ export type AuditEventType =
   | "user_blocked"
   | "user_unblocked"
   | "user_reported"
+  | "conversation_deleted"
   | "journal_liked"
   | "journal_unliked"
   | "journal_comment_added"

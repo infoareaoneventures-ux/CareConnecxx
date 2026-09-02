@@ -2354,42 +2354,43 @@ export const MCP_TOOLS: McpTool[] = [
   },
   // ── Safety: block + report ────────────────────────────────────────────────
   {
-    name: "block_user",
-    description: "Block another user from messaging or otherwise interacting with this family. MANDATORY: read back who you're about to block and wait for explicit confirmation before calling.",
+    name: "set_block_status",
+    description: "Block, unblock, or file an abuse report against another user. MANDATORY for action:'block' or 'report': confirm with the family first (who — and for 'report', what happened) and wait for explicit confirmation before calling. Unblocking needs no confirmation. Reporting tells the family ops will follow up within 24 hours.",
     input_schema: {
       type: "object",
       properties: {
-        userId:        { type: "string", description: "The blocking user's ID (the family)" },
-        targetUserId:  { type: "string", description: "The user being blocked" },
-        reason:        { type: "string", description: "Optional reason (helps ops triage)" },
+        userId:        { type: "string", description: "The acting user's ID (the family)" },
+        targetUserId:  { type: "string", description: "The user being blocked, unblocked, or reported" },
+        action:        { type: "string", enum: ["block", "unblock", "report"], description: "block, unblock, or report" },
+        reason:        { type: "string", description: "Optional reason for a block (helps ops triage)" },
+        category:      { type: "string", description: "Required for action:'report'. One of: harassment, scam, safety_concern, inappropriate_content, other" },
+        description:   { type: "string", description: "Required for action:'report'. Short description of what happened" },
       },
-      required: ["userId", "targetUserId"],
+      required: ["userId", "targetUserId", "action"],
     },
   },
   {
-    name: "unblock_user",
-    description: "Remove a block on another user.",
+    name: "delete_conversation",
+    description: "Clear a message conversation from the requesting user's own Inbox (mirrors the website's 'Delete conversation' menu action). Only hides it for this user — the other party's copy and the message history are untouched, and it resurfaces automatically the next time either side sends a new message.",
     input_schema: {
       type: "object",
       properties: {
-        userId:        { type: "string", description: "The unblocking user's ID" },
-        targetUserId:  { type: "string", description: "The user to unblock" },
+        userId:        { type: "string", description: "The user clearing the conversation (whose Inbox this affects)" },
+        counterpartId: { type: "string", description: "The other person in the conversation (caregiver or client ID)" },
       },
-      required: ["userId", "targetUserId"],
+      required: ["userId", "counterpartId"],
     },
   },
   {
-    name: "report_user",
-    description: "File a report against another user for abusive behavior. MANDATORY: confirm with the family what the report is about before calling, and tell them ops will follow up within 24 hours.",
+    name: "mark_messages_read",
+    description: "Mark all unread messages in a conversation as read and clear its unread badge (mirrors the website's Inbox automatically marking messages read when a conversation is opened). Use when the family/caregiver says something like 'mark my messages as read' or 'I've seen those'.",
     input_schema: {
       type: "object",
       properties: {
-        userId:        { type: "string", description: "The reporting user's ID" },
-        targetUserId:  { type: "string", description: "The reported user's ID" },
-        category:      { type: "string", description: "One of: harassment, scam, safety_concern, inappropriate_content, other" },
-        description:   { type: "string", description: "Short description of what happened" },
+        userId:        { type: "string", description: "The user marking messages as read" },
+        counterpartId: { type: "string", description: "The other person in the conversation (caregiver or client ID)" },
       },
-      required: ["userId", "targetUserId", "category", "description"],
+      required: ["userId", "counterpartId"],
     },
   },
   // ── Care journal engagement ───────────────────────────────────────────────
@@ -2645,8 +2646,8 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "list_blocked_users",
     description:
-      "List the users this family has blocked (the block_user list), with names where available. " +
-      "Use before block_user/unblock_user or when they ask 'who have I blocked?'.",
+      "List the users this family has blocked (via set_block_status), with names where available. " +
+      "Use before calling set_block_status or when they ask 'who have I blocked?'.",
     input_schema: {
       type: "object",
       properties: {
@@ -2708,6 +2709,8 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "send_client_message",
   "get_payout_history",
   "get_recent_messages",
+  "delete_conversation",
+  "mark_messages_read",
   "request_shift_swap",
   "accept_shift_swap",
   "cancel_shift_swap",
@@ -2754,7 +2757,7 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 
 // Tools that exist ONLY for the caregiver role. Excluded from client turns so the
 // client surface stays under OpenAI's 128-tool hard cap (otherwise capToolsForOpenAi
-// drops an arbitrary tail — which silently hid block_user/report_user and the 2026-07
+// drops an arbitrary tail — which silently hid set_block_status and the 2026-07
 // CRUD tools from clients). Shared tools (memory, web, reminders, messaging reads,
 // send_onboarding_link, get_caregiver_info/reviews) stay client-visible.
 const CAREGIVER_ONLY_TOOL_NAMES = new Set([
@@ -4450,6 +4453,11 @@ async function executeToolCall(
         if (gateError) return gateError;
         const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
         if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
+        // Mirrors BrowseCaregivers.tsx: a hidden profile is never surfaced to
+        // browse/message on the website, so Evia shouldn't relay to one either.
+        if (cgSnap.data()?.profileVisibility === "hidden") {
+          return toolError("NOT_FOUND", "Caregiver not found");
+        }
         const cgPhone = cgSnap.data()?.phone as string | undefined;
         if (!cgPhone) return toolError("NOT_FOUND", "Caregiver phone not on file");
         const caregiverName = (cgSnap.data()?.name as string | undefined) ?? "";
@@ -6846,6 +6854,17 @@ async function executeToolCall(
     if (name === "send_client_message") {
       const { caregiverId, message, clientId: clientIdInput } = input as Record<string, unknown>;
       if (!caregiverId || !message) return toolError("INVALID_INPUT", "caregiverId and message are required");
+      const cgGateSnap = await db.collection("caregivers").doc(caregiverId as string).get();
+      const cgGateData = cgGateSnap.data() ?? {};
+      // Mirrors useCaregiverGate's gateMembership() — InboxView.tsx blocks a
+      // caregiver with an inactive membership from sending in the composer;
+      // Evia must apply the same lower-stakes membership-only check.
+      const cgMembershipActive = cgGateData.membershipStatus === "active"
+        || cgGateData.membershipStatus === "trialing"
+        || (!cgGateData.membershipStatus && cgGateData.membershipPaid === true);
+      if (!cgMembershipActive) {
+        return toolError("MEMBERSHIP_REQUIRED", "This caregiver's membership isn't active — they need an active membership before messaging a family.");
+      }
       let resolvedClientId = clientIdInput as string | undefined;
 
       // If clientId is omitted we MUST verify the caregiver has an active or
@@ -6892,8 +6911,7 @@ async function executeToolCall(
       const clientSnap = await db.collection("users").doc(resolvedClientId).get();
       const clientPhone = clientSnap.data()?.phone as string | undefined;
       if (!clientPhone) return toolError("NOT_FOUND", "Client phone number not found");
-      const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-      const cgName = cgData?.name ?? "Your caregiver";
+      const cgName = cgGateData.name ?? "Your caregiver";
       const { trySend } = await import("../utils/toolNotify");
       const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
       // Also land the message in the same persisted chatRooms thread the
@@ -6950,33 +6968,49 @@ async function executeToolCall(
       const { userId, counterpartId } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
       const msgLimit = Math.min((input.limit as number) ?? 5, 20);
-      let threadsQuery: admin.firestore.Query = db.collection("threads").where("participants", "array-contains", userId);
-      if (counterpartId) threadsQuery = threadsQuery.where("participants", "array-contains", counterpartId);
-      const threadsSnap = await threadsQuery.orderBy("updatedAt", "desc").limit(5).get();
+      // Real caregiver<->client conversations live in chatRooms/{roomId}
+      // (roomId = sorted [uid1,uid2].join('_'), see utils/chatThread.ts), the
+      // same collection send_caregiver_message/send_client_message write to.
+      // This tool previously read `threads`, which is only the Evia-assistant
+      // chat-widget mirror (participants always [uid,'cara']), and ordered by
+      // a field ('updatedAt') no chatRooms/threads doc has ever had — so it
+      // always returned empty, regardless of counterpartId.
+      const { chatRoomIdFor } = await import("../utils/chatThread");
+      let roomRows: Array<{ id: string; data: () => FirebaseFirestore.DocumentData | undefined }>;
+      if (counterpartId) {
+        const roomId = chatRoomIdFor(userId as string, counterpartId as string);
+        const roomSnap = await db.collection("chatRooms").doc(roomId).get();
+        roomRows = roomSnap.exists ? [{ id: roomId, data: () => roomSnap.data() }] : [];
+      } else {
+        const roomsSnap = await db.collection("chatRooms")
+          .where("participants", "array-contains", userId)
+          .orderBy("lastMessageTimestamp", "desc")
+          .limit(5)
+          .get();
+        roomRows = roomsSnap.docs.map((d) => ({ id: d.id, data: () => d.data() }));
+      }
       const results = await Promise.all(
-        threadsSnap.docs.map(async (t) => {
-          const thread = t.data();
-          const participants = (thread.participants as string[]) ?? [];
-          const otherUserId = participants.find((p) => p !== userId);
-          let otherName = "Unknown";
-          if (otherUserId) {
-            const cgSnap = await db.collection("caregivers").doc(otherUserId).get().catch(() => null);
-            const uSnap  = await db.collection("users").doc(otherUserId).get().catch(() => null);
-            const d = cgSnap?.data() ?? uSnap?.data() ?? {};
-            otherName = d.name ?? (`${d.firstName ?? ""} ${d.lastName ?? ""}`.trim() || "Unknown");
-          }
-          const msgsSnap = await db.collection("threads").doc(t.id).collection("messages")
-            .orderBy("timestamp", "desc").limit(msgLimit).get();
-          const messages = msgsSnap.docs.reverse().map((m) => {
-            const msg = m.data();
-            return {
-              from:      msg.senderId === userId ? "you" : otherName,
-              text:      (msg.text as string ?? "").slice(0, 200),
-              timestamp: msg.timestamp,
-            };
-          });
-          return { threadId: t.id, with: otherName, messages };
-        })
+        roomRows
+          .filter((r) => !((r.data()?.deletedAt as Record<string, unknown> | undefined)?.[userId as string]))
+          .map(async (r) => {
+            const room = r.data() ?? {};
+            const participants = (room.participants as string[]) ?? [];
+            const participantNames = (room.participantNames as string[]) ?? [];
+            const otherIdx = participants.findIndex((p) => p !== userId);
+            const otherUserId = otherIdx >= 0 ? participants[otherIdx] : undefined;
+            const otherName = (otherIdx >= 0 ? participantNames[otherIdx] : "") || "Unknown";
+            const msgsSnap = await db.collection("chatRooms").doc(r.id).collection("messages")
+              .orderBy("timestamp", "desc").limit(msgLimit).get();
+            const messages = msgsSnap.docs.reverse().map((m) => {
+              const msg = m.data();
+              return {
+                from:      msg.senderId === userId ? "you" : otherName,
+                text:      (msg.text as string ?? "").slice(0, 200),
+                timestamp: msg.timestamp,
+              };
+            });
+            return { threadId: r.id, with: otherName, withId: otherUserId, messages };
+          })
       );
       return { success: true, threads: results, total: results.length };
     }
@@ -8450,115 +8484,163 @@ async function executeToolCall(
       return { success: true, caregivers, count: caregivers.length };
     }
 
-    // ── block_user ──────────────────────────────────────────────────────────
-    if (name === "block_user") {
-      const { userId, targetUserId, reason } = input as Record<string, unknown>;
-      if (!userId || !targetUserId) return toolError("INVALID_INPUT", "userId and targetUserId are required");
-      if (userId === targetUserId) return toolError("INVALID_INPUT", "Cannot block yourself");
-      await db.collection("users").doc(userId as string).set({
-        blockedUsers: admin.firestore.FieldValue.arrayUnion(targetUserId),
-        updatedAt: nowIso,
-      }, { merge: true });
-      // Surface to ops so abuse patterns become visible.
-      db.collection("admin_alerts").add({
-        type:        "user_blocked",
-        userId,
-        targetUserId,
-        reason:      reason ?? null,
-        severity:    "medium",
-        resolved:    false,
-        createdAt:   nowIso,
-      }).catch(() => {});
-      logAudit({ eventType: "user_blocked", userId: userId as string, data: { source: "mcp:block_user", targetUserId, reason } }).catch(() => {});
-      return { success: true, blocked: true };
-    }
+    // ── set_block_status (block_user + unblock_user merged, 2026-08-31 — kept
+    // both role tool surfaces under OpenAI's 128-tool cap when delete_conversation
+    // was added) ──────────────────────────────────────────────────────────────
+    if (name === "set_block_status") {
+      const { userId, targetUserId, action: blockAction, reason } = input as Record<string, unknown>;
+      if (!userId || !targetUserId || !blockAction) return toolError("INVALID_INPUT", "userId, targetUserId, and action are required");
 
-    // ── unblock_user ────────────────────────────────────────────────────────
-    if (name === "unblock_user") {
-      const { userId, targetUserId } = input as Record<string, unknown>;
-      if (!userId || !targetUserId) return toolError("INVALID_INPUT", "userId and targetUserId are required");
-      // Mirrors the website's own unblockUser (context/CareConnexContext.tsx)
-      // exactly: split arrayRemove + a nested-field delete into two writes
-      // (mixing those sentinels in one call can reject), clean up the
-      // blockedUserProfiles map entry block_user wrote, and hide the shared
-      // chat thread until a new message arrives (same messagesCutoff/deletedAt
-      // treatment as a manual conversation delete) — previously only
-      // blockedUsers was cleared, so an Evia-initiated unblock still showed
-      // the target as blocked on the website.
-      const userRef = db.collection("users").doc(userId as string);
-      await userRef.set({
-        blockedUsers: admin.firestore.FieldValue.arrayRemove(targetUserId),
-        updatedAt: nowIso,
-      }, { merge: true });
-      await userRef.set({
-        [`blockedUserProfiles.${targetUserId}`]: admin.firestore.FieldValue.delete(),
-      }, { merge: true }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
-      try {
-        const roomId = [userId, targetUserId].sort().join("_");
-        const roomRef = db.collection("chatRooms").doc(roomId as string);
-        const roomSnap = await roomRef.get();
-        if (roomSnap.exists) {
-          await roomRef.set({
-            [`messagesCutoff.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
-            [`deletedAt.${userId}`]:      admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
+      if (blockAction === "block") {
+        if (userId === targetUserId) return toolError("INVALID_INPUT", "Cannot block yourself");
+        await db.collection("users").doc(userId as string).set({
+          blockedUsers: admin.firestore.FieldValue.arrayUnion(targetUserId),
+          updatedAt: nowIso,
+        }, { merge: true });
+        // Surface to ops so abuse patterns become visible.
+        db.collection("admin_alerts").add({
+          type:        "user_blocked",
+          userId,
+          targetUserId,
+          reason:      reason ?? null,
+          severity:    "medium",
+          resolved:    false,
+          createdAt:   nowIso,
+        }).catch(() => {});
+        logAudit({ eventType: "user_blocked", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId, reason } }).catch(() => {});
+        return { success: true, blocked: true };
+      }
+
+      if (blockAction === "unblock") {
+        // Mirrors the website's own unblockUser (context/CareConnexContext.tsx)
+        // exactly: split arrayRemove + a nested-field delete into two writes
+        // (mixing those sentinels in one call can reject), clean up the
+        // blockedUserProfiles map entry the block wrote, and hide the shared
+        // chat thread until a new message arrives (same messagesCutoff/deletedAt
+        // treatment as a manual conversation delete) — previously only
+        // blockedUsers was cleared, so an Evia-initiated unblock still showed
+        // the target as blocked on the website.
+        const userRef = db.collection("users").doc(userId as string);
+        await userRef.set({
+          blockedUsers: admin.firestore.FieldValue.arrayRemove(targetUserId),
+          updatedAt: nowIso,
+        }, { merge: true });
+        await userRef.set({
+          [`blockedUserProfiles.${targetUserId}`]: admin.firestore.FieldValue.delete(),
+        }, { merge: true }).catch(() => {}); // field may not exist on legacy blocks — safe to ignore
+        try {
+          const roomId = [userId, targetUserId].sort().join("_");
+          const roomRef = db.collection("chatRooms").doc(roomId as string);
+          const roomSnap = await roomRef.get();
+          if (roomSnap.exists) {
+            await roomRef.set({
+              [`messagesCutoff.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
+              [`deletedAt.${userId}`]:      admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+        } catch {
+          // chatRoom update failing should not block the unblock itself
         }
-      } catch {
-        // chatRoom update failing should not block the unblock itself
+        logAudit({ eventType: "user_unblocked", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId } }).catch(() => {});
+        return { success: true, unblocked: true };
       }
-      logAudit({ eventType: "user_unblocked", userId: userId as string, data: { source: "mcp:unblock_user", targetUserId } }).catch(() => {});
-      return { success: true, unblocked: true };
+
+      if (blockAction === "report") {
+        const { category, description: reportDescription } = input as Record<string, unknown>;
+        if (!category || !reportDescription) return toolError("INVALID_INPUT", "category and description are required for action:'report'");
+        const ALLOWED_CATEGORIES = new Set(["harassment", "scam", "safety_concern", "inappropriate_content", "other"]);
+        if (!ALLOWED_CATEGORIES.has(category as string)) {
+          return toolError("INVALID_INPUT", `category must be one of: ${[...ALLOWED_CATEGORIES].join(", ")}`);
+        }
+        // Match the website's own report shape exactly (components/InboxView.tsx's
+        // handleReportSubmit) — different field names (reportedBy/reportedUser/
+        // reportedUserName/reason/details), `reason` is one of its fixed
+        // human-readable labels (not this tool's machine enum), a Timestamp
+        // createdAt (not an ISO string), and it never writes `status` at all
+        // (the admin list defaults a missing status to "new" client-side).
+        // Writing our own incompatible shape meant SMS-filed reports showed as
+        // "Unknown user" and never appeared as new in the admin queue.
+        const REASON_LABELS: Record<string, string> = {
+          harassment: "Harassment",
+          scam: "Spam or scam",
+          inappropriate_content: "Inappropriate behavior",
+          safety_concern: "Other", // no direct site equivalent — kept in details below
+          other: "Other",
+        };
+        const reportedUserSnap = await db.collection("users").doc(targetUserId as string).get();
+        const reportedUserName = (reportedUserSnap.data()?.name as string | undefined)
+          ?? (reportedUserSnap.data()?.displayName as string | undefined) ?? "";
+        const details = category === "safety_concern"
+          ? `[Safety concern] ${(reportDescription as string).slice(0, 2000)}`
+          : (reportDescription as string).slice(0, 2000);
+        const reportRef = await db.collection("reports").add({
+          reportedBy:       userId,
+          reportedUser:     targetUserId,
+          reportedUserName,
+          reason:           REASON_LABELS[category as string],
+          details,
+          createdAt:        admin.firestore.FieldValue.serverTimestamp(),
+        });
+        db.collection("admin_alerts").add({
+          type:        "user_reported",
+          reporterId:  userId,
+          targetUserId,
+          category,
+          reportId:    reportRef.id,
+          severity:    "medium",
+          resolved:    false,
+          createdAt:   nowIso,
+        }).catch(() => {});
+        logAudit({ eventType: "user_reported", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId, category, reportId: reportRef.id } }).catch(() => {});
+        return { success: true, reported: true, reportId: reportRef.id, followUpWindow: "24h" };
+      }
+
+      return toolError("INVALID_INPUT", "action must be 'block', 'unblock', or 'report'");
     }
 
-    // ── report_user ─────────────────────────────────────────────────────────
-    if (name === "report_user") {
-      const { userId, targetUserId, category, description } = input as Record<string, unknown>;
-      if (!userId || !targetUserId || !category || !description) return toolError("INVALID_INPUT", "userId, targetUserId, category, and description are required");
-      const ALLOWED_CATEGORIES = new Set(["harassment", "scam", "safety_concern", "inappropriate_content", "other"]);
-      if (!ALLOWED_CATEGORIES.has(category as string)) {
-        return toolError("INVALID_INPUT", `category must be one of: ${[...ALLOWED_CATEGORIES].join(", ")}`);
-      }
-      // Match the website's own report shape exactly (components/InboxView.tsx's
-      // handleReportSubmit) — different field names (reportedBy/reportedUser/
-      // reportedUserName/reason/details), `reason` is one of its fixed
-      // human-readable labels (not this tool's machine enum), a Timestamp
-      // createdAt (not an ISO string), and it never writes `status` at all
-      // (the admin list defaults a missing status to "new" client-side).
-      // Writing our own incompatible shape meant SMS-filed reports showed as
-      // "Unknown user" and never appeared as new in the admin queue.
-      const REASON_LABELS: Record<string, string> = {
-        harassment: "Harassment",
-        scam: "Spam or scam",
-        inappropriate_content: "Inappropriate behavior",
-        safety_concern: "Other", // no direct site equivalent — kept in details below
-        other: "Other",
-      };
-      const reportedUserSnap = await db.collection("users").doc(targetUserId as string).get();
-      const reportedUserName = (reportedUserSnap.data()?.name as string | undefined)
-        ?? (reportedUserSnap.data()?.displayName as string | undefined) ?? "";
-      const details = category === "safety_concern"
-        ? `[Safety concern] ${(description as string).slice(0, 2000)}`
-        : (description as string).slice(0, 2000);
-      const reportRef = await db.collection("reports").add({
-        reportedBy:       userId,
-        reportedUser:     targetUserId,
-        reportedUserName,
-        reason:           REASON_LABELS[category as string],
-        details,
-        createdAt:        admin.firestore.FieldValue.serverTimestamp(),
-      });
-      db.collection("admin_alerts").add({
-        type:        "user_reported",
-        reporterId:  userId,
-        targetUserId,
-        category,
-        reportId:    reportRef.id,
-        severity:    "medium",
-        resolved:    false,
-        createdAt:   nowIso,
-      }).catch(() => {});
-      logAudit({ eventType: "user_reported", userId: userId as string, data: { source: "mcp:report_user", targetUserId, category, reportId: reportRef.id } }).catch(() => {});
-      return { success: true, reported: true, reportId: reportRef.id, followUpWindow: "24h" };
+    // ── delete_conversation ─────────────────────────────────────────────────
+    if (name === "delete_conversation") {
+      const { userId, counterpartId } = input as Record<string, unknown>;
+      if (!userId || !counterpartId) return toolError("INVALID_INPUT", "userId and counterpartId are required");
+      const { chatRoomIdFor } = await import("../utils/chatThread");
+      const roomId = chatRoomIdFor(userId as string, counterpartId as string);
+      const roomRef = db.collection("chatRooms").doc(roomId);
+      const roomSnap = await roomRef.get();
+      if (!roomSnap.exists) return toolError("NOT_FOUND", "No conversation found with that person.");
+      // Mirrors services/chatService.ts's deleteConversation exactly: only sets
+      // deletedAt for the requesting user — the other party's copy, and the
+      // message history itself, are untouched. relayIntoSharedChatThread /
+      // chatService.sendMessage already handle clearing this (and preserving
+      // it as messagesCutoff) the next time either side sends a new message.
+      await roomRef.set({ [`deletedAt.${userId}`]: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      logAudit({ eventType: "conversation_deleted", userId: userId as string, data: { source: "mcp:delete_conversation", counterpartId } }).catch(() => {});
+      return { success: true, deleted: true };
+    }
+
+    // ── mark_messages_read ───────────────────────────────────────────────────
+    if (name === "mark_messages_read") {
+      const { userId, counterpartId } = input as Record<string, unknown>;
+      if (!userId || !counterpartId) return toolError("INVALID_INPUT", "userId and counterpartId are required");
+      const { chatRoomIdFor } = await import("../utils/chatThread");
+      const roomId = chatRoomIdFor(userId as string, counterpartId as string);
+      const roomRef = db.collection("chatRooms").doc(roomId);
+      const roomSnap = await roomRef.get();
+      if (!roomSnap.exists) return toolError("NOT_FOUND", "No conversation found with that person.");
+      // Mirrors services/chatService.ts's markMessagesAsRead exactly: every
+      // still-unread message in the room gets isRead:true + this user added to
+      // readBy (the site's own query has no senderId filter — it marks ANY
+      // unread message in the room, including ones this user sent), then the
+      // room's unreadCount for this user resets to 0.
+      const unreadSnap = await roomRef.collection("messages").where("isRead", "==", false).get();
+      let messagesMarkedRead = 0;
+      await Promise.all(unreadSnap.docs.map(async (m) => {
+        const readBy = (m.data()?.readBy as string[] | undefined) ?? [];
+        if (readBy.includes(userId as string)) return;
+        await m.ref.set({ isRead: true, readBy: admin.firestore.FieldValue.arrayUnion(userId) }, { merge: true });
+        messagesMarkedRead++;
+      }));
+      await roomRef.set({ [`unreadCount.${userId}`]: 0 }, { merge: true });
+      return { success: true, messagesMarkedRead };
     }
 
     // ── like_journal_entry ──────────────────────────────────────────────────

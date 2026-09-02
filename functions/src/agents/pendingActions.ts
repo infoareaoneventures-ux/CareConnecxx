@@ -58,8 +58,6 @@ const ALWAYS_CONFIRM = new Set<string>([
   "remove_family_member",
   "cancel_subscription",
   "restore_care_plan_version",
-  "block_user",
-  "report_user",
   "cancel_job_post",
   // U9: financial commit via the agent loop — a refund moves money and must be
   // family-confirmed. (The cascade refundHandler has its own confirm step and does
@@ -95,6 +93,11 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // gate so "add a note that mom prefers tea" doesn't need a confirmation
   // round-trip.
   update_care_plan: (input) => !CARE_PLAN_NOTE_FIELDS.has(String(input.field)),
+  // block_user + unblock_user + report_user were merged into one tool
+  // (2026-08-31, to free tool slots under OpenAI's 128-tool cap) — block and
+  // report are high-stakes (both were ALWAYS_CONFIRM before the merge);
+  // unblock was never gated and must stay that way.
+  set_block_status: (input) => input.action === "block" || input.action === "report",
   // U9: approving a timesheet via the agent loop releases payment to the caregiver
   // — gate the approve path. Disputing is reversible (goes to admin review) and
   // stays ungated.
@@ -131,10 +134,12 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
       return `Cancel Evia subscription`;
     case "restore_care_plan_version":
       return `Restore care plan to version ${String(toolInput.versionId ?? "?")}`;
-    case "block_user":
-      return `Block user ${String(toolInput.targetUserId ?? toolInput.targetPhone ?? "?")}`;
-    case "report_user":
-      return `Report user ${String(toolInput.targetUserId ?? toolInput.targetPhone ?? "?")}`;
+    case "set_block_status": {
+      const who = String(toolInput.targetUserId ?? toolInput.targetPhone ?? "?");
+      if (toolInput.action === "unblock") return `Unblock user ${who}`;
+      if (toolInput.action === "report") return `Report user ${who}`;
+      return `Block user ${who}`;
+    }
     case "cancel_job_post":
       return `Cancel job post ${String(toolInput.jobId ?? "?")}`;
     case "manage_recurring_schedule":

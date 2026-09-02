@@ -53,6 +53,12 @@ export async function relayIntoSharedChatThread(opts: {
     readBy:     [] as string[],
     type:       "text",
     imageUrl:   null,
+    // The recipient already got a guaranteed-delivery SMS as part of this same
+    // relayIntoSharedChatThread call (see the trySend/sendSMSToUser above the
+    // caller of this function) — the chatRooms-message-created trigger that
+    // texts the recipient on a new message (notifications.ts onMessageSent)
+    // must skip this message, or the recipient gets double-texted for one.
+    viaAgent:   true,
   });
 
   // Mirrors chatService.ts's sendMessage exactly: clear deletedAt for BOTH

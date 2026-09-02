@@ -1,5 +1,16 @@
 import { quickComplete } from "../utils/openaiClient";
 
+// Safety net (2026-08-31): "find me a caregiver near me" and "find a
+// cardiologist near me" share the same sentence shape, and the classifier
+// occasionally mistakes the former for FIND_NEARBY_PROVIDER — which
+// hard-deflects with a canned "Evia cannot search for providers" refusal that
+// never reaches the real caregiver-matching tools (Evia's actual core job). A
+// live family hit exactly this. A literal mention of "caregiver" always wins
+// over that specific misclassification, regardless of what the model guessed.
+export function isCaregiverSearchMisroutedAsProviderSearch(intent: Intent, text: string): boolean {
+  return intent === "FIND_NEARBY_PROVIDER" && /\bcaregivers?\b/i.test(text);
+}
+
 export type Intent =
   | "STOP"
   | "HELP"
@@ -129,7 +140,7 @@ export async function classifyIntentDetailed(
         "ADD_FAMILY_MEMBER = asking to add a family member to care updates (e.g. 'add my sister', 'include my brother John', 'add +1234567890 to updates').\n" +
         "REMOVE_FAMILY_MEMBER = asking to remove a family member from care updates (e.g. 'remove my sister', 'take John off the updates', 'remove +1234567890', 'stop sending updates to my brother').\n" +
         "FACT_CORRECTION = correcting a previously stated fact (e.g. 'actually mom is 82 not 78', 'I meant Tuesday not Monday', 'wait, her doctor is Dr. Chen not Dr. Lee').\n" +
-        "FIND_CAREGIVER = asking to find, search for, or get a new caregiver (e.g. 'I need a caregiver', 'can you find someone', 'looking for help', 'find me a caregiver', 'we need a new caregiver', 'search for caregivers').\n" +
+        "FIND_CAREGIVER = asking to find, search for, or get a new caregiver/companion/home-care helper — Evia's own core service, NOT a medical provider (e.g. 'I need a caregiver', 'can you find someone', 'looking for help', 'find me a caregiver', 'find me a caregiver near me', 'any more caregivers nearby', 'is there another caregiver around me', 'we need a new caregiver', 'search for caregivers').\n" +
         "PAUSE_SCHEDULE = asking to pause or temporarily stop a recurring care schedule (e.g. 'pause the schedule', 'hold care for now', 'skip next few weeks', 'pause recurring visits').\n" +
         "CANCEL_SCHEDULE = asking to cancel/end a recurring care schedule permanently (e.g. 'cancel recurring care', 'stop the weekly schedule', 'end recurring visits', 'cancel the standing schedule').\n" +
         "SCHEDULE_REQUEST = asking Evia to set up a personal reminder (e.g. 'remind me every Monday about mom's medications', 'set a daily reminder at 8am', 'alert me every Friday afternoon').\n" +
@@ -159,7 +170,7 @@ export async function classifyIntentDetailed(
         "PAUSE_ACCOUNT = a caregiver wanting to pause their account / go on vacation / temporarily stop receiving job matches (e.g. 'going on vacation Jul 5-12', 'pause my account', 'I need a break for two weeks', 'stop sending me jobs for a month', 'I'm taking time off').\n" +
         "REACTIVATE = a caregiver wanting to come back from a pause / vacation mode and start receiving jobs again (e.g. 'I'm back', 'reactivate me', 'unpause my account', 'I want to start taking jobs again').\n" +
         "INSTANT_PAYOUT = a caregiver requesting an instant payout of their available balance (e.g. 'PAYOUT', 'cash out now', 'instant payout', 'send me my money now', 'pay me out today').\n" +
-        "FIND_NEARBY_PROVIDER = asking to find or locate a nearby doctor, clinic, hospital, pharmacy, urgent care, dentist, or specialist (e.g. 'find a cardiologist near me', 'closest pharmacy to mom', 'any urgent care nearby', 'find a clinic in Atlanta', 'where can I find a dermatologist close by').\n" +
+        "FIND_NEARBY_PROVIDER = asking to find or locate a nearby MEDICAL provider — doctor, clinic, hospital, pharmacy, urgent care, dentist, or specialist (e.g. 'find a cardiologist near me', 'closest pharmacy to mom', 'any urgent care nearby', 'find a clinic in Atlanta', 'where can I find a dermatologist close by'). Do NOT use this for a caregiver/companion/home-care aide search — 'find me a caregiver near me', 'any caregivers nearby', 'is there another caregiver around me' are FIND_CAREGIVER, never this, even though the sentence shape ('find X near me') looks the same.\n" +
         "BOOK_DOCTOR_APPOINTMENT = asking Evia to book or schedule a doctor appointment on their behalf (e.g. 'book an appointment with Dr. Smith', 'schedule a checkup for mom', 'can you make an appointment with my doctor', 'book me in with Dr. Johnson next week', 'I need to see a doctor — can you book it').\n" +
         "PRESCRIPTION_REFILL = asking Evia to refill or renew an existing prescription at a pharmacy (e.g. 'refill mom's blood pressure medication', 'can you renew my prescription at CVS', 'I need a refill on Lisinopril', 'refill my prescription', 'request a refill at Walgreens', 'renew dad's medication').\n" +
         "NEW_PRESCRIPTION = asking for a brand new prescription for a new condition or medication not previously prescribed (e.g. 'I need a prescription for anxiety', 'get me a prescription for something for the pain', 'mom needs a prescription for her new diagnosis', 'can you help me get a new prescription').\n" +

@@ -7,6 +7,11 @@ const qaHarness = vi.hoisted(() => {
   // carePlans doc per-test without needing a new shared mock — additive only,
   // every other test leaves this null and sees the same exists:false as before.
   const carePlansState: { doc: Record<string, unknown> | null } = { doc: null };
+  // Same idea, generalized: seed a collection's query-result docs by name
+  // (e.g. "booking_requests", "shifts") for the CARE TEAM roster tests —
+  // additive only, every other test leaves this empty and sees the same
+  // empty:true/docs:[] as before.
+  const collectionDocs: Record<string, Array<{ id: string; data: Record<string, unknown> }>> = {};
 
   const makeChain = (collection = "", id?: string): any => ({
     collection: (name: string) => makeChain(name),
@@ -14,13 +19,17 @@ const qaHarness = vi.hoisted(() => {
     where: () => makeChain(collection, id),
     orderBy: () => makeChain(collection, id),
     limit: () => makeChain(collection, id),
-    get: async () => ({
-      exists: (collection === "agent_sessions" && Boolean(id)) || (collection === "carePlans" && carePlansState.doc !== null),
-      data: () => collection === "agent_sessions" ? sessionData : (collection === "carePlans" ? carePlansState.doc : {}),
-      empty: true,
-      docs: [],
-      ref: makeChain(collection, id),
-    }),
+    get: async () => {
+      const seeded = collectionDocs[collection];
+      if (seeded) return { empty: seeded.length === 0, docs: seeded.map((d) => ({ id: d.id, data: () => d.data })) };
+      return {
+        exists: (collection === "agent_sessions" && Boolean(id)) || (collection === "carePlans" && carePlansState.doc !== null),
+        data: () => collection === "agent_sessions" ? sessionData : (collection === "carePlans" ? carePlansState.doc : {}),
+        empty: true,
+        docs: [],
+        ref: makeChain(collection, id),
+      };
+    },
     set: async (data: Record<string, unknown>) => { writes.push({ collection, id, data }); },
     update: async (data: Record<string, unknown>) => { writes.push({ collection, id, data }); },
     add: async (data: Record<string, unknown>) => { writes.push({ collection, data }); return { id: "mock-id" }; },
@@ -36,6 +45,7 @@ const qaHarness = vi.hoisted(() => {
     writes,
     sessionData,
     carePlansState,
+    collectionDocs,
     detectAndStageFactChange: vi.fn(async (..._args: unknown[]) => ({ kind: "not_correction" })),
     factChangeAckCopy: vi.fn((..._args: unknown[]) => null),
     findTombstonedRestatement: vi.fn(async (..._args: unknown[]) => null),
@@ -356,6 +366,31 @@ describe("isTrivialQuickReply", () => {
   ])("routes care, payment, safety, approval, or referral context through the full agent %p", (input) => {
     expect(isTrivialQuickReply(input)).toBe(false);
   });
+
+  // 2026-08-31 fix: real production example — "What is the care address" and
+  // "I think you do" (a pushback follow-up) both slipped through every
+  // keyword check above and got a confidently wrong answer from the tool-less
+  // fast path. Topic-keyword lists can never be complete, so this catches the
+  // SHAPE of a real question or a factual pushback instead of its subject.
+  it.each([
+    "What is the care address",
+    "I think you do",
+    "Who is my caregiver",
+    "Is my caregiver active",
+    "Are you sure",
+    "Do you have my address",
+    "What's my membership status",
+  ])("routes real questions/pushback through the full agent regardless of topic %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(false);
+  });
+
+  it.each([
+    "How's it going",
+    "How are you",
+    "How is everything",
+  ])("still allows rhetorical greeting-questions on the fast path %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(true);
+  });
 });
 
 describe("WARMTH_REFLECTION_OPENERS", () => {
@@ -567,7 +602,10 @@ describe("buildCaregiverCoreContext", () => {
 // — so the auto-injected "CARE PLAN (full, on file)" context Evia gets every
 // turn never actually reflected anything a real client had on file.
 describe("buildClientCoreContext", () => {
-  beforeEach(() => { qaHarness.carePlansState.doc = null; });
+  beforeEach(() => {
+    qaHarness.carePlansState.doc = null;
+    for (const k of Object.keys(qaHarness.collectionDocs)) delete qaHarness.collectionDocs[k];
+  });
 
   it("reads the real carePlans collection (not care_plans) and surfaces nested per-recipient careNeeds/notes", async () => {
     qaHarness.carePlansState.doc = {
@@ -608,6 +646,95 @@ describe("buildClientCoreContext", () => {
     const out = await buildClientCoreContext("client-1", null, {});
     expect(out).toContain("jane doe");
     expect(out).toContain("careNeeds: Personal Care");
+  });
+
+  // 2026-08-31 fix: this block used to hardcode only ["careNeeds","notes"],
+  // silently omitting locations/lifestyle even though they live on the same
+  // recipientPlans doc — a family asked about their mom's favorite activity
+  // and home address, and Evia said "I don't have that" because this
+  // mislabeled "(full, on file)" context told it there was nothing else.
+  it("includes the home address from recipientPlans.locations", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: {
+        mary_smith: { name: "Mary Smith", locations: [{ street: "4746 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130" }] },
+      },
+    };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("address: 4746 Campbell Ave, San Jose, CA 95130");
+  });
+
+  it("includes lifestyle preferences generically, whatever keys are actually present", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: {
+        mary_smith: { name: "Mary Smith", lifestyle: { favoriteActivities: ["walks", "gardening"], prefersQuiet: true, familyInArea: false, appointmentsDetails: "" } },
+      },
+    };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("lifestyle:");
+    expect(out).toContain("favoriteActivities: walks, gardening");
+    expect(out).toContain("prefersQuiet");
+    // false/empty-string values must not appear as noise
+    expect(out).not.toContain("familyInArea");
+    expect(out).not.toContain("appointmentsDetails");
+  });
+
+  it("omits address/lifestyle lines when neither is present, without breaking careNeeds/notes", async () => {
+    qaHarness.carePlansState.doc = {
+      recipientPlans: { mary_smith: { name: "Mary Smith", careNeeds: ["Mobility Assistance"] } },
+    };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("careNeeds: Mobility Assistance");
+    expect(out).not.toContain("address:");
+    expect(out).not.toContain("lifestyle:");
+  });
+});
+
+// 2026-08-31 fix: the CARE TEAM roster this context injects on every turn was
+// built ONLY from the legacy `appointments` collection — a caregiver booked
+// entirely through the newer booking_requests/shifts pipeline (get_care_team,
+// the real tool, already checks both) was invisible here, so a family asking
+// "who's my caregiver" got an empty/wrong ambient roster and Evia guessed
+// instead of calling the tool (real example: it answered with the FAMILY
+// MEMBER's own name as the "caregiver").
+describe("buildClientCoreContext — CARE TEAM roster", () => {
+  beforeEach(() => {
+    for (const k of Object.keys(qaHarness.collectionDocs)) delete qaHarness.collectionDocs[k];
+  });
+
+  it("includes a caregiver known only through booking_requests/shifts (new pipeline)", async () => {
+    qaHarness.collectionDocs["booking_requests"] = [
+      { id: "br1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "accepted" } },
+    ];
+    qaHarness.collectionDocs["shifts"] = [
+      { id: "s1", data: { clientId: "client-1", bookingRequestId: "br1", status: "scheduled", date: "2999-01-01" } },
+    ];
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("CARE TEAM");
+    expect(out).toContain("Basra Yousuf (next 2999-01-01)");
+  });
+
+  it("still includes a legacy appointments-only caregiver (no regression)", async () => {
+    qaHarness.collectionDocs["appointments"] = [
+      { id: "a1", data: { clientId: "client-1", caregiverName: "Alice", status: "confirmed", date: "2999-01-01" } },
+    ];
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("CARE TEAM: Alice (next 2999-01-01).");
+  });
+
+  it("merges both pipelines without duplicating a caregiver present in both", async () => {
+    qaHarness.collectionDocs["appointments"] = [
+      { id: "a1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "completed", date: "2026-01-01" } },
+    ];
+    qaHarness.collectionDocs["booking_requests"] = [
+      { id: "br1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", status: "accepted" } },
+    ];
+    qaHarness.collectionDocs["shifts"] = [
+      { id: "s1", data: { clientId: "client-1", bookingRequestId: "br1", status: "scheduled", date: "2999-01-01" } },
+    ];
+    const out = await buildClientCoreContext("client-1", null, {});
+    const occurrences = (out.match(/Basra Yousuf/g) ?? []).length;
+    expect(occurrences).toBe(1);
+    expect(out).toContain("Basra Yousuf (next 2999-01-01)");
   });
 });
 

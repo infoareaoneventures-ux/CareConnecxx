@@ -130,6 +130,10 @@ const classifyIntentDetailed = vi.fn(async (..._a: any[]) => ({ intent: "QUESTIO
 vi.mock("../../agents/intentClassifier", () => ({
   classifyIntentDetailed: (...a: any[]) => classifyIntentDetailed(...a),
   classifyIntent: vi.fn(async () => "QUESTION"),
+  // Real (pure, no side effects) implementation — routeIntent.ts's
+  // FIND_CAREGIVER branch calls this directly as a safety net.
+  isCaregiverSearchMisroutedAsProviderSearch: (intent: string, text: string) =>
+    intent === "FIND_NEARBY_PROVIDER" && /\bcaregivers?\b/i.test(text),
 }));
 
 const runQaAgent          = vi.fn(async (..._a: any[]) => "qa reply");

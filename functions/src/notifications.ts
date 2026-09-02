@@ -200,40 +200,45 @@ export const onAppointmentCreated = functions.firestore
     });
 
 /**
- * Trigger when a new message is sent in a thread
- * Notifies the recipient (not the sender) via in-app + SMS
+ * Trigger when a new message is sent in a real caregiver<->client chatRooms
+ * conversation (services/chatService.ts / InboxView.tsx). Notifies the
+ * recipient (not the sender) via in-app + SMS.
+ *
+ * Was previously bound to `threads/{threadId}/messages`, which is only the
+ * Evia-assistant chat-widget mirror (threads/cara_{uid}) — real human
+ * conversations live in `chatRooms`, so this trigger fired on every Evia-chat
+ * message and immediately no-opped (the cara-prefix guard below), and never
+ * fired for a real website message at all. Messages/Inbox parity audit,
+ * 2026-08-31.
  */
 export const onMessageSent = functions.firestore
-    .document('threads/{threadId}/messages/{messageId}')
+    .document('chatRooms/{chatRoomId}/messages/{messageId}')
     .onCreate(async (snap, context) => {
         const message = snap.data();
-        const threadId = context.params.threadId;
+        const chatRoomId = context.params.chatRoomId;
 
         try {
-            // Evia threads are mirrors of an SMS/iMessage conversation the user
-            // already received on their phone — texting "New message from Evia.
-            // Open the app to reply." on top of Evia's own reply double-messages
-            // them, and the web-inbox unread badge is already maintained by the
-            // mirror (threadMirror.ts). Skip these threads entirely.
-            if (message.senderId === 'cara' || threadId.startsWith('cara_')) {
+            if (message.type === 'system') {
                 return;
             }
 
-            // Get thread to find participants
-            const threadDoc = await db.collection('threads').doc(threadId).get();
-            const thread = threadDoc.data();
-
-            if (thread && thread.isCaraThread) {
+            // A message Evia relayed (send_caregiver_message/send_client_message)
+            // already sent the recipient a guaranteed-delivery SMS as part of
+            // that same tool call — sending another one here would double-text
+            // them for one message.
+            if (message.viaAgent === true) {
                 return;
             }
 
-            if (thread && thread.participants && Array.isArray(thread.participants)) {
+            const chatRoomDoc = await db.collection('chatRooms').doc(chatRoomId).get();
+            const chatRoom = chatRoomDoc.data();
+
+            if (chatRoom && chatRoom.participants && Array.isArray(chatRoom.participants)) {
                 // Find the recipient (not the sender)
-                const recipient = thread.participants.find((p: string) => p !== message.senderId);
+                const recipient = chatRoom.participants.find((p: string) => p !== message.senderId);
 
                 if (recipient) {
-                    // Get sender name from thread data
-                    const senderName = thread.contactName || 'Someone';
+                    const senderName = message.senderName || 'Someone';
 
                     // In-app notification
                     await createNotification(recipient, {
@@ -243,11 +248,11 @@ export const onMessageSent = functions.firestore
                     });
 
                     // SMS notification (only for first message in a burst - check last message time)
-                    const lastSMSKey = `lastMessageSMS_${threadId}_${recipient}`;
+                    const lastSMSKey = `lastMessageSMS_${chatRoomId}_${recipient}`;
                     const lastSMSDoc = await db.collection('smsThrottles').doc(lastSMSKey).get();
                     const lastSMSTime = lastSMSDoc.exists ? lastSMSDoc.data()?.timestamp?.toMillis() : 0;
                     const now = Date.now();
-                    
+
                     // Only send SMS if last one was more than 5 minutes ago (avoid spam)
                     if (now - lastSMSTime > 5 * 60 * 1000) {
                         await sendSMSToUser(recipient, SMS_TEMPLATES.newMessage(senderName));

@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { readFlag } from "../utils/sessionState";
-import { classifyIntentDetailed } from "../agents/intentClassifier";
+import { classifyIntentDetailed, isCaregiverSearchMisroutedAsProviderSearch } from "../agents/intentClassifier";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
@@ -1751,7 +1751,13 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     // ── Find caregiver — post-onboarding matching request ────────────────────
-    if (intent === "FIND_CAREGIVER" && session.userType !== "caregiver") {
+    // isCaregiverSearchMisroutedAsProviderSearch is the safety net for when
+    // the classifier mistakes a caregiver search for a medical-provider
+    // search (see its own doc comment) — a live family hit exactly this.
+    if (
+      (intent === "FIND_CAREGIVER" || isCaregiverSearchMisroutedAsProviderSearch(intent, text)) &&
+      session.userType !== "caregiver"
+    ) {
       const { runMatchingForClient } = await import("../agents/matchingAgent");
       const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
       const sessionData  = sessionSnap2.data() ?? {};

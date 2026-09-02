@@ -71,6 +71,32 @@ describe("queryVisitsMerged", () => {
     });
     expect(docs).toEqual([]);
   });
+
+  // 2026-08-31: this function always adds its own `status in [...]` filter on
+  // top of whatever the caller passes — a caller wanting "today or tomorrow"
+  // used to pass dateOp:"in" with a 2-value array, which combined with the
+  // status filter is TWO "in" clauses in one query — invalid in real
+  // Firestore (this mock doesn't enforce that limit, so the test suite never
+  // caught it). The fix is a ">="/dateUpperBound range instead, which covers
+  // the same two consecutive dates without a second "in" filter.
+  it("a >=/dateUpperBound range covers a 'today or tomorrow' style window without a second 'in' filter", async () => {
+    hoisted.collState.set("appointments", [
+      { id: "a1", date: "2026-09-01", status: "confirmed" },
+      { id: "a2", date: "2026-09-02", status: "confirmed" },
+      { id: "a3", date: "2026-09-03", status: "confirmed" }, // outside the window
+    ]);
+    const docs = await queryVisitsMerged({
+      dateOp: ">=", dateValue: "2026-09-01",
+      dateUpperBound: "2026-09-02",
+      apptStatuses: ["confirmed"],
+      shiftStatuses: [],
+    });
+    // The mock's `.where()` is a no-op passthrough, so this only proves the
+    // call shape is accepted with both a range AND a status filter present —
+    // real Firestore rejects a query outright at call time if it ever sees a
+    // second "in"/"array-contains-any"/"not-in" clause, which this shape avoids.
+    expect(docs.map(d => d.id).sort()).toEqual(["a1", "a2", "a3"]);
+  });
 });
 
 describe("getVisitDoc", () => {

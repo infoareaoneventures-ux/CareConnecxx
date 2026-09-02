@@ -126,4 +126,21 @@ describe("relayIntoSharedChatThread", () => {
     const messageSet = hoisted.sets.find(s => s.path.startsWith(`chatRooms/${ROOM_ID}/messages/`));
     expect(messageSet?.data).toMatchObject({ senderId: CLIENT, senderName: "Sarah", text: "hi there", type: "text" });
   });
+
+  // 2026-08-31: Messages/Inbox parity — the recipient already gets a
+  // guaranteed-delivery SMS as part of the same send_*_message tool call that
+  // calls this function, so the chatRooms-message-created trigger (which also
+  // texts the recipient on a new message) must be able to tell an
+  // Evia-relayed message apart from one typed in the website's own composer.
+  it("marks the message viaAgent:true so the chatRooms message-created trigger doesn't double-text the recipient", async () => {
+    await relayIntoSharedChatThread({
+      clientId: CLIENT, clientName: "Sarah",
+      caregiverId: CAREGIVER, caregiverName: "Alice",
+      senderId: CLIENT, senderName: "Sarah",
+      text: "hi there",
+    });
+
+    const messageSet = hoisted.sets.find(s => s.path.startsWith(`chatRooms/${ROOM_ID}/messages/`));
+    expect(messageSet?.data.viaAgent).toBe(true);
+  });
 });

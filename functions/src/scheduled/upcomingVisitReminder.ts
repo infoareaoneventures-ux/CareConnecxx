@@ -21,8 +21,15 @@ export const upcomingVisitReminder = functions.pubsub
     // filter to the 90-minute window in code.
     // NOTE: no `.where("preVisitReminderSent","!=",true)` — Firestore `!=`
     // excludes docs missing the field. Filter already-sent in code instead.
+    // A `dateOp:"in"` here combined with queryVisitsMerged's own
+    // `status in [...]` filter is an INVALID query — Firestore allows only one
+    // `in`/`array-contains-any`/`not-in` clause per query, on any field, and
+    // this cron threw INVALID_ARGUMENT on every run as a result. today/tomorrow
+    // are always consecutive calendar days, so a `>=`/`<=` range covers the
+    // exact same two dates. Found 2026-08-31, alongside the missing-index audit.
     const docs = await queryVisitsMerged({
-      dateOp: "in", dateValue: [businessTodayStr(), businessTomorrowStr()],
+      dateOp: ">=", dateValue: businessTodayStr(),
+      dateUpperBound: businessTomorrowStr(),
       apptStatuses: ["confirmed"],
       shiftStatuses: ["scheduled"],
     });

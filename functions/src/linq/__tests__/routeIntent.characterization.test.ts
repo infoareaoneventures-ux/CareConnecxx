@@ -116,6 +116,10 @@ const classifyIntentDetailed = vi.fn(async () => ({ intent: "QUESTION", degraded
 vi.mock("../../agents/intentClassifier", () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   classifyIntentDetailed: (...a: any[]) => (classifyIntentDetailed as Function).apply(null, a),
+  // Real (pure, no side effects) implementation — routeIntent.ts's
+  // FIND_CAREGIVER branch calls this directly as a safety net.
+  isCaregiverSearchMisroutedAsProviderSearch: (intent: string, text: string) =>
+    intent === "FIND_NEARBY_PROVIDER" && /\bcaregivers?\b/i.test(text),
 }));
 
 // `handleToolCall` is dynamically imported by the family add/remove branches.

@@ -155,9 +155,9 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_communication_preferences: ["messaging"],
   set_visit_update_frequency:       ["messaging"],
   request_email_change:             ["messaging"],
-  block_user:                       ["messaging"],
-  unblock_user:                     ["messaging"],
-  report_user:                      ["messaging"],
+  set_block_status:                 ["messaging"],
+  delete_conversation:              ["messaging"],
+  mark_messages_read:               ["messaging"],
   get_support_tickets:              ["messaging"],
 
   // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
@@ -346,7 +346,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "cancel_subscription", "reactivate_subscription", "create_refund_request",
   "request_instant_payout", "retry_shift_payment", "update_booking_payment_method",
   // people & safety
-  "add_family_member", "remove_family_member", "block_user", "unblock_user", "report_user",
+  "add_family_member", "remove_family_member", "set_block_status",
   // care data
   "update_senior_profile", "update_care_plan", "restore_care_plan_version",
   "create_care_journal_entry", "log_health_flag",

@@ -384,7 +384,7 @@ export async function buildClientCoreContext(
   if (loc) parts.push(`LOCATION: ${loc}.`);
 
   const today = businessTodayStr();
-  const [planSnap, userSnap, apptSnap] = await Promise.all([
+  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap] = await Promise.all([
     // carePlans (camelCase) is the real, website-facing collection
     // (components/CarePlan.tsx) — care_plans (snake_case) is a completely
     // different, disconnected collection nothing on the site ever writes to.
@@ -394,6 +394,24 @@ export async function buildClientCoreContext(
       .where("clientId", "==", userId)
       .where("status", "in", ["confirmed", "completed", "in-progress"])
       .orderBy("date", "desc")
+      .limit(50)
+      .get()
+      .catch(() => null),
+    // Booking-pipeline redesign (2026-08-30) parity: a caregiver booked
+    // entirely through booking_requests/shifts (not the legacy appointments
+    // collection) used to be totally invisible to this roster — get_care_team
+    // (the real tool) already checks both, but this ambient summary didn't,
+    // so a family asking "who's my caregiver" got an empty/wrong ambient
+    // roster and Evia guessed instead of calling the tool. Found 2026-08-31.
+    db.collection("booking_requests")
+      .where("clientId", "==", userId)
+      .where("status", "==", "accepted")
+      .limit(50)
+      .get()
+      .catch(() => null),
+    db.collection("shifts")
+      .where("clientId", "==", userId)
+      .where("status", "==", "scheduled")
       .limit(50)
       .get()
       .catch(() => null),
@@ -410,14 +428,33 @@ export async function buildClientCoreContext(
     if (accountBits.length) parts.push(`ACCOUNT STATUS: ${accountBits.join(", ")}.`);
   }
 
-  // Care-team roster — names + next shift only, built from the appointments query
-  // (no per-caregiver doc reads; phones stay lazy via get_care_team).
-  if (apptSnap && !apptSnap.empty) {
+  // Care-team roster — names + next shift only (no per-caregiver doc reads;
+  // phones stay lazy via get_care_team). Merges BOTH pipelines a caregiver
+  // relationship can live in — legacy appointments and the newer
+  // booking_requests/shifts — so this ambient summary never silently goes
+  // empty/wrong just because a booking happened to be made one way or the
+  // other.
+  if ((apptSnap && !apptSnap.empty) || (bookingSnap && !bookingSnap.empty)) {
     const seen = new Map<string, string | null>(); // name -> next upcoming shift date
-    for (const d of apptSnap.docs) {
+    for (const d of apptSnap?.docs ?? []) {
       const a = d.data() as Record<string, any>;
       const name = a.caregiverName || "Caregiver";
       const nextShift = a.date >= today ? a.date : null;
+      if (!seen.has(name)) seen.set(name, nextShift);
+      else if (nextShift && !seen.get(name)) seen.set(name, nextShift);
+    }
+    const nextShiftByBooking = new Map<string, string>();
+    for (const d of shiftSnap?.docs ?? []) {
+      const s = d.data() as Record<string, any>;
+      const bid = s.bookingRequestId as string | undefined;
+      if (!bid || !(s.date >= today)) continue;
+      const cur = nextShiftByBooking.get(bid);
+      if (!cur || s.date < cur) nextShiftByBooking.set(bid, s.date as string);
+    }
+    for (const d of bookingSnap?.docs ?? []) {
+      const b = d.data() as Record<string, any>;
+      const name = b.caregiverName || "Caregiver";
+      const nextShift = nextShiftByBooking.get(d.id) ?? null;
       if (!seen.has(name)) seen.set(name, nextShift);
       else if (nextShift && !seen.get(name)) seen.set(name, nextShift);
     }
@@ -428,13 +465,40 @@ export async function buildClientCoreContext(
   }
 
   // Full care plan (per PHI policy above). Real shape is per-recipient —
-  // carePlans/{uid}.recipientPlans.{key}.{careNeeds,notes} (CarePlan.tsx's
-  // getKey), not flat top-level fields — a household can have more than one
-  // care recipient, so this lists every recipient's plan, labeled by name.
+  // carePlans/{uid}.recipientPlans.{key}.{careNeeds,notes,locations,lifestyle}
+  // (CarePlan.tsx's getKey), not flat top-level fields — a household can have
+  // more than one care recipient, so this lists every recipient's plan,
+  // labeled by name. emergencyContacts/accessCodes stay excluded by design
+  // (fetched on demand via get_care_plan, not cached ambiently) — everything
+  // else is included so this block is actually the "full" plan it claims to
+  // be. Found 2026-08-31: this used to hardcode only ["careNeeds","notes"],
+  // silently omitting locations/lifestyle even though they live on the same
+  // doc — the family asked about their mom's favorite activity and home
+  // address, and Evia answered "I don't have that" because this block told it
+  // there was nothing else to find.
   const plan = planSnap?.exists ? (planSnap.data() as Record<string, any>) : null;
   const recipientPlans = (plan?.recipientPlans ?? {}) as Record<string, Record<string, any>>;
   if (Object.keys(recipientPlans).length) {
     const fmt = (v: unknown) => Array.isArray(v) ? v.join("; ") : String(v);
+    // Generic, not a hardcoded field list — a lifestyle key nobody's added
+    // to this function yet still shows up automatically instead of silently
+    // vanishing the way locations/lifestyle themselves used to.
+    const fmtLifestyle = (ls: Record<string, unknown>): string => {
+      const bits: string[] = [];
+      for (const [k, v] of Object.entries(ls)) {
+        if (v === null || v === undefined || v === "" || v === false) continue;
+        if (Array.isArray(v)) { if (v.length) bits.push(`${k}: ${v.join(", ")}`); continue; }
+        bits.push(v === true ? k : `${k}: ${v}`);
+      }
+      return bits.join("; ");
+    };
+    const fmtAddress = (locations: unknown): string => {
+      if (!Array.isArray(locations) || !locations.length) return "";
+      return locations
+        .map((l: Record<string, unknown>) => [l?.street, l?.city, [l?.state, l?.zipCode].filter(Boolean).join(" ")].filter(Boolean).join(", "))
+        .filter(Boolean)
+        .join(" | ");
+    };
     const blocks: string[] = [];
     for (const [key, recipientPlan] of Object.entries(recipientPlans)) {
       const label = String(recipientPlan?.name ?? key.replace(/_/g, " ")).trim();
@@ -442,6 +506,13 @@ export async function buildClientCoreContext(
       for (const field of ["careNeeds", "notes"]) {
         const v = recipientPlan?.[field];
         if (v && (!Array.isArray(v) || v.length)) lines.push(`    - ${field}: ${fmt(v)}`);
+      }
+      const address = fmtAddress(recipientPlan?.locations);
+      if (address) lines.push(`    - address: ${address}`);
+      const lifestyle = recipientPlan?.lifestyle;
+      if (lifestyle && typeof lifestyle === "object" && !Array.isArray(lifestyle)) {
+        const ls = fmtLifestyle(lifestyle as Record<string, unknown>);
+        if (ls) lines.push(`    - lifestyle: ${ls}`);
       }
       if (lines.length) blocks.push(`  ${label}:\n${lines.join("\n")}`);
     }
@@ -729,9 +800,9 @@ export function buildClientSystemPrompt(
     `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
     `  · get_caregiver_reviews — pull recent reviews and average rating for a caregiver. Use for "what do other families say about Alice?".`,
     `  · save_caregiver_favorite / unsave_caregiver_favorite / list_saved_caregivers — manage the family's favorite caregivers.`,
-    `  · block_user — block another user from interacting with the family. MANDATORY: read back who you're about to block and wait for explicit YES.`,
-    `  · unblock_user — remove an existing block.`,
-    `  · report_user — file an abuse report. MANDATORY: confirm category and details with the family, then call. Tell them ops follows up within 24 hours.`,
+    `  · set_block_status — block, unblock, or report another user (action: 'block'|'unblock'|'report'). MANDATORY for 'block': read back who you're about to block and wait for explicit YES. MANDATORY for 'report': confirm category and details with the family, then call, and tell them ops follows up within 24 hours. Unblocking needs no confirmation.`,
+    `  · delete_conversation — clear a message conversation from the family's own Inbox (mirrors the website's 'Delete conversation' menu action). Only affects their own view; the other party's copy is untouched.`,
+    `  · mark_messages_read — mark all unread messages in a conversation as read and clear its unread badge. Use when they say something like "mark my messages as read".`,
     `  · like_journal_entry — like a care journal post when the family expresses appreciation ("loved that photo of Mom").`,
     `  · unlike_journal_entry — undo a like.`,
     `  · comment_on_journal_entry — leave a comment on a journal entry. Use when the family says "tell Maria thanks for the visit notes" — comment + the tool also notifies the caregiver.`,
@@ -740,7 +811,7 @@ export function buildClientSystemPrompt(
     `  · list_interviews — list the family's scheduled/pending interviews. Use for "when is my interview?" or before cancelling one.`,
     `  · cancel_interview — cancel a scheduled interview; the caregiver is notified automatically. Confirm first.`,
     `  · delete_memory_file — permanently delete one of your memory files for this family (content + search index). MANDATORY: read back which file and wait for explicit YES. To fix a single fact use edit_memory_file instead.`,
-    `  · list_blocked_users — show who the family has blocked. Use before block_user/unblock_user or when they ask "who have I blocked?".`,
+    `  · list_blocked_users — show who the family has blocked. Use before set_block_status or when they ask "who have I blocked?".`,
     `  · retry_shift_payment — re-run a FAILED visit payment when the family asks ("my payment didn't go through, try again"). Usually after they've fixed their card via get_payment_update_link. Don't promise success — the charge runs asynchronously; say you've re-run it.`,
     `  · update_booking_payment_method — switch how an upcoming confirmed booking is paid: card on file (credit) or paying the caregiver directly (cash, venmo, zelle). Only before the visit starts. Confirm the new method first.`,
     `  · create_refund_request — file a refund request for a specific visit or invoice. Confirm the amount and what it's for before calling; tell the family ops reviews it.`,
@@ -752,7 +823,7 @@ export function buildClientSystemPrompt(
     `  · get_work_in_progress — see everything you (Evia) currently have in flight for this family. Use when they ask "what are you working on" or "any update on that thing".`,
     `  · update_preferences — update the family's notification, do-not-disturb, or timezone preferences ("don't text me after 8pm").`,
     `  · read_memory_file / search_memory — read or search your long-term memory files for this family when the cached context above doesn't cover it.`,
-    `For irreversible actions (cancel_appointment, manage_booking, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, block_user, report_user, archive_senior_profile, cancel_interview, delete_memory_file), always confirm with the family before calling. For everything else, act and report.`,
+    `For irreversible actions (cancel_appointment, manage_booking, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, set_block_status with action 'block' or 'report', archive_senior_profile, cancel_interview, delete_memory_file), always confirm with the family before calling. For everything else, act and report.`,
     ``,
     `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through yet. Never claim someone was notified if notification.sent === false. If reason is "queued_for_retry", the message is queued and WILL be delivered automatically within minutes — say so ("the text is delayed but will go out shortly") and do NOT offer a manual retry. For any other reason, tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?"`,
     ``,
@@ -3979,12 +4050,30 @@ export async function runQuickReply(params: {
 const ACTION_VERBS = /\b(connect|book|schedule|call|hire|find|show|tell|send|cancel|reschedule|rebook|reschedule|approve|deny|reject|accept|update|change|set up|setup|set\s+up|search|look|check|get|give|need|want|add|remove|delete|fix|help|pay|refill|reorder|order|forward|share)\b/i;
 const REQUEST_PATTERNS = /\b(yes\s+(let|please|do|go|sure|ok)|let'?s|can\s+you|could\s+you|would\s+you|please|i\s+(need|want|would)|tell\s+(me|him|her|them))\b/i;
 const CARE_ACTION_CONTEXT_TERMS = /\b(mom|dad|mother|father|maria|caregiver|client|senior|visit|appointment|shift|hours|invoice|payment|pay|payout|approve|approved|approval|dispute|book|booking|checkr|background|verified|verification|family|sister|brother|daughter|son|refer|referral|fell|fall|emergency|urgent|911|hospital|doctor|pharmacy|meds?|medication|refill|pain|chest|breathe)\b/i;
+// Found 2026-08-31: "What is the care address" and "I think you do" (a
+// follow-up pushback) both slipped through every check above — neither
+// contains a digit, an action verb, or a listed topic word — and got a
+// confidently wrong answer from the tool-less fast path, which can't see most
+// of what's actually on file. Topic-keyword lists can never be complete (the
+// very next feature added is one more word nobody thought to add), so instead
+// of listing topics, catch the SHAPE of a real question or a factual
+// pushback: those always need real data to answer correctly, whatever
+// they're about. Only genuine pleasantries should ever skip this.
+const QUESTION_FORM = /\?|^\s*(what|who|whom|whose|where|when|why|which|is|are|am|was|were|do|does|did|can|could|would|should|will|has|have|had)\b/i;
+// Common greeting-questions ("How's it going?", "How are you?") are rhetorical,
+// not real information requests — carve them back out so they stay trivial.
+const GREETING_QUESTION = /^\s*how(?:'?s| is| are| have)?\s+(it|everything|things|you|your\s+day)\b/i;
+const PUSHBACK_FORM = /^\s*(i\s+think|i\s+believe|i'?m\s+(pretty\s+)?sure|that'?s\s+(not|wrong|incorrect)|you\s+(do|have|did)\b)/i;
 
 export function isTrivialQuickReply(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 30) return false;
   // Any digit or @ → likely contains entity data; use full QA agent
   if (/[\d@]/.test(t)) return false;
+  // A real question or a pushback/contradiction always needs real data to
+  // answer correctly — never assume the fast path's narrow view is enough,
+  // regardless of what topic it happens to be about.
+  if ((QUESTION_FORM.test(t) && !GREETING_QUESTION.test(t)) || PUSHBACK_FORM.test(t)) return false;
   // Action verb or request pattern → user wants something done; use full QA agent
   if (ACTION_VERBS.test(t) || REQUEST_PATTERNS.test(t)) return false;
   if (CARE_ACTION_CONTEXT_TERMS.test(t)) return false;

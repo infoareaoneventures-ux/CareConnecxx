@@ -372,7 +372,7 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     tool: "list_blocked_users",
     promptActor: "client",
     status: "shipped",
-    notes: "Read primitive over users.{uid}.blockedUsers (the array block_user/unblock_user maintain).",
+    notes: "Read primitive over users.{uid}.blockedUsers (the array set_block_status maintains).",
   },
 
   // ── Caregiver (R2) ────────────────────────────────────────────────────────

@@ -110,8 +110,6 @@ describe("isHighRisk", () => {
     expect(isHighRisk("remove_family_member",     { memberPhone: "x" })).toBe(true);
     expect(isHighRisk("cancel_subscription",      {})).toBe(true);
     expect(isHighRisk("restore_care_plan_version", { versionId: "x" })).toBe(true);
-    expect(isHighRisk("block_user",               { targetPhone: "x" })).toBe(true);
-    expect(isHighRisk("report_user",              { targetPhone: "x" })).toBe(true);
     expect(isHighRisk("delete_reminder",          { reminderId: "x" })).toBe(true);
     expect(isHighRisk("cancel_job_post",          { jobId: "x" })).toBe(true);
   });
@@ -127,6 +125,16 @@ describe("isHighRisk", () => {
     expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "cancel" })).toBe(true);
     expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "pause" })).toBe(false);
     expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "resume" })).toBe(false);
+  });
+
+  // block_user + unblock_user + report_user merged into set_block_status
+  // (2026-08-31, freed tool slots for delete_conversation/mark_messages_read)
+  // — block and report stay high-stakes (both were ALWAYS_CONFIRM pre-merge),
+  // unblock stays ungated, matching each tool's pre-merge behavior exactly.
+  it("conditionally flags set_block_status on block and report, not unblock", () => {
+    expect(isHighRisk("set_block_status", { targetUserId: "x", action: "block" })).toBe(true);
+    expect(isHighRisk("set_block_status", { targetUserId: "x", action: "report" })).toBe(true);
+    expect(isHighRisk("set_block_status", { targetUserId: "x", action: "unblock" })).toBe(false);
   });
 
   it("conditionally flags respond_to_job_application only on reject", () => {

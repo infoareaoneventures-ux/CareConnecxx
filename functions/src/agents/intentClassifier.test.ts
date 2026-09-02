@@ -8,7 +8,7 @@ vi.mock("../utils/openaiClient", () => ({
   quickComplete: (...args: unknown[]) => hoisted.quickComplete(...args),
 }));
 
-import { classifyIntent, classifyIntentDetailed } from "./intentClassifier";
+import { classifyIntent, classifyIntentDetailed, isCaregiverSearchMisroutedAsProviderSearch } from "./intentClassifier";
 
 describe("classifyIntent — fast paths (no LLM)", () => {
   beforeEach(() => {
@@ -180,5 +180,40 @@ describe("classifyIntentDetailed — retry on transient failure (U4)", () => {
     const out = await classifyIntentDetailed("hey", false);
     expect(out).toEqual({ intent: "QUESTION", degraded: true });
     expect(hoisted.quickComplete).toHaveBeenCalledTimes(2);
+  });
+});
+
+// 2026-08-31 fix — real production bug: "find me a caregiver near me" and
+// "any more caregivers nearby" have the same "find X near me" shape as a
+// medical-provider search, and the classifier occasionally mislabeled them
+// FIND_NEARBY_PROVIDER — which hard-deflects with "Evia cannot search for
+// providers", never reaching the real caregiver-matching tools that are
+// Evia's actual core job. This is the safety net: a literal "caregiver"
+// mention always wins over that specific misclassification.
+describe("isCaregiverSearchMisroutedAsProviderSearch (safety net)", () => {
+  it.each([
+    "find me a caregiver near me",
+    "Can you find me caregiver near me",
+    "I mean caregiver around me that's not imran",
+    "any more caregivers nearby",
+    "CAREGIVER near me please",
+  ])("overrides a FIND_NEARBY_PROVIDER misclassification when the text says caregiver: %p", (text) => {
+    expect(isCaregiverSearchMisroutedAsProviderSearch("FIND_NEARBY_PROVIDER", text)).toBe(true);
+  });
+
+  it("does not override a genuine medical-provider search with no mention of caregiver", () => {
+    expect(isCaregiverSearchMisroutedAsProviderSearch("FIND_NEARBY_PROVIDER", "find a cardiologist near me")).toBe(false);
+    expect(isCaregiverSearchMisroutedAsProviderSearch("FIND_NEARBY_PROVIDER", "closest pharmacy to mom")).toBe(false);
+  });
+
+  it("only applies to FIND_NEARBY_PROVIDER — never overrides a different intent", () => {
+    expect(isCaregiverSearchMisroutedAsProviderSearch("BOOK_DOCTOR_APPOINTMENT", "find me a caregiver near me")).toBe(false);
+    expect(isCaregiverSearchMisroutedAsProviderSearch("QUESTION", "find me a caregiver near me")).toBe(false);
+  });
+
+  it("already-correct FIND_CAREGIVER classifications don't need this override at all", () => {
+    // Sanity check: the classifier prompt itself should get these right — this
+    // helper is strictly a safety net for the FIND_NEARBY_PROVIDER failure mode.
+    expect(isCaregiverSearchMisroutedAsProviderSearch("FIND_CAREGIVER", "find me a caregiver near me")).toBe(false);
   });
 });

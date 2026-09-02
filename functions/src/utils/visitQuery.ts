@@ -22,6 +22,12 @@ const db = admin.firestore();
 export async function queryVisitsMerged(params: {
   dateField?: string;
   /** Omit dateOp/dateValue entirely for a status-only query (e.g. "all in-progress visits"). */
+  // NEVER pass dateOp:"in" (or "array-contains-any"/"not-in") here — this
+  // function always adds its OWN `status in [...]` filter on top, and
+  // Firestore allows only one such filter per query, on any field. A caller
+  // that did this (2026-08-31, upcomingVisitReminder.ts wanting "today or
+  // tomorrow") threw INVALID_ARGUMENT on every single run. Use `dateOp:">="`
+  // plus `dateUpperBound` instead — a range covers the same dates.
   dateOp?: FirebaseFirestore.WhereFilterOp;
   dateValue?: unknown;
   /** Optional second bound for a range query, e.g. dateOp: ">=" plus dateUpperBound for "<=". */

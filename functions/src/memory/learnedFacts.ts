@@ -733,8 +733,15 @@ export async function detectAndStageFactChange(
         "refer to MORE THAN ONE listed fact and you cannot pick exactly one.\n" +
         '{"noMatch": true} — the message is clearly a correction or forget request but NONE of the listed facts is ' +
         "the one it refers to.\n" +
-        "null — the message is NOT correcting or retracting stored information.\n" +
-        "Only pick a fact the user clearly identifies; never guess.",
+        "null — the message is NOT correcting or retracting stored information. This is the default for almost " +
+        "every message — plain questions, status checks, and requests are NEVER corrections, even if they sound " +
+        "like a pushback or challenge a previous answer. Reply null for things like 'Is my account approved', " +
+        "'Do I have a shift coming up', 'Are you sure', 'What is my name', 'Can you check my membership' — none of " +
+        "these assert a corrected fact or ask to forget one, they're just questions.\n" +
+        "Only pick 'corrects'/'ambiguous'/'noMatch' when the message explicitly states a replacement value ('it's " +
+        "actually X', 'change that to X') or explicitly asks to forget/remove/stop remembering something specific. " +
+        "When genuinely unsure, prefer null over noMatch — noMatch derails the conversation with an off-topic " +
+        "'I can't find that memory' reply, which is worse than silently treating an edge case as not a correction.",
       `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
       { maxTokens: 220 },
     );

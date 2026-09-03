@@ -7,9 +7,10 @@ import { ClientNavigation } from './ClientNavigation';
 import { PlanSelectModal } from './PlanSelectModal';
 import { authService } from '../../services/api';
 import { startIdentityVerification, listenToSubscriptionStatus, hasActiveMembership, SubscriptionStatus } from '../../services/stripeService';
-import { auth, db, functions, storage } from '../../lib/firebase';
+import { auth, db, storage } from '../../lib/firebase';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
+import { submitAccountAction } from '../../services/accountActionQueue';
 
 const DELETE_RECAPTCHA_CONTAINER = 'account-settings-delete-recaptcha';
 
@@ -242,16 +243,14 @@ export const AccountSettings: React.FC = () => {
   const [newEmailDraft, setNewEmailDraft] = useState('');
 
   const handleRequestEmailChange = () => saving(async () => {
-    if (!newEmailDraft.trim() || !functions) return;
-    const fn = functions.httpsCallable('v1-requestEmailChange');
-    await fn({ newEmail: newEmailDraft.trim() });
+    const user = authService.getCurrentUser();
+    if (!newEmailDraft.trim() || !user?.uid) return;
+    await submitAccountAction('request_email_change', { uid: user.uid, newEmail: newEmailDraft.trim() });
     setEmailRequestSent(true);
   }, 'Confirmation link sent');
 
   const handleRequestPhoneChange = () => saving(async () => {
-    if (!functions) return;
-    const fn = functions.httpsCallable('v1-requestPhoneChange');
-    await fn({ email: personalInfo.email });
+    await submitAccountAction('request_phone_change', { email: personalInfo.email });
     setPhoneRequestSent(true);
   }, 'Verification link sent');
 

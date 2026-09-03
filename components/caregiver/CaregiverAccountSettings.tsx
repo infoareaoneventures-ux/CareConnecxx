@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
-import { functions } from '../../lib/firebase';
+import { submitAccountAction } from '../../services/accountActionQueue';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -156,22 +156,20 @@ export const CaregiverAccountSettings: React.FC = () => {
   };
 
   const saveEmail = async () => {
-    if (!newEmailDraft.trim() || !functions) return;
+    if (!newEmailDraft.trim() || !currentUser?.uid) return;
     setSavingEmail(true);
     try {
-      const fn = functions.httpsCallable('v1-requestEmailChange');
-      await fn({ newEmail: newEmailDraft.trim() });
+      await submitAccountAction('request_email_change', { uid: currentUser.uid, newEmail: newEmailDraft.trim() });
       setEmailRequestSent(true);
     } catch { addToast('Failed to send confirmation link', 'error'); }
     finally { setSavingEmail(false); }
   };
 
   const requestPhoneChange = async () => {
-    if (!email || !functions) return;
+    if (!email) return;
     setRequestingPhoneChange(true);
     try {
-      const fn = functions.httpsCallable('v1-requestPhoneChange');
-      await fn({ email });
+      await submitAccountAction('request_phone_change', { email });
       setPhoneRequestSent(true);
     } catch { addToast('Failed to send verification link', 'error'); }
     finally { setRequestingPhoneChange(false); }

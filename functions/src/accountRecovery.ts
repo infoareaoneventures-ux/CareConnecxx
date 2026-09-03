@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import * as functions from "firebase-functions/v1";
 import * as crypto from "crypto";
 import {
   sendTransactionalEmail,
@@ -11,33 +10,43 @@ import { sendSMS } from "./sms";
 import { appLink } from "./config/appUrl";
 import { generateOtp, verifyOtp, OtpState } from "./utils/phoneVerification";
 
-// Account phone-number change/recovery, gated by the email already on file —
-// see docs context for the full design. Login here is phone-OTP only, so this
-// email round-trip is the only recovery path when the phone itself is lost,
-// and (for a logged-in change too) the thing standing between "I have UI
-// access right now" and actually taking over someone's login number.
+// Account phone-number change/recovery, gated by the email already on file.
+// Login here is phone-OTP only, so this email round-trip is the only recovery
+// path when the phone itself is lost, and (for a logged-in change too) the
+// thing standing between "I have UI access right now" and actually taking
+// over someone's login number.
 //
-// Three callables carry the phone flow:
-//   requestPhoneChange            — email in, verification email out (always
-//                                    responds success, never reveals whether
-//                                    the email matched an account)
+// These are plain functions, not Cloud Functions themselves — careconnex-d4c8b
+// has a GCP org policy that blocks granting public invoker IAM to brand-new
+// Cloud Functions (see project memory: the same wall broke the original
+// password-gate callable, worked around there via processAdminAdvanceQueue's
+// Firestore-trigger pattern). The website reaches these by writing a request
+// doc to account_action_requests/{id} (functions/src/triggers/accountActionQueue.ts
+// is the one new Firestore-triggered function that calls them — triggers don't
+// need public HTTP invoker IAM at all). Evia's MCP tools call them directly,
+// in-process, since they already run inside an already-deployed function.
+//
+// Phone flow:
+//   requestPhoneChangeByEmail     — email in, verification email out (always
+//                                    resolves, never reveals whether the email
+//                                    matched an account)
 //   startPhoneChangeVerification  — token + new phone in, OTP texted to the
 //                                    new number (typo-catch, not the security
 //                                    boundary — the email step already gated
 //                                    access)
 //   confirmPhoneChange            — token + code in, does the actual swap
 //
-// Email-change on Account Settings is gated the same way, one step shorter
-// (no OTP — clicking the link IS the proof of owning the new inbox):
-//   requestEmailChange (auth'd)   — new email in, confirmation email out
-//   confirmEmailChange            — token in, writes the new email
+// Email-change is gated the same way, one step shorter (no OTP — clicking the
+// link IS the proof of owning the new inbox):
+//   requestEmailChangeSelf (auth'd) — new email in, confirmation email out
+//   confirmEmailChange              — token in, writes the new email
 
 const db = () => admin.firestore();
 
 const REQUEST_TTL_MS = 30 * 60 * 1000; // 30 min
 const RATE_LIMIT_MS = 60 * 1000;
 
-type Role = "client" | "caregiver";
+export type Role = "client" | "caregiver";
 
 function randomToken(): string {
   return crypto.randomBytes(24).toString("base64url");
@@ -104,11 +113,10 @@ async function updateFamilyGroupPhoneReferences(oldPhone: string, newPhone: stri
   }
 }
 
-// Core logic shared by the website's requestPhoneChange callable (looks the
-// account up by email) and Evia's request_phone_number_change MCP tool (the
-// account is already known, so it hands the email straight through). Both
-// paths converge here so there is exactly one place that creates the request
-// doc and sends the email.
+// Core logic shared by the website's request flow (looks the account up by
+// email) and Evia's request_phone_number_change path (the account is already
+// known, so it hands the email straight through). Both converge here so
+// there is exactly one place that creates the request doc and sends the email.
 export async function requestPhoneChangeForAccount(account: AccountMatch, email: string): Promise<void> {
   const token = randomToken();
   const now = Date.now();
@@ -132,45 +140,36 @@ export async function requestPhoneChangeForAccount(account: AccountMatch, email:
   });
 }
 
-// ── requestPhoneChange ───────────────────────────────────────────────────────
-export const requestPhoneChange = functions.https.onCall(async (data) => {
-  const email = typeof data?.email === "string" ? data.email.trim() : "";
-  if (!email || !isValidEmail(email)) {
-    throw new functions.https.HttpsError("invalid-argument", "Valid email required");
-  }
-
-  // Anti-enumeration: this callable always resolves {success:true} — the
-  // caller can never tell whether the email matched an account, was rate
-  // limited, or the send failed. Only the pending-request side effects differ.
-  if (await isRateLimited("phone_change_rate_limits", email.toLowerCase())) {
-    return { success: true };
-  }
+// ── requestPhoneChangeByEmail (website's logged-out/logged-in entry point) ───
+// Anti-enumeration: always resolves, never throws — the caller can never tell
+// whether the email matched an account, was rate limited, or the send failed.
+// Only the pending-request side effects differ.
+export async function requestPhoneChangeByEmail(rawEmail: string): Promise<void> {
+  const email = rawEmail.trim();
+  if (!email || !isValidEmail(email)) return;
+  if (await isRateLimited("phone_change_rate_limits", email.toLowerCase())) return;
 
   try {
     const account = await findAccountByEmail(email);
-    if (!account) return { success: true };
+    if (!account) return;
     await requestPhoneChangeForAccount(account, email);
   } catch (err) {
-    console.error("requestPhoneChange:", err);
+    console.error("requestPhoneChangeByEmail:", err);
   }
-
-  return { success: true };
-});
+}
 
 // ── startPhoneChangeVerification ────────────────────────────────────────────
-export const startPhoneChangeVerification = functions.https.onCall(async (data) => {
-  const token = typeof data?.token === "string" ? data.token : "";
-  const newPhone = typeof data?.newPhone === "string" ? data.newPhone : "";
-  if (!token) throw new functions.https.HttpsError("invalid-argument", "Missing token");
+export async function startPhoneChangeVerification(token: string, newPhone: string): Promise<void> {
+  if (!token) throw new Error("Missing token");
   if (!/^\+1\d{10}$/.test(newPhone)) {
-    throw new functions.https.HttpsError("invalid-argument", "Phone must be in E.164 format (+1XXXXXXXXXX)");
+    throw new Error("Phone must be in E.164 format (+1XXXXXXXXXX)");
   }
 
   const ref = db().collection("phone_change_requests").doc(token);
   const snap = await ref.get();
   const reqData = snap.data();
   if (!snap.exists || !reqData || reqData.status !== "pending" || (reqData.expiresAt as number) < Date.now()) {
-    throw new functions.https.HttpsError("failed-precondition", "This link is invalid or has expired.");
+    throw new Error("This link is invalid or has expired.");
   }
 
   const otp = generateOtp();
@@ -181,23 +180,19 @@ export const startPhoneChangeVerification = functions.https.onCall(async (data) 
     message: `Your Evia verification code is ${otp.code}. It expires in 15 minutes.`,
   });
   if (!smsResult.success) {
-    throw new functions.https.HttpsError("internal", smsResult.error || "Could not send a verification code to that number.");
+    throw new Error(smsResult.error || "Could not send a verification code to that number.");
   }
-
-  return { success: true };
-});
+}
 
 // ── confirmPhoneChange ───────────────────────────────────────────────────────
-export const confirmPhoneChange = functions.https.onCall(async (data) => {
-  const token = typeof data?.token === "string" ? data.token : "";
-  const code = typeof data?.code === "string" ? data.code : "";
-  if (!token || !code) throw new functions.https.HttpsError("invalid-argument", "Missing token or code");
+export async function confirmPhoneChange(token: string, code: string): Promise<void> {
+  if (!token || !code) throw new Error("Missing token or code");
 
   const ref = db().collection("phone_change_requests").doc(token);
   const snap = await ref.get();
   const reqData = snap.data();
   if (!snap.exists || !reqData || reqData.status !== "pending" || (reqData.expiresAt as number) < Date.now() || !reqData.newPhone) {
-    throw new functions.https.HttpsError("failed-precondition", "This link is invalid or has expired.");
+    throw new Error("This link is invalid or has expired.");
   }
 
   const otpState = reqData.otp as OtpState | undefined;
@@ -206,10 +201,11 @@ export const confirmPhoneChange = functions.https.onCall(async (data) => {
     if (otpState) {
       await ref.update({ otp: { ...otpState, attempts: (otpState.attempts ?? 0) + 1 } });
     }
-    const message = result.status === "wrong"
-      ? "Incorrect code. Please try again."
-      : "That code expired or too many attempts were made. Request a new one.";
-    throw new functions.https.HttpsError("invalid-argument", message);
+    throw new Error(
+      result.status === "wrong"
+        ? "Incorrect code. Please try again."
+        : "That code expired or too many attempts were made. Request a new one.",
+    );
   }
 
   const { uid, role, newPhone, email } = reqData as { uid: string; role: Role; newPhone: string; email: string };
@@ -238,11 +234,9 @@ export const confirmPhoneChange = functions.https.onCall(async (data) => {
       ? sendTransactionalEmail({ to: email, subject: "Your Evia phone number was changed", html: phoneChangeConfirmedHtml(last4) })
       : Promise.resolve(),
   ]);
+}
 
-  return { success: true };
-});
-
-// Core logic shared by the website's requestEmailChange callable and Evia's
+// Core logic shared by the website's email-change request flow and Evia's
 // request_email_change MCP tool — one place creates the request doc and
 // sends the confirmation email. Callers are responsible for auth/ownership
 // checks and any duplicate-email validation before calling this.
@@ -264,47 +258,33 @@ export async function requestEmailChangeForAccount(uid: string, role: Role, newE
   });
 }
 
-// ── requestEmailChange (auth required — only reachable from Account Settings) ─
-export const requestEmailChange = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
-  }
-  const newEmail = typeof data?.newEmail === "string" ? data.newEmail.trim() : "";
-  if (!newEmail || !isValidEmail(newEmail)) {
-    throw new functions.https.HttpsError("invalid-argument", "Valid email required");
-  }
-
-  const uid = context.auth.uid;
-  if (await isRateLimited("email_change_rate_limits", uid)) {
-    return { success: true };
-  }
+// ── requestEmailChangeSelf (website's Account Settings entry point, auth'd) ──
+export async function requestEmailChangeSelf(uid: string, rawNewEmail: string): Promise<void> {
+  const newEmail = rawNewEmail.trim();
+  if (!newEmail || !isValidEmail(newEmail)) throw new Error("Valid email required");
+  if (await isRateLimited("email_change_rate_limits", uid)) return;
 
   const caregiverSnap = await db().collection("caregivers").doc(uid).get();
   const role: Role = caregiverSnap.exists ? "caregiver" : "client";
   await requestEmailChangeForAccount(uid, role, newEmail);
-
-  return { success: true };
-});
+}
 
 // ── confirmEmailChange ───────────────────────────────────────────────────────
-export const confirmEmailChange = functions.https.onCall(async (data) => {
-  const token = typeof data?.token === "string" ? data.token : "";
-  if (!token) throw new functions.https.HttpsError("invalid-argument", "Missing token");
+export async function confirmEmailChange(token: string): Promise<void> {
+  if (!token) throw new Error("Missing token");
 
   const ref = db().collection("email_change_requests").doc(token);
   const snap = await ref.get();
   const reqData = snap.data();
   if (!snap.exists || !reqData || reqData.status !== "pending" || (reqData.expiresAt as number) < Date.now()) {
-    throw new functions.https.HttpsError("failed-precondition", "This link is invalid or has expired.");
+    throw new Error("This link is invalid or has expired.");
   }
 
   const { uid, role, newEmail } = reqData as { uid: string; role: Role; newEmail: string };
   const collection = role === "caregiver" ? "caregivers" : "users";
   await db().collection(collection).doc(uid).set({ email: newEmail }, { merge: true });
   await ref.update({ status: "consumed" });
-
-  return { success: true };
-});
+}
 
 // ── Expiry sweep ─────────────────────────────────────────────────────────────
 // Same convention as the other short-lived-record sweepers (shiftOfferExpiry,

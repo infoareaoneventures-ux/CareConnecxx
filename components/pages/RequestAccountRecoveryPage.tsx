@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { functions } from '../../lib/firebase';
+import { submitAccountAction } from '../../services/accountActionQueue';
 import { BloomMark } from '../ui/BloomMark';
 
 // "Trouble signing in?" destination — mounted at both /client/forgot-password
@@ -22,9 +22,7 @@ export default function RequestAccountRecoveryPage() {
     setSubmitting(true);
     setError('');
     try {
-      if (!functions) throw new Error('Not connected');
-      const fn = functions.httpsCallable('v1-requestPhoneChange');
-      await fn({ email: email.trim() });
+      await submitAccountAction('request_phone_change', { email: email.trim() });
       setSent(true);
     } catch {
       setError('Something went wrong. Please try again.');

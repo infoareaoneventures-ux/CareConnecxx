@@ -27,12 +27,11 @@ admin.firestore().settings({ ignoreUndefinedProperties: true });
 // STRIPE FUNCTIONS - Payment processing for memberships
 export * from './stripe';
 
-// ACCOUNT DELETION - cancels billing + removes Firestore data + Auth user
-export * from './accountDeletion';
-
-// ACCOUNT RECOVERY - phone-number change/recovery + email-change, both gated
-// by verifying ownership of the relevant address/number before the swap
-export * from './accountRecovery';
+// ACCOUNT DELETION + RECOVERY (accountDeletion.ts, accountRecovery.ts) - plain
+// functions, not Cloud Functions themselves; see accountRecovery.ts's header
+// comment. Reached via the account_action_requests Firestore-trigger queue
+// below, or directly by Evia's MCP tools.
+export { processAccountActionQueue } from './triggers/accountActionQueue';
 
 // CHECKR - Background check initiation + webhook
 export * from './checkr';

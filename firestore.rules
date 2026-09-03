@@ -1411,6 +1411,35 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // ACCOUNT ACTION QUEUE — website writes a phone/email-change or
+    // delete-account request here; the Firestore-trigger queue
+    // (functions/src/triggers/accountActionQueue.ts) processes it and writes
+    // back status/result/error. This exists because careconnex-d4c8b's GCP
+    // org policy blocks granting public invoker IAM to brand-new Cloud
+    // Functions — same wall the admin queues above work around. Reads are
+    // gated only by knowing the (crypto-random, unguessable) document id —
+    // the same trust model as the token-keyed phone_change_requests/
+    // email_change_requests collections. Two of the six action types act on
+    // the caller's own account and require sign-in; the other four are
+    // reachable logged out by design (lost-phone recovery, email-link click).
+    match /account_action_requests/{requestId} {
+      allow read: if true;
+      allow create: if request.resource.data.type in [
+          'request_phone_change', 'start_phone_verification', 'confirm_phone_change',
+          'confirm_email_change', 'request_email_change', 'delete_account'
+        ]
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasOnly(
+          ['type', 'status', 'createdAt', 'email', 'token', 'newPhone', 'code', 'uid', 'newEmail']
+        )
+        && (
+          request.resource.data.type in ['request_email_change', 'delete_account']
+            ? (request.auth != null && request.auth.uid == request.resource.data.uid)
+            : true
+        );
+      allow update, delete: if false; // server-side only (Admin SDK trigger)
+    }
+
     // DENY ALL OTHER ACCESS BY DEFAULT
     // ==========================================
     match /{document=**} {

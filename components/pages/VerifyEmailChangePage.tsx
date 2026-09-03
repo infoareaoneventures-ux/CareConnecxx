@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { functions } from '../../lib/firebase';
+import { submitAccountAction } from '../../services/accountActionQueue';
 import { BloomMark } from '../ui/BloomMark';
 
-// Destination of the link emailed by v1-requestEmailChange. Clicking it IS
-// the proof of owning the new inbox — no further input needed here.
+// Destination of the link emailed by the request_email_change flow. Clicking
+// it IS the proof of owning the new inbox — no further input needed here.
 type Status = 'confirming' | 'done' | 'expired';
 
 export default function VerifyEmailChangePage() {
@@ -12,9 +12,8 @@ export default function VerifyEmailChangePage() {
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token') ?? '';
-    if (!token || !functions) { setStatus('expired'); return; }
-    const fn = functions.httpsCallable('v1-confirmEmailChange');
-    fn({ token })
+    if (!token) { setStatus('expired'); return; }
+    submitAccountAction('confirm_email_change', { token })
       .then(() => setStatus('done'))
       .catch(() => setStatus('expired'));
   }, []);

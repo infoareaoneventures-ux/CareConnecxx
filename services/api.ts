@@ -218,10 +218,14 @@ export const dbService = {
     // Firestore documents, then deletes the Auth login. Calling
     // auth.currentUser.delete() directly (the old behavior) only removed the
     // login and left billing running against an orphaned customer record.
+    // Routed through the account_action_requests Firestore-trigger queue
+    // (services/accountActionQueue.ts) rather than a direct callable — this
+    // project's GCP org policy blocks public invoker IAM on brand-new Cloud
+    // Functions, so a plain onCall here would silently 403.
     deleteUserAccount: async () => {
-        if (isConfigured && auth && auth.currentUser && functions) {
-            const fn = functions.httpsCallable('v1-deleteAccount');
-            await fn({});
+        if (isConfigured && auth && auth.currentUser) {
+            const { submitAccountAction } = await import('./accountActionQueue');
+            await submitAccountAction('delete_account', { uid: auth.currentUser.uid });
             return true;
         }
         throw new Error("Not logged in");

@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import * as functions from "firebase-functions/v1";
 import { cancelSubscriptionForUser } from "./stripe";
 
 // Client-side account deletion used to be just `auth.currentUser.delete()`
@@ -8,6 +7,13 @@ import { cancelSubscriptionForUser } from "./stripe";
 // against a customer record with no linked account. This is the real
 // deletion: stop billing, remove the account's data, then remove the login,
 // all server-side (client code can't safely do any of this).
+//
+// This is a plain function, not a Cloud Function itself — the website reaches
+// it via the account_action_requests Firestore-trigger queue
+// (functions/src/triggers/accountActionQueue.ts), and Evia's delete_account
+// MCP tool calls it directly, in-process. See accountRecovery.ts's header
+// comment for why (a brand-new public onCall function can't get its invoker
+// IAM set on this project).
 export interface DeleteAccountResult { deleted: true }
 
 export async function deleteAccountForUser(userId: string): Promise<DeleteAccountResult> {
@@ -54,14 +60,3 @@ export async function deleteAccountForUser(userId: string): Promise<DeleteAccoun
 
   return { deleted: true };
 }
-
-export const deleteAccount = functions.https.onCall(async (_data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
-  }
-  try {
-    return await deleteAccountForUser(context.auth.uid);
-  } catch (error: any) {
-    throw new functions.https.HttpsError("internal", error?.message ?? "Failed to delete account");
-  }
-});

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { functions } from '../../lib/firebase';
+import { submitAccountAction } from '../../services/accountActionQueue';
 import { BloomMark } from '../ui/BloomMark';
 
 // Destination of the link emailed by v1-requestPhoneChange. The email click
@@ -15,9 +15,9 @@ function formatDisplay(val: string): string {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
-function errorCode(err: unknown): string {
-  const e = err as { code?: string };
-  return (e?.code ?? '').replace(/^functions\//, '');
+function isExpiredError(err: unknown): boolean {
+  const e = err as { message?: string };
+  return !!e?.message?.includes('invalid or has expired');
 }
 
 export default function VerifyPhoneChangePage() {
@@ -37,12 +37,10 @@ export default function VerifyPhoneChangePage() {
     setSubmitting(true);
     setError('');
     try {
-      if (!functions) throw new Error('Not connected');
-      const fn = functions.httpsCallable('v1-startPhoneChangeVerification');
-      await fn({ token, newPhone: `+1${digits}` });
+      await submitAccountAction('start_phone_verification', { token, newPhone: `+1${digits}` });
       setStep('otp');
     } catch (err: unknown) {
-      if (errorCode(err) === 'failed-precondition') { setStep('expired'); return; }
+      if (isExpiredError(err)) { setStep('expired'); return; }
       const e = err as { message?: string };
       setError(e?.message || 'Something went wrong. Please try again.');
     } finally {
@@ -56,12 +54,10 @@ export default function VerifyPhoneChangePage() {
     setSubmitting(true);
     setError('');
     try {
-      if (!functions) throw new Error('Not connected');
-      const fn = functions.httpsCallable('v1-confirmPhoneChange');
-      await fn({ token, code: code.trim() });
+      await submitAccountAction('confirm_phone_change', { token, code: code.trim() });
       setStep('done');
     } catch (err: unknown) {
-      if (errorCode(err) === 'failed-precondition') { setStep('expired'); return; }
+      if (isExpiredError(err)) { setStep('expired'); return; }
       const e = err as { message?: string };
       setError(e?.message || 'Incorrect code. Please try again.');
     } finally {

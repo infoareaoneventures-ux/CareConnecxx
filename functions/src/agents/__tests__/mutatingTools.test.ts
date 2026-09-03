@@ -11,7 +11,7 @@ describe("isHighStakesMutation (U3)", () => {
       "cancel_appointment",
       "request_booking",
       "request_instant_payout",
-      "cancel_subscription",
+      "set_subscription_status",
       "remove_family_member",
       "update_care_plan",
       "send_caregiver_message",

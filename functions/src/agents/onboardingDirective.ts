@@ -65,6 +65,9 @@ const FIELD_LABEL: Record<string, string> = {
   rate:           "what they'd like to pay per hour — a number or 'flexible'",
   // Step 13
   jobDescription: "a short free-text description of the care situation (optional but helpful for caregivers)",
+  // Not a wizard step — recovery-only, so the account has a way back in if
+  // the phone is ever lost. Ask for it naturally, near the end.
+  email:          "their email address — used only for account recovery if they ever lose access to this phone number, never shared with caregivers",
   // Collected throughout
   firstName:      "the family member's first name (the person texting)",
   hoursPerDay:    "how many hours per day",

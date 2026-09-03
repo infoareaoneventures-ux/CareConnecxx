@@ -1246,36 +1246,41 @@ export const getPaymentMethodStatus = functions.https.onCall(async (data, contex
 /**
  * Cancel subscription
  */
+// Shared core (2026-08-31, Membership page audit) — Evia's cancel_subscription
+// MCP tool used to reimplement this exact Stripe call+lookup separately, which
+// meant a future change here (extra validation, refund handling, etc.)
+// wouldn't automatically apply to the SMS path. Both now call this one
+// function. Deliberately writes NOTHING to Firestore itself — matches the
+// website's own behavior exactly: the customer.subscription.updated webhook
+// (handleSubscriptionUpdated) is the single source of truth for
+// membershipStatus/subscriptionActive, whether the cancel came from the site
+// or from Evia.
+export interface CancelSubscriptionResult { alreadyCancelling?: boolean; cancelled?: boolean; periodEnd: string | null; subId?: string }
+export async function cancelSubscriptionForUser(userId: string): Promise<CancelSubscriptionResult> {
+  const subsSnap = await admin.firestore()
+    .collection('customers').doc(userId).collection('subscriptions')
+    .where('status', 'in', ['active', 'trialing']).limit(1).get();
+  if (subsSnap.empty) throw new Error('No active subscription found');
+  const subDoc  = subsSnap.docs[0];
+  const subData = subDoc.data();
+  const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
+  if (subData.cancel_at_period_end === true) return { alreadyCancelling: true, periodEnd };
+  await stripe.subscriptions.update(subDoc.id, { cancel_at_period_end: true });
+  return { cancelled: true, periodEnd, subId: subDoc.id };
+}
+
 export const cancelSubscription = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const userId = context.auth.uid;
-
   try {
-    // Get active subscription
-    const subscriptions = await admin.firestore()
-      .collection('customers')
-      .doc(userId)
-      .collection('subscriptions')
-      .where('status', 'in', ['active', 'trialing'])
-      .limit(1)
-      .get();
-
-    if (subscriptions.empty) {
-      throw new functions.https.HttpsError('not-found', 'No active subscription found');
+    const result = await cancelSubscriptionForUser(context.auth.uid);
+    return { success: true, ...result };
+  } catch (error: any) {
+    if (error instanceof Error && error.message === 'No active subscription found') {
+      throw new functions.https.HttpsError('not-found', error.message);
     }
-
-    const subscriptionId = subscriptions.docs[0].id;
-
-    // Cancel in Stripe
-    await stripe.subscriptions.update(subscriptionId, {
-      cancel_at_period_end: true,
-    });
-
-    return { success: true };
-  } catch (error) {
     console.error('Error canceling subscription:', error);
     throw new functions.https.HttpsError('internal', 'Failed to cancel subscription');
   }
@@ -1524,36 +1529,36 @@ async function handleShiftPaymentIntentFailed(intent: Stripe.PaymentIntent) {
 /**
  * Reactivate subscription
  */
+// Shared core, same reasoning as cancelSubscriptionForUser above. Note the
+// query is by `cancel_at_period_end==true` alone (no status filter) — this is
+// the site's own original query; Evia's tool used to query by
+// status in [active,trialing] first instead, a subtly different lookup now
+// unified onto this one.
+export interface ReactivateSubscriptionResult { reactivated: boolean; periodEnd: string | null }
+export async function reactivateSubscriptionForUser(userId: string): Promise<ReactivateSubscriptionResult> {
+  const subsSnap = await admin.firestore()
+    .collection('customers').doc(userId).collection('subscriptions')
+    .where('cancel_at_period_end', '==', true).limit(1).get();
+  if (subsSnap.empty) throw new Error('No canceled subscription found');
+  const subDoc  = subsSnap.docs[0];
+  const subData = subDoc.data();
+  await stripe.subscriptions.update(subDoc.id, { cancel_at_period_end: false });
+  const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
+  return { reactivated: true, periodEnd };
+}
+
 export const reactivateSubscription = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const userId = context.auth.uid;
-
   try {
-    // Get subscription with cancel_at_period_end
-    const subscriptions = await admin.firestore()
-      .collection('customers')
-      .doc(userId)
-      .collection('subscriptions')
-      .where('cancel_at_period_end', '==', true)
-      .limit(1)
-      .get();
-
-    if (subscriptions.empty) {
-      throw new functions.https.HttpsError('not-found', 'No canceled subscription found');
+    const result = await reactivateSubscriptionForUser(context.auth.uid);
+    return { success: true, ...result };
+  } catch (error: any) {
+    if (error instanceof Error && error.message === 'No canceled subscription found') {
+      throw new functions.https.HttpsError('not-found', error.message);
     }
-
-    const subscriptionId = subscriptions.docs[0].id;
-
-    // Reactivate in Stripe
-    await stripe.subscriptions.update(subscriptionId, {
-      cancel_at_period_end: false,
-    });
-
-    return { success: true };
-  } catch (error) {
     console.error('Error reactivating subscription:', error);
     throw new functions.https.HttpsError('internal', 'Failed to reactivate subscription');
   }

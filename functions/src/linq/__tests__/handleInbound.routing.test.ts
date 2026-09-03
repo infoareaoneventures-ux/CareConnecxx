@@ -1252,6 +1252,7 @@ describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
     city: "San Jose", zipCode: "95110", timeOfDay: "mornings",
     careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
     emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000", rate: 25,
+    email: "sarah@example.com",
   };
 
   function seedCheckpoint(step: string, data: Record<string, unknown>, userType = "client") {

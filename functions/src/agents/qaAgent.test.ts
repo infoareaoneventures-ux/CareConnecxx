@@ -7,6 +7,9 @@ const qaHarness = vi.hoisted(() => {
   // carePlans doc per-test without needing a new shared mock — additive only,
   // every other test leaves this null and sees the same exists:false as before.
   const carePlansState: { doc: Record<string, unknown> | null } = { doc: null };
+  // Same idea, for the users/{uid} doc buildClientCoreContext's ACCOUNT
+  // STATUS section reads — additive only, every other test leaves this null.
+  const usersState: { doc: Record<string, unknown> | null } = { doc: null };
   // Same idea, generalized: seed a collection's query-result docs by name
   // (e.g. "booking_requests", "shifts") for the CARE TEAM roster tests —
   // additive only, every other test leaves this empty and sees the same
@@ -23,8 +26,8 @@ const qaHarness = vi.hoisted(() => {
       const seeded = collectionDocs[collection];
       if (seeded) return { empty: seeded.length === 0, docs: seeded.map((d) => ({ id: d.id, data: () => d.data })) };
       return {
-        exists: (collection === "agent_sessions" && Boolean(id)) || (collection === "carePlans" && carePlansState.doc !== null),
-        data: () => collection === "agent_sessions" ? sessionData : (collection === "carePlans" ? carePlansState.doc : {}),
+        exists: (collection === "agent_sessions" && Boolean(id)) || (collection === "carePlans" && carePlansState.doc !== null) || (collection === "users" && usersState.doc !== null),
+        data: () => collection === "agent_sessions" ? sessionData : (collection === "carePlans" ? carePlansState.doc : (collection === "users" ? usersState.doc : {})),
         empty: true,
         docs: [],
         ref: makeChain(collection, id),
@@ -45,6 +48,7 @@ const qaHarness = vi.hoisted(() => {
     writes,
     sessionData,
     carePlansState,
+    usersState,
     collectionDocs,
     detectAndStageFactChange: vi.fn(async (..._args: unknown[]) => ({ kind: "not_correction" })),
     factChangeAckCopy: vi.fn((..._args: unknown[]) => null),
@@ -604,7 +608,40 @@ describe("buildCaregiverCoreContext", () => {
 describe("buildClientCoreContext", () => {
   beforeEach(() => {
     qaHarness.carePlansState.doc = null;
+    qaHarness.usersState.doc = null;
     for (const k of Object.keys(qaHarness.collectionDocs)) delete qaHarness.collectionDocs[k];
+  });
+
+  // 2026-08-31 fix (Membership page audit): this line used to read
+  // users/{uid}.subscriptionStatus — a field the real subscription lifecycle
+  // (customer.subscription.updated webhook) never writes at all, only
+  // membershipStatus. So the "subscription X" line silently never appeared
+  // for any genuinely subscribed client; if it appeared at all it could only
+  // be a leftover from the two now-fixed cancel/reactivate MCP tools writing
+  // a nonstandard value like "canceling" that nothing else recognizes.
+  it("surfaces the real membershipStatus field, not the dead subscriptionStatus one", async () => {
+    qaHarness.usersState.doc = { verified: true, membershipStatus: "active" };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("ACCOUNT STATUS");
+    expect(out).toContain("subscription active");
+  });
+
+  it("omits the subscription line entirely when membershipStatus is absent, rather than reading a stale field", async () => {
+    qaHarness.usersState.doc = { verified: true, subscriptionStatus: "canceling" };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).not.toContain("subscription canceling");
+  });
+
+  it("flags when there's no recovery email on file, so Evia knows before offering a phone/email change", async () => {
+    qaHarness.usersState.doc = { verified: true };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("recovery email NOT on file");
+  });
+
+  it("confirms the recovery email is on file once one is set", async () => {
+    qaHarness.usersState.doc = { verified: true, email: "family@example.com" };
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("recovery email on file");
   });
 
   it("reads the real carePlans collection (not care_plans) and surfaces nested per-recipient careNeeds/notes", async () => {

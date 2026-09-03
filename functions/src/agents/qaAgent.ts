@@ -422,7 +422,19 @@ export async function buildClientCoreContext(
   if (u) {
     const accountBits: string[] = [];
     accountBits.push(`identity ${u.verified ? "verified" : "unverified"}`);
-    if (u.subscriptionStatus) accountBits.push(`subscription ${u.subscriptionStatus}`);
+    // Real field: handleSubscriptionUpdated (functions/src/stripe.ts) writes
+    // users/{uid}.membershipStatus with the actual Stripe status string
+    // (active/trialing/past_due/canceled/unpaid) — the same field
+    // useAccessGates.tsx and checkClientAccessGate both check. This used to
+    // read a field (subscriptionStatus) nothing in the real subscription
+    // lifecycle ever writes, so this line silently never appeared for any
+    // genuinely subscribed client (found 2026-08-31, Membership page audit).
+    if (u.membershipStatus) accountBits.push(`subscription ${u.membershipStatus}`);
+    // update_user_profile's requestPhoneChange and request_email_change both
+    // fail soft with noEmailOnFile when there's nothing to send a link to —
+    // surface this here so Evia knows before offering either, instead of
+    // discovering it only after proposing the action (2026-09-02 phone-recovery build).
+    accountBits.push(`recovery email ${u.email ? "on file" : "NOT on file"}`);
     const onboardingComplete = (session as any)?.onboardingStep === "complete";
     accountBits.push(`onboarding ${onboardingComplete ? "complete" : "in progress"}`);
     if (accountBits.length) parts.push(`ACCOUNT STATUS: ${accountBits.join(", ")}.`);
@@ -592,6 +604,12 @@ export function buildCaregiverCoreContext(caregiver: any): string {
   const accountBits: string[] = [];
   if (caregiver.status) accountBits.push(`account ${caregiver.status}`);
   if (caregiver.verificationStatus) accountBits.push(`verification ${caregiver.verificationStatus}`);
+  // Not surfaced here the way the client side surfaces it (qaAgent.ts's
+  // buildClientCoreContext) — caregivers are already required to give an
+  // email at onboarding (caregiver_ask_email), so a caregiver reaching this
+  // block with none on file is rare, and this function's established
+  // convention (unlike the client one) is to only ever announce a positive
+  // state, never an absence — see the tests locking that in.
   // Live field is backgroundCheckStatus (top-level); backgroundCheckData.status
   // kept only as a legacy fallback. "clear" is spelled out so the model never
   // reads it as "in progress".
@@ -752,9 +770,8 @@ export function buildClientSystemPrompt(
     `  · add_family_member — add someone new to the care group. They'll get a welcome text and start receiving care updates.`,
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
-    `  · review_shift_hours — approve or dispute hours a caregiver submitted. If disputing, ask the family for the correct hours before calling.`,
-    `  · cancel_subscription — cancel the Evia membership at end of billing period. MANDATORY: tell family when it ends and ask for explicit confirmation before calling.`,
-    `  · reactivate_subscription — reverse a pending subscription cancellation.`,
+    `  · review_shift_hours — approve hours a caregiver submitted, propose a correction (ask for the correct start AND end time, not just total hours), or — if the caregiver then pushes back with a counter-proposal — accept their counter or escalate to Evia's team to mediate.`,
+    `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. MANDATORY for cancel: tell family when it ends and ask for explicit confirmation before calling. Reactivate needs no confirmation.`,
     `  · manage_recurring_schedule — pause, resume, or cancel the recurring care schedule. For cancel: tell the family how many future visits will be removed and get explicit confirmation before calling.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accepting an applicant means requesting an interview with them (the website has no direct "accept" — this IS how you show interest); include preferredDate/preferredTime when accepting. Rejecting just declines the application.`,
@@ -795,9 +812,10 @@ export function buildClientSystemPrompt(
     `  · get_care_plan_history — list the recent versions of the care plan with a one-line summary each.`,
     `  · restore_care_plan_version — roll the care plan back to a prior version. MANDATORY: confirm with the family which version they want and read back what it contains before calling.`,
     `  · get_family_group — list everyone in the care group with their role and phone.`,
-    `  · update_user_profile — update the family's own name, phone, address, or photo. Read back the proposed change before calling. Phone changes need OTP re-verification on the new number.`,
+    `  · update_user_profile — update the family's own name, address, or photo. Read back the proposed change before calling. To change their PHONE number, pass requestPhoneChange:true instead of a new number — it emails a secure link to the address on file, and the new number is entered and verified there, never over SMS. Tell the family to check their email — never ask them for the new number yourself.`,
     `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
     `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
+    `  · delete_account — permanently delete the family's own account. MANDATORY: confirm explicitly first (read back that this is irreversible and cancels any active membership).`,
     `  · get_caregiver_reviews — pull recent reviews and average rating for a caregiver. Use for "what do other families say about Alice?".`,
     `  · save_caregiver_favorite / unsave_caregiver_favorite / list_saved_caregivers — manage the family's favorite caregivers.`,
     `  · set_block_status — block, unblock, or report another user (action: 'block'|'unblock'|'report'). MANDATORY for 'block': read back who you're about to block and wait for explicit YES. MANDATORY for 'report': confirm category and details with the family, then call, and tell them ops follows up within 24 hours. Unblocking needs no confirmation.`,
@@ -822,7 +840,7 @@ export function buildClientSystemPrompt(
     `  · get_work_in_progress — see everything you (Evia) currently have in flight for this family. Use when they ask "what are you working on" or "any update on that thing".`,
     `  · update_preferences — update the family's notification, do-not-disturb, or timezone preferences ("don't text me after 8pm").`,
     `  · read_memory_file / search_memory — read or search your long-term memory files for this family when the cached context above doesn't cover it.`,
-    `For irreversible actions (cancel_appointment, manage_booking, delete_reminder, remove_family_member, cancel_subscription, manage_recurring_schedule with action 'cancel', restore_care_plan_version, set_block_status with action 'block' or 'report', archive_senior_profile, cancel_interview, delete_memory_file), always confirm with the family before calling. For everything else, act and report.`,
+    `For irreversible actions (cancel_appointment, manage_booking, delete_reminder, remove_family_member, set_subscription_status with action 'cancel', manage_recurring_schedule with action 'cancel', restore_care_plan_version, set_block_status with action 'block' or 'report', archive_senior_profile, cancel_interview, delete_memory_file, delete_account), always confirm with the family before calling. For everything else, act and report.`,
     ``,
     `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through yet. Never claim someone was notified if notification.sent === false. If reason is "queued_for_retry", the message is queued and WILL be delivered automatically within minutes — say so ("the text is delayed but will go out shortly") and do NOT offer a manual retry. For any other reason, tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?"`,
     ``,
@@ -979,7 +997,8 @@ export function buildCaregiverSystemPrompt(
     `- perform_web_action (actionType "fetch" or "browse"): get content from a public website`,
     `- list_user_reminders / create_reminder / update_reminder / delete_reminder: manage your personal reminders`,
     `- get_billing_summary: check your payment history`,
-    `- update_caregiver_profile: update your hourly rate, bio, phone, city, or weekly availability`,
+    `- update_caregiver_profile: update your hourly rate, bio, city, or weekly availability. To change your PHONE NUMBER, pass requestPhoneChange:true instead — login here is by phone number, so this emails a secure link to the address on file rather than taking the new number over text. Tell them to check their email.`,
+    `- delete_account: permanently delete your own account. MANDATORY: confirm explicitly first (read back that this is irreversible).`,
     `- pause_account: pause your account so you stop getting job matches (vacation, a break). Pass until as 'YYYY-MM-DD' or 'indefinite'`,
     `- reactivate_account: come back from a pause and start receiving job matches again`,
     `- accept_shift / decline_shift: accept or decline the shift offer you were just sent (resolves your current pending offer)`,
@@ -2880,7 +2899,7 @@ export async function runQaAgent(params: {
             // Instrumentation for D4 — track success rate on the cancel path so
             // we can decide if a dedicated cancelFlow is needed. Same pattern
             // works for any high-stakes tool.
-            if (block.name === "cancel_appointment" || block.name === "cancel_subscription") {
+            if (block.name === "cancel_appointment" || block.name === "set_subscription_status") {
               const succeeded = !(result as any)?._toolError && !(result as any)?.error;
               console.info("qaAgent.toolUse", {
                 tool:     block.name,
@@ -4057,11 +4076,19 @@ const CARE_ACTION_CONTEXT_TERMS = /\b(mom|dad|mother|father|maria|caregiver|clie
 // of listing topics, catch the SHAPE of a real question or a factual
 // pushback: those always need real data to answer correctly, whatever
 // they're about. Only genuine pleasantries should ever skip this.
-const QUESTION_FORM = /\?|^\s*(what|who|whom|whose|where|when|why|which|is|are|am|was|were|do|does|did|can|could|would|should|will|has|have|had)\b/i;
+// "any" added 2026-08-31 (Payments/Timesheets audit): casual texting shorthand
+// like "Any pending timesheets" or "Any bookings" is functionally a question
+// ("do you have any...") but has no "?" and no other listed interrogative
+// word, so it was still slipping through as trivial.
+const QUESTION_FORM = /\?|^\s*(what|who|whom|whose|where|when|why|which|is|are|am|was|were|do|does|did|can|could|would|should|will|has|have|had|any)\b/i;
 // Common greeting-questions ("How's it going?", "How are you?") are rhetorical,
 // not real information requests — carve them back out so they stay trivial.
 const GREETING_QUESTION = /^\s*how(?:'?s| is| are| have)?\s+(it|everything|things|you|your\s+day)\b/i;
-const PUSHBACK_FORM = /^\s*(i\s+think|i\s+believe|i'?m\s+(pretty\s+)?sure|that'?s\s+(not|wrong|incorrect)|you\s+(do|have|did)\b)/i;
+// "wrong"/"incorrect"/"not right" added 2026-08-31: a correction doesn't
+// always start with "That's..." — "Wrong time" or "5:30 not correct" are
+// just as common in real texting and carry the same signal wherever they
+// land in the sentence, not just as a prefix.
+const PUSHBACK_FORM = /^\s*(i\s+think|i\s+believe|i'?m\s+(pretty\s+)?sure|that'?s\s+(not|wrong|incorrect)|you\s+(do|have|did)\b)|\b(wrong|incorrect|not\s+(correct|right))\b/i;
 
 export function isTrivialQuickReply(text: string): boolean {
   const t = text.trim();

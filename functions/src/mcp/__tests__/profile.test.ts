@@ -93,10 +93,26 @@ vi.mock("../../agents/matchingAgent", () => ({
   runMatchingForClient: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Phone/email-change now route through the shared account-recovery flow
+// (functions/src/accountRecovery.ts) instead of writing pendingPhone/pendingEmail
+// directly — that module's own email-sending is exercised by its own tests, so
+// here it's a boundary mock: assert update_user_profile/request_email_change
+// call it with the right account details.
+const requestPhoneChangeForAccount = vi.fn().mockResolvedValue(undefined);
+const requestEmailChangeForAccount = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../accountRecovery", () => ({
+  requestPhoneChangeForAccount: (...a: unknown[]) => requestPhoneChangeForAccount(...a),
+  requestEmailChangeForAccount: (...a: unknown[]) => requestEmailChangeForAccount(...a),
+}));
+
 import { handleToolCall } from "../server";
 
 describe("profile tools", () => {
-  beforeEach(() => hoisted.reset());
+  beforeEach(() => {
+    hoisted.reset();
+    requestPhoneChangeForAccount.mockClear();
+    requestEmailChangeForAccount.mockClear();
+  });
 
   describe("update_caregiver_profile", () => {
     it("denies a different acting phone without writing", async () => {
@@ -172,7 +188,6 @@ describe("profile tools", () => {
       expect(userSet?.data.displayName).toBe("Bob");
       expect(userSet?.data.street).toBe("123 Main");
       expect(userSet?.data.city).toBe("NYC");
-      expect(r.phoneChangeRequested).toBe(false);
     });
 
     it("keeps the existing last name when only firstName is updated", async () => {
@@ -191,17 +206,31 @@ describe("profile tools", () => {
       expect(userSet?.data.photoUrl).toBeUndefined();
     });
 
-    it("stores phone as pendingPhone (does not overwrite live phone)", async () => {
+    it("requestPhoneChange:true starts the email-gated flow instead of writing phone directly", async () => {
+      hoisted.docState.set("users/u1", { email: "family@example.com", firstName: "Bob" });
       const r = await handleToolCall("update_user_profile", {
-        userId: "u1", phone: "+15555550100",
+        userId: "u1", requestPhoneChange: true,
       }) as any;
       expect(r.success).toBe(true);
-      expect(r.phoneChangeRequested).toBe(true);
-      expect(r.phoneVerificationNote).toContain("verify");
-      // Verify the write was to pendingPhone, not phone
+      expect(r.sentTo).toBe("family@example.com");
+      expect(requestPhoneChangeForAccount).toHaveBeenCalledWith(
+        expect.objectContaining({ uid: "u1", role: "client", name: "Bob" }),
+        "family@example.com",
+      );
+      // Nothing written to users/u1 directly — the real swap only happens
+      // once the emailed link is confirmed.
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.pendingPhone).toBe("+15555550100");
-      expect(userSet?.data.phone).toBeUndefined();
+      expect(userSet).toBeUndefined();
+    });
+
+    it("requestPhoneChange:true fails soft when there's no email on file", async () => {
+      hoisted.docState.set("users/u1", { firstName: "Bob" });
+      const r = await handleToolCall("update_user_profile", {
+        userId: "u1", requestPhoneChange: true,
+      }) as any;
+      expect(r.success).toBe(false);
+      expect(r.noEmailOnFile).toBe(true);
+      expect(requestPhoneChangeForAccount).not.toHaveBeenCalled();
     });
   });
 
@@ -242,14 +271,12 @@ describe("profile tools", () => {
       const r = await handleToolCall("request_email_change", { userId: "u1", newEmail: "new@example.com" }) as any;
       expect(r.success).toBe(true);
       expect(r.verificationSent).toBe(true);
-      // Token-keyed doc was created in email_change_requests
-      const tokenAdd = hoisted.sets.find(s => s.path.startsWith("email_change_requests/"));
-      expect(tokenAdd?.data.userId).toBe("u1");
-      expect(tokenAdd?.data.newEmail).toBe("new@example.com");
-      expect(tokenAdd?.data.status).toBe("pending");
-      // User doc was annotated with pendingEmail
+      // The actual token doc + email send now live in accountRecovery.ts
+      // (its own tests cover that) — this boundary just confirms the tool
+      // calls it with the right account and never writes pendingEmail itself.
+      expect(requestEmailChangeForAccount).toHaveBeenCalledWith("u1", "client", "new@example.com");
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.pendingEmail).toBe("new@example.com");
+      expect(userSet?.data.pendingEmail).toBeUndefined();
     });
   });
 });

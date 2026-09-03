@@ -159,6 +159,11 @@ vi.mock("../../payoutCommon", () => ({
   InstantPayoutError: payoutCommonMock.InstantPayoutError,
 }));
 
+const notifyAdmins = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../shiftHours", () => ({
+  notifyAdmins: (...args: unknown[]) => notifyAdmins(...args),
+}));
+
 // These tests target the tools' own payment-safety logic (ownership, no
 // double-charge, pending_review). The runtime confirmation gate cara-100 added
 // to handleToolCall (ALWAYS_CONFIRM / CONDITIONAL_CONFIRM) has its own suite, so
@@ -526,10 +531,18 @@ describe("U11 payment auditing & safety", () => {
   });
 
   // Scenario 1 — a client may only review (approve/reject) shift hours they own.
+  // 2026-08-31 (Payments/Timesheets audit): rewrote from decision/correctedHours
+  // to action/proposedStartTime+proposedEndTime, matching reviewShiftHours
+  // (shiftHours.ts) exactly — a correction can fix start OR end independently,
+  // not just total hours — and added accept_counter/escalate, which this tool
+  // previously had no equivalent for at all (a caregiver's counter-proposal
+  // had no resolution path over SMS).
   describe("review_shift_hours auth + idempotency", () => {
+    beforeEach(() => notifyAdmins.mockClear());
+
     it("denies a client reviewing another client's shift hours (PERMISSION_DENIED)", async () => {
       hoisted.docState.set("shiftHours/a1", { clientId: "OTHER", caregiverId: "cg1", status: "pending_client_review" });
-      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "approve" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
       // Status untouched — no approval, no charge can be triggered downstream.
@@ -546,17 +559,21 @@ describe("U11 payment auditing & safety", () => {
         payRate: 30,
         lineItems: [],
       });
-      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "approve" }) as any;
       expect(r.success).toBe(true);
-      expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
+      const shift = hoisted.docState.get("shiftHours/a1");
+      expect(shift.status).toBe("approved");
+      expect(shift.resolvedBy).toBe("client");
+      expect(shift.correctionHistory).toEqual([expect.objectContaining({ by: "client", action: "accepted" })]);
     });
 
-    it("writes a complete, capped correction proposal for a disputed shift", async () => {
+    it("writes a complete correction proposal with independent start/end times for a disputed shift", async () => {
       hoisted.docState.set("shiftHours/a1", {
         clientId: "c1",
         caregiverId: "cg1",
         status: "pending_client_review",
         submittedStartTime: "2026-07-13T09:00:00.000Z",
+        submittedEndTime: "2026-07-13T13:30:00.000Z",
         payRate: 30,
         lineItems: [],
       });
@@ -564,9 +581,10 @@ describe("U11 payment auditing & safety", () => {
       const r = await handleToolCall("review_shift_hours", {
         clientId: "c1",
         appointmentId: "a1",
-        decision: "dispute",
-        correctedHours: 4,
-        reason: "Left early",
+        action: "propose_correction",
+        proposedStartTime: "2026-07-13T09:00:00.000Z",
+        proposedEndTime: "2026-07-13T13:00:00.000Z",
+        proposalReason: "Left early",
       }) as any;
 
       expect(r.success).toBe(true);
@@ -579,17 +597,70 @@ describe("U11 payment auditing & safety", () => {
         proposedLineItems: [],
         proposedLineItemsTotal: 0,
         correctionRespondByAt: expect.any(String),
+        proposalReason: "Left early",
       });
+    });
+
+    it("rejects propose_correction missing either time (can't guess the other one)", async () => {
+      hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "pending_client_review", payRate: 30 });
+      const r = await handleToolCall("review_shift_hours", {
+        clientId: "c1", appointmentId: "a1", action: "propose_correction", proposedStartTime: "2026-07-13T09:00:00.000Z",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
     });
 
     it("duplicate approval is rejected — already-approved hours cannot be re-approved (no second charge)", async () => {
       hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "approved" });
-      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", decision: "approve" }) as any;
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "approve" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.message).toMatch(/already reviewed/i);
       // Still 'approved' — the second approval is a no-op, so onShiftHoursApproved
       // (which fires only on the pending→approved transition) cannot re-run.
       expect(hoisted.docState.get("shiftHours/a1").status).toBe("approved");
+    });
+
+    it("accepts a caregiver's counter-proposal and finalizes off the counter's own times", async () => {
+      hoisted.docState.set("shiftHours/a1", {
+        clientId: "c1",
+        caregiverId: "cg1",
+        status: "caregiver_counter_proposed",
+        counterStartTime: "2026-07-13T09:30:00.000Z",
+        counterEndTime: "2026-07-13T13:00:00.000Z",
+        counterLineItems: [],
+        payRate: 30,
+      });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "accept_counter" }) as any;
+      expect(r.success).toBe(true);
+      const shift = hoisted.docState.get("shiftHours/a1");
+      expect(shift.status).toBe("approved");
+      expect(shift.finalStartTime).toBe("2026-07-13T09:30:00.000Z");
+      expect(shift.finalEndTime).toBe("2026-07-13T13:00:00.000Z");
+    });
+
+    it("rejects accept_counter/escalate when there's no counter-proposal to respond to", async () => {
+      hoisted.docState.set("shiftHours/a1", { clientId: "c1", caregiverId: "cg1", status: "pending_client_review" });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "accept_counter" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+
+    it("escalates a dispute to admin mediation and notifies admins", async () => {
+      hoisted.docState.set("shiftHours/a1", {
+        clientId: "c1", caregiverId: "cg1", status: "caregiver_counter_proposed",
+        clientName: "A Family", caregiverName: "Alice",
+      });
+      const r = await handleToolCall("review_shift_hours", { clientId: "c1", appointmentId: "a1", action: "escalate" }) as any;
+      expect(r.success).toBe(true);
+      const shift = hoisted.docState.get("shiftHours/a1");
+      expect(shift.status).toBe("disputed_admin_review");
+      expect(shift.correctionHistory).toEqual([expect.objectContaining({ by: "client", action: "escalated" })]);
+      expect(notifyAdmins).toHaveBeenCalledWith(
+        "shift_hours_admin_review",
+        expect.any(String),
+        expect.stringContaining("A Family"),
+        { appointmentId: "a1" },
+      );
     });
   });
 

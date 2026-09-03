@@ -27,6 +27,13 @@ admin.firestore().settings({ ignoreUndefinedProperties: true });
 // STRIPE FUNCTIONS - Payment processing for memberships
 export * from './stripe';
 
+// ACCOUNT DELETION - cancels billing + removes Firestore data + Auth user
+export * from './accountDeletion';
+
+// ACCOUNT RECOVERY - phone-number change/recovery + email-change, both gated
+// by verifying ownership of the relevant address/number before the swap
+export * from './accountRecovery';
+
 // CHECKR - Background check initiation + webhook
 export * from './checkr';
 
@@ -189,6 +196,7 @@ export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
 export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
 export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
+export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';
 export { sendOnboardingReengagement } from './scheduled/onboardingReengagement';
 export { sendPaywallWinback } from './scheduled/paywallWinback';

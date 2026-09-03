@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, Eye, EyeOff, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Pencil, CheckCircle, Loader2, AlertCircle, Clock, X } from 'lucide-react';
 import { authService, dbService } from '../../services/api';
-import firebase from '../../lib/firebase';
+import { functions } from '../../lib/firebase';
 import { documentUploadService, DocumentType } from '../../services/documentUpload';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver, CaregiverDocument, UserProfile } from '../../types';
 import { geocodeToLatLng } from '../../utils/geocode';
+import { usePhoneReauth } from '../../hooks/usePhoneReauth';
+
+const DELETE_RECAPTCHA_CONTAINER = 'caregiver-settings-delete-recaptcha';
 
 const TRANSPORT_DOCS: { type: DocumentType; label: string; desc: string }[] = [
   { type: 'driversLicense', label: "Driver's License", desc: "Front of your valid driver's license" },
@@ -41,6 +44,7 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [lastName, setLastName] = useState('');
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [street, setStreet] = useState('');
   const [zip, setZip] = useState('');
@@ -49,19 +53,30 @@ export const CaregiverAccountSettings: React.FC = () => {
 
   // Edit mode toggles
   const [editingGender, setEditingGender] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
   const [editingPhone, setEditingPhone] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
 
-  // Delete account modal
+  // Email and phone both go through a verification link rather than a plain
+  // Firestore write — the phone is the login credential, and the email is
+  // the recovery channel that gates changing it, so neither should be a
+  // silent overwrite. See AccountSettings.tsx (client) for the same pattern.
+  const [newEmailDraft, setNewEmailDraft] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailRequestSent, setEmailRequestSent] = useState(false);
+  const [phoneRequestSent, setPhoneRequestSent] = useState(false);
+  const [requestingPhoneChange, setRequestingPhoneChange] = useState(false);
+
+  // Delete account modal — reauth is via phone OTP, not a password (no
+  // account here has a password credential; login is phone-OTP only).
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deletePassword, setDeletePassword] = useState('');
-  const [showDeletePassword, setShowDeletePassword] = useState(false);
-  const [deleteError, setDeleteError] = useState('');
+  const [deleteStep, setDeleteStep] = useState<'confirm' | 'otp'>('confirm');
+  const [deleteCode, setDeleteCode] = useState('');
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const deleteReauth = usePhoneReauth(DELETE_RECAPTCHA_CONTAINER);
 
   // Saving states
   const [savingGender, setSavingGender] = useState(false);
-  const [savingPhone, setSavingPhone] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
   const [zipLookingUp, setZipLookingUp] = useState(false);
 
@@ -78,13 +93,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     registration: useRef<HTMLInputElement>(null),
   };
 
-  // Password
-  const [showPasswordForm, setShowPasswordForm] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [savingPassword, setSavingPassword] = useState(false);
-
   useEffect(() => {
     let active = true;
     (async () => {
@@ -97,6 +105,7 @@ export const CaregiverAccountSettings: React.FC = () => {
         setLastName(cp.lastName || cp.name?.split(' ').slice(1).join(' ') || '');
         setDob(cp.dateOfBirth || cp.dob || '');
         setGender(cp.gender || '');
+        setEmail(cp.email || '');
         setPhone(cp.phone || '');
         setStreet(cp.street || cp.streetAddress || cp.address || '');
         setZip(cp.zipCode || cp.zip || '');
@@ -146,15 +155,26 @@ export const CaregiverAccountSettings: React.FC = () => {
     finally { setSavingGender(false); }
   };
 
-  const savePhone = async () => {
-    if (!currentUser?.uid) return;
-    setSavingPhone(true);
+  const saveEmail = async () => {
+    if (!newEmailDraft.trim() || !functions) return;
+    setSavingEmail(true);
     try {
-      await dbService.updateUser('caregivers', currentUser.uid, { phone } as any);
-      setEditingPhone(false);
-      addToast('Phone number saved', 'success');
-    } catch { addToast('Failed to save', 'error'); }
-    finally { setSavingPhone(false); }
+      const fn = functions.httpsCallable('v1-requestEmailChange');
+      await fn({ newEmail: newEmailDraft.trim() });
+      setEmailRequestSent(true);
+    } catch { addToast('Failed to send confirmation link', 'error'); }
+    finally { setSavingEmail(false); }
+  };
+
+  const requestPhoneChange = async () => {
+    if (!email || !functions) return;
+    setRequestingPhoneChange(true);
+    try {
+      const fn = functions.httpsCallable('v1-requestPhoneChange');
+      await fn({ email });
+      setPhoneRequestSent(true);
+    } catch { addToast('Failed to send verification link', 'error'); }
+    finally { setRequestingPhoneChange(false); }
   };
 
   const handleZipChange = async (val: string) => {
@@ -192,25 +212,6 @@ export const CaregiverAccountSettings: React.FC = () => {
     finally { setSavingAddress(false); }
   };
 
-  const handlePasswordChange = async () => {
-    if (!currentPassword) { addToast('Enter your current password', 'error'); return; }
-    if (!newPassword) { addToast('Enter a new password', 'error'); return; }
-    if (newPassword !== confirmPassword) { addToast('Passwords do not match', 'error'); return; }
-    if (newPassword.length < 6) { addToast('Password must be at least 6 characters', 'error'); return; }
-    setSavingPassword(true);
-    try {
-      await authService.updateUserPassword(newPassword, currentPassword);
-      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
-      setShowPasswordForm(false);
-      addToast('Password updated', 'success');
-    } catch (e: any) {
-      const msg = e?.code === 'auth/wrong-password' ? 'Current password is incorrect' : 'Failed to update password';
-      addToast(msg, 'error');
-    } finally {
-      setSavingPassword(false);
-    }
-  };
-
   const handleTransportUpload = useCallback(async (type: DocumentType, file: File) => {
     if (!currentUser?.uid) return;
     setTransportStatus(prev => ({ ...prev, [type]: 'uploading' }));
@@ -225,22 +226,29 @@ export const CaregiverAccountSettings: React.FC = () => {
     }
   }, [currentUser?.uid, addToast]);
 
+  const handleSendDeleteCode = async () => {
+    const ok = await deleteReauth.sendCode();
+    if (ok) setDeleteStep('otp');
+  };
+
   const handleDeleteAccount = async () => {
-    if (!deletePassword) { setDeleteError('Please enter your password.'); return; }
+    if (!deleteCode) { deleteReauth.setError('Enter the code we texted you.'); return; }
     setDeletingAccount(true);
-    setDeleteError('');
+    const confirmed = await deleteReauth.confirmCode(deleteCode);
+    if (!confirmed) { setDeletingAccount(false); return; }
     try {
-      const user = firebase.auth().currentUser;
-      if (!user?.email) throw new Error('no-user');
-      const credential = firebase.auth.EmailAuthProvider.credential(user.email, deletePassword);
-      await user.reauthenticateWithCredential(credential);
       await authService.deleteUserAccount();
-    } catch (err: any) {
+    } catch {
+      deleteReauth.setError('Failed to delete account. Please try again.');
       setDeletingAccount(false);
-      setDeleteError(err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential'
-        ? 'Incorrect password. Please try again.'
-        : 'Failed to delete account. Please try again.');
     }
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteModal(false);
+    setDeleteStep('confirm');
+    setDeleteCode('');
+    deleteReauth.reset();
   };
 
   const memberSince = (profile as any)?.createdAt
@@ -305,62 +313,71 @@ export const CaregiverAccountSettings: React.FC = () => {
               )}
             </Field>
 
-            {/* Email — read only */}
-            <Field label="Email address">
-              <ReadOnly value={profile?.email || ''} />
-            </Field>
-
-            {/* Password */}
-            <Field label="Password">
-              {!showPasswordForm ? (
-                <button onClick={() => setShowPasswordForm(true)}
-                  className="text-sm text-primary-600 hover:underline font-medium">
-                  Change password
-                </button>
-              ) : (
-                <div className="space-y-2">
-                  <input type="password" placeholder="Current password" value={currentPassword}
-                    onChange={e => setCurrentPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
-                  <input type="password" placeholder="New password" value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
-                  <input type="password" placeholder="Confirm new password" value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
-                  <div className="flex gap-2">
-                    <button onClick={handlePasswordChange} disabled={savingPassword}
-                      className="px-4 py-1.5 rounded-full bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-40">
-                      {savingPassword ? 'Updating…' : 'Update password'}
-                    </button>
-                    <button onClick={() => { setShowPasswordForm(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); }}
-                      className="px-4 py-1.5 rounded-full border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">
-                      Cancel
-                    </button>
+            {/* Email — this is also the recovery channel that gates changing
+                the phone number below, so a new value isn't live until its
+                own confirmation link is clicked (never a plain overwrite). */}
+            <Field label="Recovery email">
+              {editingEmail ? (
+                emailRequestSent ? (
+                  <p className="text-sm text-slate-600">
+                    Check <span className="font-medium text-slate-800">{newEmailDraft}</span> for a confirmation link.
+                    <button onClick={() => { setEditingEmail(false); setEmailRequestSent(false); }}
+                      className="block text-xs text-primary-600 hover:underline mt-1">Done</button>
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <input value={newEmailDraft} onChange={e => setNewEmailDraft(e.target.value)} placeholder="you@example.com"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
+                    <div className="flex gap-2">
+                      <button onClick={saveEmail} disabled={savingEmail || !newEmailDraft.trim()}
+                        className="px-4 py-1.5 rounded-full bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-40">
+                        {savingEmail ? 'Sending…' : 'Send confirmation link'}
+                      </button>
+                      <button onClick={() => setEditingEmail(false)}
+                        className="px-4 py-1.5 rounded-full border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )
+              ) : (
+                <EditableRow value={email || '—'} onEdit={() => { setNewEmailDraft(email); setEmailRequestSent(false); setEditingEmail(true); }} />
               )}
             </Field>
 
-            {/* Phone — edit/save toggle */}
+            {/* Phone — this is the login credential, so changing it always
+                goes through the recovery-email link, even while signed in;
+                the new number itself is entered on that page. */}
             <Field label="Phone number">
               {editingPhone ? (
-                <div className="space-y-2">
-                  <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="(xxx) xxx-xxxx"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
-                  <div className="flex gap-2">
-                    <button onClick={savePhone} disabled={savingPhone}
-                      className="px-4 py-1.5 rounded-full bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-40">
-                      {savingPhone ? 'Saving…' : 'Save'}
-                    </button>
-                    <button onClick={() => setEditingPhone(false)}
-                      className="px-4 py-1.5 rounded-full border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">
-                      Cancel
-                    </button>
+                phoneRequestSent ? (
+                  <p className="text-sm text-slate-600">
+                    Check {email || 'your email'} for a link to finish changing your number.
+                    <button onClick={() => { setEditingPhone(false); setPhoneRequestSent(false); }}
+                      className="block text-xs text-primary-600 hover:underline mt-1">Done</button>
+                  </p>
+                ) : !email ? (
+                  <p className="text-sm text-slate-600">
+                    Set a recovery email above first — we use it to verify phone number changes.
+                    <button onClick={() => setEditingPhone(false)} className="block text-xs text-primary-600 hover:underline mt-1">Close</button>
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-slate-600">We'll email a secure link to {email} to change your phone number.</p>
+                    <div className="flex gap-2">
+                      <button onClick={requestPhoneChange} disabled={requestingPhoneChange}
+                        className="px-4 py-1.5 rounded-full bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-40">
+                        {requestingPhoneChange ? 'Sending…' : 'Send link'}
+                      </button>
+                      <button onClick={() => setEditingPhone(false)}
+                        className="px-4 py-1.5 rounded-full border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )
               ) : (
-                <EditableRow value={phone || '—'} onEdit={() => setEditingPhone(true)} />
+                <EditableRow value={phone || '—'} onEdit={() => { setPhoneRequestSent(false); setEditingPhone(true); }} />
               )}
             </Field>
 
@@ -538,12 +555,14 @@ export const CaregiverAccountSettings: React.FC = () => {
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">
           <p className="text-sm text-slate-500 mb-4">Deleting your account is permanent and cannot be undone.</p>
           <button
-            onClick={() => { setDeletePassword(''); setDeleteError(''); setShowDeleteModal(true); }}
+            onClick={() => setShowDeleteModal(true)}
             className="flex items-center gap-2 text-red-500 hover:text-red-700 font-medium text-sm transition-colors"
           >
             <Trash2 className="w-4 h-4" /> Delete account
           </button>
         </div>
+        {/* RecaptchaVerifier needs a stable DOM target; created per send. */}
+        <div id={DELETE_RECAPTCHA_CONTAINER} />
 
       </div>
     </div>
@@ -554,34 +573,50 @@ export const CaregiverAccountSettings: React.FC = () => {
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
             <h2 className="text-base font-bold text-slate-900">Delete account</h2>
-            <button onClick={() => setShowDeleteModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg">
+            <button onClick={closeDeleteModal} className="p-1.5 hover:bg-slate-100 rounded-lg">
               <X className="w-5 h-5 text-slate-500" />
             </button>
           </div>
           <div className="p-6 space-y-4">
-            <p className="text-sm text-slate-600">Enter your password to confirm. This action is permanent and cannot be undone.</p>
-            <div className="relative">
-              <input
-                type={showDeletePassword ? 'text' : 'password'}
-                value={deletePassword}
-                onChange={e => { setDeletePassword(e.target.value); setDeleteError(''); }}
-                placeholder="Current password"
-                className="w-full px-3 py-2.5 pr-10 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400"
-              />
-              <button type="button" onClick={() => setShowDeletePassword(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                {showDeletePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
-            <button
-              onClick={handleDeleteAccount}
-              disabled={deletingAccount || !deletePassword}
-              className="w-full py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-            >
-              {deletingAccount ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              {deletingAccount ? 'Deleting...' : 'Delete my account'}
-            </button>
+            <p className="text-sm text-slate-600">This action is permanent and cannot be undone.</p>
+
+            {deleteStep === 'confirm' ? (
+              <>
+                <p className="text-sm text-slate-600">
+                  We'll text a verification code to {phone || 'your phone'} to confirm it's you.
+                </p>
+                {deleteReauth.error && <p className="text-xs text-red-500">{deleteReauth.error}</p>}
+                <button
+                  onClick={handleSendDeleteCode}
+                  disabled={deleteReauth.sending}
+                  className="w-full py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                >
+                  {deleteReauth.sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {deleteReauth.sending ? 'Sending code...' : 'Send verification code'}
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={deleteCode}
+                  onChange={e => setDeleteCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6-digit code"
+                  autoFocus
+                  className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400"
+                />
+                {deleteReauth.error && <p className="text-xs text-red-500">{deleteReauth.error}</p>}
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deletingAccount || deleteReauth.confirming || !deleteCode}
+                  className="w-full py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                >
+                  {(deletingAccount || deleteReauth.confirming) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  {(deletingAccount || deleteReauth.confirming) ? 'Deleting...' : 'Confirm & delete my account'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

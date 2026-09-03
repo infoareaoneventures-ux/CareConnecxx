@@ -90,7 +90,7 @@ async function pushNotification(userId: string, type: string, title: string, mes
   });
 }
 
-async function notifyAdmins(type: string, title: string, message: string, data: any) {
+export async function notifyAdmins(type: string, title: string, message: string, data: any) {
   const admins = await db.collection('users').where('userType', '==', 'admin').get();
   const batch = db.batch();
   admins.forEach(docSnap => {

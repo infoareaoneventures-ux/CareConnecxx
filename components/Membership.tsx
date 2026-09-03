@@ -301,24 +301,6 @@ export default function Membership() {
           </div>
         </div>
 
-        {/* FAQ */}
-        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-          <h3 className="text-lg font-bold text-slate-900 mb-4">Frequently Asked Questions</h3>
-          <div className="space-y-4">
-            <div>
-              <h4 className="font-medium text-slate-900">Can I cancel anytime?</h4>
-              <p className="text-slate-600 text-sm mt-1">Yes, you can cancel your membership at any time. You'll continue to have access until the end of your current billing period.</p>
-            </div>
-            <div>
-              <h4 className="font-medium text-slate-900">Is my payment information secure?</h4>
-              <p className="text-slate-600 text-sm mt-1">Absolutely. We use Stripe, a PCI-compliant payment processor. Your card details are never stored on our servers.</p>
-            </div>
-            <div>
-              <h4 className="font-medium text-slate-900">What happens if I cancel?</h4>
-              <p className="text-slate-600 text-sm mt-1">You'll keep access until your current period ends. After that, you can still browse but won't be able to message or book caregivers.</p>
-            </div>
-          </div>
-        </div>
       </main>
 
       {/* Cancel Confirmation Modal */}

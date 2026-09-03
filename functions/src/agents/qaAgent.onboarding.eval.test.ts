@@ -439,6 +439,7 @@ describe("onboarding eval graders (pure, no spend)", () => {
         city: "Austin", zipCode: "78701", daysPerWeek: 3, timeOfDay: "mornings",
         careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
         relationship: "son", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000", rate: 25,
+        email: "imran@example.com",
       },
       role: "client",
       completeFiredWith: [],
@@ -516,6 +517,7 @@ describe("eval harness tool engine (no spend)", () => {
       ["careFrequency", "part_time"], ["startDate", "2026-08-01"],
       ["selectedDays", ["Mon", "Wed", "Fri"]], ["relationship", "son"],
       ["emergencyContactName", "Jane Doe"], ["emergencyContactPhone", "+15551230000"], ["rate", 25],
+      ["email", "imran@example.com"],
     ] as Array<[string, unknown]>) {
       await handleToolCall("save_onboarding_field", { ...base, fieldName, fieldValue }, false);
     }

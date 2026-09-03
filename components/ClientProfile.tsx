@@ -29,9 +29,6 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
   const [newNeed, setNewNeed] = useState('');
   const [isAddingNeed, setIsAddingNeed] = useState(false);
   
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
   const currentUser = authService.getCurrentUser();
 
   // U3: dirty-guard so the live senior-profile listener (below) never clobbers
@@ -103,21 +100,6 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
        }
     } else {
        onShowToast("Changes simulated (Demo Mode)", 'success');
-    }
-  };
-
-  const handlePasswordChange = async () => {
-    if (newPassword !== confirmPassword) {
-      onShowToast("Passwords do not match", 'error');
-      return;
-    }
-    try {
-      await authService.updateUserPassword(newPassword);
-      onShowToast("Password updated successfully", 'success');
-      setNewPassword('');
-      setConfirmPassword('');
-    } catch (e) {
-      onShowToast("Failed to update password", 'error');
     }
   };
 
@@ -337,23 +319,6 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
            <h3 className="font-bold text-slate-900 mb-4 flex items-center">
              <Lock className="w-5 h-5 mr-2 text-primary-600" /> Security Settings
            </h3>
-           
-           <div className="space-y-4 mb-8 border-b border-slate-100 pb-8">
-              <h4 className="text-sm font-bold text-slate-700">Change Password</h4>
-              <Input 
-                label="New Password" 
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-              <Input 
-                label="Confirm Password" 
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-              />
-              <Button onClick={handlePasswordChange} disabled={!newPassword}>Update Password</Button>
-           </div>
 
            <div>
               <h4 className="text-sm font-bold text-red-600 mb-2">Danger Zone</h4>

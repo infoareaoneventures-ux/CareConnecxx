@@ -69,6 +69,9 @@ const BgcheckConsentPage  = lazy(() => import('./components/pages/BgcheckConsent
 const GenericSuccessPage  = lazy(() => import('./components/pages/GenericSuccessPage'));
 const TermsOfServicePage  = lazy(() => import('./components/pages/TermsOfServicePage'));
 const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyPage'));
+const RequestAccountRecoveryPage = lazy(() => import('./components/pages/RequestAccountRecoveryPage'));
+const VerifyPhoneChangePage      = lazy(() => import('./components/pages/VerifyPhoneChangePage'));
+const VerifyEmailChangePage      = lazy(() => import('./components/pages/VerifyEmailChangePage'));
 
 
 
@@ -376,7 +379,10 @@ const AppContent: React.FC = () => {
           <Route path="/client/login" element={<Navigate to="/login" replace />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
           <Route path="/client/profile" element={<ClientRoute element={<ClientProfileDashboard />} />} />
-          <Route path="/client/forgot-password" element={<Navigate to="/login" replace />} />
+          {/* "Trouble signing in?" on /login — one page for both roles, since login
+              here is phone-OTP only and the recovery flow behind it checks both
+              users/ and caregivers/ by email. */}
+          <Route path="/client/forgot-password" element={<RequestAccountRecoveryPage />} />
 
           <Route path="/caregiver/signup" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/client/apply" element={<Navigate to="/start?role=client" replace />} />
@@ -384,7 +390,9 @@ const AppContent: React.FC = () => {
           {/* Web caregiver signup retired — Evia SMS (/start) is the canonical onboarding. Redirect preserves any existing bookmarks/links. */}
           <Route path="/caregiver/apply" element={<Navigate to="/start?role=caregiver" replace />} />
           <Route path="/caregiver/login" element={<Navigate to="/login" replace />} />
-          <Route path="/caregiver/forgot-password" element={<Navigate to="/login" replace />} />
+          <Route path="/caregiver/forgot-password" element={<RequestAccountRecoveryPage />} />
+          <Route path="/verify-phone-change" element={<VerifyPhoneChangePage />} />
+          <Route path="/verify-email-change" element={<VerifyEmailChangePage />} />
 
           <Route path="/client/connect" element={<ClientAuthRoute element={<ClientConnectPage />} />} />
           <Route path="/caregiver/connect" element={<CaregiverAuthRoute element={<CaregiverConnectPage />} />} />

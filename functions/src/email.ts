@@ -240,6 +240,105 @@ function passwordResetHtml(name: string, resetUrl: string): string {
   return emailWrapper(body, `<p style="margin:0;">You're receiving this because a password reset was requested for your Evia account.</p>`);
 }
 
+// Account recovery / phone-and-email-change emails (functions/src/accountRecovery.ts).
+// Login here is phone-OTP only — this email link is the recovery credential
+// when the phone itself is lost, and the gate before any phone/email swap.
+export function phoneChangeRequestHtml(name: string, verifyUrl: string): string {
+  const body = `
+    <div style="height:4px;background:linear-gradient(90deg,#0d9488,#14b8a6,#06b6d4);
+                border-radius:4px;margin-bottom:36px;"></div>
+
+    <div style="text-align:center;margin-bottom:28px;">
+      <span style="display:inline-block;width:64px;height:64px;border-radius:50%;
+                   background:#f0fdfa;line-height:64px;font-size:30px;">📱</span>
+    </div>
+
+    <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
+               text-align:center;">Confirm your phone number change</h1>
+    <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
+      Hi ${name} — we received a request to change the phone number on your Evia account.
+    </p>
+
+    ${ctaButton("Continue", verifyUrl, "#0d9488")}
+
+    <p style="font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;
+              margin:0 0 24px;word-break:break-all;">
+      Or paste this link into your browser:<br>
+      <a href="${verifyUrl}" style="color:#0d9488;text-decoration:underline;">${verifyUrl}</a>
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
+                   padding:16px 20px;">
+          <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+            <strong>Security notice:</strong> This link expires in <strong>30 minutes</strong>.
+            If you didn't request this, you can safely ignore this email — your phone number
+            will not be changed.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because a phone number change was requested for your Evia account.</p>`);
+}
+
+export function phoneChangeConfirmedHtml(newPhoneLast4: string): string {
+  const body = `
+    <div style="text-align:center;margin-bottom:28px;">
+      <span style="display:inline-block;width:64px;height:64px;border-radius:50%;
+                   background:#f0fdf4;line-height:64px;font-size:30px;">✅</span>
+    </div>
+    <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
+               text-align:center;">Your phone number was changed</h1>
+    <p style="margin:0;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
+      Your Evia account's phone number was just changed to one ending in <strong>${newPhoneLast4}</strong>.
+      If this wasn't you, contact support right away.
+    </p>
+  `;
+  return emailWrapper(body);
+}
+
+export function emailChangeConfirmHtml(verifyUrl: string): string {
+  const body = `
+    <div style="height:4px;background:linear-gradient(90deg,#0d9488,#14b8a6,#06b6d4);
+                border-radius:4px;margin-bottom:36px;"></div>
+
+    <div style="text-align:center;margin-bottom:28px;">
+      <span style="display:inline-block;width:64px;height:64px;border-radius:50%;
+                   background:#f0fdfa;line-height:64px;font-size:30px;">✉️</span>
+    </div>
+
+    <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
+               text-align:center;">Confirm this email address</h1>
+    <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
+      Someone requested to use this address as the recovery email for an Evia account.
+      Confirm it's you to finish the change.
+    </p>
+
+    ${ctaButton("Confirm email", verifyUrl, "#0d9488")}
+
+    <p style="font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;
+              margin:0 0 24px;word-break:break-all;">
+      Or paste this link into your browser:<br>
+      <a href="${verifyUrl}" style="color:#0d9488;text-decoration:underline;">${verifyUrl}</a>
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
+                   padding:16px 20px;">
+          <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+            <strong>Security notice:</strong> This link expires in <strong>30 minutes</strong>.
+            If you didn't request this, you can safely ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because this address was entered as a new recovery email on Evia.</p>`);
+}
+
 // ─── Reusable server-side send helper ────────────────────────────────────────
 
 /**

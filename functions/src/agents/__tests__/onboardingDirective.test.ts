@@ -27,7 +27,7 @@ describe("buildOnboardingDirective", () => {
       city: "Austin", zipCode: "78701", daysPerWeek: 5, timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
-      rate: 25,
+      rate: 25, email: "imran@example.com",
     });
     expect(d).toContain("complete_collection");
     expect(d).toContain("all required fields collected");
@@ -44,7 +44,7 @@ describe("buildOnboardingDirective", () => {
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
-      rate: 25,
+      rate: 25, email: "imran@example.com",
       // caregiversNeeded already answered, but additionalRecipients isn't —
       // should still be nudged even though a LATER optional item is done.
       caregiversNeeded: 1,
@@ -78,7 +78,7 @@ describe("buildOnboardingDirective", () => {
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
-      rate: 25,
+      rate: 25, email: "imran@example.com",
       additionalRecipients: [], careRecipientPhotoURL: "x", ongoing: true, caregiversNeeded: 1,
       petsInHome: false, smokingHousehold: false, jobDescription: "x",
       // age/emergencyContactRelationship/daysFlexible deliberately left unset

@@ -75,8 +75,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
 
   // ── billing ──────────────────────────────────────────────────────────────
   get_billing_summary:      ["billing"],
-  cancel_subscription:      ["billing"],
-  reactivate_subscription:  ["billing"],
+  set_subscription_status:  ["billing"],
   get_invoice_history:      ["billing"],
   get_invoice_details:      ["billing"],
   create_refund_request:    ["billing"],
@@ -128,6 +127,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   decline_shift:             ["booking", "scheduling"],
   update_senior_profile:     ["care_plan"],
   update_user_profile:       ["care_plan"],
+  delete_account:            ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
   start_shift:               ["care_plan", "scheduling"],
   complete_shift:            ["care_plan", "scheduling"],
@@ -343,7 +343,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
   // money
-  "cancel_subscription", "reactivate_subscription", "create_refund_request",
+  "set_subscription_status", "create_refund_request",
   "request_instant_payout", "retry_shift_payment",
   // people & safety
   "add_family_member", "remove_family_member", "set_block_status",
@@ -353,7 +353,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // profiles & account
   "update_user_profile", "update_communication_preferences",
   "update_caregiver_profile", "update_caregiver_availability",
-  "pause_account", "reactivate_account",
+  "pause_account", "reactivate_account", "delete_account",
   // reminders & follow-ups
   "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
   // message relays (family/caregiver believe a message was delivered)

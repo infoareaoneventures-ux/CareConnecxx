@@ -180,6 +180,9 @@ export const AuthLoginPage: React.FC = () => {
               New to Evia?{' '}
               <Link to="/start" className="text-ink-600 hover:text-ink-900 font-medium">Get started →</Link>
             </p>
+            <p className="text-ink-400 text-xs text-center">
+              <Link to="/client/forgot-password" className="text-ink-600 hover:text-ink-900 font-medium">Trouble signing in?</Link>
+            </p>
           </form>
         )}
 

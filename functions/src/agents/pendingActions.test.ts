@@ -108,10 +108,19 @@ describe("isHighRisk", () => {
   it("flags always-confirm tools regardless of input", () => {
     expect(isHighRisk("cancel_appointment",       { appointmentId: "x" })).toBe(true);
     expect(isHighRisk("remove_family_member",     { memberPhone: "x" })).toBe(true);
-    expect(isHighRisk("cancel_subscription",      {})).toBe(true);
     expect(isHighRisk("restore_care_plan_version", { versionId: "x" })).toBe(true);
     expect(isHighRisk("delete_reminder",          { reminderId: "x" })).toBe(true);
     expect(isHighRisk("cancel_job_post",          { jobId: "x" })).toBe(true);
+    expect(isHighRisk("delete_account",           {})).toBe(true);
+  });
+
+  // cancel_subscription + reactivate_subscription merged into
+  // set_subscription_status (2026-09-02, freed a tool slot for delete_account)
+  // — cancel stays high-stakes (was ALWAYS_CONFIRM pre-merge), reactivate
+  // stays ungated, matching each tool's pre-merge behavior exactly.
+  it("conditionally flags set_subscription_status on cancel, not reactivate", () => {
+    expect(isHighRisk("set_subscription_status", { clientId: "x", action: "cancel" })).toBe(true);
+    expect(isHighRisk("set_subscription_status", { clientId: "x", action: "reactivate" })).toBe(false);
   });
 
   it("does NOT flag reversible tools", () => {
@@ -161,7 +170,8 @@ describe("isHighRisk", () => {
 describe("buildActionPreview", () => {
   it("produces human-readable previews for known tools", () => {
     expect(buildActionPreview("cancel_appointment",   { appointmentId: "appt_123" })).toBe("Cancel appointment appt_123");
-    expect(buildActionPreview("cancel_subscription",   {})).toBe("Cancel Evia subscription");
+    expect(buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
+    expect(buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
     expect(buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
     expect(buildActionPreview("manage_recurring_schedule", { action: "cancel", scheduleId: "sched_1" })).toContain("cancel recurring schedule sched_1");
   });

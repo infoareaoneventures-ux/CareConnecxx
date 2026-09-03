@@ -2245,6 +2245,16 @@ export async function persistClientCareRecords(
       }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
     }
 
+    // Recovery email — required field (onboardingContract.ts), written to
+    // users/{uid} the same place AccountSettings.tsx reads it from. Loosely
+    // validated (matches caregiverFieldAbsorber.ts's own EMAIL_RE) rather than
+    // trusted blindly — this is the sole recovery channel if the phone is lost.
+    const email = (d.email as string | undefined)?.trim();
+    if (email && /^\S+@\S+\.\S+$/.test(email)) {
+      await db.collection("users").doc(uid).set({ email: email.toLowerCase() }, { merge: true })
+        .catch((err) => console.error("persistClientCareRecords: users email write failed (non-fatal):", err));
+    }
+
     // Signup-time photo is the ACCOUNT HOLDER's own photo — same semantics as
     // AccountSettings.tsx's "your photo", not automatically the care
     // recipient's (Hamse, 2026-08-23). Mirrored here regardless of who the
@@ -2555,17 +2565,56 @@ function resolveClientPriceId(): string {
     ?? "";
 }
 
+// 2026-08-31 (Membership page audit): a Checkout session created here never
+// used to set `customer:` or touch `customers/{uid}.stripeCustomerId` at all
+// — only the LATER webhook wrote `users/{uid}.stripeCustomerId` on success.
+// The website's own createCheckoutSession (functions/src/stripe.ts) looks up
+// that SAME `customers/{uid}` doc first and reuses the existing Stripe
+// customer if one exists. Since the two checkout paths never shared that
+// lookup, a family who signed up over SMS and later clicked "Change plan" on
+// the website would get a brand-new Stripe customer + a SECOND parallel
+// subscription — a real double-billing risk. When userId is already known at
+// this point in onboarding (it usually is — see handleClientSendPayment's own
+// already-active check just above this function's call sites), get-or-create
+// the customer the exact same way the website does, so both entry points
+// always land on the same one.
+async function getOrCreateStripeCustomerForUser(userId: string, phone: string): Promise<string | undefined> {
+  const custRef = db.collection("customers").doc(userId);
+  const custSnap = await custRef.get();
+  const existing = custSnap.data()?.stripeCustomerId as string | undefined;
+  if (existing) return existing;
+  try {
+    const userSnap = await db.collection("users").doc(userId).get();
+    const email = userSnap.data()?.email as string | undefined;
+    const customer = await getStripe().customers.create({
+      ...(email ? { email } : {}),
+      phone,
+      metadata: { firebaseUID: userId },
+    });
+    await custRef.set({ stripeCustomerId: customer.id, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return customer.id;
+  } catch (err) {
+    // Non-fatal — fall back to the phone-only Checkout session below rather
+    // than block a family from paying at all over one Stripe API hiccup.
+    console.error("getOrCreateStripeCustomerForUser error:", err);
+    return undefined;
+  }
+}
+
 async function createClientMembershipCheckout(
   phone: string,
   caraPhone: string,
   selectedPriceId?: string,
+  userId?: string,
 ): Promise<Stripe.Checkout.Session> {
   const priceId = (selectedPriceId || resolveClientPriceId()).trim();
+  const customerId = userId ? await getOrCreateStripeCustomerForUser(userId, phone) : undefined;
   const common = {
     payment_method_types: ["card"] as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
     success_url: `${APP_URL}/payment/success?source=cara&caraPhone=${caraPhone}`,
     cancel_url: `${APP_URL}/start`,
-    metadata: { phone, task: "client_payment_setup" },
+    metadata: { phone, task: "client_payment_setup", ...(userId ? { firebaseUID: userId } : {}) },
+    ...(customerId ? { customer: customerId } : {}),
   };
 
   if (!priceId) {
@@ -2579,7 +2628,7 @@ async function createClientMembershipCheckout(
     ...common,
     mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
-    subscription_data: { metadata: { phone, kind: "client_membership" } },
+    subscription_data: { metadata: { phone, kind: "client_membership", ...(userId ? { firebaseUID: userId } : {}) } },
   });
 }
 
@@ -2757,7 +2806,7 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
     // Real recurring membership — mode "subscription" actually starts billing.
     // (Falls back to setup/card-on-file only if no price is configured, so the
     // flow never hard-fails — but with STRIPE_MEMBERSHIP_PRICE_ID set this bills.)
-    const stripeSession = await createClientMembershipCheckout(phone, caraPhone, priceId);
+    const stripeSession = await createClientMembershipCheckout(phone, caraPhone, priceId, session.userId as string | undefined);
     if (!stripeSession.url) throw new Error("Stripe checkout session created without a URL");
     // Branded wrapper (/pay/{id} → v1-linkRedirect): the texted link unfurls
     // as an Evia membership card instead of raw checkout.stripe.com.
@@ -4276,7 +4325,7 @@ export async function sendOnboardingLink(
     case "client_payment": {
       const selectedPriceId = d.selectedPlanPriceId as string | undefined;
       try {
-        const stripeSession = await createClientMembershipCheckout(phone, caraPhone, selectedPriceId);
+        const stripeSession = await createClientMembershipCheckout(phone, caraPhone, selectedPriceId, session.userId as string | undefined);
         if (!stripeSession.url) throw new Error("Stripe checkout session created without a URL");
         url = await createBrandedLink("pay", stripeSession.url, phone);
       } catch (err) {

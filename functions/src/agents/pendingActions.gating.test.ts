@@ -13,10 +13,11 @@ describe("U9 financial-flow gating", () => {
     expect(isHighRisk("create_refund_request", { amount: 240, invoiceId: "inv1" })).toBe(true);
   });
 
-  it("gates review_shift_hours only on approve (dispute is reversible)", () => {
+  it("gates review_shift_hours on approve/accept_counter (both release payment); propose_correction/escalate are reversible", () => {
     expect(isHighRisk("review_shift_hours", { action: "approve", hours: 6 })).toBe(true);
-    expect(isHighRisk("review_shift_hours", { decision: "approve" })).toBe(true);
-    expect(isHighRisk("review_shift_hours", { action: "dispute" })).toBe(false);
+    expect(isHighRisk("review_shift_hours", { action: "accept_counter" })).toBe(true);
+    expect(isHighRisk("review_shift_hours", { action: "propose_correction" })).toBe(false);
+    expect(isHighRisk("review_shift_hours", { action: "escalate" })).toBe(false);
   });
 
   it("builds an approval-quality refund preview (amount + target, not generic)", () => {

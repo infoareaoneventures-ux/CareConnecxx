@@ -23,7 +23,7 @@ describe("onboardingContract", () => {
       "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
       "startDate", "selectedDays", "timeOfDay",
       "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
-      "careNeeds", "rate", "firstName",
+      "careNeeds", "rate", "email", "firstName",
     ]);
   });
 
@@ -45,7 +45,7 @@ describe("onboardingContract", () => {
         "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
         "startDate", "selectedDays", "timeOfDay",
         "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
-        "careNeeds", "rate", "firstName",
+        "careNeeds", "rate", "email", "firstName",
       ]);
     });
 
@@ -56,7 +56,7 @@ describe("onboardingContract", () => {
         startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
         relationship: "daughter", seniorName: "Dorothy",
         emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 26, firstName: "Imran",
+        careNeeds: ["bathing"], rate: 26, email: "imran@example.com", firstName: "Imran",
       };
       expect(missingRequiredFields("client", data)).toEqual([]);
     });
@@ -68,7 +68,7 @@ describe("onboardingContract", () => {
         startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
         relationship: "daughter", seniorName: "Dorothy",
         emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 26, firstName: "Imran",
+        careNeeds: ["bathing"], rate: 26, email: "imran@example.com", firstName: "Imran",
       };
       expect(missingRequiredFields("client", data)).toEqual([]);
     });
@@ -77,7 +77,7 @@ describe("onboardingContract", () => {
       const data = { careFrequency: "part_time", homeZipCode: "78701", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
       expect(missingRequiredFields("client", data)).toEqual([
         "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "timeOfDay", "emergencyContactName",
-        "emergencyContactPhone", "careNeeds", "rate", "firstName",
+        "emergencyContactPhone", "careNeeds", "rate", "email", "firstName",
       ]);
     });
 
@@ -88,7 +88,7 @@ describe("onboardingContract", () => {
         startDate: "2026-09-01", selectedDays: ["MON"], timeOfDay: [],
         relationship: "daughter", seniorName: "Dorothy",
         emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 0, firstName: "  ",
+        careNeeds: ["bathing"], rate: 0, email: "imran@example.com", firstName: "  ",
       };
       expect(missingRequiredFields("client", data)).toEqual(["timeOfDay", "rate", "firstName"]);
     });

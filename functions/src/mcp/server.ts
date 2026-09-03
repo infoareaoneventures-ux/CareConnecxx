@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import * as crypto from "crypto";
 import { runMatchingForClient } from "../agents/matchingAgent";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
 import {
@@ -23,7 +22,7 @@ import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
-import { resolveShiftBillableAmount, shiftEndFromHours } from "../billing/shiftBillingAmounts";
+import { resolveShiftBillableAmount } from "../billing/shiftBillingAmounts";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
@@ -1163,7 +1162,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: "update_caregiver_profile",
     description:
       "Update your own caregiver profile — hourly rate, bio, city, or weekly availability. " +
-      "Only you can update your own profile. Changes take effect immediately.",
+      "Only you can update your own profile. Changes take effect immediately. To change your " +
+      "PHONE NUMBER, pass requestPhoneChange:true instead of a new number — login here is by " +
+      "phone number, so it emails a secure link to the address on file and the new number is " +
+      "entered and verified there, never over SMS.",
     input_schema: {
       type: "object",
       properties: {
@@ -1171,6 +1173,7 @@ export const MCP_TOOLS: McpTool[] = [
         hourlyRate:         { type: "number",  description: "Your new hourly rate in dollars" },
         bio:                { type: "string",  description: "Your updated bio (max 2500 characters)" },
         phone:              { type: "string",  description: "Your current session phone; used to verify account ownership and never changed by this tool" },
+        requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — a request flag, not the new number itself" },
         city:               { type: "string",  description: "Your city" },
         weeklyAvailability: { type: "object",  description: "Object mapping day abbreviations to time windows" },
       },
@@ -1338,28 +1341,32 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "cancel_subscription",
+    // Cancel + reactivate merged into one tool (2026-09-02, same reasoning as
+    // set_block_status's 2026-08-31 merge) to make room for delete_account
+    // under OpenAI's 128-tool cap.
+    name: "set_subscription_status",
     description:
-      "Cancel the family's Evia membership. Cancels at end of billing period — scheduled visits are unaffected. " +
-      "MANDATORY: tell the family when their subscription ends and confirm before calling.",
+      "Cancel or reactivate the family's Evia membership. Cancel takes effect at end of billing period — " +
+      "scheduled visits are unaffected. MANDATORY for action:'cancel': tell the family when their subscription " +
+      "ends and confirm before calling. Reactivate needs no confirmation.",
     input_schema: {
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
+        action:   { type: "string", enum: ["cancel", "reactivate"], description: "cancel or reactivate" },
       },
-      required: ["clientId"],
+      required: ["clientId", "action"],
     },
   },
   {
-    name: "reactivate_subscription",
-    description:
-      "Reverse a pending subscription cancellation. Keeps the membership active through the billing period.",
+    name: "delete_account",
+    description: "Permanently delete the family or caregiver's own Evia account — cancels any active subscription, removes their data, and deletes their login. MANDATORY: this is irreversible; confirm with them explicitly (read back that this is permanent) before calling.",
     input_schema: {
       type: "object",
       properties: {
-        clientId: { type: "string", description: "The client's user ID" },
+        userId: { type: "string", description: "The user's ID (client or caregiver)" },
       },
-      required: ["clientId"],
+      required: ["userId"],
     },
   },
   {
@@ -1541,18 +1548,21 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "review_shift_hours",
     description:
-      "Approve or dispute a caregiver's submitted shift hours. " +
-      "If disputing, provide the corrected duration in hours.",
+      "Approve, correct, or resolve a dispute on a caregiver's submitted shift hours — mirrors the website's Timesheets review modal exactly, action for action. " +
+      "'approve' accepts the hours as submitted. 'propose_correction' proposes a different start/end time (give BOTH — a correction can fix either one independently, not just total hours). " +
+      "'accept_counter'/'escalate' resolve a caregiver's counter-proposal after you've already proposed a correction and they pushed back — 'accept_counter' takes their counter-offer, 'escalate' sends it to Evia's team to mediate. " +
+      "Only one of these four actions is valid at a time depending on the shift's current status; the tool tells you which if you pick the wrong one.",
     input_schema: {
       type: "object",
       properties: {
-        clientId:       { type: "string", description: "The client's user ID" },
-        appointmentId:  { type: "string", description: "The appointment document ID" },
-        decision:       { type: "string", enum: ["approve","dispute"], description: "approve or dispute" },
-        correctedHours: { type: "number", description: "Corrected duration in hours (required when disputing)" },
-        reason:         { type: "string", description: "Reason for dispute" },
+        clientId:          { type: "string", description: "The client's user ID" },
+        appointmentId:     { type: "string", description: "The shiftHours document ID" },
+        action:            { type: "string", enum: ["approve","propose_correction","accept_counter","escalate"], description: "Which action to take" },
+        proposedStartTime: { type: "string", description: "Corrected start time (required for propose_correction), e.g. '2:00 PM'" },
+        proposedEndTime:   { type: "string", description: "Corrected end time (required for propose_correction), e.g. '5:00 PM'" },
+        proposalReason:    { type: "string", description: "Why the correction is being proposed (optional)" },
       },
-      required: ["clientId", "appointmentId", "decision"],
+      required: ["clientId", "appointmentId", "action"],
     },
   },
   {
@@ -2272,14 +2282,14 @@ export const MCP_TOOLS: McpTool[] = [
   // ── Account & profile ─────────────────────────────────────────────────────
   {
     name: "update_user_profile",
-    description: "Update the client's own profile fields (name, phone, address, photoUrl). Confirm changes with the family by reading back the new values before calling. Phone changes re-trigger OTP verification on the new number; tell the family they'll need to verify.",
+    description: "Update the client's own profile fields (name, address, photoUrl). Confirm changes with the family by reading back the new values before calling. If they want to change their PHONE number, pass requestPhoneChange:true instead — login here is by phone number, so a change is never a simple field edit: it emails a secure link to the address on file, and the actual new number is entered and verified there, never over SMS. Tell them to check their email; do NOT ask them for the new number yourself.",
     input_schema: {
       type: "object",
       properties: {
         userId:    { type: "string", description: "The user's ID" },
         firstName: { type: "string", description: "New first name (optional)" },
         lastName:  { type: "string", description: "New last name (optional)" },
-        phone:     { type: "string", description: "New phone number in E.164 format, e.g. +15555550100 (optional)" },
+        requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — this is a request flag, not the new number itself" },
         address:   { type: "string", description: "New street address (optional)" },
         city:      { type: "string", description: "New city (optional)" },
         state:     { type: "string", description: "New state (optional)" },
@@ -2752,6 +2762,11 @@ const CAREGIVER_TOOL_NAMES = new Set([
   // Booking-pipeline parity (2026-08-30) — the caregiver's own accept/decline
   // of a family's schedule-change request.
   "respond_to_schedule_amendment",
+  // Account Settings phone-recovery audit (2026-09-02) — delete_account looks
+  // the account up in whichever collection has it, so it works for either
+  // role. The phone-change entry point didn't need a new tool slot — it's
+  // update_caregiver_profile's own phone:true flag (mirrors update_user_profile).
+  "delete_account",
 ]);
 export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_NAMES.has(t.name));
 
@@ -5286,7 +5301,7 @@ async function executeToolCall(
     // ── New write tools ────────────────────────────────────────────────────────
 
     if (name === "update_caregiver_profile") {
-      const { caregiverId, hourlyRate, bio, phone: actingPhone, city, weeklyAvailability } = input as Record<string, unknown>;
+      const { caregiverId, hourlyRate, bio, phone: actingPhone, requestPhoneChange, city, weeklyAvailability } = input as Record<string, unknown>;
       if (!caregiverId || !actingPhone) return toolError("INVALID_INPUT", "caregiverId and phone are required");
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
@@ -5294,6 +5309,22 @@ async function executeToolCall(
       const ownerPhone = caregiverSnap.data()?.phone;
       if (!ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only update your own caregiver profile");
+      }
+      if (requestPhoneChange === true) {
+        const d = caregiverSnap.data() ?? {};
+        const email = (d.email as string | undefined)?.trim();
+        if (!email) {
+          return {
+            success: false,
+            noEmailOnFile: true,
+            guidance: "This account has no email on file, so there's no way to send a verification link. Ask them to set a recovery email first, then try again.",
+          };
+        }
+        const name = ((d.firstName || d.name || "there") as string).split(" ")[0];
+        const { requestPhoneChangeForAccount } = await import("../accountRecovery");
+        await requestPhoneChangeForAccount({ uid: caregiverId as string, role: "caregiver", name }, email);
+        logAudit({ eventType: "profile_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_profile:phone" } }).catch(() => {});
+        return { success: true, sentTo: email };
       }
       if (bio && typeof bio === "string" && bio.length > 2500) return toolError("INVALID_INPUT", "bio must be 2500 characters or fewer");
       if (hourlyRate != null) {
@@ -5549,39 +5580,48 @@ async function executeToolCall(
       return { success: true, reviewId: reviewRef.id, rating: ratingNum };
     }
 
-    if (name === "cancel_subscription") {
-      const { clientId } = input as Record<string, unknown>;
+    if (name === "set_subscription_status") {
+      const { clientId, action: subAction } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const subsSnap = await db.collection("customers").doc(clientId as string).collection("subscriptions").where("status", "in", ["active", "trialing"]).limit(1).get();
-      if (subsSnap.empty) return toolError("NOT_FOUND", "No active subscription found");
-      const subDoc  = subsSnap.docs[0];
-      const subData = subDoc.data();
-      if (subData.cancel_at_period_end === true) {
-        const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
-        return { success: true, alreadyCancelling: true, periodEnd };
+      if (subAction !== "cancel" && subAction !== "reactivate") {
+        return toolError("INVALID_INPUT", "action must be 'cancel' or 'reactivate'");
       }
-      const { getStripeClient } = await import("../stripe");
-      await getStripeClient().subscriptions.update(subDoc.id, { cancel_at_period_end: true });
-      await db.collection("users").doc(clientId as string).set({ subscriptionStatus: "canceling" }, { merge: true });
-      const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
-      logAudit({ eventType: "subscription_cancelled", userId: clientId as string, data: { source: "mcp:cancel_subscription", subId: subDoc.id, periodEnd } }).catch(() => {});
-      return { success: true, cancelled: true, periodEnd, subId: subDoc.id };
-    }
-
-    if (name === "reactivate_subscription") {
-      const { clientId } = input as Record<string, unknown>;
-      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const subsSnap = await db.collection("customers").doc(clientId as string).collection("subscriptions").where("status", "in", ["active", "trialing"]).limit(1).get();
-      if (subsSnap.empty) return toolError("NOT_FOUND", "No subscription found to reactivate");
-      const subDoc  = subsSnap.docs[0];
-      const subData = subDoc.data();
-      if (subData.cancel_at_period_end !== true) return toolError("INVALID_INPUT", "Subscription is not set to cancel — nothing to reactivate");
-      const { getStripeClient } = await import("../stripe");
-      await getStripeClient().subscriptions.update(subDoc.id, { cancel_at_period_end: false });
-      await db.collection("users").doc(clientId as string).set({ subscriptionStatus: "active" }, { merge: true });
-      const periodEnd = (subData.current_period_end as admin.firestore.Timestamp | undefined)?.toDate?.()?.toISOString?.() ?? null;
-      logAudit({ eventType: "subscription_reactivated", userId: clientId as string, data: { source: "mcp:reactivate_subscription", subId: subDoc.id } }).catch(() => {});
-      return { success: true, reactivated: true, periodEnd };
+      if (subAction === "cancel") {
+        // 2026-08-31 (Membership page audit): calls the SAME shared function
+        // the website's v1-cancelSubscription callable calls, instead of a
+        // separate reimplementation of the identical Stripe lookup+update. Also
+        // stopped writing users/{uid}.subscriptionStatus:"canceling" — that
+        // field is never touched by the real subscription lifecycle (the
+        // customer.subscription.updated webhook writes membershipStatus, not
+        // subscriptionStatus), so the write was actively wrong, not just dead,
+        // and left Evia's own ambient context stuck saying "canceling" forever.
+        // Matches the website exactly: write nothing directly, the webhook is
+        // the single source of truth either way.
+        const { cancelSubscriptionForUser } = await import("../stripe");
+        let result;
+        try {
+          result = await cancelSubscriptionForUser(clientId as string);
+        } catch (err) {
+          if (err instanceof Error && err.message === "No active subscription found") {
+            return toolError("NOT_FOUND", err.message);
+          }
+          throw err;
+        }
+        logAudit({ eventType: "subscription_cancelled", userId: clientId as string, data: { source: "mcp:set_subscription_status", subId: result.subId, periodEnd: result.periodEnd } }).catch(() => {});
+        return { success: true, ...result };
+      }
+      const { reactivateSubscriptionForUser } = await import("../stripe");
+      let result;
+      try {
+        result = await reactivateSubscriptionForUser(clientId as string);
+      } catch (err) {
+        if (err instanceof Error && err.message === "No canceled subscription found") {
+          return toolError("NOT_FOUND", "No subscription found to reactivate");
+        }
+        throw err;
+      }
+      logAudit({ eventType: "subscription_reactivated", userId: clientId as string, data: { source: "mcp:set_subscription_status" } }).catch(() => {});
+      return { success: true, ...result };
     }
 
     if (name === "manage_recurring_schedule") {
@@ -6273,32 +6313,34 @@ async function executeToolCall(
 
     if (name === "review_shift_hours") {
       return runActionNativeMcpWrite(name, input, async () => {
-      const { clientId, appointmentId, decision, correctedHours, reason } = input as Record<string, unknown>;
-      if (!clientId || !appointmentId || !decision) return toolError("INVALID_INPUT", "clientId, appointmentId, and decision are required");
-      if (decision !== "approve" && decision !== "dispute") return toolError("INVALID_INPUT", "decision must be approve or dispute");
-      if (decision === "dispute" && correctedHours == null) return toolError("INVALID_INPUT", "correctedHours is required when disputing");
+      const { clientId, appointmentId, action, proposedStartTime, proposedEndTime, proposalReason } = input as Record<string, unknown>;
+      if (!clientId || !appointmentId || !action) return toolError("INVALID_INPUT", "clientId, appointmentId, and action are required");
+      if (!["approve", "propose_correction", "accept_counter", "escalate"].includes(action as string)) {
+        return toolError("INVALID_INPUT", "action must be approve, propose_correction, accept_counter, or escalate");
+      }
       const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
       if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
       const shift = shiftSnap.data()!;
       if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
-      if (shift.status !== "pending_client_review") return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
+      // Mirrors reviewShiftHours' exact per-action status gate (functions/src/shiftHours.ts).
+      if ((action === "approve" || action === "propose_correction") && shift.status !== "pending_client_review") {
+        return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
+      }
+      if ((action === "accept_counter" || action === "escalate") && shift.status !== "caregiver_counter_proposed") {
+        return toolError("INVALID_INPUT", `No counter-proposal to respond to (status: ${shift.status})`);
+      }
 
       try {
-        const startTime = String(shift.submittedStartTime ?? "");
-        const endTime = decision === "approve"
-          ? String(shift.submittedEndTime ?? "")
-          : shiftEndFromHours(startTime, Number(correctedHours));
-        const billable = resolveShiftBillableAmount({
-          startTime,
-          endTime,
-          bookedRateDollars: Number(shift.payRate),
-          lineItems: shift.lineItems,
-        });
-
-        if (decision === "approve") {
+        if (action === "approve") {
+          const startTime = String(shift.submittedStartTime ?? "");
+          const endTime = String(shift.submittedEndTime ?? "");
+          const billable = resolveShiftBillableAmount({
+            startTime, endTime,
+            bookedRateDollars: Number(shift.payRate),
+            lineItems: shift.lineItems,
+          });
           await shiftSnap.ref.update({
             status: "approved",
-            reviewedAt: nowIso,
             finalStartTime: startTime,
             finalEndTime: endTime,
             finalTotalHours: billable.totalHours,
@@ -6308,24 +6350,102 @@ async function executeToolCall(
             grossPay: billable.grossPay,
             amountCents: billable.grossPayCents,
             requiresExplicitApproval: billable.requiresExplicitApproval,
+            resolvedAt: nowIso,
+            resolvedBy: "client",
+            updatedAt: nowIso,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+              by: "client", action: "accepted", at: nowIso,
+              startTime, endTime, hours: billable.totalHours,
+              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
+              basePay: billable.basePay, grossPay: billable.grossPay,
+            }),
           });
-        } else {
+        } else if (action === "propose_correction") {
+          if (!proposedStartTime || !proposedEndTime) {
+            return toolError("INVALID_INPUT", "proposedStartTime and proposedEndTime are both required to propose a correction");
+          }
+          const billable = resolveShiftBillableAmount({
+            startTime: String(proposedStartTime), endTime: String(proposedEndTime),
+            bookedRateDollars: Number(shift.payRate),
+            lineItems: shift.lineItems,
+          });
+          const correctionRespondByAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
           await shiftSnap.ref.update({
             status: "correction_proposed",
-            reviewedAt: nowIso,
-            correctedHours: billable.totalHours,
-            disputeReason: reason ?? null,
-            proposalReason: reason ?? null,
-            proposedAt: nowIso,
-            proposedStartTime: startTime,
-            proposedEndTime: endTime,
+            proposedStartTime: String(proposedStartTime),
+            proposedEndTime: String(proposedEndTime),
             proposedTotalHours: billable.totalHours,
             proposedLineItems: billable.lineItems,
             proposedLineItemsTotal: billable.lineItemsTotal,
             proposedGrossPay: billable.grossPay,
             requiresExplicitApproval: billable.requiresExplicitApproval,
-            correctionRespondByAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            proposalReason: proposalReason ?? null,
+            proposedAt: nowIso,
+            correctionRespondByAt,
+            updatedAt: nowIso,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+              by: "client", action: "proposed_correction", at: nowIso,
+              startTime: String(proposedStartTime), endTime: String(proposedEndTime),
+              hours: billable.totalHours, basePay: billable.basePay,
+              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
+              grossPay: billable.grossPay, note: proposalReason ?? null,
+            }),
           });
+          const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
+          if (!cgSessSnap4.empty) {
+            const { sendToPhone } = await import("../linq/client");
+            await sendToPhone(cgSessSnap4.docs[0].id, `The family proposed a correction to your shift hours: ${proposedStartTime}–${proposedEndTime} (${billable.totalHours}h). Respond within 24h or it auto-accepts.`).catch(() => {});
+          }
+        } else if (action === "accept_counter") {
+          if (!shift.counterStartTime || !shift.counterEndTime) {
+            return toolError("INVALID_INPUT", "Counter-proposal data is missing on this shift");
+          }
+          const billable = resolveShiftBillableAmount({
+            startTime: String(shift.counterStartTime), endTime: String(shift.counterEndTime),
+            bookedRateDollars: Number(shift.payRate),
+            lineItems: shift.counterLineItems,
+          });
+          await shiftSnap.ref.update({
+            status: "approved",
+            finalStartTime: shift.counterStartTime,
+            finalEndTime: shift.counterEndTime,
+            finalTotalHours: billable.totalHours,
+            lineItems: billable.lineItems,
+            lineItemsTotal: billable.lineItemsTotal,
+            basePay: billable.basePay,
+            grossPay: billable.grossPay,
+            amountCents: billable.grossPayCents,
+            requiresExplicitApproval: billable.requiresExplicitApproval,
+            resolvedAt: nowIso,
+            resolvedBy: "client",
+            updatedAt: nowIso,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({
+              by: "client", action: "accepted", at: nowIso,
+              startTime: shift.counterStartTime, endTime: shift.counterEndTime, hours: billable.totalHours,
+              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
+              basePay: billable.basePay, grossPay: billable.grossPay,
+            }),
+          });
+          const cgSessSnap5 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
+          if (!cgSessSnap5.empty) {
+            const { sendToPhone } = await import("../linq/client");
+            await sendToPhone(cgSessSnap5.docs[0].id, `The family accepted your counter-proposal (${billable.totalHours}h). Payment will be processed shortly.`).catch(() => {});
+          }
+        } else {
+          // escalate
+          await shiftSnap.ref.update({
+            status: "disputed_admin_review",
+            resolvedBy: null,
+            updatedAt: nowIso,
+            correctionHistory: admin.firestore.FieldValue.arrayUnion({ by: "client", action: "escalated", at: nowIso }),
+          });
+          const { notifyAdmins } = await import("../shiftHours");
+          await notifyAdmins(
+            "shift_hours_admin_review",
+            "Shift hours dispute needs mediation",
+            `${shift.clientName ?? "A client"} escalated a dispute with ${shift.caregiverName ?? "a caregiver"} for appointment ${appointmentId}.`,
+            { appointmentId },
+          ).catch(() => {});
         }
       } catch (error) {
         if (error instanceof Error) {
@@ -6333,15 +6453,8 @@ async function executeToolCall(
         }
         throw error;
       }
-      if (decision === "dispute") {
-        const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
-        if (!cgSessSnap4.empty) {
-          const { sendToPhone } = await import("../linq/client");
-          await sendToPhone(cgSessSnap4.docs[0].id, `The family reviewed your shift hours and suggested a correction: ${correctedHours}h. Text me if you'd like to discuss.`).catch(() => {});
-        }
-      }
-      logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, decision } }).catch(() => {});
-      return { success: true, decision, appointmentId };
+      logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, action } }).catch(() => {});
+      return { success: true, action, appointmentId };
       });
     }
 
@@ -6800,14 +6913,19 @@ async function executeToolCall(
           const sh = d.data();
           const cgSnap = await db.collection("caregivers").doc(sh.caregiverId as string).get().catch(() => null);
           const cg = cgSnap?.data() ?? {};
+          // Real shiftHours fields — see get_pending_timesheets' comment above;
+          // same bug (date/durationHours never written), plus approvedAt was
+          // reading reviewedAt, but reviewShiftHours (shiftHours.ts) writes
+          // resolvedAt, not reviewedAt.
+          const startTime = sh.finalStartTime ?? sh.submittedStartTime;
           return {
             invoiceId:     d.id,
-            date:          sh.date,
+            date:          startTime ? new Date(startTime as string).toISOString().slice(0, 10) : null,
             caregiverName: (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver",
-            hours:         sh.durationHours,
+            hours:         sh.finalTotalHours ?? sh.submittedTotalHours ?? null,
             amount:        `$${((sh.amountCents as number ?? 0) / 100).toFixed(2)}`,
             status:        sh.status,
-            approvedAt:    sh.reviewedAt ?? null,
+            approvedAt:    sh.resolvedAt ?? null,
           };
         })
       );
@@ -7310,7 +7428,10 @@ async function executeToolCall(
         const missing: Array<{ item: string; detail: string; fix: string }> = [];
         const optionalGaps: string[] = [];
 
-        const membershipActive = u.subscriptionActive === true || u.membershipStatus === "active";
+        // Matches checkClientAccessGate/the website's hasActiveMembership():
+        // 'trialing' counts as active too — this was missing, so a client
+        // still in their trial got wrongly told membership wasn't active.
+        const membershipActive = u.subscriptionActive === true || u.membershipStatus === "active" || u.membershipStatus === "trialing";
         if (!membershipActive) {
           missing.push({
             item: "membership payment",
@@ -7660,13 +7781,19 @@ async function executeToolCall(
           const ts = d.data();
           const cgSnap8 = await db.collection("caregivers").doc(ts.caregiverId as string).get().catch(() => null);
           const cg8 = cgSnap8?.data() ?? {};
+          // Real shiftHours fields (createValidatedShiftHours.ts) — this used
+          // to read date/clockInTime/clockOutTime/durationHours, none of which
+          // are ever written, so every real record came back blank. Mirrors
+          // Payments.tsx's own display priority: final* wins once set.
+          const startTime = ts.finalStartTime ?? ts.submittedStartTime;
+          const endTime   = ts.finalEndTime   ?? ts.submittedEndTime;
           return {
             appointmentId:  ts.appointmentId,
             caregiverName:  (cg8.name ?? `${cg8.firstName ?? ""} ${cg8.lastName ?? ""}`.trim()) || "Caregiver",
-            date:           ts.date,
-            clockIn:        ts.clockInTime,
-            clockOut:       ts.clockOutTime,
-            hours:          ts.durationHours,
+            date:           startTime ? new Date(startTime as string).toISOString().slice(0, 10) : null,
+            clockIn:        startTime ?? null,
+            clockOut:       endTime ?? null,
+            hours:          ts.finalTotalHours ?? ts.submittedTotalHours ?? null,
             amountOwed:     `$${((ts.amountCents as number ?? 0) / 100).toFixed(2)}`,
             submittedAt:    ts.submittedAt,
           };
@@ -7793,9 +7920,21 @@ async function executeToolCall(
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
 
-      const userSnap = await db.collection("users").doc(clientId as string).get();
-      if (!userSnap.exists) return toolError("NOT_FOUND", "Client not found");
-      const stripeCustomerId = userSnap.data()?.stripeCustomerId as string | undefined;
+      // customers/{uid} is the authoritative, immediately-written source (set
+      // the instant Stripe Checkout starts, functions/src/stripe.ts) — the
+      // rest of the codebase checks it first (shiftHours.ts's own payment
+      // logic), falling back to the users/{uid} mirror, which is only written
+      // later on the checkout.session.completed webhook. This tool used to
+      // check users-only, so a client with an in-progress/abandoned checkout
+      // (a customers doc, no users mirror yet) got wrongly told they had no
+      // billing account at all.
+      const custSnap = await db.collection("customers").doc(clientId as string).get().catch(() => null);
+      let stripeCustomerId = custSnap?.data()?.stripeCustomerId as string | undefined;
+      if (!stripeCustomerId) {
+        const userSnap = await db.collection("users").doc(clientId as string).get();
+        if (!userSnap.exists) return toolError("NOT_FOUND", "Client not found");
+        stripeCustomerId = userSnap.data()?.stripeCustomerId as string | undefined;
+      }
       if (!stripeCustomerId) return toolError("INVALID_INPUT", "No Stripe billing account found for this client. They may need to re-subscribe.");
 
       const { getStripeClient } = await import("../stripe");
@@ -7804,7 +7943,7 @@ async function executeToolCall(
       const appUrl = getAppUrl();
       const session = await sc.billingPortal.sessions.create({
         customer:   stripeCustomerId,
-        return_url: `${appUrl}/settings/billing`,
+        return_url: `${appUrl}/client/payments`,
       });
 
       logAudit({ eventType: "billing_portal_opened", userId: clientId as string, data: { source: "mcp:get_payment_update_link" } }).catch(() => {});
@@ -7906,6 +8045,18 @@ async function executeToolCall(
           saved: false,
           invalidValue: true,
           guidance: `"${String(fieldValue)}" isn't a valid ${fieldName} value — it must be a number. Re-read their message; if it doesn't actually answer ${fieldName}, save it to the right field instead and ask for ${fieldName} naturally.`,
+        };
+      }
+      // Recovery email must actually look like an email — it's the sole
+      // account-recovery channel if the phone is ever lost, so a malformed
+      // save here can't be allowed to silently count as "collected" the way
+      // an ordinary free-text field would.
+      if (role === "client" && fieldName === "email" && typeof fieldValue === "string" && !/^\S+@\S+\.\S+$/.test(fieldValue.trim())) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `"${fieldValue}" doesn't look like a valid email address — ask them for it again.`,
         };
       }
       // Canonicalize enum-ish values the model may save in free-form casing
@@ -8091,10 +8242,11 @@ async function executeToolCall(
       }
       if (!invDocs.length) return toolError("NOT_FOUND", "No invoices found for this client.");
       const invoice = invDocs[0].data()!;
+      const invStartTime = invoice.finalStartTime ?? invoice.submittedStartTime;
       return {
         invoiceId:     invDocs[0].id,
         caregiverName: invoice.caregiverName,
-        date:          invoice.date,
+        date:          invStartTime ? new Date(invStartTime as string).toISOString().slice(0, 10) : null,
         status:        invoice.status,
         hours:         invoice.finalTotalHours ?? invoice.submittedTotalHours,
         total:         invoice.grossPay ?? (Number(invoice.amountCents ?? 0) / 100),
@@ -8300,8 +8452,31 @@ async function executeToolCall(
 
     // ── update_user_profile ─────────────────────────────────────────────────
     if (name === "update_user_profile") {
-      const { userId, firstName, lastName, phone, address, city, state, zip, photoUrl } = input as Record<string, unknown>;
+      const { userId, firstName, lastName, requestPhoneChange, address, city, state, zip, photoUrl } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
+
+      // requestPhoneChange is a request flag, not a field write — login here
+      // is by phone number, so a change always goes through the email
+      // round-trip (a standalone tool for just this used to exist; folded in
+      // here to stay under OpenAI's 128-tool cap rather than adding a tool).
+      if (requestPhoneChange === true) {
+        const snap = await db.collection("users").doc(userId as string).get();
+        if (!snap.exists) return toolError("NOT_FOUND", "Account not found");
+        const d = snap.data() ?? {};
+        const email = (d.email as string | undefined)?.trim();
+        if (!email) {
+          return {
+            success: false,
+            noEmailOnFile: true,
+            guidance: "This account has no email on file, so there's no way to send a verification link. Ask them to set a recovery email first, then try again.",
+          };
+        }
+        const name = ((d.displayName || d.firstName || d.name || "there") as string).split(" ")[0];
+        const { requestPhoneChangeForAccount } = await import("../accountRecovery");
+        await requestPhoneChangeForAccount({ uid: userId as string, role: "client", name }, email);
+        logAudit({ eventType: "profile_updated", userId: userId as string, data: { source: "mcp:update_user_profile:phone" } }).catch(() => {});
+        return { success: true, sentTo: email };
+      }
 
       // Match the website's own field names exactly (components/client/AccountSettings.tsx):
       // it combines first/last into ONE `displayName` (never separate firstName/
@@ -8341,17 +8516,6 @@ async function executeToolCall(
         patch.careLocation = { address: finalStreet, zip: finalZip, city: finalCity, state: finalState };
       }
       if (photoUrl  != null) patch.photoURL = photoUrl;
-      // Phone changes trigger a re-verification — store as pendingPhone rather
-      // than the live phone so the existing OTP flow can run before swapping.
-      let phoneChangeRequested = false;
-      if (phone != null) {
-        if (!/^\+1\d{10}$/.test(phone as string)) {
-          return toolError("INVALID_INPUT", "phone must be in E.164 format (+1XXXXXXXXXX)");
-        }
-        patch.pendingPhone = phone;
-        patch.pendingPhoneAt = nowIso;
-        phoneChangeRequested = true;
-      }
       if (Object.keys(patch).length === 1) {
         return toolError("INVALID_INPUT", "No fields to update");
       }
@@ -8373,11 +8537,22 @@ async function executeToolCall(
       return {
         success: true,
         updated: Object.keys(patch).filter(k => k !== "updatedAt"),
-        phoneChangeRequested,
-        phoneVerificationNote: phoneChangeRequested
-          ? "Phone change saved but not yet active — the new number needs to verify via OTP before it takes over."
-          : undefined,
       };
+    }
+
+    // ── delete_account (ALWAYS_CONFIRM-gated — see pendingActions.ts) ───────
+    if (name === "delete_account") {
+      const { userId } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      const { deleteAccountForUser } = await import("../accountDeletion");
+      try {
+        await deleteAccountForUser(userId as string);
+      } catch (err) {
+        console.error("delete_account: deleteAccountForUser failed:", err);
+        return toolError("UNAVAILABLE", "Couldn't delete the account right now — please try again shortly.");
+      }
+      logAudit({ eventType: "profile_updated", userId: userId as string, data: { source: "mcp:delete_account" } }).catch(() => {});
+      return { success: true, deleted: true };
     }
 
     // ── update_communication_preferences ────────────────────────────────────
@@ -8409,15 +8584,9 @@ async function executeToolCall(
       if (!existing.empty && existing.docs[0].id !== userId) {
         return toolError("INVALID_INPUT", "An account already exists with that email address");
       }
-      const token = crypto.randomBytes(16).toString("base64url");
-      await db.collection("email_change_requests").doc(token).set({
-        userId, newEmail, requestedAt: nowIso, status: "pending",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      await db.collection("users").doc(userId as string).set({ pendingEmail: newEmail, pendingEmailToken: token, pendingEmailAt: nowIso }, { merge: true });
+      const { requestEmailChangeForAccount } = await import("../accountRecovery");
+      await requestEmailChangeForAccount(userId as string, "client", newEmail as string);
       logAudit({ eventType: "email_change_requested", userId: userId as string, data: { source: "mcp:request_email_change", maskedEmail: (newEmail as string).replace(/(.{2}).*(@.*)/, "$1***$2") } }).catch(() => {});
-      // Email-send is fire-and-forget for now — the actual link send is handled by
-      // a separate triggered function watching email_change_requests writes.
       return {
         success: true,
         verificationSent: true,
@@ -8823,15 +8992,21 @@ async function executeToolCall(
       const gsSnap = await db.collection("shiftHours").where(gsField, "==", gsValue).get();
       let shifts = gsSnap.docs.map(d => {
         const s = d.data() as Record<string, unknown>;
+        // Real shiftHours fields — date/clockInTime/clockOutTime are never
+        // written (createValidatedShiftHours.ts), so these always came back
+        // null; final* wins over submitted* once a review has happened,
+        // matching Payments.tsx's own display priority.
+        const startTime = (s.finalStartTime ?? s.submittedStartTime) as string | undefined;
+        const endTime   = (s.finalEndTime   ?? s.submittedEndTime)   as string | undefined;
         return {
           appointmentId: d.id,
-          date:          s.date ?? null,
+          date:          startTime ? new Date(startTime).toISOString().slice(0, 10) : null,
           status:        s.status ?? null,
-          durationHours: s.durationHours ?? s.submittedTotalHours ?? null,
+          durationHours: s.finalTotalHours ?? s.submittedTotalHours ?? null,
           amountCents:   s.amountCents ?? null,
           amountDollars: s.amountCents != null ? `$${(Number(s.amountCents) / 100).toFixed(2)}` : null,
-          clockInTime:   s.clockInTime ?? null,
-          clockOutTime:  s.clockOutTime ?? null,
+          clockInTime:   startTime ?? null,
+          clockOutTime:  endTime ?? null,
           caregiverName: s.caregiverName ?? null,
           clientName:    s.clientName ?? null,
         };

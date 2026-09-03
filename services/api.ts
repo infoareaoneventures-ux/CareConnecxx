@@ -214,21 +214,14 @@ export const dbService = {
         }
     },
 
-    updateUserPassword: async (newPass: string, currentPass?: string) => {
-        if (isConfigured && auth && auth.currentUser) {
-            if (currentPass && auth.currentUser.email) {
-                const credential = firebase.auth.EmailAuthProvider.credential(auth.currentUser.email, currentPass);
-                await auth.currentUser.reauthenticateWithCredential(credential);
-            }
-            await auth.currentUser.updatePassword(newPass);
-            return true;
-        }
-        throw new Error("Not logged in");
-    },
-
+    // Server-side: cancels any active subscription, deletes the account's
+    // Firestore documents, then deletes the Auth login. Calling
+    // auth.currentUser.delete() directly (the old behavior) only removed the
+    // login and left billing running against an orphaned customer record.
     deleteUserAccount: async () => {
-        if (isConfigured && auth && auth.currentUser) {
-            await auth.currentUser.delete();
+        if (isConfigured && auth && auth.currentUser && functions) {
+            const fn = functions.httpsCallable('v1-deleteAccount');
+            await fn({});
             return true;
         }
         throw new Error("Not logged in");

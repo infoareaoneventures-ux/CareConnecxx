@@ -79,15 +79,20 @@ const writeActionConfigs = {
   },
   review_shift_hours: {
     role: "client",
+    // 2026-08-31 (Payments/Timesheets audit): matches reviewShiftHours
+    // (functions/src/shiftHours.ts) exactly — action, not decision; a
+    // correction is independent start/end times, not a single hours number;
+    // accept_counter/escalate added (this tool previously had no way to
+    // resolve a caregiver's counter-proposal at all).
     inputSchema: z.object({
       clientId: stringValue,
       appointmentId: stringValue,
-      decision: z.enum(["approve", "dispute"]),
+      action: z.enum(["approve", "propose_correction", "accept_counter", "escalate"]),
     }).passthrough(),
     auditType: "shift_hours_reviewed",
     targetCollection: "shiftHours",
     idempotencyKey: (input: Record<string, unknown>) =>
-      `review_shift_hours:${input.clientId}:${input.appointmentId}:${input.decision}:${input.correctedHours ?? ""}:${input.reason ?? ""}`,
+      `review_shift_hours:${input.clientId}:${input.appointmentId}:${input.action}:${input.proposedStartTime ?? ""}:${input.proposedEndTime ?? ""}`,
     failClosed: true,
   },
   respond_to_booking_request: {

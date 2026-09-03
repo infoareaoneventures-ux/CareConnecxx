@@ -56,7 +56,6 @@ const ALWAYS_CONFIRM = new Set<string>([
   "cancel_appointment",
   "delete_reminder",
   "remove_family_member",
-  "cancel_subscription",
   "restore_care_plan_version",
   "cancel_job_post",
   // U9: financial commit via the agent loop — a refund moves money and must be
@@ -71,6 +70,9 @@ const ALWAYS_CONFIRM = new Set<string>([
   // visibility, and deleting a memory file destroys content + its search index.
   "archive_senior_profile",
   "delete_memory_file",
+  // Deleting the account is permanent (cancels billing, wipes Firestore data,
+  // removes the login) — never fire without an explicit family confirmation.
+  "delete_account",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
@@ -98,10 +100,16 @@ const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => bo
   // report are high-stakes (both were ALWAYS_CONFIRM before the merge);
   // unblock was never gated and must stay that way.
   set_block_status: (input) => input.action === "block" || input.action === "report",
-  // U9: approving a timesheet via the agent loop releases payment to the caregiver
-  // — gate the approve path. Disputing is reversible (goes to admin review) and
-  // stays ungated.
-  review_shift_hours: (input) => input.action === "approve" || input.decision === "approve",
+  // cancel_subscription + reactivate_subscription merged the same way
+  // (2026-09-02, to make room for delete_account) — cancel was ALWAYS_CONFIRM
+  // before the merge; reactivate was never gated and must stay that way.
+  set_subscription_status: (input) => input.action === "cancel",
+  // U9: approving a timesheet (or accepting a caregiver's counter-proposal —
+  // 2026-08-31, same payment-releasing effect as approve, added when
+  // accept_counter/escalate were built) via the agent loop releases payment
+  // to the caregiver — gate both. propose_correction/escalate are reversible
+  // (go to a correction cycle or admin review) and stay ungated.
+  review_shift_hours: (input) => input.action === "approve" || input.action === "accept_counter",
   // Real-world healthcare browser actions: booking an appointment or requesting
   // a refill submits on a third-party portal and is irreversible — gate it.
   // Appointment booking is two-pass (H-U3): the FIRST call (no chosenSlot) is
@@ -130,8 +138,10 @@ export function buildActionPreview(toolName: string, toolInput: Record<string, u
       return `Delete reminder ${String(toolInput.reminderId ?? "?")}`;
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
-    case "cancel_subscription":
-      return `Cancel Evia subscription`;
+    case "set_subscription_status":
+      return toolInput.action === "reactivate" ? `Reactivate Evia subscription` : `Cancel Evia subscription`;
+    case "delete_account":
+      return `Permanently delete this Evia account`;
     case "restore_care_plan_version":
       return `Restore care plan to version ${String(toolInput.versionId ?? "?")}`;
     case "set_block_status": {

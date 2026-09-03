@@ -101,6 +101,11 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   "careNeeds",
   // Step 12 — rate
   "rate",
+  // Not part of the wizard's job-post steps — a recovery-only field, added so
+  // new client accounts have a way back in if the phone is ever lost (2026-09-02
+  // Account Settings/phone-recovery audit). Required the same way the
+  // caregiver side already requires "email" below, for the same reason.
+  "email",
   // Collection always ends with the family member's own name
   "firstName",
 ];

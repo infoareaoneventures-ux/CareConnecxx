@@ -16,6 +16,7 @@ interface TeamCaregiver {
   name: string;
   imageUrl?: string;
   rating: number;
+  reviewCount: number;
   yearsExperience: number;
   hourlyRate: number;
   bookingRate?: number | null;
@@ -152,6 +153,7 @@ export const MyCareTeam: React.FC = () => {
               name: fullName,
               imageUrl,
               rating: cgData.rating ?? 0,
+              reviewCount: cgData.reviewCount ?? cgData.totalReviews ?? 0,
               yearsExperience: cgData.yearsExperience ?? 0,
               hourlyRate: cgData.hourlyRate ?? 0,
               bookingRate: bookingData.rate ?? null,
@@ -207,9 +209,10 @@ export const MyCareTeam: React.FC = () => {
   };
 
 
-  const renderStars = (rating: number) => {
-    const fullStars = Math.floor(rating);
-    const hasHalfStar = rating % 1 >= 0.5;
+  const renderStars = (rating: number, reviewCount: number) => {
+    const hasReviews = reviewCount > 0;
+    const fullStars = hasReviews ? Math.floor(rating) : 0;
+    const hasHalfStar = hasReviews && rating % 1 >= 0.5;
     return (
       <div className="flex items-center space-x-0.5">
         {[...Array(5)].map((_, i) => (
@@ -224,7 +227,9 @@ export const MyCareTeam: React.FC = () => {
             }`}
           />
         ))}
-        {rating > 0 && <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>}
+        {hasReviews
+          ? <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>
+          : <span className="ml-1 text-sm text-gray-400">No reviews yet</span>}
       </div>
     );
   };
@@ -257,10 +262,7 @@ export const MyCareTeam: React.FC = () => {
                 Active booking
               </span>
             )}
-            {activeTab === 'past' && (
-              <span className="text-xs text-gray-400 italic">Past booking</span>
-            )}
-            {renderStars(caregiver.rating)}
+            {renderStars(caregiver.rating, caregiver.reviewCount)}
             <CaregiverVerificationBadges
               verified={caregiver.verified}
               backgroundCheckStatus={caregiver.backgroundCheckStatus}

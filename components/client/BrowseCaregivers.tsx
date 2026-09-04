@@ -19,6 +19,7 @@ interface Caregiver {
   name: string;
   imageUrl?: string;
   rating: number;
+  reviewCount: number;
   yearsExperience: number;
   hourlyRate: number;
   isTopRated?: boolean;
@@ -86,6 +87,7 @@ export const BrowseCaregivers: React.FC = () => {
             name: fullName,
             imageUrl: d.photoURL || d.imageUrl || d.profilePhoto,
             rating: d.rating ?? 0,
+            reviewCount: d.reviewCount ?? d.totalReviews ?? 0,
             yearsExperience: d.yearsExperience ?? 0,
             hourlyRate: d.hourlyRate ?? 0,
             isTopRated: (d.rating ?? 0) >= 4.8,
@@ -180,10 +182,11 @@ export const BrowseCaregivers: React.FC = () => {
     navigate(`/client/caregiver/${caregiverId}`);
   };
 
-  const renderStars = (rating: number) => {
-    const fullStars = Math.floor(rating);
-    const hasHalfStar = rating % 1 >= 0.5;
-    
+  const renderStars = (rating: number, reviewCount: number) => {
+    const hasReviews = reviewCount > 0;
+    const fullStars = hasReviews ? Math.floor(rating) : 0;
+    const hasHalfStar = hasReviews && rating % 1 >= 0.5;
+
     return (
       <div className="flex items-center space-x-0.5">
         {[...Array(5)].map((_, i) => (
@@ -198,7 +201,9 @@ export const BrowseCaregivers: React.FC = () => {
             }`}
           />
         ))}
-        <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>
+        {hasReviews
+          ? <span className="ml-1 text-sm font-semibold text-gray-700">{rating}</span>
+          : <span className="ml-1 text-sm text-gray-400">No reviews yet</span>}
       </div>
     );
   };
@@ -302,7 +307,7 @@ export const BrowseCaregivers: React.FC = () => {
                 <div className="mb-3">
                   <h2 className="text-xl font-bold text-gray-900">{caregiver.name}</h2>
                   <p className="text-sm text-gray-500">Caregiver</p>
-                  <div className="mt-1">{renderStars(caregiver.rating)}</div>
+                  <div className="mt-1">{renderStars(caregiver.rating, caregiver.reviewCount)}</div>
                   <CaregiverVerificationBadges verified={(caregiver as any).verified} backgroundCheckStatus={(caregiver as any).backgroundCheckStatus} className="mt-2" />
                 </div>
 

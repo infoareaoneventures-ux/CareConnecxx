@@ -238,6 +238,77 @@ describe("stripeWebhook — exactly-once", () => {
   });
 });
 
+describe("stripeWebhook — onboardingStep resync (2026-09-03)", () => {
+  // A client who finishes membership through the WEBSITE's own checkout
+  // (not Evia's texted link) never gets advanceOnboardingStep('payment', ...)
+  // called — that only fires from checkout.session.completed when
+  // session.metadata.task === 'client_payment_setup', set only by Evia's own
+  // checkout creation. Left unrepaired, agent_sessions.onboardingStep stays
+  // parked on an early client_* step forever even though the account is
+  // fully active. handleSubscriptionUpdated (customer.subscription.updated —
+  // fires regardless of which channel completed checkout) is the one place
+  // both channels are guaranteed to meet, so it resyncs the flag once
+  // identity is ALSO genuinely verified.
+  const activeSubscriptionEvent = (id: string) => ({
+    id,
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: "sub_resync",
+        status: "active",
+        metadata: { firebaseUID: "client1" },
+        current_period_start: 1750000000,
+        current_period_end: 1752000000,
+        cancel_at_period_end: false,
+        canceled_at: null,
+      },
+    },
+  });
+
+  it("flips a stuck pre-payment client step to complete once identity is also verified", async () => {
+    hoisted.docs.set("users/client1", { identityCheckStatus: "verified" });
+    hoisted.collState.set("agent_sessions", [
+      { id: "+15551234567", userId: "client1", onboardingStep: "client_ask_plan" },
+    ]);
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(activeSubscriptionEvent("evt_resync_a")), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("agent_sessions/+15551234567")).toMatchObject({ onboardingStep: "complete" });
+  });
+
+  it("leaves the step alone when identity has not been verified yet", async () => {
+    hoisted.docs.set("users/client1", { identityCheckStatus: "processing" });
+    hoisted.collState.set("agent_sessions", [
+      { id: "+15551234567", userId: "client1", onboardingStep: "client_ask_plan" },
+    ]);
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(activeSubscriptionEvent("evt_resync_b")), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("agent_sessions/+15551234567")).toBeUndefined();
+  });
+
+  it("never touches a session that isn't sitting on a pre-payment client step", async () => {
+    hoisted.docs.set("users/client1", { identityCheckStatus: "verified" });
+    // Already complete — a normal, fully-active client sending an ordinary
+    // message; the resync must be a no-op, never a redundant write.
+    hoisted.collState.set("agent_sessions", [
+      { id: "+15551234567", userId: "client1", onboardingStep: "complete" },
+    ]);
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(activeSubscriptionEvent("evt_resync_c")), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(hoisted.docs.get("agent_sessions/+15551234567")).toBeUndefined();
+  });
+
+  it("does nothing when no agent_sessions doc references this user", async () => {
+    hoisted.docs.set("users/client1", { identityCheckStatus: "verified" });
+    hoisted.collState.set("agent_sessions", []);
+    const res = makeRes();
+    await (stripeWebhook as any)(stripeReq(activeSubscriptionEvent("evt_resync_d")), res);
+    expect(res.json).toHaveBeenCalledWith({ received: true }); // no crash
+  });
+});
+
 describe("checkrWebhook — exactly-once", () => {
   const clearReportEvent = (id?: string) => ({
     ...(id ? { id } : {}),

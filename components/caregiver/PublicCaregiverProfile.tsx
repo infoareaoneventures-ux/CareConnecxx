@@ -97,11 +97,16 @@ export const PublicCaregiverProfile: React.FC = () => {
             </h1>
             <CaregiverVerificationBadges verified={profile.verified} backgroundCheckStatus={profile.backgroundCheckStatus} className="mt-2" />
             <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 mt-1">
-              {profile.rating != null && (
+              {(profile.reviewCount ?? 0) > 0 ? (
                 <span className="flex items-center gap-1">
                   <Star className="w-3.5 h-3.5 text-primary-400" fill="currentColor" />
-                  <span className="font-medium text-slate-700">{profile.rating.toFixed(1)}</span>
-                  <span>({profile.reviewCount ?? 0} reviews)</span>
+                  <span className="font-medium text-slate-700">{(profile.rating ?? 0).toFixed(1)}</span>
+                  <span>({profile.reviewCount} reviews)</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-slate-400">
+                  <Star className="w-3.5 h-3.5 text-slate-300" />
+                  No reviews yet
                 </span>
               )}
               {city && (

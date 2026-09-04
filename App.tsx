@@ -75,8 +75,6 @@ const VerifyEmailChangePage      = lazy(() => import('./components/pages/VerifyE
 
 
 
-// Profile Modal
-const CaregiverProfileModal = lazy(() => import('./components/CaregiverProfileModal').then(module => ({ default: module.CaregiverProfileModal })));
 
 // Wrapper for landing view
 const LandingView = (props: any) => <LandingViewComponent {...props} />;

@@ -972,9 +972,11 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
             
             <div className="flex items-center gap-0.5 mb-2.5">
               {[...Array(5)].map((_, i) => (
-                <Star key={i} className={`w-[18px] h-[18px] ${i < Math.floor(caregiver.rating) ? 'text-teal-500 fill-current' : 'text-slate-200'}`} />
+                <Star key={i} className={`w-[18px] h-[18px] ${(caregiver.reviewCount ?? 0) > 0 && i < Math.round(caregiver.rating) ? 'text-teal-500 fill-current' : 'text-slate-200'}`} />
               ))}
-              <span className="text-sm font-medium text-slate-500 ml-1.5">({caregiver.reviewCount || 0})</span>
+              {(caregiver.reviewCount ?? 0) > 0
+                ? <span className="text-sm font-medium text-slate-500 ml-1.5">({caregiver.reviewCount})</span>
+                : <span className="text-sm text-slate-400 ml-1.5">No reviews yet</span>}
             </div>
 
             <CaregiverVerificationBadges verified={caregiver.verified} backgroundCheckStatus={caregiver.backgroundCheckStatus} />

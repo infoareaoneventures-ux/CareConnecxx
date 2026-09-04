@@ -214,14 +214,19 @@ export function buildCaregiverPreviewResult(opts: {
   city?: string;
   seniorName?: string;
   careNeeds?: string[];
+  /** Max caregivers to actually include (both `total` and `items`). Default 3
+   *  matches the original onboarding preview's fixed size; find_nearby_caregivers
+   *  passes its own (possibly larger, family-requested) limit here instead. */
+  itemLimit?: number;
 }): CaregiverPreviewOutput {
   const city = (opts.city ?? "").trim();
   const seniorName = (opts.seniorName ?? "").trim() || "your loved one";
   const careNeeds = Array.isArray(opts.careNeeds) ? opts.careNeeds.filter(Boolean) : [];
   const locationLabel = city || "your area";
   const needsLabel = careNeeds.length > 0 ? careNeeds.slice(0, 2).join(" & ") : "care";
-  const caregivers = opts.caregivers.slice(0, 5);
-  const items = caregivers.slice(0, 3).map(toPreviewItem);
+  const itemLimit = opts.itemLimit ?? 3;
+  const caregivers = opts.caregivers.slice(0, itemLimit);
+  const items = caregivers.map(toPreviewItem);
 
   if (caregivers.length === 0) {
     return {
@@ -247,7 +252,7 @@ export function buildCaregiverPreviewResult(opts: {
   const message = opts.widened
     ? `I don't have caregivers right in ${locationLabel} yet, but I do have nearby options for ${seniorName}: ${previewText}. ` +
       "I would start with the best fit, confirm the schedule, and keep the family updated here."
-    : `I found ${caregivers.length > 5 ? "6+" : caregivers.length} caregiver${caregivers.length !== 1 ? "s" : ""} near ${locationLabel} ` +
+    : `I found ${caregivers.length} caregiver${caregivers.length !== 1 ? "s" : ""} near ${locationLabel} ` +
       `who can help with ${needsLabel}. ${previewText}. ` +
       "I would start with the best fit, confirm the schedule, and keep the family updated here.";
 

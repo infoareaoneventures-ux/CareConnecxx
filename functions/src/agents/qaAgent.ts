@@ -816,7 +816,8 @@ export function buildClientSystemPrompt(
     `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
     `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
     `  · delete_account — permanently delete the family's own account. MANDATORY: confirm explicitly first (read back that this is irreversible and cancels any active membership).`,
-    `  · get_caregiver_reviews — pull recent reviews and average rating for a caregiver. Use for "what do other families say about Alice?".`,
+    `  · get_caregiver_info — pull a caregiver's profile AND their recent reviews/average rating in one call. Use for "what do other families say about Alice?" or any question about a specific known caregiver.`,
+    `  · find_nearby_caregivers — show real, currently-available caregivers near the family, ranked the same way the website's own Nearby Caregivers widget ranks them (distance, skills, availability, rating). Call this ANY time they ask to see/browse/find caregivers — at signup, or months later, doesn't matter — it always reads their CURRENT location and needs fresh. Works regardless of identity/membership status; only messaging, booking, and interview requests need those.`,
     `  · save_caregiver_favorite / unsave_caregiver_favorite / list_saved_caregivers — manage the family's favorite caregivers.`,
     `  · set_block_status — block, unblock, or report another user (action: 'block'|'unblock'|'report'). MANDATORY for 'block': read back who you're about to block and wait for explicit YES. MANDATORY for 'report': confirm category and details with the family, then call, and tell them ops follows up within 24 hours. Unblocking needs no confirmation.`,
     `  · delete_conversation — clear a message conversation from the family's own Inbox (mirrors the website's 'Delete conversation' menu action). Only affects their own view; the other party's copy is untouched.`,
@@ -1026,8 +1027,7 @@ export function buildCaregiverSystemPrompt(
     `- get_caregiver_earnings: see how much you've earned in the last 30 days`,
     `- update_caregiver_availability: add or remove days from your weekly availability`,
     `- get_caregiver_availability: read your current weekly availability before changing it`,
-    `- get_caregiver_info: look up your own profile details (rate, bio, city, availability)`,
-    `- get_caregiver_reviews: see your own ratings and recent reviews from families`,
+    `- get_caregiver_info: look up your own profile details (rate, bio, city, availability), AND your ratings/recent reviews from families, in one call`,
     `- get_background_check_status: check the status of your background check`,
     `- get_payout_status: check whether your Stripe payout (getting paid) setup is finished. Use when they ask "is my payout set up", "can I get paid yet", or "did my bank connect". NEVER say payouts are live, ready, or set up unless summary is "active" — when it's anything else, send the setup link with send_onboarding_link (caregiver_payouts) and tell them tapping it finishes their Stripe setup.`,
     `- get_signup_completeness: FINAL SIGNUP CHECK — audit their whole account for anything signup missed (profile fields, photo, membership, background check, payouts, visibility to families). Use right after signup finishes or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result: report each item in \`missing\` with its fix (offer to send links via send_onboarding_link), mention \`optionalGaps\` as optional, and if \`complete\` is true tell them plainly they're all set.`,
@@ -2839,7 +2839,7 @@ export async function runQaAgent(params: {
               // model otherwise has no reliable way to know. Only inject when the
               // SPEAKER is the caregiver, so client tools that legitimately target
               // a specific caregiver (send_caregiver_message, submit_review,
-              // get_caregiver_reviews) keep the client-supplied id.
+              // get_caregiver_info) keep the client-supplied id.
               ...(userType === "caregiver" && caregiverId ? { caregiverId } : {}),
               // Onboarding tools: inject the role authoritatively (last, overrides
               // any model-guessed value) so a hallucinated role can't stall a save.

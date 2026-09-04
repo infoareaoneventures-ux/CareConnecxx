@@ -71,7 +71,7 @@ Components are domain-driven:
 - `components/landing/` — marketing/landing page
 - `components/shared/` — cross-domain shared components
 
-Legacy top-level duplicates (BookingModal, Chat, ClientDashboard, etc.) were removed in the 2026-07-02 dead-code cleanup (see `docs/dead-code-removal-2026-07-02.md`). The remaining top-level components (`components/CaregiverDashboard.tsx`, `components/CaregiverProfileModal.tsx`, ...) are the live, routed versions.
+Legacy top-level duplicates (BookingModal, Chat, ClientDashboard, etc.) were removed in the 2026-07-02 dead-code cleanup (see `docs/dead-code-removal-2026-07-02.md`). The remaining top-level components (`components/CaregiverDashboard.tsx`, ...) are the live, routed versions. `components/CaregiverProfileModal.tsx` was itself later orphaned by a routing change (caregiver profile views moved to `components/ClientCaregiverProfile.tsx` in modal mode, and the SMS-shared public view to `components/caregiver/PublicCaregiverProfile.tsx`) and was removed 2026-09-03.
 
 ### Global State
 `context/CareConnexContext.tsx` holds global state: current user (client or caregiver), appointments, caregivers list, toasts/notifications, and active view. Access via `useCareConnex()` hook.

@@ -249,24 +249,64 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "find_nearby_caregivers",
+    description:
+      "Show a family real, currently-available caregivers near them — same ranking (distance, skills, " +
+      "availability, rating) as the website's own Nearby Caregivers widget, with the same filters the " +
+      "website's Browse Caregivers page offers. Call this ANY time a client asks to see, browse, or find " +
+      "caregivers, at any point in their relationship with Evia — this is NOT gated on identity verification " +
+      "or membership (browsing was never gated on the website either; only messaging, booking, and interview " +
+      "requests are — use those tools' own gates for that). Always reads the family's CURRENT location and " +
+      "care needs fresh; never rely on something they mentioned earlier in the conversation instead of " +
+      "calling this again. Defaults to the top 2, matching the dashboard widget — if they ask to see more, " +
+      "or want something more specific (a minimum rating, years of experience, a rate ceiling, further than " +
+      "the default 25 miles), pass the matching filter instead of just re-calling with no changes. Every " +
+      "caregiver this can ever return is already background-check cleared — that's a precondition of showing " +
+      "up here at all, not an optional filter, so never ask the family whether they want that.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:  { type: "string", description: "The client's user ID" },
+        careNeeds: {
+          type: "array", items: { type: "string" },
+          description: "Optional — override the care needs on file if the family described something different in this request.",
+        },
+        limit: {
+          type: "number",
+          description: "How many caregivers to return (default 2, matching the dashboard widget; max 10). Raise this when the family asks to see more.",
+        },
+        maxDistanceMiles: {
+          type: "number",
+          description: "Override the default 25-mile radius when the family asks for a wider search.",
+        },
+        minRating: {
+          type: "number",
+          description: "Only show caregivers rated at least this (e.g. 4, 4.5) — mirrors the website's Rating filter (Any/3+/4+/4.5+).",
+        },
+        minExperienceYears: {
+          type: "number",
+          description: "Only show caregivers with at least this many years of experience — mirrors the website's Experience filter.",
+        },
+        maxHourlyRate: {
+          type: "number",
+          description: "Only show caregivers at or under this hourly rate — mirrors the website's Max Rate filter.",
+        },
+      },
+      required: ["clientId"],
+    },
+  },
+  {
+    // Merged with the former get_caregiver_reviews (2026-09-03, to make room
+    // for find_nearby_caregivers under OpenAI's 128-tool cap) — reviews are
+    // now always included alongside the profile fields, one lookup instead
+    // of two for what's almost always wanted together.
     name: "get_caregiver_info",
-    description: "Get a caregiver's profile including name, rate, specialties, and rating.",
+    description: "Get a caregiver's profile — name, rate, specialties, rating — AND their recent reviews, in one call.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's ID" },
-      },
-      required: ["caregiverId"],
-    },
-  },
-  {
-    name: "get_caregiver_reviews",
-    description: "Fetch reviews for a specific caregiver.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-        limit:       { type: "number", description: "Max reviews to return (default 5)" },
+        reviewLimit: { type: "number", description: "Max recent reviews to include (default 5, max 20)" },
       },
       required: ["caregiverId"],
     },
@@ -296,7 +336,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "find_replacement_caregivers",
-    description: "Search for available caregivers matching the client's care needs. Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these. Optionally narrow the search with the filters below when the family is specific (e.g. 'find someone available mornings near 95020 who can do dementia care').",
+    description: "Find a REPLACEMENT caregiver for an existing booking — a specific visit or ongoing arrangement that's falling through (the current caregiver cancelled, isn't working out, etc.). This is NOT the tool for a general 'show me caregivers' / 'who's available near me' request — use find_nearby_caregivers for that (it has the real distance/skills/rating filters and matches what the website itself shows; this tool doesn't). Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these. Optionally narrow the search with the filters below when the family is specific (e.g. 'find someone available mornings near 95020 who can do dementia care').",
     input_schema: {
       type: "object",
       properties: {
@@ -2728,7 +2768,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "submit_gps_checkin",
   "get_tax_summary",
   "send_onboarding_link",
-  "get_caregiver_reviews",
   "get_background_check_status",
   "get_payout_status",
   "get_signup_completeness",
@@ -3197,12 +3236,16 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
+  // find_nearby_caregivers is a pure read: scores/ranks already-fetched
+  // publicCaregiverProfiles docs and returns them — no writes, no SMS, no
+  // side effects (unlike find_replacement_caregivers above).
+  "find_nearby_caregivers",
   // find_replacement_caregivers was WRONGLY on this list (double-send audit
   // 2026-07-06): it texts the family (match gallery / status), writes
   // interview_requests + agent_sessions + admin_alerts, and resolves
   // commitments — a shadow run was sending real SMS. It is mutating; it must
   // be synthesized under shadow like every other side-effecting tool.
-  "get_caregiver_reviews", "list_saved_caregivers",
+  "list_saved_caregivers",
   "get_recurring_schedule", "list_user_reminders",
   "get_billing_summary", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
@@ -3519,12 +3562,100 @@ async function executeToolCall(
         return { success: true, results: docs, hasMore: merged.length > 5 };
       }
 
+      case "find_nearby_caregivers": {
+        const {
+          clientId, careNeeds: careNeedsOverride,
+          limit: limitInput, maxDistanceMiles, minRating, minExperienceYears, maxHourlyRate,
+        } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+
+        const { loadLiveClientLocation } = await import("../agents/onboardingConversation");
+        const location = await loadLiveClientLocation(clientId as string).catch(() => null);
+        if (!location || typeof location.lat !== "number" || typeof location.lng !== "number") {
+          return toolError("NOT_FOUND", "No location on file for this family yet — get their city/zip before calling this again.");
+        }
+
+        let careNeeds: string[] = Array.isArray(careNeedsOverride) ? careNeedsOverride as string[] : [];
+        if (!careNeeds.length) {
+          const seniorSnap = await db.collection("senior_profiles").doc(clientId as string).get();
+          careNeeds = (seniorSnap.data()?.needs as string[] | undefined) ?? [];
+        }
+
+        const { isSeededCaregiver, buildCaregiverPreviewResult } = await import("../agents/actions/getCaregiverPreviewAction");
+        const { scoreAndRankCaregivers } = await import("../agents/caregiverMatchScoring");
+
+        const poolSnap = await db.collection("publicCaregiverProfiles")
+          .where("onboardingStatus", "==", "profile_complete")
+          .limit(200)
+          .get();
+        const rawDocs = poolSnap.docs
+          .map((doc) => ({ id: doc.id, data: { ...doc.data(), id: doc.id } }))
+          .filter(({ data }) => !isSeededCaregiver(data));
+
+        const resultLimit = Math.min(Math.max(Math.trunc((limitInput as number) ?? 2), 1), 10);
+        const distanceCap = typeof maxDistanceMiles === "number" ? maxDistanceMiles : 25;
+
+        const scoreOpts = {
+          clientLocations: [{ lat: location.lat as number, lng: location.lng as number }],
+          clientCareNeeds: careNeeds,
+          clientSchedule: undefined,
+          needsTransportation: false,
+        };
+        // Rank a wider pool than we'll show (30, not resultLimit) — the extra
+        // filters below (rating/experience/rate, mirroring the website's
+        // Browse Caregivers filter panel) apply AFTER ranking, so they narrow
+        // from a real pool instead of starving whatever the top-N happened to
+        // already be trimmed to.
+        let ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, maxDistance: distanceCap, applyHardFilters: true, limit: 30 });
+        let widened = false;
+        if (ranked.length === 0) {
+          ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, applyHardFilters: false, limit: 30 });
+          widened = ranked.length > 0;
+        }
+
+        const matches = ranked.filter((c) => {
+          const d = c.data;
+          if (typeof minRating === "number" && (Number(d.rating) || 0) < minRating) return false;
+          if (typeof minExperienceYears === "number") {
+            const yrs = Number(d.yearsExperience ?? d.experience) || 0;
+            if (yrs < minExperienceYears) return false;
+          }
+          if (typeof maxHourlyRate === "number" && Number(d.hourlyRate) > maxHourlyRate) return false;
+          return true;
+        }).slice(0, resultLimit);
+
+        return buildCaregiverPreviewResult({
+          caregivers: matches.map((m) => m.data),
+          widened,
+          city: location.city as string | undefined,
+          careNeeds,
+          itemLimit: resultLimit,
+        });
+      }
+
       case "get_caregiver_info": {
         if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.caregiverId as string, data: { source: "mcp:get_caregiver_info" } }).catch(() => {});
         const snap = await db.collection("caregivers").doc(input.caregiverId as string).get();
         if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
         const d = snap.data()!;
+
+        // Reviews — folded in from the former get_caregiver_reviews tool.
+        const reviewLimit = Math.min((input.reviewLimit as number) ?? 5, 20);
+        const reviewsSnap = await db
+          .collection("reviews")
+          .where("caregiverId", "==", input.caregiverId as string)
+          .orderBy("createdAt", "desc")
+          .limit(reviewLimit + 1)
+          .get();
+        const recentReviews = reviewsSnap.docs.slice(0, reviewLimit).map((rd) => {
+          const r = rd.data();
+          return { rating: r.rating, comment: r.comment ?? "", createdAt: r.createdAt };
+        });
+        const averageRating = typeof d.averageRating === "number"
+          ? d.averageRating
+          : (typeof d.rating === "number" ? d.rating : null);
+
         return {
           success: true,
           results: {
@@ -3541,36 +3672,11 @@ async function executeToolCall(
             hourlyRate:                d.hourlyRate,
             city:                      d.city,
             bio:                       d.bio ?? d.about ?? null,
+            averageRating,
+            totalReviews:              d.reviewCount ?? recentReviews.length,
+            recentReviews,
+            hasMoreReviews:            reviewsSnap.docs.length > reviewLimit,
           },
-        };
-      }
-
-      case "get_caregiver_reviews": {
-        if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-        logAudit({ eventType: "health_data_accessed", userId: input.caregiverId as string, data: { source: "mcp:get_caregiver_reviews" } }).catch(() => {});
-        const limit = Math.min((input.limit as number) ?? 5, 20);
-        const snap = await db
-          .collection("reviews")
-          .where("caregiverId", "==", input.caregiverId as string)
-          .orderBy("createdAt", "desc")
-          .limit(limit + 1)
-          .get();
-        const docs = snap.docs.slice(0, limit).map((d) => {
-          const r = d.data();
-          return { rating: r.rating, comment: r.comment ?? "", createdAt: r.createdAt };
-        });
-        const cgSnap = await db.collection("caregivers").doc(input.caregiverId as string).get();
-        const cg = cgSnap.data() ?? {};
-        const averageRating = typeof cg.averageRating === "number"
-          ? cg.averageRating
-          : (docs.length ? docs.reduce((s, r) => s + (r.rating ?? 0), 0) / docs.length : null);
-        return {
-          success: true,
-          caregiverName: cg.name ?? "the caregiver",
-          averageRating,
-          totalReviews:  cg.reviewCount ?? docs.length,
-          recentReviews: docs,
-          hasMore: snap.docs.length > limit,
         };
       }
 
@@ -3646,7 +3752,24 @@ async function executeToolCall(
         // intake (the object runMatchingForClient reads zipCode/careNeeds from),
         // so the agent can parameterize the search instead of an opaque zero-arg
         // call. Omitted filters leave the profile defaults untouched.
-        const matchIntake: Record<string, unknown> = { ...session };
+        //
+        // 2026-09-03 fix: this used to spread the raw session doc ({...session}) —
+        // but city/zipCode live nested under session.onboardingData, not at the
+        // session's own top level (AgentSession has no such fields), so any call
+        // without an explicit nearZip silently searched with NO location at all,
+        // deterministically returning whatever the fallback ordering happened to
+        // surface first (found while tracing why a client kept seeing the same
+        // one caregiver on repeat, separate asks). Start from onboardingData
+        // (which does have them), then prefer the client's LIVE current
+        // location — same helper find_nearby_caregivers uses — since a frozen
+        // onboarding-time snapshot can be stale or simply wrong.
+        const liveLocation = await import("../agents/onboardingConversation")
+          .then((m) => m.loadLiveClientLocation(clientId as string))
+          .catch(() => null);
+        const matchIntake: Record<string, unknown> = {
+          ...(session.onboardingData as Record<string, unknown> ?? {}),
+          ...(liveLocation ?? {}),
+        };
         // Validate the agent-supplied overrides before applying them: a malformed
         // ZIP or an out-of-range radius must not flow into the matching intake.
         const needsOk  = typeof needs === "string" && !!needs;

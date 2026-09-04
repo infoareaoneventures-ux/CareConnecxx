@@ -27,8 +27,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   select_callout_backup:        ["booking"],            // parity: assign a callout backup
   request_callout_refund:       ["booking", "billing"], // parity: callout refund request
   find_replacement_caregivers:  ["booking"],
+  find_nearby_caregivers:       ["booking"],
   get_caregiver_info:           ["booking"],
-  get_caregiver_reviews:        ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
   get_caregiver_appointments:   ["booking", "scheduling"],
   cancel_appointment:           ["booking"],

@@ -148,7 +148,20 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
                         photoURL: firebaseUser.photoURL,
                         userType,
                         isVerified: profile?.verified ?? false,
-                        phone: profile?.phone
+                        phone: profile?.phone,
+                        // Read straight off this same profile fetch rather than
+                        // waiting for the separate subscribeToUser listener below
+                        // (U3) to deliver its first snapshot. That listener only
+                        // starts once currentUser is set, and authResolved flips
+                        // true in this same tick — so on a refresh there was a
+                        // real (if brief) window where ClientRoute/CaregiverRoute
+                        // saw authResolved:true with eviaConnected still
+                        // undefined, and incorrectly redirected to
+                        // /client/connect (or /caregiver/connect) — visible as a
+                        // flash to that page's QR handoff screen before the
+                        // listener caught up and bounced back.
+                        eviaConnected: (profile as any)?.eviaConnected,
+                        jobPostingCompleted: (profile as any)?.jobPostingCompleted,
                     };
                     if (cancelled) return;
                     setCurrentUser(authenticatedUser);

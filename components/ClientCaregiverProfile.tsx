@@ -119,7 +119,14 @@ export default function ClientCaregiverProfile({
 
   useEffect(() => {
     if (!caregiverId) return;
-    fetchCaregiverProfile(caregiverId);
+    // When opened from a list that already loaded the full publicCaregiverProfiles
+    // doc (the modal path — see FindCaregivers.tsx's viewingCaregiver), skip the
+    // refetch entirely. It was re-reading the exact same doc and merging users/{uid}
+    // on top, which can carry slightly different values for overlapping fields
+    // (photoURL, verified, backgroundCheckStatus) — the profile would render
+    // instantly with the passed data, then visibly flash to the refetched version
+    // moments later even though nothing meaningful had changed.
+    if (!passedData) fetchCaregiverProfile(caregiverId);
     fetchReviews(caregiverId);
     const uid = auth!.currentUser?.uid;
     if (uid) {

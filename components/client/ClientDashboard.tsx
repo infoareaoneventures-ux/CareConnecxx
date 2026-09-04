@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
@@ -144,11 +144,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [reviewingShift, setReviewingShift] = useState<any | null>(null);
 
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
-  const [activeCareTeam, setActiveCareTeam] = useState<any[]>([]);
+  // Raw booking_requests docs with status:'accepted' — status stays 'accepted'
+  // forever once accepted, so this alone does NOT mean the relationship is
+  // still ongoing (see activeCareTeam below).
+  const [acceptedBookingDocs, setAcceptedBookingDocs] = useState<any[]>([]);
   const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
@@ -162,6 +164,30 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [bookingTab, setBookingTab] = useState<'pending' | 'upcoming'>('pending');
   const currentUser = authService.getCurrentUser();
   const { gate, Modals: GateModals, membershipActive, identityVerified } = useAccessGates();
+
+  // A booking only counts as an active care-team relationship while it still
+  // has a live shift — booking_requests.status stays 'accepted' forever once
+  // accepted, so that field alone can't tell "ongoing" from "long over."
+  // Mirrors PostsPage.tsx's own activeBookingIds (which offers "Re-book" once
+  // all shifts are done instead of treating the booking as still active).
+  const activeShiftBookingIds = useMemo(() => {
+    const ids = new Set<string>();
+    activeShifts.forEach((s: any) => { if (s.bookingRequestId) ids.add(s.bookingRequestId); });
+    return ids;
+  }, [activeShifts]);
+
+  const activeCareTeam = useMemo(() => {
+    const seen = new Set<string>();
+    return acceptedBookingDocs.filter((d: any) =>
+      activeShiftBookingIds.has(d.id) && d.caregiverId && !seen.has(d.caregiverId) && seen.add(d.caregiverId)
+    );
+  }, [acceptedBookingDocs, activeShiftBookingIds]);
+
+  const bookedCaregiverIds = useMemo(
+    () => new Set<string>(activeCareTeam.map((d: any) => d.caregiverId).filter(Boolean)),
+    [activeCareTeam],
+  );
+
   const hasActiveBooking = activeCareTeam.length > 0;
 
   // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
@@ -187,33 +213,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
       }, () => {});
     unsubs.push(jobPostsUnsub);
 
-    // Active care team — real-time subscription
+    // Accepted booking_requests — real-time subscription. Whether each one is
+    // still an ACTIVE relationship (vs. accepted long ago, all shifts since
+    // finished) is derived separately via activeCareTeam, above.
     const teamUnsub = db.collection('booking_requests')
       .where('clientId', '==', currentUser.uid)
       .where('status', '==', 'accepted')
-      .onSnapshot(async snap => {
-        const docs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        const seen = new Set<string>();
-        const deduped = docs.filter((d: any) => d.caregiverId && !seen.has(d.caregiverId) && seen.add(d.caregiverId));
-        setActiveCareTeam(deduped);
-        setBookedCaregiverIds(new Set(docs.map((d: any) => d.caregiverId).filter(Boolean)));
-        // Fetch caregiver profiles for rating + verification badges
-        const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
-        await Promise.all(
-          docs.slice(0, 2).map(async (d: any) => {
-            if (!d.caregiverId) return;
-            try {
-              const cgDoc = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
-              const cg = cgDoc.data() || {};
-              profiles[d.caregiverId] = {
-                rating: cg.rating ?? cg.averageRating ?? undefined,
-                verified: cg.verified === true || cg.identityVerified === true,
-                backgroundCheckStatus: cg.backgroundCheckStatus ?? cg.checkrStatus ?? undefined,
-              };
-            } catch { /* ignore */ }
-          })
-        );
-        setCareTeamProfiles(profiles);
+      .onSnapshot(snap => {
+        setAcceptedBookingDocs(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
       }, () => {});
     unsubs.push(teamUnsub);
 
@@ -288,6 +295,34 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [currentUser?.uid]);
+
+  // Caregiver profiles (rating + verification badges) for whoever is actually
+  // shown on the Care Team card — reacts to activeCareTeam, not the raw
+  // accepted-bookings list, so a stale/ended booking never fetches or shows a
+  // badge for someone who isn't really on the team anymore.
+  useEffect(() => {
+    if (!db || activeCareTeam.length === 0) { setCareTeamProfiles({}); return; }
+    let cancelled = false;
+    (async () => {
+      const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
+      await Promise.all(
+        activeCareTeam.slice(0, 2).map(async (d: any) => {
+          if (!d.caregiverId) return;
+          try {
+            const cgDoc = await db!.collection('publicCaregiverProfiles').doc(d.caregiverId).get();
+            const cg = cgDoc.data() || {};
+            profiles[d.caregiverId] = {
+              rating: cg.rating ?? cg.averageRating ?? undefined,
+              verified: cg.verified === true || cg.identityVerified === true,
+              backgroundCheckStatus: cg.backgroundCheckStatus ?? cg.checkrStatus ?? undefined,
+            };
+          } catch { /* ignore */ }
+        })
+      );
+      if (!cancelled) setCareTeamProfiles(profiles);
+    })();
+    return () => { cancelled = true; };
+  }, [activeCareTeam]);
 
   const [unpaidShifts, setUnpaidShifts] = useState<any[]>([]);
 

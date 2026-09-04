@@ -85,23 +85,37 @@ import { handleToolCall } from "../server";
 describe("discovery tools", () => {
   beforeEach(() => hoisted.reset());
 
-  describe("get_caregiver_reviews", () => {
+  describe("get_caregiver_info (merged with the former get_caregiver_reviews, 2026-09-03)", () => {
     it("requires caregiverId", async () => {
-      const r = await handleToolCall("get_caregiver_reviews", {}) as any;
+      const r = await handleToolCall("get_caregiver_info", {}) as any;
       expect(r._toolError).toBe(true);
     });
 
-    it("returns recent reviews + average rating", async () => {
+    it("returns NOT_FOUND for a missing caregiver", async () => {
+      const r = await handleToolCall("get_caregiver_info", { caregiverId: "ghost" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("NOT_FOUND");
+    });
+
+    it("returns the profile AND recent reviews + average rating in one call", async () => {
       hoisted.collState.set("reviews", [
         { rating: 5, comment: "Great with my dad", createdAt: "2026-05-01" },
         { rating: 4, comment: "Punctual and kind",  createdAt: "2026-04-15" },
       ]);
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", averageRating: 4.7, reviewCount: 12 });
-      const r = await handleToolCall("get_caregiver_reviews", { caregiverId: "cg1" }) as any;
+      hoisted.docState.set("caregivers/cg1", { name: "Alice", averageRating: 4.7, reviewCount: 12, hourlyRate: 30 });
+      const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.caregiverName).toBe("Alice");
-      expect(r.averageRating).toBe(4.7);
-      expect(r.recentReviews).toHaveLength(2);
+      expect(r.results.name).toBe("Alice");
+      expect(r.results.hourlyRate).toBe(30);
+      expect(r.results.averageRating).toBe(4.7);
+      expect(r.results.totalReviews).toBe(12);
+      expect(r.results.recentReviews).toHaveLength(2);
+    });
+
+    it("caps reviewLimit at 20", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+      const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1", reviewLimit: 999 }) as any;
+      expect(r.success).toBe(true);
     });
   });
 

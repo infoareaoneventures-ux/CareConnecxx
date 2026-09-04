@@ -384,6 +384,37 @@ async function ensureClientCoords(
   return { ...d, lat: coords.lat, lng: coords.lng };
 }
 
+// Live current location for an established client, read the same way the
+// site's own matching does (senior_profiles.latitude/longitude/zipCode/city,
+// falling back to users' flat address fields) — never the one-time
+// onboardingData snapshot captured at signup. Returns only the fields that
+// were actually found, so a caller merging this in never blanks out an
+// existing (even if imperfect) value with an absent one.
+export async function loadLiveClientLocation(
+  userId: string,
+): Promise<Record<string, unknown> | null> {
+  const out: Record<string, unknown> = {};
+
+  const seniorSnap = await db.collection("senior_profiles").doc(userId).get().catch(() => null);
+  const senior = seniorSnap?.exists ? seniorSnap.data() as Record<string, unknown> : null;
+  if (typeof senior?.latitude === "number" && typeof senior?.longitude === "number") {
+    out.lat = senior.latitude;
+    out.lng = senior.longitude;
+  }
+  if (senior?.zipCode) out.zipCode = senior.zipCode;
+
+  const userSnap = await db.collection("users").doc(userId).get().catch(() => null);
+  const user = userSnap?.exists ? userSnap.data() as Record<string, unknown> : null;
+  if (user?.city) out.city = user.city;
+  if (user?.state) out.state = user.state;
+  if (out.lat == null && typeof user?.lat === "number" && typeof user?.lng === "number") {
+    out.lat = user.lat;
+    out.lng = user.lng;
+  }
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 // ── Gate-step profile updates (2026-07-15) ────────────────────────────────────
 // A caregiver parked at an awaiting/gate step who volunteers new profile info
 // ("I can do transportation as well") used to get a context-free re-nudge and
@@ -2411,6 +2442,30 @@ async function handleClientShowCaregivers(
   opts: { withIntro?: boolean } = {},
 ): Promise<void> {
   let d            = (session as any).onboardingData ?? {};
+
+  // For an account with a real, established senior_profiles doc — this step
+  // can fire again long after the original onboarding conversation (a stuck
+  // onboardingStep re-plays it, or a family re-triggers it another way) — the
+  // frozen city/lat/lng captured back at signup can go stale (a move, a typo
+  // that was never corrected, geocoding drift). The site's own matching
+  // (FindCaregivers.tsx, useNearbyCaregiversWithScores) always reads the LIVE
+  // senior_profiles/users location, never a one-time snapshot; mirror that
+  // here instead of trusting session.onboardingData for an established client.
+  if (session.userId) {
+    const liveLocation = await loadLiveClientLocation(session.userId as string).catch(() => null);
+    if (liveLocation) {
+      d = { ...d, ...liveLocation };
+      // A live city with no matching live coords means the frozen lat/lng (if
+      // any) describe a DIFFERENT place than the city we just overwrote —
+      // drop them so ensureClientCoords below re-geocodes against the fresh
+      // city instead of silently pairing a new city with stale coordinates.
+      if (liveLocation.city && liveLocation.lat == null) {
+        delete (d as Record<string, unknown>).lat;
+        delete (d as Record<string, unknown>).lng;
+      }
+    }
+  }
+
   const city       = (d.city       as string) ?? "";
   const seniorName = (d.seniorName as string) ?? "your loved one";
   const careNeeds: string[] = Array.isArray(d.careNeeds) ? d.careNeeds : [];
@@ -4893,28 +4948,42 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
     }
 
     // Admin manually approved identity — same as the Stripe webhook path but
-    // without requiring a verification session ID. Only advances if the session
-    // is actually parked at client_awaiting_identity.
+    // without requiring a verification session ID.
+    //
+    // 2026-09-03 fix: this used to gate the ENTIRE thing — including the
+    // users/{uid}.identityCheckStatus write — behind the session being
+    // exactly at client_awaiting_identity. If it wasn't (e.g. already stuck
+    // on an earlier step from the same root cause the resync fix elsewhere
+    // in this file addresses), the admin's approval silently did nothing at
+    // all: no error, no fields written, no sign anything was wrong. An
+    // admin's "approve this person's identity" is a fact about their
+    // ACCOUNT, not something that should depend on where their SMS
+    // conversation happens to be parked — so the data write now always
+    // happens; only the conversational follow-up (announce it, advance the
+    // session to the next gate) stays conditional on the session actually
+    // being at the moment expecting it.
     case "admin_identity_override": {
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("identity"),
       });
+      let uid = session.userId as string | undefined;
+      if (!uid) {
+        uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
+        if (uid) await updateSession(phone, { userId: uid });
+      }
+      if (uid) {
+        await db.collection("users").doc(uid).set({
+          uid,
+          identityCheckStatus: "verified",
+          identityVerifiedAt:  admin.firestore.FieldValue.serverTimestamp(),
+          phone,
+          updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } else {
+        console.error(`admin_identity_override: no uid resolvable for phone=${phone} — identityCheckStatus NOT written.`);
+      }
       const step = session.onboardingStep ?? "";
       if (step === "client_awaiting_identity") {
-        let uid = session.userId as string | undefined;
-        if (!uid) {
-          uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
-          if (uid) await updateSession(phone, { userId: uid });
-        }
-        if (uid) {
-          await db.collection("users").doc(uid).set({
-            uid,
-            identityCheckStatus: "verified",
-            identityVerifiedAt:  admin.firestore.FieldValue.serverTimestamp(),
-            phone,
-            updatedAt:           admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-        }
         await sendMessage(chatId,
           session.preferredLanguage === "es"
             ? "¡Tu verificación de identidad se aprobó — estás verificado! ✅"
@@ -4922,36 +4991,44 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         );
         await updateSession(phone, { onboardingStep: "client_send_payment" });
         await handleClientSendPayment(phone, chatId, session);
+      } else {
+        console.info(`admin_identity_override: identity approved for uid=${uid ?? "unknown"}, but session step="${step}" wasn't awaiting it — data updated, no SMS follow-up sent.`);
       }
       break;
     }
 
     // Admin manually approved membership — advances without a Stripe subscription ID.
-    // Only advances if the session is parked at client_send_payment or client_awaiting_payment.
+    // Same 2026-09-03 fix as admin_identity_override above: the users/{uid}
+    // membership write now always happens; only the SMS follow-up (job-post
+    // prefill message) stays conditional on the session being at the right step.
     case "admin_payment_override": {
       await db.collection("agent_sessions").doc(phone).update({
         processedWebhookTasks: admin.firestore.FieldValue.arrayUnion("payment"),
       });
-      const payStep = session.onboardingStep ?? "";
-      if (payStep === "client_send_payment" || payStep === "client_awaiting_payment") {
-        let uid = session.userId as string | undefined;
-        if (!uid) {
-          uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
-          if (uid) await updateSession(phone, { userId: uid });
-        }
-        if (uid) {
-          await db.collection("users").doc(uid).set({
-            uid,
-            membershipStatus:   "active",
-            subscriptionActive: true,
-            phone,
-            onboardingProgress: { identityVerified: true, membershipActive: true },
-            updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-        }
+      let uid = session.userId as string | undefined;
+      if (!uid) {
+        uid = await admin.auth().getUserByPhoneNumber(phone).then(u => u.uid).catch(() => undefined);
+        if (uid) await updateSession(phone, { userId: uid });
+      }
+      if (uid) {
+        await db.collection("users").doc(uid).set({
+          uid,
+          membershipStatus:   "active",
+          subscriptionActive: true,
+          phone,
+          onboardingProgress: { identityVerified: true, membershipActive: true },
+          updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
         const d = session.onboardingData ?? {};
         await persistClientCareRecords(uid, phone, d, { allowAnonIntake: true });
+      } else {
+        console.error(`admin_payment_override: no uid resolvable for phone=${phone} — membershipStatus NOT written.`);
+      }
+      const payStep = session.onboardingStep ?? "";
+      if (payStep === "client_send_payment" || payStep === "client_awaiting_payment") {
         await presentPrefilledJobPost(phone, chatId, session);
+      } else {
+        console.info(`admin_payment_override: membership approved for uid=${uid ?? "unknown"}, but session step="${payStep}" wasn't awaiting it — data updated, no SMS follow-up sent.`);
       }
       break;
     }

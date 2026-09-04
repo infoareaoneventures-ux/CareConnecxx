@@ -1073,12 +1073,56 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     }, { merge: true });
 
   // Update user document
-  await admin.firestore().collection('users').doc(userId).set({
+  const userRef = admin.firestore().collection('users').doc(userId);
+  await userRef.set({
     membershipStatus: subscription.status,
     subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   await mirrorMembershipToCaregiverDoc(userId, subscription.status);
+
+  // Repair a stuck Evia SMS session (2026-09-03): agent_sessions.onboardingStep
+  // only advances to "complete" via advanceOnboardingStep('payment', ...),
+  // which fires from checkout.session.completed ONLY when the checkout was
+  // itself created by Evia's own SMS flow (session.metadata.task ===
+  // 'client_payment_setup'). A client who finishes membership through the
+  // WEBSITE's own checkout instead never gets that call — this webhook
+  // (customer.subscription.updated) fires either way, so it's the one place
+  // both channels are guaranteed to meet. Left unrepaired, the session stays
+  // parked on an early client_* step forever, and any later text the family
+  // sends keeps re-firing that step's scripted handler against stale
+  // onboarding-time data (see handleClientShowCaregivers's live-location fix,
+  // same session). Only flips the routing flag — never re-runs
+  // advanceOnboardingStep's own side effects (those already happened for
+  // real, through whichever channel the family actually used), and only once
+  // identity is ALSO genuinely verified, so a client who did membership first
+  // and still owes an identity check is correctly left mid-pipeline.
+  if (subscription.status === 'active' || subscription.status === 'trialing') {
+    try {
+      const userSnap = await userRef.get();
+      const identityVerified = userSnap.data()?.identityCheckStatus === 'verified';
+      if (identityVerified) {
+        const stuckSessionSnap = await admin.firestore()
+          .collection('agent_sessions')
+          .where('userId', '==', userId)
+          .limit(1)
+          .get();
+        if (!stuckSessionSnap.empty) {
+          const stuckDoc = stuckSessionSnap.docs[0];
+          const step = stuckDoc.data().onboardingStep as string | undefined;
+          const prePaymentClientSteps = [
+            'client_confirm_intake', 'client_ask_plan', 'client_payment', 'client_identity',
+          ];
+          if (step && prePaymentClientSteps.includes(step)) {
+            await stuckDoc.ref.update({ onboardingStep: 'complete' });
+            console.log(`handleSubscriptionUpdated: resynced stuck onboardingStep (${step} -> complete) for user ${userId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`handleSubscriptionUpdated: onboardingStep resync failed for ${userId}:`, err);
+    }
+  }
 
   console.log(`Subscription updated for user: ${userId}`);
 }

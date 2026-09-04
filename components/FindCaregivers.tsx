@@ -4,7 +4,7 @@ import {
   Heart, MapPin, Star, CheckCircle, Sparkles, TrendingUp,
   MessageSquare, Shield, Search, SlidersHorizontal, X,
   ChevronDown, Briefcase,
-  Pill, Car, Brain, Activity, Users, Video,
+  Pill, Car, Brain, Activity, Users, Video, RefreshCw,
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
@@ -112,6 +112,7 @@ export default function FindCaregivers() {
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
+  const [rebookCaregiverIds, setRebookCaregiverIds] = useState<Set<string>>(new Set());
 
   // Client care locations — all lat/lngs from job_posts, job_postings, carePlans, users
   const [clientLocations, setClientLocations] = useState<{ lat: number; lng: number }[]>([]);
@@ -149,12 +150,15 @@ export default function FindCaregivers() {
         setClientIntakeData(intakeData);
       }
 
-      // Load accepted booking caregiver IDs — fire and forget.
+      // Load accepted booking + interview state — fire and forget.
       // booking_requests.status stays 'accepted' forever once accepted, so
       // that field alone can't tell "ongoing" from "long over" — a caregiver
       // whose shifts already finished would show "Active Booking" here
       // forever otherwise. Cross-reference against live shifts, same rule
-      // ClientDashboard.tsx and MyCareTeam.tsx already use.
+      // ClientDashboard.tsx and MyCareTeam.tsx already use. A caregiver whose
+      // booking has ended but who was actually interviewed before shouldn't
+      // be asked to "Request Interview" again — offer Re-book instead, same
+      // rule MyCareTeam.tsx's Past tab already uses.
       Promise.all([
         fdb.collection('booking_requests')
           .where('clientId', '==', user.uid)
@@ -164,34 +168,44 @@ export default function FindCaregivers() {
           .where('clientId', '==', user.uid)
           .where('status', 'in', ['scheduled', 'in-progress'])
           .get(),
+        fdb.collection('video_interviews')
+          .where('clientId', '==', user.uid)
+          .get(),
       ])
-        .then(([bookingsSnap, shiftsSnap]) => {
+        .then(([bookingsSnap, shiftsSnap, interviewsSnap]) => {
           const activeShiftBookingIds = new Set<string>(
             shiftsSnap.docs.map(d => d.data().bookingRequestId).filter(Boolean)
           );
-          const ids = new Set<string>(
+          const allAcceptedIds = new Set<string>(
+            bookingsSnap.docs.map(d => d.data().caregiverId).filter(Boolean)
+          );
+          const liveIds = new Set<string>(
             bookingsSnap.docs
               .filter(d => activeShiftBookingIds.has(d.id))
               .map(d => d.data().caregiverId)
               .filter(Boolean)
           );
-          setBookedCaregiverIds(ids);
-        })
-        .catch(() => {});
+          setBookedCaregiverIds(liveIds);
 
-      // Load caregivers with active (non-terminal) interview requests
-      fdb.collection('video_interviews')
-        .where('clientId', '==', user.uid)
-        .get()
-        .then(snap => {
           const activeStatuses = new Set(['requested', 'pending', 'scheduled']);
-          const ids = new Set<string>(
-            snap.docs
+          const requestedIds = new Set<string>(
+            interviewsSnap.docs
               .filter(d => activeStatuses.has(d.data().status))
               .map(d => d.data().caregiverId)
               .filter(Boolean)
           );
-          setRequestedCaregiverIds(ids);
+          setRequestedCaregiverIds(requestedIds);
+
+          const completedInterviewIds = new Set<string>(
+            interviewsSnap.docs
+              .filter(d => d.data().status === 'completed')
+              .map(d => d.data().caregiverId)
+              .filter(Boolean)
+          );
+          const rebookIds = new Set<string>(
+            [...allAcceptedIds].filter(id => !liveIds.has(id) && completedInterviewIds.has(id))
+          );
+          setRebookCaregiverIds(rebookIds);
         })
         .catch(() => {});
 
@@ -833,6 +847,7 @@ export default function FindCaregivers() {
                     isFavorite={favorites.includes(cg.id)}
                     isBooked={bookedCaregiverIds.has(cg.id)}
                     isRequested={requestedCaregiverIds.has(cg.id)}
+                    isRebookable={rebookCaregiverIds.has(cg.id)}
                     onToggleFavorite={() => toggleFavorite(cg.id)}
                     onViewProfile={() => setViewingCaregiver(cg)}
                     onMessage={() => handleMessage(cg.id, `${cg.firstName} ${cg.lastName}`.trim())}
@@ -940,6 +955,7 @@ interface CaregiverCardProps {
   isBestMatch?: boolean;
   isBooked?: boolean;
   isRequested?: boolean;
+  isRebookable?: boolean;
   onToggleFavorite: () => void;
   onViewProfile: () => void;
   onMessage: () => void;
@@ -947,8 +963,9 @@ interface CaregiverCardProps {
 }
 
 const CaregiverCard: React.FC<CaregiverCardProps> = ({
-  caregiver, isFavorite, isBestMatch, isBooked, isRequested, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
+  caregiver, isFavorite, isBestMatch, isBooked, isRequested, isRebookable, onToggleFavorite, onViewProfile, onMessage, onRequestInterview,
 }) => {
+  const navigate = useNavigate();
   const fullName = `${caregiver.firstName} ${caregiver.lastName}`.trim() || 'Caregiver';
 
   return (
@@ -1057,6 +1074,13 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
             <div className="w-full py-2 text-sm font-bold bg-green-50 border-2 border-green-200 text-green-700 rounded-xl inline-flex items-center justify-center gap-1.5">
               <CheckCircle className="w-4 h-4" /> Active Booking
             </div>
+         ) : isRebookable ? (
+            <button
+               onClick={(e) => { e.stopPropagation(); navigate(`/client/posts?rebook=${caregiver.id}`); }}
+               className="w-full py-2 text-sm font-bold bg-white border-2 border-primary-300 text-primary-700 rounded-xl hover:bg-primary-50 transition-colors inline-flex items-center justify-center gap-1.5"
+            >
+               <RefreshCw className="w-4 h-4" /> Re-book
+            </button>
          ) : isRequested ? (
             <div className="w-full py-2 text-sm font-bold bg-slate-100 border-2 border-slate-200 text-slate-500 rounded-xl inline-flex items-center justify-center gap-1.5">
               <CheckCircle className="w-4 h-4" /> Interview Requested

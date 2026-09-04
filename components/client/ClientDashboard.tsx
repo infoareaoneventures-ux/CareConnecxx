@@ -190,6 +190,23 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const hasActiveBooking = activeCareTeam.length > 0;
 
+  // A caregiver whose booking has ended but who was actually interviewed
+  // before shouldn't be asked to "Request Interview" again in Nearby
+  // Caregivers — offer Re-book instead. Same rule MyCareTeam.tsx's Past tab
+  // and FindCaregivers.tsx already use.
+  const rebookCaregiverIds = useMemo(() => {
+    const completedInterviewIds = new Set<string>(
+      allInterviews.filter((d: any) => d.status === 'completed').map((d: any) => d.caregiverId).filter(Boolean)
+    );
+    const pastBookingIds = new Set<string>(
+      acceptedBookingDocs
+        .filter((d: any) => !activeShiftBookingIds.has(d.id))
+        .map((d: any) => d.caregiverId)
+        .filter(Boolean)
+    );
+    return new Set<string>([...pastBookingIds].filter(id => completedInterviewIds.has(id)));
+  }, [allInterviews, acceptedBookingDocs, activeShiftBookingIds]);
+
   // Nearby caregivers — uses same logic as Browse Caregivers (distance-filtered, AI-scored)
   const { caregivers: matchedCaregivers, loading: caregiversLoading } = useNearbyCaregiversWithScores(
     currentUser?.uid ?? null,
@@ -1405,11 +1422,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           matchScore={0}
                           matchReasons={[]}
                           onBook={handleGatedInterview}
+                          onRebook={(cg) => navigate(`/client/posts?rebook=${cg.id}`)}
                           onViewProfile={(cg) => navigate(`/client/caregiver/${cg.id}`)}
                           onMessage={handleGatedMessage}
                           isSaved={savedIds.includes(caregiver.id)}
                           onToggleSave={handleToggleSave}
                           isRequested={requestedCaregiverIds.has(caregiver.id)}
+                          isRebookable={rebookCaregiverIds.has(caregiver.id)}
                         />
                       ))}
                     </div>

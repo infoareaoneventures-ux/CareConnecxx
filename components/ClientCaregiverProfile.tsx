@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
   Star, MapPin, CheckCircle, ChevronLeft, Car,
-  MessageSquare, Video, Languages, GraduationCap,
+  MessageSquare, Video, Languages, GraduationCap, RefreshCw,
 } from 'lucide-react';
 import { CaregiverVerificationBadges } from './shared/CaregiverVerificationBadges';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
@@ -109,6 +109,8 @@ export default function ClientCaregiverProfile({
   const [showInterviewModal, setShowInterviewModal] = useState(false);
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
   const [isBooked, setIsBooked] = useState(false);
+  const [hasPastBooking, setHasPastBooking] = useState(false);
+  const [hasCompletedInterview, setHasCompletedInterview] = useState(false);
   const [isRequested, setIsRequested] = useState(false);
   const [hasCompletedShift, setHasCompletedShift] = useState(false);
   const [hasReviewed, setHasReviewed] = useState(false);
@@ -144,7 +146,8 @@ export default function ClientCaregiverProfile({
         .where('status', '==', 'accepted')
         .get()
         .then(async snap => {
-          if (snap.empty) { setIsBooked(false); return; }
+          if (snap.empty) { setIsBooked(false); setHasPastBooking(false); return; }
+          setHasPastBooking(true);
           const bookingIds = snap.docs.map(d => d.id);
           const shiftsSnap = await db!.collection('shifts')
             .where('clientId', '==', uid)
@@ -155,7 +158,11 @@ export default function ClientCaregiverProfile({
         })
         .catch(() => {});
 
-      // Check for an active interview request with this caregiver
+      // Check for an active interview request with this caregiver, and
+      // whether a PAST interview with them was completed — same rule
+      // MyCareTeam.tsx uses to decide whether the Past tab offers Re-book
+      // (a family that's already interviewed this caregiver shouldn't be
+      // asked to "Request Interview" again once their booking ends).
       const activeStatuses = ['requested', 'pending', 'scheduled'];
       db!.collection('video_interviews')
         .where('clientId', '==', uid)
@@ -164,6 +171,7 @@ export default function ClientCaregiverProfile({
         .then(snap => {
           const hasActive = snap.docs.some(d => activeStatuses.includes(d.data().status));
           setIsRequested(hasActive);
+          setHasCompletedInterview(snap.docs.some(d => d.data().status === 'completed'));
         })
         .catch(() => {});
 
@@ -364,6 +372,13 @@ export default function ClientCaregiverProfile({
                   <div className="w-full py-2.5 bg-green-50 border border-green-200 text-green-700 font-semibold rounded-full flex items-center justify-center gap-2 text-sm">
                     <CheckCircle className="w-4 h-4" /> Active Booking
                   </div>
+                ) : hasPastBooking && hasCompletedInterview ? (
+                  <button
+                    onClick={() => navigate(`/client/posts?rebook=${caregiverId}`)}
+                    className="w-full py-2.5 border border-primary-300 text-primary-700 font-semibold rounded-full hover:bg-primary-50 transition-colors flex items-center justify-center gap-2 text-sm"
+                  >
+                    <RefreshCw className="w-4 h-4" /> Re-book
+                  </button>
                 ) : isRequested ? (
                   <div className="w-full py-2.5 bg-slate-100 border border-slate-200 text-slate-500 font-semibold rounded-full flex items-center justify-center gap-2 text-sm">
                     <CheckCircle className="w-4 h-4" /> Interview Requested

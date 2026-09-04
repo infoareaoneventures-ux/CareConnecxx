@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase } from 'lucide-react';
+import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase, RefreshCw } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 
@@ -8,11 +8,13 @@ interface CaregiverMatchCardProps {
   matchScore: number;
   matchReasons: string[];
   onBook: (caregiver: Caregiver) => void;
+  onRebook?: (caregiver: Caregiver) => void;
   onViewProfile: (caregiver: Caregiver) => void;
   onMessage?: (caregiver: Caregiver) => void;
   isSaved?: boolean;
   onToggleSave?: (caregiver: Caregiver) => void;
   isRequested?: boolean;
+  isRebookable?: boolean;
   hideSkills?: boolean;
 }
 
@@ -21,11 +23,13 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
   matchScore,
   matchReasons,
   onBook,
+  onRebook,
   onViewProfile,
   onMessage,
   isSaved = false,
   onToggleSave,
   isRequested = false,
+  isRebookable = false,
   hideSkills = false,
 }) => {
   const [imgErrored, setImgErrored] = useState(false);
@@ -149,6 +153,13 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           <div className="w-full py-2 text-sm font-bold bg-slate-100 border-2 border-slate-200 text-slate-500 rounded-xl inline-flex items-center justify-center gap-1.5">
             <CheckCircle className="w-4 h-4" /> Interview Requested
           </div>
+        ) : isRebookable ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRebook ? onRebook(caregiver) : onBook(caregiver); }}
+            className="w-full py-2 text-sm font-bold bg-white border-2 border-primary-300 text-primary-700 rounded-xl hover:bg-primary-50 transition-colors inline-flex items-center justify-center gap-1.5"
+          >
+            <RefreshCw className="w-4 h-4" /> Re-book
+          </button>
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onBook(caregiver); }}

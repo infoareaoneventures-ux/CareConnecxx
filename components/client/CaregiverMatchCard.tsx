@@ -73,12 +73,12 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
               {[...Array(5)].map((_, i) => (
                 <Star
                   key={i}
-                  className={`w-[18px] h-[18px] ${i < Math.floor(caregiver.rating || 0) ? 'text-teal-500 fill-current' : 'text-slate-200'}`}
+                  className={`w-[18px] h-[18px] ${((caregiver as any).reviewCount || 0) > 0 && i < Math.round(caregiver.rating || 0) ? 'text-teal-500 fill-current' : 'text-slate-200'}`}
                 />
               ))}
-              <span className="text-sm font-medium text-slate-500 ml-1.5">
-                ({(caregiver as any).reviewCount || 0})
-              </span>
+              {((caregiver as any).reviewCount || 0) > 0
+                ? <span className="text-sm font-medium text-slate-500 ml-1.5">({(caregiver as any).reviewCount})</span>
+                : <span className="text-sm text-slate-400 ml-1.5">No reviews yet</span>}
             </div>
 
             <div className="mt-1.5 flex flex-wrap gap-1">

@@ -59,7 +59,7 @@ export const MyCareTeam: React.FC = () => {
             .get(),
           fdb.collection('shifts')
             .where('clientId', '==', uid)
-            .where('status', '==', 'scheduled')
+            .where('status', 'in', ['scheduled', 'in-progress'])
             .get(),
           fdb.collection('video_interviews')
             .where('clientId', '==', uid)

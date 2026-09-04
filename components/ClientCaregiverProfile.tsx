@@ -134,14 +134,25 @@ export default function ClientCaregiverProfile({
         setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
       }).catch(() => {});
 
-      // Check for an existing accepted booking with this caregiver
+      // Check for an existing accepted booking with this caregiver that STILL
+      // has a live shift. booking_requests.status stays 'accepted' forever
+      // once accepted, so that field alone can't tell "ongoing" from "long
+      // over" — same rule ClientDashboard.tsx and MyCareTeam.tsx already use.
       db!.collection('booking_requests')
         .where('clientId', '==', uid)
         .where('caregiverId', '==', caregiverId)
         .where('status', '==', 'accepted')
-        .limit(1)
         .get()
-        .then(snap => setIsBooked(!snap.empty))
+        .then(async snap => {
+          if (snap.empty) { setIsBooked(false); return; }
+          const bookingIds = snap.docs.map(d => d.id);
+          const shiftsSnap = await db!.collection('shifts')
+            .where('clientId', '==', uid)
+            .where('status', 'in', ['scheduled', 'in-progress'])
+            .get();
+          const hasLiveShift = shiftsSnap.docs.some(d => bookingIds.includes(d.data().bookingRequestId));
+          setIsBooked(hasLiveShift);
+        })
         .catch(() => {});
 
       // Check for an active interview request with this caregiver

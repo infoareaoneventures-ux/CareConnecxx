@@ -10,7 +10,7 @@ const hasAppointmentId = (v: unknown): boolean =>
   !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
 import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
-import { staleConfirmFlags } from "../utils/sessionState";
+import { staleConfirmFlags, hasActiveSmsFlow } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { isConvergenceFlipped } from "../config/featureFlags";
@@ -1866,7 +1866,25 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // anything ambiguous falls through to runQaAgent below. A degraded
     // classification (classifier error → guessed QUESTION) never qualifies —
     // the full agent path with its supervisor is the fail-safe.
-    if (intent === "QUESTION" && !intentDegraded && isTrivialQuickReply(text)) {
+    //
+    // Found 2026-09-04: a short in-flow reply ("yeah", "anyone else", "which
+    // one", a bare first name like "Amina") classifies as QUESTION with no
+    // entity content and passed isTrivialQuickReply — routing to
+    // runQuickReply, which has NO tool access and answers purely from the
+    // last few turns of chat history. Mid a caregiver-matching flow
+    // (pendingMatches set), that produced fabricated caregiver names/details
+    // never backed by any real Firestore record — a hallucinated match, not
+    // a stale one. hasActiveSmsFlow (pendingMatches + every other guarded
+    // state-machine flag, sessionState.ts) is the existing, already-tested
+    // signal for "a multi-turn flow is in progress here" — any turn inside
+    // one of those needs real grounding, so it must never take the no-tool
+    // fast path regardless of how trivial the text looks in isolation.
+    if (
+      intent === "QUESTION" &&
+      !intentDegraded &&
+      isTrivialQuickReply(text) &&
+      !hasActiveSmsFlow(session as unknown as Record<string, unknown>)
+    ) {
       const quickReply = await runQuickReply({
         text,
         phone,

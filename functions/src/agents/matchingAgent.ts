@@ -271,6 +271,27 @@ export async function runMatchingForClient(
         7 * 24 * 60 * 60 * 1000,
       ))
       .catch(() => { /* goal is context sugar — never block matching on it */ });
+    // 2026-09-04: `intake` is frequently a raw agent_sessions doc — most
+    // callers pass sessionData straight through (routeIntent.ts, bookingExecutor,
+    // shiftOffer, triggerEngine, commitmentTracker, replacementAgent) — and
+    // AgentSession has NO top-level city/zipCode; those only ever live nested
+    // under onboardingData or the live senior_profiles/users docs. Every one
+    // of those callers was silently matching with an empty city/zip, which
+    // starved the haversine path below and fell back to a proxy that either
+    // over- or under-matched. Fill the gap once, here, for every caller —
+    // same fix already applied to find_replacement_caregivers /
+    // find_nearby_caregivers (functions/src/mcp/server.ts) — rather than
+    // patching each call site. Never overwrites data intake already had.
+    if (!intake.city && !intake.zipCode) {
+      const liveUserId = ((session as any)?.userId ?? intake.userId) as string | undefined;
+      if (liveUserId) {
+        const live = await import("./onboardingConversation")
+          .then((m) => m.loadLiveClientLocation(liveUserId))
+          .catch(() => null);
+        if (live) Object.assign(intake, live);
+      }
+    }
+
     const zip    = (intake.zipCode ?? "") as string;
     const city   = (intake.city    ?? "") as string;
 
@@ -283,7 +304,11 @@ export async function runMatchingForClient(
     // (which takes the same loosely-typed intake object) can read it without
     // a signature change; failure is non-fatal — falls back to the old
     // city/zip proxy for this one request rather than blocking matching.
-    const clientLoc = await geocodeCityOrZip(city, zip).catch(() => null);
+    // Prefer coordinates already resolved above (senior_profiles.latitude/
+    // longitude, the most precise source) over re-geocoding a city/zip string.
+    const clientLoc = (typeof intake.lat === "number" && typeof intake.lng === "number")
+      ? { lat: intake.lat as number, lng: intake.lng as number }
+      : await geocodeCityOrZip(city, zip).catch(() => null);
     if (clientLoc) {
       intake.__clientLat = clientLoc.lat;
       intake.__clientLng = clientLoc.lng;
@@ -298,17 +323,24 @@ export async function runMatchingForClient(
       }
     }
 
-    // Pull active + pending_review caregivers in a broad radius
+    // 2026-09-04: was `.where("status", "in", ["active", "pending_review"])`
+    // — `status` is NOT part of the bookability contract (caregiverEligibility.ts
+    // explicitly warns against pre-filtering on it) and plenty of real,
+    // bookable caregivers (onboardingStatus=profile_complete AND
+    // verificationStatus=approved) never had that exact `status` value set,
+    // so they were dropped before the `eligible` post-filter below ever saw
+    // them — this was the actual reason only one caregiver (whichever
+    // happened to have status="active") ever surfaced here, regardless of
+    // how many were really bookable nearby. Pre-filter on the sanctioned
+    // index field instead; the post-filter still enforces the full contract.
     const snap = await db.collection("caregivers")
-      .where("status", "in", ["active", "pending_review"])
+      .where("onboardingStatus", "==", "profile_complete")
       .limit(50)
       .get();
 
     const nowIso = new Date().toISOString();
     // Same bookability rule the website uses everywhere else (onboarding
-    // complete + verification approved) — this flow previously only checked
-    // `status`, which can surface (or hide) caregivers the site itself
-    // wouldn't consider bookable.
+    // complete + verification approved).
     const eligible = (d: FirebaseFirestore.QueryDocumentSnapshot) => isCaregiverBookable(d.data() as any);
     const withinRadius = (c: CaregiverCandidate, miles: number): boolean => {
       const lat = (c as any).lat ?? (c as any).latitude ?? (c as any).location?.lat;

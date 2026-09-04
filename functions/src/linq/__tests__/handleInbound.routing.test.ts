@@ -284,6 +284,9 @@ vi.mock("../../agents/caregiverProfileHandler", () => ({
   handleCaregiverProfileUpdate: vi.fn(async () => {}),
   profileFieldFromIntent:       vi.fn(() => null),
 }));
+// 2026-09-04: gates the trivial quick-reply bypass — default to "no active
+// flow" so existing routing assertions are unaffected; overridden per-test.
+const hasActiveSmsFlow = vi.fn((..._a: any[]) => false);
 vi.mock("../../utils/sessionState", () => ({
   STATE_MACHINE_FLAGS: ["stateExpiresAt"],
   clearAllStateFlags:  vi.fn(async () => {}),
@@ -303,6 +306,7 @@ vi.mock("../../utils/sessionState", () => ({
   isFlowStale: vi.fn(() => false),
   MULTI_STEP_FLOW_TTL_MS: 24 * 60 * 60 * 1000,
   CREDENTIAL_FLOW_TTL_MS: 30 * 60 * 1000,
+  hasActiveSmsFlow: (...a: any[]) => hasActiveSmsFlow(...a),
 }));
 vi.mock("../../utils/caraMessage", () => ({
   generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg"),
@@ -390,6 +394,7 @@ beforeEach(() => {
   runQaAgent.mockResolvedValue("qa reply");
   runQuickReply.mockResolvedValue("quick reply");
   isTrivialQuickReply.mockReturnValue(false);
+  hasActiveSmsFlow.mockReturnValue(false);
   getAllPending.mockResolvedValue([]);
   handlePendingApprovals.mockResolvedValue({ outcome: "fallthrough" });
   handleShiftOfferReply.mockResolvedValue("fallthrough");
@@ -909,6 +914,22 @@ describe("QA tail (quick-reply bypass vs full agent)", () => {
   it("ordinary client message lands on the full QA agent", async () => {
     seedSession();
     await handleInbound(makeEvent("how do I add my sister to the account?"));
+    expect(runQaAgent).toHaveBeenCalledTimes(1);
+  });
+
+  // 2026-09-04: found live — a short in-flow reply ("anyone else", "Amina")
+  // mid a caregiver-matching flow (pendingMatches active) passed
+  // isTrivialQuickReply and hit the no-tool fast path, which then fabricated
+  // caregiver names/details from chat history alone. Any active state-machine
+  // flow must force the full (tool-grounded) agent, regardless of how
+  // trivial the text looks in isolation.
+  it("a trivial-looking QUESTION mid an active SMS flow (e.g. pendingMatches) skips the quick-reply bypass", async () => {
+    seedSession();
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    isTrivialQuickReply.mockReturnValue(true);
+    hasActiveSmsFlow.mockReturnValue(true);
+    await handleInbound(makeEvent("Amina"));
+    expect(runQuickReply).not.toHaveBeenCalled();
     expect(runQaAgent).toHaveBeenCalledTimes(1);
   });
 });

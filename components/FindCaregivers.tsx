@@ -149,13 +149,32 @@ export default function FindCaregivers() {
         setClientIntakeData(intakeData);
       }
 
-      // Load accepted booking caregiver IDs — fire and forget
-      fdb.collection('booking_requests')
-        .where('clientId', '==', user.uid)
-        .where('status', '==', 'accepted')
-        .get()
-        .then(snap => {
-          const ids = new Set<string>(snap.docs.map(d => d.data().caregiverId).filter(Boolean));
+      // Load accepted booking caregiver IDs — fire and forget.
+      // booking_requests.status stays 'accepted' forever once accepted, so
+      // that field alone can't tell "ongoing" from "long over" — a caregiver
+      // whose shifts already finished would show "Active Booking" here
+      // forever otherwise. Cross-reference against live shifts, same rule
+      // ClientDashboard.tsx and MyCareTeam.tsx already use.
+      Promise.all([
+        fdb.collection('booking_requests')
+          .where('clientId', '==', user.uid)
+          .where('status', '==', 'accepted')
+          .get(),
+        fdb.collection('shifts')
+          .where('clientId', '==', user.uid)
+          .where('status', 'in', ['scheduled', 'in-progress'])
+          .get(),
+      ])
+        .then(([bookingsSnap, shiftsSnap]) => {
+          const activeShiftBookingIds = new Set<string>(
+            shiftsSnap.docs.map(d => d.data().bookingRequestId).filter(Boolean)
+          );
+          const ids = new Set<string>(
+            bookingsSnap.docs
+              .filter(d => activeShiftBookingIds.has(d.id))
+              .map(d => d.data().caregiverId)
+              .filter(Boolean)
+          );
           setBookedCaregiverIds(ids);
         })
         .catch(() => {});

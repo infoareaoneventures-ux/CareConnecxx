@@ -44,8 +44,6 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 
 | Item | Principle(s) | Rationale |
 |------|--------------|-----------|
-| `credential_vault` | Shared Workspace | Stored third-party portal credentials; server-only. |
-| `browser_sessions` | Shared Workspace | Headless automation state; internal. |
 | `agent_turn_checkpoints` | Shared Workspace | Mid-turn resume state; internal. |
 | `processed_stripe_events`, `processed_checkr_events` | Shared Workspace | Webhook idempotency ledgers; server-only. |
 | `dnd_queue` | Shared Workspace | SMS send-timing queue; server-only. |
@@ -70,15 +68,19 @@ Origin: `docs/plans/2026-06-24-001-feat-cara-100-agent-native-plan.md` (Track A)
 | Item | Principle(s) | Rationale |
 |------|--------------|-----------|
 | No generic `send_notification` tool | Tools as Primitives | The notification primitive already exists as `send_client_message` / `send_caregiver_message`, which enforce caregiver↔client engagement auth (IDOR prevention, `server.ts:3731+`). A generic `send_notification(phone, message)` exposed to the LLM would bypass that auth → spam/IDOR hole. **Rejected by design.** |
-| `trySend` bundled in `cancel_appointment`, `schedule_interview`, `submit_gps_checkin`, `respond_to_job_application`, `send_caregiver_message` | Tools as Primitives | Each notifies the *already-authorized counterparty for that specific action*. This is intentional safe convenience (auto-notify-on-action), not a workflow-tool anti-pattern to decompose. |
+| `trySend` bundled in `schedule_interview`, `submit_gps_checkin`, `respond_to_job_application`, `send_caregiver_message` | Tools as Primitives | Each notifies the *already-authorized counterparty for that specific action*. This is intentional safe convenience (auto-notify-on-action), not a workflow-tool anti-pattern to decompose. |
 | `manage_recurring_schedule` (action: pause/resume/cancel) left as one tool | Tools as Primitives | U15 punch-list. This is an **action-discriminated primitive**, not a workflow bundle — the same shape as `review_shift_hours(action)` / `respond_to_job_application(decision)`: one entity (a recurring schedule), one mutation surface, switched by an `action` enum. The finer `modify_recurring_schedule` / `get_recurring_schedule` cover the edit/read; splitting pause/resume/cancel into three near-identical tools adds surface with no composability gain. Intentional. |
 | `find_replacement_caregivers` left composed (not split into read/filter/match sub-primitives) | Tools as Primitives | U9b. The tool is read-only (no irreversible effect) and **already parameterized** — the model shapes the search via `needs`/`nearZip`/`availabilityWindow`/`radiusMiles`. The body it wraps (`runMatchingForClient`: profile read → scoring → ranked async results) is tuned as a unit; exposing its internals as separate primitives would add round-trips and Sonnet-loop surface with no safety or capability gain. Sanctioned "leave composed" resolution per plan U9b line 286. The booking half of U9b WAS decomposed (`get_caregiver_booking_rate` + `quote_booking` extracted; `request_booking` commits via the same shared quote helper). |
 
-## Real-world healthcare (flag-gated)
+## Real-world healthcare — removed, not just gated (2026-09-05)
 
-| Item | Principle(s) | Rationale |
-|------|--------------|-----------|
-| `perform_web_action` login actions (book appointment / Rx refill / insurance check) | Tools as Primitives, Action Parity | Gated behind `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS` (dark in prod). Decomposition (U9) ships behind the same flag; real-model eval is required before the flag flips. |
+The `perform_web_action`/`search_healthcare_provider`/`fetch_web_page`/`browse_web`/
+`manage_credentials` tools, the `startHealthcareFlow`/`resumeHealthcareFlow`
+intent-routed conversation flow, and their supporting browser-automation/credential
+modules were removed entirely (client-tool capability audit) — the site has no
+medical-appointment/pharmacy feature of any kind, so there was nothing to keep this
+gated behind `FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS` for. This section is kept as a
+historical pointer, not an active exclusion.
 
 ---
 

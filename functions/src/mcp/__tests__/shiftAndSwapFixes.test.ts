@@ -1,5 +1,4 @@
 // Guards the no-silent-auto-booking contract at the MCP tool surface:
-//  - reschedule_appointment must NOT move the appointment before the caregiver accepts
 //  - initiate_client_swap must only offer bookable (profile_complete + approved) caregivers
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -106,47 +105,6 @@ vi.mock("../../utils/caraMessage", () => ({
 }));
 
 import { handleToolCall } from "../server";
-
-describe("reschedule_appointment — caregiver acceptance required", () => {
-  beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); });
-
-  it("keeps the original schedule and creates a pending time_change offer", async () => {
-    hoisted.docState.set("appointments/a1", {
-      clientId: "c1", status: "confirmed", caregiverId: "cg1", caregiverName: "Alice",
-      date: "2026-06-18", startTime: "09:00", endTime: "11:00", durationHours: 2,
-    });
-    hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
-
-    const r = await handleToolCall("reschedule_appointment", {
-      appointmentId: "a1", clientId: "c1", newDate: "2026-06-20", newTime: "14:00",
-    }) as any;
-
-    expect(r.success).toBe(true);
-    expect(r.status).toBe("pending_caregiver_confirmation");
-    expect(r.note).toContain("until");
-
-    const appt = hoisted.docState.get("appointments/a1");
-    expect(appt.date).toBe("2026-06-18");        // NOT moved
-    expect(appt.startTime).toBe("09:00");        // NOT moved
-    expect(appt.pendingTimeChange).toMatchObject({
-      newDate: "2026-06-20", newStartTime: "14:00",
-    });
-
-    const offer = hoisted.adds.find((a) => a.path === "shift_offers");
-    expect(offer).toBeTruthy();
-    expect(offer!.data.kind).toBe("time_change");
-    expect(offer!.data.payload).toMatchObject({ previousDate: "2026-06-18", newDate: "2026-06-20" });
-    expect(sendMessage).toHaveBeenCalledWith("chat-cg", expect.stringContaining("Reply YES"));
-  });
-
-  it("still blocks reschedules of completed/cancelled appointments", async () => {
-    hoisted.docState.set("appointments/a1", { clientId: "c1", status: "completed", caregiverId: "cg1" });
-    const r = await handleToolCall("reschedule_appointment", {
-      appointmentId: "a1", clientId: "c1", newDate: "2026-06-20", newTime: "14:00",
-    }) as any;
-    expect(r._toolError).toBe(true);
-  });
-});
 
 describe("initiate_client_swap — bookable-only replacement options", () => {
   beforeEach(() => { hoisted.reset(); vi.clearAllMocks(); });

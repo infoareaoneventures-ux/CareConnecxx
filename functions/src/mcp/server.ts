@@ -24,7 +24,6 @@ import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
 import { resolveShiftBillableAmount } from "../billing/shiftBillingAmounts";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
-import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 
 // U6/U7 — CONFIRMED, externally-irreversible tools whose side effect must fire
@@ -39,13 +38,11 @@ import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 // and submit_shift_hours are NOT confirmation-gated (they carry their own
 // idempotency — payoutCommon.executeInstantPayout's replay window + doc-keyed
 // Stripe idempotency key, appointmentId dedup), so keying them here did
-// nothing. The genuine confirmed-and-irreversible action is the real-world web
-// submit (pharmacy refill / appointment commit), where a double-fire hits a
-// third party. This ledger is defense-in-depth layered over claimPendingAction's
-// single-fire claim.
-export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([
-  "perform_web_action",
-]);
+// nothing. This ledger is defense-in-depth layered over claimPendingAction's
+// single-fire claim. Empty since perform_web_action (the one tool that needed
+// it — a double-fire hit a third party) was removed 2026-09-05; add a future
+// confirmed-and-irreversible third-party-facing tool here if one is built.
+export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
 import { caregiverAnnualAmount, clientMonthlyAmount } from "../config/pricing";
@@ -312,18 +309,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_health_signals",
-    description: "Get health signals detected from recent care journal entries for a senior (last 30 days).",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId: { type: "string", description: "The senior's user ID" },
-        daysBack: { type: "number", description: "Days of history to include (default 30, max 90)" },
-      },
-      required: ["seniorId"],
-    },
-  },
-  {
     name: "get_billing_summary",
     description: "Get the client's current subscription status and recent billing history.",
     input_schema: {
@@ -463,19 +448,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "log_health_flag",
-    description: "Log a health concern flagged directly by the family member (not from a journal entry).",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId:    { type: "string" },
-        signalType:  { type: "string", description: "e.g. 'falls', 'appetite_loss', 'confusion'" },
-        description: { type: "string" },
-      },
-      required: ["seniorId", "signalType", "description"],
-    },
-  },
-  {
     name: "read_memory_file",
     description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
     input_schema: {
@@ -583,21 +555,6 @@ export const MCP_TOOLS: McpTool[] = [
         subagent_type: { type: "string", enum: getPublicSubAgentNames(), description: "Which sub-agent to delegate to." },
       },
       required: ["description", "subagent_type"],
-    },
-  },
-  {
-    name: "cancel_appointment",
-    description:
-      "Cancel a confirmed appointment on behalf of the client. " +
-      "IMPORTANT: Only call this after the family has explicitly confirmed they want to cancel (e.g. they said 'yes cancel it' or 'go ahead'). Never call without explicit confirmation.",
-    input_schema: {
-      type: "object",
-      properties: {
-        appointmentId: { type: "string", description: "The Firestore document ID of the appointment" },
-        clientId:      { type: "string", description: "The client's user ID (for ownership check)" },
-        reason:        { type: "string", description: "Optional reason (e.g. 'client_request', 'plans changed')" },
-      },
-      required: ["appointmentId", "clientId"],
     },
   },
   {
@@ -763,55 +720,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "list_user_reminders",
-    description: "List the personal reminders the user has set up through Evia (e.g. 'remind me every Monday about medications').",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone: { type: "string", description: "The user's phone number" },
-      },
-      required: ["phone"],
-    },
-  },
-  {
-    name: "create_reminder",
-    description:
-      "Create a personal recurring reminder for the user. Use when the family asks Evia to remind them of something on a schedule. " +
-      "Confirm the schedule with the family before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:      { type: "string" },
-        userId:     { type: "string" },
-        label:      { type: "string", description: "Short name for the reminder, e.g. 'mom medications'" },
-        recurrence: { type: "string", description: "One of: daily, weekly, monthly, once" },
-        dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
-        hour:       { type: "number", description: "24-hour format, 0–23" },
-        minute:     { type: "number", description: "0–59" },
-        message:    { type: "string", description: "The full text Evia will send as the reminder" },
-      },
-      required: ["phone", "userId", "label", "recurrence", "hour", "minute", "message"],
-    },
-  },
-  {
-    name: "update_reminder",
-    description: "Update an existing personal reminder — change its time, schedule, label, or message. Use when the family says 'move my medication reminder to 8am' or 'change that reminder to weekdays'. Only the reminder's owner can update it; provide only the fields that change.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:      { type: "string" },
-        triggerId:  { type: "string", description: "The reminder/trigger id (from list_user_reminders)" },
-        label:      { type: "string" },
-        recurrence: { type: "string", description: "One of: daily, weekly, monthly, once" },
-        dayOfWeek:  { type: "number", description: "0=Sun … 6=Sat — only for weekly recurrence" },
-        hour:       { type: "number", description: "24-hour format, 0–23" },
-        minute:     { type: "number", description: "0–59" },
-        message:    { type: "string" },
-      },
-      required: ["phone", "triggerId"],
-    },
-  },
-  {
     name: "create_senior_profile",
     description:
       "Create an ADDITIONAL care recipient (senior) for this family's household — the same as the '+ Add' button on the website's Care Plan page. " +
@@ -958,18 +866,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "delete_reminder",
-    description: "Cancel and delete an active personal reminder. Only call after the user has confirmed they want to remove it.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone:     { type: "string", description: "The user's phone number" },
-        triggerId: { type: "string", description: "The Firestore document ID of the user_triggers doc" },
-      },
-      required: ["phone", "triggerId"],
-    },
-  },
-  {
     name: "get_caregiver_appointments",
     description: "Get upcoming scheduled appointments for a caregiver — used when a caregiver asks about their schedule.",
     input_schema: {
@@ -993,157 +889,6 @@ export const MCP_TOOLS: McpTool[] = [
         clientId: { type: "string", description: "The client's user ID" },
       },
       required: ["clientId"],
-    },
-  },
-  {
-    name: "get_work_in_progress",
-    description:
-      "One unified view of everything Evia currently has in flight for this user — " +
-      "open follow-up promises, active background tasks, pending approvals, presented " +
-      "caregiver matches, and to-dos, with overdue items first. Call when the user asks " +
-      "'what's happening', 'what are you working on for me', or 'any updates', and " +
-      "before making a new promise so you can account for what's already owed.",
-    input_schema: {
-      type: "object",
-      properties: {
-        phone: { type: "string", description: "The user's phone number (auto-injected)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "search_web",
-    description:
-      "Fast web search for information about healthcare providers, pharmacies, " +
-      "insurance, or anything else the family or caregiver needs to know. " +
-      "Use this BEFORE perform_web_action for any lookup that doesn't require " +
-      "navigating a specific website. Returns titles and URLs. " +
-      "Examples: 'Dr. Peterson neurologist Atlanta phone number', " +
-      "'CVS Peachtree hours', 'does Aetna cover in-home care Atlanta'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "The search query (1-200 characters)",
-        },
-        numResults: {
-          type: "number",
-          description: "Number of results to return (1-10, default 5)",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "perform_web_action",
-    description:
-      "Take a LOGIN-REQUIRED action on a healthcare portal on behalf of the family. " +
-      "For public web lookups use the dedicated primitives instead (search_healthcare_provider, fetch_web_page, browse_web), or search_web.\n\n" +
-      "Set loginAction to one of:\n" +
-      "- 'schedule_appointment': book a doctor appointment on MyChart etc.\n" +
-      "- 'pharmacy_refill': request a prescription refill on CVS/Walgreens\n" +
-      "- 'insurance_check': check authorization or coverage status\n\n" +
-      "If credentials aren't stored yet, Evia will collect them securely via iMessage before proceeding.",
-    input_schema: {
-      type: "object",
-      properties: {
-        task: {
-          type: "string",
-          description: "What to do, in plain English.",
-        },
-        loginAction: {
-          type: "string",
-          enum: ["schedule_appointment", "pharmacy_refill", "insurance_check"],
-          description: "For login-required portal actions.",
-        },
-        userId:          { type: "string", description: "The user's Firestore ID" },
-        phone:           { type: "string", description: "The user's phone number" },
-        city:            { type: "string", description: "City for location-specific searches" },
-        doctorName:      { type: "string", description: "Doctor name for appointment scheduling" },
-        specialty:       { type: "string", description: "Doctor specialty" },
-        preferredDate:   { type: "string", description: "Preferred date e.g. 'next Tuesday', 'May 20'" },
-        appointmentType: { type: "string", description: "e.g. 'follow-up', 'annual physical'" },
-        portalService:   { type: "string", description: "Portal to use: mychart, athenahealth, followmyhealth" },
-        pharmacyService: {
-          type: "string",
-          enum: ["cvs", "walgreens", "riteaid"],
-          description: "Pharmacy for refill requests",
-        },
-        medicationName:  { type: "string", description: "Medication name for refill" },
-        rxNumber:        { type: "string", description: "Rx number for direct refill lookup" },
-        insurer:         { type: "string", description: "Insurance company name e.g. 'Aetna', 'UnitedHealthcare'" },
-        checkType: {
-          type: "string",
-          enum: ["coverage", "authorization", "claim_status"],
-          description: "Type of insurance check",
-        },
-        referenceNumber: { type: "string", description: "Prior auth or claim reference number" },
-        seniorName:      { type: "string", description: "Senior's name when account has multiple members" },
-      },
-      required: ["task", "userId", "loginAction"],
-    },
-  },
-  {
-    name: "search_healthcare_provider",
-    description: "Public web search for healthcare providers/resources (no login). Use for 'find a cardiologist near me', 'urgent care in <city>'. Prefer search_web for general lookups.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query:  { type: "string", description: "What to search for, in plain English." },
-        city:   { type: "string", description: "City to scope the search to, if relevant." },
-        userId: { type: "string", description: "Injected automatically." },
-        phone:  { type: "string", description: "Injected automatically." },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "fetch_web_page",
-    description: "Fetch the content of a specific public URL (no login). Use when you already know the page to read.",
-    input_schema: {
-      type: "object",
-      properties: {
-        url:    { type: "string", description: "The URL to fetch." },
-        userId: { type: "string", description: "Injected automatically." },
-        phone:  { type: "string", description: "Injected automatically." },
-      },
-      required: ["url"],
-    },
-  },
-  {
-    name: "browse_web",
-    description: "Run a public AI browser session for complex navigation that needs no login (multi-step lookups on public sites).",
-    input_schema: {
-      type: "object",
-      properties: {
-        task:   { type: "string", description: "What to do/find, in plain English." },
-        url:    { type: "string", description: "Optional starting URL." },
-        userId: { type: "string", description: "Injected automatically." },
-        phone:  { type: "string", description: "Injected automatically." },
-      },
-      required: ["task"],
-    },
-  },
-  {
-    name: "manage_credentials",
-    description:
-      "Manage stored portal login credentials for this user. " +
-      "Use when family asks: 'what logins do you have for me', " +
-      "'remove my CVS login', 'update my MyChart password', " +
-      "'do you have my Walgreens login?'",
-    input_schema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["list", "delete", "check"],
-          description: "list = show all stored services, delete = remove one, check = verify one exists",
-        },
-        userId:  { type: "string", description: "The user's Firestore ID" },
-        service: { type: "string", description: "Service key e.g. mychart, cvs, walgreens" },
-      },
-      required: ["action", "userId"],
     },
   },
   {
@@ -1445,26 +1190,6 @@ export const MCP_TOOLS: McpTool[] = [
         action: { type: "string", enum: ["set","arrayUnion","arrayRemove"], description: "set = replace, arrayUnion = add to array, arrayRemove = remove from array" },
       },
       required: ["seniorId", "clientId", "field", "value", "action"],
-    },
-  },
-  {
-    name: "reschedule_appointment",
-    description:
-      "Move an existing confirmed appointment to a new date and/or time. " +
-      "Checks caregiver availability. Confirm with family before calling. " +
-      "IMPORTANT — a reschedule is usually NOT immediate. Inspect the returned `status`: " +
-      "`pending_caregiver_confirmation` means the visit stays at its ORIGINAL time until the caregiver accepts — " +
-      "tell the family you've asked the caregiver to confirm and will follow up, and do NOT say the reschedule is done. " +
-      "Only `applied_directly` means the change already took effect.",
-    input_schema: {
-      type: "object",
-      properties: {
-        appointmentId: { type: "string", description: "Appointment document ID to reschedule" },
-        clientId:      { type: "string", description: "The client's user ID" },
-        newDate:       { type: "string", description: "New date in YYYY-MM-DD format" },
-        newTime:       { type: "string", description: "New start time in HH:MM format" },
-      },
-      required: ["appointmentId", "clientId", "newDate", "newTime"],
     },
   },
   {
@@ -1837,30 +1562,6 @@ export const MCP_TOOLS: McpTool[] = [
         reason:        { type: "string", description: "Reason for refund (optional)" },
       },
       required: ["clientId", "appointmentId"],
-    },
-  },
-  {
-    name: "get_care_plan_history",
-    description:
-      "Get the revision history of the client's care plan — who changed what and when. Returns up to 10 versions.",
-    input_schema: {
-      type: "object",
-      properties: {
-        limit: { type: "number", description: "Number of versions to return (default 5, max 10)" },
-      },
-    },
-  },
-  {
-    name: "restore_care_plan_version",
-    description:
-      "Restore a previous version of the care plan. Confirm with the client before calling — this replaces the current care plan.",
-    input_schema: {
-      type: "object",
-      properties: {
-        versionId: { type: "string", description: "The care-plan version document ID to restore (from get_care_plan_history)" },
-        clientId:  { type: "string", description: "The client's user ID (auto-injected from session)" },
-      },
-      required: ["versionId"],
     },
   },
   {
@@ -2443,71 +2144,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["userId", "counterpartId"],
     },
   },
-  // ── Care journal engagement ───────────────────────────────────────────────
-  {
-    name: "like_journal_entry",
-    description: "Like a care journal entry the caregiver posted. Use when the family says something like 'tell Maria I love that photo'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:  { type: "string", description: "The user liking the entry" },
-        entryId: { type: "string", description: "The care_journal entry ID" },
-      },
-      required: ["userId", "entryId"],
-    },
-  },
-  {
-    name: "unlike_journal_entry",
-    description: "Remove a like from a care journal entry.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:  { type: "string", description: "The user removing the like" },
-        entryId: { type: "string", description: "The care_journal entry ID" },
-      },
-      required: ["userId", "entryId"],
-    },
-  },
-  {
-    name: "comment_on_journal_entry",
-    description: "Add a comment to a care journal entry. The caregiver will see the comment. Use when a family says 'tell Maria thanks for the visit notes' or 'reply that the puzzle was a great idea'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:  { type: "string", description: "The user commenting" },
-        entryId: { type: "string", description: "The care_journal entry ID" },
-        comment: { type: "string", description: "The comment text" },
-      },
-      required: ["userId", "entryId", "comment"],
-    },
-  },
-  {
-    name: "delete_comment",
-    description: "Delete a comment the user previously left on a care journal entry. Use when the family says 'delete my last comment' or 'remove what I said on that entry'. Only the comment's author can delete it.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:    { type: "string", description: "The user who left the comment" },
-        entryId:   { type: "string", description: "The care_journal entry ID" },
-        commentId: { type: "string", description: "The comment ID to delete" },
-      },
-      required: ["userId", "entryId", "commentId"],
-    },
-  },
-  {
-    name: "edit_comment",
-    description: "Edit the text of a comment the user previously left on a care journal entry. Use when the family says 'fix my comment to say …'. Only the comment's author can edit it.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:    { type: "string", description: "The user who left the comment" },
-        entryId:   { type: "string", description: "The care_journal entry ID" },
-        commentId: { type: "string", description: "The comment ID to edit" },
-        comment:   { type: "string", description: "The new comment text" },
-      },
-      required: ["userId", "entryId", "commentId", "comment"],
-    },
-  },
   {
     name: "edit_review",
     description: "Update a review the family already submitted for a caregiver — change the rating and/or comment. Use when they say 'change my review to 5 stars' or 'update what I wrote'. Only the review's author can edit it.",
@@ -2729,16 +2365,10 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_upcoming_appointments",
   "get_care_journal",
   "get_senior_profile",
-  "log_health_flag",
   "read_memory_file",
   "update_memory_file",
   "edit_memory_file",
   "search_memory",
-  "search_web",
-  "perform_web_action",
-  "list_user_reminders",
-  "create_reminder",
-  "delete_reminder",
   "get_billing_summary",
   "update_caregiver_profile",
   "pause_account",
@@ -2784,14 +2414,11 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_support_tickets",
   "get_shifts",
   "get_caregiver_availability",
-  "update_reminder",
   "update_care_journal_entry",
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
   "list_shift_swaps",
-  // Unified work-in-progress view (agentic-reliability wave 2026-07)
-  "get_work_in_progress",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
   // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
@@ -2817,6 +2444,11 @@ export const CAREGIVER_TOOLS: McpTool[] = MCP_TOOLS.filter(t => CAREGIVER_TOOL_N
 const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "get_caregiver_appointments",
   "update_caregiver_profile",
+  // Scoping fix 2026-09-05 (client-tool capability audit): both operate on
+  // "your own caregiver account" per their own descriptions — were reachable
+  // from a client conversation too since neither was ever added here.
+  "pause_account",
+  "reactivate_account",
   "accept_shift",
   "decline_shift",
   "apply_to_job",
@@ -2862,9 +2494,6 @@ export async function handleToolCallForCaregiver(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
-  if (name === "perform_web_action" && input.loginAction) {
-    return { _toolError: true, message: "Login-required web actions are not available for caregivers." };
-  }
   return handleToolCall(name, input, shadowMode);
 }
 
@@ -3246,12 +2875,12 @@ const READ_ONLY_TOOLS = new Set<string>([
   // commitments — a shadow run was sending real SMS. It is mutating; it must
   // be synthesized under shadow like every other side-effecting tool.
   "list_saved_caregivers",
-  "get_recurring_schedule", "list_user_reminders",
+  "get_recurring_schedule",
   "get_billing_summary", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
-  "get_care_journal", "get_care_journal_client", "get_care_plan", "get_care_plan_history",
-  "get_health_signals", "get_recent_messages", "get_family_group",
-  "read_memory_file", "search_memory", "search_web",
+  "get_care_journal", "get_care_journal_client", "get_care_plan",
+  "get_recent_messages", "get_family_group",
+  "read_memory_file", "search_memory",
   "list_client_jobs", "list_job_applicants", "browse_job_board",
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
   "get_payout_status", "get_signup_completeness",
@@ -3327,23 +2956,13 @@ export async function handleToolCall(
   input: Record<string, unknown>,
   shadowMode = false,
 ): Promise<unknown> {
-  if (
-    (name === "perform_web_action" || name === "search_healthcare_provider") &&
-    !realWorldHealthcareActionsEnabled()
-  ) {
-    return {
-      _toolError: true,
-      code: "MEDICAL_ACTIONS_DISABLED",
-      message: "Evia coordinates non-medical care. Contact a licensed healthcare provider or pharmacy directly.",
-    };
-  }
   // U11: under shadow, never execute a non-read-only tool — return a synthetic
   // "would-have-run" result the harness records as the shadow end-state.
   if (shadowMode && !READ_ONLY_TOOLS.has(name)) {
     return { _shadow: true, simulated: name, wouldRun: true, input };
   }
-  // Runtime-enforced confirmation gate. High-risk tool calls (cancel_appointment,
-  // remove_family_member, cancel_subscription, etc.) are intercepted on the
+  // Runtime-enforced confirmation gate. High-risk tool calls (remove_family_member,
+  // cancel_subscription, etc.) are intercepted on the
   // first call and turned into a pending-action stub for Claude to read.
   // The re-run from approvalHandler sets _confirmedActionId to bypass the gate.
   // See pendingActions.ts for the full design.
@@ -3678,22 +3297,6 @@ async function executeToolCall(
             hasMoreReviews:            reviewsSnap.docs.length > reviewLimit,
           },
         };
-      }
-
-      case "get_health_signals": {
-        if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
-        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
-        if (denied) return denied;
-        logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_health_signals").catch(() => {});
-        const snap = await db
-          .collection("health_signals")
-          .where("seniorId", "==", input.seniorId)
-          .where("detectedAt", ">=", daysAgo)
-          .orderBy("detectedAt", "desc")
-          .limit(21)
-          .get();
-        const docs = snap.docs.slice(0, 20).map((d) => d.data());
-        return { success: true, results: docs, hasMore: snap.docs.length > 20, daysBack };
       }
 
       case "get_billing_summary": {
@@ -4156,20 +3759,6 @@ async function executeToolCall(
         return { success: true, updated: true };
       }
 
-      case "log_health_flag": {
-        if (!input.seniorId || !input.signalType) return toolError("INVALID_INPUT", "seniorId and signalType are required");
-        logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:log_health_flag").catch(() => {});
-        await db.collection("health_signals").add({
-          seniorId:    input.seniorId,
-          signalType:  input.signalType,
-          description: input.description ?? "",
-          severity:    "flag",
-          source:      "family_report",
-          detectedAt:  nowIso,
-        });
-        return { success: true, logged: true };
-      }
-
       case "read_memory_file": {
         if (!input.userId || !input.file) return toolError("INVALID_INPUT", "userId and file are required");
         const requestedFile = String(input.file);
@@ -4336,39 +3925,6 @@ async function executeToolCall(
         const inProgress  = sanitized.filter((t) => t.status === "in_progress").length;
         const completed   = sanitized.filter((t) => t.status === "completed").length;
         return { success: true, count: sanitized.length, pending, inProgress, completed };
-      }
-
-      case "cancel_appointment": {
-        const { appointmentId, clientId, reason } = input;
-        if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
-        const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-        if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-        const appt = apptSnap.data()!;
-        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
-        if (["cancelled_by_client", "cancelled"].includes(appt.status)) {
-          return toolError("INVALID_INPUT", "Appointment is already cancelled");
-        }
-        await apptSnap.ref.update({
-          status:           "cancelled_by_client",
-          cancelledAt:      nowIso,
-          cancelledReason:  reason ?? "client_request",
-        });
-        // Notify caregiver — surface success/failure so Evia doesn't claim
-        // the caregiver was reached when the message never went out.
-        let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
-        if (appt.caregiverId) {
-          const cgSnap  = await db.collection("caregivers").doc(appt.caregiverId as string).get();
-          const cgPhone = cgSnap.data()?.phone as string | undefined;
-          if (cgPhone) {
-            const { trySend } = await import("../utils/toolNotify");
-            notification = await trySend(cgPhone,
-              `The family has cancelled the visit on ${appt.date ?? ""}. Sorry for the inconvenience.`,
-              "mcp:cancel_appointment",
-            );
-          }
-        }
-        logAudit({ eventType: "health_data_accessed", userId: clientId as string, data: { source: "mcp:cancel_appointment", appointmentId, notificationSent: notification.sent } }).catch(() => {});
-        return { success: true, cancelled: true, appointmentId, date: appt.date, caregiverName: appt.caregiverName, notification };
       }
 
       case "manage_booking": {
@@ -4792,33 +4348,6 @@ async function executeToolCall(
         return { success: true, members: snap.docs.map(d => d.data()), count: snap.size };
       }
 
-      case "list_user_reminders": {
-        if (!input.phone) return toolError("INVALID_INPUT", "phone is required");
-        const snap = await db.collection("user_triggers")
-          .where("phone",  "==", input.phone)
-          .where("active", "==", true)
-          .get();
-        const reminders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        return { success: true, reminders, count: reminders.length };
-      }
-
-      case "create_reminder": {
-        const { phone, userId, label, recurrence, hour, minute, message: msg, dayOfWeek } = input;
-        if (!phone || !userId || !label || !recurrence || hour == null || minute == null || !msg) {
-          return toolError("INVALID_INPUT", "phone, userId, label, recurrence, hour, minute, message are required");
-        }
-        const { createUserTrigger } = await import("../triggers/userTriggerManager");
-        const triggerId = await createUserTrigger(phone as string, userId as string, {
-          label:      label      as string,
-          recurrence: recurrence as "daily" | "weekly" | "monthly" | "once",
-          dayOfWeek:  dayOfWeek  as number | undefined,
-          hour:       hour       as number,
-          minute:     minute     as number,
-          message:    msg        as string,
-        });
-        return { success: true, triggerId, label };
-      }
-
       case "schedule_followup": {
         const { phone, userId, message: followUpMsg, scheduledAt, reason } = input;
         if (!phone || !userId || !followUpMsg || !scheduledAt) {
@@ -4842,32 +4371,6 @@ async function executeToolCall(
           return { success: false, reason: "skipped_calibration_period" };
         }
         return { success: true, triggerId, scheduledAt };
-      }
-
-      case "delete_reminder": {
-        const { phone, triggerId } = input;
-        if (!phone || !triggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
-        const { deleteUserTrigger } = await import("../triggers/userTriggerManager");
-        const deleted = await deleteUserTrigger(phone as string, triggerId as string);
-        if (!deleted) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
-        return { success: true, deleted: true };
-      }
-
-      case "update_reminder": {
-        const { phone, triggerId, label, recurrence, dayOfWeek, hour, minute, message: msg } = input;
-        if (!phone || !triggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
-        const patch: Record<string, unknown> = {};
-        if (label      !== undefined) patch.label      = label;
-        if (recurrence !== undefined) patch.recurrence = recurrence;
-        if (dayOfWeek  !== undefined) patch.dayOfWeek  = dayOfWeek;
-        if (hour       !== undefined) patch.hour       = hour;
-        if (minute     !== undefined) patch.minute     = minute;
-        if (msg        !== undefined) patch.message    = msg;
-        if (Object.keys(patch).length === 0) return toolError("INVALID_INPUT", "provide at least one field to update");
-        const { updateUserTrigger } = await import("../triggers/userTriggerManager");
-        const updated = await updateUserTrigger(phone as string, triggerId as string, patch);
-        if (!updated) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
-        return { success: true, updated: true, triggerId };
       }
 
       case "get_caregiver_appointments": {
@@ -4923,313 +4426,6 @@ async function executeToolCall(
           interviews: [], // kept for response-shape compatibility (see note above)
           summary: total === 0 ? "Nothing pending" : `${total} item(s) need your attention`,
         };
-      }
-
-      case "get_work_in_progress": {
-        const phoneW = (input.phone as string | undefined) ?? "";
-        if (!phoneW) return toolError("INVALID_INPUT", "phone is required");
-        const nowIso = new Date().toISOString();
-        const ageHrs = (iso?: string) => {
-          const ms = typeof iso === "string" ? Date.parse(iso) : NaN;
-          return Number.isFinite(ms) ? Math.max(0, Math.floor((Date.now() - ms) / 3_600_000)) : null;
-        };
-
-        const [qaCommit, matchCommit, activeTaskSnap, taskSnap2, sessionSnap2] = await Promise.all([
-          db.collection("pending_commitments").doc(`${phoneW}_qa_answer`).get(),
-          db.collection("pending_commitments").doc(`${phoneW}_matching`).get(),
-          db.collection("agent_tasks_active").doc(phoneW).get(),
-          db.collection("agent_tasks")
-            .where("clientPhone", "==", phoneW)
-            .where("status", "in", ["pending", "awaiting_approval", "pending_bg_clear"])
-            .limit(10)
-            .get(),
-          db.collection("agent_sessions").doc(phoneW).get(),
-        ]);
-
-        interface WipItem {
-          kind: string; summary: string;
-          dueAt: string | null; ageHours: number | null; overdue: boolean;
-        }
-        const items: WipItem[] = [];
-
-        for (const snap of [qaCommit, matchCommit]) {
-          if (!snap.exists || snap.data()?.status !== "open") continue;
-          const c = snap.data()!;
-          items.push({
-            kind:     "promise",
-            summary:  `Follow-up owed: ${String(c.promiseText ?? "").slice(0, 140)}`,
-            dueAt:    (c.dueAt as string | undefined) ?? null,
-            ageHours: ageHrs(c.createdAt as string | undefined),
-            overdue:  ((c.dueAt as string | undefined) ?? "") < nowIso,
-          });
-        }
-        if (activeTaskSnap.exists) {
-          const t = activeTaskSnap.data()!;
-          items.push({
-            kind:     "background_task",
-            summary:  String(t.description ?? t.statusText ?? t.type ?? "background task in progress").slice(0, 140),
-            dueAt:    null,
-            ageHours: ageHrs((t.startedAt ?? t.createdAt) as string | undefined),
-            overdue:  false,
-          });
-        }
-        for (const d of taskSnap2.docs) {
-          const t = d.data();
-          items.push({
-            kind:     "pending_task",
-            summary:  `${String(t.type ?? "task")} — ${String(t.status ?? "pending")}`.slice(0, 140),
-            dueAt:    (t.expiresAt as string | undefined) ?? null,
-            ageHours: ageHrs(t.createdAt as string | undefined),
-            overdue:  !!(t.expiresAt && (t.expiresAt as string) < nowIso),
-          });
-        }
-        const sess = sessionSnap2.data() ?? {};
-        const todos = Array.isArray(sess.todos) ? sess.todos : [];
-        for (const t of todos as Array<Record<string, unknown>>) {
-          if (t?.status === "completed") continue;
-          const label = String(t?.content ?? t?.text ?? t?.task ?? "").slice(0, 140);
-          if (!label) continue;
-          items.push({ kind: "todo", summary: label, dueAt: null, ageHours: null, overdue: false });
-        }
-        const matches = Array.isArray(sess.pendingMatches) ? sess.pendingMatches : [];
-        if (matches.length > 0) {
-          const names = (matches as Array<Record<string, unknown>>)
-            .map((m) => String(m?.name ?? "")).filter(Boolean).slice(0, 5);
-          items.push({
-            kind:     "matches_presented",
-            summary:  `Caregiver matches awaiting your pick: ${names.join(", ")}`,
-            dueAt:    null,
-            ageHours: ageHrs(sess.pendingMatchesSetAt as string | undefined),
-            overdue:  false,
-          });
-        }
-
-        // Overdue first, then nearest due date, then oldest.
-        items.sort((a, b) =>
-          Number(b.overdue) - Number(a.overdue) ||
-          (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999") ||
-          (b.ageHours ?? -1) - (a.ageHours ?? -1)
-        );
-
-        return {
-          success: true,
-          total:   items.length,
-          items,
-          summary: items.length === 0
-            ? "Nothing in flight — no open promises, tasks, or pending decisions."
-            : `${items.length} item(s) in flight${items.some(i => i.overdue) ? ", including overdue follow-ups — address those first" : ""}.`,
-        };
-      }
-
-      case "search_web": {
-        const { searchWeb } = await import("../browser/browserbaseClient");
-        const results = await searchWeb(
-          input.query as string,
-          (input.numResults as number | undefined) ?? 5
-        );
-        return { results };
-      }
-
-      case "perform_web_action": {
-        // Login-required healthcare-portal actions only. Public web reads were
-        // decomposed into search_healthcare_provider / fetch_web_page / browse_web (U9).
-        const {
-          findAppointmentSlots,
-          bookAppointmentSlot,
-          requestPharmacyRefill,
-          checkInsuranceAuthorization,
-        } = await import("../browser/careWebActions");
-        const { startCredentialCollection } = await import("../browser/credentialCollector");
-
-        const task        = input.task        as string;
-        const loginAction = input.loginAction as "schedule_appointment" | "pharmacy_refill" | "insurance_check" | undefined;
-        const userId2     = input.userId      as string;
-        const phone2      = (input.phone      as string | undefined) ?? "unknown";
-
-        try {
-          // ── Login-required portal actions ──────────────────────────────────
-          if (loginAction) {
-            // H-U9: ship DARK behind the flag. Flag-off → coming-soon; nothing is
-            // proposed or committed until the pre-launch gate closes.
-            const { realWorldHealthcareActionsEnabled } = await import("../config/featureFlags");
-            if (!realWorldHealthcareActionsEnabled()) {
-              return {
-                status: "coming_soon",
-                message: "I can look up info and find the right links for you — taking action directly on your healthcare portals is coming soon.",
-              };
-            }
-            // H-U7: the credential vault is userId-keyed — fail CLOSED if there's
-            // no resolvable account, rather than silently missing the credential.
-            if (!userId2 || userId2 === "unknown") {
-              return toolError("PERMISSION_DENIED",
-                "I can only do this on a registered account. Please make sure you're signed up, then try again.");
-            }
-            switch (loginAction) {
-              case "schedule_appointment": {
-                const portalSvc = (input.portalService as string | undefined ?? "mychart") as import("../browser/credentialVault").PortalService;
-                const chosenSlot = input.chosenSlot as { provider: string; datetime: string; location?: string } | undefined;
-
-                // PASS 2 (H-U3): commit the APPROVED slot. Reached only on the
-                // confirmed re-run, which carries chosenSlot — the gate (keyed on
-                // chosenSlot) already round-tripped the family's approval.
-                if (chosenSlot) {
-                  return await bookAppointmentSlot({
-                    userId: userId2, phone: phone2, chosenSlot, portalService: portalSvc,
-                  });
-                }
-
-                // PASS 1 (H-U3): read-only discovery (ungated). Returns a concrete
-                // slot for the agent to propose; nothing is committed here.
-                const found = await findAppointmentSlots({
-                  userId:        userId2,
-                  phone:         phone2,
-                  doctorName:    input.doctorName    as string ?? task,
-                  specialty:     input.specialty     as string | undefined,
-                  preferredDate: input.preferredDate as string | undefined,
-                  portalService: portalSvc,
-                });
-                if (found.needsCredentials) {
-                  await startCredentialCollection({
-                    phone:   phone2,
-                    userId:  userId2,
-                    service: portalSvc,
-                    reason:  `schedule an appointment with ${input.doctorName ?? "your doctor"}`,
-                  });
-                  return { status: "collecting_credentials" };
-                }
-                return found;
-              }
-
-              case "pharmacy_refill": {
-                const pharmSvc = (input.pharmacyService as "cvs" | "walgreens" | "riteaid" | undefined) ?? "cvs";
-                const result = await requestPharmacyRefill({
-                  userId:          userId2,
-                  phone:           phone2,
-                  pharmacyService: pharmSvc,
-                  medicationName:  input.medicationName as string | undefined,
-                  rxNumber:        input.rxNumber       as string | undefined,
-                  seniorName:      input.seniorName     as string | undefined,
-                });
-                if (result.needsCredentials) {
-                  await startCredentialCollection({
-                    phone:   phone2,
-                    userId:  userId2,
-                    service: pharmSvc as import("../browser/credentialVault").PortalService,
-                    reason:  "request a prescription refill",
-                  });
-                  return { status: "collecting_credentials" };
-                }
-                return result;
-              }
-
-              case "insurance_check": {
-                const insurer = input.insurer as string ?? task;
-                const { insurerToServiceKey } = await import("../browser/credentialVault");
-                const result = await checkInsuranceAuthorization({
-                  userId:              userId2,
-                  phone:               phone2,
-                  insurer,
-                  checkType:           (input.checkType as "coverage" | "authorization" | "claim_status" | undefined) ?? "coverage",
-                  serviceDescription:  input.task       as string | undefined,
-                  referenceNumber:     input.referenceNumber as string | undefined,
-                  seniorName:          input.seniorName  as string | undefined,
-                });
-                if (result.needsCredentials) {
-                  await startCredentialCollection({
-                    phone:   phone2,
-                    userId:  userId2,
-                    service: insurerToServiceKey(insurer),
-                    reason:  `check your ${insurer} insurance`,
-                  });
-                  return { status: "collecting_credentials" };
-                }
-                return result;
-              }
-            }
-          }
-
-          // No loginAction → this tool is login-only now; public reads moved out.
-          return toolError("INVALID_INPUT", "loginAction is required. For public web reads use search_healthcare_provider, fetch_web_page, or browse_web.");
-        } catch (webErr) {
-          console.error("[perform_web_action] error:", webErr);
-          return { error: true, message: "I ran into a problem with that web action. Let me find the link for you instead." };
-        }
-      }
-
-      // ── Public web primitives (U9 — decomposed from perform_web_action) ──────
-      case "search_healthcare_provider": {
-        const { searchHealthcareProvider } = await import("../browser/careWebActions");
-        const userIdW = (input.userId as string | undefined) ?? "unknown";
-        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
-        const query   = input.query as string | undefined;
-        if (!query) return toolError("INVALID_INPUT", "query is required");
-        try {
-          const result = await searchHealthcareProvider({ userId: userIdW, phone: phoneW, query, city: input.city as string | undefined });
-          return { found: result.found, summary: result.summary, results: result.results.slice(0, 3) };
-        } catch (e) {
-          console.error("[search_healthcare_provider] error:", e);
-          return { error: true, message: "I couldn't run that search just now." };
-        }
-      }
-
-      case "fetch_web_page": {
-        const { fetchHealthcarePage } = await import("../browser/careWebActions");
-        const userIdW = (input.userId as string | undefined) ?? "unknown";
-        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
-        const url     = input.url as string | undefined;
-        if (!url) return toolError("INVALID_INPUT", "url is required");
-        try {
-          const result = await fetchHealthcarePage({ userId: userIdW, phone: phoneW, url });
-          return { statusCode: result.statusCode, content: result.content.slice(0, 1500) };
-        } catch (e) {
-          console.error("[fetch_web_page] error:", e);
-          return { error: true, message: "I couldn't fetch that page just now." };
-        }
-      }
-
-      case "browse_web": {
-        const { performBrowserAction } = await import("../browser/careWebActions");
-        const userIdW = (input.userId as string | undefined) ?? "unknown";
-        const phoneW  = (input.phone  as string | undefined) ?? "unknown";
-        const task    = input.task as string | undefined;
-        if (!task) return toolError("INVALID_INPUT", "task is required");
-        try {
-          const result = await performBrowserAction({ userId: userIdW, phone: phoneW, task, url: input.url as string | undefined, requiresLogin: false });
-          return { success: result.success, result: result.result, sessionId: result.sessionId };
-        } catch (e) {
-          console.error("[browse_web] error:", e);
-          return { error: true, message: "I ran into a problem browsing for that." };
-        }
-      }
-
-      case "manage_credentials": {
-        const {
-          listCredentials,
-          deleteCredential,
-          hasCredential,
-        } = await import("../browser/credentialVault");
-
-        const credUserId = input.userId  as string;
-        const service    = input.service as import("../browser/credentialVault").PortalService | undefined;
-
-        switch (input.action as string) {
-          case "list": {
-            const creds = await listCredentials(credUserId);
-            return { credentials: creds, count: creds.length };
-          }
-          case "delete": {
-            if (!service) return toolError("INVALID_INPUT", "service is required for delete");
-            await deleteCredential(credUserId, service);
-            return { deleted: true, service };
-          }
-          case "check": {
-            if (!service) return toolError("INVALID_INPUT", "service is required for check");
-            const exists = await hasCredential(credUserId, service);
-            return { exists, service };
-          }
-          default:
-            return toolError("INVALID_INPUT", `Unknown credentials action: ${input.action}`);
-        }
       }
 
       default:
@@ -5807,50 +5003,6 @@ async function executeToolCall(
       await seniorSnap.ref.set(upd, { merge: true });
       logAudit({ eventType: "senior_profile_updated", userId: clientId as string, data: { source: "mcp:update_senior_profile", seniorId, field, action } }).catch(() => {});
       return { success: true, updated: field, action };
-    }
-
-    if (name === "reschedule_appointment") {
-      const { appointmentId, clientId, newDate, newTime } = input as Record<string, unknown>;
-      if (!appointmentId || !clientId || !newDate || !newTime) return toolError("INVALID_INPUT", "appointmentId, clientId, newDate, and newTime are required");
-      // Dual-lookup — the visit may live in appointments (old bookings) or
-      // shifts (new ones written by writeConfirmedShifts, 2026-08-30 pipeline).
-      let apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap.exists) apptSnap = await db.collection("shifts").doc(appointmentId as string).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
-      if (["cancelled","cancelled_by_client","completed"].includes(appt.status as string)) return toolError("INVALID_INPUT", `Cannot reschedule an appointment with status '${appt.status}'`);
-      const [apptConflictSnap, shiftConflictSnap] = await Promise.all([
-        db.collection("appointments").where("caregiverId", "==", appt.caregiverId).where("date", "==", newDate).where("status", "in", ["confirmed","in-progress","pending_caregiver_confirmation"]).get(),
-        db.collection("shifts").where("caregiverId", "==", appt.caregiverId).where("date", "==", newDate).where("status", "in", ["scheduled","in-progress"]).get(),
-      ]);
-      if ([...apptConflictSnap.docs, ...shiftConflictSnap.docs].some(d => d.id !== appointmentId)) return toolError("CONFLICT", "The caregiver is not available at that date and time");
-      const durationHours = (appt.durationHours as number) ?? 2;
-      const [h, m] = (newTime as string).split(":").map(Number);
-      const totalMins = h * 60 + m + durationHours * 60;
-      const newEndTime = `${String(Math.floor(totalMins / 60) % 24).padStart(2,"0")}:${String(totalMins % 60).padStart(2,"0")}`;
-      // The appointment does NOT move until the caregiver accepts the shift
-      // offer — requestShiftTimeChange stamps pendingTimeChange and texts them
-      // a YES/NO offer (shiftOffer.ts applies or discards the change).
-      const { requestShiftTimeChange } = await import("../agents/shiftTimeChange");
-      const tcResult = await requestShiftTimeChange({
-        appointmentId: appointmentId as string,
-        clientId:      clientId as string,
-        clientPhone:   (input as Record<string, unknown>).phone as string | undefined,
-        newDate:       newDate as string,
-        newStartTime:  newTime as string,
-        newEndTime,
-      });
-      if (!tcResult.ok) return toolError("INVALID_INPUT", `Could not request the reschedule (${tcResult.reason ?? "unknown error"})`);
-      logAudit({ eventType: "appointment_rescheduled", userId: clientId as string, data: { source: "mcp:reschedule_appointment", appointmentId, newDate, newTime, status: tcResult.status } }).catch(() => {});
-      if (tcResult.status === "applied_directly") {
-        return { success: true, appointmentId, newDate, newTime, newEndTime, status: "applied_directly", note: "Caregiver had no phone on file — change applied and flagged for admin follow-up." };
-      }
-      return {
-        success: true, appointmentId, newDate, newTime, newEndTime,
-        status: "pending_caregiver_confirmation",
-        note: `The visit stays at its original time until ${appt.caregiverName ?? "the caregiver"} accepts the new time. Tell the family you've asked the caregiver to confirm and will follow up — do NOT say the reschedule is done.`,
-      };
     }
 
     if (name === "create_care_journal_entry") {
@@ -8401,52 +7553,6 @@ async function executeToolCall(
       return { success: true, requestId: ref.id, status: "requested", message: "Refund request submitted. Admin review within 24 hours." };
     }
 
-    // ── get_care_plan_history ───────────────────────────────────────────────
-    if (name === "get_care_plan_history") {
-      // Canonical path: care_plans/{clientId}/versions (bug-audit §6.1). clientId
-      // is session-injected, so history is always scoped to the caller's own plan.
-      const { clientId: cpClientId } = input as Record<string, string | undefined>;
-      if (!cpClientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
-      const cpLimit = Math.min((input.limit as number) ?? 5, 10);
-      const cpSnap = await db.collection("care_plans").doc(cpClientId)
-        .collection("versions")
-        .orderBy("savedAt", "desc")
-        .limit(cpLimit)
-        .get();
-      if (cpSnap.empty) return { versions: [], message: "No revision history yet." };
-      return {
-        versions: cpSnap.docs.map(d => ({
-          versionId:  d.id,
-          savedAt:    d.data().savedAt,
-          changedBy:  d.data().changedBy,
-          summary:    d.data().summary,
-        })),
-      };
-    }
-
-    // ── restore_care_plan_version ───────────────────────────────────────────
-    if (name === "restore_care_plan_version") {
-      // Canonical path: care_plans/{clientId} + its versions subcollection
-      // (bug-audit §6.1/§6.2). clientId is session-injected, and the version is
-      // read from THIS client's own subcollection — so a model-supplied versionId
-      // can only ever address the caller's own plan (cross-household restore is
-      // prevented by construction; no separate ownership check needed).
-      const { versionId: rVersionId, clientId: rClientId } = input as Record<string, string | undefined>;
-      if (!rVersionId || !rClientId) return toolError("INVALID_INPUT", "versionId is required (clientId auto-injected from session)");
-      const rVersionDoc = await db.collection("care_plans").doc(rClientId)
-        .collection("versions").doc(rVersionId).get();
-      if (!rVersionDoc.exists) return toolError("NOT_FOUND", "Version not found");
-      const rVersionData = rVersionDoc.data()!;
-      const rPlan = (rVersionData.carePlan ?? rVersionData) as Record<string, unknown>;
-      // Overwrite the live plan with the snapshot. This write fires
-      // onCarePlanWrite, which records the restored state as the newest version —
-      // and the pre-restore state is already in history (versioned when it was
-      // last edited), so no explicit "save before restore" is needed.
-      await db.collection("care_plans").doc(rClientId).set({ ...rPlan, updatedAt: nowIso });
-      logAudit({ eventType: "care_plan_restored", userId: rClientId, data: { source: "mcp:restore_care_plan_version", versionId: rVersionId } }).catch(() => {});
-      return { success: true, message: "Care plan restored to the selected version." };
-    }
-
     // ── request_shift_swap ──────────────────────────────────────────────────
     if (name === "request_shift_swap") {
       const { caregiverId, appointmentId, reason } = input as Record<string, string>;
@@ -8935,106 +8041,6 @@ async function executeToolCall(
       return { success: true, messagesMarkedRead };
     }
 
-    // ── like_journal_entry ──────────────────────────────────────────────────
-    if (name === "like_journal_entry") {
-      const { userId, entryId } = input as Record<string, unknown>;
-      if (!userId || !entryId) return toolError("INVALID_INPUT", "userId and entryId are required");
-      const entryRef = db.collection("care_journal").doc(entryId as string);
-      const entrySnap = await entryRef.get();
-      if (!entrySnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
-      await entryRef.set({
-        likedBy: admin.firestore.FieldValue.arrayUnion(userId),
-        likeCount: admin.firestore.FieldValue.increment(1),
-      }, { merge: true });
-      logAudit({ eventType: "journal_liked", userId: userId as string, data: { source: "mcp:like_journal_entry", entryId } }).catch(() => {});
-      return { success: true, liked: true };
-    }
-
-    // ── unlike_journal_entry ────────────────────────────────────────────────
-    if (name === "unlike_journal_entry") {
-      const { userId, entryId } = input as Record<string, unknown>;
-      if (!userId || !entryId) return toolError("INVALID_INPUT", "userId and entryId are required");
-      const entryRef = db.collection("care_journal").doc(entryId as string);
-      await entryRef.set({
-        likedBy: admin.firestore.FieldValue.arrayRemove(userId),
-        likeCount: admin.firestore.FieldValue.increment(-1),
-      }, { merge: true });
-      logAudit({ eventType: "journal_unliked", userId: userId as string, data: { source: "mcp:unlike_journal_entry", entryId } }).catch(() => {});
-      return { success: true, unliked: true };
-    }
-
-    // ── comment_on_journal_entry ────────────────────────────────────────────
-    if (name === "comment_on_journal_entry") {
-      const { userId, entryId, comment } = input as Record<string, unknown>;
-      if (!userId || !entryId || !comment) return toolError("INVALID_INPUT", "userId, entryId, and comment are required");
-      const entryRef = db.collection("care_journal").doc(entryId as string);
-      const entrySnap = await entryRef.get();
-      if (!entrySnap.exists) return toolError("NOT_FOUND", "Care journal entry not found");
-      const commentRef = await entryRef.collection("comments").add({
-        userId,
-        comment: (comment as string).slice(0, 2000),
-        createdAt: nowIso,
-      });
-      await entryRef.set({ commentCount: admin.firestore.FieldValue.increment(1) }, { merge: true }).catch(() => {});
-      // Best-effort notify caregiver so the comment actually reaches them.
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
-      const entry = entrySnap.data()!;
-      if (entry.caregiverId) {
-        const cgSnap = await db.collection("caregivers").doc(entry.caregiverId as string).get();
-        const cgPhone = cgSnap.data()?.phone as string | undefined;
-        if (cgPhone) {
-          const { trySend } = await import("../utils/toolNotify");
-          notification = await trySend(cgPhone, `New comment on your care journal entry: "${(comment as string).slice(0, 120)}"`, "mcp:comment_on_journal_entry");
-        }
-      }
-      logAudit({ eventType: "journal_comment_added", userId: userId as string, data: { source: "mcp:comment_on_journal_entry", entryId, commentId: commentRef.id, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, commentId: commentRef.id, notification };
-    }
-
-    // ── delete_comment ──────────────────────────────────────────────────────
-    if (name === "delete_comment") {
-      const { userId, entryId, commentId } = input as Record<string, unknown>;
-      if (!userId || !entryId || !commentId) return toolError("INVALID_INPUT", "userId, entryId, and commentId are required");
-      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
-      const entryRef   = db.collection("care_journal").doc(entryId as string);
-      // Existence check, ownership check, delete, and the commentCount decrement
-      // run in one transaction so concurrent deletes of the same entry can't
-      // double-decrement (or drop the count) — they all commit or none do.
-      const outcome = await db.runTransaction(async (tx) => {
-        const snap = await tx.get(commentRef);
-        if (!snap.exists) return { error: "NOT_FOUND" as const };
-        if (snap.data()?.userId !== userId) return { error: "PERMISSION_DENIED" as const };
-        tx.delete(commentRef);
-        tx.set(entryRef, { commentCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
-        return { error: null };
-      });
-      if (outcome.error === "NOT_FOUND") return toolError("NOT_FOUND", "Comment not found.");
-      if (outcome.error === "PERMISSION_DENIED") return toolError("PERMISSION_DENIED", "You can only delete your own comments.");
-      logAudit({ eventType: "journal_comment_deleted", userId: userId as string, data: { source: "mcp:delete_comment", entryId, commentId } }).catch(() => {});
-      return { success: true, deleted: true };
-    }
-
-    // ── edit_comment ──────────────────────────────────────────────────────────
-    if (name === "edit_comment") {
-      const { userId, entryId, commentId, comment } = input as Record<string, unknown>;
-      if (!userId || !entryId || !commentId || !comment) return toolError("INVALID_INPUT", "userId, entryId, commentId, and comment are required");
-      const commentRef = db.collection("care_journal").doc(entryId as string).collection("comments").doc(commentId as string);
-      // Verify existence + author ownership in a transaction, then update the text.
-      let abort: { code: ToolErrorCode; message: string } | null = null;
-      await db.runTransaction(async (tx) => {
-        const snap = await tx.get(commentRef);
-        if (!snap.exists) { abort = { code: "NOT_FOUND", message: "Comment not found." }; return; }
-        if (snap.data()?.userId !== userId) { abort = { code: "PERMISSION_DENIED", message: "You can only edit your own comments." }; return; }
-        tx.update(commentRef, { comment: (comment as string).slice(0, 2000), editedAt: nowIso });
-      });
-      // Read through a cast: TS control-flow analysis can't see assignments made
-      // inside the transaction closure and would narrow `abort` to never here.
-      const abortResult = abort as { code: ToolErrorCode; message: string } | null;
-      if (abortResult) return toolError(abortResult.code, abortResult.message);
-      logAudit({ eventType: "journal_comment_edited", userId: userId as string, data: { source: "mcp:edit_comment", entryId, commentId } }).catch(() => {});
-      return { success: true, edited: true };
-    }
-
     // ── edit_review ─────────────────────────────────────────────────────────
     // Updates the family's own review. The caregiver's aggregate rating is kept
     // fresh by the `onReviewWritten` onWrite trigger (functions/src/index.ts),
@@ -9154,27 +8160,6 @@ async function executeToolCall(
         weeklyAvailability: ga.weeklyAvailability ?? {},
         preferredTimeOfDay: ga.preferredTimeOfDay ?? null,
       };
-    }
-
-    // ── update_reminder ─────────────────────────────────────────────────────
-    if (name === "update_reminder") {
-      const { phone: urPhone, triggerId: urTriggerId, label, recurrence, dayOfWeek, hour, minute, message: urMsg } =
-        input as Record<string, unknown>;
-      if (!urPhone || !urTriggerId) return toolError("INVALID_INPUT", "phone and triggerId are required");
-      const patch: Record<string, unknown> = {};
-      if (label      !== undefined) patch.label = label;
-      if (recurrence !== undefined) patch.recurrence = recurrence;
-      if (dayOfWeek  !== undefined) patch.dayOfWeek = dayOfWeek;
-      if (hour       !== undefined) patch.hour = hour;
-      if (minute     !== undefined) patch.minute = minute;
-      if (urMsg      !== undefined) patch.message = urMsg;
-      if (Object.keys(patch).length === 0) {
-        return toolError("INVALID_INPUT", "Provide at least one field to update (label, recurrence, dayOfWeek, hour, minute, or message).");
-      }
-      const { updateUserTrigger } = await import("../triggers/userTriggerManager");
-      const updated = await updateUserTrigger(urPhone as string, urTriggerId as string, patch as Parameters<typeof updateUserTrigger>[2]);
-      if (!updated) return toolError("NOT_FOUND", "Reminder not found or does not belong to this user");
-      return { success: true, updated: true, triggerId: urTriggerId };
     }
 
     // ── update_care_journal_entry ───────────────────────────────────────────
@@ -9527,7 +8512,7 @@ async function executeToolCall(
         if (shouldAlertForToolFailure(errorReason)) {
           await createCaraOpsAlert({
             type: "cara_tool_failed",
-            severity: name === "perform_web_action" ? "high" : "medium",
+            severity: "medium",
             phone: stringInput(input, "phone"),
             userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
             role: stringInput(input, "userType") ?? stringInput(input, "role"),
@@ -9558,7 +8543,7 @@ async function executeToolCall(
       }).catch((ledgerErr) => console.warn("MCP ledger failure write failed", { name, ledgerErr }));
       await createCaraOpsAlert({
         type: "cara_tool_exception",
-        severity: name === "perform_web_action" ? "high" : "medium",
+        severity: "medium",
         phone: stringInput(input, "phone"),
         userId: stringInput(input, "userId") ?? stringInput(input, "clientId") ?? stringInput(input, "caregiverId"),
         role: stringInput(input, "userType") ?? stringInput(input, "role"),

@@ -29,7 +29,7 @@ import {
   INTENT_CAPABILITIES,
   findUntaggedTools,
 } from "./toolCapabilities";
-import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS, handleToolCall } from "../mcp/server";
+import { MCP_TOOLS, IDEMPOTENT_CONFIRMED_TOOLS } from "../mcp/server";
 import { LAUNCH_ACTION_PARITY } from "./launchActionParity";
 import { CONTRACT_COLLECTIONS } from "../data/contract";
 import { isHighRisk } from "./pendingActions";
@@ -38,12 +38,18 @@ import { isHighRisk } from "./pendingActions";
 const names = (tools: { name: string }[]) => new Set(tools.map(t => t.name));
 
 describe("selectToolsForIntent", () => {
-  it("removes medical tools from broad and unclassified launch turns", () => {
+  // search_web/perform_web_action/search_healthcare_provider/fetch_web_page/
+  // browse_web/manage_credentials (the real-world browser-automation family),
+  // healthcareHandler.ts's intent-routed flow, and schedulingHandler.ts's
+  // reminder flow were all removed entirely 2026-09-05 — no site equivalent
+  // for any of it, confirmed by the client-tool capability audit.
+  // selectToolsForIntent no longer has a medical-tool filter at all.
+  it("has no medical tools left to filter (the whole feature is gone)", () => {
     for (const intent of [null, undefined] as const) {
       const filtered = names(selectToolsForIntent(MCP_TOOLS, intent));
       expect(filtered.has("perform_web_action")).toBe(false);
       expect(filtered.has("search_healthcare_provider")).toBe(false);
-      expect(filtered.has("search_web")).toBe(true);
+      expect(filtered.has("get_care_journal")).toBe(true);
     }
   });
 
@@ -56,13 +62,6 @@ describe("selectToolsForIntent", () => {
     }
   });
 
-  it("rejects direct medical tool dispatch while the launch flag is off", async () => {
-    delete process.env.FEATURE_REAL_WORLD_HEALTHCARE_ACTIONS;
-    await expect(handleToolCall("perform_web_action", {
-      loginAction: "pharmacy_refill",
-    })).resolves.toMatchObject({ _toolError: true, code: "MEDICAL_ACTIONS_DISABLED" });
-  });
-
   it("filters down to booking-relevant tools for FIND_CAREGIVER", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "FIND_CAREGIVER"));
     expect(filtered.has("find_replacement_caregivers")).toBe(true);
@@ -72,7 +71,7 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("get_invoice_history")).toBe(false);
     expect(filtered.has("create_refund_request")).toBe(false);
     // Memory write tools should NOT be included
-    expect(filtered.has("search_web")).toBe(false);
+    expect(filtered.has("search_memory")).toBe(false);
   });
 
   it("filters down to billing-only tools for VIEW_INVOICE", () => {
@@ -119,17 +118,20 @@ describe("selectToolsForIntent", () => {
   });
 
   it("scopes CREDENTIAL_MANAGEMENT to memory_search only", () => {
+    // manage_credentials (the only tool this intent ever targeted) was removed
+    // 2026-09-05 — no site equivalent existed for a stored-portal-login vault.
+    // The memory_search bucket now holds only memory-file tools.
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "CREDENTIAL_MANAGEMENT"));
-    expect(filtered.has("manage_credentials")).toBe(true);
     expect(filtered.has("read_memory_file")).toBe(true);
     expect(filtered.has("request_booking")).toBe(false);
     expect(filtered.has("get_invoice_history")).toBe(false);
   });
 
   it("scopes SCHEDULE_REQUEST to scheduling only — no booking or billing", () => {
+    // create_reminder/list_user_reminders (and schedulingHandler.ts, the
+    // conversational path that used to also reach personal reminders) were
+    // removed entirely 2026-09-05 — no site equivalent.
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "SCHEDULE_REQUEST"));
-    expect(filtered.has("create_reminder")).toBe(true);
-    expect(filtered.has("list_user_reminders")).toBe(true);
     expect(filtered.has("schedule_followup")).toBe(true);
     expect(filtered.has("request_booking")).toBe(false);
     expect(filtered.has("get_invoice_history")).toBe(false);
@@ -209,7 +211,6 @@ describe("LAUNCH_ACTION_PARITY", () => {
     "get_senior_profile",
     "list_household_seniors",
     "get_pending_tasks",
-    "get_work_in_progress",
     "suggest_upcoming_care",
     "get_care_team",
     "create_support_ticket",
@@ -352,9 +353,9 @@ describe("LAUNCH_ACTION_PARITY", () => {
 describe("IDEMPOTENT_CONFIRMED_TOOLS (U7 guard)", () => {
   // Representative input that puts each conditionally-high-risk tool into its
   // gated state. A tool whose risk is unconditional needs no entry here.
-  const HIGH_RISK_INPUT: Record<string, Record<string, unknown>> = {
-    perform_web_action: { loginAction: "pharmacy_refill" },
-  };
+  // Currently empty — perform_web_action (the one entry that needed this) was
+  // removed 2026-09-05; add a future entry here if one is needed.
+  const HIGH_RISK_INPUT: Record<string, Record<string, unknown>> = {};
 
   it("every entry is a real MCP tool", () => {
     const realNames = new Set(MCP_TOOLS.map(t => t.name));

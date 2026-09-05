@@ -44,14 +44,14 @@ describe("shadow/dry-run isolation (U11)", () => {
   beforeEach(() => hoisted.reset());
 
   it("synthesizes a mutating tool under shadowMode with NO write", async () => {
-    const r = await handleToolCall("create_reminder", { phone: "+1", text: "x", userId: "u1" }, true) as any;
+    const r = await handleToolCall("remove_family_member", { phone: "+1", seniorId: "s1", clientId: "c1", memberPhone: "+15551234567" }, true) as any;
     expect(r._shadow).toBe(true);
-    expect(r.simulated).toBe("create_reminder");
+    expect(r.simulated).toBe("remove_family_member");
     expect(hoisted.writes.length).toBe(0);
   });
 
   it("synthesizes a high-risk gated tool under shadowMode (gate never reached, no pending_actions write)", async () => {
-    const r = await handleToolCall("cancel_appointment", { phone: "+1", appointmentId: "a1" }, true) as any;
+    const r = await handleToolCall("cancel_job_post", { phone: "+1", jobId: "j1" }, true) as any;
     expect(r._shadow).toBe(true);
     expect(hoisted.writes.find(w => w.path.startsWith("pending_actions"))).toBeUndefined();
   });
@@ -62,7 +62,7 @@ describe("shadow/dry-run isolation (U11)", () => {
   });
 
   it("executes mutating tools normally when shadowMode is off (regression)", async () => {
-    const r = await handleToolCall("create_reminder", { phone: "+1", text: "x", userId: "u1" }, false) as any;
+    const r = await handleToolCall("remove_family_member", { phone: "+1", seniorId: "s1", clientId: "c1", memberPhone: "+15551234567" }, false) as any;
     expect(r?._shadow).toBeUndefined();
   });
 
@@ -72,10 +72,9 @@ describe("shadow/dry-run isolation (U11)", () => {
     // family and writes interview_requests + session state — a shadow run was
     // sending real SMS while it sat on the read-only allowlist. It is mutating.
     expect(isReadOnlyTool("find_replacement_caregivers")).toBe(false);
-    expect(isReadOnlyTool("create_reminder")).toBe(false);
-    expect(isReadOnlyTool("cancel_appointment")).toBe(false);
-    expect(isReadOnlyTool("pause_account")).toBe(false);
-    expect(isReadOnlyTool("perform_web_action")).toBe(false);
+    expect(isReadOnlyTool("remove_family_member")).toBe(false);
+    expect(isReadOnlyTool("cancel_job_post")).toBe(false);
+    expect(isReadOnlyTool("manage_booking")).toBe(false);
   });
 
   it("synthesizes find_replacement_caregivers under shadowMode — never texts the family", async () => {

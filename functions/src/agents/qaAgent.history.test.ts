@@ -316,11 +316,13 @@ describe("skip-flag call sites — source-level guarantees", () => {
   const qaSrc = fs.readFileSync(path.resolve(__dirname, "qaAgent.ts"), "utf8");
   const trackerSrc = fs.readFileSync(path.resolve(__dirname, "commitmentTracker.ts"), "utf8");
 
-  it("the three saveConversationTurn-backed sends and the filler pass skipHistoryRecord", () => {
+  it("the three saveConversationTurn-backed sends pass skipHistoryRecord", () => {
+    // The mid-loop browse-action filler ("On it — give me a moment.") was
+    // removed 2026-09-05 along with perform_web_action itself (no site
+    // equivalent) — only these three call sites remain.
     expect(qaSrc).toContain("await sendSplit(chatId, reply, { skipHistoryRecord: true });");          // main reply
     expect(qaSrc).toContain("await sendSplit(chatId, resumedReply, { skipHistoryRecord: true });");   // checkpoint resume
     expect(qaSrc).toContain("buildClickableMessage(reply), { skipHistoryRecord: true })");            // runQuickReply
-    expect(qaSrc).toContain('sendSplit(chatId, "On it — give me a moment.", { skipHistoryRecord: true })'); // mid-loop filler
   });
 
   it("sendSplit itself never sets the flag — it only forwards caller opts", () => {

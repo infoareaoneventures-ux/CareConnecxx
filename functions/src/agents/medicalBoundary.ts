@@ -1,13 +1,9 @@
-import { realWorldHealthcareActionsEnabled } from "../config/featureFlags";
-
-export const MEDICAL_TOOL_NAMES = new Set([
-  "perform_web_action",
-  "search_healthcare_provider",
-]);
-
-export function medicalActionsAvailable(): boolean {
-  return realWorldHealthcareActionsEnabled();
-}
+// The real-world healthcare/browser-automation feature this file used to
+// gate (perform_web_action, search_healthcare_provider, and the
+// startHealthcareFlow/resumeHealthcareFlow conversation flow) was removed
+// entirely 2026-09-05 — the site has no medical-appointment/pharmacy feature
+// of any kind. Evia now always deflects these intents; this file's only
+// remaining job is producing that deflection message.
 
 export function buildNonMedicalDeflection(intent: string, text: string): string {
   const immediateDanger = /\b(911|emergency|immediate danger|not breathing|unconscious)\b/i.test(text);

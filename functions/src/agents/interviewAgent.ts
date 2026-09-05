@@ -144,9 +144,30 @@ export async function handleInterviewSelection(
   const relationship = (intake.relationship ?? "family") as string;
   const age         = intake.age ?? "";
 
+  // 2026-09-05: pendingMatches is never cleared below until now, so a family
+  // that replies with the same selection twice in one conversation (e.g. "2"
+  // again after a later unrelated "which caregiver?" prompt) used to re-run
+  // this whole function a second time — a second interview_requests doc and a
+  // second real SMS to the caregiver for the exact same request, live-caught
+  // via a duplicated "didn't respond in time" notification later. Skip any
+  // caregiver who already has a non-terminal request from this client.
+  const NON_TERMINAL_STATUSES = new Set(["awaiting_caregiver_availability", "pending_presentation"]);
+  const existingReqsSnap = await db.collection("interview_requests")
+    .where("clientPhone", "==", phone)
+    .get();
+  const caregiverIdsAlreadyRequested = new Set(
+    existingReqsSnap.docs
+      .filter((d) => NON_TERMINAL_STATUSES.has(d.data().status))
+      .map((d) => d.data().caregiverId)
+      .filter(Boolean)
+  );
+
+  let anyNewRequestSent = false;
   for (const idx of selected) {
     const match = matches[idx - 1];
     if (!match) continue;
+    if (caregiverIdsAlreadyRequested.has(match.id)) continue;
+    anyNewRequestSent = true;
 
     // Create interview request doc
     await db.collection("interview_requests").add({
@@ -175,10 +196,22 @@ export async function handleInterviewSelection(
     await sendMessage(caregiverSession.chatId, caregiverReachOutMsg);
   }
 
+  // Clear pendingMatches now that this selection has been acted on — leaving
+  // it set let the SAME "1"/"2" reply re-run this whole function again later
+  // in the conversation (see the dedup guard above for what that caused).
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingMatches:      admin.firestore.FieldValue.delete(),
+    pendingMatchesSetAt: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+
   const reachedOutMsg = await generateCaraMessage({
     audience: "family",
-    context:  `Evia just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`,
-    fallback: `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\nI'll text you as soon as I hear back with their availability.`,
+    context:  anyNewRequestSent
+      ? `Evia just contacted ${selected.length} ${selected.length === 1 ? "caregiver" : "caregivers"} on the family's behalf. Let them know and say you'll text as soon as you hear back with availability.`
+      : "The family selected caregiver(s) Evia had already reached out to for this same request. Let them know you've already contacted this caregiver and are still waiting to hear back — don't say you just reached out again.",
+    fallback: anyNewRequestSent
+      ? `I've reached out to ${selected.length === 1 ? "that caregiver" : "those caregivers"} on your behalf.\n\nI'll text you as soon as I hear back with their availability.`
+      : "I've already reached out about that one — still waiting to hear back. I'll let you know as soon as I do.",
     maxTokens: 80,
   });
   await sendMessage(chatId, reachedOutMsg);

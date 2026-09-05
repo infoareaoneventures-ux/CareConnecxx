@@ -1,6 +1,5 @@
 import type { Intent } from "./intentClassifier";
 import type { McpTool } from "../mcp/server";
-import { MEDICAL_TOOL_NAMES, medicalActionsAvailable } from "./medicalBoundary";
 
 // Six capability buckets used to filter the 80+ MCP tools before each Sonnet
 // turn. The goal is to reduce the tool surface Claude has to attend to per
@@ -31,8 +30,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
   get_caregiver_appointments:   ["booking", "scheduling"],
-  cancel_appointment:           ["booking"],
-  reschedule_appointment:       ["booking", "scheduling"],
   schedule_interview:           ["booking"],
   respond_to_interview_request: ["booking"],
   submit_interview_feedback:    ["booking"],
@@ -65,10 +62,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_recurring_schedule:        ["scheduling"],
   modify_recurring_schedule:     ["scheduling"],
   manage_recurring_schedule:     ["scheduling"],
-  list_user_reminders:           ["scheduling"],
-  create_reminder:               ["scheduling"],
-  update_reminder:               ["scheduling"],  // CRUD: reminder UPDATE
-  delete_reminder:               ["scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
   get_caregiver_availability:    ["scheduling"],
@@ -100,10 +93,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_care_journal_entry: ["care_plan"],
   get_care_plan:             ["care_plan"],
   update_care_plan:          ["care_plan"],
-  get_care_plan_history:     ["care_plan"],
-  restore_care_plan_version: ["care_plan"],
-  get_health_signals:        ["care_plan"],
-  log_health_flag:           ["care_plan"],
   create_senior_profile:     ["care_plan"],
   remove_care_recipient:     ["care_plan"],
   // U7
@@ -113,11 +102,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   create_job_post:           ["booking"],
   list_proactive_drafts:     ["scheduling"],
   cancel_proactive_draft:    ["scheduling"],
-  like_journal_entry:        ["care_plan", "messaging"],
-  unlike_journal_entry:      ["care_plan", "messaging"],
-  comment_on_journal_entry:  ["care_plan", "messaging"],
-  edit_comment:              ["care_plan", "messaging"],  // CRUD: journal-comment UPDATE
-  delete_comment:            ["care_plan", "messaging"],
   edit_review:               ["booking"],
   cancel_followup:           ["scheduling"],
   update_caregiver_profile:  ["care_plan"],
@@ -169,19 +153,12 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   list_blocked_users:     ["messaging"],
   list_shift_swaps:       ["booking", "scheduling", "messaging"],
 
-  // ── memory_search (memory files, web actions, credentials) ──────────────
+  // ── memory_search (memory files) ─────────────────────────────────────────
   read_memory_file:   ["memory_search"],
   update_memory_file: ["memory_search"],
   edit_memory_file:   ["memory_search"],
   delete_memory_file: ["memory_search"],
   search_memory:      ["memory_search"],
-  search_web:         ["memory_search"],
-  perform_web_action: ["memory_search"],
-  manage_credentials: ["memory_search"],
-  // U9: public web primitives decomposed from perform_web_action
-  search_healthcare_provider: ["memory_search"],
-  fetch_web_page:             ["memory_search"],
-  browse_web:                 ["memory_search"],
 
   // Note: untagged tools are "core" and always included.
   // Core tools:
@@ -196,9 +173,6 @@ export const CORE_TOOL_NAMES = new Set<string>([
   "get_senior_profile",
   "list_household_seniors",
   "get_pending_tasks",
-  // Unified WIP view — like get_pending_tasks, an orientation read the agent
-  // may need under any intent ("what are you working on for me?").
-  "get_work_in_progress",
   "suggest_upcoming_care",
   "get_care_team",
   "create_support_ticket",
@@ -329,11 +303,10 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 // instruction (see qaAgent.ts), instead of the soft buildToolResultContent
 // path used for read-only lookups. Curated rather than prefix-derived so
 // adding a tool here is a deliberate decision; genuinely low-stakes writes
-// (journal likes/comments, memory notes Evia already echoes back) are
-// intentionally excluded.
+// (memory notes Evia already echoes back) are intentionally excluded.
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
-  "request_booking", "reschedule_appointment", "cancel_appointment",
+  "request_booking",
   "manage_recurring_schedule", "modify_recurring_schedule", "initiate_client_swap",
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
@@ -348,14 +321,14 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // people & safety
   "add_family_member", "remove_family_member", "set_block_status",
   // care data
-  "update_senior_profile", "update_care_plan", "restore_care_plan_version",
-  "create_care_journal_entry", "log_health_flag",
+  "update_senior_profile", "update_care_plan",
+  "create_care_journal_entry",
   // profiles & account
   "update_user_profile", "update_communication_preferences",
   "update_caregiver_profile", "update_caregiver_availability",
   "pause_account", "reactivate_account", "delete_account",
   // reminders & follow-ups
-  "create_reminder", "delete_reminder", "schedule_followup", "cancel_followup",
+  "schedule_followup", "cancel_followup",
   // message relays (family/caregiver believe a message was delivered)
   "send_caregiver_message", "send_client_message",
   // CRUD/parity gap closures (agent-native audit 2026-07) — falsely reporting
@@ -386,9 +359,10 @@ export function selectToolsForIntent(
   allTools: McpTool[],
   intent: Intent | null | undefined,
 ): McpTool[] {
-  const launchTools = medicalActionsAvailable()
-    ? allTools
-    : allTools.filter(tool => !MEDICAL_TOOL_NAMES.has(tool.name));
+  // Real-world healthcare/browser-automation tools were removed entirely
+  // 2026-09-05 (no site equivalent) — there is no longer a medical-tool
+  // allowlist to filter here.
+  const launchTools = allTools;
   if (!intent) return launchTools;
 
   const required = INTENT_CAPABILITIES[intent];

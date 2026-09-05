@@ -218,44 +218,6 @@ describe("missing CRUD tools", () => {
     });
   });
 
-  describe("update_reminder", () => {
-    it("requires phone and triggerId", async () => {
-      const r = await handleToolCall("update_reminder", { phone: "+15555550001" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("requires at least one field to update", async () => {
-      const r = await handleToolCall("update_reminder", { phone: "+15555550001", triggerId: "t1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-
-    it("returns NOT_FOUND when the reminder belongs to another phone", async () => {
-      hoisted.docState.set("user_triggers/t1", { phone: "+15550009999", recurrence: "daily", hour: 8, minute: 0 });
-      const r = await handleToolCall("update_reminder", { phone: "+15555550001", triggerId: "t1", hour: 9 }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("NOT_FOUND");
-    });
-
-    it("updates the field and recomputes nextFireAt when the schedule changes", async () => {
-      hoisted.docState.set("user_triggers/t1", { phone: "+15555550001", recurrence: "daily", hour: 8, minute: 0, nextFireAt: "2026-01-01T08:00:00.000Z" });
-      const r = await handleToolCall("update_reminder", { phone: "+15555550001", triggerId: "t1", hour: 9 }) as any;
-      expect(r.success).toBe(true);
-      expect(r.updated).toBe(true);
-      const upd = hoisted.updates.find(u => u.path === "user_triggers/t1");
-      expect(upd?.data.hour).toBe(9);
-      expect(upd?.data.nextFireAt).toBeDefined();
-    });
-
-    it("does not recompute nextFireAt for a label-only change", async () => {
-      hoisted.docState.set("user_triggers/t1", { phone: "+15555550001", recurrence: "daily", hour: 8, minute: 0 });
-      await handleToolCall("update_reminder", { phone: "+15555550001", triggerId: "t1", label: "new label" });
-      const upd = hoisted.updates.find(u => u.path === "user_triggers/t1");
-      expect(upd?.data.label).toBe("new label");
-      expect(upd?.data.nextFireAt).toBeUndefined();
-    });
-  });
-
   describe("update_care_journal_entry", () => {
     it("requires caregiverId and entryId", async () => {
       const r = await handleToolCall("update_care_journal_entry", { caregiverId: "cg1" }) as any;

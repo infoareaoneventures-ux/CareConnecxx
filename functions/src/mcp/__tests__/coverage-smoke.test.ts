@@ -182,32 +182,6 @@ vi.mock("../../stripe", () => ({
   }),
 }));
 
-vi.mock("../../browser/careWebActions", () => ({
-  searchHealthcareProvider: vi.fn().mockResolvedValue({ providers: [] }),
-  fetchHealthcarePage:    vi.fn().mockResolvedValue({ content: "" }),
-  performBrowserAction:   vi.fn().mockResolvedValue({ success: true, data: "ok" }),
-  findAppointmentSlots:   vi.fn().mockResolvedValue({ slots: [] }),
-  bookAppointmentSlot:    vi.fn().mockResolvedValue({ status: "scheduled" }),
-  scheduleDoctorAppointment: vi.fn().mockResolvedValue({ status: "scheduled" }),
-  requestPharmacyRefill:  vi.fn().mockResolvedValue({ status: "requested" }),
-  checkInsuranceAuthorization: vi.fn().mockResolvedValue({ status: "verified" }),
-}));
-
-vi.mock("../../browser/browserbaseClient", () => ({
-  searchWeb: vi.fn().mockResolvedValue([{ title: "Result", url: "https://x", snippet: "..." }]),
-}));
-
-vi.mock("../../browser/credentialCollector", () => ({
-  startCredentialCollection: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("../../browser/credentialVault", () => ({
-  storeCredential: vi.fn().mockResolvedValue(undefined),
-  hasCredential:   vi.fn().mockResolvedValue(true),
-  listCredentials: vi.fn().mockResolvedValue([{ service: "mychart" }]),
-  deleteCredential: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("../../utils/toolNotify", () => ({
   trySend:        vi.fn().mockResolvedValue({ sent: true }),
   trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
@@ -411,13 +385,6 @@ describe("MCP tool smoke coverage", () => {
     expect(((await handleToolCall("get_checkr_report", { caregiverId: "cg1" })) as any)._toolError).toBe(true);
   });
 
-  it("get_health_signals happy path", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
-    hoisted.collState.set("health_signals", []);
-    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
-    expect(r.success).toBe(true);
-  });
-
   it("get_recurring_schedule returns null when no schedule", async () => {
     hoisted.collState.set("recurring_schedules", []);
     const r = await handleToolCall("get_recurring_schedule", { clientId: "c1" }) as any;
@@ -445,40 +412,6 @@ describe("MCP tool smoke coverage", () => {
     expect(r.success).toBe(true);
   });
 
-  // ── Reminders ────────────────────────────────────────────────────────────
-  it("list_user_reminders happy path", async () => {
-    hoisted.collState.set("user_triggers", []);
-    const r = await handleToolCall("list_user_reminders", { phone: "+15555550000" }) as any;
-    expect(r.success).toBe(true);
-  });
-
-  it("create_reminder happy path", async () => {
-    const r = await handleToolCall("create_reminder", {
-      phone: "+15555550000", userId: "u1", label: "Take meds",
-      recurrence: "daily", hour: 9, minute: 0, message: "Time to take meds!",
-    }) as any;
-    expect(r.success).toBe(true);
-  });
-
-  it("create_reminder rejects missing inputs", async () => {
-    const r = await handleToolCall("create_reminder", { phone: "+15555550000" }) as any;
-    expect(r._toolError).toBe(true);
-  });
-
-  // ── Web ──────────────────────────────────────────────────────────────────
-  it("search_web returns a results array", async () => {
-    const r = await handleToolCall("search_web", { query: "pharmacies near 11201" }) as any;
-    expect(r.results).toBeDefined();
-    expect(Array.isArray(r.results)).toBe(true);
-  });
-
-  it("perform_web_action (browse) returns a structured result", async () => {
-    const r = await handleToolCall("perform_web_action", { task: "look up hours", actionType: "browse" }) as any;
-    // Tool returns something with either success or error — must not throw
-    expect(r).toBeDefined();
-    expect(typeof r).toBe("object");
-  });
-
   // ── Tasks / preferences ──────────────────────────────────────────────────
   it("get_pending_tasks happy path", async () => {
     hoisted.collState.set("agent_tasks", []);
@@ -490,12 +423,6 @@ describe("MCP tool smoke coverage", () => {
   it("update_preferences happy path", async () => {
     const r = await handleToolCall("update_preferences", { userId: "u1", dndEnabled: true, dndStart: "22:00", dndEnd: "07:00" }) as any;
     expect(r.success).toBe(true);
-  });
-
-  it("manage_credentials list returns credentials array", async () => {
-    const r = await handleToolCall("manage_credentials", { userId: "u1", action: "list" }) as any;
-    expect(r.credentials).toBeDefined();
-    expect(Array.isArray(r.credentials)).toBe(true);
   });
 
   // ── Reviews + care plan ──────────────────────────────────────────────────
@@ -558,19 +485,6 @@ describe("MCP tool smoke coverage", () => {
 
   // ── Notification surfacing — invariant checks ─────────────────────────────
   describe("CRUD-gap tools (U15)", () => {
-    it("delete_comment removes the author's comment", async () => {
-      hoisted.docState.set("care_journal/e1/comments/c1", { userId: "u1", comment: "hi" });
-      const r = await handleToolCall("delete_comment", { userId: "u1", entryId: "e1", commentId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.deleted).toBe(true);
-    });
-
-    it("delete_comment refuses a non-author", async () => {
-      hoisted.docState.set("care_journal/e1/comments/c1", { userId: "u1" });
-      const r = await handleToolCall("delete_comment", { userId: "other", entryId: "e1", commentId: "c1" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
     it("edit_review updates the author's review", async () => {
       hoisted.docState.set("reviews/r1", { clientId: "c1", rating: 3 });
       const r = await handleToolCall("edit_review", { clientId: "c1", reviewId: "r1", rating: 5 }) as any;
@@ -681,14 +595,6 @@ describe("MCP tool smoke coverage", () => {
 
   describe("notification surfacing invariant", () => {
     it("refactored tools always return a notification field with sent boolean", async () => {
-      // cancel_appointment (high-risk — _confirmedActionId bypasses HITL gate;
-      // U12 validates it against a real pending doc, so seed one).
-      hoisted.docState.set("pending_actions/test", { toolName: "cancel_appointment", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
-      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1" });
-      hoisted.docState.set("caregivers/cg1", { phone: "+15555550101" });
-      const cancel = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "test" }) as any;
-      expect(typeof cancel.notification.sent).toBe("boolean");
-
       // send_caregiver_message
       hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
@@ -701,9 +607,9 @@ describe("MCP tool smoke coverage", () => {
       // (awaiting/approved, unexpired) pending doc. An "executed" doc is already
       // resolved, so the gate must refuse with PERMISSION_DENIED rather than
       // re-running the irreversible action.
-      hoisted.docState.set("pending_actions/done", { toolName: "cancel_appointment", status: "executed", expiresAt: "2999-01-01T00:00:00.000Z" });
-      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "confirmed", caregiverId: "cg1" });
-      const r = await handleToolCall("cancel_appointment", { appointmentId: "a1", clientId: "c1", _confirmedActionId: "done" }) as any;
+      hoisted.docState.set("pending_actions/done", { toolName: "remove_family_member", status: "executed", expiresAt: "2999-01-01T00:00:00.000Z" });
+      hoisted.docState.set("senior_profiles/s1", { userId: "c1", familyMembers: [] });
+      const r = await handleToolCall("remove_family_member", { seniorId: "s1", clientId: "c1", memberPhone: "+15551234567", _confirmedActionId: "done" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });

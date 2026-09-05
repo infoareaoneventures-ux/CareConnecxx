@@ -106,10 +106,7 @@ beforeEach(() => {
 
 describe("isHighRisk", () => {
   it("flags always-confirm tools regardless of input", () => {
-    expect(isHighRisk("cancel_appointment",       { appointmentId: "x" })).toBe(true);
     expect(isHighRisk("remove_family_member",     { memberPhone: "x" })).toBe(true);
-    expect(isHighRisk("restore_care_plan_version", { versionId: "x" })).toBe(true);
-    expect(isHighRisk("delete_reminder",          { reminderId: "x" })).toBe(true);
     expect(isHighRisk("cancel_job_post",          { jobId: "x" })).toBe(true);
     expect(isHighRisk("delete_account",           {})).toBe(true);
   });
@@ -127,7 +124,6 @@ describe("isHighRisk", () => {
     expect(isHighRisk("get_senior_profile",       { seniorId: "x" })).toBe(false);
     expect(isHighRisk("request_booking",          { caregiverId: "x" })).toBe(false);
     expect(isHighRisk("send_caregiver_message",   { caregiverId: "x", body: "hi" })).toBe(false);
-    expect(isHighRisk("create_reminder",          { text: "x" })).toBe(false);
   });
 
   it("conditionally flags manage_recurring_schedule only on cancel", () => {
@@ -169,7 +165,6 @@ describe("isHighRisk", () => {
 
 describe("buildActionPreview", () => {
   it("produces human-readable previews for known tools", () => {
-    expect(buildActionPreview("cancel_appointment",   { appointmentId: "appt_123" })).toBe("Cancel appointment appt_123");
     expect(buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
     expect(buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
     expect(buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
@@ -181,8 +176,7 @@ describe("buildActionPreview", () => {
   });
 
   it("handles missing ID fields gracefully", () => {
-    expect(buildActionPreview("cancel_appointment", {})).toBe("Cancel appointment ?");
-    expect(buildActionPreview("delete_reminder", {})).toBe("Delete reminder ?");
+    expect(buildActionPreview("remove_family_member", {})).toBe("Remove family member ?");
   });
 });
 
@@ -192,17 +186,17 @@ describe("proposePendingAction", () => {
     const action = await proposePendingAction({
       phone:     "+15550001111",
       userId:    "user-1",
-      toolName:  "cancel_appointment",
-      toolInput: { appointmentId: "appt_123" },
+      toolName:  "remove_family_member",
+      toolInput: { memberPhone: "+15559876543" },
     });
     const after = Date.now();
 
     expect(action.id).toMatch(/^pa_/);
     expect(action.phone).toBe("+15550001111");
     expect(action.userId).toBe("user-1");
-    expect(action.toolName).toBe("cancel_appointment");
+    expect(action.toolName).toBe("remove_family_member");
     expect(action.status).toBe("awaiting");
-    expect(action.preview).toBe("Cancel appointment appt_123");
+    expect(action.preview).toBe("Remove family member +15559876543");
 
     const expiresAt = new Date(action.expiresAt).getTime();
     const proposedAt = new Date(action.proposedAt).getTime();
@@ -218,7 +212,7 @@ describe("getLatestPending", () => {
   });
 
   it("returns the most-recent awaiting action for the phone", async () => {
-    await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment",  toolInput: { appointmentId: "a1" } });
+    await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member",  toolInput: { memberPhone: "a1" } });
     await new Promise((r) => setTimeout(r, 5)); // ensure timestamps differ
     const newer = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_subscription", toolInput: {} });
 
@@ -230,8 +224,8 @@ describe("getLatestPending", () => {
   it("returns null and lazily expires a stale awaiting doc", async () => {
     const action = await proposePendingAction({
       phone:     "+15550001111",
-      toolName:  "cancel_appointment",
-      toolInput: { appointmentId: "a1" },
+      toolName:  "remove_family_member",
+      toolInput: { memberPhone: "a1" },
     });
     // Manually expire by overwriting expiresAt to the past
     const snap = hoisted.snapshot();
@@ -246,7 +240,7 @@ describe("getLatestPending", () => {
   });
 
   it("does not return actions for a different phone", async () => {
-    await proposePendingAction({ phone: "+15550009999", toolName: "cancel_appointment", toolInput: {} });
+    await proposePendingAction({ phone: "+15550009999", toolName: "remove_family_member", toolInput: {} });
     expect(await getLatestPending("+15550001111")).toBeNull();
   });
 });
@@ -257,18 +251,18 @@ describe("getAllPending", () => {
   });
 
   it("returns ALL awaiting actions for the phone, newest first", async () => {
-    const first = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment",  toolInput: { appointmentId: "a1" } });
+    const first = await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member",  toolInput: { memberPhone: "a1" } });
     await new Promise((r) => setTimeout(r, 5)); // ensure timestamps differ
     const second = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_subscription", toolInput: {} });
-    await proposePendingAction({ phone: "+15550009999", toolName: "delete_reminder", toolInput: { reminderId: "r1" } });
+    await proposePendingAction({ phone: "+15550009999", toolName: "cancel_job_post", toolInput: { jobId: "j1" } });
 
     const got = await getAllPending("+15550001111");
     expect(got.map((a) => a.id)).toEqual([second.id, first.id]);
   });
 
   it("lazily expires stale docs and excludes them from the result", async () => {
-    const live  = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_appointment", toolInput: { appointmentId: "a1" } });
-    const stale = await proposePendingAction({ phone: "+15550001111", toolName: "delete_reminder",    toolInput: { reminderId: "r1" } });
+    const live  = await proposePendingAction({ phone: "+15550001111", toolName: "remove_family_member", toolInput: { memberPhone: "a1" } });
+    const stale = await proposePendingAction({ phone: "+15550001111", toolName: "cancel_job_post",    toolInput: { jobId: "r1" } });
     const snap = hoisted.snapshot();
     hoisted.seed(snap.map(([id, data]) =>
       id === stale.id
@@ -287,7 +281,7 @@ describe("getAllPending", () => {
 describe("resolvePendingAction", () => {
   it("marks awaiting -> executed and stores executionPreview", async () => {
     const a = await proposePendingAction({
-      phone: "+15550001111", toolName: "cancel_appointment", toolInput: { appointmentId: "x" },
+      phone: "+15550001111", toolName: "remove_family_member", toolInput: { memberPhone: "x" },
     });
     await resolvePendingAction(a.id, "executed", { executionPreview: "{ ok: true }" });
 
@@ -303,7 +297,7 @@ describe("resolvePendingAction", () => {
 
   it("logs a warning and skips when status conflicts with the requested change", async () => {
     const a = await proposePendingAction({
-      phone: "+15550001111", toolName: "cancel_appointment", toolInput: {},
+      phone: "+15550001111", toolName: "remove_family_member", toolInput: {},
     });
     await resolvePendingAction(a.id, "executed");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -320,9 +314,9 @@ describe("buildPendingActionStub", () => {
     const action: PendingAction = {
       id:         "pa_42",
       phone:      "+15550001111",
-      toolName:   "cancel_appointment",
+      toolName:   "remove_family_member",
       toolInput:  {},
-      preview:    "Cancel appointment appt_123",
+      preview:    "Remove family member +15559876543",
       proposedAt: new Date(Date.now()).toISOString(),
       expiresAt:  new Date(Date.now() + 14 * 60_000).toISOString(),
       status:     "awaiting",
@@ -330,8 +324,8 @@ describe("buildPendingActionStub", () => {
     const stub = buildPendingActionStub(action);
     expect(stub._pending_action).toBe(true);
     expect(stub.actionId).toBe("pa_42");
-    expect(stub.toolName).toBe("cancel_appointment");
-    expect(stub.preview).toBe("Cancel appointment appt_123");
+    expect(stub.toolName).toBe("remove_family_member");
+    expect(stub.preview).toBe("Remove family member +15559876543");
     expect(stub.expires_in_minutes).toBeGreaterThanOrEqual(13);
     expect(stub.expires_in_minutes).toBeLessThanOrEqual(15);
     expect(stub.guidance.toLowerCase()).toContain("confirm");

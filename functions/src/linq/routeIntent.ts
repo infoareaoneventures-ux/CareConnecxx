@@ -13,7 +13,6 @@ import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agent
 import { staleConfirmFlags, hasActiveSmsFlow } from "../utils/sessionState";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
-import { isConvergenceFlipped } from "../config/featureFlags";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
 import {
@@ -41,7 +40,7 @@ import {
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
 import { handleRecurringConfirm } from "./inboundHelpers";
-import { buildNonMedicalDeflection, medicalActionsAvailable } from "../agents/medicalBoundary";
+import { buildNonMedicalDeflection } from "../agents/medicalBoundary";
 
 const db = admin.firestore();
 
@@ -1406,41 +1405,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── Schedule request — set up a personal recurring reminder ─────────────
-    if (intent === "SCHEDULE_REQUEST") {
-      const { handleScheduleRequest } = await import("../agents/schedulingHandler");
-      await handleScheduleRequest(phone, text, session as unknown as Record<string, unknown>);
-      return;
-    }
-
-    // ── Trigger management — view or cancel personal reminders ───────────────
-    if (intent === "TRIGGER_MANAGEMENT") {
-      // U10: convergence flip — when "reminder_management" is flipped (only after
-      // its shadow data shows parity), the live path runs through the MCP tool loop
-      // instead of the cascade state machine. Dark by default (flag off → the state
-      // machine below, unchanged). Reversible by clearing CONVERGENCE_FLIPPED; the
-      // state machine is retained until a later post-flip cleanup deletes it.
-      if (isConvergenceFlipped("reminder_management")) {
-        // runQaAgent delivers its own reply via sendSplit(chatId); do NOT also
-        // route it through sendViaInteractionAgent (that path is for proactive
-        // agent-initiated sends and would double-send this reply). Matches the
-        // default QA path below.
-        await runQaAgent({
-          text, phone, chatId,
-          userId:      session.userId ?? "",
-          seniorId:    session.seniorId ?? session.userId ?? "",
-          userType:    (session.userType as "client" | "caregiver") ?? "client",
-          caregiverId: session.caregiverId,
-          session:     session as unknown as Record<string, unknown>,
-          intent,
-          ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
-        });
-        return;
-      }
-      const { handleTriggerManagement } = await import("../agents/schedulingHandler");
-      await handleTriggerManagement(phone, text, session as unknown as Record<string, unknown>);
-      return;
-    }
+    // Personal reminders (SCHEDULE_REQUEST/TRIGGER_MANAGEMENT) were removed
+    // 2026-09-05 — no site equivalent. Both intents now fall through to the
+    // default QA agent below, same as any other unhandled intent.
 
     // ── POST_JOB — start the conversational job posting state machine ────────
     if (intent === "POST_JOB" && session.userType !== "caregiver") {
@@ -1766,6 +1733,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     // ── Healthcare intents — provider search, appointment booking, Rx ────────
+    // Real-world healthcare/browser-automation actions were removed 2026-09-05
+    // (client-tool capability audit: the site has zero medical-appointment/
+    // pharmacy feature of any kind). Always deflect — never route to a
+    // healthcare-action flow.
     if (
       (intent === "FIND_NEARBY_PROVIDER" ||
        intent === "BOOK_DOCTOR_APPOINTMENT" ||
@@ -1773,24 +1744,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
        intent === "NEW_PRESCRIPTION") &&
       session.userType !== "caregiver"
     ) {
-      if (!medicalActionsAvailable()) {
-        await sendMessage(chatId, buildNonMedicalDeflection(intent, text));
-        return;
-      }
-      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-      try {
-        const { startHealthcareFlow } = await import("../agents/healthcareHandler");
-        await startHealthcareFlow(
-          phone,
-          chatId,
-          text,
-          session,
-          intent,
-          (msg) => sendMessage(chatId, msg)
-        );
-      } finally {
-        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-      }
+      await sendMessage(chatId, buildNonMedicalDeflection(intent, text));
       return;
     }
 
@@ -1803,7 +1757,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // is an honest "cannot identify that memory". The deterministic turn is
     // deliberately not persisted as a completed turn, so it is never passively
     // extracted (R23). not_correction/failed fall through to the QA agent.
-    if (intent === "FACT_CORRECTION") {
+    // 2026-09-05: classifyIntentDetailed sees ONLY the raw text, no conversation
+    // history, so a mid-flow pushback ("you don't know their availability at
+    // all") can read exactly like a fact correction out of context and misfire
+    // into the honest-but-nonsensical "cannot identify that memory" copy —
+    // live-caught mid a caregiver-interview flow. Same guard as the trivial
+    // quick-reply bypass below: any turn inside an active guarded flow defers
+    // to the full grounded agent instead, which has the actual conversation
+    // context to answer correctly (and can still stage a real fact correction
+    // itself via its own tools).
+    if (intent === "FACT_CORRECTION" && !hasActiveSmsFlow(session as unknown as Record<string, unknown>)) {
       const { detectAndStageFactChange, factChangeAckCopy } = await import("../memory/learnedFacts");
       const factUserId = session.userType === "caregiver"
         ? (session.caregiverId ?? session.userId ?? phone)

@@ -8,7 +8,6 @@ import { isHighStakesMutation, HIGH_STAKES_MUTATIONS } from "../toolCapabilities
 describe("isHighStakesMutation (U3)", () => {
   it("flags the destructive/committing actions a false success would harm", () => {
     for (const tool of [
-      "cancel_appointment",
       "request_booking",
       "request_instant_payout",
       "set_subscription_status",
@@ -34,8 +33,8 @@ describe("isHighStakesMutation (U3)", () => {
   });
 
   it("excludes intentionally low-stakes writes (echoed or cosmetic)", () => {
-    // Evia already echoes memory notes back; journal social actions are cosmetic.
-    for (const tool of ["update_memory_file", "like_journal_entry", "comment_on_journal_entry"]) {
+    // Evia already echoes memory notes back.
+    for (const tool of ["update_memory_file"]) {
       expect(isHighStakesMutation(tool), `${tool} should be excluded`).toBe(false);
     }
   });

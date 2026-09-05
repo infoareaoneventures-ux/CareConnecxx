@@ -203,8 +203,8 @@ describe("admin_replay_pending_action — high-risk confirmation", () => {
   function seedHighRiskPending() {
     hoisted.docs.set("pending_actions/pa-hr", {
       status: "awaiting",
-      toolName: "perform_web_action",
-      toolInput: { loginAction: "pharmacy_refill", medicationName: "X" },
+      toolName: "remove_family_member",
+      toolInput: { seniorId: "s1", clientId: "c1", memberPhone: "+15551234567" },
       userId: "user-1",
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     });
@@ -237,9 +237,8 @@ describe("admin_replay_pending_action — high-risk confirmation", () => {
       adminCtx,
     );
     expect(res.success).toBe(true);
-    expect(handleToolCall).toHaveBeenCalledWith("perform_web_action", {
-      loginAction: "pharmacy_refill",
-      medicationName: "X",
+    expect(handleToolCall).toHaveBeenCalledWith("remove_family_member", {
+      seniorId: "s1", clientId: "c1", memberPhone: "+15551234567",
     });
     expect(hoisted.docs.get("pending_actions/pa-hr").status).toBe("executed");
   });

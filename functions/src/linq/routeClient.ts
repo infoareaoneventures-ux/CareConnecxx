@@ -301,18 +301,9 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     return "handled";
   }
 
-  // ── Credential collection (portal logins) ─────────────────────────────────
-  // Must run before intent classification — password messages must not be logged.
-  if ((session as unknown as Record<string, unknown>).collectingCredential) {
-    const { handleCredentialReply } = await import("../browser/credentialCollector");
-    const handled = await handleCredentialReply({
-      phone,
-      userId: session.userId ?? "",
-      text,
-      session: session as unknown as Record<string, unknown>,
-    });
-    if (handled) return "handled";
-  }
+  // Credential collection (portal-login capture for the real-world healthcare
+  // flow) was removed 2026-09-05 along with the flow itself — collectingCredential
+  // can no longer be set, so there's nothing left to handle here.
 
   // ── Job posting flow — multi-step state machine for returning clients ───────
   if ((session as any).jobPostingStep) {
@@ -341,17 +332,9 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     return "handled";
   }
 
-  // ── Healthcare agentic flow — provider search, appt booking, Rx refill ────
-  if ((session as any).healthcareFlowStep && session.userType !== "caregiver") {
-    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-    try {
-      const { resumeHealthcareFlow } = await import("../agents/healthcareHandler");
-      await resumeHealthcareFlow(phone, chatId, text, session, (msg) => sendMessage(chatId, msg));
-    } finally {
-      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-    }
-    return "handled";
-  }
+  // Real-world healthcare/browser-automation actions were removed 2026-09-05
+  // (no site equivalent) — healthcareFlowStep can no longer be set, so there's
+  // nothing left to resume here.
 
   // ── Refund self-service flow (multi-step state machine) ───────────────────
   // 24h freshness gate — an abandoned refund flow had NO expiry and would

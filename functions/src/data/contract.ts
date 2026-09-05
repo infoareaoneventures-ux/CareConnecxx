@@ -440,13 +440,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: false,
     notes: "Notification/DND/timezone preferences (memory/preferences.ts; mcp update_preferences). Server/agent-only; web preference surfaces read the users doc, not this.",
   },
-  health_signals: {
-    path: "health_signals",
-    docId: "auto",
-    caraWrites: true,
-    webReads: false,
-    notes: "Health concern flags from journal analysis and family reports (mcp log_health_flag / get_health_signals). PHI-bearing; server/agent-only.",
-  },
   proactive_triggers: {
     path: "proactive_triggers",
     docId: "auto",
@@ -494,7 +487,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: false,
-    notes: "User-requested reminders (triggers/userTriggerManager.ts; mcp create/update/delete_reminder). Server/agent-only.",
+    notes: "User-requested reminders (triggers/userTriggerManager.ts). Both creation paths (the MCP create/update/delete_reminder tools, and the conversational schedulingHandler.ts flow) were removed 2026-09-05 — no site equivalent. No new reminders can be created; triggers/triggerEngine.ts still fires any pre-existing docs on schedule until they complete naturally. Server/agent-only.",
   },
   shift_swap_requests: {
     path: "shift_swap_requests",

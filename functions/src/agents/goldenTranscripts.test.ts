@@ -362,18 +362,18 @@ const GOLDEN_TRANSCRIPTS: GoldenTranscript[] = [
     name:        "multi-step-tool-chain-cancel-then-find-replacement",
     description: "Family wants to cancel + find replacement — Evia executes the chain in order.",
     toolMocks: {
-      cancel_appointment:         { success: true, appointmentId: "appt-99" },
+      manage_booking:               { success: true, action: "cancel_whole_booking", bookingRequestId: "br-99" },
       find_replacement_caregivers: { matches: [{ id: "cg-1", name: "Alex" }] },
     },
     claudeScript: [
-      { tools: [{ name: "cancel_appointment", input: { appointmentId: "appt-99" } }] },
+      { tools: [{ name: "manage_booking", input: { action: "cancel_whole_booking", bookingRequestId: "br-99", clientId: "u-1" } }] },
       { tools: [{ name: "find_replacement_caregivers", input: { clientId: "u-1" } }] },
       { text: "Cancelled the visit and pulled Alex as a backup. Want me to set up a quick intro?" },
     ],
     input: { text: "cancel monday's visit and find me someone else" },
     expect: {
       replyContains: ["Alex"],
-      toolsCalled:   ["cancel_appointment", "find_replacement_caregivers"],
+      toolsCalled:   ["manage_booking", "find_replacement_caregivers"],
       noListShape:   true,
     },
   },

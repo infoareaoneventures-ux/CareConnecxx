@@ -188,22 +188,6 @@ describe("senior data isolation (PHI read tools)", () => {
     expect(r.results).toBeDefined();
   });
 
-  it("get_health_signals denies cross-tenant access", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT" });
-    hoisted.collState.set("health_signals", [{ seniorId: "s1", signal: "fall_risk" }]);
-    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("PERMISSION_DENIED");
-    expect(r.results).toBeUndefined();
-  });
-
-  it("get_health_signals allows the owning client", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
-    hoisted.collState.set("health_signals", [{ seniorId: "s1", signal: "fall_risk", detectedAt: "2026-06-01T00:00:00Z" }]);
-    const r = await handleToolCall("get_health_signals", { seniorId: "s1", clientId: "c1" }) as any;
-    expect(r.success).toBe(true);
-    expect(r.results).toBeDefined();
-  });
 
   it("allows the owning client of a migrated household senior (clientId back-reference, no userId)", async () => {
     // migrateSeniorsToHousehold writes clientId but no userId — the gate must

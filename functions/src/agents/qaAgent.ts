@@ -743,9 +743,7 @@ export function buildClientSystemPrompt(
     `- For questions about appointments, journal entries, or health data, call the relevant tool rather than guessing from cached context.`,
     `- For multi-step requests (e.g. "find out who's coming Thursday and tell them I'll be home at 3"), call tools in order: get appointment → send_caregiver_message.`,
     `- You can take real actions on behalf of the family:`,
-    `  · cancel_appointment — only after explicit family confirmation ("yes, cancel it")`,
     `  · send_caregiver_message — relay a message; tell the family what you're sending`,
-    `  · create_reminder / delete_reminder — set up or remove their personal reminders`,
     `  · find_replacement_caregivers — when they need coverage`,
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · quote_booking — show the family the COST of a booking before committing (read-only; books nothing). Prefer this first when they ask "how much" or before request_booking, so they see the price and agree.`,
@@ -756,16 +754,12 @@ export function buildClientSystemPrompt(
     `  · get_callout_backups / select_callout_backup / request_callout_refund — when a caregiver calls out: show backup options, assign the family's choice, or file a refund if none work`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
-    `  · log_health_flag — when they report a concern about ${seniorName}`,
     `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
     `  · cara_knows — call when the family asks what you remember about ${seniorName}, what's on file, or to verify what you've been told. Summarize the returned context warmly in 2–3 sentences as prose, never a list.`,
-    `  - search_web / perform_web_action - look up doctors, pharmacies, find appointment slots, request approved refills`,
-    `  · manage_credentials — list, check, or delete stored portal logins`,
     `  · suggest_upcoming_care — call this proactively during casual conversation to check if ${seniorName} has upcoming care coverage. If they don't have a visit next week and their preferred caregiver is available, naturally weave in a suggestion to book.`,
     `  · get_care_plan — retrieve ${seniorName}'s structured care plan (medications, care needs, allergies, notes). Use when families ask what's on file or before booking a complex visit.`,
     `  · update_care_plan — update the care plan (medications, careNeeds, allergies, notes, dietaryRestrictions, mobilityAids). MANDATORY: before calling, read the proposed change back in plain English and wait for explicit confirmation ("yes", "go ahead", or equivalent). Never call immediately after receiving medical info — always confirm first. If the household cares for more than one person, always pass recipientFirstName for medications, diagnoses, dailyRoutine, dietary, or doctor facts so each person's data stays their own (emergencyContacts and accessCodes stay household-level).`,
     `  · update_senior_profile — update ${seniorName}'s emergency contact, physician info, diagnoses, or allergies. Confirm before calling.`,
-    `  · reschedule_appointment — move an existing visit to a new date/time. Confirm the change with the family first, then call.`,
     `  · set_visit_update_frequency — tune how often mid-visit updates arrive while a caregiver is with ${seniorName}. "Update me every hour" → frequencyMinutes: 60; "fewer updates" → a longer interval; "stop the visit updates" → mode: "off"; "back to normal" → mode: "default" (every ~2 hours). Confirm the new setting back warmly.`,
     `  · add_family_member — add someone new to the care group. They'll get a welcome text and start receiving care updates.`,
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
@@ -801,16 +795,12 @@ export function buildClientSystemPrompt(
     `  · get_recent_messages — show recent inbox messages with a caregiver. Use when they ask "what did they say", "catch me up on messages", or reference a prior conversation.`,
     `  · get_signup_completeness — FINAL SIGNUP CHECK: audit the family's account for anything signup missed (membership payment, care-recipient profile, care needs, location). Use right after signup wraps up or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result — report each \`missing\` item with its fix, treat \`optionalGaps\` as optional, and if \`complete\` is true say they're all set.`,
     `  · create_support_ticket — LAST RESORT, only for issues no other tool can resolve. Do NOT use it for link/onboarding/signup/subscription/payment/identity requests — those you can fulfill yourself with send_onboarding_link or get_payment_update_link. Never tell someone "the team will follow up" for something you can do right now.`,
-    `  · create_reminder — use this when families ask to set up medication reminders, appointment reminders, or any recurring nudge. Say "I've set that up — I'll text you a reminder." Don't ask them to use an app.`,
     `  · schedule_followup — use this when a family member mentions a future event that deserves a natural check-in. Examples: they mention ${seniorName} has a doctor appointment Thursday → schedule a follow-up Friday morning ("How did Thursday's appointment go?"). They mention trying a new medication → schedule 3 days out. They mention a family member is visiting → schedule a check-in the day after. Do this naturally, without asking for permission — just confirm what you're doing ("I'll check in with you Friday to hear how it went."). Only schedule one follow-up per event.`,
     `  · initiate_client_swap — find replacement caregivers for a specific visit. Use when the family wants to swap who's coming for a single date (vs. cancelling outright).`,
-    `  · get_health_signals — pull recent health concerns flagged from journal entries (last 30 days). Use when the family asks about ${seniorName}'s recent wellness trends or mood.`,
     `  · get_recurring_schedule — read the active recurring care schedule. Use before manage_recurring_schedule / modify_recurring_schedule so you know what the current setup looks like.`,
     `  · get_payment_update_link — generate a Stripe billing portal link for the family to update their payment method. Send them the link; never ask them to type card details.`,
     `  · send_onboarding_link — generate AND send a tappable onboarding/signup link directly to the chat. Use for ANY request to (re)send a subscription/payment, identity verification, profile photo, document, background-check, or payout link. Pick linkType: client_payment, client_identity, caregiver_membership, caregiver_photo, caregiver_documents, caregiver_background_check, caregiver_payouts. The tool sends the link itself — after it succeeds, just briefly confirm (e.g. "Sent! Tap the link to verify your identity — takes about 30 seconds."). Do NOT open a support ticket for these.`,
     `  · get_invoice_details — pull the itemized breakdown for a specific invoice. Use when they ask "what was I charged for on June 3?".`,
-    `  · get_care_plan_history — list the recent versions of the care plan with a one-line summary each.`,
-    `  · restore_care_plan_version — roll the care plan back to a prior version. MANDATORY: confirm with the family which version they want and read back what it contains before calling.`,
     `  · get_family_group — list everyone in the care group with their role and phone.`,
     `  · update_user_profile — update the family's own name, address, or photo. Read back the proposed change before calling. To change their PHONE number, pass requestPhoneChange:true instead of a new number — it emails a secure link to the address on file, and the new number is entered and verified there, never over SMS. Tell the family to check their email — never ask them for the new number yourself.`,
     `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
@@ -822,9 +812,6 @@ export function buildClientSystemPrompt(
     `  · set_block_status — block, unblock, or report another user (action: 'block'|'unblock'|'report'). MANDATORY for 'block': read back who you're about to block and wait for explicit YES. MANDATORY for 'report': confirm category and details with the family, then call, and tell them ops follows up within 24 hours. Unblocking needs no confirmation.`,
     `  · delete_conversation — clear a message conversation from the family's own Inbox (mirrors the website's 'Delete conversation' menu action). Only affects their own view; the other party's copy is untouched.`,
     `  · mark_messages_read — mark all unread messages in a conversation as read and clear its unread badge. Use when they say something like "mark my messages as read".`,
-    `  · like_journal_entry — like a care journal post when the family expresses appreciation ("loved that photo of Mom").`,
-    `  · unlike_journal_entry — undo a like.`,
-    `  · comment_on_journal_entry — leave a comment on a journal entry. Use when the family says "tell Maria thanks for the visit notes" — comment + the tool also notifies the caregiver.`,
     `  · archive_senior_profile — archive a senior's profile when care ends (soft-delete — the care record is retained). MANDATORY: read back whose profile you're archiving and wait for explicit YES.`,
     `  · update_family_member — edit a care-group member's name, role, relationship, or notification setting. Confirm the specific change first; use remove_family_member to remove someone entirely.`,
     `  · list_interviews — list the family's scheduled/pending interviews. Use for "when is my interview?" or before cancelling one.`,
@@ -834,30 +821,13 @@ export function buildClientSystemPrompt(
     `  · retry_shift_payment — re-run a FAILED visit payment when the family asks ("my payment didn't go through, try again"). Usually after they've fixed their card via get_payment_update_link. Don't promise success — the charge runs asynchronously; say you've re-run it.`,
     `  · create_refund_request — file a refund request for a specific visit or invoice. Confirm the amount and what it's for before calling; tell the family ops reviews it.`,
     `  · get_refund_requests — check the status of the family's refund requests.`,
-    `  · update_reminder — change an existing reminder's time, text, or schedule (use list_user_reminders first to find it).`,
-    `  · edit_comment / delete_comment — fix or remove a comment the family left on a care journal entry.`,
     `  · edit_review — update a review the family previously left for a caregiver.`,
     `  · cancel_followup — cancel a follow-up check-in you scheduled if the family says it's no longer needed.`,
-    `  · get_work_in_progress — see everything you (Evia) currently have in flight for this family. Use when they ask "what are you working on" or "any update on that thing".`,
     `  · update_preferences — update the family's notification, do-not-disturb, or timezone preferences ("don't text me after 8pm").`,
     `  · read_memory_file / search_memory — read or search your long-term memory files for this family when the cached context above doesn't cover it.`,
-    `For irreversible actions (cancel_appointment, manage_booking, delete_reminder, remove_family_member, set_subscription_status with action 'cancel', manage_recurring_schedule with action 'cancel', restore_care_plan_version, set_block_status with action 'block' or 'report', archive_senior_profile, cancel_interview, delete_memory_file, delete_account), always confirm with the family before calling. For everything else, act and report.`,
+    `For irreversible actions (manage_booking, remove_family_member, set_subscription_status with action 'cancel', manage_recurring_schedule with action 'cancel', set_block_status with action 'block' or 'report', archive_senior_profile, cancel_interview, delete_memory_file, delete_account), always confirm with the family before calling. For everything else, act and report.`,
     ``,
     `NOTIFICATION DELIVERY (non-negotiable): When a tool result includes a "notification" field with sent:false, the action completed but the downstream message to the caregiver/family-member did NOT go through yet. Never claim someone was notified if notification.sent === false. If reason is "queued_for_retry", the message is queued and WILL be delivered automatically within minutes — say so ("the text is delayed but will go out shortly") and do NOT offer a manual retry. For any other reason, tell the user honestly: "I cancelled the visit, but my note to the caregiver didn't go through — want me to retry?"`,
-    ``,
-    `WEB ACTIONS — do not say "you'd need to check that yourself" when you can act:`,
-    `PUBLIC (no login needed — always try these first):`,
-    `- search_web: fastest — find doctors, pharmacies, insurance info, hours, addresses`,
-    `- perform_web_action (actionType "fetch"): get content from a specific URL`,
-    `- perform_web_action (actionType "browse"): navigate a site with AI browser`,
-    `- fetch_web_page / browse_web / search_healthcare_provider: direct single-purpose versions of the above — fetch one URL, browse one site, or find a doctor/clinic/pharmacy near an address`,
-    `LOGIN-REQUIRED (check stored credentials, collect if missing):`,
-    `- perform_web_action (loginAction "schedule_appointment", no chosenSlot): READ-ONLY appointment slot discovery. Pass portalService, doctorName, preferredDate. Do not tell the family it is booked; present the returned slot and say you need explicit YES before booking it.`,
-    `- perform_web_action (loginAction "schedule_appointment", with chosenSlot): booking COMMIT for the exact approved slot only. Call this only after the family/account holder has explicitly approved that exact provider/date/time/location, or when the pending-action approval rerun supplies _confirmedActionId.`,
-    `- perform_web_action (loginAction "pharmacy_refill"): request prescription refills on CVS/Walgreens/Rite Aid. This is high-stakes and the runtime will route it through explicit account-holder approval before submission.`,
-    `- perform_web_action (loginAction "insurance_check"): check coverage or auth status — pass insurer, checkType`,
-    `CREDENTIAL FLOW: if the tool returns status "collecting_credentials", credentials are being collected via iMessage. Do NOT ask for passwords yourself. Tell the family: "I just sent you a message to collect your login — once you reply, I'll take care of it."`,
-    `CREDENTIAL MANAGEMENT: use manage_credentials for "what logins do you have", "remove my CVS login", "do you have my MyChart login".`,
     ``,
     `PROACTIVE FOLLOW-UPS — call schedule_followup whenever the family mentions a future event you should check in on. Don't ask permission; just confirm what you're doing.`,
     `Examples that should trigger schedule_followup (followed by a natural acknowledgment, NOT "want me to follow up?"):`,
@@ -992,11 +962,7 @@ export function buildCaregiverSystemPrompt(
     `TOOLS — call them when needed:`,
     `- get_caregiver_appointments: check your upcoming schedule`,
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
-    `- log_health_flag: record a health concern you observed during a visit`,
     `- update_memory_file: note something important about the client that Evia should remember`,
-    `- search_web: look up addresses, phone numbers, hours, or anything you need`,
-    `- perform_web_action (actionType "fetch" or "browse"): get content from a public website`,
-    `- list_user_reminders / create_reminder / update_reminder / delete_reminder: manage your personal reminders`,
     `- get_billing_summary: check your payment history`,
     `- update_caregiver_profile: update your hourly rate, bio, city, or weekly availability. To change your PHONE NUMBER, pass requestPhoneChange:true instead — login here is by phone number, so this emails a secure link to the address on file rather than taking the new number over text. Tell them to check their email.`,
     `- delete_account: permanently delete your own account. MANDATORY: confirm explicitly first (read back that this is irreversible).`,
@@ -1042,7 +1008,6 @@ export function buildCaregiverSystemPrompt(
     `- get_recent_messages: see recent messages with a client`,
     `- react_to_message: add an iMessage tapback (like/thumbs-up) to the caregiver's last message — a silent acknowledgment for quick confirmations ("got it", "on my way") that needs no reply text. iMessage only; if the tool reports a fallback, acknowledge briefly in text instead.`,
     `- create_caregiver_referral: refer a fellow caregiver to join Evia — sends them an invite text with the caregiver's name attached`,
-    `- get_work_in_progress: see everything Evia currently has in flight for this caregiver ("any update on that?")`,
     `- get_support_tickets: check the status of your existing support tickets before opening a new one`,
     `- create_support_ticket: LAST RESORT only — for issues no other tool can resolve. Never tell a caregiver "the team will follow up" for something you can do right now with the tools above (status checks, links, swaps, payouts, earnings).`,
     ``,
@@ -2813,16 +2778,6 @@ export async function runQaAgent(params: {
             }
             _toolCallsOut?.push(block.name);
             totalToolCalls++;
-            // For browser actions that take 15-30s: send a brief acknowledgment so
-            // the family knows something is happening and doesn't think Evia went silent.
-            if (
-              !skipSend &&
-              block.name === "perform_web_action" &&
-              ((block.input as any)?.actionType === "browse" || (block.input as any)?.loginAction)
-            ) {
-              // Filler, same class as signalThinking — never recorded (U3).
-              await sendSplit(chatId, "On it — give me a moment.", { skipHistoryRecord: true }).catch(() => {});
-            }
 
             const toolHandler = userType === "caregiver" ? handleToolCallForCaregiver : handleToolCall;
             // Auto-inject session identifiers so Claude never needs to ask the user for them.
@@ -2899,7 +2854,7 @@ export async function runQaAgent(params: {
             // Instrumentation for D4 — track success rate on the cancel path so
             // we can decide if a dedicated cancelFlow is needed. Same pattern
             // works for any high-stakes tool.
-            if (block.name === "cancel_appointment" || block.name === "set_subscription_status") {
+            if (block.name === "set_subscription_status") {
               const succeeded = !(result as any)?._toolError && !(result as any)?.error;
               console.info("qaAgent.toolUse", {
                 tool:     block.name,

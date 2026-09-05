@@ -21,8 +21,7 @@
 |---|---|---|---|---|---|---|---|
 | client | Search/match caregivers and request replacements | components/FindCaregivers.tsx | caregivers | `find_replacement_caregivers` | client | shipped |  |
 | client | Book a caregiver (creates pending_caregiver_confirmation appointment) | components/client/booking/BookingFlow.tsx | appointments | `request_booking` | client | shipped |  |
-| client | Reschedule an existing appointment | components/client/ClientVisitsPage.tsx | appointments | `reschedule_appointment` | client | shipped |  |
-| client | Cancel an appointment | components/client/ClientVisitsPage.tsx | appointments | `cancel_appointment` | client | shipped |  |
+| client | Cancel an appointment (manage_booking action: cancel_pending_request / cancel_whole_booking) | components/client/ClientVisitsPage.tsx | shifts | `manage_booking` | client | shipped |  |
 | client | Update the senior's care plan | components/CarePlan.tsx | carePlans | `update_care_plan` | client | shipped |  |
 | client | Record per-recipient day-to-day care tasks by category (care-plan interview / Step3CareNeeds parity) | components/client/postJob/Step3CareNeeds.tsx | carePlans | `save_care_task_detail` | client | shipped | Added 2026-07-15 with the post-payment care-plan interview; writes recipientPlans.{key}.careNeedDetails in the exact shape CarePlan.tsx renders. |
 | client | Add a member to the family group | components/client/MyCareTeam.tsx | family_groups | `add_family_member` | client | shipped |  |
@@ -38,13 +37,11 @@
 | client | Request a refund (creates admin-visible state) | components/client/Payments.tsx | admin_alerts | `create_refund_request` | client | shipped |  |
 | client | Retry a failed shift payment | components/client/Payments.tsx | shiftHours | `retry_shift_payment` | client | shipped | Parity audit 2026-07-06: agent mirror of v1-retryShiftPayment — resets payment_failed → approved so the charge trigger re-fires. Owner-scoped; naturally idempotent. |
 | client | Switch a confirmed booking's payment method (credit ↔ cash/venmo/zelle) | n/a | appointments | `update_booking_payment_method` | client | shipped | Parity audit 2026-07-06: the v1-updateBookingPaymentMethod callable had NO UI caller (reverse orphan) — agent-first. Same guards: owner only, status 'confirmed', not yet started. |
-| client | Create a care reminder | n/a | n/a | `create_reminder` | client | shipped | Reminders are scheduled triggers, not a registered contract collection. SMS-first — the legacy RemindersPage web surface was removed 2026-07-02. |
 | client | Submit a caregiver review | components/client/LeaveReviewModal.tsx | caregivers | `submit_review` | client | shipped |  |
 | client | Read upcoming appointments | components/client/ClientVisitsPage.tsx | appointments | `get_upcoming_appointments` | any | shipped | Used by Evia recipe discovery for next-visit briefing and visit confirmation context. |
 | client | Read the client's care team | components/client/MyCareTeam.tsx | caregivers | `get_care_team` | any | shipped | Used by Evia recipe discovery for next-visit and who-is-coming answers. |
 | client | Review what Evia remembers | n/a | n/a | `cara_knows` | any | shipped | Memory is derived from scoped memory files, Zep context, learned facts, and live tool data; hidden prompt context is not exposed. |
 | client | Correct or update Evia memory | n/a | n/a | `update_memory_file` | any | shipped | Fresh corrections outrank stale memory and learned facts. |
-| client | See everything Evia has in flight (open promises, tasks, matches, to-dos) | n/a | n/a | `get_work_in_progress` | any | shipped | Unified WIP view over pending_commitments, agent_tasks(_active), and session todos/pendingMatches — agentic-reliability wave 2026-07. |
 | client | Archive (soft-delete) a senior profile when care ends | n/a | senior_profiles | `archive_senior_profile` | client | shipped | Soft status flag only (status:'archived'); the care record is retained. Hard delete is an intentional exclusion (AGENT_NATIVE_EXCLUSIONS.md). |
 | client | Edit a family group member's name/role/relationship/notifications | components/client/MyCareTeam.tsx | family_group_members | `update_family_member` | client | shipped | Ownership scoped by the userId+memberPhone query — only the caller's own membership docs are reachable. |
 | client | List scheduled/pending interviews | n/a | video_interviews + interviews | `list_interviews` | any | shipped | Caller-scoped read (clientId OR caregiverId) across BOTH interview collections (web/MCP + SMS flow); results carry source + callUrl. |

@@ -129,7 +129,7 @@ describe("onboardingContract", () => {
       expect(isOnboardingTool("save_onboarding_field")).toBe(true);
       expect(isOnboardingTool("complete_collection")).toBe(true);
       expect(isOnboardingTool("complete_task")).toBe(true);
-      expect(isOnboardingTool("cancel_appointment")).toBe(false);
+      expect(isOnboardingTool("request_booking")).toBe(false);
       expect(isOnboardingTool("get_care_plan")).toBe(false);
     });
   });

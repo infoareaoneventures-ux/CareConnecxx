@@ -10,9 +10,8 @@ When the family is asking about a concerning pattern, lead with **honesty, not r
 ## Inputs you should look up FIRST
 
 1. `get_care_journal` — last 14 entries (broader window than draft-care-update).
-2. `get_health_signals` — see what's flagged, severity, and when it was first noted.
-3. `get_recent_messages` to/from the caregiver — they may have already raised the concern.
-4. If a fall/pain/confusion was specifically mentioned, also pull `get_pending_tasks` to see whether anyone's been notified.
+2. `get_recent_messages` to/from the caregiver — they may have already raised the concern.
+3. If a fall/pain/confusion was specifically mentioned, also pull `get_pending_tasks` to see whether anyone's been notified.
 
 ## Triage rules
 

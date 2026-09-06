@@ -411,6 +411,15 @@ export async function loadLiveClientLocation(
     out.lat = user.lat;
     out.lng = user.lng;
   }
+  // geocodeClientIntake (triggers/clientIntakeGeocode.ts) writes users/{uid}
+  // as `latitude`/`longitude`, not `lat`/`lng` — a phone-only client (never
+  // opened the website, so senior_profiles.latitude/longitude was never
+  // geocoded either) had no path that ever surfaced real coordinates here,
+  // even though this trigger had already written them (2026-09-06 live bug).
+  if (out.lat == null && typeof user?.latitude === "number" && typeof user?.longitude === "number") {
+    out.lat = user.latitude;
+    out.lng = user.longitude;
+  }
 
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -1183,6 +1192,20 @@ export async function handleOnboardingStep(
           "you'll still need to finish that quick identity check before we can move forward with anyone");
         return;
       }
+      // Check the LIVE fact FIRST, before classifying the reply at all —
+      // regardless of whether the reply lands as ack/question/other, a
+      // genuinely already-cleared gate (webhook missed) must never be
+      // followed by a resend or a "still verifying" nudge. 2026-09-06 live
+      // bug: a pushback ("what do you mean I did that already") classified
+      // as "other", which resent the link BEFORE ever reaching this check —
+      // checking it up front closes that regardless of classification.
+      const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
+      if (liveIdentityFact.includes("VERIFIED")) {
+        // Identity cleared but step never advanced (webhook missed or admin override
+        // callable unreachable). Drive the same path as the Stripe Identity webhook.
+        await advanceOnboardingStep(phone, "identity", "");
+        return;
+      }
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
       if (idReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
@@ -1191,16 +1214,6 @@ export async function handleOnboardingStep(
         return;
       }
       if (idReplyKind === "question") {
-        // Check the LIVE fact before answering — an "isn't this already
-        // verified?" question can be genuinely right (webhook missed, same
-        // recovery the "other" branch below already does) and must actually
-        // advance the family, not just tell them so and stop (same fix as
-        // client_awaiting_payment's question branch).
-        const liveIdentityFactQ = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
-        if (liveIdentityFactQ.includes("VERIFIED")) {
-          await advanceOnboardingStep(phone, "identity", "");
-          return;
-        }
         // Identity links expire and only the 7-day stale nudge could re-mint
         // one — a "link doesn't work / never got it" report earns a fresh
         // link right now. Status questions ("how long?") stay answer-only:
@@ -1220,17 +1233,10 @@ export async function handleOnboardingStep(
         if (await resendGateLink(phone, chatId, "client_awaiting_identity", "client_identity",
           "Here's a fresh link for the quick 30-second identity check:", { throttled: true })) return;
       }
-      const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
-      if (liveIdentityFact.includes("VERIFIED")) {
-        // Identity cleared but step never advanced (webhook missed or admin override
-        // callable unreachable). Drive the same path as the Stripe Identity webhook.
-        await advanceOnboardingStep(phone, "identity", "");
-        return;
-      }
       const msgIdentity = await generateCaraMessage({
         audience: "family",
-        context: `The family member just texted: "${text}". ` + (liveIdentityFact ? `${liveIdentityFact} ` : "") +
-          "Respond to what they actually said, grounded in the live status above if present (if it VERIFIED, confirm it's done — do not say it's still verifying); otherwise reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
+        context: `The family member just texted: "${text}". ` +
+          "Reassure them it's still being verified and that Evia will send their caregiver options as soon as it clears.",
         fallback: "Still verifying — I'll send your caregiver options as soon as it clears.",
         maxTokens: 80,
       });
@@ -1244,48 +1250,14 @@ export async function handleOnboardingStep(
           "you'll still need to finish your membership setup via the link I sent before we can move forward with anyone");
         return;
       }
-      const payReplyKind = await classifyAwaitingReply(text, "finish their payment setup via the link Evia sent");
-      if (payReplyKind === "ack") {
-        await sendAwaitingAck(chatId, session,
-          "The family member just acknowledged your payment-setup ask (a thanks or 'will do') — you're here when it's done.",
-          "Sounds good — I'm here when it's done!");
-        return;
-      }
-      if (payReplyKind === "question") {
-        // Check the LIVE fact before answering — a "didn't this already go
-        // through?" question can be genuinely right (webhook missed, same
-        // recovery the "other" branch below already does) and must actually
-        // advance the family, not just tell them so and stop.
-        const liveClientPayFactQ = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
-        if (liveClientPayFactQ.includes("WENT THROUGH")) {
-          const subIdQ = (session as any).stripeSubscriptionId as string | undefined;
-          if (subIdQ) {
-            await advanceOnboardingStep(phone, "payment", subIdQ);
-          } else {
-            await advanceOnboardingStep(phone, "admin_payment_override", "");
-          }
-          return;
-        }
-        const payAnswer = await answerQuestionMidFlow(text, session, phone);
-        await sendMessage(chatId, payAnswer);
-        // Only resend the link if they're actually asking for it again
-        // ("doesn't work", "never got it") — a plain status question just
-        // answered must never be followed by resending the very link the
-        // answer said isn't needed (2026-09-06 live bug: Evia said "your
-        // payment went through" then immediately re-sent the payment link).
-        if (await wantsGateLinkResend(text)) {
-          if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
-            "Here's your membership link again — it takes about 30 seconds:")) return;
-        }
-        await runGateLinkNet(phone, chatId, session, payAnswer);
-        return;
-      }
-      if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
-        "finishing your membership setup via the link I sent — it takes about 30 seconds")) return;
-      if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
-        "Here's your membership link again — it takes about 30 seconds:", { throttled: true })) return;
-      // resendGateLink declined = payment landed while we were replying — the
-      // live fact below grounds the confirmation.
+      // Check the LIVE fact FIRST, before classifying the reply at all —
+      // regardless of whether the reply lands as ack/question/other, a
+      // genuinely already-cleared gate (webhook missed) must never be
+      // followed by a resend or a "still waiting" nudge. 2026-09-06 live
+      // bug: a pushback ("what do you mean I did that already") classified
+      // as "other", which resent the link BEFORE the old code ever reached
+      // this check — checking it up front closes that regardless of
+      // classification.
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
       if (liveClientPayFact.includes("WENT THROUGH")) {
         // Payment landed but step never advanced (webhook missed or admin override
@@ -1298,11 +1270,36 @@ export async function handleOnboardingStep(
         }
         return;
       }
+      const payReplyKind = await classifyAwaitingReply(text, "finish their payment setup via the link Evia sent");
+      if (payReplyKind === "ack") {
+        await sendAwaitingAck(chatId, session,
+          "The family member just acknowledged your payment-setup ask (a thanks or 'will do') — you're here when it's done.",
+          "Sounds good — I'm here when it's done!");
+        return;
+      }
+      if (payReplyKind === "question") {
+        const payAnswer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, payAnswer);
+        // Only resend the link if they're actually asking for it again
+        // ("doesn't work", "never got it") — a plain status question just
+        // answered must never be followed by resending the very link the
+        // answer said isn't needed.
+        if (await wantsGateLinkResend(text)) {
+          if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
+            "Here's your membership link again — it takes about 30 seconds:")) return;
+        }
+        await runGateLinkNet(phone, chatId, session, payAnswer);
+        return;
+      }
+      if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
+        "finishing your membership setup via the link I sent — it takes about 30 seconds")) return;
+      if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
+        "Here's your membership link again — it takes about 30 seconds:", { throttled: true })) return;
       const clientPayNudge = await generateCaraMessage({
         audience: "family",
         language: session.preferredLanguage === "es" ? "es" : "en",
-        context: `The family member just texted: "${text}". ` + (liveClientPayFact ? `${liveClientPayFact} ` : "") +
-          "Respond to what they actually said, grounded in the live status above if present — if the payment already WENT THROUGH, confirm it's active and do NOT nudge them to tap the link again; otherwise warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
+        context: `The family member just texted: "${text}". ` +
+          "Warmly nudge them to tap the link you already sent to finish up (it only takes about 30 seconds).",
         fallback: "I'm still waiting for your payment setup to complete. Tap the link I sent to finish up — it only takes 30 seconds! 💳",
         maxTokens: 70,
       });

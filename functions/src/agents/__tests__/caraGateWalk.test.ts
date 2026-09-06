@@ -579,11 +579,27 @@ describe("gate status questions are grounded in live state (all builders)", () =
     // 2026-09-06 live bug: a client asking "isn't that approved already?" while
     // genuinely already paid (webhook missed) got told "yes, went through" and
     // then the payment link AGAIN — contradicting itself and leaving them stuck
-    // re-asking forever. The question branch now drives the same advance path
-    // the real Stripe webhook uses instead of just answering and stopping.
+    // re-asking forever. The live fact is now checked before ANY reply
+    // classification, so it drives the same advance path the real Stripe
+    // webhook uses instead of just answering and stopping.
     const session = seed("client_awaiting_payment", {}, { userType: "client", stripeSubscriptionId: "sub_client" });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "did my payment go through?", session);
+    expect(stored()?.processedWebhookTasks).toContain("payment");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_payment");
+  });
+
+  it("client payment: a pushback classified as `other` ALSO auto-advances instead of resending the link", async () => {
+    // The actual shape of the 2026-09-06 live bug: "what do you mean I did
+    // that already" classified as `other`, not `question` — the old code's
+    // fix only covered the question branch, so this reply still hit the
+    // unconditional resend below it. Checking the live fact before
+    // classification at all closes it regardless of which bucket the reply
+    // lands in.
+    const session = seed("client_awaiting_payment", {}, { userType: "client", stripeSubscriptionId: "sub_client" });
+    awaitingKind = "other";
+    await handleOnboardingStep(PHONE, CHAT, "what do you mean I did that already", session);
+    expect(stripeSpies.checkoutCreate).not.toHaveBeenCalled();
     expect(stored()?.processedWebhookTasks).toContain("payment");
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_payment");
   });
@@ -592,6 +608,15 @@ describe("gate status questions are grounded in live state (all builders)", () =
     const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "is my identity check done?", session);
+    expect(stored()?.processedWebhookTasks).toContain("identity");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
+  });
+
+  it("client identity: a pushback classified as `other` ALSO auto-advances instead of resending the link", async () => {
+    const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
+    awaitingKind = "other";
+    await handleOnboardingStep(PHONE, CHAT, "what do you mean I already did that", session);
+    expect(stripeSpies.identityCreate).not.toHaveBeenCalled();
     expect(stored()?.processedWebhookTasks).toContain("identity");
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
   });

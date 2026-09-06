@@ -10,10 +10,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
   const collState = new Map<string, any[]>();
+  const sets: Array<{ path: string; data: any; opts?: any }> = [];
+
+  // Real FieldValue.arrayUnion is opaque server-side magic; here it's a
+  // sentinel object that .set() below knows how to fold into the stored array
+  // (deduping, same as the real thing) so shownCaregiverIds tests can assert
+  // against docState after the call.
+  const applyArrayUnion = (existing: unknown, op: { __op: "arrayUnion"; args: any[] }) => {
+    const merged = Array.isArray(existing) ? [...existing] : [];
+    for (const a of op.args) if (!merged.includes(a)) merged.push(a);
+    return merged;
+  };
 
   const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
+    path,
     get: vi.fn(async () => ({ exists: docState.has(path), data: () => docState.get(path) })),
+    set: vi.fn(async (data: Record<string, any>, opts?: { merge?: boolean }) => {
+      sets.push({ path, data, opts });
+      const existing = docState.get(path) ?? {};
+      const merged: Record<string, any> = opts?.merge ? { ...existing } : {};
+      for (const [k, v] of Object.entries(data)) {
+        merged[k] = v && typeof v === "object" && (v as any).__op === "arrayUnion"
+          ? applyArrayUnion(existing[k], v as any)
+          : v;
+      }
+      docState.set(path, merged);
+    }),
   });
   const makeCollRef = (path: string): any => {
     const ref: any = {};
@@ -28,10 +51,10 @@ const hoisted = vi.hoisted(() => {
   };
 
   return {
-    docState, collState,
+    docState, collState, sets,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
     loadLiveClientLocation: vi.fn(),
-    reset: () => { docState.clear(); collState.clear(); },
+    reset: () => { docState.clear(); collState.clear(); sets.length = 0; },
   };
 });
 
@@ -39,7 +62,10 @@ vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
   firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { arrayUnion: () => ({}), arrayRemove: () => ({}), increment: () => ({}), delete: () => ({}) },
+    FieldValue: {
+      arrayUnion: (...args: any[]) => ({ __op: "arrayUnion", args }),
+      arrayRemove: () => ({}), increment: () => ({}), delete: () => ({}),
+    },
   }),
 }));
 vi.mock("../../observability/auditLog", () => ({
@@ -96,16 +122,18 @@ describe("find_nearby_caregivers", () => {
     expect(r.code).toBe("NOT_FOUND");
   });
 
-  it("defaults to the top 2, matching the dashboard widget", async () => {
+  it("defaults to the top 4, matching the dashboard widget", async () => {
     hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
     hoisted.collState.set("publicCaregiverProfiles", [
       caregiver("cg1", { rating: 5 }),
       caregiver("cg2", { rating: 4.8 }),
-      caregiver("cg3", { rating: 4 }),
+      caregiver("cg3", { rating: 4.6 }),
+      caregiver("cg4", { rating: 4 }),
+      caregiver("cg5", { rating: 3.8 }),
     ]);
     const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT }) as any;
     expect(r.available).toBe(true);
-    expect(r.items).toHaveLength(2);
+    expect(r.items).toHaveLength(4);
   });
 
   it("raises the count when the family asks to see more (limit override)", async () => {
@@ -174,5 +202,51 @@ describe("find_nearby_caregivers", () => {
     const ids = r.items.map((i: any) => i.id);
     expect(ids).not.toContain("cg_unapproved");
     expect(ids).toContain("cg_ok");
+  });
+
+  describe("already-shown exclusion (shownCaregiverIds)", () => {
+    const PHONE = "+15551234567";
+
+    it("excludes caregivers already shown this conversation when a phone is present", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: ["cg1", "cg2"] });
+      hoisted.collState.set("publicCaregiverProfiles", [
+        caregiver("cg1"), caregiver("cg2"), caregiver("cg3"), caregiver("cg4"),
+      ]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 }) as any;
+      const ids = r.items.map((i: any) => i.id);
+      expect(ids).not.toContain("cg1");
+      expect(ids).not.toContain("cg2");
+      expect(ids).toContain("cg3");
+      expect(ids).toContain("cg4");
+    });
+
+    it("records newly-shown ids onto the session so a later call excludes them", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.collState.set("publicCaregiverProfiles", [caregiver("cg1"), caregiver("cg2")]);
+      await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 });
+      const write = hoisted.sets.find((s) => s.path === `agent_sessions/${PHONE}` && s.data.shownCaregiverIds);
+      expect(write).toBeTruthy();
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`)?.shownCaregiverIds;
+      expect(stored).toEqual(expect.arrayContaining(["cg1", "cg2"]));
+    });
+
+    it("trims the exclusion list to the last 3 once the pool is exhausted, so someone re-surfaces", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: ["cg1", "cg2", "cg3", "cg4", "cg5"] });
+      hoisted.collState.set("publicCaregiverProfiles", [
+        caregiver("cg1"), caregiver("cg2"), caregiver("cg3"), caregiver("cg4"), caregiver("cg5"),
+      ]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 }) as any;
+      // Every known caregiver had already been shown — excluding all 5 leaves
+      // nobody, so the handler trims the exclusion down to the last 3
+      // (cg3-cg5) and retries, which re-surfaces cg1/cg2 instead of
+      // dead-ending the conversation.
+      expect(r.available).toBe(true);
+      const ids = r.items.map((i: any) => i.id);
+      expect(ids.some((id: string) => id === "cg1" || id === "cg2")).toBe(true);
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`)?.shownCaregiverIds;
+      expect(stored).toEqual(expect.arrayContaining(["cg3", "cg4", "cg5"]));
+    });
   });
 });

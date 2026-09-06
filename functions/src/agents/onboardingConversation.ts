@@ -1178,6 +1178,11 @@ export async function handleOnboardingStep(
     // prod session still parked on the string falls through to the defensive
     // default below (absorber path), which never crashes and never wipes state.
     case "client_awaiting_identity": {
+      if (await wantsMoreCaregivers(text)) {
+        await sendMoreCaregiversDuringGate(phone, chatId, session,
+          "you'll still need to finish that quick identity check before we can move forward with anyone");
+        return;
+      }
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
       if (idReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
@@ -1186,6 +1191,16 @@ export async function handleOnboardingStep(
         return;
       }
       if (idReplyKind === "question") {
+        // Check the LIVE fact before answering — an "isn't this already
+        // verified?" question can be genuinely right (webhook missed, same
+        // recovery the "other" branch below already does) and must actually
+        // advance the family, not just tell them so and stop (same fix as
+        // client_awaiting_payment's question branch).
+        const liveIdentityFactQ = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
+        if (liveIdentityFactQ.includes("VERIFIED")) {
+          await advanceOnboardingStep(phone, "identity", "");
+          return;
+        }
         // Identity links expire and only the 7-day stale nudge could re-mint
         // one — a "link doesn't work / never got it" report earns a fresh
         // link right now. Status questions ("how long?") stay answer-only:
@@ -1224,6 +1239,11 @@ export async function handleOnboardingStep(
       return;
     }
     case "client_awaiting_payment": {
+      if (await wantsMoreCaregivers(text)) {
+        await sendMoreCaregiversDuringGate(phone, chatId, session,
+          "you'll still need to finish your membership setup via the link I sent before we can move forward with anyone");
+        return;
+      }
       const payReplyKind = await classifyAwaitingReply(text, "finish their payment setup via the link Evia sent");
       if (payReplyKind === "ack") {
         await sendAwaitingAck(chatId, session,
@@ -1232,13 +1252,32 @@ export async function handleOnboardingStep(
         return;
       }
       if (payReplyKind === "question") {
-        // Answer, then ALWAYS follow with a fresh checkout link (membership
-        // handler pattern) — a family who lost or never got the link had no
-        // conversational way back to checkout (same defect class as the
-        // caregiver photo step, but on the revenue path).
-        await sendMessage(chatId, await answerQuestionMidFlow(text, session, phone));
-        await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
-          "Here's your membership link again — it takes about 30 seconds:");
+        // Check the LIVE fact before answering — a "didn't this already go
+        // through?" question can be genuinely right (webhook missed, same
+        // recovery the "other" branch below already does) and must actually
+        // advance the family, not just tell them so and stop.
+        const liveClientPayFactQ = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
+        if (liveClientPayFactQ.includes("WENT THROUGH")) {
+          const subIdQ = (session as any).stripeSubscriptionId as string | undefined;
+          if (subIdQ) {
+            await advanceOnboardingStep(phone, "payment", subIdQ);
+          } else {
+            await advanceOnboardingStep(phone, "admin_payment_override", "");
+          }
+          return;
+        }
+        const payAnswer = await answerQuestionMidFlow(text, session, phone);
+        await sendMessage(chatId, payAnswer);
+        // Only resend the link if they're actually asking for it again
+        // ("doesn't work", "never got it") — a plain status question just
+        // answered must never be followed by resending the very link the
+        // answer said isn't needed (2026-09-06 live bug: Evia said "your
+        // payment went through" then immediately re-sent the payment link).
+        if (await wantsGateLinkResend(text)) {
+          if (await resendGateLink(phone, chatId, "client_awaiting_payment", "client_payment",
+            "Here's your membership link again — it takes about 30 seconds:")) return;
+        }
+        await runGateLinkNet(phone, chatId, session, payAnswer);
         return;
       }
       if (await tryAbsorbClientGateUpdate(phone, chatId, text, session,
@@ -3387,6 +3426,52 @@ async function wantsGateLinkResend(text: string): Promise<boolean> {
     text,
   ).catch(() => "NO");
   return raw.trim().toUpperCase().startsWith("Y");
+}
+
+// The website never gated BROWSING on identity verification or membership —
+// only messaging, booking, and interview requests (find_nearby_caregivers's
+// own contract in mcp/server.ts). But client_awaiting_identity/_payment are
+// handled by this file's scripted gate runner, not the general qaAgent tool
+// loop, so an off-topic "any more caregivers?" asked mid-gate had nowhere to
+// go — classifyAwaitingReply's ack/question/other split has no bucket for it,
+// and none of those branches ever call a caregiver-search tool. Checked FIRST,
+// before that classification, so it can't be misread as a question about the
+// gate itself (the same class of misclassification risk as the role-switch
+// bug this session already fixed).
+async function wantsMoreCaregivers(text: string): Promise<boolean> {
+  const raw = await parseWithClaude(
+    "The user is texting Evia, a care coordinator, mid-signup. Is their message asking to see " +
+      "(more) caregivers, caregiver options, or matches — e.g. \"any more caregivers\", \"show me other " +
+      "options\", \"who else is available\", \"can I see more caregivers\", \"any other caregivers nearby\"? " +
+      "Reply YES only for that. Reply NO for a plain acknowledgment, a question about payment/identity/the " +
+      "process itself, or anything else. Reply with exactly one word: YES or NO.",
+    text,
+  ).catch(() => "NO");
+  return raw.trim().toUpperCase().startsWith("Y");
+}
+
+// Surfaces real caregiver matches for a "show me more" ask that arrives while
+// a gate (identity check, membership) is still pending, then reminds the
+// family the gate itself still needs finishing. Reuses find_nearby_caregivers
+// (mcp/server.ts) rather than re-querying here, so this shares its
+// shownCaregiverIds exclusion/exhaustion-trim logic — the family never gets
+// re-shown someone already sent, whether "more" is asked from here or from
+// ordinary post-onboarding chat.
+async function sendMoreCaregiversDuringGate(
+  phone: string, chatId: string, session: AgentSession, gateReminder: string,
+): Promise<void> {
+  const clientId = session.userId as string | undefined;
+  if (!clientId) {
+    await sendMessage(chatId, `I'll pull up more options for you shortly — ${gateReminder}.`);
+    return;
+  }
+  const { handleToolCall } = await import("../mcp/server");
+  const result = await handleToolCall("find_nearby_caregivers", { clientId, phone })
+    .catch(() => null) as { available?: boolean; message?: string; _toolError?: boolean } | null;
+  const base = (result && !result._toolError && result.message)
+    ? result.message
+    : "I don't have any new options to show just yet, but I'm still looking.";
+  await sendMessage(chatId, `${base} And don't forget — ${gateReminder}.`);
 }
 
 // Belt-and-suspenders for gate-step replies that end in PROSE with no

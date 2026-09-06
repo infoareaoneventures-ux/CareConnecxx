@@ -255,11 +255,13 @@ export const MCP_TOOLS: McpTool[] = [
       "or membership (browsing was never gated on the website either; only messaging, booking, and interview " +
       "requests are — use those tools' own gates for that). Always reads the family's CURRENT location and " +
       "care needs fresh; never rely on something they mentioned earlier in the conversation instead of " +
-      "calling this again. Defaults to the top 2, matching the dashboard widget — if they ask to see more, " +
+      "calling this again. Defaults to the top 4, matching the dashboard widget — if they ask to see more, " +
       "or want something more specific (a minimum rating, years of experience, a rate ceiling, further than " +
       "the default 25 miles), pass the matching filter instead of just re-calling with no changes. Every " +
       "caregiver this can ever return is already background-check cleared — that's a precondition of showing " +
-      "up here at all, not an optional filter, so never ask the family whether they want that.",
+      "up here at all, not an optional filter, so never ask the family whether they want that. Never re-shows " +
+      "someone already shown this conversation — a follow-up call (e.g. a 'show me more' ask) automatically " +
+      "excludes everyone already surfaced and returns new people instead.",
     input_schema: {
       type: "object",
       properties: {
@@ -270,7 +272,7 @@ export const MCP_TOOLS: McpTool[] = [
         },
         limit: {
           type: "number",
-          description: "How many caregivers to return (default 2, matching the dashboard widget; max 10). Raise this when the family asks to see more.",
+          description: "How many caregivers to return (default 4, matching the dashboard widget; max 10). You don't need to raise this yourself for a 'show me more' ask — every call already excludes caregivers already shown, so calling again with no changes surfaces new people.",
         },
         maxDistanceMiles: {
           type: "number",
@@ -3183,7 +3185,7 @@ async function executeToolCall(
 
       case "find_nearby_caregivers": {
         const {
-          clientId, careNeeds: careNeedsOverride,
+          clientId, careNeeds: careNeedsOverride, phone,
           limit: limitInput, maxDistanceMiles, minRating, minExperienceYears, maxHourlyRate,
         } = input as Record<string, unknown>;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
@@ -3203,15 +3205,27 @@ async function executeToolCall(
         const { isSeededCaregiver, buildCaregiverPreviewResult } = await import("../agents/actions/getCaregiverPreviewAction");
         const { scoreAndRankCaregivers } = await import("../agents/caregiverMatchScoring");
 
+        // Never re-show someone this family has already been sent this
+        // conversation — tracked on the session the same way rejectedCaregiverIds
+        // excludes DECLINED caregivers (matchingAgent.ts). If excluding them
+        // leaves nobody (the local pool is small and "show more" has been asked
+        // enough times to exhaust it), trim to the last 3 shown and retry —
+        // mirrors matchingAgent.ts's identical rejection-exhaustion escalation
+        // rather than dead-ending the conversation.
+        const sessionRef = phone ? db.collection("agent_sessions").doc(phone as string) : null;
+        const shownIds: string[] = sessionRef
+          ? ((await sessionRef.get()).data()?.shownCaregiverIds as string[] | undefined) ?? []
+          : [];
+
         const poolSnap = await db.collection("publicCaregiverProfiles")
           .where("onboardingStatus", "==", "profile_complete")
           .limit(200)
           .get();
-        const rawDocs = poolSnap.docs
+        const allRawDocs = poolSnap.docs
           .map((doc) => ({ id: doc.id, data: { ...doc.data(), id: doc.id } }))
           .filter(({ data }) => !isSeededCaregiver(data));
 
-        const resultLimit = Math.min(Math.max(Math.trunc((limitInput as number) ?? 2), 1), 10);
+        const resultLimit = Math.min(Math.max(Math.trunc((limitInput as number) ?? 4), 1), 10);
         const distanceCap = typeof maxDistanceMiles === "number" ? maxDistanceMiles : 25;
 
         const scoreOpts = {
@@ -3220,19 +3234,7 @@ async function executeToolCall(
           clientSchedule: undefined,
           needsTransportation: false,
         };
-        // Rank a wider pool than we'll show (30, not resultLimit) — the extra
-        // filters below (rating/experience/rate, mirroring the website's
-        // Browse Caregivers filter panel) apply AFTER ranking, so they narrow
-        // from a real pool instead of starving whatever the top-N happened to
-        // already be trimmed to.
-        let ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, maxDistance: distanceCap, applyHardFilters: true, limit: 30 });
-        let widened = false;
-        if (ranked.length === 0) {
-          ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, applyHardFilters: false, limit: 30 });
-          widened = ranked.length > 0;
-        }
-
-        const matches = ranked.filter((c) => {
+        const applyPostFilters = (c: { data: Record<string, unknown> }) => {
           const d = c.data;
           if (typeof minRating === "number" && (Number(d.rating) || 0) < minRating) return false;
           if (typeof minExperienceYears === "number") {
@@ -3241,7 +3243,35 @@ async function executeToolCall(
           }
           if (typeof maxHourlyRate === "number" && Number(d.hourlyRate) > maxHourlyRate) return false;
           return true;
-        }).slice(0, resultLimit);
+        };
+        // Rank a wider pool than we'll show (30, not resultLimit) — the extra
+        // filters below (rating/experience/rate, mirroring the website's
+        // Browse Caregivers filter panel) apply AFTER ranking, so they narrow
+        // from a real pool instead of starving whatever the top-N happened to
+        // already be trimmed to.
+        const runPass = (excludeIds: string[]) => {
+          const rawDocs = allRawDocs.filter(({ id }) => !excludeIds.includes(id));
+          let ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, maxDistance: distanceCap, applyHardFilters: true, limit: 30 });
+          let widenedPass = false;
+          if (ranked.length === 0) {
+            ranked = scoreAndRankCaregivers(rawDocs, { ...scoreOpts, applyHardFilters: false, limit: 30 });
+            widenedPass = ranked.length > 0;
+          }
+          return { matches: ranked.filter(applyPostFilters).slice(0, resultLimit), widened: widenedPass };
+        };
+
+        let { matches, widened } = runPass(shownIds);
+        if (matches.length === 0 && shownIds.length > 0) {
+          const trimmedShown = shownIds.slice(-3);
+          ({ matches, widened } = runPass(trimmedShown));
+          if (sessionRef) await sessionRef.set({ shownCaregiverIds: trimmedShown }, { merge: true }).catch(() => {});
+        }
+
+        if (sessionRef && matches.length > 0) {
+          await sessionRef.set({
+            shownCaregiverIds: admin.firestore.FieldValue.arrayUnion(...matches.map((m) => m.data.id as string)),
+          }, { merge: true }).catch(() => {});
+        }
 
         return buildCaregiverPreviewResult({
           caregivers: matches.map((m) => m.data),

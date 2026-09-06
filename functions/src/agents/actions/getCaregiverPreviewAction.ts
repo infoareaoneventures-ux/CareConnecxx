@@ -214,9 +214,10 @@ export function buildCaregiverPreviewResult(opts: {
   city?: string;
   seniorName?: string;
   careNeeds?: string[];
-  /** Max caregivers to actually include (both `total` and `items`). Default 3
-   *  matches the original onboarding preview's fixed size; find_nearby_caregivers
-   *  passes its own (possibly larger, family-requested) limit here instead. */
+  /** Max caregivers to actually include (both `total` and `items`). Default 4
+   *  matches the dashboard's Nearby Caregivers widget (ClientDashboard.tsx
+   *  shows discoveryCaregivers.slice(0, 4)); find_nearby_caregivers passes its
+   *  own (possibly larger, family-requested) limit here instead. */
   itemLimit?: number;
 }): CaregiverPreviewOutput {
   const city = (opts.city ?? "").trim();
@@ -224,7 +225,7 @@ export function buildCaregiverPreviewResult(opts: {
   const careNeeds = Array.isArray(opts.careNeeds) ? opts.careNeeds.filter(Boolean) : [];
   const locationLabel = city || "your area";
   const needsLabel = careNeeds.length > 0 ? careNeeds.slice(0, 2).join(" & ") : "care";
-  const itemLimit = opts.itemLimit ?? 3;
+  const itemLimit = opts.itemLimit ?? 4;
   const caregivers = opts.caregivers.slice(0, itemLimit);
   const items = caregivers.map(toPreviewItem);
 

@@ -575,18 +575,25 @@ describe("gate status questions are grounded in live state (all builders)", () =
     expect(answerPrompt()).toContain("ALREADY reviewed");
   });
 
-  it("client payment: says the membership WENT THROUGH when the subscription id is on the session", async () => {
+  it("client payment: auto-advances (webhook-missed recovery) instead of answering WENT THROUGH and stopping", async () => {
+    // 2026-09-06 live bug: a client asking "isn't that approved already?" while
+    // genuinely already paid (webhook missed) got told "yes, went through" and
+    // then the payment link AGAIN — contradicting itself and leaving them stuck
+    // re-asking forever. The question branch now drives the same advance path
+    // the real Stripe webhook uses instead of just answering and stopping.
     const session = seed("client_awaiting_payment", {}, { userType: "client", stripeSubscriptionId: "sub_client" });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "did my payment go through?", session);
-    expect(answerPrompt()).toContain("WENT THROUGH");
+    expect(stored()?.processedWebhookTasks).toContain("payment");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_payment");
   });
 
-  it("client identity: says VERIFIED when onboardingData clears the flag", async () => {
+  it("client identity: auto-advances (webhook-missed recovery) instead of answering VERIFIED and stopping", async () => {
     const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
     awaitingKind = "question";
     await handleOnboardingStep(PHONE, CHAT, "is my identity check done?", session);
-    expect(answerPrompt()).toContain("VERIFIED");
+    expect(stored()?.processedWebhookTasks).toContain("identity");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
   });
 });
 
@@ -843,11 +850,19 @@ describe("gate-step link resend — the link actually goes out, as a link part",
     expect(linkParts().some((u) => u.includes("/upload/document?t="))).toBe(true);
   });
 
-  it("client payment: a 'never got the link' question mints a fresh checkout and sends it", async () => {
-    const session = seed("client_awaiting_payment", {}, { userType: "client" });
+  it("client payment: a status question does NOT re-mint a link; a 'never got it' report DOES", async () => {
+    const s1 = seed("client_awaiting_payment", {}, { userType: "client" });
     awaitingKind = "question";
-    await handleOnboardingStep(PHONE, CHAT, "I never got the link", session);
-    expect(stripeSpies.checkoutCreate).toHaveBeenCalled();
+    wantsLink = "NO";
+    await handleOnboardingStep(PHONE, CHAT, "how long does this usually take?", s1);
+    expect(stripeSpies.checkoutCreate).not.toHaveBeenCalled();
+    expect(linkParts()).toHaveLength(0);
+
+    sentMessages.length = 0;
+    const s2 = seed("client_awaiting_payment", {}, { userType: "client" });
+    wantsLink = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "I never got the link", s2);
+    expect(stripeSpies.checkoutCreate).toHaveBeenCalledTimes(1);
     expect(linkParts().length).toBeGreaterThan(0);
   });
 

@@ -581,7 +581,10 @@ async function detectRoleSwitch(
     "Use \"caregiver\" if they are clearly saying they are a caregiver looking for work. " +
     `Use \"none\" if their message is just answering the current question or is ambiguous. ` +
     "Only flag clear role-switch intent; do NOT flag a client mentioning they have a caregiver background, " +
-    "or a caregiver mentioning their own elderly parent in passing.",
+    "or a caregiver mentioning their own elderly parent in passing. The word \"caregiver\" appearing in the " +
+    "message is NOT enough by itself — a client asking about caregiver MATCHES (e.g. \"any more caregivers?\", " +
+    "\"are there more caregivers in my area?\") is asking about candidates for their loved one, not declaring " +
+    "themselves a caregiver — that is \"none\", never \"caregiver\".",
     text,
   );
   if (raw === "__parse_error__" || !raw.startsWith("{")) return null;
@@ -1070,11 +1073,18 @@ export async function handleOnboardingStep(
       && !step.endsWith("_awaiting_payment") && !step.endsWith("_awaiting_stripe")
       && !step.endsWith("_awaiting_bgcheck") && !step.endsWith("_awaiting_membership")
       && !step.endsWith("_awaiting_documents") && !step.endsWith("_awaiting_photo")
+      && !step.endsWith("_awaiting_identity") && !step.endsWith("_awaiting_mvr")
       // Confirm-name steps own their own yes/correction parsing. A bare "yes" here
       // must NOT be misread as a role switch — that would wipe onboardingData (the
       // name we just greeted them with) and dump them back to ask_role.
       && step !== "client_confirm_name"
-      && step !== "caregiver_confirm_name") {
+      && step !== "caregiver_confirm_name"
+      // Post-collection browsing (matches shown, deciding on membership) — a
+      // family asking "any more caregivers?" here was live-caught getting
+      // misread as "I'm a caregiver looking for work," wiping their whole
+      // intake and dumping them back to ask_role (2026-09-06). Established
+      // accounts past intake-confirm never need role-switch detection.
+      && step !== "client_ask_plan") {
     const switchTo = await detectRoleSwitch(text, session.userType ?? null);
     if (switchTo) {
       await updateSession(phone, {
@@ -2557,12 +2567,14 @@ async function handleClientShowCaregivers(
     }
   }
 
-  // Value first (real caregivers shown above), then price + an explicit
-  // consent ask. handleClientPresentPlan now STOPS after the ask — the
-  // identity link only goes out after the family says yes
-  // (handleClientPlanReply), never unrequested.
-  await updateSession(phone, { onboardingStep: "client_ask_plan" });
-  await handleClientPresentPlan(phone, chatId, session);
+  // Site order (2026-09-06 fix): Care Plan → Identity → Membership, matching
+  // the website's own onboarding tracker exactly. Identity goes out now, with
+  // no price mentioned yet — the membership pitch (handleClientPresentPlan)
+  // only fires once identity actually clears (see the "identity" case in
+  // advanceOnboardingStep). Previously this pitched the price FIRST and only
+  // sent Identity after a yes — backwards from the site, where price is never
+  // shown until after Identity.
+  await sendIdentityCheckLink(phone, chatId, session);
 }
 
 // Proactive post-collection handoff for the agent loop. When the loop calls
@@ -2713,9 +2725,13 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   const priceLabel = await describeClientPrice(priceId);
 
   // Pitch + explicit consent ask, then STOP (consent gate, 2026-07-12). This
-  // is a money moment — the setup/identity link goes out only after the family
-  // says yes (handleClientPlanReply owns the reply), never unrequested. One
-  // message, one job: price + what it covers + a clear yes/no question.
+  // is a money moment — the actual membership checkout link goes out only
+  // after the family says yes (handleClientPlanReply owns the reply), never
+  // unrequested. One message, one job: price + what it covers + a clear
+  // yes/no question. Runs AFTER identity clears (site order, 2026-09-06) —
+  // the caregiver matches were shown earlier, with the identity check now
+  // sitting in between, so the context below says "already showed," not
+  // "just showed."
   //
   // R12 (hallucination hardening 2026-07-17): when the live Stripe price lookup
   // fails (priceLabel === ""), the briefing must NOT ask the model to "state
@@ -2728,7 +2744,8 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   const msg = await generateCaraMessage({
     audience: "family",
     context:
-      `Evia just showed a family real local caregivers for ${seniorName} (photos + profiles, sent above). ` +
+      `Evia already showed this family real local caregivers for ${seniorName} (photos + profiles, sent earlier ` +
+      `in this conversation) and their identity check just cleared. ` +
       pricePart +
       `and for that Evia coordinates everything for ${seniorName} — scheduling, weekly summaries, and keeping ` +
       `the whole family in the loop. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
@@ -2745,6 +2762,64 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
   await sendMessage(chatId, msg);
   // Step stays client_ask_plan (set by the caller) — handleClientPlanReply
   // parses the yes/no and sends the identity link on an explicit yes.
+}
+
+// Site-order fix (2026-09-06): the website's own onboarding tracker shows
+// Care Plan → Identity → Membership, in that order — Identity is never
+// mentioned as gated behind price, and no dollar amount is shown until after
+// it. Evia used to pitch the membership PRICE immediately after showing
+// caregiver matches, get a yes, THEN send the Identity link — so the very
+// first thing raised was money, backwards from what the site itself shows
+// and asks for. This is now called directly from handleClientShowCaregivers,
+// with no price pitch first — the price pitch (handleClientPresentPlan) now
+// runs only once identity actually clears (see the "identity" webhook case
+// in advanceOnboardingStep below).
+async function sendIdentityCheckLink(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  // Live check: skip a redundant Identity link if the client already
+  // verified — most likely via the website, which Evia otherwise has no way
+  // to know about before unconditionally minting a brand-new Stripe Identity
+  // session and asking them to redo a check they already passed. Already
+  // verified means Identity is done — go straight to the price pitch, same
+  // as the webhook path below does once a fresh check clears.
+  if (session.userId) {
+    const identitySnap = await db.collection("users").doc(session.userId as string).get().catch(() => null);
+    if (identitySnap?.exists && identitySnap.data()?.identityCheckStatus === "verified") {
+      await updateSession(phone, { onboardingStep: "client_ask_plan" });
+      await handleClientPresentPlan(phone, chatId, session);
+      return;
+    }
+  }
+
+  await signalThinking(chatId, session.service);
+  let identityUrl: string;
+  try {
+    identityUrl = await createClientIdentitySession(phone);
+  } catch (err) {
+    console.error("createClientIdentitySession error — falling back to price pitch:", err);
+    // Identity verification was skipped (not completed) — persist that flag so
+    // ops can see who bypassed the identity check, and raise an admin_alerts
+    // doc so it's visible in the Control Room instead of only in logs.
+    await mergeOnboardingData(phone, {
+      needsIdentityVerification: true,
+      identityGateSkippedAt: new Date().toISOString(),
+    });
+    await db.collection("admin_alerts").add({
+      type:      "identity_gate_skipped",
+      phone,
+      error:     String(err),
+      createdAt: new Date().toISOString(),
+      resolved:  false,
+      severity:  "high",
+    }).catch(() => {});
+    await updateSession(phone, { onboardingStep: "client_ask_plan" });
+    await handleClientPresentPlan(phone, chatId, session);
+    return;
+  }
+  await sendMessage(chatId,
+    "Quick 30-second identity check first — it's how I keep every family on the platform real and safe:"
+  );
+  await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
+  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
 }
 
 async function handleClientPlanReply(
@@ -2781,57 +2856,11 @@ async function handleClientPlanReply(
     return;
   }
 
-  // Live check: skip a redundant Identity link if the client already
-  // verified — most likely via the website, which Evia otherwise has no way
-  // to know about before unconditionally minting a brand-new Stripe Identity
-  // session and asking them to redo a check they already passed.
-  if (session.userId) {
-    const identitySnap = await db.collection("users").doc(session.userId as string).get().catch(() => null);
-    if (identitySnap?.exists && identitySnap.data()?.identityCheckStatus === "verified") {
-      await updateSession(phone, { onboardingStep: "client_send_payment" });
-      await handleClientSendPayment(phone, chatId, session);
-      return;
-    }
-  }
-
-  // Confirmed → ensure a price is stored, then send the identity link.
-  const d = session.onboardingData ?? {};
-  let priceId = (d.selectedPlanPriceId as string) ?? "";
-  if (!priceId) {
-    priceId = resolveClientPriceId();
-    await mergeOnboardingData(phone, { selectedPlan: "Evia", selectedPlanPriceId: priceId });
-  }
-
-  await signalThinking(chatId, session.service);
-  let identityUrl: string;
-  try {
-    identityUrl = await createClientIdentitySession(phone);
-  } catch (err) {
-    console.error("createClientIdentitySession error — falling back to payment:", err);
-    // Identity verification was skipped (not completed) — persist that flag so
-    // ops can see who bypassed the identity check, and raise an admin_alerts
-    // doc so it's visible in the Control Room instead of only in logs.
-    await mergeOnboardingData(phone, {
-      needsIdentityVerification: true,
-      identityGateSkippedAt: new Date().toISOString(),
-    });
-    await db.collection("admin_alerts").add({
-      type:      "identity_gate_skipped",
-      phone,
-      error:     String(err),
-      createdAt: new Date().toISOString(),
-      resolved:  false,
-      severity:  "high",
-    }).catch(() => {});
-    await updateSession(phone, { onboardingStep: "client_send_payment" });
-    await handleClientSendPayment(phone, chatId, session);
-    return;
-  }
-  await sendMessage(chatId,
-    "Perfect. Quick 30-second identity check first — it's how I keep every family on the platform real and safe:"
-  );
-  await sendMessage(chatId, { parts: [{ type: "link", value: identityUrl }] });
-  await updateSession(phone, { onboardingStep: "client_awaiting_identity" });
+  // By the time this step is reached, Identity has already cleared (this
+  // step only fires after the "identity" webhook case pitches the price) —
+  // confirmed intent goes straight to the actual membership checkout.
+  await updateSession(phone, { onboardingStep: "client_send_payment" });
+  await handleClientSendPayment(phone, chatId, session);
 }
 
 export async function handleClientSendPayment(phone: string, chatId: string, session: AgentSession): Promise<void> {
@@ -4937,10 +4966,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
             : "Your identity check just cleared — you're verified! ✅"
         );
 
-        // New order: plan/price was accepted before identity, so once identity
-        // clears we go straight to collecting payment (card on file).
-        await updateSession(phone, { onboardingStep: "client_send_payment" });
-        await handleClientSendPayment(phone, chatId, session);
+        // Site order (2026-09-06 fix): Identity clears BEFORE any price is
+        // mentioned, matching the website's own tracker (Care Plan → Identity
+        // → Membership) — pitch the membership price now; handleClientPlanReply
+        // sends the actual Stripe checkout link once the family confirms.
+        await updateSession(phone, { onboardingStep: "client_ask_plan" });
+        await handleClientPresentPlan(phone, chatId, session);
       }
       // (caregiver_awaiting_identity forwarding removed — U12, R17: the retired
       // step no longer exists; caregivers never receive an identity task.)
@@ -4989,8 +5020,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
             ? "¡Tu verificación de identidad se aprobó — estás verificado! ✅"
             : "Your identity check just cleared — you're verified! ✅"
         );
-        await updateSession(phone, { onboardingStep: "client_send_payment" });
-        await handleClientSendPayment(phone, chatId, session);
+        // Site order (2026-09-06 fix): pitch the membership price now that
+        // identity is clear, matching the Stripe webhook path above.
+        await updateSession(phone, { onboardingStep: "client_ask_plan" });
+        await handleClientPresentPlan(phone, chatId, session);
       } else {
         console.info(`admin_identity_override: identity approved for uid=${uid ?? "unknown"}, but session step="${step}" wasn't awaiting it — data updated, no SMS follow-up sent.`);
       }

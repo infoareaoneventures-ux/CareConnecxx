@@ -7459,7 +7459,18 @@ async function executeToolCall(
         }
       }
       const missing = missingRequiredFields(role, data);
-      return { ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0 };
+      // Email confirmations kept getting garbled/truncated in the model's own
+      // free-text reply (e.g. "Got it, hamse143@" — dropping the domain) even
+      // with a system-prompt instruction not to. Handing back the exact saved
+      // string right here, at the point of generation, is far more reliable
+      // than a static instruction written elsewhere in the prompt.
+      const emailGuidance = fieldName === "email"
+        ? ` Confirm this back to them using this EXACT string, unmodified: "${normalizedValue}" — never abbreviate, truncate, or drop the domain.`
+        : "";
+      return {
+        ok: true, fieldName, saved: true, missing, collectionComplete: missing.length === 0,
+        ...(emailGuidance ? { guidance: emailGuidance.trim() } : {}),
+      };
     }
 
     // ── complete_collection (U1) ────────────────────────────────────────────

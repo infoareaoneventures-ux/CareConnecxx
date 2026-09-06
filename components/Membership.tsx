@@ -3,13 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Check, Crown, Shield, Star, Loader2, AlertCircle, Calendar, CreditCard } from 'lucide-react';
 import { Button } from './ui/Button';
 import { ClientNavigation } from './client/ClientNavigation';
-import { auth, db } from '../lib/firebase';
+import { auth } from '../lib/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   getSubscriptionStatus,
   hasActiveMembership,
   SubscriptionStatus,
-  listenToSubscriptionStatus
+  listenToSubscriptionStatus,
+  getClientBillingPortalUrl,
 } from '../services/stripeService';
 import { PlanSelectModal } from './client/PlanSelectModal';
 
@@ -37,6 +38,7 @@ export default function Membership() {
   const [error, setError] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [openingPortal, setOpeningPortal] = useState(false);
 
   useEffect(() => {
     const user = auth?.currentUser;
@@ -67,6 +69,18 @@ export default function Membership() {
       setError('Failed to load subscription status');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    setOpeningPortal(true);
+    try {
+      const url = await getClientBillingPortalUrl();
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      setError(err?.message || 'Could not open billing portal. Please try again.');
+    } finally {
+      setOpeningPortal(false);
     }
   };
 
@@ -300,6 +314,26 @@ export default function Membership() {
             )}
           </div>
         </div>
+
+        {/* Manage membership — Stripe's hosted portal covers payment method,
+            cancellation, and full invoice/payment history in one place, same
+            as the caregiver-side Payments page (CaregiverPaymentsPage.tsx). */}
+        {isActive && (
+          <div className="mt-8 bg-white rounded-2xl border border-slate-200 p-5 flex items-center justify-between gap-4">
+            <div>
+              <p className="font-semibold text-slate-900 text-sm">Manage membership</p>
+              <p className="text-xs text-slate-500 mt-0.5">Update payment method, or view invoices and payment history via Stripe.</p>
+            </div>
+            <button
+              onClick={handleManageBilling}
+              disabled={openingPortal}
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-60 flex items-center gap-2 shrink-0"
+            >
+              {openingPortal && <Loader2 className="w-4 h-4 animate-spin" />}
+              Manage
+            </button>
+          </div>
+        )}
 
       </main>
 

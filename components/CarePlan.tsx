@@ -497,10 +497,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     setPlan(updatedPlan);
     setEditingContactIdx(null);
     try {
-      await Promise.all([
-        dbService.updateCarePlan(currentPlanId, updatedPlan),
-        db?.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: updatedList }, { merge: true }),
-      ]);
+      await dbService.updateCarePlan(currentPlanId, updatedPlan);
       dirtyContactsRef.current = false;
     } catch {}
   };
@@ -548,10 +545,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     }
     setSavingContacts(true);
     try {
-      await Promise.all([
-        dbService.updateCarePlan(currentPlanId, plan),
-        db?.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: plan.emergencyContacts }, { merge: true }),
-      ]);
+      await dbService.updateCarePlan(currentPlanId, plan);
       dirtyContactsRef.current = false;
       setEditingContactIdx(null);
       onShowToast('Contact saved', 'success');
@@ -765,8 +759,9 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
           emergencyPhone: setupDraft.phone,
           emergencyRelationship: setupDraft.relationship,
         }),
-        db.collection('carePlans').doc(currentPlanId).set({ emergencyContacts: [normalizedContact] }, { merge: true }),
+        dbService.updateCarePlan(currentPlanId, { ...plan, emergencyContacts: [normalizedContact] }),
       ]);
+      setPlan(prev => ({ ...prev, emergencyContacts: [normalizedContact] }));
       setWizardData((prev: any) => ({ ...prev, emergencyFirstName: setupDraft.firstName, emergencyLastName: setupDraft.lastName, emergencyPhone: setupDraft.phone, emergencyRelationship: setupDraft.relationship }));
       setEditingSetupContact(false);
       onShowToast('Contact updated', 'success');
@@ -1628,57 +1623,6 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
                 </div>
 
-                {/* ── Personal care details (per-person, from Evia — read-only) ──
-                    care_plans/{uid}.recipientMedical[getKey] is written by the SMS
-                    agent's update_care_plan with recipientFirstName. Display-only
-                    here (editing flows through Evia chat); absent map = nothing
-                    renders, so single-recipient/legacy docs look exactly as before. */}
-                {(() => {
-                  const rm = (plan as any).recipientMedical?.[getKey(recipient.firstName, recipient.lastName)];
-                  if (!rm) return null;
-                  const label = (v: any): string => {
-                    if (v == null) return '';
-                    if (typeof v !== 'object') return String(v);
-                    return String(v.name ?? v.description ?? (v.time ? `${v.time} — ${v.description ?? ''}` : '')) || JSON.stringify(v);
-                  };
-                  const rows: { title: string; items: string[] }[] = [
-                    { title: 'Medications',          items: (Array.isArray(rm.medications) ? rm.medications : []).map(label).filter(Boolean) },
-                    { title: 'Diagnoses',            items: (Array.isArray(rm.diagnoses) ? rm.diagnoses : []).map(label).filter(Boolean) },
-                    { title: 'Daily routine',        items: (Array.isArray(rm.dailyRoutine) ? rm.dailyRoutine : []).map(label).filter(Boolean) },
-                    { title: 'Dietary restrictions', items: (Array.isArray(rm.dietaryRestrictions) ? rm.dietaryRestrictions : []).map(label).filter(Boolean) },
-                    { title: 'Doctors',              items: (Array.isArray(rm.doctorContacts) ? rm.doctorContacts : []).map(label).filter(Boolean) },
-                  ].filter(r => r.items.length > 0);
-                  const notes = [rm.dietaryNotes, rm.specialInstructions].map((s: any) => String(s ?? '').trim()).filter(Boolean);
-                  if (!rows.length && !notes.length) return null;
-                  return (
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
-                      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-xl bg-primary-50 flex items-center justify-center">
-                            <ClipboardList className="w-4 h-4 text-primary-500" />
-                          </div>
-                          <h3 className="font-bold text-slate-900 text-sm">{recipient.firstName}'s Care Details</h3>
-                        </div>
-                        <span className="text-[11px] text-slate-400 font-medium">Managed with Evia — text to update</span>
-                      </div>
-                      <div className="px-5 py-4 space-y-3">
-                        {rows.map(r => (
-                          <div key={r.title}>
-                            <p className="text-xs font-semibold text-slate-500 mb-1.5">{r.title}</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {r.items.map((it, i) => (
-                                <span key={i} className="px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200 text-xs text-slate-600 font-medium">{it}</span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                        {notes.map((n, i) => (
-                          <p key={i} className="text-xs text-slate-500">{n}</p>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
               </>
             )}
 

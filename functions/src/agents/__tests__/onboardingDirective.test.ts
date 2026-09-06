@@ -28,9 +28,15 @@ describe("buildOnboardingDirective", () => {
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
       rate: 25, email: "imran@example.com",
+      // "everything collected" now means every wizard item, required AND
+      // optional (see the combined CLIENT_WIZARD_FIELD_ORDER fix) — not just
+      // the required subset.
+      additionalRecipients: [], careRecipientPhotoURL: "x", ongoing: true, caregiversNeeded: 1,
+      petsInHome: false, smokingHousehold: false, jobDescription: "x",
+      emergencyContactRelationship: "friend", daysFlexible: false,
     });
     expect(d).toContain("complete_collection");
-    expect(d).toContain("all required fields collected");
+    expect(d).toContain("all items collected");
   });
 
   // 2026-08-24 fix: additionalRecipients had a label but was never in the
@@ -50,7 +56,7 @@ describe("buildOnboardingDirective", () => {
       caregiversNeeded: 1,
     });
     expect(d).toContain("every OTHER person needing care");
-    expect(d).toContain("HOLD ON BEFORE FINISHING");
+    expect(d).toContain("not yet gotten a value for");
   });
 
   it("stops nudging additionalRecipients once it's been answered", () => {
@@ -66,7 +72,7 @@ describe("buildOnboardingDirective", () => {
       age: 82, emergencyContactRelationship: "friend", daysFlexible: false,
     });
     expect(d).not.toContain("every OTHER person needing care");
-    expect(d).not.toContain("HOLD ON BEFORE FINISHING");
+    expect(d).not.toContain("not yet gotten a value for");
   });
 
   // 2026-08-24: age, emergencyContactRelationship, and daysFlexible had labels
@@ -83,7 +89,7 @@ describe("buildOnboardingDirective", () => {
       petsInHome: false, smokingHousehold: false, jobDescription: "x",
       // age/emergencyContactRelationship/daysFlexible deliberately left unset
     });
-    expect(d).toContain("HOLD ON BEFORE FINISHING");
+    expect(d).toContain("not yet gotten a value for");
     expect(d).toContain("their age");
     expect(d).toContain("the emergency contact's relationship");
     expect(d).toContain("whether their days are flexible");

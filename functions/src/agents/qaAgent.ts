@@ -37,6 +37,7 @@ import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { selectToolPack, TOOL_PACKS_CAPABILITY } from "./toolPackSelector";
 import { buildOnboardingDirective } from "./onboardingDirective";
+import { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } from "./clientJobPostingContract";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
 import { parseWellness, describeWellness, selectNextAppointment } from "./careEvidence";
@@ -2350,9 +2351,35 @@ export async function runQaAgent(params: {
     const caregiverRateRangeText = onboardingRole === "caregiver"
       ? await getMarketRateText()
       : undefined;
+    const draftOnboardingData = (session as any)?.onboardingData as Record<string, unknown> | undefined;
+    // Cross-channel sync (2026-09-06): a client may complete some or all of
+    // setup on the website directly instead of over SMS — job_postings/users
+    // never used to be read back into Evia's own onboardingData draft, so
+    // Evia kept asking for things the site already has. Merge live site data
+    // in as defaults UNDER the draft (an answer given THIS turn always wins);
+    // never persisted back, purely for this turn's "what's still needed" check.
+    const clientUid = onboardingRole === "client" ? (userId ?? (session as any)?.userId) : undefined;
+    let effectiveOnboardingData = draftOnboardingData;
+    if (clientUid) {
+      try {
+        const [jobPostingsSnap, usersSnap] = await Promise.all([
+          db.collection("job_postings").doc(clientUid).get(),
+          db.collection("users").doc(clientUid).get(),
+        ]);
+        const liveData = {
+          ...mapJobPostingsDocToOnboardingData(jobPostingsSnap.exists ? jobPostingsSnap.data() : undefined),
+          ...mapUsersDocToOnboardingData(usersSnap.exists ? usersSnap.data() : undefined),
+        };
+        if (Object.keys(liveData).length > 0) {
+          effectiveOnboardingData = { ...liveData, ...(draftOnboardingData ?? {}) };
+        }
+      } catch (err) {
+        console.error("onboarding: live job_postings/users sync failed (non-fatal, using draft only):", err);
+      }
+    }
     systemPrompt += "\n\n" + buildOnboardingDirective(
       onboardingRole,
-      (session as any)?.onboardingData as Record<string, unknown> | undefined,
+      effectiveOnboardingData,
       caregiverRateRangeText,
     );
   }

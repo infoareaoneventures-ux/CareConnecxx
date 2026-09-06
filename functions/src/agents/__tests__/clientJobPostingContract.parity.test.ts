@@ -7,6 +7,8 @@ import {
   mapCareFrequencyToWizardValue,
   mapTimeOfDayToWizardValues,
   parseRate,
+  mapJobPostingsDocToOnboardingData,
+  mapUsersDocToOnboardingData,
 } from "../clientJobPostingContract";
 
 // Guards the fix from docs/plans (session: make Evia write job_postings/carePlans
@@ -125,5 +127,77 @@ describe("clientJobPostingContract — parity with the web wizard's job_postings
     // a step now collects it — add "neighborhood" back to
     // WIZARD_JOB_POSTINGS_FIELDS and to clientJobPostingContract.ts.
     expect(neighborhoodMatches.length, "wizard now references 'neighborhood' somewhere new — re-check whether it's collected and update this contract").toBeLessThanOrEqual(2);
+  });
+});
+
+// Cross-channel sync (2026-09-06): a client who completes some or all of
+// setup on the website should never have Evia keep asking about the same
+// fields over SMS. These guard the reverse direction — live job_postings/
+// users docs mapped back into Evia's onboardingData shape.
+describe("clientJobPostingContract — reverse mapping (site → Evia onboardingData)", () => {
+  it("maps a fully-completed job_postings doc back to onboardingData field names", () => {
+    const doc = buildJobPostingsDoc("uid-1", "+15551234567", {
+      careFrequency: "part_time",
+      street: "123 Main St", city: "San Jose", state: "CA", zipCode: "95111",
+      startDate: "2026-09-01", selectedDays: ["MON", "WED", "FRI"], timeOfDay: "morning",
+      relationship: "daughter",
+      seniorName: "Dorothy Smith", age: 82,
+      additionalRecipients: [{ name: "Frank Smith", relationship: "father", age: 85 }],
+      emergencyContactName: "Jane Doe", emergencyContactPhone: "+15550001111", emergencyContactRelationship: "granddaughter",
+      careNeeds: ["companionship", "meal prep"],
+      petsInHome: true, smokingHousehold: false,
+      rate: 26, caregiversNeeded: 2,
+      jobDescription: "Warm, patient caregiver needed.",
+    });
+
+    const back = mapJobPostingsDocToOnboardingData(doc as unknown as Record<string, unknown>);
+
+    expect(back.careFrequency).toBe("part_time");
+    expect(back.street).toBe("123 Main St");
+    expect(back.zipCode).toBe("95111");
+    expect(back.startDate).toBe("2026-09-01");
+    expect(back.selectedDays).toEqual(["MON", "WED", "FRI"]);
+    expect(back.timeOfDay).toBe("morning");
+    expect(back.relationship).toBe("daughter");
+    expect(back.seniorName).toBe("Dorothy Smith");
+    expect(back.age).toBe("82");
+    expect(back.additionalRecipients).toEqual([{ name: "Frank Smith", relationship: "father", age: "85" }]);
+    expect(back.emergencyContactName).toBe("Jane Doe");
+    expect(back.emergencyContactPhone).toBe("+15550001111");
+    expect(back.emergencyContactRelationship).toBe("granddaughter");
+    expect(back.careNeeds).toEqual(["companionship", "meal prep"]);
+    expect(back.petsInHome).toBe(true);
+    expect(back.smokingHousehold).toBe(false);
+    expect(back.rate).toBe(26);
+    expect(back.caregiversNeeded).toBe(2);
+    expect(back.jobDescription).toBe("Warm, patient caregiver needed.");
+  });
+
+  it("maps relationship 'myself' back to Evia's self sentinel, and a flexible rate back to the string", () => {
+    const doc = buildJobPostingsDoc("uid-1", "+1", { relationship: "self", rate: "flexible" });
+    const back = mapJobPostingsDocToOnboardingData(doc as unknown as Record<string, unknown>);
+    expect(back.relationship).toBe("self");
+    expect(back.rate).toBe("flexible");
+  });
+
+  it("returns an empty object for a null/missing doc, never throws", () => {
+    expect(mapJobPostingsDocToOnboardingData(null)).toEqual({});
+    expect(mapJobPostingsDocToOnboardingData(undefined)).toEqual({});
+  });
+
+  it("maps users/{uid}'s own address + email to Evia's home*/email field names", () => {
+    const back = mapUsersDocToOnboardingData({
+      street: "456 Oak Ave", city: "Austin", state: "TX", zipCode: "78701",
+      email: "hamse143@gmail.com",
+    });
+    expect(back).toEqual({
+      homeStreet: "456 Oak Ave", homeCity: "Austin", homeState: "TX", homeZipCode: "78701",
+      email: "hamse143@gmail.com",
+    });
+  });
+
+  it("returns an empty object for a null/missing users doc, never throws", () => {
+    expect(mapUsersDocToOnboardingData(null)).toEqual({});
+    expect(mapUsersDocToOnboardingData(undefined)).toEqual({});
   });
 });

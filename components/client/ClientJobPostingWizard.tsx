@@ -98,6 +98,15 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [nearbyCount, setNearbyCount] = useState<number | null>(null);
+  // Account-recovery email (2026-09-05) — the account's phone number IS the
+  // login, so there was no way back in if it's ever lost. Evia's SMS
+  // onboarding already collects this same field (users/{uid}.email); this
+  // closes the parity gap on the web side. Optional, asked at the very end
+  // so it never blocks the actual job-posting submission at Step 14.
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailSaved, setEmailSaved] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [exampleIdx, setExampleIdx] = useState(0);
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
@@ -333,6 +342,24 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
       addToast(msg, 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveRecoveryEmail = async () => {
+    const trimmed = recoveryEmail.trim();
+    if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
+      setEmailError("That doesn't look like a valid email address.");
+      return;
+    }
+    setEmailSaving(true);
+    setEmailError(null);
+    try {
+      await dbService.updateUser('users', uid, { email: trimmed.toLowerCase() });
+      setEmailSaved(true);
+    } catch (e: any) {
+      setEmailError(e?.message || 'Could not save. Please try again.');
+    } finally {
+      setEmailSaving(false);
     }
   };
 
@@ -1207,6 +1234,33 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <p className="text-indigo-200 text-sm">
               In the meantime, feel free to explore CareConnex.
             </p>
+            {emailSaved ? (
+              <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex items-center gap-2 text-white text-sm">
+                <Check size={16} className="text-teal-300 shrink-0" /> Recovery email saved — thanks!
+              </div>
+            ) : (
+              <div className="w-full bg-white/10 rounded-2xl px-4 py-3 text-left">
+                <p className="text-white text-sm font-semibold mb-1">Add a recovery email (optional)</p>
+                <p className="text-indigo-200 text-xs mb-2.5">
+                  Your phone number is how you sign in — an email gives you a way back in if you ever lose access to it.
+                </p>
+                <input
+                  type="email"
+                  placeholder="you@example.com"
+                  value={recoveryEmail}
+                  onChange={e => { setRecoveryEmail(e.target.value); setEmailError(null); }}
+                  className="w-full border border-white/30 bg-white/10 rounded-xl px-3 py-2 text-white placeholder-indigo-300 text-sm focus:outline-none focus:border-white mb-2"
+                />
+                {emailError && <p className="text-red-200 text-xs mb-2">{emailError}</p>}
+                <button
+                  onClick={handleSaveRecoveryEmail}
+                  disabled={emailSaving || !recoveryEmail.trim()}
+                  className="w-full bg-white/20 text-white text-sm font-semibold py-2 rounded-xl hover:bg-white/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {emailSaving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : 'Save email'}
+                </button>
+              </div>
+            )}
             <button
               onClick={onComplete}
               className="w-full bg-white text-indigo-700 font-semibold py-3 rounded-full hover:bg-indigo-50 transition-colors"

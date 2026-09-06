@@ -226,6 +226,91 @@ export function buildSeniorProfileWizardFields(d: Record<string, unknown>): Seni
   };
 }
 
+// ── Reverse mapping: live site docs → Evia's onboardingData shape ───────────
+//
+// A client can complete some or all of setup on the website directly instead
+// of over SMS — Evia's own onboardingData draft (agent_sessions/{phone}) never
+// sees any of that, since nothing previously read job_postings/carePlans/users
+// back into it. This is the inverse of buildJobPostingsDoc above: given
+// whatever's live on those documents, produce onboardingData-shaped fields so
+// Evia's "what's still needed" check reflects the real account state instead
+// of just its own private draft (2026-09-06 cross-channel sync fix). Callers
+// merge this UNDER their own onboardingData (site data fills gaps, an
+// in-conversation answer from THIS turn always wins) and treat it as
+// read-only context for prompt-building — never persisted back verbatim,
+// since save_onboarding_field remains the only writer of the real draft.
+
+const WIZARD_TO_CARA_FREQUENCY: Record<string, string> = {
+  "specific": "occasional", "part-time": "part_time", "full-time": "full_time",
+};
+
+function joinName(first?: string, last?: string): string {
+  return [first, last].filter(Boolean).join(" ").trim();
+}
+
+export function mapJobPostingsDocToOnboardingData(
+  jobPostings: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!jobPostings) return {};
+  const d = jobPostings;
+  const out: Record<string, unknown> = {};
+
+  if (d.careFrequency) out.careFrequency = WIZARD_TO_CARA_FREQUENCY[d.careFrequency as string] ?? d.careFrequency;
+  if (d.street)   out.street = d.street;
+  if (d.zipCode)  out.zipCode = d.zipCode;
+  if (d.city)     out.city = d.city;
+  if (d.state)    out.state = d.state;
+  if (d.startDate) out.startDate = d.startDate;
+  if (d.endDate)  out.endDate = d.endDate;
+  if (typeof d.ongoing === "boolean") out.ongoing = d.ongoing;
+  if (typeof d.daysFlexible === "boolean") out.daysFlexible = d.daysFlexible;
+  if (Array.isArray(d.selectedDays) && d.selectedDays.length) out.selectedDays = d.selectedDays;
+  if (Array.isArray(d.timeOfDay) && d.timeOfDay.length) out.timeOfDay = d.timeOfDay[0];
+  if (d.careRecipientPhotoURL) out.careRecipientPhotoURL = d.careRecipientPhotoURL;
+
+  const seniorName = joinName(d.careRecipientFirstName as string | undefined, d.careRecipientLastName as string | undefined);
+  if (seniorName) out.seniorName = seniorName;
+  if (d.careRecipientAge) out.age = d.careRecipientAge;
+  if (Array.isArray(d.additionalRecipients) && d.additionalRecipients.length) {
+    out.additionalRecipients = (d.additionalRecipients as Array<Record<string, unknown>>).map((r) => ({
+      name: joinName(r.firstName as string | undefined, r.lastName as string | undefined),
+      relationship: r.relationship,
+      age: r.age,
+    }));
+  }
+  if (d.relationship) out.relationship = d.relationship === "myself" ? "self" : d.relationship;
+
+  const emergencyContactName = joinName(d.emergencyFirstName as string | undefined, d.emergencyLastName as string | undefined);
+  if (emergencyContactName) out.emergencyContactName = emergencyContactName;
+  if (d.emergencyPhone) out.emergencyContactPhone = d.emergencyPhone;
+  if (d.emergencyRelationship) out.emergencyContactRelationship = d.emergencyRelationship;
+
+  if (Array.isArray(d.careNeeds) && d.careNeeds.length) out.careNeeds = d.careNeeds;
+  if (typeof d.petsInHome === "boolean") out.petsInHome = d.petsInHome;
+  if (typeof d.smokingHousehold === "boolean") out.smokingHousehold = d.smokingHousehold;
+  if (d.rateFlexible === true) out.rate = "flexible";
+  else if (typeof d.rate === "number" && d.rate > 0) out.rate = d.rate;
+  if (d.jobDescription) out.jobDescription = d.jobDescription;
+  if (typeof d.caregiversNeeded === "number") out.caregiversNeeded = d.caregiversNeeded;
+
+  return out;
+}
+
+// users/{uid} — the account holder's OWN address (distinct document from
+// job_postings' care address) and recovery email.
+export function mapUsersDocToOnboardingData(
+  users: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!users) return {};
+  const out: Record<string, unknown> = {};
+  if (users.street)  out.homeStreet = users.street;
+  if (users.zipCode) out.homeZipCode = users.zipCode;
+  if (users.city)    out.homeCity = users.city;
+  if (users.state)   out.homeState = users.state;
+  if (users.email)   out.email = users.email;
+  return out;
+}
+
 // Re-export for callers that need the recipient list without importing
 // careRecipients.ts directly.
 export { allCareRecipients, normalizeAdditionalRecipients };

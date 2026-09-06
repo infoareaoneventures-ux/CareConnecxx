@@ -78,26 +78,37 @@ function labelFor(field: string): string {
   return FIELD_LABEL[field] ?? field;
 }
 
-// Optional wizard-order items — NOT in CLIENT_REQUIRED_FIELDS, so they never
-// show up in the "STILL NEEDED" list, and complete_collection is allowed to
-// fire the instant required fields are done regardless of these. Tracked
-// separately here so the completion gate can still ask about them at least
-// once — otherwise the model treats "optional for the family" as "optional
-// for me to ask," and silently skips straight to finishing (observed live:
-// photo, pets/smoking, caregiversNeeded, ongoing/endDate, and jobDescription
-// all got dropped this way in the same test conversation).
-// additionalRecipients, age, emergencyContactRelationship, daysFlexible
-// (2026-08-24): all had a FIELD_LABEL entry but were never added to this
-// tracked list, so they had zero nudge to ever be asked. Order below now
-// matches the wizard's real step sequence throughout (was previously out of
-// order — photo/Step 8 listed before ongoing/Step 6).
-const OPTIONAL_ORDER_ITEMS: readonly string[] = [
-  "ongoing", "daysFlexible",             // Step 6
-  "careRecipientPhotoURL",               // Step 8
-  "age", "additionalRecipients", "caregiversNeeded", // Step 10
-  "emergencyContactRelationship",        // Step 11
-  "petsInHome", "smokingHousehold",      // Step 12
-  "jobDescription",                      // Step 14
+// Full wizard sequence — required AND optional fields interleaved in ONE
+// list, in the same order as the numbered "WIZARD QUESTION ORDER" block
+// below. Replaces the old split of "required fields" (drove STILL NEEDED)
+// vs. a separate OPTIONAL_ORDER_ITEMS list (only surfaced as a reminder once
+// every required field was already done, i.e. at the very END of the
+// conversation). That split was a real bug, caught live (2026-09-05): once
+// relationship + the senior's name were saved, "next missing item" pointed
+// straight at the next REQUIRED field (emergencyContactName), so the model
+// skipped past Step 9's age/additionalRecipients and Step 10's
+// caregiversNeeded entirely — asking about them only got queued for the very
+// end, not their correct wizard position. Walking ONE combined ordered list
+// for "what to ask next" fixes this regardless of a field's required/
+// optional status.
+const CLIENT_WIZARD_FIELD_ORDER: readonly string[] = [
+  "careFrequency",                                              // Step 2
+  "homeZipCode",                                                // Step 3
+  "sameAsHomeAddress", "city", "zipCode",                       // Step 3b
+  "startDate",                                                   // Step 4
+  "ongoing", "endDate",                                          // Step 5
+  "selectedDays", "daysFlexible", "timeOfDay",                  // Step 6
+  "careRecipientPhotoURL",                                      // Step 7
+  "relationship",                                                // Step 8
+  "seniorName", "age", "additionalRecipients",                  // Step 9
+  "caregiversNeeded",                                            // Step 10
+  "emergencyContactName", "emergencyContactPhone", "emergencyContactRelationship", // Step 11
+  "careNeeds",                                                   // Step 12
+  "petsInHome", "smokingHousehold",                             // Step 13
+  "rate",                                                        // Step 14
+  "jobDescription",                                              // Step 15
+  "firstName",                                                   // Step 16
+  "email",                                                       // recovery-only, asked near the end
 ];
 
 /**
@@ -126,35 +137,31 @@ export function buildOnboardingDirective(
     ? known.map((f) => `  ✓ ${labelFor(f)} — already have it, do NOT ask again`).join("\n")
     : "  (nothing yet)";
 
-  const missingLines = missing.length
-    ? missing.map((f) => `  • ${labelFor(f)}`).join("\n")
-    : "  (all required fields collected)";
+  // Single ordered checklist — required AND optional fields interleaved in
+  // true wizard order (CLIENT_WIZARD_FIELD_ORDER above). A field the model has
+  // already asked about and the family explicitly declined/skipped may still
+  // show here (it never received a value) — that's fine, it's informational,
+  // not a re-ask instruction; the action text below tells the model not to
+  // re-ask something it already covered.
+  // Presence check, not isFieldFilled — an empty array (additionalRecipients:
+  // []) or false (petsInHome/smokingHousehold/daysFlexible: false) are valid,
+  // meaningful answers here, not "still missing." endDate only applies when
+  // ongoing is explicitly false — most families say ongoing, at which point
+  // endDate is correctly never filled (not "not yet asked").
+  const stillNeeded = CLIENT_WIZARD_FIELD_ORDER.filter((f) => {
+    if (f === "endDate" && data.ongoing !== false) return false;
+    return data[f] === undefined;
+  });
+
+  const missingLines = stillNeeded.length
+    ? stillNeeded.map((f) => `  • ${labelFor(f)}${required.includes(f) ? "" : " (optional for THEM to skip — never for you to skip asking)"}`).join("\n")
+    : "  (all items collected)";
 
   // Only the client reaches this point (caregiver delegated above).
   const audience = "family member";
 
-  const optionalNotYetAddressed = OPTIONAL_ORDER_ITEMS.filter((f) => data[f] === undefined);
-  const optionalGateLine = optionalNotYetAddressed.length
-    ? `HOLD ON BEFORE FINISHING: even once every item above is collected, you have NOT yet ` +
-      `brought up ${optionalNotYetAddressed.map(labelFor).join("; ")} — these are optional for ` +
-      `the FAMILY to skip, but that does not mean YOU skip asking. Check your own messages in ` +
-      `this conversation: if you have never once mentioned one of these, ask about it now, ` +
-      `before calling complete_collection. Only call complete_collection once you have brought ` +
-      `up every numbered item in the wizard order at least once (asked-and-answered, ` +
-      `volunteered, or explicitly declined) — not the instant the required fields alone are done.`
-    : ``;
-
-  const action = missing.length
-    ? `Ask for the SINGLE most natural next missing item — usually the first one listed. ` +
-      `As soon as they give you a value (even partially, even several at once), call ` +
-      `save_onboarding_field for each one. Then look at what's still missing and continue. ` +
-      `Once the STILL NEEDED list is empty, do NOT immediately call complete_collection — ` +
-      `first check whether you've also brought up every OPTIONAL item in the wizard order below ` +
-      `(photo, ongoing/end date, how many caregivers needed, pets/smoking, payment method, ` +
-      `description). Only once ALL numbered items — required and optional — have been ` +
-      `addressed at least once should you call complete_collection, on that same turn.`
-    : optionalGateLine ||
-      `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
+  const action = stillNeeded.length === 0
+    ? `Everything required is collected. Call complete_collection RIGHT NOW, before anything ` +
       `else this turn, then send ONE short warm line saying you've got what you need and you're ` +
       `about to read it back to confirm everything's right (a separate message with the full ` +
       `summary and a confirmation question follows automatically right after yours — do NOT ` +
@@ -164,7 +171,23 @@ export function buildOnboardingDirective(
       `question, and do NOT announce what you'll ask next. NEVER say anything like "next step is ` +
       `membership payment" or "once that's active I can move you into matching" here or anywhere ` +
       `else in this flow — membership is what lets them message/book a caregiver once matched, it ` +
-      `does not gate whether matching happens at all.`;
+      `does not gate whether matching happens at all.`
+    : missing.length > 0
+    ? `Ask for the SINGLE most natural next item — the first one listed above, in that exact ` +
+      `order, whether it's required or optional. Do NOT skip an earlier optional item to reach a ` +
+      `later required one (e.g. don't jump from the senior's name straight to emergency contact — ` +
+      `age/additional loved ones and how many caregivers are needed come first, in that order). ` +
+      `As soon as they give you a value (even partially, even several at once), call ` +
+      `save_onboarding_field for each one, then look at what's still needed and continue. If they ` +
+      `decline or skip an optional item, don't push — just move to the next item in the list, and ` +
+      `never ask that declined item again even though it may still show here without a value.`
+    : `Every REQUIRED field is collected, but you have not yet gotten a value for ` +
+      `${stillNeeded.map(labelFor).join("; ")} — these are optional for the FAMILY to skip, but ` +
+      `not for you to skip asking. Check your own messages in this conversation: if you have ` +
+      `never once brought one of these up, ask about the next one now, in the order listed above, ` +
+      `before calling complete_collection. But if you already asked and they declined or skipped ` +
+      `it, treat it as addressed even though it has no value here — do not ask again, and call ` +
+      `complete_collection now instead of waiting for a value that will never come.`;
 
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text, following the`,
@@ -183,12 +206,12 @@ export function buildOnboardingDirective(
     `frequency), save it and skip asking for it again — never re-ask something`,
     `they already told you, and never jump ahead to a later item on your own:`,
     `  1. How often care is needed (occasional / part-time / full-time)`,
-    `  2. Their home address — ask for the street address AND the 5-digit zip code together (e.g. "What's your home address, including zip code?"). The zip code is REQUIRED — city and state are derived automatically from it the moment it's saved, so NEVER ask what city they're in and NEVER guess a city yourself from a street name (a street called "Campbell Ave" is not the city Campbell — always get the zip and let it resolve the city).`,
-    `  3. Is care at the same address? — this is its OWN required question, ask it explicitly ("Is care needed at that same address?") and save the answer via save_onboarding_field("sameAsHomeAddress", true or false) — NEVER assume same-address just because you already have the home address, and never skip straight to asking about schedule. If YES: saving true auto-copies the home address into the care address for you — do not also manually re-ask city/zip. If NO: ask for the care street address and zip code the same way as step 2 (zip required, city/state auto-derived — never asked, never guessed).`,
+    `  2. Their home address — ask for the street address AND the 5-digit zip code together (e.g. "What's your home address, including zip code?"). Save the street as save_onboarding_field("homeStreet", ...) and the zip as save_onboarding_field("homeZipCode", ...) — NOT "street"/"zipCode", which are the CARE address's fields (step 3, a different address entirely — don't conflate the two even though both are "an address with a zip code"). The zip code is REQUIRED — city and state are derived automatically from it the moment it's saved as homeZipCode, so NEVER ask what city they're in and NEVER guess a city yourself from a street name (a street called "Campbell Ave" is not the city Campbell — always get the zip and let it resolve the city).`,
+    `  3. Is care at the same address? — this is its OWN required question, ask it explicitly ("Is care needed at that same address?") and save the answer via save_onboarding_field("sameAsHomeAddress", true or false) — NEVER assume same-address just because you already have the home address, and never skip straight to asking about schedule. If YES: saving true auto-copies the home address into the care address for you — do not also manually re-ask city/zip. If NO: ask for the care street address and zip code the same conversational way as step 2, but save them as save_onboarding_field("street", ...) and save_onboarding_field("zipCode", ...) — the CARE address fields, not homeStreet/homeZipCode (zip required, city/state auto-derived — never asked, never guessed).`,
     `  4. When to start`,
     `  5. Whether it's ongoing with no end date, or has a specific end date (optional, but ASK — most families say ongoing)`,
     `  6. Which specific days + whether days are flexible + time of day`,
-    `  7. Whether they'd like to share a photo of the person needing care (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
+    `  7. Whether they'd like to add a profile photo of THEMSELVES — the person you're texting with, matching the wizard's own Step 8 (optional, but ASK ONCE) — make clear it's completely optional, accept a texted image directly as careRecipientPhotoURL, move on immediately either way`,
     `  8. Their relationship to the person needing care`,
     `  9. The senior's name and age, and anyone else needing care ("both mom and dad")`,
     ` 10. How many caregivers they think they'll need (optional, but ASK — lightly, most people say 1)`,
@@ -208,10 +231,11 @@ export function buildOnboardingDirective(
     `  - One question per message. Never send a numbered list or ask for several things at once.`,
     `  - For selectedDays: save as an array of uppercase 3-letter codes e.g. ['MON','WED','FRI']. If they say "weekdays" save ['MON','TUE','WED','THU','FRI']; "weekends" → ['SAT','SUN']; "every day" → ['SUN','MON','TUE','WED','THU','FRI','SAT'].`,
     `  - For careFrequency: "a few times a month"/"occasionally" → "occasional"; "1-4 days/week"/"part time" → "part_time"; "5+ days"/"full time"/"every day" → "full_time".`,
-    `  - PHOTO: ask once, warmly, whether they'd like to share a photo of the person needing care — make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
+    `  - PHOTO: ask once, warmly, whether they'd like to add a profile photo of THEMSELVES (the family member you're texting with) — same as their Account Settings profile picture, matching the wizard's own Step 8. Only mention it doubles as their loved one's photo too if they said the care is for themselves (relationship 'myself'). Make clear it's totally optional. If they send an image, that's the photo (save as careRecipientPhotoURL) — never ask again. If they decline or don't send one, move on immediately, don't push.`,
     `  - When you ask what kind of help is needed, weave two or three natural examples — companionship, meals, bathing, rides, medication reminders. All care is NON-MEDICAL — never offer nursing or medical services.`,
     `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
+    `  - For email: when you confirm it back, always repeat the COMPLETE address exactly as they sent it (e.g. "Got it, hamse143@gmail.com") — never truncate it at the @ or drop the domain. A partial echo reads as if only part of it was saved, even when the full address was.`,
     `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.
   - For startDate: when they give a date, acknowledge it as a TARGET or PREFERENCE — never say "X works" or imply availability is confirmed. Instead say something like "Got it, I'll aim for [date]" or "Noted — I'll look for someone available around then."`,
     `  - Ongoing/end date is step 5, its OWN question right after start date — don't skip it just because startDate is answered (e.g. "and is this ongoing, or is there an end date already — like recovering from surgery?"). Most families say ongoing — save ongoing:true and skip endDate. Only if they name a specific end date, save ongoing:false plus endDate.`,

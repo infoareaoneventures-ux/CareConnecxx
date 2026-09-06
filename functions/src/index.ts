@@ -272,6 +272,9 @@ export { sendPendingTimesheetNudges } from './scheduled/pendingTimesheetNudge';
 // INTERVIEW RESPONSE REMINDER (every 6h — nudges caregivers to respond before the request expires)
 export { sendInterviewResponseReminders } from './scheduled/interviewResponseReminder';
 
+// INTERVIEW COMPLETION NUDGE (every 15min — asks the family whether a passed, still-"accepted" interview happened)
+export { sendInterviewCompletionNudges } from './scheduled/interviewCompletionNudge';
+
 // FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
 export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
 

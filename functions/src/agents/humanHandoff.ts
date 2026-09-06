@@ -93,6 +93,15 @@ export const HANDOFF_GROUNDING_SYSTEM_PROMPT =
   "or the TOOL RESULTS. A draft that truthfully repeats or confirms a fact the user just shared " +
   "in the CURRENT MESSAGE is SUPPORTED. Paraphrase and warm framing are fine — " +
   "only flag claims whose substance appears NOWHERE in the provided material. " +
+  "EXCEPTION: for a claim about a SCHEDULED appointment/interview/visit/shift's current date, " +
+  "time, or status, or about a caregiver's current availability, being consistent with the " +
+  "RECENT CONVERSATION alone is NOT enough — that record can change after it was last stated " +
+  "(rescheduled, cancelled, completed, edited) independent of anything said in this chat. The " +
+  "CONTEXT is freshly read this turn (not carried over from earlier in the conversation), so it " +
+  "still counts as support — RECENT CONVERSATION specifically is what does not. Rate such a " +
+  "claim SUPPORTED only if it is confirmed by the CONTEXT, the TOOL RESULTS THIS TURN, or the " +
+  "CURRENT MESSAGE; otherwise UNSUPPORTED, even if the assistant said the same thing earlier in " +
+  "RECENT CONVERSATION. " +
   "Reply with exactly one word: SUPPORTED or UNSUPPORTED.";
 
 // Bound the payload so a huge system prompt can't blow up quick-tier cost.

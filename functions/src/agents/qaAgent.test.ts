@@ -775,6 +775,42 @@ describe("buildClientCoreContext — CARE TEAM roster", () => {
   });
 });
 
+// 2026-09-06 fix: this context had NO interview section at all — a family
+// asking "do I have an interview" got zero ambient grounding, so if Evia
+// answered without calling list_interviews this turn, the claim had nothing
+// behind it and correctly tripped the human-handoff safety net instead of
+// ever giving a real answer (real example: two "I'm looping in a teammate"
+// handoffs in a row for a genuine, existing, same-day interview). Same bug
+// class as the CARE TEAM roster gap above, just never caught for interviews.
+describe("buildClientCoreContext — INTERVIEWS", () => {
+  beforeEach(() => {
+    for (const k of Object.keys(qaHarness.collectionDocs)) delete qaHarness.collectionDocs[k];
+  });
+
+  it("includes a requested/accepted interview", async () => {
+    qaHarness.collectionDocs["video_interviews"] = [
+      { id: "iv1", data: { clientId: "client-1", caregiverName: "Basra Yousuf", scheduledTime: "2999-01-01T10:00:00.000Z", status: "accepted" } },
+    ];
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).toContain("INTERVIEWS");
+    expect(out).toContain("Basra Yousuf on 2999-01-01T10:00:00.000Z (accepted)");
+  });
+
+  it("omits the section entirely when there are no open interviews", async () => {
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out).not.toContain("INTERVIEWS");
+  });
+
+  it("sorts multiple interviews by scheduledTime", async () => {
+    qaHarness.collectionDocs["video_interviews"] = [
+      { id: "iv1", data: { clientId: "client-1", caregiverName: "Later Cg", scheduledTime: "2999-02-01T10:00:00.000Z", status: "requested" } },
+      { id: "iv2", data: { clientId: "client-1", caregiverName: "Sooner Cg", scheduledTime: "2999-01-01T10:00:00.000Z", status: "accepted" } },
+    ];
+    const out = await buildClientCoreContext("client-1", null, {});
+    expect(out.indexOf("Sooner Cg")).toBeLessThan(out.indexOf("Later Cg"));
+  });
+});
+
 describe("gateQuickReplyGrounding", () => {
   const FACTS = "Known context:\n- NEXT VISIT: Ana is coming on Friday at 10.";
   const RECENT = [{ role: "user" as const, content: "hi" }];

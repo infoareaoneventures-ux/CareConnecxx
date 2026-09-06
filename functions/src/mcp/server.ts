@@ -727,7 +727,7 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Create an ADDITIONAL care recipient (senior) for this family's household — the same as the '+ Add' button on the website's Care Plan page. " +
       "Use when a family says they want to add another parent/relative they care for. " +
-      "Do NOT use to edit the existing senior — use update_senior_profile for that. The new profile is linked to the family automatically and shows up as a new tab on the Care Plan page.",
+      "Do NOT use to edit the existing senior — there is no tool to patch an existing senior's name/needs/location after creation. The new profile is linked to the family automatically and shows up as a new tab on the Care Plan page.",
     input_schema: {
       type: "object",
       properties: {
@@ -1174,28 +1174,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "update_senior_profile",
-    description:
-      "Update specific fields on the senior's profile — diagnoses or allergies. " +
-      "For emergency contact info, use update_care_plan (field: 'emergencyContacts') instead — that's the field the website's Care Plan page actually reads. " +
-      "Confirm before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId: { type: "string", description: "The senior's profile document ID" },
-        clientId: { type: "string", description: "The client's user ID" },
-        field: {
-          type: "string",
-          enum: ["diagnoses","allergies"],
-          description: "Which field to update",
-        },
-        value:  { description: "New value. String for contact/physician fields; string for array append/remove." },
-        action: { type: "string", enum: ["set","arrayUnion","arrayRemove"], description: "set = replace, arrayUnion = add to array, arrayRemove = remove from array" },
-      },
-      required: ["seniorId", "clientId", "field", "value", "action"],
-    },
-  },
-  {
     name: "create_care_journal_entry",
     description:
       "Create a care journal entry after a visit — notes, mood, whether medications were given, activities. " +
@@ -1244,6 +1222,7 @@ export const MCP_TOOLS: McpTool[] = [
         preferredDate:  { type: "string", description: "Required when accepting — e.g. '2026-09-01'" },
         preferredTime:  { type: "string", description: "Required when accepting — e.g. '14:00'" },
         interviewType:  { type: "string", description: "Optional, defaults to 'video'" },
+        notes:          { type: "string", description: "Optional, accept only — anything to flag for the interview (topics to discuss, etc.). The job this interview relates to is linked automatically from the application — no need to ask for it." },
         message:        { type: "string", description: "Optional message to the caregiver (reject only)" },
       },
       required: ["applicationId", "clientId", "decision"],
@@ -1486,7 +1465,11 @@ export const MCP_TOOLS: McpTool[] = [
       "once the caregiver confirms via respond_to_interview_request — do NOT tell the family a link exists yet. " +
       "Confirm date/time with the client before calling. Same rules as the website's own Request Interview modal: " +
       "the caregiver must be a real, currently-bookable match, and families are capped at 5 interview requests per " +
-      "day — if you get a RATE_LIMITED error, tell them honestly they've hit today's limit and to try again tomorrow.",
+      "day — if you get a RATE_LIMITED error, tell them honestly they've hit today's limit and to try again tomorrow. " +
+      "The website's modal also offers interview type (video/phone/in-person), an optional related job post, and " +
+      "optional notes — mention these are options if it fits naturally (e.g. after they name a caregiver: \"video, " +
+      "phone, or in person? And anything you'd like me to note for the interview?\"), but never make them a required " +
+      "extra question — video with no notes is a completely normal default, same as leaving the site's fields blank.",
     input_schema: {
       type: "object",
       properties: {
@@ -1496,6 +1479,8 @@ export const MCP_TOOLS: McpTool[] = [
         preferredDate: { type: "string", description: "Date in YYYY-MM-DD format" },
         preferredTime: { type: "string", description: "Time in HH:MM (24h) format" },
         interviewType: { type: "string", enum: ["video","phone","in_person"], description: "Default: video" },
+        jobId:         { type: "string", description: "Optional — the job_posts document ID this interview relates to, if the family mentions a specific posted job." },
+        notes:         { type: "string", description: "Optional — anything the family wants to flag for the interview (topics to discuss, etc.), same as the website modal's Notes field." },
       },
       required: ["clientId", "caregiverId", "preferredDate", "preferredTime"],
     },
@@ -2922,11 +2907,12 @@ export function isReadOnlyTool(name: string): boolean {
 async function createVideoInterviewRequestForTool(params: {
   clientId: string; caregiverId: string; applicationId?: string;
   preferredDate: string; preferredTime: string; interviewType?: string;
+  jobId?: string; notes?: string;
   /** Resolves any open "interview" commitment (interviewPromiseNet.ts) the
    *  instant a real schedule_interview call actually succeeds. */
   phone?: string;
 }): Promise<Record<string, unknown>> {
-  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, phone } = params;
+  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, jobId, notes, phone } = params;
   const { parseScheduledTimeMs } = await import("../utils/scheduledTime");
   const startMs = parseScheduledTimeMs(`${preferredDate}T${preferredTime}:00`);
   if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
@@ -2934,7 +2920,7 @@ async function createVideoInterviewRequestForTool(params: {
 
   try {
     const interview = await requestVideoInterview({
-      clientId, caregiverId, scheduledTime, applicationId, interviewType,
+      clientId, caregiverId, scheduledTime, applicationId, interviewType, jobId, notes,
       source: "mcp:schedule_interview",
     });
     if (phone) {
@@ -5022,30 +5008,6 @@ async function executeToolCall(
       return toolError("INVALID_INPUT", `Unknown action '${action}'. Must be pause, resume, or cancel`);
     }
 
-    if (name === "update_senior_profile") {
-      const { seniorId, clientId, field, value, action } = input as Record<string, unknown>;
-      if (!seniorId || !clientId || !field || value == null || !action) return toolError("INVALID_INPUT", "seniorId, clientId, field, value, and action are required");
-      // emergencyContactName/Phone/primaryPhysicianName/Phone were removed
-      // (2026-08-24) — nothing on the website or in onboarding ever read or
-      // wrote those fields; the real emergency-contact data lives in
-      // carePlans.emergencyContacts (see update_care_plan).
-      const ALLOWED = new Set(["diagnoses","allergies"]);
-      const ARRAY_F = ALLOWED;
-      if (!ALLOWED.has(field as string)) return toolError("INVALID_INPUT", `Field '${field}' is not updatable. Allowed: ${[...ALLOWED].join(", ")}`);
-      if (!ARRAY_F.has(field as string) && (action === "arrayUnion" || action === "arrayRemove")) return toolError("INVALID_INPUT", `Field '${field}' is scalar — use action 'set'`);
-      const seniorSnap = await db.collection("senior_profiles").doc(seniorId as string).get();
-      if (!seniorSnap.exists) return toolError("NOT_FOUND", "Senior profile not found");
-      const sd = seniorSnap.data()!;
-      if (sd.userId && sd.userId !== clientId) return toolError("PERMISSION_DENIED", "Not authorized to update this senior's profile");
-      const upd: Record<string, unknown> = { updatedAt: nowIso };
-      if (action === "arrayUnion")       upd[field as string] = admin.firestore.FieldValue.arrayUnion(value);
-      else if (action === "arrayRemove") upd[field as string] = admin.firestore.FieldValue.arrayRemove(value);
-      else                               upd[field as string] = value;
-      await seniorSnap.ref.set(upd, { merge: true });
-      logAudit({ eventType: "senior_profile_updated", userId: clientId as string, data: { source: "mcp:update_senior_profile", seniorId, field, action } }).catch(() => {});
-      return { success: true, updated: field, action };
-    }
-
     if (name === "create_care_journal_entry") {
       const { caregiverId, appointmentId, notes, mood, medsGiven, activities, recipientFirstName } = input as Record<string, unknown>;
       if (!caregiverId || !appointmentId || !notes) return toolError("INVALID_INPUT", "caregiverId, appointmentId, and notes are required");
@@ -5458,6 +5420,11 @@ async function executeToolCall(
         return createVideoInterviewRequestForTool({
           clientId: clientId as string, caregiverId: app.caregiverId as string,
           applicationId: applicationId as string,
+          // The application already IS for a specific job — link it
+          // automatically rather than making the model re-supply an id it
+          // has no independent reason to already know.
+          jobId: app.jobId as string | undefined,
+          notes: input.notes as string | undefined,
           phone: input.phone as string | undefined,
           preferredDate: preferredDate as string, preferredTime: preferredTime as string,
           interviewType: interviewType as string | undefined,
@@ -6077,7 +6044,7 @@ async function executeToolCall(
 
     // ── schedule_interview ──────────────────────────────────────────────────
     if (name === "schedule_interview") {
-      const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = input as Record<string, unknown>;
+      const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, jobId, notes } = input as Record<string, unknown>;
       if (!clientId || !caregiverId || !preferredDate || !preferredTime) return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
       // Mirrors the website's own paywall for the same 'interview' action
       // (hooks/useAccessGates.tsx) — was entirely ungated here before.
@@ -6087,6 +6054,8 @@ async function executeToolCall(
       return createVideoInterviewRequestForTool({
         clientId: clientId as string, caregiverId: caregiverId as string,
         applicationId: applicationId as string | undefined,
+        jobId: jobId as string | undefined,
+        notes: notes as string | undefined,
         phone: input.phone as string | undefined,
         preferredDate: preferredDate as string, preferredTime: preferredTime as string,
         interviewType: interviewType as string | undefined,
@@ -6767,21 +6736,26 @@ async function executeToolCall(
           missing.push({
             item: "care recipient profile",
             detail: "There's no profile for the person receiving care (name/needs).",
-            fix: "ask who the care is for and save with create_senior_profile / update_senior_profile",
+            fix: "ask who the care is for and save with create_senior_profile",
           });
         } else {
           if (!filled(senior.needs)) {
             missing.push({
               item: "care needs",
               detail: `${senior.name}'s profile has no care needs listed — matching can't rank caregivers well.`,
-              fix: "ask what help they need and save with update_senior_profile",
+              // No tool currently patches senior_profiles.needs for an EXISTING
+              // senior (only create_senior_profile sets it, at creation time) —
+              // flagged as a pre-existing gap, not fixed here.
+              fix: "ask what help they need — care needs is set at profile creation (create_senior_profile); there is no tool to patch it afterward yet",
             });
           }
           if (!filled(senior.location) && !filled(senior.zipCode)) {
             missing.push({
               item: "care location",
               detail: "No city/ZIP on the care recipient's profile — needed to match nearby caregivers.",
-              fix: "ask for the city or ZIP and save with update_senior_profile",
+              // Same gap as above — senior_profiles.location/zipCode has no
+              // post-creation edit path either.
+              fix: "ask for the city or ZIP — location is set at profile creation (create_senior_profile); there is no tool to patch it afterward yet",
             });
           }
           if (!filled(senior.age)) optionalGaps.push("care recipient's age");

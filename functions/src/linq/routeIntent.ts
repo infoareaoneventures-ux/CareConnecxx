@@ -1796,8 +1796,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // this handler and never reach here. For ONBOARDED users, flip a session
     // flag and fall through to runQaAgent — qaAgent reads the flag and runs a
     // structured profile-review sub-prompt (read current state, confirm in
-    // prose, patch fields one at a time via update_senior_profile /
-    // update_care_plan). 20-minute TTL prevents stale flags surviving across
+    // prose, patch fields one at a time via update_care_plan). 20-minute TTL
+    // prevents stale flags surviving across
     // unrelated future conversations.
     if (intent === "UPDATE_ONBOARDING" && session.userType !== "caregiver") {
       const ttlMs = 20 * 60 * 1000;

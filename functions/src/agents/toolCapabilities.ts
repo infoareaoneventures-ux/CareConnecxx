@@ -109,7 +109,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   reactivate_account:        ["scheduling"],
   accept_shift:              ["booking", "scheduling"],
   decline_shift:             ["booking", "scheduling"],
-  update_senior_profile:     ["care_plan"],
   update_user_profile:       ["care_plan"],
   delete_account:            ["care_plan"],
   submit_gps_checkin:        ["care_plan"],
@@ -321,7 +320,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // people & safety
   "add_family_member", "remove_family_member", "set_block_status",
   // care data
-  "update_senior_profile", "update_care_plan",
+  "update_care_plan",
   "create_care_journal_entry",
   // profiles & account
   "update_user_profile", "update_communication_preferences",

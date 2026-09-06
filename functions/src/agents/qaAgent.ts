@@ -385,7 +385,7 @@ export async function buildClientCoreContext(
   if (loc) parts.push(`LOCATION: ${loc}.`);
 
   const today = businessTodayStr();
-  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap] = await Promise.all([
+  const [planSnap, userSnap, apptSnap, bookingSnap, shiftSnap, interviewSnap] = await Promise.all([
     // carePlans (camelCase) is the real, website-facing collection
     // (components/CarePlan.tsx) — care_plans (snake_case) is a completely
     // different, disconnected collection nothing on the site ever writes to.
@@ -414,6 +414,20 @@ export async function buildClientCoreContext(
       .where("clientId", "==", userId)
       .where("status", "==", "scheduled")
       .limit(50)
+      .get()
+      .catch(() => null),
+    // Not-yet-resolved interviews only (requested/accepted) — completed/
+    // cancelled/declined ones are historical, not "do I have an interview"
+    // material. Found 2026-09-06: this section didn't exist at all, so a
+    // family asking "do I have an interview" got zero ambient grounding —
+    // if Evia answered without calling list_interviews this turn, the claim
+    // had nothing behind it and correctly tripped the human-handoff safety
+    // net instead of ever giving a real answer. Same bug class as the CARE
+    // TEAM roster gap fixed 2026-08-31, just never caught for interviews.
+    db.collection("video_interviews")
+      .where("clientId", "==", userId)
+      .where("status", "in", ["requested", "accepted"])
+      .limit(10)
       .get()
       .catch(() => null),
   ]);
@@ -475,6 +489,19 @@ export async function buildClientCoreContext(
       .map(([name, next]) => (next ? `${name} (next ${next})` : name))
       .join(", ");
     if (roster) parts.push(`CARE TEAM: ${roster}.`);
+  }
+
+  // Upcoming interviews (requested/accepted only) — see the interviewSnap
+  // query comment above for why this section exists.
+  if (interviewSnap && !interviewSnap.empty) {
+    const upcoming = interviewSnap.docs
+      .map(d => d.data() as Record<string, any>)
+      .filter(iv => typeof iv.scheduledTime === "string")
+      .sort((a, b) => String(a.scheduledTime).localeCompare(String(b.scheduledTime)))
+      .slice(0, 5)
+      .map(iv => `${iv.caregiverName || "a caregiver"} on ${iv.scheduledTime} (${iv.status})`)
+      .join("; ");
+    if (upcoming) parts.push(`INTERVIEWS: ${upcoming}.`);
   }
 
   // Full care plan (per PHI policy above). Real shape is per-recipient —
@@ -758,9 +785,8 @@ export function buildClientSystemPrompt(
     `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
     `  · cara_knows — call when the family asks what you remember about ${seniorName}, what's on file, or to verify what you've been told. Summarize the returned context warmly in 2–3 sentences as prose, never a list.`,
     `  · suggest_upcoming_care — call this proactively during casual conversation to check if ${seniorName} has upcoming care coverage. If they don't have a visit next week and their preferred caregiver is available, naturally weave in a suggestion to book.`,
-    `  · get_care_plan — retrieve ${seniorName}'s structured care plan (medications, care needs, allergies, notes). Use when families ask what's on file or before booking a complex visit.`,
-    `  · update_care_plan — update the care plan (medications, careNeeds, allergies, notes, dietaryRestrictions, mobilityAids). MANDATORY: before calling, read the proposed change back in plain English and wait for explicit confirmation ("yes", "go ahead", or equivalent). Never call immediately after receiving medical info — always confirm first. If the household cares for more than one person, always pass recipientFirstName for medications, diagnoses, dailyRoutine, dietary, or doctor facts so each person's data stays their own (emergencyContacts and accessCodes stay household-level).`,
-    `  · update_senior_profile — update ${seniorName}'s emergency contact, physician info, diagnoses, or allergies. Confirm before calling.`,
+    `  · get_care_plan — retrieve ${seniorName}'s structured care plan (medications, care needs, notes). Use when families ask what's on file or before booking a complex visit.`,
+    `  · update_care_plan — update the care plan (careNeeds, notes, lifestyle, careLocation, emergencyContacts, accessCodes). This is a non-medical marketplace: never solicit or record medications, diagnoses, or other medical details. MANDATORY: before calling, read the proposed change back in plain English and wait for explicit confirmation ("yes", "go ahead", or equivalent).`,
     `  · set_visit_update_frequency — tune how often mid-visit updates arrive while a caregiver is with ${seniorName}. "Update me every hour" → frequencyMinutes: 60; "fewer updates" → a longer interval; "stop the visit updates" → mode: "off"; "back to normal" → mode: "default" (every ~2 hours). Confirm the new setting back warmly.`,
     `  · add_family_member — add someone new to the care group. They'll get a welcome text and start receiving care updates.`,
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
@@ -771,12 +797,12 @@ export function buildClientSystemPrompt(
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accepting an applicant means requesting an interview with them (the website has no direct "accept" — this IS how you show interest); include preferredDate/preferredTime when accepting. Rejecting just declines the application.`,
     `  · submit_interview_feedback — record fit level (strong/maybe/no) after a caregiver interview; also marks the interview completed. If strong, a hire request is created. If no, the interview is marked declined (matches the website's "Not Selected"). A "strong" result is the hire DECISION, not the booking itself — on the website this opens a separate booking-details step next. If the family wants to move forward right away, walk them through get_caregiver_booking_rate/quote_booking then request_booking (passing this interviewId) to actually schedule the visit.`,
-    `  · complete_interview — mark a past interview completed when the family confirms it happened but hasn't given a fit decision yet. Not needed if you're about to call submit_interview_feedback, which does this automatically.`,
+    `  · complete_interview — mark a past interview completed when the family confirms it happened but hasn't given a fit decision yet. Not needed if you're about to call submit_interview_feedback, which does this automatically. Requires a specific interviewId — if you don't already have it from this turn's context (e.g. the family just says "yes" to a check-in about whether an interview happened, with no ID in sight), call list_interviews first to find the matching accepted-but-not-completed interview, then call this with its id. Never guess or reuse an interviewId from earlier in the conversation without confirming it via list_interviews if the schedule/status could have changed since.`,
     `  · schedule_interview — request a video interview with a caregiver. Ask the family for their preferred date and time, then call. This only SENDS THE REQUEST — no Google Meet link exists yet and none goes out until the caregiver confirms; never tell the family a link is ready or share a callUrl from this call.`,
     `  · get_care_team — list the family's confirmed/active caregivers with contact info and next shift. Call when they ask "who's on my team", "my caregivers", or "who do I have".`,
     `  · get_upcoming_appointments — list ${seniorName}'s upcoming scheduled visits (dates, times, caregiver). Call when they ask "what's coming up", "who's visiting this week", or "what's on the calendar".`,
     `  · list_household_seniors — list everyone being cared for in this household. Use when a family manages care for more than one person and you need to know who's on file.`,
-    `  · create_senior_profile — add ANOTHER care recipient to the household (e.g. "I also look after my dad") — same as the '+ Add' button on the website's Care Plan page. Collect their name (and any needs/conditions they share), confirm, then call. Use update_senior_profile to edit the existing senior — not this.`,
+    `  · create_senior_profile — add ANOTHER care recipient to the household (e.g. "I also look after my dad") — same as the '+ Add' button on the website's Care Plan page. Collect their name (and any needs/conditions they share), confirm, then call. Only for a NEW recipient — there is no tool to edit an existing senior's name/needs/location after creation.`,
     `  · remove_care_recipient — remove a care recipient from the household (same as the trash icon on the Care Plan page). Confirm before calling — permanent, and can't remove the household's only recipient.`,
     `  · update_care_plan — can also update 'lifestyle' (favorite activities, visitors, quiet time, etc. — pass only the fields changing) and 'careLocation' (street/city/state/zip) for a care recipient, matching the website's Care Plan page.`,
     `  · create_job_post — post a new caregiver job so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.`,
@@ -2320,9 +2346,9 @@ export async function runQaAgent(params: {
   // failure mode that prompted this code path. The directive forces her to:
   //   1) read what's already on file (no re-asking for known fields)
   //   2) summarize it in prose, ending with ONE question
-  //   3) patch corrections one at a time via update_senior_profile /
-  //      update_care_plan / update_memory_file (with the existing read-back-
-  //      and-confirm rule from the main system prompt)
+  //   3) patch corrections one at a time via update_care_plan /
+  //      update_memory_file (with the existing read-back-and-confirm rule
+  //      from the main system prompt)
   // The 20-minute TTL is enforced here so a stale flag doesn't accidentally
   // hijack an unrelated future conversation.
   const reviewExpiresAt = (session as any)?.profileReviewExpiresAt as string | undefined;
@@ -2336,7 +2362,7 @@ export async function runQaAgent(params: {
       "Step 1 — On your FIRST reply this mode is active, call get_care_plan to pull the current care plan, and combine it with the senior profile and learned facts already in your context above. " +
       "Step 2 — Summarize what's on file in ONE short, warm prose sentence (e.g. \"I have Anita, 78, in Gilroy, needing help with bathing and meds.\") and end with ONE open question (\"Is any of that wrong?\" or \"What should we update?\"). Never invent a city or detail you can't see in the context. " +
       "Step 3 — Wait for the family to name what's wrong. When they do, read the proposed change back in plain English (\"Got it — updating her name to Anita. Confirm?\") and wait for an explicit yes before calling the update tool. " +
-      "Step 4 — Use update_senior_profile for emergency contact, physician, diagnoses, allergies. Use update_care_plan for careNeeds. Use update_memory_file for durable narrative facts (personality, routines, family). " +
+      "Step 4 — Use update_care_plan for careNeeds or emergencyContacts. Use update_memory_file for durable narrative facts (personality, routines, family). Never solicit or record medications, diagnoses, or other medical details — this is a non-medical marketplace. " +
       "Step 5 — After each successful patch, ask if there's anything else to fix (ONE question). When the family says \"that's it\", \"all good\", \"nothing else\", or equivalent, keep the closing reply warm and short. " +
       "EXIT SIGNAL: when and only when the family has confirmed they're done, end your reply with the literal token [[EXIT_PROFILE_REVIEW]] on its own line. The post-processor strips the token before sending and clears the session flag. Do NOT emit the token while the user is still correcting fields.";
   }

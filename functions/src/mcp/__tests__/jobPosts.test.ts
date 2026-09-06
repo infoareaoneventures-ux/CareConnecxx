@@ -228,6 +228,9 @@ describe("respond_to_job_application", () => {
     const ivSet = hoisted.sets.find(s => s.path === `video_interviews/${r.interviewId}`);
     expect(ivSet?.data).toMatchObject({ clientId: CLIENT, caregiverId: "cg1", applicationId: "app_1", status: "requested" });
     expect(ivSet?.data.callUrl).toBeUndefined();
+    // 2026-09-06: the job this interview relates to is linked automatically
+    // from the application (app.jobId) — the model never needs to supply it.
+    expect(ivSet?.data.jobId).toBe(JOB_ID);
   });
 
   it("on accept: requires preferredDate/preferredTime", async () => {

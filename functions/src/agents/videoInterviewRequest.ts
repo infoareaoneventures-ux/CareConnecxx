@@ -95,12 +95,18 @@ export async function requestVideoInterview(
   const clientName = ((cl.name as string) || `${cl.firstName ?? ""} ${cl.lastName ?? ""}`.trim()) || "A family";
   const clientPhotoURL = cl.photoURL as string | undefined;
 
+  // Auto-derived from the job doc itself rather than trusting a caller-
+  // supplied title — Evia's schedule_interview tool only ever has a jobId to
+  // work with (it has no reason to already know the post's title), so
+  // deriving it here means the tool doesn't need a redundant jobTitle input.
+  let resolvedJobTitle = params.jobTitle;
   if (jobId) {
     const job = await db.collection("job_posts").doc(jobId).get();
     const ownerId = job.data()?.clientId ?? job.data()?.userId ?? job.data()?.createdBy;
     if (!job.exists || ownerId !== clientId) {
       throw new VideoInterviewRequestError("permission-denied", "The selected job does not belong to this client");
     }
+    resolvedJobTitle = (job.data()?.title as string | undefined) ?? resolvedJobTitle;
   }
 
   const now = admin.firestore.Timestamp.now();
@@ -115,7 +121,7 @@ export async function requestVideoInterview(
     notes,
     interviewType,
     ...(jobId ? { jobId } : {}),
-    ...(params.jobTitle ? { jobTitle: params.jobTitle.slice(0, 200) } : {}),
+    ...(resolvedJobTitle ? { jobTitle: resolvedJobTitle.slice(0, 200) } : {}),
     ...(caregiverPhoto ? { caregiverPhoto: caregiverPhoto.slice(0, 2048) } : {}),
     ...(clientPhotoURL ? { clientPhotoURL: clientPhotoURL.slice(0, 2048) } : {}),
     ...(applicationId ? { applicationId } : {}),

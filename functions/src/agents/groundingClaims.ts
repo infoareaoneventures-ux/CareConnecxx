@@ -15,14 +15,32 @@
 // Like the legacy detector it errs WIDE by design — a false positive costs one
 // quick-tier verifier call, a false negative ships an invented fact to a family.
 //
-// Risk tiers (plan R18/R19):
+// Risk tiers (plan R18/R19; schedule_appointment/caregiver_availability moved
+// to HIGH 2026-09-06 — see below):
 //   high — medical (condition / allergy / prior medical event), identity or
 //          relationship, action/authorization ("I've booked/cancelled/..."),
-//          and money/payment. An unverifiable high-risk claim FAILS CLOSED to
-//          deterministic neutral copy (see humanHandoff.neutralCopyForClaims).
-//   low  — age, location/address, schedule/appointment, caregiver availability.
-//          An unverifiable low-risk claim keeps the documented pre-U7 fallback
-//          (fail-open to sending — see the qaAgent gate).
+//          money/payment, schedule/appointment, and caregiver availability.
+//          An unverifiable high-risk claim FAILS CLOSED to deterministic
+//          neutral copy (see humanHandoff.neutralCopyForClaims).
+//   low  — age, location/address. An unverifiable low-risk claim keeps the
+//          documented pre-U7 fallback (fail-open to sending — see the
+//          qaAgent gate).
+//
+// 2026-09-06: schedule_appointment and caregiver_availability were promoted
+// from low to high risk after a live incident — a family edited an
+// interview's scheduledTime directly in Firestore, and Evia kept repeating
+// the stale original date/time on every subsequent turn (including after
+// being asked "are you sure"). The grounding verifier had rated the stale
+// claim SUPPORTED because it was consistent with what Evia itself had said
+// earlier in RECENT CONVERSATION — but a scheduled-item's real status can
+// change independently of the conversation (site-side edits, cancellations,
+// admin overrides), so "consistent with what was said before" isn't the same
+// as "still true now." See the companion prompt hardening in
+// HANDOFF_GROUNDING_SYSTEM_PROMPT (humanHandoff.ts), which makes RECENT
+// CONVERSATION alone insufficient support for exactly these two categories.
+// This closes the gap for the whole product, not just interviews — any
+// handler whose draft reply asserts a schedule/availability fact goes
+// through this same shared classifier + verifier.
 
 export type GroundingClaimCategory =
   | "medical_condition"       // diagnosis / condition / medication / vital
@@ -50,6 +68,8 @@ const HIGH_RISK_CATEGORIES: ReadonlySet<GroundingClaimCategory> = new Set([
   "relationship_identity",
   "action_authorization",
   "money_payment",
+  "schedule_appointment",
+  "caregiver_availability",
 ]);
 
 export function riskForCategory(category: GroundingClaimCategory): GroundingRisk {
@@ -113,13 +133,13 @@ const CLAIM_PATTERNS: ReadonlyArray<[GroundingClaimCategory, RegExp]> = [
   ["relationship_identity", /\b(?:her|his|your|their)\s+(?:primary\s+)?(?:physician|doctor|caregiver|nurse|guardian|emergency contact|power of attorney)\s+is\b/i],
   ["relationship_identity", /\bis\s+(?:her|his|your|their)\s+power of attorney\b/i],
 
-  // ── schedule / appointment (LOW) ────────────────────────────────────────────
+  // ── schedule / appointment (HIGH, 2026-09-06) ───────────────────────────────
   ["schedule_appointment", /\b(?:appointment|shift|booking|interview|visit)\b.{0,40}\b(?:is|was|on|at|scheduled|booked|confirmed|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i], // legacy
   ["schedule_appointment", /\b(?:at|by|on)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i],                         // legacy
   ["schedule_appointment", /\b[A-Z][a-z]+\s+(?:will|'ll|is going to|is gonna)\s+\w+/],                    // legacy ("Maria will arrive at 3")
   ["schedule_appointment", /\b(?:she|he|they)\s+(?:will|'ll)\s+(?:arrive|be there|be here|come|stop by|visit)\b/i],
 
-  // ── caregiver availability (LOW) ────────────────────────────────────────────
+  // ── caregiver availability (HIGH, 2026-09-06) ───────────────────────────────
   ["caregiver_availability", /\b[A-Z][a-z]+(?:'s| is)\s+(?:free|available|booked|coming|out|sick|here|on|off|done)\b/],   // legacy
   ["caregiver_availability", /\b(?:she|he|they|your caregiver|the caregiver)(?:'s|'re|\s+(?:is|are))\s+(?:free|available|unavailable|fully booked|booked|off|out sick|on shift|off shift)\b/i],
   ["caregiver_availability", /\b(?:no|a few|several|\d+)\s+caregivers?\s+(?:are|is)\s+(?:free|available|open)\b/i],

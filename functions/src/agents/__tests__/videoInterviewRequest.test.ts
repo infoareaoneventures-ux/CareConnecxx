@@ -110,7 +110,7 @@ describe("requestVideoInterview", () => {
     })).rejects.toMatchObject({ code: "permission-denied" });
   });
 
-  it("accepts a jobId that does belong to this client, and stores jobId/jobTitle", async () => {
+  it("accepts a jobId that does belong to this client, and falls back to a caller-supplied jobTitle when the job doc has none", async () => {
     hoisted.docState.set("job_posts/job_1", { clientId: CLIENT });
     const result = await requestVideoInterview({
       clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO,
@@ -118,6 +118,26 @@ describe("requestVideoInterview", () => {
     });
     expect(result.jobId).toBe("job_1");
     expect(result.jobTitle).toBe("Overnight care");
+  });
+
+  // 2026-09-06: Evia's schedule_interview tool only ever has a jobId to work
+  // with, no reason to already know the post's title — auto-deriving from
+  // the job doc itself means the tool doesn't need a redundant jobTitle input.
+  it("derives jobTitle from the job doc itself when present, overriding any caller-supplied value", async () => {
+    hoisted.docState.set("job_posts/job_1", { clientId: CLIENT, title: "Senior care in San Jose" });
+    const result = await requestVideoInterview({
+      clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO,
+      jobId: "job_1", jobTitle: "stale caller-supplied title", source: "test",
+    });
+    expect(result.jobTitle).toBe("Senior care in San Jose");
+  });
+
+  it("stores notes when provided", async () => {
+    const result = await requestVideoInterview({
+      clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO,
+      notes: "Ask about weekend availability", source: "test",
+    });
+    expect(result.notes).toBe("Ask about weekend availability");
   });
 
   it("links applicationId to job_applications (Evia's job-application-accept flow) without touching the site's clientName/caregiverName resolution", async () => {

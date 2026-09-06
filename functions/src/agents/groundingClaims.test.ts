@@ -30,7 +30,7 @@ describe("classifyGroundingClaims — plan false-negative fixtures (R18)", () =>
     ["She lives in Sacramento.",                 "location",          "low"],
     ["He is her son.",                           "relationship_identity", "high"],
     ["Her primary physician is Dr. Chen.",       "relationship_identity", "high"],
-    ["She is available tomorrow afternoon.",     "caregiver_availability", "low"],
+    ["She is available tomorrow afternoon.",     "caregiver_availability", "high"],
     ["The payment went through this morning.",   "money_payment",     "high"],
     ["Your refund was processed yesterday.",     "money_payment",     "high"],
     ["I've cancelled Thursday's visit for you.", "action_authorization", "high"],
@@ -108,8 +108,8 @@ describe("risk tiers (R18/R19)", () => {
     ["money_payment", "high"],
     ["age", "low"],
     ["location", "low"],
-    ["schedule_appointment", "low"],
-    ["caregiver_availability", "low"],
+    ["schedule_appointment", "high"],
+    ["caregiver_availability", "high"],
   ] as const)("%s is %s risk", (category, risk) => {
     expect(riskForCategory(category)).toBe(risk);
   });

@@ -22,7 +22,7 @@ The product and its AI agent were renamed **Cara / CareConnex → Evia** (public
 - **Code identifiers and file names**: `CaraChat.tsx`, `caraAgent.ts`, `useCaraUnread`, `CareConnexContext.tsx`, `useCareConnex()`, `CARA_CAPABILITIES`, etc.
 - **Env var names**: everything prefixed `CARA_` (`CARA_AGENT_MODEL`, `CARA_AVATAR_URL`, …) — the live function env depends on them.
 - **Persisted Firestore values and contracts**: `senderId: 'cara'`, `source: 'cara_sms'`, `threads/cara_{uid}`, `isCaraThread`, the `source=cara` URL param, firestore.rules checks — existing prod data uses these.
-- **Firebase project/hosting**: `careconnex-d4c8b` / `https://careconnex-d4c8b.web.app` stays the live test URL until eviacares.com is linked to Firebase Hosting (not yet done). Marketing/SEO/legal URLs already point at eviacares.com.
+- **Firebase project/hosting**: `careconnex-d4c8b` is the one Firebase Hosting site (`firebase hosting:sites:list` confirms only one site on the project). `eviacares.com` is attached to it as a custom domain (confirmed live 2026-09-05), so `firebase deploy --only hosting` updates `https://careconnex-d4c8b.web.app` and `https://eviacares.com` simultaneously — there is no separate deploy step for the custom domain.
 - Historical docs (`docs/plans/`, `docs/reports/`, `docs/brainstorms/`) still say Cara/CareConnex — they are dated records, leave them.
 
 ## Commands

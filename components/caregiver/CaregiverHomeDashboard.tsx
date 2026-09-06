@@ -167,7 +167,15 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   })();
-  const acceptedBookings = bookingRequests.filter(b => b.status === 'accepted');
+  // A booking_request never flips its status back off 'accepted' once the
+  // relationship ends, so it can't be trusted alone (same bug already fixed
+  // on the client side's Active Booking badge — CaregiverFamiliesPage.tsx's
+  // Active/Past split cross-checks a live scheduled shift for the same
+  // reason). Mirror that check here so the Dashboard card agrees with it.
+  const activeBookingIds = new Set(
+    allShifts.filter(s => s.status === 'scheduled' && s.bookingRequestId).map(s => s.bookingRequestId)
+  );
+  const acceptedBookings = bookingRequests.filter(b => b.status === 'accepted' && activeBookingIds.has(b.id));
   const hasActiveFamilies = acceptedBookings.length > 0;
 
   const todayShifts = allShifts.filter(s => s.date === todayStr);

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { User, Settings, Wallet, BookOpen, MessageCircle, LogOut, ChevronDown } from 'lucide-react';
+import { User, Settings, Wallet, BookOpen, MessageCircle, LogOut, ChevronDown, Users } from 'lucide-react';
 import { authService } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 import type { Caregiver } from '../../types';
@@ -12,7 +12,7 @@ interface CaregiverUserMenuProps {
 export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const ACCOUNT_PATHS = ['/caregiver/profile', '/caregiver/settings', '/caregiver/payments'];
+  const ACCOUNT_PATHS = ['/caregiver/profile', '/caregiver/settings', '/caregiver/payments', '/caregiver/families'];
   const isAccountActive = ACCOUNT_PATHS.some(p => location.pathname.startsWith(p));
   const { currentUser, addToast } = useCareConnex();
   const [open, setOpen] = useState(false);
@@ -70,6 +70,7 @@ export const CaregiverUserMenu: React.FC<CaregiverUserMenuProps> = ({ profile })
 
   const items: Array<{ label: string; onClick: () => void; icon: React.ReactNode; divider?: boolean }> = [
     { label: 'Profile', onClick: () => go('/caregiver/profile'), icon: <User className="w-4 h-4" /> },
+    { label: 'My Families', onClick: () => go('/caregiver/families'), icon: <Users className="w-4 h-4" /> },
     { label: 'Payments', onClick: () => go('/caregiver/payments'), icon: <Wallet className="w-4 h-4" /> },
     { label: 'Settings', onClick: () => go('/caregiver/settings'), icon: <Settings className="w-4 h-4" />, divider: true },
     { label: 'Success guide', onClick: scrollToSuccessGuide, icon: <BookOpen className="w-4 h-4" /> },

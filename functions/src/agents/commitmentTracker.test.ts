@@ -390,6 +390,62 @@ describe("sweepOverdueCommitments — matching", () => {
   });
 });
 
+describe("sweepOverdueCommitments — interview", () => {
+  const interviewCommitment = (overrides: Record<string, unknown> = {}) => ({
+    phone: PHONE, chatId: CHAT, kind: "interview",
+    promiseText: "Got it, I'm lining up an interview with Basra.",
+    userType: "client",
+    source: "interviewPromiseNet:narrated_interview", status: "open", attempts: 0,
+    createdAt: pastIso(10 * 60_000),
+    dueAt: pastIso(60_000),
+    sweepAfter: pastIso(60_000),
+    ...overrides,
+  });
+
+  it("re-runs the agent with a nudge to ask for date/time, sends the reply, and marks fulfilled", async () => {
+    hoisted.seedCommitment(`${PHONE}_interview`, interviewCommitment());
+    hoisted.seedSession(PHONE, { userId: "u1" });
+    runQaAgent.mockResolvedValue("What day and time works for the interview with Basra?");
+
+    await sweepOverdueCommitments();
+
+    expect(runQaAgent).toHaveBeenCalledOnce();
+    const params = runQaAgent.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.skipSend).toBe(true);
+    expect(params.isRetry).toBe(true);
+    expect((params.sourceChannel as string)).toContain("schedule_interview was never called");
+    expect(sendSplit).toHaveBeenCalledWith(CHAT, "What day and time works for the interview with Basra?");
+    const doc = hoisted.commitments().get(`${PHONE}_interview`)!;
+    expect(doc.status).toBe("fulfilled");
+    expect(doc.resolution).toBe("asked_for_datetime");
+    expect(doc.attempts).toBe(1);
+  });
+
+  it("escalates to a human when the re-run produces no reply at all", async () => {
+    hoisted.seedCommitment(`${PHONE}_interview`, interviewCommitment());
+    hoisted.seedSession(PHONE, {});
+    runQaAgent.mockResolvedValue("");
+
+    await sweepOverdueCommitments();
+
+    expect(sendSplit).not.toHaveBeenCalled();
+    expect(sendViaInteractionAgent).toHaveBeenCalledOnce();
+    expect(hoisted.adminAlerts.some((a) => a.type === "commitment_unfulfilled" && a.kind === "interview")).toBe(true);
+    expect(hoisted.commitments().get(`${PHONE}_interview`)!.status).toBe("escalated");
+  });
+
+  it("escalates without a second re-run when the attempt budget is spent", async () => {
+    hoisted.seedCommitment(`${PHONE}_interview`, interviewCommitment({ attempts: 1 }));
+    hoisted.seedSession(PHONE, {});
+
+    await sweepOverdueCommitments();
+
+    expect(runQaAgent).not.toHaveBeenCalled();
+    expect(sendViaInteractionAgent).toHaveBeenCalledOnce();
+    expect(hoisted.commitments().get(`${PHONE}_interview`)!.status).toBe("escalated");
+  });
+});
+
 describe("sweepDroppedTurns", () => {
   it("converts an overdue unanswered inbound into a tracked commitment and consumes the marker", async () => {
     hoisted.seedTurnWatch("chat_9", {

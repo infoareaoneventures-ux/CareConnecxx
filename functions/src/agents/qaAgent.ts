@@ -2493,6 +2493,18 @@ export async function runQaAgent(params: {
   // confirmation copy ("tap the link" only fits send_onboarding_link; the
   // match gallery and booking-block explanation need a generic pointer).
   let deliveredLinkArtifact = false;
+  // Tracks whether schedule_interview actually ran this turn — the interview-
+  // promise net (below) only fires when it didn't, so a genuine "I'm lining
+  // up an interview" narration that never calls the tool is caught instead
+  // of leaving nothing created and nothing following up.
+  let scheduledInterviewThisTurn = false;
+  // Ground truth for the interview-identity guard (below): which caregiver a
+  // successful schedule_interview/respond_to_job_application(accept) call
+  // ACTUALLY targeted this turn, so the guard can catch Evia's own reply
+  // naming someone else (2026-09-06 live bug: confirmed via Firestore the
+  // tool created an interview with a different caregiver than the one Evia's
+  // reply named).
+  let scheduledInterviewDetails: { interviewId: string; caregiverId: string; caregiverName: string } | null = null;
 
   try {
     if (!skipSend) await startTyping(chatId).catch(() => {});
@@ -2876,6 +2888,15 @@ export async function runQaAgent(params: {
               // re-mint the artifact or re-run the search.
               deliveredToUser = true;
               if (block.name === "send_onboarding_link") deliveredLinkArtifact = true;
+            }
+            // respond_to_job_application's "accept" branch also creates a real
+            // interview (via the same shared requestVideoInterview) — count it too.
+            if (!errored && (block.name === "schedule_interview" || (block.name === "respond_to_job_application" && (result as { interviewId?: string })?.interviewId))) {
+              scheduledInterviewThisTurn = true;
+              const r = result as { interviewId?: string; caregiverId?: string; caregiverName?: string };
+              if (r.interviewId && r.caregiverId && r.caregiverName) {
+                scheduledInterviewDetails = { interviewId: r.interviewId, caregiverId: r.caregiverId, caregiverName: r.caregiverName };
+              }
             }
 
             // Instrumentation for D4 — track success rate on the cancel path so
@@ -3525,6 +3546,28 @@ export async function runQaAgent(params: {
       }
     }
 
+    // Interview-identity guard: before the final send, check whether a
+    // schedule_interview/respond_to_job_application(accept) call that just
+    // succeeded THIS turn actually targeted the caregiver this reply claims —
+    // 2026-09-06 live bug: Evia said "I sent Basra the interview request"
+    // while the tool call underneath used a different caregiver's id. On a
+    // mismatch, self-correct (cancel the wrongly-created interview, notify
+    // the wrongly-targeted caregiver, page ops) rather than confirm a wrong
+    // action to the family.
+    if (!skipSend && !shadowMode && scheduledInterviewDetails && reply.trim()) {
+      const { guardInterviewIdentityConsistency } = await import("./interviewIdentityGuard");
+      reply = await guardInterviewIdentityConsistency({
+        reply,
+        interviewId:   scheduledInterviewDetails.interviewId,
+        caregiverId:   scheduledInterviewDetails.caregiverId,
+        caregiverName: scheduledInterviewDetails.caregiverName,
+        phone,
+      }).catch((err) => {
+        console.error("qaAgent: interview-identity guard failed", err);
+        return reply;
+      });
+    }
+
     // Broken-record guard (ch10). Before the final send, check whether this
     // reply is a near-duplicate of something Evia JUST said. A real person does
     // not text the same thing twice — this is the failure class behind the
@@ -3591,6 +3634,18 @@ export async function runQaAgent(params: {
       const { fulfillNarratedLinkPromise } = await import("./linkPromiseNet");
       await fulfillNarratedLinkPromise({ phone, chatId, reply, userType }).catch((err) =>
         console.error("qaAgent: link-promise net failed", err));
+    }
+
+    // Interview-promise net: unlike the link net above, this runs in BOTH
+    // onboarding and ordinary post-onboarding chat — an "I'm lining up an
+    // interview with X" narration with no schedule_interview call is the
+    // same dropped-promise failure mode regardless of onboarding state
+    // (2026-09-06 live bug: confirmed via Firestore no interview was ever
+    // created, in an already-"complete" conversation).
+    if (!skipSend && !shadowMode && !scheduledInterviewThisTurn && reply.trim()) {
+      const { fulfillNarratedInterviewPromise } = await import("./interviewPromiseNet");
+      await fulfillNarratedInterviewPromise({ phone, chatId, reply, userId, userType }).catch((err) =>
+        console.error("qaAgent: interview-promise net failed", err));
     }
 
     // A real answer went out — clear any open "I'll get back to you"

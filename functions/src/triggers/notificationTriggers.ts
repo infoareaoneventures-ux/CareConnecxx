@@ -28,12 +28,24 @@ async function addNotification(
 // sendViaInteractionAgent (Evia's own voice, DND/opt-out/supervisor-checked)
 // with a plain sendToPhone fallback — matches onAppointmentUpdated's own
 // send pattern for the legacy collection, rather than a raw unchecked text.
+// urgency: 'immediate' (not 'standard') — 2026-09-06 fix: every call site
+// below is a one-time transactional business event (new applicant, booking
+// request/decline, interview cancelled, caregiver arrived, …), never a
+// "use your judgment" proactive check-in. 'standard' + canDrop:true ran
+// these through shouldSend's LLM "is now a good time?" gate (caraAgent.ts),
+// which fails CLOSED and silently drops the message — no retry, no admin
+// alert — on any timeout or error, and also counted against the daily
+// proactive cap. A live test confirmed a job-application notification never
+// arrived at all, at 10:15am (not a DND/quiet-hours case). 'immediate'
+// bypasses both the judgment gate and the daily cap — same class of
+// reliability guarantee booking asks and agent alerts already get elsewhere
+// in this file (see the canDrop:false call sites in caraAgent.ts).
 async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
   const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
   await sendViaInteractionAgent(phone, {
-    content: message, urgency: 'standard', sourceAgent: 'notification_trigger', canDrop: true,
+    content: message, urgency: 'immediate', sourceAgent: 'notification_trigger', canDrop: true,
   }).catch(() => sendToPhone(phone, message)).catch((err) =>
     console.error('[notificationTriggers] notifyCaregiverByText failed:', err));
 }
@@ -43,7 +55,7 @@ async function notifyClientByText(clientId: string, message: string): Promise<vo
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
   await sendViaInteractionAgent(phone, {
-    content: message, urgency: 'standard', sourceAgent: 'notification_trigger', canDrop: true,
+    content: message, urgency: 'immediate', sourceAgent: 'notification_trigger', canDrop: true,
   }).catch(() => sendToPhone(phone, message)).catch((err) =>
     console.error('[notificationTriggers] notifyClientByText failed:', err));
 }

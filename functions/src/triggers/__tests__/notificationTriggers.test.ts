@@ -190,6 +190,18 @@ describe("onJobApplicationCreate — SMS parity", () => {
     await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("applied") }));
   });
+
+  // 2026-09-06 fix: this text used to go out at urgency:'standard', which
+  // routes through shouldSend's LLM "is now a good time?" gate and fails
+  // CLOSED (silently drops, no retry) on any timeout/error — confirmed live,
+  // the notification never arrived for a real applicant. 'immediate'
+  // bypasses that gate and the daily proactive cap so this transactional,
+  // one-time notification can never be silently lost.
+  it("sends at urgency 'immediate' so the notification can never be silently dropped", async () => {
+    const data = { clientId: CLIENT, caregiverName: "Alice", jobTitle: "Weekend care" };
+    await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ urgency: "immediate" }));
+  });
 });
 
 describe("onVideoInterviewWrite — SMS parity", () => {
@@ -203,7 +215,13 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     const before = { status: "confirmed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
     const after  = { ...before, status: "cancelled", cancelledBy: "client" };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
-    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({
+      content: expect.stringContaining("cancelled"),
+      // 2026-09-06 fix: same silent-drop risk as the job-application text —
+      // 'immediate' guarantees this transactional notification is never
+      // dropped by shouldSend's LLM judgment gate or the daily proactive cap.
+      urgency: "immediate",
+    }));
   });
 
   it("an Evia-cancelled interview (cancelledViaAgent set by cancel_interview) does NOT get a duplicate text", async () => {

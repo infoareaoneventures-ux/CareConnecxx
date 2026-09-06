@@ -22,7 +22,7 @@ import type { OnboardingLinkType } from "./onboardingConversation";
 
 const db = admin.firestore();
 
-export type CommitmentKind = "qa_answer" | "matching" | "link";
+export type CommitmentKind = "qa_answer" | "matching" | "link" | "interview";
 
 // Shared fallback copy. qaAgent sends these; the sweep compares a re-run's
 // reply against them to know whether it produced a real answer or another stall.
@@ -230,6 +230,8 @@ export async function sweepOverdueCommitments(): Promise<void> {
         await attemptMatchingFulfillment(doc.ref, c, session);
       } else if (c.kind === "link") {
         await attemptLinkFulfillment(doc.ref, c);
+      } else if (c.kind === "interview") {
+        await attemptInterviewFulfillment(doc.ref, c, session);
       } else {
         await attemptAnswerFulfillment(doc.ref, c, session);
       }
@@ -348,6 +350,52 @@ async function attemptLinkFulfillment(
   // Stays open — the attempt was claimed above, so the next sweep escalates.
 }
 
+// schedule_interview requires a date/time the backend cannot invent, so
+// unlike matching/link this can never be silently completed — the only real
+// fulfillment is making sure the family actually gets asked. Re-run the QA
+// agent with a system nudge instructing it to ask now instead of narrating
+// another empty promise; on success this is markFulfilled even though the
+// interview itself isn't scheduled yet — same accepted semantics qa_answer
+// already uses ("a real follow-up went out" is what commitment tracking
+// guarantees, not the eventual outcome of that follow-up).
+async function attemptInterviewFulfillment(
+  ref: FirebaseFirestore.DocumentReference,
+  c: PendingCommitment,
+  session: Record<string, unknown>
+): Promise<void> {
+  const { runQaAgent, sendSplit } = await import("./qaAgent");
+  try {
+    const reply = await runQaAgent({
+      text:     c.promiseText,
+      phone:    c.phone,
+      chatId:   c.chatId,
+      userId:   c.userId ?? ((session.userId as string) ?? ""),
+      seniorId: c.seniorId ?? ((session.seniorId as string) ?? ""),
+      userType: c.userType ?? ((session.userType as "client" | "caregiver") ?? "client"),
+      ...(c.caregiverId ? { caregiverId: c.caregiverId } : {}),
+      session,
+      isRetry:  true,
+      skipSend: true,
+      sourceChannel:
+        "[SYSTEM: you told the family you were lining up / scheduling an interview, but never actually " +
+        "asked what day and time works, and schedule_interview was never called — nothing was created. " +
+        "Ask them now for a day and time so you can actually schedule it. Do not say you are already " +
+        "lining it up again without asking.]",
+    });
+
+    const trimmed = (reply ?? "").trim();
+    if (!trimmed) {
+      await escalateCommitment(ref, c);
+      return;
+    }
+    await sendSplit(c.chatId, trimmed);
+    await markFulfilled(ref, "asked_for_datetime");
+  } catch (err) {
+    console.error("[commitmentTracker] interview re-attempt threw:", err);
+    await escalateCommitment(ref, c);
+  }
+}
+
 // Re-run the original question through the QA agent with skipSend so this
 // sweep fully controls what the user receives: a real answer is delivered,
 // another stall/snag is NOT re-sent — it escalates to a human instead.
@@ -442,6 +490,9 @@ async function escalateCommitment(
     : c.kind === "link"
     ? "I'm sorry — the setup link I promised is taking longer than it should. " +
       "I've escalated this to our care team, and a real person will text it to you shortly."
+    : c.kind === "interview"
+    ? "I'm sorry — I dropped the ball setting up your interview request. " +
+      "I've escalated this to our care team, and a real person will follow up with you shortly."
     : "I'm sorry — I still owe you an answer on what you asked earlier, and it's taking longer than it should. " +
       "I've escalated it to our care team, and a real person will follow up with you shortly.";
 

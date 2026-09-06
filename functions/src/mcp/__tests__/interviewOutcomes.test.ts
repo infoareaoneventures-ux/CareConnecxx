@@ -7,7 +7,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // These tests lock in the fix.
 
 const hoisted = vi.hoisted(() => {
-  const docState = new Map<string, any>();
+  const docState  = new Map<string, any>();
+  // Collection-level fixtures for a where().limit().get() query — keyed by
+  // collection path, id ignored (these tests only ever seed one relevant doc
+  // per collection, e.g. one agent_sessions doc for the responding client).
+  const collState = new Map<string, Array<{ id: string; data: any }>>();
   const adds:    Array<{ path: string; data: any }> = [];
   const updates: Array<{ path: string; data: any }> = [];
 
@@ -25,14 +29,17 @@ const hoisted = vi.hoisted(() => {
     doc: (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`),
     where: (..._a: any[]) => makeCollRef(path),
     limit: (..._a: any[]) => makeCollRef(path),
-    get: vi.fn(async () => ({ empty: true, size: 0, docs: [] })),
+    get: vi.fn(async () => {
+      const items = collState.get(path) ?? [];
+      return { empty: items.length === 0, size: items.length, docs: items.map((d) => ({ id: d.id, data: () => d.data })) };
+    }),
     add: vi.fn(async (data: any) => { adds.push({ path, data }); return makeDocRef(`${path}/auto`); }),
   });
 
   return {
-    docState, adds, updates,
+    docState, collState, adds, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
-    reset: () => { docState.clear(); adds.length = 0; updates.length = 0; },
+    reset: () => { docState.clear(); collState.clear(); adds.length = 0; updates.length = 0; },
   };
 });
 
@@ -51,6 +58,7 @@ vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().moc
 vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn().mockResolvedValue(undefined) }));
 
 import { handleToolCall } from "../server";
+import { sendToPhone } from "../../linq/client";
 
 const CLIENT = "client_1";
 const IV_ID = "iv_1";
@@ -134,5 +142,59 @@ describe("submit_interview_feedback", () => {
     await handleToolCall("submit_interview_feedback", { interviewId: IV_ID, clientId: CLIENT, fitLevel: "no" });
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.completedAt).toBeUndefined();
+  });
+});
+
+describe("respond_to_interview_request", () => {
+  beforeEach(() => {
+    hoisted.reset();
+    vi.mocked(sendToPhone).mockClear();
+    hoisted.docState.set(`video_interviews/${IV_ID}`, {
+      clientId: CLIENT, caregiverId: "cg1", clientName: "A Family", caregiverName: "Alice", status: "requested",
+    });
+    hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+    // agent_sessions are phone-keyed — the handler reads clientSess.docs[0].id as the phone.
+    hoisted.collState.set("agent_sessions", [{ id: "+15551234567", data: { userId: CLIENT } }]);
+  });
+
+  // 2026-09-06 fix: this used to write "confirmed", not "accepted" — the
+  // website's own accept action (videoService.ts's acceptInterview) writes
+  // "accepted", and onVideoInterviewWrite's client in-app-notification
+  // branch only checks for that exact string, so a caregiver accepting via
+  // Evia silently never produced the dashboard notification a website-side
+  // accept would have (the SMS text below still went out either way, which
+  // is why this went unnoticed).
+  it("accept writes status 'accepted' (matches the website's own accept action, not 'confirmed')", async () => {
+    const r = await handleToolCall("respond_to_interview_request", {
+      caregiverId: "cg1", interviewId: IV_ID, decision: "accept",
+    }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(update?.data.status).toBe("accepted");
+  });
+
+  it("accept notifies the client directly by text", async () => {
+    await handleToolCall("respond_to_interview_request", {
+      caregiverId: "cg1", interviewId: IV_ID, decision: "accept",
+    });
+    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("confirmed"));
+  });
+
+  it("decline writes status 'declined' and notifies the client", async () => {
+    const r = await handleToolCall("respond_to_interview_request", {
+      caregiverId: "cg1", interviewId: IV_ID, decision: "decline",
+    }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(update?.data.status).toBe("declined");
+    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("isn't available"));
+  });
+
+  it("refuses when the interview doesn't belong to this caregiver", async () => {
+    const r = await handleToolCall("respond_to_interview_request", {
+      caregiverId: "someone_else", interviewId: IV_ID, decision: "accept",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
   });
 });

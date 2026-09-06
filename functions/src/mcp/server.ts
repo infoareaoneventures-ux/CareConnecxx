@@ -2922,8 +2922,11 @@ export function isReadOnlyTool(name: string): boolean {
 async function createVideoInterviewRequestForTool(params: {
   clientId: string; caregiverId: string; applicationId?: string;
   preferredDate: string; preferredTime: string; interviewType?: string;
+  /** Resolves any open "interview" commitment (interviewPromiseNet.ts) the
+   *  instant a real schedule_interview call actually succeeds. */
+  phone?: string;
 }): Promise<Record<string, unknown>> {
-  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType } = params;
+  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, phone } = params;
   const { parseScheduledTimeMs } = await import("../utils/scheduledTime");
   const startMs = parseScheduledTimeMs(`${preferredDate}T${preferredTime}:00`);
   if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
@@ -2934,9 +2937,15 @@ async function createVideoInterviewRequestForTool(params: {
       clientId, caregiverId, scheduledTime, applicationId, interviewType,
       source: "mcp:schedule_interview",
     });
+    if (phone) {
+      const { resolveCommitment } = await import("../agents/commitmentTracker");
+      await resolveCommitment(phone, "interview", "scheduled").catch(() => {});
+    }
     return {
       success: true,
       interviewId: interview.id,
+      caregiverId: interview.caregiverId,
+      caregiverName: interview.caregiverName,
       scheduledTime: interview.scheduledTime,
       interviewType: interview.interviewType,
       note: "The interview request has been sent to the caregiver — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
@@ -5449,6 +5458,7 @@ async function executeToolCall(
         return createVideoInterviewRequestForTool({
           clientId: clientId as string, caregiverId: app.caregiverId as string,
           applicationId: applicationId as string,
+          phone: input.phone as string | undefined,
           preferredDate: preferredDate as string, preferredTime: preferredTime as string,
           interviewType: interviewType as string | undefined,
         });
@@ -6077,6 +6087,7 @@ async function executeToolCall(
       return createVideoInterviewRequestForTool({
         clientId: clientId as string, caregiverId: caregiverId as string,
         applicationId: applicationId as string | undefined,
+        phone: input.phone as string | undefined,
         preferredDate: preferredDate as string, preferredTime: preferredTime as string,
         interviewType: interviewType as string | undefined,
       });
@@ -6090,7 +6101,13 @@ async function executeToolCall(
       if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
       const iv = ivSnap.data()!;
       if (iv.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Interview does not belong to this caregiver");
-      const newStatus = decision === "accept" ? "confirmed" : "declined";
+      // "accepted" — matches the website's own accept action (videoService.ts's
+      // acceptInterview) exactly, not "confirmed": onVideoInterviewWrite's
+      // client in-app-notification branch only checks for "accepted", so
+      // writing a different string here silently dropped the dashboard
+      // notification for a caregiver who accepted via Evia instead of the
+      // website (the SMS text below still went out either way, masking it).
+      const newStatus = decision === "accept" ? "accepted" : "declined";
       const upd: Record<string, unknown> = { status: newStatus, respondedAt: nowIso };
       const { parseScheduledTimeMs: parseIvMs, formatInterviewTime: formatIvTime } = await import("../utils/scheduledTime");
       let proposedIso: string | null = null;

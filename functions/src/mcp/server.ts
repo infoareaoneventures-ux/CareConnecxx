@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { runMatchingForClient } from "../agents/matchingAgent";
+import { requestVideoInterview, VideoInterviewRequestError } from "../agents/videoInterviewRequest";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
 import {
   readMemoryFile,
@@ -62,7 +63,7 @@ const db = admin.firestore();
 // READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
 // `quote_booking`, and reusable by the committing `request_booking` path.
 // Shared literal union for structured tool failures (see toolError below).
-type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED";
+type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "RATE_LIMITED";
 
 type BookingQuoteResult =
   | { ok: false; code: ToolErrorCode; message: string }
@@ -1481,9 +1482,11 @@ export const MCP_TOOLS: McpTool[] = [
     name: "schedule_interview",
     description:
       "Schedule a video interview between a client and a caregiver applicant. " +
-      "Creates the interview record, generates the Google Meet link (joinable from any phone browser, no account needed), " +
-      "and texts the caregiver the link automatically. Returns callUrl — share it with the client in your reply. " +
-      "Confirm date/time with client before calling.",
+      "Creates the interview record; the Google Meet link is generated and texted to both parties automatically " +
+      "once the caregiver confirms via respond_to_interview_request — do NOT tell the family a link exists yet. " +
+      "Confirm date/time with the client before calling. Same rules as the website's own Request Interview modal: " +
+      "the caregiver must be a real, currently-bookable match, and families are capped at 5 interview requests per " +
+      "day — if you get a RATE_LIMITED error, tell them honestly they've hit today's limit and to try again tomorrow.",
     input_schema: {
       type: "object",
       properties: {
@@ -2910,6 +2913,12 @@ export function isReadOnlyTool(name: string): boolean {
 // hire/booking time, in PostsPage.tsx's handleSendBooking) — a job_applications
 // doc that leaves 'pending' any earlier than that would vanish from the
 // client's own Applicants panel, which filters on status=='pending'.
+// Delegates to the SAME shared implementation the website's own
+// ScheduleInterviewModal → createVideoInterviewRequest callable uses
+// (agents/videoInterviewRequest.ts) — same caregiver-eligibility check
+// (publicCaregiverProfiles), same job-ownership check, same 5/day rate
+// limit. Evia used to have its own independent write here with none of
+// those checks (2026-09-06 parity fix).
 async function createVideoInterviewRequestForTool(params: {
   clientId: string; caregiverId: string; applicationId?: string;
   preferredDate: string; preferredTime: string; interviewType?: string;
@@ -2920,37 +2929,30 @@ async function createVideoInterviewRequestForTool(params: {
   if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
   const scheduledTime = new Date(startMs).toISOString();
 
-  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-  const cgData = cgSnap.data() ?? {};
-  const caregiverName = ((cgData.name as string) ?? `${cgData.firstName ?? ""} ${cgData.lastName ?? ""}`.trim()) || "Caregiver";
-  const clientSnap = await db.collection("users").doc(clientId).get();
-  const clientName = (clientSnap.data()?.name as string) ?? "A family";
-
-  const ivRef = db.collection("video_interviews").doc();
-  await ivRef.set({
-    clientId,
-    caregiverId,
-    applicationId: applicationId ?? null,
-    clientName,
-    caregiverName,
-    scheduledTime,
-    interviewType:  interviewType ?? "video",
-    status:        "requested",
-    createdAt:      new Date().toISOString(),
-    feedbackSubmitted: false,
-  });
-  if (applicationId) {
-    await db.collection("job_applications").doc(applicationId).update({ interviewId: ivRef.id }).catch(() => {});
+  try {
+    const interview = await requestVideoInterview({
+      clientId, caregiverId, scheduledTime, applicationId, interviewType,
+      source: "mcp:schedule_interview",
+    });
+    return {
+      success: true,
+      interviewId: interview.id,
+      scheduledTime: interview.scheduledTime,
+      interviewType: interview.interviewType,
+      note: "The interview request has been sent to the caregiver — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
+    };
+  } catch (err) {
+    if (err instanceof VideoInterviewRequestError) {
+      const codeMap: Record<string, ToolErrorCode> = {
+        "invalid-argument":     "INVALID_INPUT",
+        "failed-precondition":  "NOT_FOUND",
+        "permission-denied":    "PERMISSION_DENIED",
+        "resource-exhausted":   "RATE_LIMITED",
+      };
+      return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
+    }
+    throw err;
   }
-
-  logAudit({ eventType: "interview_scheduled", userId: clientId, data: { source: "mcp:schedule_interview", interviewId: ivRef.id, caregiverId, scheduledTime } }).catch(() => {});
-  return {
-    success: true,
-    interviewId: ivRef.id,
-    scheduledTime,
-    interviewType: interviewType ?? "video",
-    note: "The interview request has been sent to the caregiver — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
-  };
 }
 
 export async function handleToolCall(

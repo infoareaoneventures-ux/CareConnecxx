@@ -177,6 +177,7 @@ let questionMode = false;   // isQuestionOrOther → YES when true
 let stepAnswer   = "";      // raw value the current step's parse prompt returns
 let awaitingKind = "other"; // classifyAwaitingReply verdict at awaiting steps
 let wantsLink    = "NO";    // wantsGateLinkResend verdict (identity/stripe/bgcheck resend gate)
+let wantsMore    = "NO";    // wantsMoreCaregivers verdict ("show me more caregivers" mid-gate)
 let intakeConfirmIntent  = "confirm"; // handleClientConfirmIntake's confirm-vs-edit classification
 let intakeCorrectionJson = "{}";      // extractIntakeCorrections' extracted-fields JSON
 vi.mock("../../utils/openaiClient", () => ({
@@ -185,6 +186,7 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes('"switchTo"')) return '{"switchTo":"none"}';
     if (prompt.includes("Detect if they are correcting")) return "null";
     if (prompt.includes("general question or off-topic comment")) return questionMode ? "YES" : "NO";
+    if (prompt.includes("Is their message asking to see")) return wantsMore; // wantsMoreCaregivers
     if (prompt.includes("Classify their message")) return wantsLink; // wantsGateLinkResend
     if (prompt.includes("Classify the reply")) return awaitingKind;
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
@@ -235,6 +237,7 @@ beforeEach(() => {
   stepAnswer = "";
   awaitingKind = "other";
   wantsLink = "NO";
+  wantsMore = "NO";
   intakeConfirmIntent = "confirm";
   intakeCorrectionJson = "{}";
   stripeSpies.accountsCreate.mockClear();
@@ -616,6 +619,29 @@ describe("gate status questions are grounded in live state (all builders)", () =
     const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
     awaitingKind = "other";
     await handleOnboardingStep(PHONE, CHAT, "what do you mean I already did that", session);
+    expect(stripeSpies.identityCreate).not.toHaveBeenCalled();
+    expect(stored()?.processedWebhookTasks).toContain("identity");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");
+  });
+
+  it("client payment: \"do you have more caregivers available\" ALSO auto-advances instead of nagging to finish membership that's already done", async () => {
+    // 2026-09-06 live bug: the "show me more caregivers" branch was checked
+    // BEFORE the live gate-status fact, so it unconditionally reminded the
+    // family to finish membership even when it was already done (confirmed
+    // live on the family's own website dashboard). The live fact must win
+    // over every other branch, including this one.
+    const session = seed("client_awaiting_payment", {}, { userType: "client", stripeSubscriptionId: "sub_client" });
+    wantsMore = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "do you have more caregivers available", session);
+    expect(stripeSpies.checkoutCreate).not.toHaveBeenCalled();
+    expect(stored()?.processedWebhookTasks).toContain("payment");
+    expect(stored()?.onboardingStep).not.toBe("client_awaiting_payment");
+  });
+
+  it("client identity: a \"show me more caregivers\" ask ALSO auto-advances instead of nagging to finish identity that's already done", async () => {
+    const session = seed("client_awaiting_identity", { needsIdentityVerification: false }, { userType: "client" });
+    wantsMore = "YES";
+    await handleOnboardingStep(PHONE, CHAT, "any more caregivers nearby", session);
     expect(stripeSpies.identityCreate).not.toHaveBeenCalled();
     expect(stored()?.processedWebhookTasks).toContain("identity");
     expect(stored()?.onboardingStep).not.toBe("client_awaiting_identity");

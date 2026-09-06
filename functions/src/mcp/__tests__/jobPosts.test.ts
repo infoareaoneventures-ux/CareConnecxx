@@ -49,23 +49,44 @@ const hoisted = vi.hoisted(() => {
     return ref;
   };
 
+  // requestVideoInterview (agents/videoInterviewRequest.ts, shared with the
+  // site's createVideoInterviewRequest callable) uses a transaction for the
+  // daily rate-limit check + interview create — a plain sequential shim
+  // against the same in-memory docState is enough for these tests.
+  const runTransactionMock = async (fn: (t: any) => Promise<any>) => {
+    const t = {
+      get:    (ref: any) => ref.get(),
+      set:    (ref: any, data: any, opts?: any) => ref.set(data, opts),
+      update: (ref: any, data: any) => ref.update(data),
+      create: (ref: any, data: any) => ref.set(data),
+    };
+    return fn(t);
+  };
+
   return {
     docState, collState, sets, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
+    runTransactionMock,
     reset: () => { docState.clear(); collState.clear(); sets.length = 0; updates.length = 0; },
   };
 });
 
 vi.mock("firebase-admin", () => ({
   __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
+  default: { firestore: () => ({ collection: hoisted.collectionMock, runTransaction: hoisted.runTransactionMock }) },
+  firestore: Object.assign(() => ({ collection: hoisted.collectionMock, runTransaction: hoisted.runTransactionMock }), {
     FieldValue: {
       arrayUnion:      (...v: any[]) => ({ __arrayUnion: v }),
       arrayRemove:     (...v: any[]) => ({ __arrayRemove: v }),
       increment:       (n: number) => ({ __increment: n }),
       delete:          () => ({ __delete: true }),
       serverTimestamp: () => ({ __serverTimestamp: true }),
+    },
+    Timestamp: {
+      now: () => {
+        const ms = Date.now();
+        return { toMillis: () => ms, toDate: () => new Date(ms) };
+      },
     },
   }),
 }));
@@ -89,6 +110,10 @@ import { handleToolCall } from "../server";
 
 const CLIENT = "client_1";
 const JOB_ID = "job_1";
+// requestVideoInterview (shared with the site) refuses a scheduledTime in the
+// past — compute a date safely ahead of "now" instead of a fixed string that
+// would eventually fall behind.
+const FUTURE_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 describe("edit_job_post", () => {
   beforeEach(() => hoisted.reset());
@@ -178,11 +203,13 @@ describe("respond_to_job_application", () => {
     hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
     hoisted.docState.set("job_posts/" + JOB_ID, { clientId: CLIENT, status: "open" });
     hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", subscriptionActive: true, name: "A Family" });
-    hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+    // Caregiver eligibility (requestVideoInterview) reads publicCaregiverProfiles
+    // — the same bookability-gated projection the site's own interview request checks.
+    hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice" });
 
     const r = await handleToolCall("respond_to_job_application", {
       applicationId: "app_1", clientId: CLIENT, decision: "accept",
-      preferredDate: "2026-09-01", preferredTime: "14:00",
+      preferredDate: FUTURE_DATE, preferredTime: "14:00",
     }) as any;
     expect(r.success).toBe(true);
     expect(r.interviewId).toBeTruthy();
@@ -215,7 +242,7 @@ describe("respond_to_job_application", () => {
     hoisted.docState.set(`users/${CLIENT}`, {}); // no identity, no membership
     const r = await handleToolCall("respond_to_job_application", {
       applicationId: "app_1", clientId: CLIENT, decision: "accept",
-      preferredDate: "2026-09-01", preferredTime: "14:00",
+      preferredDate: FUTURE_DATE, preferredTime: "14:00",
     }) as any;
     expect(r._toolError).toBe(true);
     expect(r.code).toBe("IDENTITY_REQUIRED");

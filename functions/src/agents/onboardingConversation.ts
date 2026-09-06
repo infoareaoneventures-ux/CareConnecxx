@@ -1187,23 +1187,25 @@ export async function handleOnboardingStep(
     // prod session still parked on the string falls through to the defensive
     // default below (absorber path), which never crashes and never wipes state.
     case "client_awaiting_identity": {
-      if (await wantsMoreCaregivers(text)) {
-        await sendMoreCaregiversDuringGate(phone, chatId, session,
-          "you'll still need to finish that quick identity check before we can move forward with anyone");
-        return;
-      }
-      // Check the LIVE fact FIRST, before classifying the reply at all —
-      // regardless of whether the reply lands as ack/question/other, a
-      // genuinely already-cleared gate (webhook missed) must never be
-      // followed by a resend or a "still verifying" nudge. 2026-09-06 live
-      // bug: a pushback ("what do you mean I did that already") classified
-      // as "other", which resent the link BEFORE ever reaching this check —
-      // checking it up front closes that regardless of classification.
+      // Check the LIVE fact FIRST, before ANYTHING else — including the
+      // "show me more caregivers" branch, whose reminder text otherwise
+      // unconditionally claims identity still isn't done even when it
+      // genuinely already cleared (2026-09-06 live bug: "do you have more
+      // caregivers" hit that branch and got told to finish a gate that had
+      // already cleared). Nothing in this case should ever run before this
+      // check — a genuinely already-cleared gate (webhook missed) must
+      // never be followed by a resend or a "still verifying"/"finish this
+      // first" nudge, regardless of what the reply says.
       const liveIdentityFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_identity(phone, session);
       if (liveIdentityFact.includes("VERIFIED")) {
         // Identity cleared but step never advanced (webhook missed or admin override
         // callable unreachable). Drive the same path as the Stripe Identity webhook.
         await advanceOnboardingStep(phone, "identity", "");
+        return;
+      }
+      if (await wantsMoreCaregivers(text)) {
+        await sendMoreCaregiversDuringGate(phone, chatId, session,
+          "you'll still need to finish that quick identity check before we can move forward with anyone");
         return;
       }
       const idReplyKind = await classifyAwaitingReply(text, "wait for their identity verification to clear");
@@ -1245,19 +1247,16 @@ export async function handleOnboardingStep(
       return;
     }
     case "client_awaiting_payment": {
-      if (await wantsMoreCaregivers(text)) {
-        await sendMoreCaregiversDuringGate(phone, chatId, session,
-          "you'll still need to finish your membership setup via the link I sent before we can move forward with anyone");
-        return;
-      }
-      // Check the LIVE fact FIRST, before classifying the reply at all —
-      // regardless of whether the reply lands as ack/question/other, a
-      // genuinely already-cleared gate (webhook missed) must never be
-      // followed by a resend or a "still waiting" nudge. 2026-09-06 live
-      // bug: a pushback ("what do you mean I did that already") classified
-      // as "other", which resent the link BEFORE the old code ever reached
-      // this check — checking it up front closes that regardless of
-      // classification.
+      // Check the LIVE fact FIRST, before ANYTHING else — including the
+      // "show me more caregivers" branch, whose reminder text otherwise
+      // unconditionally claims membership still isn't done even when it
+      // genuinely already cleared (2026-09-06 live bug: "do you have more
+      // caregivers available" hit that branch and got told to finish
+      // membership that had already gone through — confirmed live on the
+      // website's own dashboard). Nothing in this case should ever run
+      // before this check — a genuinely already-cleared gate (webhook
+      // missed) must never be followed by a resend or a "still waiting"/
+      // "finish this first" nudge, regardless of what the reply says.
       const liveClientPayFact = await LIVE_GATE_FACT_BUILDERS.client_awaiting_payment(phone, session);
       if (liveClientPayFact.includes("WENT THROUGH")) {
         // Payment landed but step never advanced (webhook missed or admin override
@@ -1268,6 +1267,11 @@ export async function handleOnboardingStep(
         } else {
           await advanceOnboardingStep(phone, "admin_payment_override", "");
         }
+        return;
+      }
+      if (await wantsMoreCaregivers(text)) {
+        await sendMoreCaregiversDuringGate(phone, chatId, session,
+          "you'll still need to finish your membership setup via the link I sent before we can move forward with anyone");
         return;
       }
       const payReplyKind = await classifyAwaitingReply(text, "finish their payment setup via the link Evia sent");

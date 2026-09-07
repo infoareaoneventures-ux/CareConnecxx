@@ -247,6 +247,38 @@ describe("list_client_jobs", () => {
   });
 });
 
+describe("list_job_applicants — cover letter field parity", () => {
+  beforeEach(() => hoisted.reset());
+
+  // 2026-09-07: apply_to_job writes BOTH coverLetter (canonical — what the
+  // website's apply flow also writes) and coverNote (a compat alias kept
+  // only for older SMS-side readers). This handler used to read ONLY
+  // coverNote, so any application submitted through the website's own apply
+  // flow (which never sets coverNote at all) always came back with
+  // coverNote: null even though a real cover letter existed — found live via
+  // a real applicant ("i'm hard worker") Evia denied having on file for.
+  it("reads coverLetter when coverNote was never set (a web-submitted application)", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
+    hoisted.collState.set("job_applications", [
+      { id: "app1", jobId: JOB_ID, caregiverId: "cg1", coverLetter: "i'm hard worker " },
+    ]);
+    hoisted.docState.set("caregivers/cg1", { name: "Basra Yousuf" });
+    const r = await handleToolCall("list_job_applicants", { jobId: JOB_ID, clientId: CLIENT }) as any;
+    expect(r.success).toBe(true);
+    expect(r.applicants[0].coverNote).toBe("i'm hard worker ");
+  });
+
+  it("still falls back to the legacy coverNote field for an older SMS-submitted application", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
+    hoisted.collState.set("job_applications", [
+      { id: "app1", jobId: JOB_ID, caregiverId: "cg1", coverNote: "legacy note" },
+    ]);
+    hoisted.docState.set("caregivers/cg1", { name: "Basra Yousuf" });
+    const r = await handleToolCall("list_job_applicants", { jobId: JOB_ID, clientId: CLIENT }) as any;
+    expect(r.applicants[0].coverNote).toBe("legacy note");
+  });
+});
+
 describe("respond_to_job_application", () => {
   beforeEach(() => hoisted.reset());
 

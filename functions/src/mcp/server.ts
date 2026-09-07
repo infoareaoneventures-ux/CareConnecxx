@@ -6517,7 +6517,13 @@ async function executeToolCall(
             caregiverName:  (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Unknown",
             caregiverId:    app.caregiverId,
             proposedRate:   app.proposedRate ?? null,
-            coverNote:      app.coverNote    ?? null,
+            // coverLetter is the canonical key (apply_to_job writes both, but
+            // only as a compat alias for SMS-side readers — the website's own
+            // apply flow writes ONLY coverLetter). Reading coverNote alone
+            // silently returned null for every web-submitted application's
+            // real cover letter — found live via a real applicant whose note
+            // ("i'm hard worker") Evia denied having on file.
+            coverNote:      app.coverLetter ?? app.coverNote ?? null,
             status:         app.status       ?? "pending",
             appliedAt:      app.appliedAt,
             rating:         cg.rating        ?? null,

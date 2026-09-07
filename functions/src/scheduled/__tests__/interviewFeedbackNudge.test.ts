@@ -1,20 +1,63 @@
-import { describe, it, expect, vi } from "vitest";
-
-// Transitive imports call admin.firestore() at module load, so the module won't
-// import without a firebase-admin stub. These tests exercise only the pure
-// decision function — the stub just lets the module load; it's never read.
-vi.mock("firebase-admin", () => {
-  const firestore = () => ({ collection: () => ({ where: () => ({}), doc: () => ({}), add: () => {} }) });
-  const stub = { apps: [], initializeApp: () => ({}), firestore, storage: () => ({}), auth: () => ({}) };
-  return { __esModule: true, default: stub, ...stub };
-});
-
-import { shouldNudgeInterviewFeedback, NUDGE_DELAY_MS, MAX_NUDGES, RENUDGE_COOLDOWN_MS } from "../interviewFeedbackNudge";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Sibling of interviewCompletionNudge.test.ts. Asks the family for a fit
 // decision once an interview has sat "completed" with no feedbackSubmitted
 // for NUDGE_DELAY_MS — the safety net for complete_interview's "MANDATORY"
 // same-reply ask being a prompt-level instruction with no runtime enforcement.
+
+const store = {
+  interviews: new Map<string, any>(),
+  sessions:   new Map<string, any>(),
+  updates:    [] as Array<{ id: string; data: any }>,
+};
+
+function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
+  return {
+    where: (field: string, _op: string, value: any) => ({
+      limit: (_n: number) => ({
+        get: async () => {
+          const matches = [...map.entries()].filter(([, data]) => data[field] === value);
+          return {
+            empty: matches.length === 0,
+            docs: matches.map(([id, data]) => ({
+              id,
+              data: () => data,
+              ...(withRef ? { ref: { update: vi.fn(async (upd: any) => { store.updates.push({ id, data: upd }); }) } } : {}),
+            })),
+          };
+        },
+      }),
+    }),
+  };
+}
+
+vi.mock("firebase-admin", () => {
+  const collection = (name: string) => {
+    if (name === "video_interviews") return makeQueryCollection(store.interviews, true);
+    if (name === "agent_sessions")   return makeQueryCollection(store.sessions, false);
+    return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
+  };
+  const firestore = () => ({ collection });
+  const stub = { apps: [], initializeApp: () => ({}), firestore, storage: () => ({}), auth: () => ({}) };
+  return { __esModule: true, default: stub, ...stub };
+});
+
+vi.mock("firebase-functions/v1", () => ({
+  pubsub: { schedule: () => ({ onRun: (fn: any) => fn }) },
+}));
+
+vi.mock("../../utils/caraMessage", () => ({
+  generateCaraMessage: vi.fn(async (opts: any) => opts.fallback),
+}));
+
+const sendSpy = vi.fn(async (..._a: unknown[]) => true);
+vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unknown[]) => sendSpy(...a) }));
+
+import {
+  sendInterviewFeedbackNudges,
+  shouldNudgeInterviewFeedback,
+  NUDGE_DELAY_MS, MAX_NUDGES, RENUDGE_COOLDOWN_MS,
+} from "../interviewFeedbackNudge";
 
 const NOW = 1_000_000_000_000;
 
@@ -71,5 +114,74 @@ describe("shouldNudgeInterviewFeedback", () => {
       status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), nudgeCount: MAX_NUDGES,
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
     })).toBe(false);
+  });
+});
+
+// 2026-09-07 (live-caught, same root cause as interviewCompletionNudge): a
+// suppressed send (shared MAX_PROACTIVE_PER_DAY cap, opt-out, wait-tool) was
+// still recorded as a delivered nudge, permanently burning the interview's
+// limited MAX_NUDGES attempts on messages that never reached the phone.
+describe("sendInterviewFeedbackNudges — only counts a nudge when it actually sends", () => {
+  function seedInterview(id: string, data: Record<string, unknown> = {}) {
+    store.interviews.set(id, {
+      status:              "completed",
+      feedbackSubmitted:   false,
+      completedAt:         new Date(NOW - NUDGE_DELAY_MS - 1000).toISOString(),
+      feedbackNudgeCount:  0,
+      feedbackNudgedAt:    null,
+      clientId:            "client-1",
+      caregiverName:       "Basra Yousuf",
+      ...data,
+    });
+  }
+
+  function seedSession(phone: string, data: Record<string, unknown> = {}) {
+    store.sessions.set(phone, {
+      userId:         "client-1",
+      optedOut:       false,
+      onboardingStep: "complete",
+      phone,
+      ...data,
+    });
+  }
+
+  beforeEach(() => {
+    store.interviews.clear();
+    store.sessions.clear();
+    store.updates.length = 0;
+    sendSpy.mockReset();
+  });
+
+  it("does not touch the interview doc when the send is suppressed (cap/opt-out/wait-tool)", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-suppressed");
+    seedSession("+15550000001");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(store.updates).toHaveLength(0);
+  });
+
+  it("increments the nudge counter only when the send actually succeeds", async () => {
+    sendSpy.mockResolvedValueOnce(true);
+    seedInterview("iv-sent");
+    seedSession("+15550000002");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(store.updates).toEqual([
+      { id: "iv-sent", data: { feedbackNudgeCount: 1, feedbackNudgedAt: expect.any(String) } },
+    ]);
+  });
+
+  it("retries next run instead of burning MAX_NUDGES on a suppressed send", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-retry", { feedbackNudgeCount: MAX_NUDGES - 1 });
+    seedSession("+15550000003");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(store.updates).toHaveLength(0);
   });
 });

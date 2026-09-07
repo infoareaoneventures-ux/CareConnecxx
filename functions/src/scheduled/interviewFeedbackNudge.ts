@@ -110,12 +110,16 @@ export const sendInterviewFeedbackNudges = functions.pubsub
           maxTokens: 100,
         });
 
-        await sendViaInteractionAgent(phone, {
+        const sent = await sendViaInteractionAgent(phone, {
           content:     message,
           urgency:     "standard",
           sourceAgent: "interview_feedback_nudge",
           canDrop:     true,
         });
+        // Suppressed (proactive daily cap, wait-tool, opt-out) — not an error.
+        // Don't burn one of the MAX_NUDGES attempts on a message that never
+        // went out; retry on the next scheduled run instead.
+        if (!sent) continue;
 
         await doc.ref.update({
           feedbackNudgeCount: nudgeCount + 1,

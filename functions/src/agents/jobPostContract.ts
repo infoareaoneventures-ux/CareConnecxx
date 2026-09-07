@@ -38,6 +38,7 @@ export interface WebJobPostInput {
   lat?:             number | null;
   lng?:             number | null;
   recipientsCount?: number;
+  caregiversNeeded?: number;      // 1-4, how many caregivers this job is looking to hire — mirrors PostJobFlow.tsx exactly
   minHoursPerWeek?: number;
   screeningQuestions?: string[];
   petsInHome?:      boolean;
@@ -101,6 +102,9 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     requirements: careTypes,           // legacy mirror (jobMatchService keywords)
     ...(p.careLevel ? { careLevel: p.careLevel } : {}),
     ...(p.recipientsCount ? { recipientsCount: p.recipientsCount } : {}),
+    // Matches PostJobFlow.tsx's own write exactly — always set, defaulting to
+    // 1, never conditionally omitted.
+    caregiversNeeded: p.caregiversNeeded || 1,
     ...(typeof p.minHoursPerWeek === "number" ? { minHoursPerWeek: p.minHoursPerWeek } : {}),
     ...(p.screeningQuestions?.length ? { screeningQuestions: p.screeningQuestions } : {}),
     petsInHome:       p.petsInHome ?? false,

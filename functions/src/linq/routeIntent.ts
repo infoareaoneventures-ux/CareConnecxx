@@ -16,7 +16,6 @@ import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
 import {
-  handleInterviewSelection,
   handleInterviewConfirm,
   writeInterviewOutcomeSignal,
 } from "../agents/interviewAgent";
@@ -894,28 +893,31 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     // ── Caregiver selection (numbers after match presentation) ────────────────
-    // Only fire when ALL of:
-    //   - pendingMatches is non-empty
-    //   - pendingMatches was set within the last 2 hours (older state is stale)
-    //   - text is JUST a selection answer ("1", "2", "1 and 2", "all", "1,3"),
-    //     not a sentence that happens to contain a digit ("3 mornings a week"
-    //     used to trip the old loose /[123]/ regex)
-    // Anything else falls through to the normal intent routing. If the user
-    // explicitly says "find a caregiver" while pendingMatches is stale, we
-    // clear it below so they get a fresh search instead of being asked to
-    // pick from a list they never saw.
+    // 2026-09-07 (Hamse decision): a bare-number/name reply picking a caregiver
+    // off the match list used to short-circuit here into handleInterviewSelection
+    // (interviewAgent.ts) — a whole separate flow where EVIA asks the CAREGIVER
+    // for their availability first, then confirms a mutual time with the family,
+    // writing video_interviews directly instead of through the shared
+    // requestVideoInterview() the website's own "Request Interview" modal uses.
+    // That flow has NO website equivalent at all (the site always collects a
+    // specific date/time from the client upfront) and was never brought under
+    // the same eligibility/rate-limit protections requestVideoInterview() has.
+    // Removed the interception entirely: qaAgent.ts already has purpose-built
+    // handling for exactly this reply (see its "CAREGIVERS YOU JUST SHOWED THIS
+    // FAMILY" context block) — it resolves a number/name/pronoun against
+    // pendingMatches and calls schedule_interview (requestVideoInterview,
+    // matching the site) after asking for a date/time if needed. A number reply
+    // now simply falls through to normal routing/runQaAgent like a name reply
+    // already did, so both go through the one flow that matches the site.
+    // handleInterviewSelection itself is intentionally left in interviewAgent.ts
+    // (unreachable for new selections, but still resolvable) rather than deleted,
+    // so any interview_requests negotiation already in flight from before this
+    // change can still finish normally.
     const stalePendingMatches = (session as any).pendingMatches as Array<unknown> | undefined;
     if (stalePendingMatches && stalePendingMatches.length > 0) {
       const setAt = (session as any).pendingMatchesSetAt as string | undefined;
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       const isFresh = !setAt || setAt > twoHoursAgo;
-      const trimmedNorm = norm.replace(/[.!?]+$/, "").trim();
-      const isPureSelectionAnswer = /^(?:all|none|skip|pass|[1-9](?:\s*(?:,|and|&|\s)\s*[1-9])*)$/i.test(trimmedNorm);
-
-      if (isFresh && isPureSelectionAnswer) {
-        await handleInterviewSelection(phone, chatId, text, session);
-        return;
-      }
 
       // ── Mid-match refilter ─────────────────────────────────────────────
       // "show me cheaper ones", "any with dementia experience", "anyone Saturday?"

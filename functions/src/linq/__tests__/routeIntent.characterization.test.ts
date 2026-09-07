@@ -665,3 +665,38 @@ describe("U3b source scan — one owner for completed-turn memory", () => {
     expect([...routeSrc.matchAll(/adoptExistingRows: true/g)]).toHaveLength(1);
   });
 });
+
+// 2026-09-07 (Hamse decision): a bare-number caregiver selection after a match
+// presentation used to short-circuit into handleInterviewSelection
+// (interviewAgent.ts) — a caregiver-negotiates-first flow with no website
+// equivalent at all, bypassing the shared requestVideoInterview() the site's
+// own "Request Interview" modal and schedule_interview both use. Removed:
+// a number reply now falls through to normal routing/runQaAgent exactly like
+// a name reply already did, so both paths converge on the one flow that
+// matches the site.
+describe("characterization — caregiver selection after a match list no longer uses the no-site-match flow", () => {
+  const pendingMatches = [
+    { id: "cg1", name: "Basra Yousuf", rate: 25 },
+    { id: "cg2", name: "Imran", rate: 24 },
+  ];
+
+  it("a bare number reply does NOT call handleInterviewSelection — it falls through to runQaAgent", async () => {
+    seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
+
+    const { handleInterviewSelection } = await import("../../agents/interviewAgent");
+    await routeIntentAndRespond(ctx("2"));
+
+    expect(handleInterviewSelection).not.toHaveBeenCalled();
+    expect(runQaAgent).toHaveBeenCalled();
+  });
+
+  it("a caregiver named directly also falls through to runQaAgent (unchanged — same flow as a number reply now)", async () => {
+    seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
+
+    const { handleInterviewSelection } = await import("../../agents/interviewAgent");
+    await routeIntentAndRespond(ctx("let's interview Basra"));
+
+    expect(handleInterviewSelection).not.toHaveBeenCalled();
+    expect(runQaAgent).toHaveBeenCalled();
+  });
+});

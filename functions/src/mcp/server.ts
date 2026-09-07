@@ -789,26 +789,39 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "create_job_post",
-    description: "Post a new caregiver job for the family so nearby caregivers can apply. Collect care needs, schedule, hourly rate, and a 5-digit zip code (required — never accept a typed city, the zip auto-derives it, same as onboarding); confirm, then call.",
+    description:
+      "Post a new caregiver job for the family so nearby caregivers can apply — matches the website's own 6-step " +
+      "'Post a Job' wizard field for field. Collect care needs, schedule, a title, a description, and a 5-digit " +
+      "zip code (required — never accept a typed city, the zip auto-derives it, same as onboarding); confirm, " +
+      "then call. Omit hourlyRate entirely if the family wants a flexible/negotiable rate instead of a set number " +
+      "— same as leaving the website's 'rate flexible' toggle on.",
     input_schema: {
       type: "object",
       properties: {
         clientId:      { type: "string", description: "Injected automatically." },
+        title:         { type: "string", description: "Job title shown to caregivers, 10-80 characters — same field as the website's 'Job title' box." },
+        notes:         { type: "string", description: "Description of the job, 50-2500 characters — what a caregiver should know (responsibilities, tasks, etc.). Same as the website's required 'Details' field; never accept phone numbers or emails here." },
         careTypes:     { type: "array", items: { type: "string" } },
+        careNeedDetails: {
+          type: "object",
+          description: "Optional sub-tasks per care type, e.g. { \"Mobility Assistance\": [\"Ambulation\", \"Transfer Assist\"] } — same as the website's sub-task checkboxes under each care type.",
+          additionalProperties: { type: "array", items: { type: "string" } },
+        },
         frequency:     { type: "string", description: "e.g. 'weekly', 'one-time'" },
         days:          { type: "array", items: { type: "string" } },
         timeOfDay:     { type: "array", items: { type: "string" } },
-        hourlyRate:    { type: "number" },
+        hourlyRate:    { type: "number", description: "Omit entirely for a flexible/negotiable rate — do not pass 0." },
         streetAddress: { type: "string", description: "Optional street address — saved to the family's care plan, not shown on the public job post" },
         zipCode:       { type: "string", description: "5-digit zip — required, city/state are auto-derived from it" },
         startDate:     { type: "string", description: "YYYY-MM-DD" },
         endDate:       { type: "string", description: "YYYY-MM-DD — only if this is a date-limited request, not ongoing" },
         careLevel:          { type: "string", description: "Optional overall care level" },
         minHoursPerWeek:    { type: "number", description: "Optional minimum hours per week" },
+        caregiversNeeded:   { type: "number", description: "Optional, 1-4 — how many caregivers this job is looking to hire. Defaults to 1 if not mentioned, same as the website." },
         screeningQuestions: { type: "array", items: { type: "string" }, description: "Optional custom screening questions for applicants" },
         careRecipients: {
           type: "array",
-          description: "Only if this covers a care recipient not already on file — each is saved to the family's roster and care plan.",
+          description: "EVERY care recipient this job covers — both someone new AND anyone already on the family's roster/care plan (check the CARE PLAN section of your context first). Including an existing recipient here is safe and expected: it will NOT create a duplicate, it just keeps their care plan (care needs, notes, location) in sync with this job post.",
           items: {
             type: "object",
             properties: {
@@ -820,7 +833,7 @@ export const MCP_TOOLS: McpTool[] = [
           },
         },
       },
-      required: ["clientId", "careTypes", "hourlyRate", "zipCode"],
+      required: ["clientId", "title", "notes", "careTypes", "zipCode"],
     },
   },
   {
@@ -5320,11 +5333,24 @@ async function executeToolCall(
 
     if (name === "create_job_post") {
       const {
-        clientId, careTypes, frequency, days, timeOfDay, hourlyRate, streetAddress, zipCode, startDate, endDate,
-        careLevel, minHoursPerWeek, screeningQuestions, careRecipients,
+        clientId, title, notes, careTypes, careNeedDetails, frequency, days, timeOfDay, hourlyRate, streetAddress,
+        zipCode, startDate, endDate, careLevel, minHoursPerWeek, caregiversNeeded, screeningQuestions, careRecipients,
       } = input as Record<string, unknown>;
-      if (!clientId || !Array.isArray(careTypes) || careTypes.length === 0 || hourlyRate == null || !zipCode) {
-        return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), hourlyRate, and zipCode are required");
+      // 2026-09-07: title/notes brought up to full parity with the website's
+      // required 'Job title' (10-80 chars) and 'Details' (50-2500 chars)
+      // fields — this tool previously had no way to collect either at all, so
+      // every SMS-posted job got a generic auto-title and no description.
+      // hourlyRate is now genuinely optional (omit for a flexible rate,
+      // matching the website's "rate flexible" toggle) — buildWebJobPostDoc
+      // already derives rateFlexible from a missing/zero rate on its own.
+      if (!clientId || typeof title !== "string" || title.trim().length < 10 || title.trim().length > 80) {
+        return toolError("INVALID_INPUT", "title is required, 10-80 characters");
+      }
+      if (typeof notes !== "string" || notes.trim().length < 50 || notes.trim().length > 2500) {
+        return toolError("INVALID_INPUT", "notes (job description) is required, 50-2500 characters");
+      }
+      if (!Array.isArray(careTypes) || careTypes.length === 0 || !zipCode) {
+        return toolError("INVALID_INPUT", "clientId, careTypes (non-empty), and zipCode are required");
       }
       const daysArr = Array.isArray(days) ? (days as string[]) : [];
       const todArr  = Array.isArray(timeOfDay) ? (timeOfDay as string[]) : [];
@@ -5341,14 +5367,15 @@ async function executeToolCall(
       await ref.set(buildWebJobPostDoc({
         clientId:      clientId as string,
         source:        "cara_sms",
-        title:         place?.city ? `Care needed in ${place.city}` : "Care needed",
+        title:         (title as string).trim(),
+        description:   (notes as string).trim(),
         careTypes:     careTypes as string[],
         startDate:     (startDate ?? undefined) as string | undefined,
         endDate:       (endDate ?? undefined) as string | undefined,
         frequency:     (frequency ?? undefined) as string | undefined,
         days:          daysArr,
         timeOfDay:     todArr,
-        hourlyRate:    hourlyRate as number | string,
+        hourlyRate:    hourlyRate as number | string | undefined,
         zipCode:       zipCode as string,
         city:          place?.city,
         state:         place?.state,
@@ -5356,22 +5383,31 @@ async function executeToolCall(
         lng:           place?.lng,
         careLevel:     (careLevel ?? undefined) as string | undefined,
         minHoursPerWeek: typeof minHoursPerWeek === "number" ? minHoursPerWeek : undefined,
+        caregiversNeeded: typeof caregiversNeeded === "number" ? Math.min(4, Math.max(1, caregiversNeeded)) : undefined,
         screeningQuestions: Array.isArray(screeningQuestions) ? (screeningQuestions as string[]) : undefined,
         recipientsCount: Array.isArray(careRecipients) ? Math.min(4, Math.max(1, careRecipients.length)) : undefined,
         intakeId:      ref.id,
       }));
       // Matches PostJobFlow.tsx's own post-submit mirror exactly (job_postings
-      // roster + carePlans.recipientPlans/locationPool) — only runs when the
-      // family named a care recipient not already on file.
+      // roster + carePlans.recipientPlans/locationPool). Runs for EVERY
+      // recipient this job covers, not just new ones — mirrorJobPostRecipientsToWeb
+      // already safely no-ops the roster write for someone who matches the
+      // existing primary recipient, while still syncing their care plan
+      // (careNeeds/careNeedDetails/notes) to this job post. Before 2026-09-07
+      // this only ran when careRecipients held a brand-new person, so an
+      // existing-only recipient's care plan (and Notes) never got this job
+      // post's details at all.
       if (Array.isArray(careRecipients) && careRecipients.length > 0) {
         await mirrorJobPostRecipientsToWeb({
-          uid:            clientId as string,
-          careRecipients: careRecipients as { firstName: string; lastName?: string; relationship?: string }[],
-          careTypes:      careTypes as string[],
-          streetAddress:  (streetAddress ?? undefined) as string | undefined,
-          city:           place?.city,
-          state:          place?.state,
-          zipCode:        zipCode as string,
+          uid:             clientId as string,
+          careRecipients:  careRecipients as { firstName: string; lastName?: string; relationship?: string }[],
+          careTypes:       careTypes as string[],
+          careNeedDetails: (careNeedDetails ?? undefined) as Record<string, unknown> | undefined,
+          description:     (notes as string).trim(),
+          streetAddress:   (streetAddress ?? undefined) as string | undefined,
+          city:            place?.city,
+          state:           place?.state,
+          zipCode:         zipCode as string,
         }).catch(() => {});
       }
       logAudit({ eventType: "job_post_created", userId: clientId as string, data: { source: "mcp:create_job_post", jobId: ref.id } }).catch(() => {});

@@ -143,16 +143,15 @@ describe("create_job_post", () => {
     expect(doc.streetAddress).toBeUndefined();
   });
 
-  it("writes minHoursPerWeek, screeningQuestions, and recipientsCount when given", async () => {
+  it("writes minHoursPerWeek and recipientsCount when given", async () => {
     lookupZipPlace.mockResolvedValue({ city: "Austin", state: "TX", lat: 30.27, lng: -97.74 });
     const r = await handleToolCall("create_job_post", {
       clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], hourlyRate: 25, zipCode: "78701",
-      minHoursPerWeek: 20, screeningQuestions: ["Do you drive?"], caregiversNeeded: 2,
+      minHoursPerWeek: 20, caregiversNeeded: 2,
       careRecipients: [{ firstName: "Rosie", relationship: "mother" }],
     }) as any;
     const doc = hoisted.sets.find(s => s.path === `job_posts/${r.jobId}`)?.data;
     expect(doc.minHoursPerWeek).toBe(20);
-    expect(doc.screeningQuestions).toEqual(["Do you drive?"]);
     expect(doc.recipientsCount).toBe(1);
     expect(doc.caregiversNeeded).toBe(2);
   });

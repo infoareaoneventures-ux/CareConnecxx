@@ -17,6 +17,16 @@ import * as admin from "firebase-admin";
 // extras (schedule object, summary, hourlyRate passthrough, notifiedCount) ride
 // along for the existing SMS/snapshot consumers.
 
+// Same default the website's own wizard auto-fills (Step5Describe.tsx: "if no
+// title and city is set, title = 'Senior care in {city}'") — the family can
+// still type over it there. Evia (2026-09-07, Hamse's call) never asks a
+// dedicated title question at all — it just silently uses this same default,
+// so an SMS-posted job's title matches what a site user would get by simply
+// not bothering to customize the site's own auto-filled suggestion.
+export function defaultJobTitle(city?: string | null): string {
+  return city ? `Senior care in ${city}` : "Senior care needed";
+}
+
 export interface WebJobPostInput {
   clientId:         string;
   source:           string;                  // "cara" | "cara_sms" | "intake_trigger"
@@ -40,7 +50,6 @@ export interface WebJobPostInput {
   recipientsCount?: number;
   caregiversNeeded?: number;      // 1-4, how many caregivers this job is looking to hire — mirrors PostJobFlow.tsx exactly
   minHoursPerWeek?: number;
-  screeningQuestions?: string[];
   petsInHome?:      boolean;
   smokingHousehold?: boolean;
   phone?:           string;
@@ -106,7 +115,6 @@ export function buildWebJobPostDoc(p: WebJobPostInput): Record<string, unknown> 
     // 1, never conditionally omitted.
     caregiversNeeded: p.caregiversNeeded || 1,
     ...(typeof p.minHoursPerWeek === "number" ? { minHoursPerWeek: p.minHoursPerWeek } : {}),
-    ...(p.screeningQuestions?.length ? { screeningQuestions: p.screeningQuestions } : {}),
     petsInHome:       p.petsInHome ?? false,
     smokingHousehold: p.smokingHousehold ?? false,
     status:           "open",

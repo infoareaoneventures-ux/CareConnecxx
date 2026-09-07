@@ -12,7 +12,7 @@ import { Step2WhoWhere } from './Step2WhoWhere';
 import { Step3CareNeeds } from './Step3CareNeeds';
 import { Step4Rate } from './Step4Rate';
 import { Step5Describe } from './Step5Describe';
-import { Step6ScreeningReview } from './Step6ScreeningReview';
+import { Step6Review } from './Step6Review';
 import { JobPostFormData, INITIAL_FORM_DATA } from './types';
 
 const TOTAL_STEPS = 6;
@@ -69,8 +69,6 @@ export const PostJobFlow: React.FC = () => {
         careLevel: data.careLevel || undefined,
         petsInHome: data.petsInHome,
         smokingHousehold: data.smokingHousehold,
-
-        screeningQuestions: data.screeningQuestions.map(q => q.trim()).filter(Boolean),
       };
 
       const id = await dbService.createJobPost(payload as any, currentUser.uid);
@@ -214,7 +212,7 @@ export const PostJobFlow: React.FC = () => {
             <Step5Describe data={data} onChange={onChange} onContinue={next} onBack={back} onShowToast={addToast} />
           )}
           {step === 5 && (
-            <Step6ScreeningReview
+            <Step6Review
               data={data}
               onChange={onChange}
               onContinue={next}

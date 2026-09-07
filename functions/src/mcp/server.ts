@@ -818,7 +818,6 @@ export const MCP_TOOLS: McpTool[] = [
         careLevel:          { type: "string", description: "Optional overall care level" },
         minHoursPerWeek:    { type: "number", description: "Optional minimum hours per week" },
         caregiversNeeded:   { type: "number", description: "Optional, 1-4 — how many caregivers this job is looking to hire. Defaults to 1 if not mentioned, same as the website." },
-        screeningQuestions: { type: "array", items: { type: "string" }, description: "Optional custom screening questions for applicants" },
         careRecipients: {
           type: "array",
           description: "EVERY care recipient this job covers — both someone new AND anyone already on the family's roster/care plan (check the CARE PLAN section of your context first). Including an existing recipient here is safe and expected: it will NOT create a duplicate, it just keeps their care plan (care needs, notes, location) in sync with this job post.",
@@ -5334,7 +5333,7 @@ async function executeToolCall(
     if (name === "create_job_post") {
       const {
         clientId, title, notes, careTypes, careNeedDetails, frequency, days, timeOfDay, hourlyRate, streetAddress,
-        zipCode, startDate, endDate, careLevel, minHoursPerWeek, caregiversNeeded, screeningQuestions, careRecipients,
+        zipCode, startDate, endDate, careLevel, minHoursPerWeek, caregiversNeeded, careRecipients,
       } = input as Record<string, unknown>;
       // 2026-09-07: title/notes brought up to full parity with the website's
       // required 'Job title' (10-80 chars) and 'Details' (50-2500 chars)
@@ -5384,7 +5383,6 @@ async function executeToolCall(
         careLevel:     (careLevel ?? undefined) as string | undefined,
         minHoursPerWeek: typeof minHoursPerWeek === "number" ? minHoursPerWeek : undefined,
         caregiversNeeded: typeof caregiversNeeded === "number" ? Math.min(4, Math.max(1, caregiversNeeded)) : undefined,
-        screeningQuestions: Array.isArray(screeningQuestions) ? (screeningQuestions as string[]) : undefined,
         recipientsCount: Array.isArray(careRecipients) ? Math.min(4, Math.max(1, careRecipients.length)) : undefined,
         intakeId:      ref.id,
       }));

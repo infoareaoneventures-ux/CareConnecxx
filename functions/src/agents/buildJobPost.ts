@@ -1,9 +1,9 @@
 import * as admin from "firebase-admin";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
-import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients } from "./careRecipients";
-import { buildWebJobPostDoc } from "./jobPostContract";
+import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
+import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
 import { geocodeZip, geocodeCity } from "../utils/geocode";
-import { buildJobPostingsDoc, buildCarePlanLocationEntry } from "./clientJobPostingContract";
+import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
 
 const db = admin.firestore();
 
@@ -33,6 +33,27 @@ export function jobLiveMessage(city: string | null | undefined, notifiedCount: n
     : `Your care request is live! 🎉 I'm searching for caregivers${where} right now and I'll text you the moment I find a match.`;
 }
 
+// Additive union by name — never lets a narrower per-job recipient selection
+// shrink the account's persistent roster (the website's own PostJobFlow.tsx
+// gives this exact guarantee via arrayUnion; see the call site below).
+function unionRecipientsByName(base: CareRecipient[], extra: CareRecipient[]): CareRecipient[] {
+  const out = [...base];
+  const seen = new Set(base.map((r) => recipientPlanKey(r.name)));
+  for (const r of extra) {
+    const key = recipientPlanKey(r.name);
+    if (!seen.has(key)) { seen.add(key); out.push(r); }
+  }
+  return out;
+}
+
+type JobDataRecipient = { firstName: string; lastName?: string; relationship?: string; isSelf?: boolean };
+
+function jobRecipientName(r: JobDataRecipient, onboardingData: Record<string, unknown>): string {
+  return r.isSelf
+    ? ((onboardingData.firstName ?? onboardingData.name ?? "Me") as string)
+    : `${r.firstName} ${r.lastName ?? ""}`.trim();
+}
+
 // ── Main builder ──────────────────────────────────────────────────────────────
 
 export async function buildAndSaveJobPost(params: {
@@ -43,11 +64,84 @@ export async function buildAndSaveJobPost(params: {
 }): Promise<{ jobId: string; notifiedCount: number }> {
   const { uid, phone, onboardingData, jobData } = params;
 
-  const seniorName    = (onboardingData.seniorName    ?? "") as string;
-  const firstName     = seniorName.split(" ")[0] || seniorName;
-  const relationship  = (onboardingData.relationship  ?? "") as string;
-  const city          = (onboardingData.city          ?? "") as string;
-  const zipCode       = (onboardingData.zipCode       ?? "") as string;
+  // ── Per-job who/where overrides (2026-09-07 parity build) ─────────────────
+  // jobPostingFlow.ts's jp_ask_recipients/jp_ask_caregivers_needed/jp_ask_location
+  // steps collect THIS job's actual choices — often a subset of, or an addition
+  // to, the account's full household/address history. These win over onboarding
+  // data for everything describing THIS specific job post. The account's
+  // persistent roster (job_postings.additionalRecipients, carePlans.locationPool,
+  // job_postings.savedLocations) is only ever ADDED to below, never shrunk to
+  // match a narrower per-job selection — matching the website's own
+  // PostJobFlow.tsx guarantee (arrayUnion, "set primary only if none exists yet").
+  const jobRecipients: JobDataRecipient[] = Array.isArray(jobData.careRecipients)
+    ? (jobData.careRecipients as JobDataRecipient[])
+    : [];
+  const hasJobLocation = typeof jobData.streetAddress === "string" && (jobData.streetAddress as string).trim().length > 0;
+
+  const existingJpSnap = await db.collection("job_postings").doc(uid).get().catch(() => null);
+  const existingJp = (existingJpSnap?.exists ? existingJpSnap.data() : {}) as Record<string, unknown>;
+  const siteState  = mapJobPostingsDocToOnboardingData(existingJp);
+
+  let rosterSeniorName: string;
+  let rosterRelationship: string;
+  let rosterAdditional: CareRecipient[];
+  if (siteState.seniorName) {
+    // A roster already exists on job_postings/{uid} — its primary is sticky
+    // (never reassigned by a later job's narrower pick). Fold in every
+    // recipient THIS job named that isn't already that primary.
+    rosterSeniorName   = siteState.seniorName as string;
+    rosterRelationship = (siteState.relationship as string) ?? "";
+    const primaryKey = recipientPlanKey(rosterSeniorName);
+    const thisJobExtras: CareRecipient[] = jobRecipients
+      .filter((r) => recipientPlanKey(jobRecipientName(r, onboardingData)) !== primaryKey)
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }));
+    rosterAdditional = unionRecipientsByName(
+      normalizeAdditionalRecipients(siteState.additionalRecipients),
+      thisJobExtras,
+    );
+  } else if (jobRecipients.length > 0) {
+    // No roster yet — this job's own primary choice becomes the account's.
+    const existingPrimaryKey = recipientPlanKey((onboardingData.seniorName as string) ?? "");
+    let primaryIdx = jobRecipients.findIndex(
+      (r) => !r.isSelf && recipientPlanKey(jobRecipientName(r, onboardingData)) === existingPrimaryKey
+    );
+    if (primaryIdx < 0) primaryIdx = 0;
+    const primary = jobRecipients[primaryIdx];
+    rosterSeniorName   = jobRecipientName(primary, onboardingData);
+    rosterRelationship = primary.isSelf ? "self" : (primary.relationship ?? (onboardingData.relationship as string) ?? "");
+    rosterAdditional = jobRecipients
+      .filter((_, i) => i !== primaryIdx)
+      .map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }));
+  } else {
+    // Legacy fallback — a session that predates the who/where step, or a
+    // direct MCP call that skipped it.
+    rosterSeniorName   = (onboardingData.seniorName as string) ?? "";
+    rosterRelationship = (onboardingData.relationship as string) ?? "";
+    rosterAdditional   = normalizeAdditionalRecipients(onboardingData.additionalRecipients);
+  }
+
+  const effectiveOnboarding: Record<string, unknown> = {
+    ...onboardingData,
+    seniorName: rosterSeniorName,
+    relationship: rosterRelationship,
+    additionalRecipients: rosterAdditional,
+  };
+  if (hasJobLocation) {
+    effectiveOnboarding.street  = jobData.streetAddress;
+    effectiveOnboarding.zipCode = jobData.zipCode;
+    effectiveOnboarding.city    = jobData.city;
+    effectiveOnboarding.state   = jobData.state;
+    effectiveOnboarding.petsInHome       = jobData.petsInHome;
+    effectiveOnboarding.smokingHousehold = jobData.smokingHousehold;
+  }
+  if (typeof jobData.caregiversNeeded === "number") {
+    effectiveOnboarding.caregiversNeeded = jobData.caregiversNeeded;
+  }
+
+  const seniorName    = rosterSeniorName || ((onboardingData.seniorName ?? "") as string);
+  const relationship  = rosterRelationship || ((onboardingData.relationship ?? "") as string);
+  const city          = hasJobLocation ? ((jobData.city as string) ?? "") : ((onboardingData.city ?? "") as string);
+  const zipCode       = hasJobLocation ? ((jobData.zipCode as string) ?? "") : ((onboardingData.zipCode ?? "") as string);
   const conditions    = (onboardingData.conditions    ?? []) as string[];
   const seniorAge     = onboardingData.age as number | undefined;
 
@@ -61,41 +155,50 @@ export async function buildAndSaveJobPost(params: {
   const description    = (jobData.jobDescription   ?? "") as string;
   const petsInHome     = (jobData.petsInHome        ?? false) as boolean;
   const smokingHousehold = (jobData.smokingHousehold ?? false) as boolean;
+  const caregiversNeeded = typeof jobData.caregiversNeeded === "number" ? jobData.caregiversNeeded : 1;
 
-  // Multi-recipient household ("both mom and dad"): the web CarePlan/Posts
-  // tabs are built from job_postings' primary careRecipient* fields plus
-  // additionalRecipients[] — write them in the exact shape the web writes.
-  const extraRecipients = normalizeAdditionalRecipients(onboardingData.additionalRecipients);
-  const additionalRecipients = extraRecipients.map((r) => ({
-    firstName:    r.name.split(" ")[0] || r.name,
-    lastName:     "",
-    name:         r.name,
-    relationship: r.relationship ?? "",
-    ...(r.age !== undefined ? { age: String(r.age) } : {}),
-  }));
-  const recipientsCount = 1 + additionalRecipients.length;
-  const recipientNames  = [firstName, ...additionalRecipients.map((r) => r.firstName)].filter(Boolean);
+  // THIS job's actual recipient selection (narrow) drives the public listing
+  // and care-plan writes below — distinct from the account-wide roster
+  // computed above, which only ever grows.
+  const recipients: CareRecipient[] = jobRecipients.length > 0
+    ? jobRecipients.map((r) => ({ name: jobRecipientName(r, onboardingData), relationship: r.isSelf ? "myself" : (r.relationship ?? "") }))
+    : allCareRecipients(onboardingData);
+  const recipientsCount = recipients.length || 1;
 
-  const title = `${careLevel === "light" ? "Light " : careLevel === "intensive" ? "Full " : ""}Care for ${
-    recipientNames.length > 1 ? recipientNames.join(" & ") : firstName || "Loved One"
-  }`;
+  // 2026-09-07 (Hamse's call): Evia never asks a dedicated title question —
+  // jobPostingFlow.ts silently fills jobTitle with this same default the
+  // moment the address/city is known (jp_ask_location), matching what the
+  // website's own wizard auto-suggests (Step5Describe.tsx) before a site user
+  // bothers to customize it. This fallback only covers a session that
+  // predates that step or a direct MCP call that skipped it.
+  const title = ((jobData.jobTitle as string | undefined)?.trim()) || defaultJobTitle(city || null);
 
-  const stateHint = (onboardingData.state ?? jobData.state ?? "") as string;
+  const stateHint = (jobData.state ?? onboardingData.state ?? "") as string;
   let coords = await geocodeZip(zipCode);
   if (!coords) coords = await geocodeCity(city, stateHint);
 
   // ── job_postings/{uid} — client's own record, in the wizard's exact shape ──
   // (clientJobPostingContract.ts is the single definition both the web wizard
   // and Evia's finalization write are locked to — see the parity test.)
-  const jobPostingDoc = buildJobPostingsDoc(uid, phone, onboardingData);
+  const jobPostingDoc = buildJobPostingsDoc(uid, phone, effectiveOnboarding);
   await db.collection("job_postings").doc(uid).set(jobPostingDoc, { merge: true });
 
+  // A brand-new address entered THIS job (not matched to any known option) —
+  // append it to the account's saved-locations history so it's selectable for
+  // a future job post too, matching the website's addNewLocation write.
+  if (jobData.isNewLocation === true && hasJobLocation) {
+    await db.collection("job_postings").doc(uid).set({
+      savedLocations: admin.firestore.FieldValue.arrayUnion({
+        street: jobData.streetAddress, city: jobData.city ?? "", state: jobData.state ?? "", zipCode: jobData.zipCode,
+      }),
+    }, { merge: true }).catch(() => {});
+  }
+
   // ── carePlans/{uid} — full care plan with recipient details ───────────────
-  // One plan entry per recipient, keyed with the web CarePlan.tsx getKey format
-  // (recipientPlanKey) so the web tabs find Evia's data. Needs/conditions are
-  // shared at signup (same as the web PostJob flow); per-person edits happen in
-  // the CarePlan tabs afterward.
-  const recipients = allCareRecipients(onboardingData);
+  // One plan entry per recipient THIS job actually covers, keyed with the web
+  // CarePlan.tsx getKey format (recipientPlanKey) so the web tabs find Evia's
+  // data. Needs/conditions are shared at signup (same as the web PostJob
+  // flow); per-person edits happen in the CarePlan tabs afterward.
   const recipientPlans: Record<string, unknown> = {};
   for (const r of recipients.length ? recipients : [{ name: seniorName, relationship, age: seniorAge }]) {
     recipientPlans[recipientPlanKey((r.name || "").split(" ")[0] || r.name || "primary")] = {
@@ -116,11 +219,31 @@ export async function buildAndSaveJobPost(params: {
       updatedAt:    new Date().toISOString(),
     };
   }
+
+  // locationPool is a growing history of addresses (Step2WhoWhere.tsx reads it
+  // as one of its candidate sources) — upsert THIS job's address into it
+  // instead of overwriting the whole pool down to one entry every job post.
+  const cpSnap = await db.collection("carePlans").doc(uid).get().catch(() => null);
+  const existingPool = (cpSnap?.exists ? ((cpSnap.data() as Record<string, unknown>).locationPool as Array<Record<string, unknown>> | undefined) : undefined) ?? [];
+  const newLocEntry = buildCarePlanLocationEntry(effectiveOnboarding, coords ?? undefined) as unknown as Record<string, unknown>;
+  let locationPool: Array<Record<string, unknown>>;
+  if (newLocEntry.street && newLocEntry.zipCode) {
+    const idx = existingPool.findIndex((l) =>
+      String(l.street ?? "").toLowerCase() === String(newLocEntry.street).toLowerCase() &&
+      String(l.zipCode ?? "") === String(newLocEntry.zipCode)
+    );
+    locationPool = idx >= 0
+      ? existingPool.map((l, i) => (i === idx ? { ...l, ...newLocEntry } : l))
+      : [...existingPool, newLocEntry];
+  } else {
+    locationPool = existingPool.length ? existingPool : [newLocEntry];
+  }
+
   await db.collection("carePlans").doc(uid).set({
     clientId: uid,
     phone,
     recipientPlans,
-    locationPool: [buildCarePlanLocationEntry(onboardingData, coords ?? undefined)],
+    locationPool,
     // Finalizing the job post over SMS is Evia's equivalent of the wizard's
     // final "Submit" — stamp the same review marker the web Care Plan page
     // sets, so useOnboardingProgress.ts's completeness check is satisfied for
@@ -163,6 +286,7 @@ export async function buildAndSaveJobPost(params: {
     lat:             coords?.lat ?? null,
     lng:             coords?.lng ?? null,
     recipientsCount,
+    caregiversNeeded,
     petsInHome,
     smokingHousehold,
     phone,

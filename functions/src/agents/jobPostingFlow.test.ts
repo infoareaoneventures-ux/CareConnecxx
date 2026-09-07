@@ -54,7 +54,12 @@ const PHONE = "+15555550100";
 const CHAT  = "chat-1";
 const SESSION: any = {
   jobPostingStep: "jp_ask_start",
-  jobPostingData: {},
+  // job_posting is a DEFAULT_FLIPPED_FLOWS flow (isConvergenceFlipped, on by
+  // default) — dispatch resolves the step from jobPostingData, not the literal
+  // jobPostingStep string above. jobFrequency pre-filled so it resolves to
+  // jp_ask_start (the step these tests actually exercise) — schedule (frequency
+  // /start/days/time) comes before who/where in the site's own order.
+  jobPostingData: { jobFrequency: "occasional" },
   onboardingData: { seniorName: "Rosie Alvarez" },
 };
 

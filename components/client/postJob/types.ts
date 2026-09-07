@@ -47,9 +47,6 @@ export interface JobPostFormData {
   // Step 5: Describe
   title: string;
   description: string;
-
-  // Step 6: Screening
-  screeningQuestions: string[];
 }
 
 export const INITIAL_FORM_DATA: JobPostFormData = {
@@ -84,8 +81,6 @@ export const INITIAL_FORM_DATA: JobPostFormData = {
 
   title: '',
   description: '',
-
-  screeningQuestions: [],
 };
 
 export interface StepProps {

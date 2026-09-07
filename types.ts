@@ -313,9 +313,6 @@ export interface JobPost {
   paymentMethod?: JobPaymentMethod;
   rateFlexible?: boolean;
 
-  // Screening
-  screeningQuestions?: string[];
-
   // UrbanSitter-style frequency tag (displayed as one-time / part-time / full-time pill on the Job Board)
   jobFrequency?: 'one-time' | 'part-time' | 'full-time';
 

@@ -414,7 +414,6 @@ export const dbService = {
             'recipientsCount', 'streetAddress', 'city', 'state', 'zipCode', 'neighborhood',
             'careTypes', 'careLevel', 'petsInHome', 'smokingHousehold',
             'paymentMethod', 'rateFlexible',
-            'screeningQuestions',
         ];
 
         const sanitizedPost: any = {};

@@ -388,6 +388,23 @@ export async function handleInterviewConfirm(
     return;
   }
 
+  // Claim this confirmation atomically before doing any work. Inbound SMS
+  // delivery is at-least-once, so the same "yes" can arrive twice in quick
+  // succession; without a claim here, each delivery independently mints its
+  // own video_interviews doc, sends its own confirmation texts, and schedules
+  // its own duplicate "in an hour" reminder. Whichever call wins the
+  // transaction proceeds below; a loser (flag already cleared/changed by the
+  // winner) is a silent no-op.
+  const sessionRef = db.collection("agent_sessions").doc(phone);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(sessionRef);
+    const current = snap.data()?.pendingInterviewConfirm as { docId?: string } | undefined;
+    if (!current || current.docId !== pending.docId) return false;
+    tx.update(sessionRef, { pendingInterviewConfirm: admin.firestore.FieldValue.delete() });
+    return true;
+  });
+  if (!claimed) return;
+
   // Resolve identity up front so the interview record is queryable by
   // list_interviews (clientId/caregiverId) regardless of scheduling path
   const requestSnap  = await db.collection("interview_requests").doc(pending.docId).get();
@@ -459,10 +476,7 @@ export async function handleInterviewConfirm(
     scheduledTime: pending.mutualTime,
   }).catch((err) => console.error("notifyAdminInterviewScheduled error:", err));
 
-  // Clear pending from session
-  await db.collection("agent_sessions").doc(phone).update({
-    pendingInterviewConfirm: admin.firestore.FieldValue.delete(),
-  });
+  // (pendingInterviewConfirm already cleared by the claim transaction above)
 
   // Send to family — call link + .ics + text
   if (callUrl) {

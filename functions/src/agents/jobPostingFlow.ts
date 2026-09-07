@@ -696,8 +696,24 @@ async function handleJpAskFrequency(
   await mergeJobData(phone, { jobFrequency: frequency });
   await updateJobStep(phone, "jp_ask_start");
   await sendMessage(chatId,
-    `${label[frequency] ?? "Got it"}! When would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`
+    `${label[frequency] ?? "Got it"}! When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`
   );
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Display-only formatting for an echoed-back date — the STORED jobStartDate
+// value stays YYYY-MM-DD (or "ASAP"/raw text) for consistency with the rest
+// of the system (job_posts.startDate, etc.); a family reading a text message
+// shouldn't see the raw ISO string ("2026-09-15") echoed back at them.
+// Parses the string directly rather than via `new Date(...)` to avoid any
+// timezone-shift risk on a date-only value.
+export function formatDateForDisplay(value: string): string {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return value; // "ASAP" or a raw fallback string — show as-is
+  const [, y, mo, d] = m;
+  const monthName = MONTH_NAMES[parseInt(mo, 10) - 1];
+  return monthName ? `${monthName} ${parseInt(d, 10)}, ${y}` : value;
 }
 
 async function handleJpAskStart(
@@ -706,7 +722,7 @@ async function handleJpAskStart(
   if (await isQuestionOrOther(text)) {
     const answer = await answerQuestionMidFlow(text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, `When would you like care to start? (e.g. "next Monday", "ASAP", "June 1")`);
+    await sendMessage(chatId, `When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`);
     return;
   }
   // Anchor relative dates ("next Monday", "in two weeks") to the REAL current
@@ -726,7 +742,7 @@ async function handleJpAskStart(
   await mergeJobData(phone, { jobStartDate: stored });
   await updateJobStep(phone, "jp_ask_days");
   await sendMessage(chatId,
-    `Got it — starting ${stored}! Which days work best?\n\n(e.g. "Mon, Wed, Fri" or "weekdays" or "every day")`
+    `Got it — starting ${formatDateForDisplay(stored)}! Which days work best?\n\n(e.g. "Mon, Wed, Fri" or "weekdays" or "every day")`
   );
 }
 
@@ -1041,7 +1057,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     `👤 For: ${recipientsLabel}`,
     `🧑‍⚕️ Caregivers needed: ${caregiversNeeded}`,
     `📍 Location: ${locationLabel}`,
-    `📅 Start: ${startDate}`,
+    `📅 Start: ${formatDateForDisplay(startDate)}`,
     `🔄 Frequency: ${freqLabel[frequency] ?? frequency}`,
     `📆 Days: ${daysLabel}`,
     `⏰ Time: ${timesLabel}`,

@@ -147,6 +147,41 @@ describe("jp_ask_recipients", () => {
     expect(stored.jobPostingStep).toBe("jp_ask_recipients");
     expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
   });
+
+  // 2026-09-07 (live-caught): "it's someone new, my mother" correctly never
+  // invents a name — but used to repeat the ENTIRE generic list-and-instructions
+  // question, which read as "didn't understand anything." Now it asks
+  // specifically for the missing name and remembers the stated relationship.
+  it("a relationship stated with no name yet asks specifically for the name, remembering the relationship", async () => {
+    hoisted.docState.set(`job_postings/${UID}`, {});
+    modelReplies("NO", JSON.stringify({ matched: [], newName: null, newRelationship: "Parent" }));
+
+    await handleJobPostingStep(PHONE, CHAT, "it's someone new, my mother", baseSession());
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.pendingNewRecipientRelationship).toBe("Parent");
+    expect(stored.jobPostingStep).toBe("jp_ask_recipients"); // unchanged — still collecting the name
+    expect(sendMessage.mock.calls[0][1]).toBe("Sure — what's their name?");
+  });
+
+  it("a bare name given next completes using the remembered relationship, without re-asking it", async () => {
+    hoisted.docState.set(`job_postings/${UID}`, {});
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_recipients",
+      jobPostingData: { ...SCHEDULED, pendingNewRecipientRelationship: "Parent" },
+    });
+    modelReplies("NO", JSON.stringify({ matched: [], newName: "Rosie", newRelationship: null }));
+
+    await handleJobPostingStep(PHONE, CHAT, "Rosie", baseSession({
+      jobPostingData: { ...SCHEDULED, pendingNewRecipientRelationship: "Parent" },
+    }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.careRecipients).toEqual([
+      { firstName: "Rosie", lastName: "", relationship: "Parent", isSelf: false },
+    ]);
+    expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed"); // no relationship re-ask
+  });
 });
 
 describe("jp_ask_recipient_relationship", () => {
@@ -164,6 +199,32 @@ describe("jp_ask_recipient_relationship", () => {
       { firstName: "David", lastName: "", relationship: "Parent", isSelf: false },
     ]);
     expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+  });
+});
+
+// 2026-09-07 (live-caught): a mid-flow question asked while posting a job for
+// someone NEW used to be answered grounded in the ACCOUNT's original on-file
+// senior (onboardingData.seniorName) — completely unrelated to the new
+// recipient actually being set up in this same conversation. A user setting
+// up care for "David" got a reply about "Rosie Alvarez" (the account's
+// original senior) instead.
+describe("answerQuestionMidFlow grounding (live-caught: wrong recipient in mid-flow answers)", () => {
+  it("grounds in the job's actual in-progress recipient, not the account's unrelated on-file senior", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
+    });
+    // Call 1: isQuestionOrOther → YES. Call 2: mid-flow free-form answer.
+    modelReplies("YES", "Most families just need one caregiver for a job like this.");
+
+    await handleJobPostingStep(PHONE, CHAT, "how many do most people pick?", baseSession({
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
+    }));
+
+    const answerCallSystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
+    expect(answerCallSystem).toContain("David");
+    expect(answerCallSystem).not.toContain("Rosie");
   });
 });
 

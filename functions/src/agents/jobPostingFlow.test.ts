@@ -123,6 +123,20 @@ describe("jobPostingFlow — anti-invention clause (U2, R1)", () => {
     // Guard passes → answer delivered unchanged (behavior unchanged when clean).
     expect(sendMessage.mock.calls[0][1]).toBe("Great question — Evia matches you with vetted local caregivers.");
   });
+
+  // 2026-09-07 (live-caught): the classification prompt used to judge
+  // relevance "to the current question" without ever stating what that
+  // question WAS — a context-free guess that misclassified short, valid
+  // answers like a bare "morning" as off-topic. Locks in that the actual
+  // question text now rides along in the prompt.
+  it("isQuestionOrOther's prompt includes the actual question being asked, not a context-free guess", async () => {
+    modelReplies("NO", "next Monday");
+
+    await handleJobPostingStep(PHONE, CHAT, "next monday please", SESSION);
+
+    const classifySystem = (messagesCreate.mock.calls[0][0] as { system: string }).system;
+    expect(classifySystem).toContain("When would you like care to start?");
+  });
 });
 
 describe("jobPostingFlow — output guard (U2, R2)", () => {

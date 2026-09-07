@@ -262,9 +262,19 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
   }
 }
 
-async function isQuestionOrOther(text: string): Promise<boolean> {
+// 2026-09-07 (live-caught): the prompt used to judge relevance "to the
+// current question" without ever stating what that question WAS — a
+// context-free guess. Short, valid answers ("morning", "Myself", "1", a bare
+// name from the options list) are exactly the replies that guess gets wrong,
+// since in isolation they can look like a fragment of a greeting or an
+// off-topic aside. Passing the actual question text fixes this at the source
+// (every call site below passes its own REASK/current-question copy).
+async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
-    "Reply YES if this is a general question or off-topic comment unrelated to answering the current question. Reply NO if it is a direct answer. Only reply YES or NO.",
+    `The question Evia just asked the family was: "${currentQuestion}"\n\n` +
+    "Reply YES if the family's message is a general question or off-topic comment that does NOT answer that question. " +
+    "Reply NO if it directly answers that question — including a short answer like a single word, a bare number, or a name from a list of options. " +
+    "Only reply YES or NO.",
     text
   );
   return result.toUpperCase().startsWith("Y");
@@ -286,8 +296,16 @@ export const JP_MIDFLOW_FALLBACK = "Good question — I don't want to guess on t
 // means nothing gets merged/advanced until a real, recognized answer lands.
 const JP_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
 
-async function answerQuestionMidFlow(text: string, session: AgentSession): Promise<string> {
-  const d = (session as any).onboardingData as Record<string, unknown> ?? {};
+async function answerQuestionMidFlow(phone: string, text: string, session: AgentSession): Promise<string> {
+  // 2026-09-07 (live-caught): this used to ground itself in the ACCOUNT's
+  // original onboarding senior (onboardingData.seniorName) unconditionally —
+  // so a mid-flow question asked while posting a job for someone NEW (a
+  // different recipient than the account's on-file senior) got answered
+  // using the wrong person's saved details. recipientsDisplayName already
+  // resolves the job's ACTUAL in-progress recipient (careRecipients, or the
+  // pending new name mid-relationship-question), falling back to the
+  // account's senior only when nothing job-specific has been collected yet.
+  const recipientName = await recipientsDisplayName(phone, session);
   // Recall grounding — without it, "what city did I tell you?" gets a
   // grounded-sounding denial even though the answer is on the session.
   const sharedProfile = describeSharedProfile(session as any);
@@ -296,7 +314,7 @@ async function answerQuestionMidFlow(text: string, session: AgentSession): Promi
     max_tokens: 100,
     system:
       "You are Evia, a care coordinator helping a client post a care job. " +
-      `They are setting up a job for ${(d.seniorName as string) ?? "their loved one"}. ` +
+      `They are setting up a job for ${recipientName}. ` +
       (sharedProfile ? `${sharedProfile} ` : "") +
       "Answer briefly (1–2 sentences). Be warm and helpful. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
@@ -406,8 +424,8 @@ async function handleJpAskRecipients(
   const listText = formatRecipientOptions(options);
   const REASK = `Who is this job for?\n\n${listText}\n\nReply with a name or number (a few is fine, e.g. "1, 2") — or tell me someone new and how they're related to you.`;
 
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -416,7 +434,8 @@ async function handleJpAskRecipients(
   const raw = await parseWithClaude(
     `Known people on file:\n${listText}\n\n` +
     "The family is choosing who a care job is for. Match their reply against the numbered list above (by number or name — case-insensitive, first name is enough). " +
-    'Return ONLY a JSON object: {"matched": [numbers from the list the message actually refers to], "newName": "a person\'s name mentioned that is NOT on the list, or null", "newRelationship": "their relationship to the account holder if the message stated one — must be exactly Parent, Spouse or Partner, or Other — else null"}. ' +
+    'Return ONLY a JSON object: {"matched": [numbers from the list the message actually refers to], "newName": "a person\'s name mentioned that is NOT on the list, or null", "newRelationship": "their relationship to the account holder, if stated — must be exactly Parent, Spouse or Partner, or Other — else null"}. ' +
+    '"newRelationship" can be set even when "newName" is null — e.g. "it\'s someone new, my mother" states the relationship without a name yet. ' +
     "Never invent a match or a name the message doesn't actually contain.",
     text
   );
@@ -434,7 +453,16 @@ async function handleJpAskRecipients(
     }
   } catch { /**/ }
 
+  // 2026-09-07 (live-caught): "it's someone new, my mother" correctly never
+  // invents a name — but repeating the ENTIRE generic question felt like
+  // nothing was understood. Remember the stated relationship and ask
+  // specifically for the missing name instead.
   if (matched.length === 0 && !newName) {
+    if (newRelationship) {
+      await mergeJobData(phone, { pendingNewRecipientRelationship: newRelationship });
+      await sendMessage(chatId, "Sure — what's their name?");
+      return;
+    }
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
   }
@@ -443,8 +471,10 @@ async function handleJpAskRecipients(
 
   if (newName) {
     const [first, ...rest] = newName.split(/\s+/).filter(Boolean);
-    if (newRelationship) {
-      chosen.push({ firstName: first, lastName: rest.join(" "), relationship: newRelationship, isSelf: false });
+    const jobData = await getJobData(phone);
+    const relationship = newRelationship ?? ((jobData.pendingNewRecipientRelationship as string | undefined) ?? null);
+    if (relationship) {
+      chosen.push({ firstName: first, lastName: rest.join(" "), relationship, isSelf: false });
       await finishRecipientSelection(phone, chatId, chosen);
       return;
     }
@@ -481,8 +511,8 @@ async function handleJpAskRecipientRelationship(
   const jobData = await getJobData(phone);
   const first = (jobData.pendingNewRecipientFirstName as string) ?? "them";
   const REASK = `What's your relationship to ${first}? (Parent, Spouse or Partner, or Other)`;
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -508,8 +538,8 @@ async function handleJpAskCaregiversNeeded(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "How many caregivers do you need for this job? (Most families need just 1 — reply a number 1-4)";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -546,8 +576,8 @@ async function handleJpAskLocation(
   const REASK = `Which address is this for?\n\n${listText}\n\n` +
     (locations.length ? "Reply with a number, or a new street address + zip code." : "Reply with the street address + zip code.");
 
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -609,8 +639,8 @@ async function handleJpAskLocationEnvironment(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "Are there pets in the home? Does anyone smoke in the home?";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -647,9 +677,13 @@ async function handleJpAskLocationEnvironment(
 async function recipientsDisplayName(phone: string, session: AgentSession): Promise<string> {
   const jobData = await getJobData(phone);
   const recipients = (jobData.careRecipients as JobRecipient[]) ?? [];
-  return recipients.length
-    ? recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and ")
-    : seniorFirstName(session);
+  if (recipients.length) return recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and ");
+  // A new person's name may be known before their relationship is (mid
+  // jp_ask_recipient_relationship) — prefer that over the account's
+  // unrelated on-file senior.
+  const pendingFirst = jobData.pendingNewRecipientFirstName as string | undefined;
+  if (pendingFirst) return pendingFirst;
+  return seniorFirstName(session);
 }
 
 async function careNeedsQuestion(phone: string): Promise<string> {
@@ -669,8 +703,8 @@ async function handleJpAskFrequency(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "How often do you need help? Occasional (1–2 days a week), part-time (3–4 days), or full-time (5+)?";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -719,10 +753,11 @@ export function formatDateForDisplay(value: string): string {
 async function handleJpAskStart(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  const REASK = `When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`;
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
-    await sendMessage(chatId, `When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`);
+    await sendMessage(chatId, REASK);
     return;
   }
   // Anchor relative dates ("next Monday", "in two weeks") to the REAL current
@@ -750,8 +785,8 @@ async function handleJpAskDays(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -785,8 +820,8 @@ async function handleJpAskTime(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "What time of day works best? Mornings, afternoons, evenings, overnight, or a mix?";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -829,8 +864,8 @@ async function handleJpAskCareNeeds(
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
   const REASK = `What kind of care does ${name} need? (e.g. personal care, meals, companionship, mobility)`;
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -872,8 +907,8 @@ async function handleJpAskRate(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "What hourly rate are you offering? (e.g. \"$20\", \"18 an hour\", \"flexible\")";
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     await sendMessage(chatId, REASK);
     return;
@@ -910,11 +945,12 @@ async function handleJpAskRate(
 async function handleJpAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  const name = await recipientsDisplayName(phone, session);
+  const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great.`;
+  if (await isQuestionOrOther(text, REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
-    const name = await recipientsDisplayName(phone, session);
-    await sendMessage(chatId, `Can you describe a typical care day for ${name}? A sentence or two is great.`);
+    await sendMessage(chatId, REASK);
     return;
   }
   const description = text.trim().slice(0, 500);
@@ -930,8 +966,9 @@ async function handleJpAskDescription(
 async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
-  if (await isQuestionOrOther(text)) {
-    const answer = await answerQuestionMidFlow(text, session);
+  const CONFIRM_REASK = "Confirming whether to post this job for caregivers to see — reply YES to post it, or NO to start over.";
+  if (await isQuestionOrOther(text, CONFIRM_REASK)) {
+    const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);
     const jobData = await getJobData(phone);
     const summary = buildJobSummary(jobData, session);

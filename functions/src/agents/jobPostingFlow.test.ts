@@ -3,6 +3,15 @@
 // pattern per caregiverProfileHandler.test.ts (vi.hoisted + firebase-admin /
 // linq/client mocks). NOTE the vitest gotcha: beforeEach callbacks use braces —
 // never implicitly return a value.
+//
+// 2026-09-07 (live-caught): parseWithClaude used to carry the shared
+// ANTI_INVENTION_CLAUSE too — its "use only what's in the briefing" wording
+// confused the model on these briefing-less classification prompts into
+// answering with a long meta-response instead of classifying, which the
+// output guard correctly (but silently, until this same fix added logging)
+// rejected — a literal "occasional" reply reliably failed. parseWithClaude
+// now carries CLASSIFICATION_GUARD_CLAUSE instead; only answerQuestionMidFlow
+// (real free-form generation) still uses ANTI_INVENTION_CLAUSE.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -47,7 +56,7 @@ vi.mock("../utils/claudeClient", () => ({
 
 const { sendMessage, messagesCreate } = hoisted;
 
-import { handleJobPostingStep, JP_MIDFLOW_FALLBACK } from "./jobPostingFlow";
+import { handleJobPostingStep, JP_MIDFLOW_FALLBACK, CLASSIFICATION_GUARD_CLAUSE } from "./jobPostingFlow";
 import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
 
 const PHONE = "+15555550100";
@@ -90,7 +99,7 @@ afterEach(() => {
 });
 
 describe("jobPostingFlow — anti-invention clause (U2, R1)", () => {
-  it("both direct model calls carry ANTI_INVENTION_CLAUSE in their system prompt", async () => {
+  it("both direct classification calls carry CLASSIFICATION_GUARD_CLAUSE in their system prompt", async () => {
     // Call 1: isQuestionOrOther classifier ("NO" = a direct answer).
     // Call 2: start-date parse.
     modelReplies("NO", "next Monday");
@@ -99,12 +108,12 @@ describe("jobPostingFlow — anti-invention clause (U2, R1)", () => {
 
     expect(messagesCreate).toHaveBeenCalledTimes(2);
     for (const call of messagesCreate.mock.calls) {
-      expect((call[0] as { system: string }).system).toContain(ANTI_INVENTION_CLAUSE);
+      expect((call[0] as { system: string }).system).toContain(CLASSIFICATION_GUARD_CLAUSE);
     }
     expect(String(sendMessage.mock.calls[0][1])).toContain("starting next Monday");
   });
 
-  it("answerQuestionMidFlow's system prompt carries the clause", async () => {
+  it("answerQuestionMidFlow's system prompt carries the shared ANTI_INVENTION_CLAUSE (free-form generation, not classification)", async () => {
     // Call 1: isQuestionOrOther → YES. Call 2: mid-flow answer.
     modelReplies("YES", "Great question — Evia matches you with vetted local caregivers.");
 
@@ -145,5 +154,28 @@ describe("jobPostingFlow — output guard (U2, R2)", () => {
     await handleJobPostingStep(PHONE, CHAT, "how does matching work?", SESSION);
 
     expect(sendMessage.mock.calls[0][1]).toBe(META_OUTPUT);
+  });
+
+  // 2026-09-07: the actual live-caught bug — jp_ask_frequency's classification
+  // call carried ANTI_INVENTION_CLAUSE (briefing-framed), which confused the
+  // model into a long meta-response for a literal, unambiguous "occasional"
+  // reply, every single time. Locks in the fix (CLASSIFICATION_GUARD_CLAUSE
+  // instead) via the same guard-rejection path, on the actual step that broke.
+  it("jp_ask_frequency re-asks (not silently defaults or crashes) when the model returns a meta-response instead of classifying", async () => {
+    const FREQ_SESSION: any = {
+      jobPostingStep: "jp_ask_frequency",
+      jobPostingData: {},
+      onboardingData: { seniorName: "Rosie Alvarez" },
+    };
+    modelReplies("NO", META_OUTPUT);
+
+    await handleJobPostingStep(PHONE, CHAT, "occasional", FREQ_SESSION);
+
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("briefing context");
+    // Failure path never advances the step — no jobPostingStep write at all.
+    expect(hoisted.updateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ jobPostingStep: expect.anything() })
+    );
   });
 });

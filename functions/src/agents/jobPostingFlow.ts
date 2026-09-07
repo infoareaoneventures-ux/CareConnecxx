@@ -216,15 +216,28 @@ function formatLocationOptions(options: JobLocation[]): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// 2026-09-07 (live-caught): every classification/extraction prompt in this
+// file used to carry the shared ANTI_INVENTION_CLAUSE, which is written for
+// free-form GENERATED messages and explicitly talks about "the briefing" —
+// something these plain "pick one of three words" / "extract this value"
+// prompts never have. Claude Haiku, given no briefing to reference, got
+// confused and answered with a long, meta "I don't have enough context..."
+// response instead of classifying — which the output guard correctly caught
+// as a meta_response and rejected, silently, forever (no logging existed
+// until this same fix), so a literal, unambiguous "occasional" reply reliably
+// produced a 529-character rejected response and an endless re-ask loop. This
+// clause says the same "don't invent" thing without the briefing framing that
+// doesn't apply here.
+export const CLASSIFICATION_GUARD_CLAUSE =
+  "Reply with ONLY the requested value or format — no explanation, no extra text, no questions. " +
+  "Never invent information the user's message doesn't contain.";
+
 async function parseWithClaude(prompt: string, userText: string): Promise<string> {
   try {
     const response = await getSharedClient().messages.create({
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 200,
-      // U2 (hallucination hardening): parse results are echoed back to the
-      // user ("Got it — starting ${stored}!"), so this raw-output path carries
-      // the shared anti-invention rule too.
-      system:     prompt + "\n" + ANTI_INVENTION_CLAUSE,
+      system:     prompt + "\n" + CLASSIFICATION_GUARD_CLAUSE,
       messages:   [{ role: "user", content: userText }],
     });
     const parsed = ((response.content[0] as { text: string }).text ?? "").trim();

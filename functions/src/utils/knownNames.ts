@@ -82,10 +82,26 @@ export function collectKnownNames(session: Record<string, unknown>): string[] {
     (session as any).seniorName as string | undefined,
   ])) out.add(t);
 
-  // Every recipient on a multi-recipient care plan, if present on the session.
-  const recipients = (od.recipients as Array<{ name?: string }> | undefined) ?? [];
-  for (const r of recipients) {
+  // Every recipient on a multi-recipient care plan. additionalRecipients is the
+  // REAL field name (careRecipients.ts's CareRecipient[] shape, {name,...}) —
+  // this previously read a field ("recipients") nothing ever wrote, so this
+  // branch always silently contributed zero names (live-caught 2026-09-07: a
+  // family member already properly added to the account still tripped a
+  // "different person" false alarm every time their name came up again).
+  const additionalRecipients = (od.additionalRecipients as Array<{ name?: string }> | undefined) ?? [];
+  for (const r of additionalRecipients) {
     const t = firstNameToken(r?.name);
+    if (t) out.add(t);
+  }
+
+  // Anyone already selected/named in an in-progress "post a new job" who/where
+  // step (jobPostingFlow.ts's JobRecipient[] shape, {firstName,...}) — the same
+  // person may come up again later in that same conversation (e.g. answering
+  // the care-needs question), which must never look like a persona shift.
+  const jobData = (session.jobPostingData as Record<string, unknown> | undefined) ?? {};
+  const jobRecipients = (jobData.careRecipients as Array<{ firstName?: string }> | undefined) ?? [];
+  for (const r of jobRecipients) {
+    const t = firstNameToken(r?.firstName);
     if (t) out.add(t);
   }
 

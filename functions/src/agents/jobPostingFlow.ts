@@ -100,6 +100,21 @@ export interface JobLocation { street: string; city: string; state: string; zipC
 
 const RELATIONSHIP_CHIPS = ["Parent", "Spouse or Partner", "Other"];
 
+// 2026-09-07 (live-caught): a parsed classification value ("occasional",
+// "Parent", ...) was being matched against its expected enum with a plain,
+// case-sensitive `.includes()` — Claude Haiku doesn't reliably return the
+// exact requested casing even for a trivial single-word classification (a
+// live test replying literally "occasional" twice got re-asked both times).
+// This bug was invisible before the parse-failure re-ask fix (same commit)
+// because the OLD code silently defaulted to "occasional" on any mismatch —
+// which happened to be right by coincidence whenever the user's real answer
+// WAS "occasional". Match case-insensitively, return the canonically-cased
+// option so storage/display stays consistent either way.
+function matchEnum(raw: string, options: string[]): string | null {
+  const norm = raw.trim().toLowerCase();
+  return options.find((o) => o.toLowerCase() === norm) ?? null;
+}
+
 async function fetchRecipientOptions(uid: string, onboardingData: Record<string, unknown>): Promise<JobRecipient[]> {
   const options: JobRecipient[] = [];
   const seen = new Set<string>();
@@ -392,8 +407,8 @@ async function handleJpAskRecipients(
       matched = parsed.matched.filter((n: unknown) => typeof n === "number" && n >= 1 && n <= options.length);
     }
     if (typeof parsed.newName === "string" && parsed.newName.trim()) newName = parsed.newName.trim();
-    if (typeof parsed.newRelationship === "string" && RELATIONSHIP_CHIPS.includes(parsed.newRelationship)) {
-      newRelationship = parsed.newRelationship;
+    if (typeof parsed.newRelationship === "string") {
+      newRelationship = matchEnum(parsed.newRelationship, RELATIONSHIP_CHIPS);
     }
   } catch { /**/ }
 
@@ -456,13 +471,14 @@ async function handleJpAskRecipientRelationship(
     'Reply with exactly one of those three values.',
     text
   );
-  if (!RELATIONSHIP_CHIPS.includes(raw)) {
+  const relationship = matchEnum(raw, RELATIONSHIP_CHIPS);
+  if (!relationship) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
   }
   const last = (jobData.pendingNewRecipientLastName as string) ?? "";
   const existing = (jobData.careRecipients as JobRecipient[]) ?? [];
-  const chosen = [...existing, { firstName: first, lastName: last, relationship: raw, isSelf: false }];
+  const chosen = [...existing, { firstName: first, lastName: last, relationship, isSelf: false }];
   await finishRecipientSelection(phone, chatId, chosen);
 }
 
@@ -644,11 +660,11 @@ async function handleJpAskFrequency(
     'Reply with exactly one of: occasional, part_time, full_time',
     text
   );
-  if (!["occasional", "part_time", "full_time"].includes(raw)) {
+  const frequency = matchEnum(raw, ["occasional", "part_time", "full_time"]);
+  if (!frequency) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
   }
-  const frequency = raw;
   const label: Record<string, string> = { occasional: "Occasional", part_time: "Part-time", full_time: "Full-time" };
   await mergeJobData(phone, { jobFrequency: frequency });
   await updateJobStep(phone, "jp_ask_start");

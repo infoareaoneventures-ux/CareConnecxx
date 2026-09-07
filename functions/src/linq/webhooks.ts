@@ -1952,7 +1952,17 @@ const handleInboundInner = traceable(
 
   // ── Persona shift detection — flag and pause when a different person seems to be texting ─
   // Only relevant for complete client sessions; onboarding flows already self-reset via START OVER.
-  if (session.onboardingStep === "complete" && session.userType === "client" && !personaResolvedThisTurn) {
+  // Also skipped mid "post a new job" who/where collection (jp_ask_recipients /
+  // jp_ask_recipient_relationship) — naming a brand-new person there is the
+  // expected, desired action (the site itself supports multiple care
+  // recipients per account), and jobPostingFlow.ts's own numbered-list +
+  // explicit-relationship capture already handles it deliberately and safely.
+  // Without this, this check unconditionally blocked adding a second recipient
+  // over SMS at all (live-caught 2026-09-07) — a real feature gap relative to
+  // the website's own wizard, not a security fix for that specific case.
+  const JOB_POSTING_WHO_STEPS = new Set(["jp_ask_recipients", "jp_ask_recipient_relationship"]);
+  const inJobPostingWhoStep = JOB_POSTING_WHO_STEPS.has((session as any).jobPostingStep as string);
+  if (session.onboardingStep === "complete" && session.userType === "client" && !personaResolvedThisTurn && !inJobPostingWhoStep) {
     const sessionSeniorName =
       ((session as any).onboardingData?.seniorName as string | undefined) ??
       ((session as any).seniorName as string | undefined);

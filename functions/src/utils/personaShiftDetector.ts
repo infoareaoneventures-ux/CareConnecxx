@@ -54,12 +54,18 @@ export async function detectPersonaShift(params: {
       "- Messages that are LOGISTICS ABOUT A CAREGIVER are NEVER a persona shift: asking for a caregiver's " +
       "profile or link, booking/scheduling them, asking if they're available, messaging/rating/paying them, " +
       "or asking who's on the care team. (e.g. \"send me Imran's profile\", \"book James\", \"is Maria free Friday\".)\n" +
-      "- Single mentions like \"my husband\" or \"my sister\" referring to other family members do NOT count.\n\n" +
-      "ONLY use \"different_senior\" when the message clearly introduces a NEW CARE RECIPIENT — a person who " +
-      "needs care — identified by a relationship/care-need cue (e.g. \"my dad just fell and needs help\", " +
-      "\"my mother can't be left alone\") whose name is NOT in the known list, OR a clearly different parent " +
-      "than the one on file. Use \"different_role\" only if the speaker says they are a caregiver but the " +
-      "session role is client (or vice versa). Otherwise reply {\"kind\": \"none\", \"evidence\": \"\"}.",
+      "- Single mentions like \"my husband\" or \"my sister\" referring to other family members do NOT count.\n" +
+      "- A message that EXPLICITLY asks to ADD another person/recipient to the account, or to post/set up care " +
+      "for someone in addition to who's already on file (e.g. \"I want to add another person to my care and " +
+      "post a job\", \"can we add my dad too\", \"set up care for someone else on this account\") is NEVER a " +
+      "persona shift — this platform deliberately supports multiple care recipients per account, so a clear, " +
+      "self-aware request to add one is expected and desired, not a mix-up.\n\n" +
+      "ONLY use \"different_senior\" when the message reads like the sender may NOT realize they're texting a " +
+      "system set up for someone else — spontaneously describing a new person's care needs with no framing " +
+      "that they're intentionally adding them (e.g. \"my dad just fell and needs help\", \"my mother can't be " +
+      "left alone\") whose name is NOT in the known list, OR a clearly different parent than the one on file. " +
+      "Use \"different_role\" only if the speaker says they are a caregiver but the session role is client (or " +
+      "vice versa). Otherwise reply {\"kind\": \"none\", \"evidence\": \"\"}.",
       text,
       { maxTokens: 80 },
     );

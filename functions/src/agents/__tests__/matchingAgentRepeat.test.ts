@@ -189,3 +189,61 @@ describe("runMatchingForClient — asking for more actually surfaces more (2026-
     expect(shown).not.toContain("cg_hired");
   });
 });
+
+describe("runMatchingForClient — honest re-offer instead of a false 'nobody available' (2026-09-07)", () => {
+  // Live bug: a family's real local area had 2 real, eligible caregivers —
+  // both already shown to them before — and Evia told them nobody was
+  // available at all. The exclusion list exists to avoid repeating the exact
+  // same pitch verbatim, not to make Evia lie about availability.
+  it("re-offers the already-shown caregivers by name instead of claiming nobody is available", async () => {
+    hoisted.collState.set("publicCaregiverProfiles", [
+      caregiver("cg1", { name: "Basra" }),
+      caregiver("cg2", { name: "Imran" }),
+    ]);
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      userId: CLIENT, chatId: CHAT_ID, shownCaregiverIds: ["cg1", "cg2"],
+    });
+    const { sendMessage } = await import("../../linq/client");
+    const intake = { seniorName: "Mom", city: "Santa Clara", zipCode: "95050", careNeeds: ["Companionship"] };
+
+    const result = await runMatchingForClient(PHONE, CHAT_ID, intake, undefined, {});
+    expect(result).toBe("no_match");
+
+    const sentText = (sendMessage as any).mock.calls.at(-1)?.[1] as string;
+    expect(sentText).toContain("Basra");
+    expect(sentText).toContain("Imran");
+    expect(sentText).not.toMatch(/nobody|no one.*available|don't have anyone/i);
+
+    const reoffered = hoisted.docState.get(`agent_sessions/${PHONE}`)?.reofferableCaregivers;
+    expect(reoffered).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "cg1", name: "Basra" }),
+      expect.objectContaining({ id: "cg2", name: "Imran" }),
+    ]));
+  });
+
+  it("still sends the honest re-offer once failureCount escalates to the urgent branch", async () => {
+    hoisted.collState.set("publicCaregiverProfiles", [caregiver("cg1", { name: "Basra" })]);
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      userId: CLIENT, chatId: CHAT_ID, shownCaregiverIds: ["cg1"], consecutiveMatchFailures: 1,
+    });
+    const { sendMessage } = await import("../../linq/client");
+    const intake = { seniorName: "Mom", city: "Santa Clara", zipCode: "95050", careNeeds: ["Companionship"] };
+
+    await runMatchingForClient(PHONE, CHAT_ID, intake, undefined, {});
+    const sentText = (sendMessage as any).mock.calls.at(-1)?.[1] as string;
+    expect(sentText).toContain("Basra");
+    expect(sentText).not.toContain("actively searching");
+  });
+
+  it("keeps the original honest 'nobody available' copy when there really is nobody, reofferable or not", async () => {
+    hoisted.collState.set("publicCaregiverProfiles", []);
+    const { sendMessage } = await import("../../linq/client");
+    const intake = { seniorName: "Mom", city: "Santa Clara", zipCode: "95050", careNeeds: ["Companionship"] };
+
+    const result = await runMatchingForClient(PHONE, CHAT_ID, intake, undefined, {});
+    expect(result).toBe("no_match");
+    const sentText = (sendMessage as any).mock.calls.at(-1)?.[1] as string;
+    expect(sentText).toMatch(/don't have anyone available/i);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.reofferableCaregivers).toBeUndefined();
+  });
+});

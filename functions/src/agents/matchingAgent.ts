@@ -555,6 +555,35 @@ export async function runMatchingForClient(
     const top3Scores = scoredCaregivers.slice(0, 3).map((x) => x.matchScore);
 
     if (top3.length === 0) {
+      // 2026-09-07: distinguish "genuinely nobody nearby" from "real, eligible
+      // people exist — they were just already shown/declined before". The
+      // exclusion list exists so a text conversation doesn't repeat the exact
+      // same pitch verbatim on every "show me more" — it was never meant to
+      // make Evia claim zero availability when that's false (found live: a
+      // family's own area had 3 real caregivers, 2 already shown, and Evia
+      // told them nobody was available at all). hiredIds and seeded test data
+      // stay excluded here regardless — a hire is permanent, seed data was
+      // never real — only the shown/rejected reason gets a second look.
+      const reofferable = snap.docs
+        .filter(eligible)
+        .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
+        .filter((c) =>
+          !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
+          !hiredIds.includes(c.id) &&
+          !isTemporarilyUnavailable(c as any, nowIso) &&
+          excludeIds.includes(c.id)
+        )
+        .slice(0, 3);
+      if (reofferable.length > 0) {
+        await db.collection("agent_sessions").doc(phone).update({
+          reofferableCaregivers: reofferable.map((c) => ({ id: c.id, name: c.name, hourlyRate: c.hourlyRate })),
+        }).catch(() => {});
+      }
+      const reofferNames = reofferable.map((c) => c.name).filter(Boolean);
+      const reofferLine = reofferNames.length > 0
+        ? `The closest matches near you are still ${reofferNames.length === 1 ? reofferNames[0] : `${reofferNames.slice(0, -1).join(", ")} and ${reofferNames[reofferNames.length - 1]}`} — I'd already sent their info before. Want me to send their profiles again, or should I keep looking for someone new?`
+        : null;
+
       // Read and increment the failure counter on the client's session
       const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
       const prevFailures = (sessionSnap.data()?.consecutiveMatchFailures ?? 0) as number;
@@ -571,6 +600,7 @@ export async function runMatchingForClient(
         zipCode:        (intake.zipCode ?? "") as string,
         careNeeds:      intakeCareNeeds,
         failureCount,
+        reofferable:    reofferNames,
         createdAt:      new Date().toISOString(),
         resolved:       false,
         severity,
@@ -582,7 +612,7 @@ export async function runMatchingForClient(
         // itself (tool result carries the facts) — texting it here too gave
         // the family two back-to-back, contradictory messages.
         if (!suppressSends) {
-          await sendMessage(chatId,
+          await sendMessage(chatId, reofferLine ??
             "I haven't been able to find the right match yet, but I'm still actively searching. " +
             "Our team has also been notified and will personally reach out to you shortly — we won't let you wait."
           );
@@ -607,7 +637,7 @@ export async function runMatchingForClient(
           });
         }
       } else if (!suppressSends) {
-        await sendMessage(chatId,
+        await sendMessage(chatId, reofferLine ??
           "I don't have anyone available in your area right now, but I've flagged your request " +
           "and our team will reach out within 24 hours to find the right match."
         );

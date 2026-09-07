@@ -1217,11 +1217,15 @@ export const MCP_TOOLS: McpTool[] = [
       "Rejecting is irreversible and the system itself will ask the family to confirm before it actually " +
       "takes effect (you'll get back a confirmation request, not a result) — do not ask them to confirm " +
       "yourself in conversation first, and do not tell them it's done until this tool actually returns success. " +
-      "Never say an application was accepted/rejected/declined without this tool having returned that result.",
+      "Never say an application was accepted/rejected/declined without this tool having returned that result. " +
+      "MANDATORY: applicationId must come from a list_job_applicants result from THIS turn — never guess it or " +
+      "reuse one from earlier in the conversation, and never substitute the applicant's caregiverId (a different " +
+      "field on the same record) for applicationId; they are not interchangeable and mixing them up fails with " +
+      "NOT_FOUND. If you don't already have a fresh applicationId in hand, call list_job_applicants first.",
     input_schema: {
       type: "object",
       properties: {
-        applicationId:  { type: "string", description: "The job_applications document ID" },
+        applicationId:  { type: "string", description: "The job_applications document ID from list_job_applicants — NOT the applicant's caregiverId, a different field on the same record" },
         clientId:       { type: "string", description: "The client's user ID" },
         decision:       { type: "string", enum: ["accept","reject"], description: "accept (request an interview) or reject" },
         preferredDate:  { type: "string", description: "Required when accepting — e.g. '2026-09-01'" },
@@ -3477,16 +3481,30 @@ async function executeToolCall(
           };
         }
         if (matchOutcome === "no_match") {
+          // 2026-09-07: runMatchingForClient distinguishes "genuinely nobody
+          // nearby" from "real people exist, they were just already shown
+          // before" and writes the latter here when it applies — read it back
+          // so the agent tells the truth instead of claiming zero
+          // availability when real candidates actually exist.
+          const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
+          const reofferable = ((freshSess.data()?.reofferableCaregivers ?? []) as Array<{ name?: string; hourlyRate?: number }>)
+            .map((m) => ({ name: m.name ?? "Caregiver", hourlyRate: m.hourlyRate ?? null }));
           return {
             success: true,
             outcome: "no_match",
             matchesFound: 0,
             teamAlerted: true,
-            instruction:
-              "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
-              "only message they get. In ONE short warm message: be honest that you haven't found the right " +
-              "match yet, that you're still actively searching, and that the team has been alerted and will " +
-              "personally reach out. Do not invent caregiver names and do not promise a specific timeline.",
+            reofferableCaregivers: reofferable,
+            instruction: reofferable.length > 0
+              ? `No NEW caregivers matched, but ${reofferable.map((c) => c.name).join(" and ")} — already sent to ` +
+                "this family before — are still the closest real matches nearby. NOTHING has been texted to the " +
+                "family — your reply is the only message they get. In ONE short warm message, be honest: say " +
+                "these are still the best options near them and ask whether to resend those profiles or keep " +
+                "looking for someone new. Do not claim nobody is available — that would be false."
+              : "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
+                "only message they get. In ONE short warm message: be honest that you haven't found the right " +
+                "match yet, that you're still actively searching, and that the team has been alerted and will " +
+                "personally reach out. Do not invent caregiver names and do not promise a specific timeline.",
             filtersApplied,
           };
         }

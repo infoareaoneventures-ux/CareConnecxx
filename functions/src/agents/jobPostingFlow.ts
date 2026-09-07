@@ -231,11 +231,20 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
     // Output guard (U2, R2): a meta-response/URL from the parser is a parse
     // failure — every call site already handles "__parse_error__" (raw text or
     // validated default). Kill switch: CARA_OUTPUT_GUARD_ENABLED=false.
-    if (parsed && caraOutputGuardEnabled() && !guardModelOutput(parsed).ok) {
-      return "__parse_error__";
+    if (parsed) {
+      const guard = caraOutputGuardEnabled() ? guardModelOutput(parsed) : { ok: true as const };
+      if (!guard.ok) {
+        // 2026-09-07: this whole function previously failed SILENTLY on any
+        // rejection or exception — no log, no alert — so a live, 100%-
+        // reproducing extraction failure (a family stuck re-asked on a plain
+        // "occasional") had zero server-side evidence to diagnose from.
+        console.warn("[jobPostingFlow] parseWithClaude: output guard rejected model response", { reason: (guard as any).reason, rawLength: parsed.length });
+        return "__parse_error__";
+      }
     }
     return parsed;
-  } catch {
+  } catch (err) {
+    console.error("[jobPostingFlow] parseWithClaude: Anthropic call threw", err);
     return "__parse_error__";
   }
 }
@@ -662,6 +671,11 @@ async function handleJpAskFrequency(
   );
   const frequency = matchEnum(raw, ["occasional", "part_time", "full_time"]);
   if (!frequency) {
+    // 2026-09-07: live-caught, 100%-reproducing failure on a plain "occasional"
+    // that survived the case-insensitive matchEnum fix — log the actual raw
+    // value so the next occurrence has real diagnostic evidence instead of
+    // silently re-asking with zero trace of what the model actually returned.
+    console.warn("[jobPostingFlow] handleJpAskFrequency: no enum match", { raw, textLength: text.length });
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
   }

@@ -80,16 +80,31 @@ export function isTemporarilyUnavailable(
   return !!pausedUntil && pausedUntil > nowIso;
 }
 
+// 2026-09-07: a live "matching_run_failed" alert ("...toLowerCase is not a
+// function") traced to computeRuleSignals assuming every one of these fields
+// is always a plain string. publicCaregiverProfiles passes several of them
+// through verbatim from whatever the raw caregiver doc actually has — and the
+// website's OWN scoring (caregiverMatchScoring.ts) already treats
+// availability as `unknown`, preferring weeklyAvailability over the
+// `{days,hours}` shape this file's CaregiverCandidate type assumes. A truthy
+// non-string value (e.g. availability.hours not actually being a string on
+// some real docs) crashed the whole matching pass instead of just scoring
+// that one signal as neutral. asStr() makes every .toLowerCase() call site
+// fail soft instead of throwing, regardless of which field is malformed.
+function asStr(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
 /** Compute rule-based signals as a pre-filter before calling Claude. */
 export function computeRuleSignals(
   caregiver: CaregiverCandidate,
   intake: Record<string, unknown>
 ): { ruleScore: number; signals: CandidateSignals } {
   const needs       = (intake.careNeeds ?? []) as string[];
-  const intakeCity  = ((intake.city  ?? "") as string).toLowerCase();
-  const intakeZip   = ((intake.zipCode ?? "") as string);
+  const intakeCity  = asStr(intake.city).toLowerCase();
+  const intakeZip   = asStr(intake.zipCode);
   const intakeDays  = (intake.daysPerWeek ?? 0) as number;
-  const intakeTod   = ((intake.timeOfDay ?? "") as string).toLowerCase();
+  const intakeTod   = asStr(intake.timeOfDay).toLowerCase();
 
   const allSkills = [
     ...(caregiver.specialties  ?? []),
@@ -110,8 +125,8 @@ export function computeRuleSignals(
   const clientLng = intake.__clientLng as number | undefined;
   const cgLat = ((caregiver as any).lat ?? (caregiver as any).latitude ?? (caregiver as any).location?.lat) as number | undefined;
   const cgLng = ((caregiver as any).lng ?? (caregiver as any).longitude ?? (caregiver as any).location?.lng) as number | undefined;
-  const cgCity = (caregiver.city ?? "").toLowerCase();
-  const cgZip  = ((caregiver as any).zipCode ?? "") as string;
+  const cgCity = asStr(caregiver.city).toLowerCase();
+  const cgZip  = asStr((caregiver as any).zipCode);
   let distanceMiles: number | undefined;
   if (clientLat != null && clientLng != null && cgLat != null && cgLng != null) {
     distanceMiles = Math.round(haversineDistanceMiles(clientLat, clientLng, cgLat, cgLng) * 10) / 10;
@@ -119,7 +134,7 @@ export function computeRuleSignals(
   else if (intakeZip && cgZip && intakeZip.slice(0, 3) === cgZip.slice(0, 3)) distanceMiles = 12;
   else distanceMiles = 22;
 
-  const cgHours = (caregiver.availability?.hours ?? "").toLowerCase();
+  const cgHours = asStr(caregiver.availability?.hours).toLowerCase();
   let scheduleOverlap = 60;
   if (cgHours.includes(intakeTod) || intakeTod === "") scheduleOverlap = 90;
   if (intakeDays > 5 && !cgHours.includes("weekend")) scheduleOverlap = Math.min(scheduleOverlap, 70);
@@ -137,9 +152,9 @@ export function computeRuleSignals(
   // a family with no matches) but push them down so better-fitting caregivers
   // surface first. Claude does the nuanced scoring; this just orders the top 15.
   const budgetMax  = Number(intake.budgetMax ?? 0);
-  const genderPref = ((intake.genderPreference ?? "") as string).toLowerCase();
+  const genderPref = asStr(intake.genderPreference).toLowerCase();
   if (budgetMax > 0 && caregiver.hourlyRate > budgetMax) ruleScore -= 20;
-  if (genderPref && caregiver.gender && caregiver.gender.toLowerCase() !== genderPref) ruleScore -= 15;
+  if (genderPref && caregiver.gender && asStr(caregiver.gender).toLowerCase() !== genderPref) ruleScore -= 15;
   if (intake.needsDriving === true && caregiver.canDrive === false) ruleScore -= 10;
   ruleScore = Math.max(0, ruleScore);
 
@@ -292,8 +307,8 @@ export async function runMatchingForClient(
       }
     }
 
-    const zip    = (intake.zipCode ?? "") as string;
-    const city   = (intake.city    ?? "") as string;
+    const zip    = asStr(intake.zipCode);
+    const city   = asStr(intake.city);
 
     // Real coordinates for real distance math (haversine), matching the
     // website's own "Nearby Caregivers" logic (caregiverMatchScoring.ts) —
@@ -394,8 +409,8 @@ export async function runMatchingForClient(
       // No coordinates on one side (geocoding failed, or the caregiver doc
       // predates geocoding) — fall back to the old proxy rather than
       // silently excluding a candidate we have no real distance for.
-      return c.city?.toLowerCase() === city.toLowerCase() ||
-        !!(c as any).zipCode?.startsWith(zip.slice(0, 3));
+      return asStr(c.city).toLowerCase() === asStr(city).toLowerCase() ||
+        asStr((c as any).zipCode).startsWith(zip.slice(0, 3));
     };
     let caregivers: CaregiverCandidate[] = snap.docs
       .filter(eligible)

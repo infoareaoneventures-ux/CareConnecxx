@@ -80,6 +80,13 @@ beforeEach(() => {
   writeUserNotification.mockClear();
   hoisted.docState.set(`caregivers/${CAREGIVER}`, { phone: "+15550001111" });
   hoisted.docState.set(`users/${CLIENT}`, { phone: "+15550002222" });
+  // sendTransactionalText (2026-09-06 fix, second pass) only calls
+  // sendViaInteractionAgent when an agent_sessions doc exists for the phone —
+  // seed both by default so the existing assertions below (which all expect
+  // the interaction-agent path) keep exercising that path; the no-session
+  // fallback is covered separately below.
+  hoisted.docState.set("agent_sessions/+15550001111", { userId: CAREGIVER });
+  hoisted.docState.set("agent_sessions/+15550002222", { userId: CLIENT });
 });
 
 describe("onBookingRequestWrite — SMS parity", () => {
@@ -236,5 +243,65 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     const after  = { ...before, status: "cancelled", cancelledBy: "caregiver" };
     await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
+  });
+
+  // 2026-09-06 fix: a website-button decline used to leave the client with
+  // only an in-app bell notification — no text at all, unlike accept
+  // (interviewLinkTrigger) and cancel (above).
+  it("a website-declined interview (no respondedViaAgent marker) texts the client", async () => {
+    const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice" };
+    const after  = { ...before, status: "declined" };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
+  });
+
+  it("an Evia-declined interview (respondedViaAgent set by respond_to_interview_request) does NOT get a duplicate text", async () => {
+    const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice" };
+    const after  = { ...before, status: "declined", respondedViaAgent: true };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+  });
+
+  // 2026-09-06 fix: a client 'not selected' decision (website button or
+  // Evia's submit_interview_feedback fitLevel:'no') used to leave the
+  // caregiver with only an in-app bell notification — no text, unlike the
+  // 'strong' path which already texts the caregiver directly.
+  it("a client 'not selected' decline texts the caregiver, not the client", async () => {
+    const before = { status: "completed", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family" };
+    const after  = { ...before, status: "declined", declinedBy: "client" };
+    await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("A Family") }));
+    expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
+  });
+});
+
+describe("sendTransactionalText — reliability fix (2026-09-06, second pass)", () => {
+  // Live bug: a client requested an interview from the site and the
+  // caregiver never got a text through Evia. Root cause: canDrop:true still
+  // ran the send through shouldSend's judgment gate, AND sendViaInteractionAgent
+  // resolves false (rather than rejecting) for a missing agent_sessions doc —
+  // exactly the case for a caregiver who has never texted Evia — so the old
+  // `.catch(() => sendToPhone(...))` fallback never fired.
+
+  it("a new interview request uses canDrop:false so shouldSend's judgment gate can never suppress it", async () => {
+    const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString() };
+    await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ canDrop: false, urgency: "immediate" }));
+  });
+
+  it("falls back to a plain text when the caregiver has no agent_sessions doc yet (never texted Evia)", async () => {
+    hoisted.docState.delete("agent_sessions/+15550001111");
+    const after = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: new Date().toISOString() };
+    await (onVideoInterviewWrite as any)(change(null, "iv1", after), { params: { interviewId: "iv1" } });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(sendToPhone).toHaveBeenCalledWith("+15550001111", expect.stringContaining("interview"));
+  });
+
+  it("falls back to a plain text for a session-less client too", async () => {
+    hoisted.docState.delete("agent_sessions/+15550002222");
+    const data = { clientId: CLIENT, caregiverName: "Alice", jobTitle: "Weekend care" };
+    await (onJobApplicationCreate as any)({ data: () => data }, { params: { applicationId: "app1" } });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(sendToPhone).toHaveBeenCalledWith("+15550002222", expect.stringContaining("applied"));
   });
 });

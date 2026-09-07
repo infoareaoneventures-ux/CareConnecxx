@@ -35,6 +35,19 @@ export function toPublicProfile(id: string, cg: Record<string, unknown>): Record
       "photo", "imageUrl", "profilePhoto", "photoURL",
       "lookingFor", "preferredSchedule", "isApprovedDriver", "travelRadius", "serviceRadius",
       "lat", "lng", "latitude", "longitude",
+      // 2026-09-06: isCaregiverBookable() now checks these — must be present on
+      // the projection or every consumer that reads publicCaregiverProfiles
+      // (Dashboard widget, Browse Caregivers, find_nearby_caregivers) would
+      // silently never see them and keep showing paused/opted-out caregivers
+      // as bookable. optedOut itself is a mirror of the real SMS opt-out
+      // (agent_sessions.optedOut) — see triggers/caregiverOptOutMirror.ts.
+      "pausedUntil", "optedOut",
+      // 2026-09-06: matchingAgent.ts (Evia's SMS "find a caregiver" flow) was
+      // migrated from raw `caregivers` onto this projection so it reads the
+      // same pool as the site — these three were only ever on the raw doc
+      // and are needed for its soft budget/gender/driving-preference scoring
+      // and its zip-prefix distance fallback. Not sensitive.
+      "zipCode", "gender", "canDrive",
       // Internal test-data marker (scripts/seed-test-caregivers.cjs) — not
       // sensitive, but must pass through so isSeededCaregiver() still works
       // for any consumer reading this projection instead of raw caregivers.

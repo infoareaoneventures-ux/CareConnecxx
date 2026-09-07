@@ -38,6 +38,13 @@ vi.mock("../../accountDeletion", () => ({
   deleteAccountForUser: (...a: unknown[]) => deleteAccountForUser(...a),
 }));
 
+const pauseCaregiver = vi.fn();
+const reactivateCaregiver = vi.fn();
+vi.mock("../../agents/pauseAccount", () => ({
+  pauseCaregiver: (...a: unknown[]) => pauseCaregiver(...a),
+  reactivateCaregiver: (...a: unknown[]) => reactivateCaregiver(...a),
+}));
+
 import { processAccountActionQueue } from "../accountActionQueue";
 
 function makeSnap(data: Record<string, unknown>) {
@@ -52,6 +59,8 @@ beforeEach(() => {
   requestEmailChangeSelf.mockReset().mockResolvedValue(undefined);
   confirmEmailChange.mockReset().mockResolvedValue(undefined);
   deleteAccountForUser.mockReset().mockResolvedValue({ deleted: true });
+  pauseCaregiver.mockReset().mockResolvedValue(undefined);
+  reactivateCaregiver.mockReset().mockResolvedValue(undefined);
 });
 
 describe("processAccountActionQueue", () => {
@@ -95,6 +104,30 @@ describe("processAccountActionQueue", () => {
     expect(deleteAccountForUser).toHaveBeenCalledWith("u1");
     expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
       status: "done", result: { deleted: true },
+    }));
+  });
+
+  it("dispatches set_caregiver_pause_status (pause) with uid + until", async () => {
+    const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "pause", until: "2026-10-01" });
+    await processAccountActionQueue(snap as any);
+    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "2026-10-01");
+    expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "done", result: { status: "paused", until: "2026-10-01" },
+    }));
+  });
+
+  it("dispatches set_caregiver_pause_status (pause) defaulting to indefinite when no until is given", async () => {
+    const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "pause" });
+    await processAccountActionQueue(snap as any);
+    expect(pauseCaregiver).toHaveBeenCalledWith("cg1", "indefinite");
+  });
+
+  it("dispatches set_caregiver_pause_status (reactivate) with uid", async () => {
+    const snap = makeSnap({ type: "set_caregiver_pause_status", uid: "cg1", action: "reactivate" });
+    await processAccountActionQueue(snap as any);
+    expect(reactivateCaregiver).toHaveBeenCalledWith("cg1");
+    expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "done", result: { status: "active" },
     }));
   });
 

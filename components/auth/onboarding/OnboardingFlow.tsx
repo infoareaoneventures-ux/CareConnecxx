@@ -42,6 +42,7 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
   const [agreed, setAgreed] = useState(false);
   const [name, setName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
   const [countryCode, setCountryCode] = useState('+1');
   const [phoneInput, setPhoneInput] = useState('');
   const [e164, setE164] = useState<string | null>(null);
@@ -141,7 +142,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
       const cleanFirst = sanitizeName(name).slice(0, 80);
       const cleanLast = sanitizeName(lastName).slice(0, 80);
       const cleanName = cleanLast ? `${cleanFirst} ${cleanLast}` : cleanFirst;
-      const resp = await create({ phone: e164, role, name: cleanName, firstName: cleanFirst, lastName: cleanLast || undefined, consentText: CONSENT_VERSION, referralId });
+      const cleanEmail = email.replace(/\s+/g, '').toLowerCase();
+      const resp = await create({ phone: e164, role, name: cleanName, firstName: cleanFirst, lastName: cleanLast || undefined, email: cleanEmail, consentText: CONSENT_VERSION, referralId });
       const data = resp.data as { linqPhone?: string };
       if (!data?.linqPhone) throw new Error('No LINQ number returned');
       setLinqPhone(data.linqPhone);
@@ -207,6 +209,8 @@ export const OnboardingFlow: React.FC<Props> = ({ initialRole, referralId }) => 
           setName={setName}
           lastName={lastName}
           setLastName={setLastName}
+          email={email}
+          setEmail={setEmail}
           onSubmit={() => setStep('phone')}
           onBack={() => setStep('consent')}
         />
@@ -488,6 +492,13 @@ const ConsentScreen: React.FC<{
   );
 };
 
+// Loosely valid enough to submit — the real validation (whitespace-stripped,
+// same fix as the job-posting wizard's recovery-email field) happens once
+// more server-side in createWebOnboardingSession; a malformed value there is
+// silently dropped rather than blocking signup, so this check only needs to
+// catch the common case.
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
 const NameEntry: React.FC<{
   role: OnboardingRole;
   tone: 'dark' | 'light';
@@ -495,12 +506,29 @@ const NameEntry: React.FC<{
   setName: (v: string) => void;
   lastName: string;
   setLastName: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
   onSubmit: () => void;
   onBack: () => void;
-}> = ({ role, tone, name, setName, lastName, setLastName, onSubmit, onBack }) => {
+}> = ({ role, tone, name, setName, lastName, setLastName, email, setEmail, onSubmit, onBack }) => {
   const trimmed = name.trim();
-  const isValid = trimmed.length > 0;
+  // Strip ALL whitespace before validating, not just the ends — mobile
+  // keyboard autocomplete (Gboard's "@" suggestion strip especially) can
+  // insert a stray space mid-address that .trim() alone never catches.
+  const cleanEmail = email.replace(/\s+/g, '');
+  const isValid = trimmed.length > 0 && EMAIL_RE.test(cleanEmail);
   const onSubmitForm = (e: React.FormEvent) => { e.preventDefault(); if (isValid) onSubmit(); };
+  const emailField = (rounded: string, padding: string, textSize: string) => (
+    <input
+      type="email"
+      inputMode="email"
+      autoComplete="email"
+      placeholder="you@example.com"
+      value={email}
+      onChange={(e) => setEmail(e.target.value)}
+      className={`w-full bg-white border hairline ${rounded} ${padding} text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 ${textSize}`}
+    />
+  );
   if (tone === 'dark') {
     return (
       <form onSubmit={onSubmitForm} className="space-y-5">
@@ -529,6 +557,7 @@ const NameEntry: React.FC<{
             className="w-full bg-white border hairline rounded-xl px-4 py-3.5 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-base"
           />
         </div>
+        {emailField('rounded-xl', 'px-4 py-3.5', 'text-base')}
         <button
           type="submit"
           disabled={!isValid}
@@ -571,6 +600,7 @@ const NameEntry: React.FC<{
           className="w-full bg-white border hairline rounded-2xl px-5 py-4 text-ink-900 placeholder-ink-400 focus:outline-none focus:border-ink-400 text-lg"
         />
       </div>
+      {emailField('rounded-2xl', 'px-5 py-4', 'text-lg')}
       <button
         type="submit"
         disabled={!isValid}

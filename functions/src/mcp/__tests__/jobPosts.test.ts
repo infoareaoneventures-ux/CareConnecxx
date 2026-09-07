@@ -36,6 +36,7 @@ const hoisted = vi.hoisted(() => {
     collection: (sub: string) => makeCollRef(`${path}/${sub}`),
   });
 
+  let autoId = 0;
   const makeCollRef = (path: string): any => {
     const ref: any = {};
     ref.doc = (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`);
@@ -45,6 +46,13 @@ const hoisted = vi.hoisted(() => {
     ref.get = vi.fn(async () => {
       const items = collState.get(path) ?? [];
       return { empty: items.length === 0, size: items.length, docs: items.map((d: any, i: number) => ({ id: d.id ?? `doc-${i}`, data: () => d, ref: makeDocRef(`${path}/${d.id ?? `doc-${i}`}`) })) };
+    });
+    // proposePendingAction (pendingActions.ts) uses collection().add() —
+    // needed for the real confirmation round-trip test below.
+    ref.add = vi.fn(async (data: any) => {
+      const id = `auto-${autoId++}`;
+      docState.set(`${path}/${id}`, data);
+      return makeDocRef(`${path}/${id}`);
     });
     return ref;
   };
@@ -104,6 +112,12 @@ const trySend = vi.fn().mockResolvedValue({ sent: true });
 vi.mock("../../utils/toolNotify", () => ({
   trySend:        (...args: unknown[]) => trySend(...args),
   trySendViaCara: vi.fn().mockResolvedValue({ sent: true }),
+}));
+
+const sendMessage = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../linq/client", () => ({
+  sendMessage: (...args: unknown[]) => sendMessage(...args),
+  sendToPhone: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { handleToolCall } from "../server";
@@ -175,6 +189,49 @@ describe("cancel_job_post", () => {
     hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "cancelled" });
     const r = await handleToolCall("cancel_job_post", { jobId: JOB_ID, clientId: CLIENT, _confirmedActionId: "test" }) as any;
     expect(r._toolError).toBe(true);
+  });
+});
+
+describe("cancel_job_post — real confirmation round-trip (propose → confirm → execute)", () => {
+  // 2026-09-06: every OTHER test in this suite (and every test in
+  // approvalHandler.test.ts / pendingActions.confirm.test.ts) exercises only
+  // ONE half of the real confirmation flow in isolation — either a hand-seeded
+  // "awaiting" pending doc calling handleToolCall directly (this file, above),
+  // or a fully-mocked handleToolCall inside approvalHandler.test.ts. Neither
+  // ever wires the REAL sequence: approvalHandler.executeConfirmedAction
+  // claims the pending doc (awaiting → executing) BEFORE dispatching to the
+  // real MCP gate with _confirmedActionId. A live test (family confirmed
+  // declining a job applicant) found that real sequence ALWAYS failed with
+  // PERMISSION_DENIED — isConfirmedActionValid rejected "executing", a status
+  // the confirmed re-run always has by the time it's checked. This test uses
+  // the REAL (unmocked) pendingActions.ts + approvalHandler.ts + handleToolCall
+  // gate together, so a regression here can never again hide behind two
+  // passing unit tests with a false shared assumption between them.
+  beforeEach(() => hoisted.reset());
+
+  it("a real 'yes' after a real proposal actually cancels the job post, not PERMISSION_DENIED", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
+    const { handlePendingApproval } = await import("../../agents/approvalHandler");
+    const { proposePendingAction } = await import("../../agents/pendingActions");
+
+    const phone = "+15550001234";
+    const proposed = await proposePendingAction({
+      phone, userId: CLIENT, toolName: "cancel_job_post", toolInput: { jobId: JOB_ID, clientId: CLIENT },
+    });
+
+    const result = await handlePendingApproval({
+      phone, chatId: phone, text: "yes", userId: CLIENT,
+      pending: proposed as any,
+    });
+
+    expect(result).toEqual({ outcome: "handled" });
+    // The real, previously-always-failing symptom: a hardcoded "didn't go
+    // through" ack instead of "Done." — assert the ack the family actually got.
+    expect(sendMessage).toHaveBeenCalledWith(phone, "Done.");
+    const update = hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`);
+    expect(update?.data.status).toBe("cancelled");
+    const resolvedDoc = hoisted.docState.get(`pending_actions/${proposed.id}`);
+    expect(resolvedDoc?.status).toBe("executed");
   });
 });
 

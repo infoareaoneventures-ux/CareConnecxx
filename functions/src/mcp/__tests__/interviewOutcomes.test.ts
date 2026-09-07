@@ -190,6 +190,17 @@ describe("respond_to_interview_request", () => {
     expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("isn't available"));
   });
 
+  // 2026-09-06 fix: onVideoInterviewWrite's decline branch (notificationTriggers.ts)
+  // checks this flag to skip its own text — this tool already sent one above —
+  // so a decline routed through Evia doesn't double-text the client.
+  it("stamps respondedViaAgent so the Firestore trigger doesn't send a duplicate decline text", async () => {
+    await handleToolCall("respond_to_interview_request", {
+      caregiverId: "cg1", interviewId: IV_ID, decision: "decline",
+    });
+    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(update?.data.respondedViaAgent).toBe(true);
+  });
+
   it("refuses when the interview doesn't belong to this caregiver", async () => {
     const r = await handleToolCall("respond_to_interview_request", {
       caregiverId: "someone_else", interviewId: IV_ID, decision: "accept",

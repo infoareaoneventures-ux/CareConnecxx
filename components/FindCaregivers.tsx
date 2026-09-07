@@ -745,7 +745,7 @@ export default function FindCaregivers() {
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-primary-600" />
-              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Find Senior Caregivers</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Find Caregivers</h1>
             </div>
           </div>
         </div>

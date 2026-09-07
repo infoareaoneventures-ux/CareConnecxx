@@ -791,6 +791,11 @@ export const CaregiverVerificationDashboard: React.FC<CaregiverVerificationDashb
                       <p className="text-sm">
                         {isCaregiverBookable(selectedCaregiver)
                           ? 'Bookable — visible to families in search.'
+                          // 2026-09-06: isCaregiverBookable() now also returns false while
+                          // paused — checked first here so admin doesn't misread a caregiver's
+                          // own pause as an onboarding problem.
+                          : (selectedCaregiver as any).pausedUntil && (selectedCaregiver as any).pausedUntil > new Date().toISOString()
+                          ? 'Not bookable — caregiver has paused their own account.'
                           : selectedCaregiver.verificationStatus === 'checkr_clear'
                           ? 'Not yet bookable — legacy "checkr_clear" status; bookability requires verificationStatus "approved".'
                           : 'Not yet bookable — profile onboarding incomplete (requires onboardingStatus "profile_complete").'}

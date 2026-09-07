@@ -145,11 +145,19 @@ const CLAIM_PATTERNS: ReadonlyArray<[GroundingClaimCategory, RegExp]> = [
   ["caregiver_availability", /\b(?:no|a few|several|\d+)\s+caregivers?\s+(?:are|is)\s+(?:free|available|open)\b/i],
 
   // ── action / authorization (HIGH) ───────────────────────────────────────────
-  ["action_authorization", /\bI\s+(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded)\b/i],             // legacy
-  ["action_authorization", /\bI(?:'ve| have| just| already)+\s+(?:just\s+|already\s+)?(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|authorized|approved|charged|submitted|sent|processed|set (?:that |this |it )?up)\b/i],
-  ["action_authorization", /\bI\s+(?:authorized|approved|charged|submitted|processed|went ahead and \w+)\b/i],
-  ["action_authorization", /\b(?:has|have)\s+been\s+(?:confirmed|scheduled|cancelled|canceled|booked|paid|refunded|authorized|approved|processed)\b/i],
-  ["action_authorization", /\b(?:is|was)\s+(?:now\s+|all\s+)?(?:confirmed|cancelled|canceled|booked|scheduled|authorized|approved|processed|set)\b(?:\s*[.!—-]|\s+for\b|\s+and\b|$)/i],
+  // 2026-09-06: "declined"/"rejected"/"denied" were missing from every verb
+  // list below — a live incident found Evia say "Done, I declined the
+  // applicant" without ever actually calling the tool (job_applications
+  // stayed "pending"), and this whole category (already HIGH risk, meant to
+  // fail closed on an unverifiable claim) never even classified the reply as
+  // an action claim worth checking, because "declined" wasn't a recognized
+  // verb. Same gap class as the schedule_appointment/caregiver_availability
+  // fix above — closing it here, not just for this one reply.
+  ["action_authorization", /\bI\s+(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|declined|rejected|denied)\b/i],             // legacy
+  ["action_authorization", /\bI(?:'ve| have| just| already)+\s+(?:just\s+|already\s+)?(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|authorized|approved|charged|submitted|sent|processed|declined|rejected|denied|set (?:that |this |it )?up)\b/i],
+  ["action_authorization", /\bI\s+(?:authorized|approved|charged|submitted|processed|declined|rejected|denied|turned down|went ahead and \w+)\b/i],
+  ["action_authorization", /\b(?:has|have)\s+been\s+(?:confirmed|scheduled|cancelled|canceled|booked|paid|refunded|authorized|approved|processed|declined|rejected|denied)\b/i],
+  ["action_authorization", /\b(?:is|was)\s+(?:now\s+|all\s+)?(?:confirmed|cancelled|canceled|booked|scheduled|authorized|approved|processed|declined|rejected|denied|set)\b(?:\s*[.!—-]|\s+for\b|\s+and\b|$)/i],
 
   // ── money / payment (HIGH) ──────────────────────────────────────────────────
   ["money_payment", /\$\s?\d[\d,]*(?:\.\d+)?/],                                                           // legacy

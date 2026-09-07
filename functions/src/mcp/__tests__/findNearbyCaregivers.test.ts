@@ -249,4 +249,60 @@ describe("find_nearby_caregivers", () => {
       expect(stored).toEqual(expect.arrayContaining(["cg3", "cg4", "cg5"]));
     });
   });
+
+  // 2026-09-06 live bug: a family who'd already interviewed a caregiver and
+  // made a real hire/decline decision (hire_decisions) saw that same
+  // caregiver resurface as if new on a later "show me more" ask —
+  // shownCaregiverIds only ever covered "shown this conversation," never
+  // "already decided". matchingAgent.ts had the identical gap, fixed the
+  // same way there.
+  //
+  // Correction (Hamse, 2026-09-06): a DECLINE isn't permanent — the family
+  // may reconsider that caregiver later, same as a plain rejection (which
+  // already re-surfaces on pool exhaustion). Only a HIRE is a standing
+  // relationship that should never be undone by pool exhaustion.
+  describe("already-decided exclusion (hire_decisions)", () => {
+    it("excludes a caregiver the family already hired", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.collState.set("hire_decisions", [{ id: "hd1", clientId: CLIENT, caregiverId: "cg_hired", decision: "hire" }]);
+      hoisted.collState.set("publicCaregiverProfiles", [
+        caregiver("cg_hired"), caregiver("cg_new"),
+      ]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, limit: 10 }) as any;
+      const ids = r.items.map((i: any) => i.id);
+      expect(ids).not.toContain("cg_hired");
+      expect(ids).toContain("cg_new");
+    });
+
+    it("never re-surfaces a hired caregiver even once the shown-pool is exhausted and trimmed", async () => {
+      const PHONE = "+15559876543";
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: ["cg1", "cg2", "cg3"] });
+      hoisted.collState.set("hire_decisions", [{ id: "hd1", clientId: CLIENT, caregiverId: "cg_hired", decision: "hire" }]);
+      hoisted.collState.set("publicCaregiverProfiles", [
+        caregiver("cg1"), caregiver("cg2"), caregiver("cg3"), caregiver("cg_hired"),
+      ]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 }) as any;
+      const ids = r.items.map((i: any) => i.id);
+      expect(ids).not.toContain("cg_hired");
+    });
+
+    it("a declined caregiver re-surfaces once trimmed out of shownCaregiverIds by newer entries (unlike a hire, which never would)", async () => {
+      const PHONE = "+15559876544";
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      // cg_declined was shown (and later declined) BEFORE cg2/cg3/cg4 — it's
+      // the oldest entry, so "keep only the last 3 shown" naturally drops it.
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: ["cg_declined", "cg2", "cg3", "cg4"] });
+      hoisted.collState.set("hire_decisions", [{ id: "hd1", clientId: CLIENT, caregiverId: "cg_declined", decision: "decline" }]);
+      hoisted.collState.set("publicCaregiverProfiles", [
+        caregiver("cg_declined"), caregiver("cg2"), caregiver("cg3"), caregiver("cg4"),
+      ]);
+      // All 4 excluded on the first pass (empty pool) → exhaustion escalation
+      // trims shownCaregiverIds to the last 3 (cg2/cg3/cg4), which drops
+      // cg_declined — it re-surfaces as the only remaining bookable candidate.
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 }) as any;
+      const ids = r.items.map((i: any) => i.id);
+      expect(ids).toContain("cg_declined");
+    });
+  });
 });

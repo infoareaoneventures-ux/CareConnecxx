@@ -240,6 +240,16 @@ export { geocodeClientIntake } from './triggers/clientIntakeGeocode';
 // CAREGIVER GEOCODING — re-geocodes lat/lng server-side when address fields change
 export { geocodeCaregiverDoc } from './triggers/caregiverGeocode';
 
+// CAREGIVER OPT-OUT MIRROR — denormalizes the real SMS opt-out onto the
+// caregiver doc so isCaregiverBookable() (a pure, dependency-free function)
+// can see it without a second collection lookup
+export { mirrorCaregiverOptOut } from './triggers/caregiverOptOutMirror';
+
+// INTERVIEW ACTION QUEUE — Firestore-trigger workaround (GCP org policy blocks
+// new public Cloud Functions) giving the website caregiver-response parity
+// with Evia's respond_to_interview_request (accept/decline/propose-a-time)
+export { processInterviewActionQueue } from './triggers/interviewActionQueue';
+
 // AI proxy — secure server-side Anthropic calls (auth-gated, rate-limited)
 export { aiProxy } from "./aiProxy";
 
@@ -274,6 +284,9 @@ export { sendInterviewResponseReminders } from './scheduled/interviewResponseRem
 
 // INTERVIEW COMPLETION NUDGE (every 15min — asks the family whether a passed, still-"accepted" interview happened)
 export { sendInterviewCompletionNudges } from './scheduled/interviewCompletionNudge';
+
+// INTERVIEW FEEDBACK NUDGE (every 15min — asks for the hire/pass decision on a completed interview with none recorded)
+export { sendInterviewFeedbackNudges } from './scheduled/interviewFeedbackNudge';
 
 // FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
 export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
@@ -377,6 +390,15 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
   const name = cleanStr(rawName);
   const firstName = cleanStr((data.firstName as string | undefined) ?? "");
   const lastName  = cleanStr((data.lastName  as string | undefined) ?? "");
+  // 2026-09-06: recovery email, now collected on /start itself (parity with
+  // Evia's SMS loop, which already requires this field for both roles —
+  // onboardingContract.ts). Strip ALL whitespace, not just the ends — mobile
+  // keyboard autocomplete (Gboard's "@" suggestion strip especially) can
+  // insert a stray space mid-address, which trim() alone never catches.
+  // Silently dropped if malformed rather than rejecting the whole signup
+  // over a secondary field — the SMS loop still asks again if this is empty.
+  const rawEmail = ((data.email as string | undefined) ?? "").replace(/\s+/g, "");
+  const email = /^\S+@\S+\.\S+$/.test(rawEmail) ? rawEmail.toLowerCase().slice(0, 254) : undefined;
 
   if (!phone || !/^\+1\d{10}$/.test(phone)) {
     throw new functions.https.HttpsError("invalid-argument", "A valid US/CA phone number is required.");
@@ -415,6 +437,7 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     ...(name      ? { name }      : {}),
     ...(firstName ? { firstName } : {}),
     ...(lastName  ? { lastName }  : {}),
+    ...(email     ? { email }     : {}),
     ...(referralId && role === "caregiver" ? { referralId } : {}),
     status:      "awaiting_inbound",
     createdAt:   admin.firestore.Timestamp.fromDate(now),
@@ -427,6 +450,7 @@ export const createWebOnboardingSession = functions.https.onCall(async (data, co
     const userPatch: Record<string, unknown> = {
       uid:       context.auth.uid,
       phone,
+      ...(email ? { email } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     if (!userSnap.exists) {

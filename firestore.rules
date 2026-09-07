@@ -1426,17 +1426,41 @@ service cloud.firestore {
       allow read: if true;
       allow create: if request.resource.data.type in [
           'request_phone_change', 'start_phone_verification', 'confirm_phone_change',
-          'confirm_email_change', 'request_email_change', 'delete_account'
+          'confirm_email_change', 'request_email_change', 'delete_account',
+          'set_caregiver_pause_status'
         ]
         && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(
-          ['type', 'status', 'createdAt', 'email', 'token', 'newPhone', 'code', 'uid', 'newEmail']
+          ['type', 'status', 'createdAt', 'email', 'token', 'newPhone', 'code', 'uid', 'newEmail', 'action', 'until']
         )
         && (
-          request.resource.data.type in ['request_email_change', 'delete_account']
+          request.resource.data.type in ['request_email_change', 'delete_account', 'set_caregiver_pause_status']
             ? (request.auth != null && request.auth.uid == request.resource.data.uid)
             : true
+        )
+        && (
+          request.resource.data.type != 'set_caregiver_pause_status'
+            || request.resource.data.action in ['pause', 'reactivate']
         );
+      allow update, delete: if false; // server-side only (Admin SDK trigger)
+    }
+
+    // Same Firestore-trigger-queue pattern as account_action_requests above —
+    // gives the website caregiver-response flow (accept/decline/propose a
+    // different time) parity with Evia's respond_to_interview_request MCP
+    // tool without a brand-new Cloud Function (same GCP org-policy wall).
+    // Caller must be signed in as the caregiver named on the request — unlike
+    // account_action_requests, every action type here is caregiver-only, so
+    // the uid check applies unconditionally.
+    match /interview_action_requests/{requestId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.caregiverId;
+      allow create: if request.resource.data.type == 'respond_to_interview'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.decision in ['accept', 'decline']
+        && request.resource.data.keys().hasOnly(
+          ['type', 'status', 'createdAt', 'caregiverId', 'interviewId', 'decision', 'proposedDate', 'proposedTime', 'message']
+        )
+        && request.auth != null && request.auth.uid == request.resource.data.caregiverId;
       allow update, delete: if false; // server-side only (Admin SDK trigger)
     }
 

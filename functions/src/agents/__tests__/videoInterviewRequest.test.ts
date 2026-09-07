@@ -149,19 +149,53 @@ describe("requestVideoInterview", () => {
     expect(hoisted.docState.get("job_applications/app_1")).toMatchObject({ interviewId: result.id });
   });
 
-  it("enforces the same 5-per-day cap the site's callable enforces", async () => {
+  it("enforces the same 5-per-day cap the site's callable enforces, across 5 DIFFERENT caregivers", async () => {
     for (let i = 0; i < 5; i++) {
+      hoisted.docState.set(`publicCaregiverProfiles/cg_new_${i}`, { name: `New Caregiver ${i}` });
+      await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_new_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
+    }
+    hoisted.docState.set("publicCaregiverProfiles/cg_new_6", { name: "One Too Many" });
+    await expect(requestVideoInterview({
+      clientId: CLIENT, caregiverId: "cg_new_6", scheduledTime: FUTURE_ISO, source: "test",
+    })).rejects.toMatchObject({ code: "resource-exhausted" });
+  });
+
+  // 2026-09-06 (Hamse): the cap is meant to stop spamming many DIFFERENT
+  // caregivers in one day, not to cap legitimate back-and-forth scheduling
+  // with a caregiver the family is already talking to (e.g. Evia relaying a
+  // counter-proposed time and re-submitting once they agree) — every round of
+  // that negotiation used to burn the same daily quota as contacting a
+  // stranger.
+  it("does NOT cap repeated requests to the SAME caregiver (rescheduling/counter-proposal negotiation)", async () => {
+    for (let i = 0; i < 8; i++) {
       await requestVideoInterview({ clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test" });
     }
     await expect(requestVideoInterview({
       clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test",
+    })).resolves.toMatchObject({ caregiverId: CAREGIVER });
+  });
+
+  it("still caps at 5 distinct caregivers even when some requests are repeats of an already-contacted one", async () => {
+    // Contact CAREGIVER (already-seeded) 3 times, then 4 NEW distinct caregivers —
+    // 5 distinct caregivers total, the repeats to CAREGIVER shouldn't count.
+    for (let i = 0; i < 3; i++) {
+      await requestVideoInterview({ clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test" });
+    }
+    for (let i = 0; i < 4; i++) {
+      hoisted.docState.set(`publicCaregiverProfiles/cg_extra_${i}`, { name: `Extra ${i}` });
+      await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_extra_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
+    }
+    hoisted.docState.set("publicCaregiverProfiles/cg_extra_5", { name: "Sixth Distinct" });
+    await expect(requestVideoInterview({
+      clientId: CLIENT, caregiverId: "cg_extra_5", scheduledTime: FUTURE_ISO, source: "test",
     })).rejects.toMatchObject({ code: "resource-exhausted" });
   });
 
   it("does not cap a DIFFERENT client's requests", async () => {
     hoisted.docState.set("users/client_2", { name: "Another Family" });
     for (let i = 0; i < 5; i++) {
-      await requestVideoInterview({ clientId: CLIENT, caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test" });
+      hoisted.docState.set(`publicCaregiverProfiles/cg_c1_${i}`, { name: `Caregiver ${i}` });
+      await requestVideoInterview({ clientId: CLIENT, caregiverId: `cg_c1_${i}`, scheduledTime: FUTURE_ISO, source: "test" });
     }
     await expect(requestVideoInterview({
       clientId: "client_2", caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test",

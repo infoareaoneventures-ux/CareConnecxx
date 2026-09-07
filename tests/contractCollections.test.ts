@@ -113,6 +113,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // Health / wellbeing analytics streams
     'health_trends', 'health_summaries', 'wellbeing_checkins',
     'post_visit_feedback',
+    // Family-satisfaction check-in replies (2026-09-06) — sentiment logging +
+    // admin-alert escalation only; the web never reads this, families see
+    // check-ins/replies purely over SMS.
+    'family_satisfaction_replies',
     // Billing / payment internals written server-side (web reads invoices/payments,
     // not these intermediate/event records)
     'billing_events', 'visit_billing', 'visit_payments', 'dispute_flags',
@@ -123,6 +127,10 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     // ('blocks' + 'shift_swap_requests' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
     'comments', 'client_cancel_requests', 'email_change_requests',
     'emergency_events', 'instant_payouts', 'refundRequests',
+    // Phone-number-change token/verification requests (2026-09-03) — the web
+    // only ever reaches this via the token-authenticated verification page,
+    // never by reading the collection directly.
+    'phone_change_requests',
     // Subcollection leaf names that appear as bare collection("name") segments.
     // Their parent docs are governed by the contract entry for the parent path.
     'messages',          // threads/{id}/messages — covered by 'threads' entry

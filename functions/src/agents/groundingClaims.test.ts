@@ -36,6 +36,14 @@ describe("classifyGroundingClaims — plan false-negative fixtures (R18)", () =>
     ["I've cancelled Thursday's visit for you.", "action_authorization", "high"],
     ["I authorized the charge on your card.",    "action_authorization", "high"],
     ["Your booking has been confirmed.",         "action_authorization", "high"],
+    // 2026-09-06: live incident — "declined"/"rejected"/"denied" were missing
+    // from every action_authorization verb list, so a false "Done, I declined
+    // the applicant" (the tool was never actually called) never even got
+    // classified as a claim worth checking.
+    ["Done, I declined the applicant.",          "action_authorization", "high"],
+    ["I rejected the application.",              "action_authorization", "high"],
+    ["The application has been declined.",       "action_authorization", "high"],
+    ["Your request was denied.",                 "action_authorization", "high"],
   ] as const)("%p → %s (%s risk)", (draft, category, risk) => {
     const claims = classifyGroundingClaims(draft);
     expect(claimCategories(claims)).toContain(category);

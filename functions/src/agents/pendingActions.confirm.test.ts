@@ -48,8 +48,14 @@ describe("isConfirmedActionValid", () => {
     expect(isConfirmedActionValid({ ...base, status: "approved" }, "cancel_appointment", "+15550001111", NOW)).toBe(true);
   });
 
-  it("rejects an executing action (already claimed for execution)", () => {
-    expect(isConfirmedActionValid({ ...base, status: "executing" }, "cancel_appointment", "+15550001111", NOW)).toBe(false);
+  // 2026-09-06 fix: this used to assert `false` — but claimPendingAction
+  // (awaiting → executing) ALWAYS runs before approvalHandler dispatches to
+  // the MCP gate with _confirmedActionId, so the legitimate confirmed re-run
+  // sees "executing" every single time, never "awaiting". Asserting `false`
+  // here meant every confirmed high-risk action in the product failed
+  // unconditionally (a live test caught this — see pendingActions.ts).
+  it("accepts an executing action (claimPendingAction already ran — this is the normal confirmed re-run, not a duplicate)", () => {
+    expect(isConfirmedActionValid({ ...base, status: "executing" }, "cancel_appointment", "+15550001111", NOW)).toBe(true);
   });
 
   it("rejects when no phone is provided", () => {

@@ -15,15 +15,35 @@ interface ProfileApprovalBannerProps {
     // merge it in, same as CaregiverPaymentsPage.tsx already does.
     payoutsEnabled?: boolean;
     chargesEnabled?: boolean;
+    pausedUntil?: string;
   };
   onViewChecklist?: () => void;
   hasEngagement?: boolean;
 }
 
 export const ProfileApprovalBanner: React.FC<ProfileApprovalBannerProps> = ({ profile, hasEngagement }) => {
-  // Canonical contract: bookable requires profile_complete + verificationStatus approved.
-  // `verified` alone is NOT sufficient (it's a secondary display signal only).
+  // Canonical contract: bookable requires profile_complete + verificationStatus
+  // approved + not paused. `verified` alone is NOT sufficient (it's a
+  // secondary display signal only).
   const isApproved = isCaregiverBookable(profile);
+  const isPausedNow = !!profile.pausedUntil && profile.pausedUntil > new Date().toISOString();
+
+  // 2026-09-06: isCaregiverBookable() now also returns false while paused —
+  // checked here FIRST and separately so a fully-approved caregiver who
+  // simply paused themselves doesn't fall through to the onboarding-progress
+  // checks below and see something like "Start your background check to get
+  // approved," which would be flatly wrong (and confusing) for their actual
+  // situation.
+  if (isPausedNow) {
+    return (
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
+        <Clock className="w-5 h-5 text-slate-500 flex-shrink-0" />
+        <p className="text-sm text-slate-800 flex-1">
+          <span className="font-semibold">Account paused</span> — you won't show up in family search until you reactivate.
+        </p>
+      </div>
+    );
+  }
 
   if (isApproved && hasEngagement) return null;
 

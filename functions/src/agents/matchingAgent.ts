@@ -316,26 +316,69 @@ export async function runMatchingForClient(
 
     // Exclude caregivers the family has already declined
     const rejectedIds: string[] = (session?.rejectedCaregiverIds ?? []) as string[];
+    let shownIds: string[] = (session?.shownCaregiverIds ?? []) as string[];
+    let fetchedSessionUserId: string | undefined;
     if (!session) {
       const sessionSnap = await db.collection("agent_sessions").doc(phone).get();
       if (sessionSnap.exists) {
         rejectedIds.push(...((sessionSnap.data()?.rejectedCaregiverIds ?? []) as string[]));
+        shownIds = (sessionSnap.data()?.shownCaregiverIds ?? []) as string[];
+        // Found 2026-09-06 (via matchingAgentRepeat.test.ts): a caller that
+        // omits `session` (relying on this fallback fetch) got the fetch's
+        // rejectedIds/shownIds but NOT its userId — clientIdForExclusions
+        // below fell through to intake.userId, which is frequently absent,
+        // silently skipping the hire_decisions lookup and letting an already-
+        // hired caregiver resurface for exactly the callers this fallback
+        // exists for.
+        fetchedSessionUserId = sessionSnap.data()?.userId as string | undefined;
       }
     }
 
-    // 2026-09-04: was `.where("status", "in", ["active", "pending_review"])`
-    // — `status` is NOT part of the bookability contract (caregiverEligibility.ts
-    // explicitly warns against pre-filtering on it) and plenty of real,
-    // bookable caregivers (onboardingStatus=profile_complete AND
-    // verificationStatus=approved) never had that exact `status` value set,
-    // so they were dropped before the `eligible` post-filter below ever saw
-    // them — this was the actual reason only one caregiver (whichever
-    // happened to have status="active") ever surfaced here, regardless of
-    // how many were really bookable nearby. Pre-filter on the sanctioned
-    // index field instead; the post-filter still enforces the full contract.
-    const snap = await db.collection("caregivers")
+    // Found 2026-09-06 (live bug): a family asking "is there more caregivers"
+    // kept getting the exact same names back, and a caregiver they'd already
+    // interviewed and made a hire/decline decision on (hire_decisions) could
+    // resurface as if new. rejectedIds alone only covers an explicit
+    // "not interested" rejection — it never tracked "already shown, no
+    // decision yet" (that's what find_nearby_caregivers's shownCaregiverIds
+    // is for, but this older intent-routed FIND_CAREGIVER path never read or
+    // wrote it) or "already interviewed/decided" at all. excludeIds unifies
+    // all three so repeated "show more" calls — through EITHER path — never
+    // re-surface someone the family has already seen or decided on.
+    //
+    // Correction (Hamse, 2026-09-06): a DECLINE is not permanent — the family
+    // may reconsider later, same as a plain rejectedCaregiverIds entry
+    // (already re-surfaced on pool exhaustion below). Only a HIRE is a real,
+    // standing relationship that should never be undone by pool exhaustion —
+    // hiredIds is therefore kept out of the trimmable set entirely.
+    const clientIdForExclusions = ((session as any)?.userId ?? fetchedSessionUserId ?? intake.userId) as string | undefined;
+    const decisionDocs = clientIdForExclusions
+      ? (await db.collection("hire_decisions").where("clientId", "==", clientIdForExclusions).limit(200).get()).docs
+      : [];
+    const hiredIds: string[] = decisionDocs
+      .filter((d) => d.data().decision === "hire")
+      .map((d) => d.data().caregiverId as string).filter(Boolean);
+    const declinedIds: string[] = decisionDocs
+      .filter((d) => d.data().decision === "decline")
+      .map((d) => d.data().caregiverId as string).filter(Boolean);
+    shownIds = Array.from(new Set([...shownIds, ...declinedIds]));
+    const excludeIds = Array.from(new Set([...rejectedIds, ...shownIds, ...hiredIds]));
+
+    // 2026-09-06: reads publicCaregiverProfiles instead of the raw caregivers
+    // collection — the same pool the site's own Dashboard widget, Browse
+    // Caregivers page, and find_nearby_caregivers already read. Before this,
+    // Evia's SMS "find a caregiver" was the only surface reading the raw
+    // collection directly, an unnecessary structural difference from
+    // everything else even though the eligibility rule (isCaregiverBookable,
+    // below) was already identical — a stale or not-yet-projected raw doc
+    // could theoretically diverge from what the family would see on the site
+    // for the exact same request.
+    // (Pre-filter on onboardingStatus for index efficiency — was `status in
+    // [...]` until 2026-09-04, dropped for the same reason documented then:
+    // `status` is not part of the bookability contract; the post-filter
+    // below enforces the full contract regardless of this pre-filter.)
+    const snap = await db.collection("publicCaregiverProfiles")
       .where("onboardingStatus", "==", "profile_complete")
-      .limit(50)
+      .limit(100)
       .get();
 
     const nowIso = new Date().toISOString();
@@ -358,14 +401,17 @@ export async function runMatchingForClient(
       .filter(eligible)
       .map((d) => ({
         id:                     d.id,
-        pendingBackgroundCheck: d.data().status === "pending_review",
-        backgroundCheckStatus:  d.data().backgroundCheckData?.status as string | undefined,
+        // publicCaregiverProfiles carries backgroundCheckStatus flat (never
+        // the raw caregivers doc's nested backgroundCheckData.status, and no
+        // `status` field at all — see publicCaregiverProfile.ts's pick list).
+        pendingBackgroundCheck: d.data().backgroundCheckStatus === "pending",
+        backgroundCheckStatus:  d.data().backgroundCheckStatus as string | undefined,
         certifications:         d.data().certifications as string[] | undefined,
         ...d.data(),
       } as CaregiverCandidate))
       .filter((c) =>
         !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
-        !rejectedIds.includes(c.id) &&
+        !excludeIds.includes(c.id) &&
         !isTemporarilyUnavailable(c as any, nowIso) &&
         withinRadius(c, 25)
       );
@@ -378,7 +424,7 @@ export async function runMatchingForClient(
         .map((d) => ({ id: d.id, ...d.data() } as CaregiverCandidate))
         .filter((c) =>
           !isSeededCaregiver(c as unknown as Record<string, unknown>) &&
-          !rejectedIds.includes(c.id) &&
+          !excludeIds.includes(c.id) &&
           !isTemporarilyUnavailable(c as any, nowIso)
         );
     }
@@ -528,11 +574,21 @@ export async function runMatchingForClient(
         }
         // Auto-trigger a broader rematch on the next cycle by clearing rejected list
         // only if all local + broader search is exhausted
-        if (rejectedIds.length > 0) {
-          // Widen the pool: keep only the last 3 rejections to allow re-presentation after escalation
+        if (rejectedIds.length > 0 || shownIds.length > 0) {
+          // Widen the pool: keep only the last 3 rejections/shown, same
+          // trim-and-retry escalation find_nearby_caregivers already uses for
+          // its own shownCaregiverIds — a genuinely small local market
+          // shouldn't perma-lock a family out just because everyone nearby
+          // has already been shown or declined once (declinedIds lives
+          // inside shownIds, so it's eligible for exactly this same
+          // widening). hiredIds is deliberately NOT trimmed here: a
+          // caregiver the family actually hired should never resurface, no
+          // matter how thin the pool gets.
           const trimmedRejections = rejectedIds.slice(-3);
+          const trimmedShown      = shownIds.slice(-3);
           await db.collection("agent_sessions").doc(phone).update({
             rejectedCaregiverIds: trimmedRejections,
+            shownCaregiverIds:    trimmedShown,
           });
         }
       } else if (!suppressSends) {
@@ -753,6 +809,10 @@ export async function runMatchingForClient(
       // Used by webhooks.ts to detect stale state — selection prompts older
       // than 2 hours are treated as expired and cleared on next inbound.
       pendingMatchesSetAt: new Date().toISOString(),
+      // Shared with find_nearby_caregivers (mcp/server.ts) so "show more
+      // caregivers" never repeats a name, regardless of which of the two
+      // caregiver-search paths a given turn happens to route through.
+      shownCaregiverIds: admin.firestore.FieldValue.arrayUnion(...top3.map((c) => c.id)),
     });
 
     // Register these caregivers' names so the persona-shift detector never

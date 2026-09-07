@@ -95,6 +95,51 @@ describe("isCaregiverBookable", () => {
     }
   });
 
+  // 2026-09-06: pausing (pause_account/reactivate_account) used to be checked
+  // only by the SMS matching flow's own local isTemporarilyUnavailable —
+  // every other consumer of this canonical gate (Dashboard widget, Browse
+  // Caregivers, find_nearby_caregivers) had no idea pausing existed.
+  it("returns false while pausedUntil is in the future, even if otherwise bookable", () => {
+    expect(
+      isCaregiverBookable(
+        { onboardingStatus: "profile_complete", verificationStatus: "approved", pausedUntil: "2026-10-01" },
+        "2026-09-06T00:00:00.000Z",
+      )
+    ).toBe(false);
+  });
+
+  it("returns true again once pausedUntil is in the past", () => {
+    expect(
+      isCaregiverBookable(
+        { onboardingStatus: "profile_complete", verificationStatus: "approved", pausedUntil: "2026-08-01" },
+        "2026-09-06T00:00:00.000Z",
+      )
+    ).toBe(true);
+  });
+
+  it("is unaffected by an absent pausedUntil", () => {
+    expect(
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved" })
+    ).toBe(true);
+  });
+
+  // 2026-09-06: the real SMS/TCPA opt-out (agent_sessions.optedOut) is
+  // mirrored onto the caregiver doc (triggers/caregiverOptOutMirror.ts) —
+  // before this, nothing in the matching pipeline checked it at all, so an
+  // opted-out caregiver (Evia can no longer reach them) could still be
+  // suggested as a match.
+  it("returns false when optedOut is mirrored true, even if otherwise bookable", () => {
+    expect(
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", optedOut: true })
+    ).toBe(false);
+  });
+
+  it("is unaffected by optedOut explicitly false or absent", () => {
+    expect(
+      isCaregiverBookable({ onboardingStatus: "profile_complete", verificationStatus: "approved", optedOut: false })
+    ).toBe(true);
+  });
+
   it("UNBOOKABLE_BG_STATUSES contains the full adverse list", () => {
     expect([...UNBOOKABLE_BG_STATUSES].sort()).toEqual(
       [

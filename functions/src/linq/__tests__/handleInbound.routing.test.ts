@@ -973,6 +973,35 @@ describe("web-onboarding name bridge", () => {
     expect(session()?.onboardingStep).toBe("client_ask_name");
     expect(session()?.onboardingData).toBeUndefined();
   });
+
+  // 2026-09-06: /start now also collects a recovery email up front (parity
+  // with Evia's SMS loop, which already requires one for both roles) —
+  // seeded the same way name already was, so the loop never asks again.
+  describe("recovery email seeding (2026-09-06)", () => {
+    it("client with a name AND email → both seeded onto onboardingData", async () => {
+      seedWebSession({ role: "client", name: "Sarah", email: "sarah@example.com" });
+      await handleInbound(makeEvent("Hey Evia"));
+      expect(session()?.onboardingStep).toBe("client_confirm_name");
+      expect(session()?.onboardingData?.firstName).toBe("Sarah");
+      expect(session()?.onboardingData?.email).toBe("sarah@example.com");
+    });
+
+    it("caregiver with a name AND email → both seeded onto onboardingData", async () => {
+      seedWebSession({ role: "caregiver", name: "Maria", email: "maria@example.com" });
+      await handleInbound(makeEvent("Hey Evia"));
+      expect(session()?.onboardingStep).toBe("caregiver_confirm_name");
+      expect(session()?.onboardingData?.name).toBe("Maria");
+      expect(session()?.onboardingData?.email).toBe("maria@example.com");
+    });
+
+    it("email present but NO name → still seeds email, routes to ask-name (not confirm)", async () => {
+      seedWebSession({ role: "client", email: "noname@example.com" });
+      await handleInbound(makeEvent("Hey Evia"));
+      expect(session()?.onboardingStep).toBe("client_ask_name");
+      expect(session()?.onboardingData?.email).toBe("noname@example.com");
+      expect(session()?.onboardingData?.firstName).toBeUndefined();
+    });
+  });
 });
 
 // ── Onboarding-loop flag routing (pre-flip gate: both-flags interaction) ─────

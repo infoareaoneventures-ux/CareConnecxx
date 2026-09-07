@@ -1212,7 +1212,12 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Accept or reject a caregiver's application to your job post. The website has no direct 'accept' action — " +
       "accepting an applicant means requesting an interview with them (preferredDate/preferredTime required); " +
-      "the job isn't marked filled until a booking is actually sent and accepted later. Confirm before accepting.",
+      "the job isn't marked filled until a booking is actually sent and accepted later. " +
+      "Call this tool the moment the family states their decision — for BOTH accept and reject. " +
+      "Rejecting is irreversible and the system itself will ask the family to confirm before it actually " +
+      "takes effect (you'll get back a confirmation request, not a result) — do not ask them to confirm " +
+      "yourself in conversation first, and do not tell them it's done until this tool actually returns success. " +
+      "Never say an application was accepted/rejected/declined without this tool having returned that result.",
     input_schema: {
       type: "object",
       properties: {
@@ -3213,6 +3218,23 @@ async function executeToolCall(
         const shownIds: string[] = sessionRef
           ? ((await sessionRef.get()).data()?.shownCaregiverIds as string[] | undefined) ?? []
           : [];
+        // 2026-09-06: a caregiver the family already interviewed and made a
+        // real hire/decline decision on (hire_decisions) could still
+        // resurface here as if new — matchingAgent.ts had the identical gap,
+        // fixed the same way there. Correction (Hamse): a decline isn't
+        // permanent (the family may reconsider), only a hire is — so
+        // declinedIds joins the trimmable shownIds, and only hiredIds stays
+        // in the never-trimmed set.
+        const decisionDocs = (
+          await db.collection("hire_decisions").where("clientId", "==", clientId as string).limit(200).get()
+        ).docs;
+        const hiredIds: string[] = decisionDocs
+          .filter((d) => d.data().decision === "hire")
+          .map((d) => d.data().caregiverId as string).filter(Boolean);
+        const declinedIds: string[] = decisionDocs
+          .filter((d) => d.data().decision === "decline")
+          .map((d) => d.data().caregiverId as string).filter(Boolean);
+        for (const id of declinedIds) if (!shownIds.includes(id)) shownIds.push(id);
 
         const poolSnap = await db.collection("publicCaregiverProfiles")
           .where("onboardingStatus", "==", "profile_complete")
@@ -3257,10 +3279,13 @@ async function executeToolCall(
           return { matches: ranked.filter(applyPostFilters).slice(0, resultLimit), widened: widenedPass };
         };
 
-        let { matches, widened } = runPass(shownIds);
+        // hiredIds is never trimmed on retry, unlike shownIds — a caregiver
+        // the family already hired should never resurface, no matter how
+        // thin the pool gets.
+        let { matches, widened } = runPass([...shownIds, ...hiredIds]);
         if (matches.length === 0 && shownIds.length > 0) {
           const trimmedShown = shownIds.slice(-3);
-          ({ matches, widened } = runPass(trimmedShown));
+          ({ matches, widened } = runPass([...trimmedShown, ...hiredIds]));
           if (sessionRef) await sessionRef.set({ shownCaregiverIds: trimmedShown }, { merge: true }).catch(() => {});
         }
 
@@ -6066,43 +6091,27 @@ async function executeToolCall(
     if (name === "respond_to_interview_request") {
       const { caregiverId, interviewId, decision, proposedDate, proposedTime, message: ivMsg } = input as Record<string, unknown>;
       if (!caregiverId || !interviewId || !decision) return toolError("INVALID_INPUT", "caregiverId, interviewId, and decision are required");
-      const ivSnap = await db.collection("video_interviews").doc(interviewId as string).get();
-      if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
-      const iv = ivSnap.data()!;
-      if (iv.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Interview does not belong to this caregiver");
-      // "accepted" — matches the website's own accept action (videoService.ts's
-      // acceptInterview) exactly, not "confirmed": onVideoInterviewWrite's
-      // client in-app-notification branch only checks for "accepted", so
-      // writing a different string here silently dropped the dashboard
-      // notification for a caregiver who accepted via Evia instead of the
-      // website (the SMS text below still went out either way, masking it).
-      const newStatus = decision === "accept" ? "accepted" : "declined";
-      const upd: Record<string, unknown> = { status: newStatus, respondedAt: nowIso };
-      const { parseScheduledTimeMs: parseIvMs, formatInterviewTime: formatIvTime } = await import("../utils/scheduledTime");
-      let proposedIso: string | null = null;
-      if (proposedDate && proposedTime) {
-        const proposedMs = parseIvMs(`${proposedDate}T${proposedTime}:00`);
-        proposedIso = Number.isNaN(proposedMs) ? `${proposedDate}T${proposedTime}:00` : new Date(proposedMs).toISOString();
-        upd.proposedTime = proposedIso;
+      const { respondToInterviewRequest, InterviewResponseError } = await import("../agents/interviewResponse");
+      try {
+        const result = await respondToInterviewRequest({
+          caregiverId: caregiverId as string,
+          interviewId: interviewId as string,
+          decision: decision === "accept" ? "accept" : "decline",
+          proposedDate: proposedDate as string | undefined,
+          proposedTime: proposedTime as string | undefined,
+          message: ivMsg as string | undefined,
+          source: "mcp:respond_to_interview_request",
+        });
+        return { success: true, decision, interviewId, callUrl: result.callUrl, proposedTime: result.proposedTime };
+      } catch (err) {
+        if (err instanceof InterviewResponseError) {
+          return toolError(
+            err.code === "not-found" ? "NOT_FOUND" : err.code === "permission-denied" ? "PERMISSION_DENIED" : "INVALID_INPUT",
+            err.message,
+          );
+        }
+        throw err;
       }
-      await ivSnap.ref.update(upd);
-      const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-      if (!clientSess.empty) {
-        const cgData = (await db.collection("caregivers").doc(caregiverId as string).get()).data();
-        const cgName = cgData?.name ?? "The caregiver";
-        const { sendToPhone } = await import("../linq/client");
-        const schedMs = parseIvMs(iv.scheduledTime ?? "");
-        const whenText = Number.isNaN(schedMs) ? "the scheduled time" : formatIvTime(schedMs);
-        const notifyMsg = decision === "accept"
-          ? `${cgName} confirmed the interview for ${whenText}.` +
-            (iv.callUrl ? `\n\nJoin from your phone: ${iv.callUrl}` : "")
-          : proposedDate
-            ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
-            : `${cgName} isn't available for the interview. ${(ivMsg as string) ?? ""}`.trim();
-        await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => {});
-      }
-      logAudit({ eventType: "interview_responded", userId: caregiverId as string, data: { source: "mcp:respond_to_interview_request", interviewId, decision } }).catch(() => {});
-      return { success: true, decision, interviewId, callUrl: (iv.callUrl as string | undefined) ?? null, proposedTime: proposedIso };
     }
 
     // ── get_care_team ───────────────────────────────────────────────────────

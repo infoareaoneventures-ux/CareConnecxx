@@ -104,6 +104,10 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   // closes the parity gap on the web side. Optional, asked at the very end
   // so it never blocks the actual job-posting submission at Step 14.
   const [recoveryEmail, setRecoveryEmail] = useState('');
+  // 2026-09-06: /start now collects this up front for every new account —
+  // without this check, every client would see this prompt again here even
+  // though they already provided one at signup.
+  const [hasEmailOnFile, setHasEmailOnFile] = useState(false);
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSaved, setEmailSaved] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -175,6 +179,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           }
           setClientFirstName(first);
           setClientLastName(last);
+          if ((d.email as string | undefined)?.trim()) setHasEmailOnFile(true);
           const street = d.street  || '';
           const zip    = d.zipCode || '';
           const city   = d.city    || '';
@@ -346,7 +351,14 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   };
 
   const handleSaveRecoveryEmail = async () => {
-    const trimmed = recoveryEmail.trim();
+    // Strip ALL whitespace, not just the ends — mobile keyboard autocomplete
+    // (Gboard's "@" suggestion strip especially) can insert a stray space
+    // mid-address (e.g. "name@ gmail.com"), which .trim() alone never
+    // catches since it only strips the leading/trailing ends. A space is
+    // never valid inside an email anyway, so removing it outright is
+    // strictly more forgiving than rejecting an otherwise-correct address
+    // over an invisible typo the user didn't mean to make.
+    const trimmed = recoveryEmail.replace(/\s+/g, '');
     if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
       setEmailError("That doesn't look like a valid email address.");
       return;
@@ -1234,7 +1246,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             <p className="text-indigo-200 text-sm">
               In the meantime, feel free to explore CareConnex.
             </p>
-            {emailSaved ? (
+            {hasEmailOnFile ? null : emailSaved ? (
               <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex items-center gap-2 text-white text-sm">
                 <Check size={16} className="text-teal-300 shrink-0" /> Recovery email saved — thanks!
               </div>

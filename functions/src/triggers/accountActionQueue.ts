@@ -19,7 +19,8 @@ type ActionType =
   | "confirm_phone_change"
   | "request_email_change"
   | "confirm_email_change"
-  | "delete_account";
+  | "delete_account"
+  | "set_caregiver_pause_status";
 
 export const processAccountActionQueue = functions.firestore
   .document("account_action_requests/{requestId}")
@@ -53,6 +54,7 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
     confirmEmailChange,
   } = await import("../accountRecovery");
   const { deleteAccountForUser } = await import("../accountDeletion");
+  const { pauseCaregiver, reactivateCaregiver } = await import("../agents/pauseAccount");
 
   switch (type) {
     case "request_phone_change":
@@ -80,6 +82,20 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
 
     case "delete_account":
       return await deleteAccountForUser(String(data.uid ?? "")) as unknown as Record<string, unknown>;
+
+    // Website entry point for the same pause/reactivate a caregiver could
+    // already do over SMS (pause_account/reactivate_account MCP tools) —
+    // calls the exact same shared write logic so all callers stay in sync.
+    case "set_caregiver_pause_status": {
+      const uid = String(data.uid ?? "");
+      if (data.action === "reactivate") {
+        await reactivateCaregiver(uid);
+        return { status: "active" };
+      }
+      const until = typeof data.until === "string" && data.until.trim() ? data.until.trim() : "indefinite";
+      await pauseCaregiver(uid, until);
+      return { status: "paused", until };
+    }
 
     default:
       throw new Error(`Unknown account action type: ${String(type)}`);

@@ -28,36 +28,51 @@ async function addNotification(
 // sendViaInteractionAgent (Evia's own voice, DND/opt-out/supervisor-checked)
 // with a plain sendToPhone fallback — matches onAppointmentUpdated's own
 // send pattern for the legacy collection, rather than a raw unchecked text.
-// urgency: 'immediate' (not 'standard') — 2026-09-06 fix: every call site
-// below is a one-time transactional business event (new applicant, booking
-// request/decline, interview cancelled, caregiver arrived, …), never a
-// "use your judgment" proactive check-in. 'standard' + canDrop:true ran
-// these through shouldSend's LLM "is now a good time?" gate (caraAgent.ts),
-// which fails CLOSED and silently drops the message — no retry, no admin
-// alert — on any timeout or error, and also counted against the daily
-// proactive cap. A live test confirmed a job-application notification never
-// arrived at all, at 10:15am (not a DND/quiet-hours case). 'immediate'
-// bypasses both the judgment gate and the daily cap — same class of
-// reliability guarantee booking asks and agent alerts already get elsewhere
-// in this file (see the canDrop:false call sites in caraAgent.ts).
+// urgency: 'immediate', canDrop: false — 2026-09-06 fix (second pass): every
+// call site below is a one-time transactional business event (new applicant,
+// booking request/decline, interview request/decline/cancel, caregiver
+// arrived, …), never a "use your judgment" proactive check-in, so it must
+// match the canDrop:false pattern every other must-always-deliver send in
+// this codebase uses (see checkr.ts's sendBgcheckNoticeToCaregiver,
+// appointmentUpdated.ts). The first pass here (canDrop:true, still gated on
+// shouldSend's judgment call) was itself the bug it was written to fix: a
+// live test found a client-requested interview never reached the caregiver
+// at all. Root cause was two-fold — canDrop:true still runs the message
+// through shouldSend's "is now a good time?" gate even at 'immediate'
+// urgency (only the daily cap is truly bypassed by urgency alone), AND
+// sendViaInteractionAgent RESOLVES false (missing agent_sessions doc,
+// opted-out, shouldSend said no, dedup) rather than rejecting for every one
+// of those cases — so the `.catch(() => sendToPhone(...))` fallback below
+// never ran for exactly the caregiver who most needs it: one who has never
+// texted Evia yet, and so has no agent_sessions doc at all. Now checks
+// session existence explicitly (mirrors sendBgcheckNoticeToCaregiver) so a
+// session-less recipient reliably gets the plain sendToPhone text instead of
+// being silently dropped by a resolved (not thrown) false.
+async function sendTransactionalText(phone: string, message: string, sourceAgent: string): Promise<void> {
+  const sessSnap = await db.collection('agent_sessions').doc(phone).get().catch(() => null);
+  if (sessSnap?.exists) {
+    await sendViaInteractionAgent(phone, {
+      content: message, urgency: 'immediate', sourceAgent, canDrop: false,
+    }).catch(() => sendToPhone(phone, message)).catch((err) =>
+      console.error(`[notificationTriggers] ${sourceAgent} failed:`, err));
+    return;
+  }
+  await sendToPhone(phone, message).catch((err) =>
+    console.error(`[notificationTriggers] ${sourceAgent} failed (no agent session):`, err));
+}
+
 async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
   const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
-  await sendViaInteractionAgent(phone, {
-    content: message, urgency: 'immediate', sourceAgent: 'notification_trigger', canDrop: true,
-  }).catch(() => sendToPhone(phone, message)).catch((err) =>
-    console.error('[notificationTriggers] notifyCaregiverByText failed:', err));
+  await sendTransactionalText(phone, message, 'notification_trigger');
 }
 
 async function notifyClientByText(clientId: string, message: string): Promise<void> {
   const snap = await db.collection('users').doc(clientId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
-  await sendViaInteractionAgent(phone, {
-    content: message, urgency: 'immediate', sourceAgent: 'notification_trigger', canDrop: true,
-  }).catch(() => sendToPhone(phone, message)).catch((err) =>
-    console.error('[notificationTriggers] notifyClientByText failed:', err));
+  await sendTransactionalText(phone, message, 'notification_trigger');
 }
 
 
@@ -118,6 +133,12 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.clientName || 'A client'} has decided not to move forward at this time.`,
             data: { interviewId: context.params.interviewId },
           });
+          // "Not Selected" fires from both the website button and Evia's
+          // submit_interview_feedback (fitLevel:'no') — neither path texts the
+          // caregiver today, unlike the 'strong' path (which does), so a
+          // caregiver waiting to hear back had nothing but a bell icon.
+          // Found 2026-09-06, same gap class as the decline-direction fix above.
+          await notifyCaregiverByText(after.caregiverId, `${after.clientName || 'The family'} has decided not to move forward at this time.`);
         } else if (after.clientId) {
           // Caregiver declined → notify client
           await addNotification(after.clientId, {
@@ -126,6 +147,14 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.caregiverName} is unable to make the scheduled interview.`,
             data: { interviewId: context.params.interviewId },
           });
+          // respond_to_interview_request (mcp/server.ts) already texts this
+          // direction itself and stamps respondedViaAgent — skip to avoid a
+          // double text. A website-button decline has nothing else telling
+          // the client by phone, unlike accept (interviewLinkTrigger) and
+          // cancel (below) — found 2026-09-06, this SMS never existed.
+          if (!after.respondedViaAgent) {
+            await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} isn't able to make the scheduled interview.`);
+          }
         }
       }
 

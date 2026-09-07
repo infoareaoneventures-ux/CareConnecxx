@@ -258,6 +258,16 @@ export function buildCaregiverProfileMirror(d: Record<string, unknown>): Record<
   };
 
   copy("name",    d.name);
+  // 2026-09-06: phone was previously written ONLY at initial doc creation
+  // (the caller's own docRef.set below), never re-checked afterward — a
+  // caregiver whose account predates that write, or hit any edge case that
+  // skipped it, was left with a permanently missing caregivers/{uid}.phone
+  // even though agent_sessions/{phone}.onboardingData.phone had the number
+  // the whole time (found live: interviewLinkTrigger.ts's "missing_phone"
+  // delivery status on an account with a fully populated session). Copying
+  // it here means every future onboarding-data update self-heals this
+  // instead of leaving it silently wrong forever.
+  copy("phone",   d.phone);
   copy("city",    d.city);
   copy("zipCode", d.zipCode);
   // Coords — from a shared location pin OR geocoded from city/zip (see

@@ -63,4 +63,32 @@ describe("toPublicProfile", () => {
       city: "San Jose", lat: 37.3, lng: -121.9,
     });
   });
+
+  // 2026-09-06: isCaregiverBookable() now checks pausedUntil — without this
+  // field on the projection, every consumer reading publicCaregiverProfiles
+  // (Dashboard widget, Browse Caregivers, find_nearby_caregivers) would
+  // silently never see a caregiver's pause and keep showing them as bookable.
+  it("carries pausedUntil through so the shared bookability gate can see it", () => {
+    const out = toPublicProfile("cg1", { name: "Alice", pausedUntil: "2026-10-01" });
+    expect(out.pausedUntil).toBe("2026-10-01");
+  });
+
+  it("omits pausedUntil for a caregiver who isn't paused", () => {
+    const out = toPublicProfile("cg1", { name: "Alice" });
+    expect(out).not.toHaveProperty("pausedUntil");
+  });
+
+  // 2026-09-06: isCaregiverBookable() now also checks optedOut (mirrored from
+  // the real SMS opt-out) — same passthrough requirement as pausedUntil.
+  it("carries optedOut through so the shared bookability gate can see it", () => {
+    const out = toPublicProfile("cg1", { name: "Alice", optedOut: true });
+    expect(out.optedOut).toBe(true);
+  });
+
+  // 2026-09-06: matchingAgent.ts moved onto this projection — these three
+  // were only ever on the raw caregivers doc before.
+  it("carries zipCode, gender, canDrive through for matchingAgent.ts's soft-preference scoring", () => {
+    const out = toPublicProfile("cg1", { name: "Alice", zipCode: "95050", gender: "Female", canDrive: true });
+    expect(out).toMatchObject({ zipCode: "95050", gender: "Female", canDrive: true });
+  });
 });

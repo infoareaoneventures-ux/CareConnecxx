@@ -39,6 +39,12 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [openTransport, setOpenTransport] = useState(false);
   const [openBlocked, setOpenBlocked] = useState(false);
 
+  // Same pause/reactivate a caregiver could already do over SMS
+  // (pause_account/reactivate_account) — website entry point added 2026-09-06.
+  const [pausedUntil, setPausedUntil] = useState<string | null>(null);
+  const [togglingPause, setTogglingPause] = useState(false);
+  const [resumeDateDraft, setResumeDateDraft] = useState('');
+
   // Personal info fields
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -111,6 +117,7 @@ export const CaregiverAccountSettings: React.FC = () => {
         setZip(cp.zipCode || cp.zip || '');
         setCity(cp.city || '');
         setState(cp.state || '');
+        setPausedUntil(cp.pausedUntil || null);
         setPrefs({});
         const docs = cp.documents || {};
         const resolveDocStatus = (doc: any) => {
@@ -227,6 +234,35 @@ export const CaregiverAccountSettings: React.FC = () => {
   const handleSendDeleteCode = async () => {
     const ok = await deleteReauth.sendCode();
     if (ok) setDeleteStep('otp');
+  };
+
+  const isPaused = !!pausedUntil && pausedUntil > new Date().toISOString();
+
+  const handleTogglePause = async () => {
+    if (!currentUser?.uid) return;
+    setTogglingPause(true);
+    try {
+      if (isPaused) {
+        await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'reactivate' });
+        setPausedUntil(null);
+        addToast("You're active again — you'll start showing up for new matches.", 'success');
+      } else {
+        const until = resumeDateDraft.trim() || undefined;
+        await submitAccountAction('set_caregiver_pause_status', { uid: currentUser.uid, action: 'pause', ...(until ? { until } : {}) });
+        setPausedUntil(until || '2099-12-31');
+        setResumeDateDraft('');
+        addToast(
+          until
+            ? `Account paused — you'll automatically become active again on ${until}.`
+            : "Account paused — you won't be shown for new matches until you reactivate.",
+          'success'
+        );
+      }
+    } catch {
+      addToast(`Failed to ${isPaused ? 'reactivate' : 'pause'} your account. Please try again.`, 'error');
+    } finally {
+      setTogglingPause(false);
+    }
   };
 
   const handleDeleteAccount = async () => {
@@ -548,6 +584,49 @@ export const CaregiverAccountSettings: React.FC = () => {
             )}
           </div>
         </Accordion>
+
+        {/* ── Pause Account ── */}
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-slate-900 mb-1">
+                {isPaused ? 'Your account is paused' : 'Pause your account'}
+              </p>
+              <p className="text-sm text-slate-500">
+                {isPaused
+                  ? (pausedUntil && pausedUntil !== '2099-12-31'
+                      ? `You'll automatically become active again on ${pausedUntil}. Reactivate sooner anytime.`
+                      : "You won't show up for new matches until you reactivate. Fully reversible anytime.")
+                  : 'Taking a break? Stop showing up for new matches without deleting your profile. Reversible anytime.'}
+              </p>
+              {!isPaused && (
+                <label className="flex items-center gap-2 mt-3 text-xs text-slate-500">
+                  Resume on (optional)
+                  <input
+                    type="date"
+                    value={resumeDateDraft}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setResumeDateDraft(e.target.value)}
+                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-700"
+                  />
+                  <span className="text-slate-400">— leave blank to pause until you reactivate</span>
+                </label>
+              )}
+            </div>
+            <button
+              onClick={handleTogglePause}
+              disabled={togglingPause}
+              className={`flex items-center gap-2 shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 ${
+                isPaused
+                  ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                  : 'border border-slate-300 hover:border-slate-400 text-slate-700'
+              }`}
+            >
+              {togglingPause ? <Loader2 className="w-4 h-4 animate-spin" /> : (isPaused ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />)}
+              {togglingPause ? 'Saving...' : (isPaused ? 'Reactivate' : 'Pause account')}
+            </button>
+          </div>
+        </div>
 
         {/* ── Delete Account ── */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3 p-5">

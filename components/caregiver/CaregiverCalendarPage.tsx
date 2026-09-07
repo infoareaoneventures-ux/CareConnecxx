@@ -832,11 +832,19 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
   };
 
   const InterviewDetail = ({ interview, onClose }: { interview: InterviewEvent; onClose: () => void }) => {
+    const { addToast } = useCareConnex();
     const [job, setJob]                   = useState<any>(null);
     const [clientPhoto, setClientPhoto]   = useState<string | null>(null);
     const [accepting,  setAccepting]      = useState(false);
     const [declining,  setDeclining]      = useState(false);
     const [cancelling, setCancelling]     = useState(false);
+    // "Propose a different time" — parity with what Evia's
+    // respond_to_interview_request already lets a caregiver do over SMS.
+    const [showPropose, setShowPropose]   = useState(false);
+    const [proposeDate, setProposeDate]   = useState('');
+    const [proposeTime, setProposeTime]   = useState('');
+    const [proposing,   setProposing]     = useState(false);
+    const [proposeError, setProposeError] = useState<string | null>(null);
 
     const TypeIcon  = interview.interviewType === 'phone' ? Phone : interview.interviewType === 'in-person' ? Home : Video;
     const typeLabel = interview.interviewType === 'phone' ? 'Phone Call' : interview.interviewType === 'in-person' ? 'In Person' : 'Video Call';
@@ -920,6 +928,36 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
         setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
       } catch { } finally { setDeclining(false); }
+    };
+
+    // "Propose a different time" — declines the original request the same
+    // way handleDecline does, but records the alternative time and texts the
+    // family what it is (via the shared respondToInterviewRequest, the same
+    // function Evia's own respond_to_interview_request tool uses) instead of
+    // just a bare decline. Needs the queue path, not a raw Firestore write —
+    // firestore.rules never allowed proposedTime on a direct client update.
+    const handlePropose = async () => {
+      if (!proposeDate || !proposeTime) return;
+      setProposing(true);
+      setProposeError(null);
+      try {
+        const { respondToInterviewRequest } = await import('../../services/interviewActionQueue');
+        await respondToInterviewRequest({
+          caregiverId: interview.caregiverId,
+          interviewId: interview.id,
+          decision: 'decline',
+          proposedDate: proposeDate,
+          proposedTime: proposeTime,
+        });
+        setInterviews(prev => prev.map(iv => iv.id === interview.id ? { ...iv, status: 'declined' as const } : iv));
+        setSelectedInterview(prev => prev?.id === interview.id ? { ...prev, status: 'declined' as const } : prev);
+        setShowPropose(false);
+        addToast('Proposed time sent — the family will be notified.', 'success');
+      } catch (e: any) {
+        setProposeError(e?.message || 'Could not send that. Please try again.');
+      } finally {
+        setProposing(false);
+      }
     };
 
     const handleCancel = async () => {
@@ -1030,7 +1068,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
         {/* Actions */}
         <div className="mt-4 flex flex-col gap-2">
           {/* Accept / Decline for pending requests */}
-          {interview.status === 'requested' && (
+          {interview.status === 'requested' && !showPropose && (
             <div className="flex gap-2">
               <button onClick={handleAccept} disabled={accepting}
                 className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
@@ -1040,6 +1078,35 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
                 className="flex-1 py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
                 {declining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-4 h-4" />} Decline
               </button>
+            </div>
+          )}
+          {interview.status === 'requested' && !showPropose && (
+            <button onClick={() => setShowPropose(true)}
+              className="py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5">
+              <CalendarIcon className="w-3.5 h-3.5" /> Propose a different time
+            </button>
+          )}
+          {interview.status === 'requested' && showPropose && (
+            <div className="p-3 border border-slate-200 rounded-xl space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Propose a different time</p>
+              <div className="flex gap-2">
+                <input type="date" value={proposeDate} onChange={(e) => { setProposeDate(e.target.value); setProposeError(null); }}
+                  min={new Date().toISOString().slice(0, 10)}
+                  className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700" />
+                <input type="time" value={proposeTime} onChange={(e) => { setProposeTime(e.target.value); setProposeError(null); }}
+                  className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700" />
+              </div>
+              {proposeError && <p className="text-red-600 text-xs">{proposeError}</p>}
+              <div className="flex gap-2">
+                <button onClick={handlePropose} disabled={proposing || !proposeDate || !proposeTime}
+                  className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                  {proposing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Send proposal
+                </button>
+                <button onClick={() => { setShowPropose(false); setProposeError(null); }} disabled={proposing}
+                  className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium">
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
 

@@ -48,6 +48,9 @@ interface Interview {
   notes?: string;
   jobId?: string;
   jobTitle?: string;
+  /** ISO datetime — the caregiver's counter-proposed time when they declined
+   * with an alternative instead of outright (see interviewResponse.ts). */
+  proposedTime?: string;
 }
 
 interface Applicant {
@@ -109,6 +112,13 @@ export const PostsPage: React.FC = () => {
   const [submittingDecision, setSubmittingDecision] = useState<Record<string, boolean>>({});
   const [decisionDone, setDecisionDone] = useState<Record<string, 'hired' | 'declined'>>({});
   const [interviewFilter, setInterviewFilter] = useState<'all' | 'pending' | 'accepted' | 'completed' | 'declined' | 'cancelled'>('all');
+
+  // Responding to a caregiver's counter-proposed time (see interview.proposedTime) —
+  // parity with what Evia already lets a family do conversationally.
+  const [respondingToProposalId, setRespondingToProposalId] = useState<string | null>(null);
+  const [counterProposeOpenId, setCounterProposeOpenId] = useState<string | null>(null);
+  const [counterProposeDate, setCounterProposeDate] = useState('');
+  const [counterProposeTime, setCounterProposeTime] = useState('');
 
   const [mainTab, setMainTab] = useState<MainTab>('posts');
   const [postsFilter, setPostsFilter] = useState<PostsFilter>('open');
@@ -293,6 +303,7 @@ export const PostsPage: React.FC = () => {
             notes: d.notes || undefined,
             jobId: d.jobId || undefined,
             jobTitle: d.jobTitle || undefined,
+            proposedTime: d.proposedTime || undefined,
           };
         });
         const statusOrder: Record<string, number> = { pending: 0, accepted: 1, confirmed: 2, completed: 3, declined: 4, cancelled: 5 };
@@ -441,6 +452,57 @@ export const PostsPage: React.FC = () => {
       });
       setInterviews(prev => prev.map(i => i.id === interviewId ? { ...i, status: 'cancelled' } : i));
     } catch { addToast('Failed to cancel interview', 'error'); }
+  };
+
+  // Responding to a caregiver's counter-proposed time (interview.proposedTime)
+  // — both paths just submit a fresh interview request via the same shared
+  // requestVideoInterview the "Request Interview" button already uses; the
+  // caregiver's counter-proposal isn't a special action, just a suggested
+  // time for a brand-new request (see interviewResponse.ts).
+  const handleAcceptProposedTime = async (interview: Interview) => {
+    if (!interview.proposedTime || !currentUser) return;
+    setRespondingToProposalId(interview.id);
+    try {
+      const { videoService } = await import('../../services/videoService');
+      await videoService.scheduleInterview(
+        currentUser.uid, currentUser.displayName || 'Client',
+        interview.caregiverId, interview.caregiverName,
+        new Date(interview.proposedTime),
+        undefined, interview.jobId, interview.jobTitle,
+      );
+      addToast('Interview re-sent for the proposed time.', 'success');
+    } catch {
+      addToast('Failed to send the new request. Please try again.', 'error');
+    } finally {
+      setRespondingToProposalId(null);
+    }
+  };
+
+  const handleCounterProposeTime = async (interview: Interview) => {
+    if (!counterProposeDate || !counterProposeTime || !currentUser) return;
+    const scheduledDateTime = new Date(`${counterProposeDate}T${counterProposeTime}:00`);
+    if (scheduledDateTime <= new Date()) {
+      addToast('Please pick a future date and time', 'error');
+      return;
+    }
+    setRespondingToProposalId(interview.id);
+    try {
+      const { videoService } = await import('../../services/videoService');
+      await videoService.scheduleInterview(
+        currentUser.uid, currentUser.displayName || 'Client',
+        interview.caregiverId, interview.caregiverName,
+        scheduledDateTime,
+        undefined, interview.jobId, interview.jobTitle,
+      );
+      setCounterProposeOpenId(null);
+      setCounterProposeDate('');
+      setCounterProposeTime('');
+      addToast('New time sent to the caregiver.', 'success');
+    } catch {
+      addToast('Failed to send the new request. Please try again.', 'error');
+    } finally {
+      setRespondingToProposalId(null);
+    }
   };
 
   // Real-time booking request statuses for this client
@@ -1215,6 +1277,60 @@ export const PostsPage: React.FC = () => {
                         {/* Notes */}
                         {interview.notes && (
                           <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5 break-words">{interview.notes}</p>
+                        )}
+
+                        {/* Caregiver counter-proposed a different time */}
+                        {interview.status === 'declined' && interview.proposedTime && (
+                          <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-lg">
+                            <p className="text-xs font-medium text-purple-800 flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5" />
+                              {interview.caregiverName} proposed {new Date(interview.proposedTime).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} instead
+                            </p>
+                            {counterProposeOpenId === interview.id ? (
+                              <div className="mt-2 flex flex-wrap items-end gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                                  <input type="date" value={counterProposeDate} onChange={(e) => setCounterProposeDate(e.target.value)}
+                                    className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
+                                  <input type="time" value={counterProposeTime} onChange={(e) => setCounterProposeTime(e.target.value)}
+                                    className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                                </div>
+                                <button
+                                  onClick={() => handleCounterProposeTime(interview)}
+                                  disabled={respondingToProposalId === interview.id || !counterProposeDate || !counterProposeTime}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                                >
+                                  {respondingToProposalId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send
+                                </button>
+                                <button
+                                  onClick={() => { setCounterProposeOpenId(null); setCounterProposeDate(''); setCounterProposeTime(''); }}
+                                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  onClick={() => handleAcceptProposedTime(interview)}
+                                  disabled={respondingToProposalId === interview.id}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                                >
+                                  {respondingToProposalId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} Accept this time
+                                </button>
+                                <button
+                                  onClick={() => setCounterProposeOpenId(interview.id)}
+                                  disabled={respondingToProposalId === interview.id}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 border border-purple-200 text-purple-700 rounded-lg text-xs font-medium hover:bg-purple-100 disabled:opacity-50"
+                                >
+                                  <Calendar className="w-3.5 h-3.5" /> Propose another time
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
 
                         {/* Actions */}

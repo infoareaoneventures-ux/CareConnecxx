@@ -14,7 +14,8 @@ export type AccountActionType =
   | 'confirm_phone_change'
   | 'request_email_change'
   | 'confirm_email_change'
-  | 'delete_account';
+  | 'delete_account'
+  | 'set_caregiver_pause_status';
 
 export async function submitAccountAction<T extends Record<string, unknown> = { success: true }>(
   type: AccountActionType,

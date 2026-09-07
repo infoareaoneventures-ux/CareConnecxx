@@ -340,7 +340,20 @@ export function isConfirmedActionValid(
 ): boolean {
   if (
     !(pending !== null &&
-      (pending.status === "awaiting" || pending.status === "approved") &&
+      // 2026-09-06 fix: "executing" MUST be accepted here — approvalHandler's
+      // executeConfirmedAction calls claimPendingAction (awaiting → executing,
+      // a single-fire transaction) BEFORE dispatching to the MCP gate with
+      // _confirmedActionId set, so the legitimate re-run ALWAYS sees status
+      // "executing" by the time this check runs, never "awaiting". Rejecting
+      // "executing" here meant EVERY confirmed high-risk action in the product
+      // failed unconditionally with PERMISSION_DENIED ("This confirmation is
+      // no longer valid") — found via a live test where a family confirmed
+      // declining a job applicant and got exactly that error. claimPendingAction's
+      // own transaction (checks status !== "awaiting" inside the transaction)
+      // already provides the single-fire/no-double-dispatch guarantee — this
+      // check exists to reject a forged/expired/wrong-tool/wrong-phone/
+      // tampered-input id, not to re-police a claim that already succeeded.
+      (pending.status === "awaiting" || pending.status === "approved" || pending.status === "executing") &&
       new Date(pending.expiresAt).getTime() > nowMs &&
       pending.toolName === toolName &&
       pending.phone === phone)

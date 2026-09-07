@@ -777,6 +777,70 @@ async function classifyFeedbackSentiment(
   return "neutral";
 }
 
+// ── Family satisfaction check-in reply — sentiment routing ────────────────────
+// sendFamilySatisfactionCheckins (scheduled/familySatisfactionCheckin.ts) sets
+// awaitingSatisfactionReply when it asks "how has care been going overall" —
+// its own comment promised a negative reply gets "flagged for follow-up", but
+// nothing ever read the flag (found 2026-09-06: it was write-only, dead code).
+// Unlike post-visit feedback (a narrow single-purpose ask that fully owns the
+// reply), this check-in's phrasing invites open-ended replies that may also
+// carry a real question or request — so this is a side effect only: classify
+// + log + escalate + clear the flag, and let the normal qaAgent turn still
+// run and answer whatever was actually said, rather than swallowing the reply.
+async function classifySatisfactionSentiment(
+  text: string
+): Promise<"positive" | "negative" | "neutral"> {
+  try {
+    const raw = await quickComplete(
+      "Classify this family's reply to a general \"how has care been going overall\" check-in as " +
+        "positive, negative, or neutral. Consider tone and substance, not just keywords — a reply that " +
+        "raises a complaint, problem, or frustration with their care is negative even if worded politely. " +
+        "Reply with one word: POSITIVE, NEGATIVE, or NEUTRAL.",
+      text,
+      { maxTokens: 10 },
+    );
+    const label = raw.trim().toUpperCase();
+    if (label === "POSITIVE") return "positive";
+    if (label === "NEGATIVE") return "negative";
+  } catch (err) {
+    console.error("classifySatisfactionSentiment error:", err);
+  }
+  return "neutral";
+}
+
+async function handleSatisfactionCheckinReply(params: {
+  phone:    string;
+  clientId: string;
+  text:     string;
+}): Promise<void> {
+  const sentiment = await classifySatisfactionSentiment(params.text);
+  const nowIso = new Date().toISOString();
+  await db.collection("family_satisfaction_replies").add({
+    clientId:  params.clientId,
+    phone:     params.phone,
+    sentiment,
+    rawText:   params.text.slice(0, 500),
+    createdAt: nowIso,
+  });
+  if (sentiment === "negative") {
+    await createCaraOpsAlert({
+      type:     "family_dissatisfaction_signal",
+      severity: "high",
+      phone:    params.phone,
+      userId:   params.clientId,
+      role:     "client",
+      source:   "familySatisfactionCheckin",
+      message:  "A family's reply to the satisfaction check-in read as negative — needs a human follow-up.",
+      context:  { textPreview: params.text.slice(0, 200) },
+    }).catch(() => {});
+  }
+  // Clear regardless of sentiment — this check-in only expects one reply, and
+  // an unrelated later message must never be misread as answering it.
+  await db.collection("agent_sessions").doc(params.phone).update({
+    awaitingSatisfactionReply: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+}
+
 type FeedbackClaimResult = "claimed" | "busy" | "done" | "expired" | "not_ready";
 
 async function claimVisitFeedback(triggerId: string, leaseOwner: string): Promise<FeedbackClaimResult> {
@@ -1215,15 +1279,26 @@ const handleInboundInner = traceable(
       const webName      = (webSessionData.name      as string | undefined)?.trim() || "";
       const webFirstName = (webSessionData.firstName as string | undefined)?.trim() || "";
       const webLastName  = (webSessionData.lastName  as string | undefined)?.trim() || "";
+      // 2026-09-06: the /start web wizard now collects a recovery email
+      // up front (parity with Evia's SMS loop, which already requires one
+      // for both roles — onboardingContract.ts's CLIENT/CAREGIVER_REQUIRED_
+      // FIELDS). Seeding it here means the loop sees it as already collected
+      // and never asks again over text.
+      const webEmail     = (webSessionData.email    as string | undefined)?.trim() || "";
       const firstStep = webName
         ? (webRole === "caregiver" ? "caregiver_confirm_name" : "client_confirm_name")
         : (webRole === "caregiver" ? "caregiver_ask_name" : "client_ask_name");
       // Caregiver flow keys the name as `name`; client flow keys firstName (and
       // lastName when present) — matches the fields the ask-name handlers write.
-      const seededOnboardingData = webName
-        ? (webRole === "caregiver"
-            ? { name: webName }
-            : { firstName: webFirstName || webName, ...(webLastName ? { lastName: webLastName } : {}) })
+      const seededOnboardingData = (webName || webEmail)
+        ? {
+            ...(webName
+              ? (webRole === "caregiver"
+                  ? { name: webName }
+                  : { firstName: webFirstName || webName, ...(webLastName ? { lastName: webLastName } : {}) })
+              : {}),
+            ...(webEmail ? { email: webEmail } : {}),
+          }
         : undefined;
 
       // Returning user — phone already linked to an account WITH real onboarding
@@ -2760,6 +2835,15 @@ const handleInboundInner = traceable(
         });
       }
     }
+  }
+
+  // ── Family satisfaction check-in reply — sentiment routing (side effect only) ──
+  // No `return` here, unlike post-visit feedback above — deliberately, see
+  // handleSatisfactionCheckinReply's comment.
+  if ((session as any).awaitingSatisfactionReply && typeof session.userId === "string") {
+    await handleSatisfactionCheckinReply({
+      phone, clientId: session.userId, text,
+    }).catch((err) => console.error("handleSatisfactionCheckinReply error:", err));
   }
 
   // ── Pending irreversible-action approval — runtime-enforced HITL gate ──────

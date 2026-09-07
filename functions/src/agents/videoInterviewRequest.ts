@@ -132,12 +132,23 @@ export async function requestVideoInterview(
     const limit = await transaction.get(limitRef);
     const windowStartedAt = limit.data()?.windowStartedAt as admin.firestore.Timestamp | undefined;
     const inWindow = Boolean(windowStartedAt && now.toMillis() - windowStartedAt.toMillis() < DAY_MS);
-    const count = inWindow ? Number(limit.data()?.count ?? 0) : 0;
-    if (count >= MAX_REQUESTS_PER_DAY) {
+    // 2026-09-06: the cap is meant to stop a client from blasting requests at
+    // many DIFFERENT caregivers in one day, not to cap legitimate back-and-forth
+    // scheduling with a caregiver they're already talking to (e.g. Evia relaying
+    // a caregiver's counter-proposed time and re-submitting once the family
+    // agrees) — every round of that negotiation is a fresh request to the SAME
+    // caregiverId, and used to burn the same daily quota as spamming five
+    // strangers. Track distinct caregiverIds contacted today instead of a raw
+    // count: a caregiver already in today's set never counts against the cap.
+    const caregiverIds: string[] = inWindow
+      ? ((limit.data()?.caregiverIds as string[] | undefined) ?? [])
+      : [];
+    const alreadyContactedToday = caregiverIds.includes(caregiverId);
+    if (!alreadyContactedToday && caregiverIds.length >= MAX_REQUESTS_PER_DAY) {
       throw new VideoInterviewRequestError("resource-exhausted", "Daily interview request limit reached");
     }
     transaction.set(limitRef, {
-      count: count + 1,
+      caregiverIds: alreadyContactedToday ? caregiverIds : [...caregiverIds, caregiverId],
       windowStartedAt: inWindow ? windowStartedAt : now,
       updatedAt: now,
     });

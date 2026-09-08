@@ -56,10 +56,27 @@ vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unkno
 import {
   sendInterviewCompletionNudges,
   shouldNudgeInterviewCompletion,
+  formatPacificDateTime,
   NUDGE_DELAY_MS, MAX_NUDGES, RENUDGE_COOLDOWN_MS,
 } from "../interviewCompletionNudge";
 
 const NOW = 1_000_000_000_000;
+
+// 2026-09-08 (live-caught): the nudge message interpolated the raw UTC ISO
+// scheduledTime straight into the prompt — a 2026-09-08T00:00:00.000Z
+// interview (5pm Pacific on September 7th) got told back to the family as
+// "on September 8th", reading the UTC calendar date literally instead of
+// the family's actual local day.
+describe("formatPacificDateTime", () => {
+  it("renders a UTC midnight timestamp on its correct Pacific calendar day, not the UTC day", () => {
+    expect(formatPacificDateTime("2026-09-08T00:00:00.000Z")).toBe("Monday, September 7 at 5:00 PM");
+  });
+
+  it("falls back gracefully for missing or unparseable input", () => {
+    expect(formatPacificDateTime(undefined)).toBe("the scheduled time");
+    expect(formatPacificDateTime("not-a-date")).toBe("the scheduled time");
+  });
+});
 
 describe("shouldNudgeInterviewCompletion", () => {
   it("does not fire for a non-accepted status", () => {

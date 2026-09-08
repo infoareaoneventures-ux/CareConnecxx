@@ -124,6 +124,25 @@ describe("jobPostingFlow — anti-invention clause (U2, R1)", () => {
     expect(sendMessage.mock.calls[0][1]).toBe("Great question — Evia matches you with vetted local caregivers.");
   });
 
+  // 2026-09-08 (live-caught): this call sees only the current message, never
+  // the conversation transcript — including Evia's own prior outbound texts.
+  // A family replying to Evia's own interview-completion nudge ("can you
+  // make it complete") got forced into job-posting terms ("are you setting
+  // up a job posting?"), and asking directly "what interview do I have" got
+  // a confident, false "I haven't mentioned an interview — this is our first
+  // message!" Locks in the instruction that stops both: never claim
+  // something was/wasn't said before, and redirect rather than guess when
+  // the message is about a different topic entirely.
+  it("answerQuestionMidFlow's system prompt instructs an honest redirect instead of forcing an out-of-scope question into job-posting terms", async () => {
+    modelReplies("YES", "That sounds like something else — let's finish this first, and I'll help with that right after.");
+
+    await handleJobPostingStep(PHONE, CHAT, "can you make it complete", SESSION);
+
+    const answerSystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
+    expect(answerSystem).toContain("NEVER claim something was or wasn't mentioned before");
+    expect(answerSystem.toLowerCase()).toContain("let's finish this first");
+  });
+
   // 2026-09-07 (live-caught): the classification prompt used to judge
   // relevance "to the current question" without ever stating what that
   // question WAS — a context-free guess that misclassified short, valid

@@ -53,7 +53,8 @@ vi.mock("firebase-admin", () => {
 
 const sendMessage = vi.fn(async (..._a: unknown[]) => ({ message_id: "m1" }));
 vi.mock("../../linq/client", () => ({ sendMessage: (...a: unknown[]) => sendMessage(...a) }));
-vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async (opts: any) => opts.fallback ?? "msg") }));
+const generateCaraMessageMock = vi.fn(async (opts: any) => opts.fallback ?? "msg");
+vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: (...a: unknown[]) => (generateCaraMessageMock as any)(...a) }));
 vi.mock("../../safety/outputGuard", () => ({
   guardModelOutput: () => ({ ok: true }),
   ANTI_INVENTION_CLAUSE: "ANTI_INVENTION",
@@ -435,6 +436,42 @@ describe("jp_ask_location_environment", () => {
   });
 });
 
+// 2026-09-08 (live-caught): a bare "yes" confirming the final post got
+// misclassified by isQuestionOrOther as off-topic — the classifier's own
+// prompt hardcoded "someone else"/"another person" examples from the
+// recipients step, which had nothing to do with a YES/NO confirm and
+// distracted the model into answering a generic "let's get started" message
+// instead of ever reaching the actual post. The family saw a friendly-
+// sounding but wrong reply and the job silently never posted.
+describe("jp_confirm_post (live-caught: a bare 'yes' never actually posted the job)", () => {
+  const READY_JOB_DATA = {
+    ...SCHEDULED, careRecipients: [ROSIE], caregiversNeeded: 1,
+    streetAddress: "4746 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130",
+  };
+
+  it("a bare 'yes' posts the job — not misclassified as off-topic", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA, userId: UID });
+    modelReplies("NO", "YES");
+
+    await handleJobPostingStep(PHONE, CHAT, "yes", baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingStep).toBeUndefined();
+    expect(stored.jobPostingData).toBeUndefined();
+  });
+
+  it("the confirm-step classification prompt carries no leftover wording from an unrelated question", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA, userId: UID });
+    modelReplies("NO", "YES");
+
+    await handleJobPostingStep(PHONE, CHAT, "yes", baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA }));
+
+    const classifySystem = (messagesCreate.mock.calls[0][0] as { system: string }).system;
+    expect(classifySystem).not.toContain("someone else");
+    expect(classifySystem).toContain("Confirming whether to post this job");
+  });
+});
+
 describe("startJobPostingFlow", () => {
   it("kicks off at jp_ask_frequency (schedule questions run before who/where)", async () => {
     await startJobPostingFlow(PHONE, CHAT, baseSession());
@@ -442,5 +479,22 @@ describe("startJobPostingFlow", () => {
     expect(stored.jobPostingStep).toBe("jp_ask_frequency");
     expect(stored.jobPostingData).toEqual({});
     expect(String(sendMessage.mock.calls[0][1])).toContain("How often");
+  });
+
+  // 2026-09-08 (live-caught): the opening message used to pass
+  // describeWhoIsWho(onboardingData) as context — the ACCOUNT's original
+  // onboarding senior — before the flow has ever asked who THIS job is for
+  // (that's jp_ask_recipients, which runs after the schedule questions,
+  // matching the site's own wizard order). A family saying "I want to post a
+  // new job" got told "We're setting up care for Samira M" before ever being
+  // asked, even when posting for someone else entirely. The opening context
+  // must stay recipient-neutral.
+  it("the opening message never names or assumes a specific care recipient", async () => {
+    generateCaraMessageMock.mockClear();
+    await startJobPostingFlow(PHONE, CHAT, baseSession());
+
+    const opts = generateCaraMessageMock.mock.calls[0][0] as { context: string };
+    expect(opts.context).not.toContain("Rosie");
+    expect(opts.context.toLowerCase()).toContain("do not name or assume");
   });
 });

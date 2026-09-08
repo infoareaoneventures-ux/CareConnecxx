@@ -17,6 +17,20 @@ export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1 hour after scheduledTime, per
 export const MAX_NUDGES = 2; // "repeating maybe one or two" — one follow-up, then stop
 export const RENUDGE_COOLDOWN_MS = 3 * 60 * 60 * 1000; // space repeats a few hours apart, same day
 
+// Renders a UTC ISO timestamp in the family's local (Pacific — matches the
+// project's own convention elsewhere, e.g. morningBriefing's cron and
+// jobPostingFlow's "today" anchoring) day-of-week/date/time, so a message
+// that mentions when the interview was never reads off the wrong calendar
+// day just because UTC and Pacific fall on different dates.
+export function formatPacificDateTime(iso: string | undefined): string {
+  if (!iso) return "the scheduled time";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "the scheduled time";
+  const datePart = d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long", month: "long", day: "numeric" });
+  const timePart = d.toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
+  return `${datePart} at ${timePart}`;
+}
+
 /**
  * Pure decision: should this accepted interview get a completion nudge now?
  * Extracted so the freshness + repeat-count guard is unit-tested without
@@ -92,10 +106,18 @@ export const sendInterviewCompletionNudges = functions.pubsub
 
         const caregiverName = ((interview.caregiverName ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
 
+        // 2026-09-08 (live-caught): interview.scheduledTime is a raw UTC ISO
+        // string ("2026-09-08T00:00:00.000Z") — interpolated as-is, the model
+        // read the UTC calendar date literally and told the family their
+        // interview was "on September 8th" when it was actually 5pm Pacific
+        // on September 7th. Format in the family's local (Pacific) time before
+        // it ever reaches the prompt.
+        const scheduledLabel = formatPacificDateTime(interview.scheduledTime as string | undefined);
+
         const message = await generateCaraMessage({
           audience: "family",
           context:
-            `The family's video interview with ${caregiverName} was scheduled for ${interview.scheduledTime}, ` +
+            `The family's video interview with ${caregiverName} was scheduled for ${scheduledLabel}, ` +
             `which has now passed, but it's still marked "accepted" (not completed). Ask whether the interview ` +
             `happened, and offer to mark it complete or help reschedule if it didn't. One or two warm sentences.`,
           fallback:

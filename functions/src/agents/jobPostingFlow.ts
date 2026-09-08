@@ -5,7 +5,7 @@ import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./bu
 import { defaultJobTitle } from "./jobPostContract";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { describeWhoIsWho, allCareRecipients, recipientPlanKey } from "./careRecipients";
+import { allCareRecipients, recipientPlanKey } from "./careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
@@ -289,14 +289,25 @@ async function parseWithClaude(prompt: string, userText: string): Promise<string
 // since in isolation they can look like a fragment of a greeting or an
 // off-topic aside. Passing the actual question text fixes this at the source
 // (every call site below passes its own REASK/current-question copy).
+//
+// 2026-09-08 (live-caught, regression from the "who is this job for" fix
+// above): those "someone else"/"another person" examples were hardcoded
+// into THIS shared prompt, used across all 13 different questions in this
+// file (frequency, days, confirm-YES/NO, etc.) — a bare "yes" answering the
+// FINAL confirm question got misclassified as off-topic, anchored on
+// examples about naming a person that had nothing to do with what was
+// actually asked. Generalized to the underlying principle (a short/partial/
+// vague attempt still counts as a direct answer) without anchoring to any
+// one question's specific wording, so it applies correctly regardless of
+// which of the 13 questions is currently active.
 async function isQuestionOrOther(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
     `The question Evia just asked the family was: "${currentQuestion}"\n\n` +
-    "Reply YES if the family's message is a general question or off-topic comment that does NOT answer that question. " +
-    "Reply NO if it directly answers that question — including a short answer like a single word, a bare number, or a name from a list of options, " +
-    "and including a PARTIAL or VAGUE attempt to answer (e.g. \"someone else\", \"another person\", \"it's for someone new\" when asked who the job is for — " +
-    "these are direct answers even without a name yet; a separate follow-up question asks for the missing detail). " +
-    "Only reply YES for a genuine question or a comment that doesn't attempt to address what was asked at all.",
+    "Reply NO if the family's message is ANY attempt — even a single word, a bare number, or a short/partial/vague one — " +
+    "to address that specific question. A vague or incomplete attempt still counts as a direct answer (a follow-up question " +
+    "can ask for whatever detail is still missing) — it is NOT the same as asking something else or changing the subject. " +
+    "Reply YES only if the message is a genuine question, or a comment that does not attempt to address what was asked at all. " +
+    "Only reply YES or NO.",
     text
   );
   return result.toUpperCase().startsWith("Y");
@@ -341,6 +352,17 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
   // has been collected yet (jobSpecific === false), where its grounding is
   // actually correct instead of stale.
   const sharedProfile = jobSpecific ? "" : describeSharedProfile(session as any);
+  // 2026-09-08 (live-caught): this call sees ONLY the current message — no
+  // transcript of the conversation, including Evia's OWN prior messages. A
+  // family replying to Evia's own interview-completion nudge ("Can you make
+  // it complete") got answered as if it must be about the job posting
+  // (the only thing this prompt knows about), producing a confused
+  // "are you setting up a job posting, or something else?" reply — and when
+  // asked directly "what interview do I have," it confidently claimed
+  // "I haven't mentioned an interview... this is our first message!", which
+  // was flatly false (Evia's own prior text named the interview). This
+  // function has no way to know that — it must not pretend otherwise, and
+  // must not try to force an out-of-scope question into job-posting terms.
   const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
@@ -348,7 +370,12 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
       "You are Evia, a care coordinator helping a client post a care job. " +
       `They are setting up a job for ${recipientName}. ` +
       (sharedProfile ? `${sharedProfile} ` : "") +
-      "Answer briefly (1–2 sentences). Be warm and helpful. " +
+      "You see ONLY this one message, not the rest of the conversation — including anything Evia herself said earlier. " +
+      "NEVER claim something was or wasn't mentioned before; you cannot know that. " +
+      "If the message is clearly about something OTHER than the details of THIS job post (a different topic entirely — " +
+      "e.g. an interview, a booking, billing, a different job) — do not try to answer it or guess what it's about. Instead say " +
+      "plainly that it'll have to wait, e.g. \"That sounds like something else — let's finish this first, and I'll help with " +
+      "that right after.\" Otherwise answer their actual question about this job post briefly (1–2 sentences). Be warm and helpful. " +
       "NEVER write out a URL or web address — a URL you compose will be wrong and dead — and never claim you " +
       "just sent, resent, or will send a link: real links are delivered by the system as separate tappable messages. " +
       ANTI_INVENTION_CLAUSE,
@@ -394,21 +421,27 @@ export async function startJobPostingFlow(
   session: AgentSession
 ): Promise<void> {
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const onboardingData = (session as any).onboardingData as Record<string, unknown> ?? {};
-  // R11: ground who's who — the job is care FOR the recipient, never for the
-  // account holder posting it.
-  const whoIsWho = describeWhoIsWho(onboardingData);
   await db.collection("agent_sessions").doc(phone).update({
     jobPostingStep: "jp_ask_frequency",
     jobPostingData: {},
     stateExpiresAt: expiresAt,
   });
+  // 2026-09-08 (live-caught): this used to pass describeWhoIsWho(onboardingData)
+  // as grounding — the ACCOUNT's original onboarding senior — into the very
+  // FIRST message of a NEW job post, before the flow has any business knowing
+  // who this particular job is for. Matching the site's own wizard order
+  // (Step1Schedule before Step2WhoWhere), recipient is asked LATER
+  // (jp_ask_recipients); asserting a name here produced "we're setting up
+  // care for Samira M" even when the family was about to post for someone
+  // else entirely. Deliberately recipient-neutral until that step.
   const msg = await generateCaraMessage({
     audience: "family",
     language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-    context: (whoIsWho ? whoIsWho + " " : "") +
-      "Kicking off posting a new care job. First question: how often do they need help — just occasional (a day or two a week), part-time (3–4 days), or full-time (5+ days). Be warm and a little excited.",
-    fallback: `Let's post a new care job! 🎉\n\nHow often do you need help — just occasional (a day or two a week), part-time (3–4 days), or full-time (5+ days)?`,
+    context:
+      "Kicking off posting a new care job. Who this specific job is for hasn't been asked yet (that's a later question in this flow) — " +
+      "do NOT name or assume any care recipient. First question: how often is help needed — just occasional (a day or two a week), " +
+      "part-time (3–4 days), or full-time (5+ days). Be warm and a little excited.",
+    fallback: `Let's post a new care job!\n\nHow often do you need help — just occasional (a day or two a week), part-time (3–4 days), or full-time (5+ days)?`,
     maxTokens: 90,
   });
   await sendMessage(chatId, msg);
@@ -703,7 +736,7 @@ async function handleJpAskLocationEnvironment(
   await mergeJobData(phone, { petsInHome, smokingHousehold });
   await updateJobStep(phone, "jp_ask_care_needs");
   await sendMessage(chatId,
-    `Got it — ${petsInHome ? "pets ✓" : "no pets"}, ${smokingHousehold ? "smoking ✓" : "no smoking"}.\n\n${await careNeedsQuestion(phone)}`
+    `Got it — ${petsInHome ? "pets, yes" : "no pets"}, ${smokingHousehold ? "smoking, yes" : "no smoking"}.\n\n${await careNeedsQuestion(phone)}`
   );
 }
 
@@ -941,7 +974,7 @@ async function handleJpAskCareNeeds(
   await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel });
   await updateJobStep(phone, "jp_ask_rate");
   await sendMessage(chatId,
-    `${needsLabel} — great choices! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
+    `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`
   );
 }
 
@@ -1131,19 +1164,21 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const needsLabel = careNeeds.length > 0 ? careNeeds.join(", ") : "General care";
   const locationLabel = street ? `${street}, ${city}${city && state ? " " : ""}${state}`.trim() : "TBD";
 
+  // 2026-09-08 (Hamse's call): no emojis — matches the site's own Step6Review.tsx,
+  // which renders this same summary as plain labeled text.
   return [
-    title ? `📌 Title: ${title}` : "",
-    `👤 For: ${recipientsLabel}`,
-    `🧑‍⚕️ Caregivers needed: ${caregiversNeeded}`,
-    `📍 Location: ${locationLabel}`,
-    `📅 Start: ${formatDateForDisplay(startDate)}`,
-    `🔄 Frequency: ${freqLabel[frequency] ?? frequency}`,
-    `📆 Days: ${daysLabel}`,
-    `⏰ Time: ${timesLabel}`,
-    `🩺 Care needs: ${needsLabel}`,
-    `💪 Care level: ${careLevel.charAt(0).toUpperCase() + careLevel.slice(1)}`,
-    `💵 Rate: ${rateLabel} (${payMethod})`,
-    `🐾 Pets: ${pets} | 🚬 Smoking: ${smoking}`,
-    desc ? `📝 "${desc}"` : "",
+    title ? `Title: ${title}` : "",
+    `For: ${recipientsLabel}`,
+    `Caregivers needed: ${caregiversNeeded}`,
+    `Location: ${locationLabel}`,
+    `Start: ${formatDateForDisplay(startDate)}`,
+    `Frequency: ${freqLabel[frequency] ?? frequency}`,
+    `Days: ${daysLabel}`,
+    `Time: ${timesLabel}`,
+    `Care needs: ${needsLabel}`,
+    `Care level: ${careLevel.charAt(0).toUpperCase() + careLevel.slice(1)}`,
+    `Rate: ${rateLabel} (${payMethod})`,
+    `Pets: ${pets} | Smoking: ${smoking}`,
+    desc ? `"${desc}"` : "",
   ].filter(Boolean).join("\n");
 }

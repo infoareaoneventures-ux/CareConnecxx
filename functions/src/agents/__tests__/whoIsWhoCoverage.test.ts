@@ -45,7 +45,17 @@ const HELPER_WIRED: Array<[string, number]> = [
   ["../../linq/webhooks.ts",                    1], // awaiting-supply hold reply
   ["../../linq/routeClient.ts",                 2], // pre-shift add-tasks + decline confirmations
   ["../../triggers/jobApplicationTriggers.ts",  1],
-  ["../jobPostingFlow.ts",                      1],
+  // jobPostingFlow.ts deliberately dropped 2026-09-08: unlike every other file
+  // here, a job post's recipient is CHOSEN mid-conversation and can differ
+  // from the account's fixed onboarding senior (posting for someone new, or
+  // for a second household member) — describeWhoIsWho's static, account-level
+  // framing actively caused misattribution here (a job being set up for a new
+  // person got described using the wrong, stale on-file senior; a mid-flow
+  // answer's "for X" line got contradicted by describeWhoIsWho's own "never
+  // for X" sentence right after it). Replaced with resolveJobRecipient /
+  // recipientsDisplayName, which resolve the job's ACTUAL in-progress
+  // recipient dynamically per call — strictly more correct for this file's
+  // multi-recipient nature than the static helper the other files use.
   ["../permissionsConversation.ts",             1],
   ["../onboardingConversation.ts",              2], // pre-checkout msg7 + link-sent reassurance
 ];

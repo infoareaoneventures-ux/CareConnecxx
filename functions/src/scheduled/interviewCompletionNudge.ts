@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -14,21 +15,30 @@ const db = admin.firestore();
 export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1 hour after scheduledTime, per Hamse
 // Client-only, mirrors the site's own "Mark as Completed" action being a
 // client-side control — the caregiver has no equivalent completion step here.
-export const MAX_NUDGES = 2; // "repeating maybe one or two" — one follow-up, then stop
-export const RENUDGE_COOLDOWN_MS = 3 * 60 * 60 * 1000; // space repeats a few hours apart, same day
+// 2026-09-08 (Hamse's call): no hard attempt cap — a hiring-relevant decision
+// sitting unresolved shouldn't just go silent forever after a couple of
+// misses. Matches shouldNudgeStaleApplicants/shouldNudgePendingTimesheets,
+// which never give up either, just cool down between repeats. The cooldown
+// itself is widened to match their cadence (48h) instead of the old 3h —
+// spacing that made sense capped at 2 total sends would be naggy repeated
+// indefinitely.
+export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // space repeats ~2 days apart, same as stale-applicant/timesheet nudges
 
 // Renders a UTC ISO timestamp in the family's local (Pacific — matches the
 // project's own convention elsewhere, e.g. morningBriefing's cron and
 // jobPostingFlow's "today" anchoring) day-of-week/date/time, so a message
 // that mentions when the interview was never reads off the wrong calendar
 // day just because UTC and Pacific fall on different dates.
+//
+// 2026-09-08: thinned to a wrapper around the shared scheduledTime.ts
+// helpers (parseScheduledTimeMs + formatInterviewTime) — those already do
+// this exact conversion (used by list_interviews for the same reason), and
+// having two independent implementations is how one of them drifts.
 export function formatPacificDateTime(iso: string | undefined): string {
   if (!iso) return "the scheduled time";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "the scheduled time";
-  const datePart = d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long", month: "long", day: "numeric" });
-  const timePart = d.toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
-  return `${datePart} at ${timePart}`;
+  const ms = parseScheduledTimeMs(iso);
+  if (Number.isNaN(ms)) return "the scheduled time";
+  return formatInterviewTime(ms);
 }
 
 /**
@@ -39,14 +49,12 @@ export function formatPacificDateTime(iso: string | undefined): string {
 export function shouldNudgeInterviewCompletion(p: {
   status:        string;
   scheduledMs:   number | null;
-  nudgeCount:    number;
   lastNudgedMs:  number | null;
   nowMs:         number;
 }): boolean {
   if (p.status !== "accepted") return false;
   if (p.scheduledMs === null) return false;
   if (p.nowMs - p.scheduledMs < NUDGE_DELAY_MS) return false;
-  if (p.nudgeCount >= MAX_NUDGES) return false;
   if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
   return true;
 }
@@ -55,8 +63,9 @@ export function shouldNudgeInterviewCompletion(p: {
  * Interview-completion nudge. An accepted interview whose scheduledTime has
  * passed gets asked about, 1h later — "did it happen?" — so a family doesn't
  * have to remember to go mark it complete, and stale "accepted" interviews
- * don't linger forever. Repeats at most once (MAX_NUDGES=2 total sends) if
- * ignored, spaced a few hours apart; never a third attempt.
+ * don't linger forever. Repeats every ~48h for as long as it stays
+ * unresolved — no hard cap, so a busy family missing the first couple of
+ * check-ins doesn't mean the interview gets forgotten forever.
  *
  * Read-only except the send + a per-interview nudge counter/timestamp; the
  * nudge does NOT mark anything complete itself — a "yes" reply routes through
@@ -85,7 +94,6 @@ export const sendInterviewCompletionNudges = functions.pubsub
         if (!shouldNudgeInterviewCompletion({
           status: interview.status as string,
           scheduledMs: Number.isNaN(scheduledMs) ? null : scheduledMs,
-          nudgeCount,
           lastNudgedMs,
           nowMs,
         })) continue;
@@ -132,8 +140,8 @@ export const sendInterviewCompletionNudges = functions.pubsub
           canDrop:     true,
         });
         // Suppressed (proactive daily cap, wait-tool, opt-out) — not an error.
-        // Don't burn one of the MAX_NUDGES attempts on a message that never
-        // went out; retry on the next scheduled run instead.
+        // Don't stamp completionNudgedAt for a message that never went out;
+        // retry on the next scheduled run instead.
         if (!sent) continue;
 
         await doc.ref.update({

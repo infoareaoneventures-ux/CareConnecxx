@@ -107,7 +107,7 @@ export default function ClientCaregiverProfile({
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(!passedData);
   const [showInterviewModal, setShowInterviewModal] = useState(false);
-  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
+  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [isBooked, setIsBooked] = useState(false);
   const [hasPastBooking, setHasPastBooking] = useState(false);
   const [hasCompletedInterview, setHasCompletedInterview] = useState(false);
@@ -133,7 +133,7 @@ export default function ClientCaregiverProfile({
     const uid = auth!.currentUser?.uid;
     if (uid) {
       dbService.getJobPostsByClient(uid).then(posts => {
-        setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
+        setClientOpenPosts(posts.filter((p: any) => p.status === 'open').map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date, createdAt: p.createdAt })));
       }).catch(() => {});
 
       // Check for an existing accepted booking with this caregiver that STILL

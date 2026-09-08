@@ -109,7 +109,7 @@ export default function FindCaregivers() {
   const { blockedIds } = useCareConnex();
   const [viewingCaregiver, setViewingCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
   const [interviewCaregiver, setInterviewCaregiver] = useState<(Caregiver & { matchScore?: AIMatchScore }) | null>(null);
-  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
+  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [bookedCaregiverIds, setBookedCaregiverIds] = useState<Set<string>>(new Set());
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
   const [rebookCaregiverIds, setRebookCaregiverIds] = useState<Set<string>>(new Set());
@@ -219,7 +219,7 @@ export default function FindCaregivers() {
 
       // Populate clientOpenPosts from the same query
       const openPosts = postsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-      setClientOpenPosts(openPosts.map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date })));
+      setClientOpenPosts(openPosts.map((p: any) => ({ id: p.id, title: p.title, startDate: p.startDate || p.date, createdAt: p.createdAt })));
 
       const seen = new Set<string>();
       const locs: { lat: number; lng: number }[] = [];

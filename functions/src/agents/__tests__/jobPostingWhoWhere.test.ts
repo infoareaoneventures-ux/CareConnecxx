@@ -59,12 +59,11 @@ vi.mock("../../safety/outputGuard", () => ({
   guardModelOutput: () => ({ ok: true }),
   ANTI_INVENTION_CLAUSE: "ANTI_INVENTION",
 }));
-const describeSharedProfileMock = vi.fn(() => "");
+const describeSharedProfileMock = vi.fn((..._a: unknown[]) => "");
 vi.mock("../profileBriefing", () => ({ describeSharedProfile: (...a: unknown[]) => describeSharedProfileMock(...a) }));
 vi.mock("../buildJobPost", () => ({
   buildAndSaveJobPost: vi.fn(async () => ({ jobId: "job-1", notifiedCount: 0 })),
-  jobLiveMessage: vi.fn(() => "live"),
-  notifiedOutcomePhrase: vi.fn(() => "notified"),
+  jobLiveMessage: "live",
 }));
 const messagesCreate = vi.fn();
 vi.mock("../../utils/claudeClient", () => ({

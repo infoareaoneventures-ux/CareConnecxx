@@ -32,7 +32,12 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
 }) => {
     const [selectedDate, setSelectedDate] = useState('');
     const [selectedTime, setSelectedTime] = useState('');
-    const [interviewType, setInterviewType] = useState<'video' | 'phone' | 'in-person'>('video');
+    // 2026-09-08 (Hamse's call): Phone and In-Person were removed — the actual
+    // link-generation trigger (onVideoInterviewLinkEnsure) never checked
+    // interviewType at all and always generates a Google Meet link regardless,
+    // matching the product's design (Meet links only, no phone bridge or
+    // in-person flow exists). Every interview is a video call; no selector needed.
+    const interviewType = 'video' as const;
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedJobId, setSelectedJobId] = useState(preselectedJobId || '');
@@ -194,33 +199,6 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                             {(caregiver.rating != null) && (
                                 <p className="text-sm text-accent-500">★ {Number(caregiver.rating).toFixed(1)}</p>
                             )}
-                        </div>
-                    </div>
-
-                    {/* Interview Type Selection */}
-                    <div>
-                        <label className="flex items-center text-sm font-bold text-slate-700 mb-3">
-                            Interview Type
-                        </label>
-                        <div className="grid grid-cols-3 gap-3">
-                            {[
-                                { id: 'video', label: 'Video Call', icon: '📹' },
-                                { id: 'phone', label: 'Phone', icon: '📞' },
-                                { id: 'in-person', label: 'In Person', icon: '🏠' }
-                            ].map((type) => (
-                                <button
-                                    key={type.id}
-                                    onClick={() => setInterviewType(type.id as 'video' | 'phone' | 'in-person')}
-                                    className={`p-3 rounded-xl border transition-all ${
-                                        interviewType === type.id
-                                            ? 'border-primary-500 bg-primary-50 text-primary-700'
-                                            : 'border-slate-200 hover:border-slate-300'
-                                    }`}
-                                >
-                                    <span className="text-2xl mb-1 block">{type.icon}</span>
-                                    <span className="text-sm font-medium">{type.label}</span>
-                                </button>
-                            ))}
                         </div>
                     </div>
 

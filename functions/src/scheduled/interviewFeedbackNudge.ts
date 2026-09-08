@@ -19,8 +19,13 @@ const db = admin.firestore();
 export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1 hour after completedAt
 // Client-only — the fit decision is the family's call, same as the website's
 // "Not Selected" / "Send Booking" buttons only ever appearing on their side.
-export const MAX_NUDGES = 2; // one follow-up, then stop — mirrors the completion nudge
-export const RENUDGE_COOLDOWN_MS = 3 * 60 * 60 * 1000; // space repeats a few hours apart
+// 2026-09-08 (Hamse's call): no hard attempt cap, matching
+// interviewCompletionNudge.ts's own fix and shouldNudgeStaleApplicants/
+// shouldNudgePendingTimesheets — a hiring decision sitting unresolved
+// shouldn't go silent forever after a couple of misses. Cooldown widened to
+// match their ~48h cadence for the same reason (repeated indefinitely, the
+// old 3h spacing would be naggy).
+export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // space repeats ~2 days apart
 
 /**
  * Pure decision: should this completed-but-undecided interview get a
@@ -30,7 +35,6 @@ export function shouldNudgeInterviewFeedback(p: {
   status:           string;
   feedbackSubmitted: boolean;
   completedMs:      number | null;
-  nudgeCount:       number;
   lastNudgedMs:     number | null;
   nowMs:            number;
 }): boolean {
@@ -38,7 +42,6 @@ export function shouldNudgeInterviewFeedback(p: {
   if (p.feedbackSubmitted) return false;
   if (p.completedMs === null) return false;
   if (p.nowMs - p.completedMs < NUDGE_DELAY_MS) return false;
-  if (p.nudgeCount >= MAX_NUDGES) return false;
   if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
   return true;
 }
@@ -48,7 +51,7 @@ export function shouldNudgeInterviewFeedback(p: {
  * asked about, 1h later — "did you want to move forward, or pass?" — so a
  * skipped in-conversation ask (or a website "Mark as Completed" click with no
  * follow-up) doesn't leave the interview stuck with no decision forever.
- * Repeats at most once (MAX_NUDGES=2 total sends), spaced a few hours apart.
+ * Repeats every ~48h for as long as it stays undecided — no hard cap.
  *
  * Read-only except the send + a per-interview nudge counter/timestamp; the
  * nudge does NOT record any decision itself — a reply routes through Evia's
@@ -78,7 +81,6 @@ export const sendInterviewFeedbackNudges = functions.pubsub
           status: interview.status as string,
           feedbackSubmitted: interview.feedbackSubmitted === true,
           completedMs: Number.isNaN(completedMs) ? null : completedMs,
-          nudgeCount,
           lastNudgedMs,
           nowMs,
         })) continue;
@@ -117,8 +119,8 @@ export const sendInterviewFeedbackNudges = functions.pubsub
           canDrop:     true,
         });
         // Suppressed (proactive daily cap, wait-tool, opt-out) — not an error.
-        // Don't burn one of the MAX_NUDGES attempts on a message that never
-        // went out; retry on the next scheduled run instead.
+        // Don't stamp feedbackNudgedAt for a message that never went out;
+        // retry on the next scheduled run instead.
         if (!sent) continue;
 
         await doc.ref.update({

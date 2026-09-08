@@ -96,6 +96,10 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   family_group_participant_add_failed: { included: false },
 
   // ── excluded: user-relayed (the user's own action, not Evia's) ───────────
+  // conversation_deleted: the family clearing their own Inbox view (mcp
+  // delete_conversation, mirrors the website's "Delete conversation" menu
+  // action) — their own housekeeping, not an action Evia took for them.
+  conversation_deleted:       { included: false },
   review_submitted:           { included: false },
   care_journal_created:       { included: false },
   favorite_saved:             { included: false },

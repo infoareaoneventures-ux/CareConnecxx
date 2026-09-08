@@ -175,6 +175,18 @@ describe("U7: current-inbound evidence block (R19)", () => {
     expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("CURRENT MESSAGE is SUPPORTED");
     expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("CURRENT MESSAGE");
   });
+
+  // 2026-09-08 (live-caught): "are you sure the 5pm interview was completed?"
+  // repeats the disputed claim's exact words back as a challenge, not an
+  // assertion — Evia doubled down on the (wrong, fabricated-date) claim
+  // instead of the verifier catching it, because the CURRENT MESSAGE rule
+  // above didn't distinguish a user asserting a fact from a user questioning
+  // one. Locks in the fix: a challenge must never count as confirmation.
+  it("the verifier prompt instructs that a challenge to a fact is not confirmation of it", () => {
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("QUESTIONS or CHALLENGES a fact");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("skepticism is not support");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("never one that merely asks about or challenges");
+  });
 });
 
 describe("U7: parseGroundingVerdictTyped (strict, R19)", () => {

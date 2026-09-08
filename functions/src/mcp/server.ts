@@ -19,7 +19,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
-import { apptStartMs, businessTodayStr } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
@@ -2297,7 +2297,11 @@ export const MCP_TOOLS: McpTool[] = [
     name: "list_interviews",
     description:
       "List scheduled/pending video or phone interviews for the caller. Pass clientId for a family's interviews or " +
-      "caregiverId for a caregiver's. Use before cancel_interview or when someone asks 'when is my interview?'.",
+      "caregiverId for a caregiver's. Use before cancel_interview or when someone asks 'when is my interview?'. " +
+      "Each result's scheduledTimeLocal is already in the family's local time (e.g. 'Monday, September 7 at 5:00 PM') " +
+      "— always read dates/times from scheduledTimeLocal, never compute them yourself from the raw scheduledTime " +
+      "(a UTC timestamp); converting several of these by hand is exactly how a real reply once spliced one " +
+      "interview's real date onto a different interview's real time.",
     input_schema: {
       type: "object",
       properties: {
@@ -8345,6 +8349,21 @@ async function executeToolCall(
 
     // ── list_interviews ─────────────────────────────────────────────────────
     if (name === "list_interviews") {
+      // 2026-09-08 (live-caught): scheduledTime is a raw UTC ISO string
+      // ("2026-09-08T00:00:00.000Z" for what's actually 5pm Pacific on the
+      // 7th). Asked to reason over a LIST of several similarly-timed
+      // interviews with the same caregiver, the model has to mentally
+      // convert every one of them from UTC before it can say which is
+      // "today" or "at 5pm" — exactly the kind of per-item timezone
+      // arithmetic that produced a real answer splicing one interview's real
+      // date onto a different interview's real time. Precomputing a
+      // human-readable Pacific label server-side (same helper the interview
+      // reminders use) removes that mental-math step entirely.
+      const scheduledTimeLocal = (iso: unknown): string | null => {
+        if (typeof iso !== "string" || !iso) return null;
+        const ms = parseScheduledTimeMs(iso);
+        return Number.isNaN(ms) ? null : formatInterviewTime(ms);
+      };
       const liClientId    = input.clientId as string | undefined;
       const liCaregiverId = input.caregiverId as string | undefined;
       const liStatus      = input.status as string | undefined;
@@ -8383,6 +8402,7 @@ async function executeToolCall(
             caregiverId:   iv.caregiverId ?? null,
             caregiverName: iv.caregiverName ?? null,
             scheduledTime: iv.scheduledTime ?? null,
+            scheduledTimeLocal: scheduledTimeLocal(iv.scheduledTime),
             interviewType: iv.interviewType ?? "video",
             status:        iv.status ?? "scheduled",
             callUrl:       iv.callUrl ?? null,
@@ -8399,6 +8419,7 @@ async function executeToolCall(
             caregiverId:   iv.caregiverId ?? null,
             caregiverName: iv.caregiverName ?? null,
             scheduledTime: iv.scheduledTime ?? null,
+            scheduledTimeLocal: scheduledTimeLocal(iv.scheduledTime),
             interviewType: "video",
             status:        iv.status ?? "scheduled",
             callUrl:       iv.callUrl ?? null,

@@ -56,7 +56,7 @@ vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: (...a: unkno
 import {
   sendInterviewFeedbackNudges,
   shouldNudgeInterviewFeedback,
-  NUDGE_DELAY_MS, MAX_NUDGES, RENUDGE_COOLDOWN_MS,
+  NUDGE_DELAY_MS, RENUDGE_COOLDOWN_MS,
 } from "../interviewFeedbackNudge";
 
 const NOW = 1_000_000_000_000;
@@ -64,63 +64,65 @@ const NOW = 1_000_000_000_000;
 describe("shouldNudgeInterviewFeedback", () => {
   it("does not fire for a non-completed status", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "accepted", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "accepted", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
     expect(shouldNudgeInterviewFeedback({
-      status: "declined", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "declined", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("does not fire once feedback has already been submitted", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: true, completedMs: NOW - NUDGE_DELAY_MS - 1, nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", feedbackSubmitted: true, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("does not fire before completedAt has passed by NUDGE_DELAY_MS", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS - 1), nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS - 1), lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("fires once the delay has elapsed on a completed, undecided interview", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), lastNudgedMs: null, nowMs: NOW,
     })).toBe(true);
   });
 
   it("does not fire with no parseable completedAt", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: null, nudgeCount: 0, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", feedbackSubmitted: false, completedMs: null, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("respects the repeat cooldown", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), nudgeCount: 1,
+      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS - 1), nowMs: NOW,
     })).toBe(false);
   });
 
   it("fires the repeat once the cooldown elapses", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), nudgeCount: 1,
+      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
     })).toBe(true);
   });
 
-  it("never sends more than MAX_NUDGES total", () => {
+  // 2026-09-08: no hard cap — keeps firing every ~48h no matter how many
+  // times it's already nudged, as long as the cooldown has elapsed.
+  it("still fires after many prior nudges, once the cooldown has elapsed", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), nudgeCount: MAX_NUDGES,
+      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
-    })).toBe(false);
+    })).toBe(true);
   });
 });
 
 // 2026-09-07 (live-caught, same root cause as interviewCompletionNudge): a
 // suppressed send (shared MAX_PROACTIVE_PER_DAY cap, opt-out, wait-tool) was
-// still recorded as a delivered nudge, permanently burning the interview's
-// limited MAX_NUDGES attempts on messages that never reached the phone.
+// still recorded as a delivered nudge, even though the message never reached
+// the phone.
 describe("sendInterviewFeedbackNudges — only counts a nudge when it actually sends", () => {
   function seedInterview(id: string, data: Record<string, unknown> = {}) {
     store.interviews.set(id, {
@@ -175,9 +177,9 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     ]);
   });
 
-  it("retries next run instead of burning MAX_NUDGES on a suppressed send", async () => {
+  it("retries next run instead of advancing the counter on a suppressed send", async () => {
     sendSpy.mockResolvedValueOnce(false);
-    seedInterview("iv-retry", { feedbackNudgeCount: MAX_NUDGES - 1 });
+    seedInterview("iv-retry", { feedbackNudgeCount: 5 });
     seedSession("+15550000003");
 
     await (sendInterviewFeedbackNudges as any)();

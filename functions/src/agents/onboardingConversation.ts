@@ -5647,10 +5647,9 @@ async function handleJobConfirmPrefill(
   try {
     const refreshed  = await db.collection("agent_sessions").doc(phone).get();
     const onboarding = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
-    const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
-    const city  = (onboarding.city as string) ?? null;
+    const { jobId } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
     await updateSession(phone, { onboardingStep: "client_ask_permissions" });
-    await sendMessage(chatId, jobLiveMessage(city, notifiedCount));
+    await sendMessage(chatId, jobLiveMessage);
     const { sendClientPermissionsFlow } = await import("./permissionsConversation");
     const freshSnap = await db.collection("agent_sessions").doc(phone).get();
     await sendClientPermissionsFlow(phone, chatId, freshSnap.data() as AgentSession);
@@ -5970,12 +5969,11 @@ async function handleJobConfirmPost(
       const jobData   = (refreshed.data()?.onboardingData ?? {}) as Record<string, unknown>;
       const onboarding = jobData; // same object holds both
 
-      const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
+      const { jobId } = await buildAndSaveJobPost({ uid, phone, onboardingData: onboarding, jobData: onboarding });
 
-      const city = (onboarding.city as string) ?? null;
       await updateSession(phone, { onboardingStep: "client_ask_permissions" });
       await sendMessage(chatId,
-        `${jobLiveMessage(city, notifiedCount)}\n\n` +
+        `${jobLiveMessage}\n\n` +
         `You can also browse caregivers and manage everything at ${APP_URL}/client/dashboard`
       );
 

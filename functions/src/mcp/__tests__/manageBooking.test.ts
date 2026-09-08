@@ -41,15 +41,6 @@ const hoisted = vi.hoisted(() => {
     return ref;
   };
 
-  const makeBatch = () => ({
-    update: (ref: any, data: any) => {
-      updates.push({ path: ref.path, data });
-      docState.set(ref.path, { ...(docState.get(ref.path) ?? {}), ...data });
-    },
-    set: (ref: any, data: any) => { sets.push({ path: ref.path, data }); docState.set(ref.path, data); },
-    commit: vi.fn(async () => undefined),
-  });
-
   return {
     docState, collState, sets, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),

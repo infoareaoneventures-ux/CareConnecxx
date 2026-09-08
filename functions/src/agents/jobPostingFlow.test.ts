@@ -43,9 +43,8 @@ vi.mock("../linq/client", () => ({
 // buildJobPost drags in the notifications/bookingExecutor chain (module-level
 // admin.apps access) — none of it is exercised by these step-level tests.
 vi.mock("./buildJobPost", () => ({
-  buildAndSaveJobPost:   vi.fn(async () => ({ jobId: "job-1", notifiedCount: 0 })),
-  jobLiveMessage:        vi.fn(() => "Your job post is live."),
-  notifiedOutcomePhrase: vi.fn(() => "no caregivers notified yet"),
+  buildAndSaveJobPost: vi.fn(async () => ({ jobId: "job-1", notifiedCount: 0 })),
+  jobLiveMessage:       "Your care request is submitted! I'll reach out as soon as applications start coming in.",
 }));
 
 vi.mock("../utils/claudeClient", () => ({
@@ -264,5 +263,33 @@ describe("jp_ask_start (live-caught: model refusal stored as the literal start d
       expect.objectContaining({ jobPostingData: expect.objectContaining({ jobStartDate: "whenever works" }) })
     );
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("I need a message");
+  });
+});
+
+// 2026-09-08 (live-caught): a brand-new address's zip code was captured and
+// stored correctly (city/state resolve from it) but never shown anywhere in
+// the job summary — unlike the site's own review screen, which always
+// includes it in "street, city, state zip" order — leaving the family unable
+// to tell from the summary whether the zip they typed actually landed.
+describe("buildJobSummary (live-caught: captured zip code never shown)", () => {
+  it("includes the zip code in the location line of the confirm summary", async () => {
+    hoisted.docGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({
+        jobPostingData: {
+          jobFrequency: "occasional",
+          streetAddress: "1 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130",
+        },
+      }),
+    });
+    modelReplies("NO", "MAYBE");
+
+    await handleJobPostingStep(PHONE, CHAT, "not sure", {
+      ...SESSION,
+      jobPostingStep: "jp_confirm_post",
+      jobPostingData: { jobFrequency: "occasional" },
+    });
+
+    expect(String(sendMessage.mock.calls[0][1])).toContain("1 Campbell Ave, San Jose, CA 95130");
   });
 });

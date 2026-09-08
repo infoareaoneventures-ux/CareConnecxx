@@ -1,7 +1,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
-import { buildAndSaveJobPost, jobLiveMessage, notifiedOutcomePhrase } from "./buildJobPost";
+import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -784,7 +784,7 @@ async function careNeedsQuestion(phone: string): Promise<string> {
   // 2026-09-08 (live-caught): "you" is second person — "does you need" reads
   // as broken grammar; every other name here is third person ("does Samira
   // need"). needCareVerb (below) picks the right conjugation either way.
-  return `What kind of care ${needCareVerb(name)} ${name} need? Just tell me in your own words — things like personal care ` +
+  return `What kind of care ${needCareVerb(name)} ${name} need? Things like personal care ` +
     `(bathing, grooming), mobility help, memory care, medication reminders, meals, rides, companionship, ` +
     `or light housekeeping.`;
 }
@@ -1135,7 +1135,7 @@ async function handleJpConfirmPost(
   try {
     const onboardingData = ((session as any).onboardingData as Record<string, unknown>) ?? {};
     const jobData        = await getJobData(phone);
-    const { jobId, notifiedCount } = await buildAndSaveJobPost({ uid, phone, onboardingData, jobData });
+    await buildAndSaveJobPost({ uid, phone, onboardingData, jobData });
 
     await db.collection("agent_sessions").doc(phone).update({
       jobPostingStep: admin.firestore.FieldValue.delete(),
@@ -1143,13 +1143,17 @@ async function handleJpConfirmPost(
       stateExpiresAt: admin.firestore.FieldValue.delete(),
     });
 
-    const city = ((jobData as any)?.city ?? (onboardingData as any)?.city ?? null) as string | null;
-    const outcome = notifiedOutcomePhrase(city, notifiedCount);
+    // 2026-09-08 (Hamse's call): one honest, universal message — see
+    // jobLiveMessage's own comment for why this no longer varies by
+    // notifiedCount. No Job ID line either — it's a raw Firestore doc id (in
+    // fact the client's own account uid, per buildJobPost.ts's
+    // job_posts/{uid} keying — not a distinct per-job identifier at all),
+    // meaningless to a family and never shown anywhere on the site either.
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
       language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-      context: `The family's care request just went live. Reflect this EXACT outcome truthfully — do not overstate it: ${outcome}. Tell them you'll let them know when applications come in, and mention they can view their post anytime by texting you "show my jobs". You MUST include the exact phrase "show my jobs" and end with the line "Job ID: ${jobId}".`,
-      fallback: `${jobLiveMessage(city, notifiedCount)}\n\nYou can view your post any time by texting me "show my jobs".\n\nJob ID: ${jobId}`,
+      context: `The family's care request was just submitted. Tell them you'll reach out as soon as applications start coming in, and mention they can view their post anytime by texting you "show my jobs". You MUST include the exact phrase "show my jobs".`,
+      fallback: `${jobLiveMessage}\n\nYou can view your post any time by texting me "show my jobs".`,
       maxTokens: 130,
     }));
   } catch (err) {
@@ -1175,6 +1179,7 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const street    = (jobData.streetAddress as string) ?? "";
   const city      = (jobData.city as string) ?? "";
   const state     = (jobData.state as string) ?? "";
+  const zipCode   = (jobData.zipCode as string) ?? "";
   const startDate = (jobData.jobStartDate  as string) ?? "TBD";
   const frequency = (jobData.jobFrequency  as string) ?? "occasional";
   const days      = (jobData.jobDays       as string[]) ?? [];
@@ -1195,7 +1200,14 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     ? times.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(" & ")
     : "TBD";
   const needsLabel = careNeeds.length > 0 ? careNeeds.join(", ") : "General care";
-  const locationLabel = street ? `${street}, ${city}${city && state ? " " : ""}${state}`.trim() : "TBD";
+  // 2026-09-08 (live-caught): the zip code was captured and stored correctly
+  // (city/state resolve from it via lookupZipPlace) but never shown in this
+  // summary at all, unlike the site's own review screen (Step6Review.tsx),
+  // which always includes it — matching that exact "street, city, state zip"
+  // composition so the family can see it was captured, not just trust it was.
+  const locationLabel = street
+    ? [street, city, `${state} ${zipCode}`.trim()].filter(Boolean).join(", ")
+    : "TBD";
 
   // 2026-09-08 (Hamse's call): no emojis — matches the site's own Step6Review.tsx,
   // which renders this same summary as plain labeled text.

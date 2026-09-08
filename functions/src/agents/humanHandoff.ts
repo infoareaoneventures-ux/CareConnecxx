@@ -82,6 +82,17 @@ export function shouldHandOffToHuman(args: {
 // SUPPORTED, garbage, or checker error → send normally (fail-open to the
 // pre-gate behavior) and log the candidate for tuning.
 
+// 2026-09-08 (live-caught): a family asked "are you sure the 5pm interview was
+// completed?" after Evia wrongly claimed it was (and even fabricated a date,
+// splicing one real interview's date onto another's time) — Evia doubled down
+// with "Yes, I checked, and the 5:00pm interview... is marked completed,"
+// still wrong, contradicting the live record. The CURRENT MESSAGE rule below
+// (R19) only ever considered whether the user's message CONTAINS the same
+// words as the claim — "are you sure the 5pm interview was completed" repeats
+// that exact phrase, so a verifier reading the rule literally could count the
+// user's own skepticism as if it were the user ASSERTING the fact, precisely
+// backwards. A challenge is never confirmation, however closely it echoes the
+// disputed claim's wording.
 export const HANDOFF_GROUNDING_SYSTEM_PROMPT =
   "You are a fact-check gate for an SMS care assistant. You get the assistant's CONTEXT " +
   "(cached account, visit, and care data it was given), the RECENT CONVERSATION, the user's " +
@@ -91,17 +102,22 @@ export const HANDOFF_GROUNDING_SYSTEM_PROMPT =
   "scheduled/confirmed/cancelled/paid, dates, times, amounts, medical facts, ages, locations, " +
   "relationships) is supported by the CONTEXT, the RECENT CONVERSATION, the CURRENT MESSAGE, " +
   "or the TOOL RESULTS. A draft that truthfully repeats or confirms a fact the user just shared " +
-  "in the CURRENT MESSAGE is SUPPORTED. Paraphrase and warm framing are fine — " +
-  "only flag claims whose substance appears NOWHERE in the provided material. " +
+  "in the CURRENT MESSAGE is SUPPORTED. A user's message that QUESTIONS or CHALLENGES a fact " +
+  "(\"are you sure?\", \"really?\", \"that doesn't sound right\", \"did that actually happen?\") is " +
+  "the OPPOSITE of confirming it, even though it may repeat the claim's exact words back — " +
+  "skepticism is not support, no matter how closely the challenge echoes the disputed claim. " +
+  "Paraphrase and warm framing are fine — only flag claims whose substance appears NOWHERE in " +
+  "the provided material. " +
   "EXCEPTION: for a claim about a SCHEDULED appointment/interview/visit/shift's current date, " +
   "time, or status, or about a caregiver's current availability, being consistent with the " +
   "RECENT CONVERSATION alone is NOT enough — that record can change after it was last stated " +
   "(rescheduled, cancelled, completed, edited) independent of anything said in this chat. The " +
   "CONTEXT is freshly read this turn (not carried over from earlier in the conversation), so it " +
   "still counts as support — RECENT CONVERSATION specifically is what does not. Rate such a " +
-  "claim SUPPORTED only if it is confirmed by the CONTEXT, the TOOL RESULTS THIS TURN, or the " +
-  "CURRENT MESSAGE; otherwise UNSUPPORTED, even if the assistant said the same thing earlier in " +
-  "RECENT CONVERSATION. " +
+  "claim SUPPORTED only if it is confirmed by the CONTEXT, the TOOL RESULTS THIS TURN, or a " +
+  "CURRENT MESSAGE that itself ASSERTS the fact (never one that merely asks about or challenges " +
+  "it); otherwise UNSUPPORTED, even if the assistant said the same thing earlier in RECENT " +
+  "CONVERSATION or the user is currently asking whether it's true. " +
   "Reply with exactly one word: SUPPORTED or UNSUPPORTED.";
 
 // Bound the payload so a huge system prompt can't blow up quick-tier cost.

@@ -7,31 +7,19 @@ import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnb
 
 const db = admin.firestore();
 
-// "near {city}" when we have a city, else "in your area". Owns the no-city
-// fallback so callers pass the raw city (null/undefined when unknown) — no
-// magic-string sentinel to keep in sync across call sites.
-function whereClause(city: string | null | undefined): string {
-  return city ? ` near ${city}` : " in your area";
-}
-
-// Truthful one-clause summary of the notify outcome, shared by the family-facing
-// copy so the pluralization lives in exactly one place.
-export function notifiedOutcomePhrase(city: string | null | undefined, notifiedCount: number): string {
-  const where = whereClause(city);
-  return notifiedCount > 0
-    ? `${notifiedCount} caregiver${notifiedCount === 1 ? "" : "s"}${where} ${notifiedCount === 1 ? "has" : "have"} already been alerted`
-    : `Evia is actively searching for caregivers${where} (none matched yet, but new ones join often)`;
-}
-
-// Honest "your job is live" copy driven by the REAL notify outcome. Callers used
-// to hard-code "I've notified caregivers within 25 miles" even when zero were
-// reached (no coords / empty area) — a false claim to the family.
-export function jobLiveMessage(city: string | null | undefined, notifiedCount: number): string {
-  const where = whereClause(city);
-  return notifiedCount > 0
-    ? `Your care request is live! 🎉 I've reached out to ${notifiedCount} caregiver${notifiedCount === 1 ? "" : "s"}${where} and I'll message you the moment someone's interested.`
-    : `Your care request is live! 🎉 I'm searching for caregivers${where} right now and I'll text you the moment I find a match.`;
-}
+// 2026-09-08 (Hamse's call): one honest, universal message regardless of
+// notifiedCount — matches the site's own "Care Request Submitted!" wording
+// (PostJobFlow.tsx). The prior version branched on notifiedCount to say
+// "I've reached out to N caregivers" vs. "I'm actively searching... none
+// matched yet" — both overstated what actually happens: there's no ongoing
+// search, just a one-time scan at posting plus a separate invite to each new
+// caregiver as they join later, and this job is already visible to every
+// caregiver browsing regardless of any of that. Never mentioning a specific
+// count sidesteps the original bug this file was built to fix (claiming
+// caregivers were notified when none were) by construction — there's no
+// count-dependent branch left to accidentally regress.
+export const jobLiveMessage =
+  "Your care request is submitted! I'll reach out as soon as applications start coming in.";
 
 // Additive union by name — never lets a narrower per-job recipient selection
 // shrink the account's persistent roster (the website's own PostJobFlow.tsx

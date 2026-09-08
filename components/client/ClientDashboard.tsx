@@ -145,7 +145,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
-  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string }[]>([]);
+  const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
   // Raw booking_requests docs with status:'accepted' — status stays 'accepted'
   // forever once accepted, so this alone does NOT mean the relationship is
@@ -226,7 +226,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         // normalizeJobPost: server-written docs can carry location as an OBJECT — crashes JSX if rendered raw
         const posts = snap.docs.map(d => normalizeJobPost({ id: d.id, ...(d.data() as any) }));
         setClientAllPosts(posts);
-        setClientOpenPosts(posts.filter(p => p.status === 'open').map(p => ({ id: p.id, title: p.title || 'Untitled post' })));
+        setClientOpenPosts(posts.filter(p => p.status === 'open').map(p => ({ id: p.id, title: p.title || 'Untitled post', createdAt: (p as any).createdAt })));
       }, () => {});
     unsubs.push(jobPostsUnsub);
 

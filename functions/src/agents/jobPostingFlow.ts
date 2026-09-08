@@ -115,6 +115,26 @@ function matchEnum(raw: string, options: string[]): string | null {
   return options.find((o) => o.toLowerCase() === norm) ?? null;
 }
 
+// 2026-09-08 (live-caught): every JSON-shaped parseWithClaude call below fed
+// the raw text straight into JSON.parse inside a silently-swallowed try/catch
+// — indistinguishable, from the caller's side, from "the model correctly
+// found nothing." A perfectly good answer wrapped in a stray ```json code
+// fence or a word of commentary (a known model quirk that
+// CLASSIFICATION_GUARD_CLAUSE reduces but doesn't guarantee against) was
+// silently treated as if the user hadn't said anything, sending the same
+// generic re-ask as a totally garbled reply. Strips a code fence if present,
+// and — critically — LOGS the raw text on failure, so a repeat leaves real
+// diagnostic evidence instead of another silent guess.
+function parseJsonLoose(raw: string, where: string): any | null {
+  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    console.warn(`[jobPostingFlow] ${where}: JSON.parse failed on model output`, { raw: raw.slice(0, 300) });
+    return null;
+  }
+}
+
 async function fetchRecipientOptions(uid: string, onboardingData: Record<string, unknown>): Promise<JobRecipient[]> {
   const options: JobRecipient[] = [];
   const seen = new Set<string>();
@@ -442,8 +462,8 @@ async function handleJpAskRecipients(
   let matched: number[] = [];
   let newName: string | null = null;
   let newRelationship: string | null = null;
-  try {
-    const parsed = JSON.parse(raw);
+  const parsed = parseJsonLoose(raw, "handleJpAskRecipients");
+  if (parsed) {
     if (Array.isArray(parsed.matched)) {
       matched = parsed.matched.filter((n: unknown) => typeof n === "number" && n >= 1 && n <= options.length);
     }
@@ -451,7 +471,7 @@ async function handleJpAskRecipients(
     if (typeof parsed.newRelationship === "string") {
       newRelationship = matchEnum(parsed.newRelationship, RELATIONSHIP_CHIPS);
     }
-  } catch { /**/ }
+  }
 
   // 2026-09-07 (live-caught): "it's someone new, my mother" correctly never
   // invents a name — but repeating the ENTIRE generic question felt like
@@ -592,14 +612,14 @@ async function handleJpAskLocation(
   let matchedIndex: number | null = null;
   let newStreet: string | null = null;
   let newZip: string | null = null;
-  try {
-    const parsed = JSON.parse(raw);
+  const parsed = parseJsonLoose(raw, "handleJpAskLocation");
+  if (parsed) {
     if (typeof parsed.matchedIndex === "number" && parsed.matchedIndex >= 1 && parsed.matchedIndex <= locations.length) {
       matchedIndex = parsed.matchedIndex;
     }
     if (typeof parsed.newStreet === "string" && parsed.newStreet.trim()) newStreet = parsed.newStreet.trim();
     if (typeof parsed.newZip === "string" && /^\d{5}$/.test(parsed.newZip.trim())) newZip = parsed.newZip.trim();
-  } catch { /**/ }
+  }
 
   if (matchedIndex) {
     const loc = locations[matchedIndex - 1];
@@ -800,10 +820,8 @@ async function handleJpAskDays(
     text
   );
   let days: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) days = parsed;
-  } catch { /**/ }
+  const parsedDays = parseJsonLoose(raw, "handleJpAskDays");
+  if (Array.isArray(parsedDays) && parsedDays.length > 0) days = parsedDays;
   if (days.length === 0) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
@@ -837,11 +855,11 @@ async function handleJpAskTime(
     text
   );
   let times: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
+  const parsedTimes = parseJsonLoose(raw, "handleJpAskTime");
+  if (Array.isArray(parsedTimes)) {
     const valid = ["morning", "afternoon", "evening", "overnight"];
-    if (Array.isArray(parsed)) times = parsed.filter((t: string) => valid.includes(t));
-  } catch { /**/ }
+    times = parsedTimes.filter((t: string) => valid.includes(t));
+  }
   if (times.length === 0) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;
@@ -884,10 +902,8 @@ async function handleJpAskCareNeeds(
     text
   );
   let careNeeds: string[] = [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) careNeeds = parsed;
-  } catch { /**/ }
+  const parsedNeeds = parseJsonLoose(raw, "handleJpAskCareNeeds");
+  if (Array.isArray(parsedNeeds) && parsedNeeds.length > 0) careNeeds = parsedNeeds;
   if (careNeeds.length === 0) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;

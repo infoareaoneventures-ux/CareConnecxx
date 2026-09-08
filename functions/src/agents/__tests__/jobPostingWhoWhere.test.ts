@@ -136,6 +136,24 @@ describe("jp_ask_recipients", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("relationship to David");
   });
 
+  // 2026-09-08 (live-caught): even "Myself"/"1" — the simplest possible
+  // answers — kept failing with the generic re-ask. Traced to the model
+  // occasionally wrapping its JSON in a ```json code fence despite being told
+  // "Return ONLY a JSON object" — JSON.parse threw, the catch silently
+  // swallowed it, and the fallback (matched:[], newName:null) looked
+  // identical to "nothing recognized." Locks in that a fenced response still
+  // parses correctly.
+  it("a JSON response wrapped in a markdown code fence still parses (not silently dropped)", async () => {
+    hoisted.docState.set(`job_postings/${UID}`, {});
+    modelReplies("NO", "```json\n" + JSON.stringify({ matched: [1], newName: null, newRelationship: null }) + "\n```");
+
+    await handleJobPostingStep(PHONE, CHAT, "Myself", baseSession());
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.careRecipients).toHaveLength(1);
+    expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+  });
+
   it("garbage input that matches nothing and names nobody is a re-ask, not a fabricated pick", async () => {
     hoisted.docState.set(`job_postings/${UID}`, {});
     modelReplies("NO", JSON.stringify({ matched: [], newName: null, newRelationship: null }));

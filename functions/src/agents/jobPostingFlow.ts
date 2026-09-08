@@ -293,8 +293,10 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
   const result = await parseWithClaude(
     `The question Evia just asked the family was: "${currentQuestion}"\n\n` +
     "Reply YES if the family's message is a general question or off-topic comment that does NOT answer that question. " +
-    "Reply NO if it directly answers that question — including a short answer like a single word, a bare number, or a name from a list of options. " +
-    "Only reply YES or NO.",
+    "Reply NO if it directly answers that question — including a short answer like a single word, a bare number, or a name from a list of options, " +
+    "and including a PARTIAL or VAGUE attempt to answer (e.g. \"someone else\", \"another person\", \"it's for someone new\" when asked who the job is for — " +
+    "these are direct answers even without a name yet; a separate follow-up question asks for the missing detail). " +
+    "Only reply YES for a genuine question or a comment that doesn't attempt to address what was asked at all.",
     text
   );
   return result.toUpperCase().startsWith("Y");
@@ -325,10 +327,20 @@ async function answerQuestionMidFlow(phone: string, text: string, session: Agent
   // resolves the job's ACTUAL in-progress recipient (careRecipients, or the
   // pending new name mid-relationship-question), falling back to the
   // account's senior only when nothing job-specific has been collected yet.
-  const recipientName = await recipientsDisplayName(phone, session);
+  const { name: recipientName, jobSpecific } = await resolveJobRecipient(phone, session);
   // Recall grounding — without it, "what city did I tell you?" gets a
   // grounded-sounding denial even though the answer is on the session.
-  const sharedProfile = describeSharedProfile(session as any);
+  //
+  // 2026-09-08 (live-caught, same conversation as the fix above): even after
+  // grounding the "They are setting up a job for X" line correctly,
+  // describeSharedProfile still injected its own WHO'S WHO framing built from
+  // the ACCOUNT's original onboarding senior — an emphatic "the recipient is
+  // Samira M... never for {accountHolder}" that flatly contradicted the
+  // correct line right before it ("for you"), and the model followed the
+  // louder, more specific sentence. Only include it when nothing job-specific
+  // has been collected yet (jobSpecific === false), where its grounding is
+  // actually correct instead of stale.
+  const sharedProfile = jobSpecific ? "" : describeSharedProfile(session as any);
   const response = await getSharedClient().messages.create({
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
@@ -454,14 +466,16 @@ async function handleJpAskRecipients(
   const raw = await parseWithClaude(
     `Known people on file:\n${listText}\n\n` +
     "The family is choosing who a care job is for. Match their reply against the numbered list above (by number or name — case-insensitive, first name is enough). " +
-    'Return ONLY a JSON object: {"matched": [numbers from the list the message actually refers to], "newName": "a person\'s name mentioned that is NOT on the list, or null", "newRelationship": "their relationship to the account holder, if stated — must be exactly Parent, Spouse or Partner, or Other — else null"}. ' +
+    'Return ONLY a JSON object: {"matched": [numbers from the list the message actually refers to], "newName": "a person\'s name mentioned that is NOT on the list, or null", "newRelationship": "their relationship to the account holder, if stated — must be exactly Parent, Spouse or Partner, or Other — else null", "impliesNewPerson": true or false}. ' +
     '"newRelationship" can be set even when "newName" is null — e.g. "it\'s someone new, my mother" states the relationship without a name yet. ' +
+    '"impliesNewPerson" is true whenever the family indicates this is for someone NOT on the list — e.g. "someone else", "another person", "it\'s for someone new" — even with no name or relationship stated at all. ' +
     "Never invent a match or a name the message doesn't actually contain.",
     text
   );
   let matched: number[] = [];
   let newName: string | null = null;
   let newRelationship: string | null = null;
+  let impliesNewPerson = false;
   const parsed = parseJsonLoose(raw, "handleJpAskRecipients");
   if (parsed) {
     if (Array.isArray(parsed.matched)) {
@@ -471,15 +485,18 @@ async function handleJpAskRecipients(
     if (typeof parsed.newRelationship === "string") {
       newRelationship = matchEnum(parsed.newRelationship, RELATIONSHIP_CHIPS);
     }
+    impliesNewPerson = parsed.impliesNewPerson === true;
   }
 
-  // 2026-09-07 (live-caught): "it's someone new, my mother" correctly never
-  // invents a name — but repeating the ENTIRE generic question felt like
-  // nothing was understood. Remember the stated relationship and ask
-  // specifically for the missing name instead.
+  // 2026-09-08 (live-caught): "someone else" / "another person" / "it's
+  // someone new, my mother" all correctly never invent a name — but repeating
+  // the ENTIRE generic question felt like nothing was understood. Remember
+  // any stated relationship and ask specifically for the missing name instead,
+  // for ANY phrasing that signals a new/different person, not just one that
+  // also names a relationship.
   if (matched.length === 0 && !newName) {
-    if (newRelationship) {
-      await mergeJobData(phone, { pendingNewRecipientRelationship: newRelationship });
+    if (newRelationship || impliesNewPerson) {
+      if (newRelationship) await mergeJobData(phone, { pendingNewRecipientRelationship: newRelationship });
       await sendMessage(chatId, "Sure — what's their name?");
       return;
     }
@@ -693,17 +710,26 @@ async function handleJpAskLocationEnvironment(
 // This job's actual recipient(s), collected earlier in jp_ask_recipients —
 // used for every question from here on instead of the single onboarding-time
 // senior name, so a job posted for someone else (or for "myself") reads
-// correctly for the rest of the flow.
-async function recipientsDisplayName(phone: string, session: AgentSession): Promise<string> {
+// correctly for the rest of the flow. `jobSpecific` is true once a real
+// answer has been collected for THIS job (as opposed to falling back to the
+// account's generic on-file senior) — see answerQuestionMidFlow for why
+// callers need to know the difference, not just the name.
+async function resolveJobRecipient(phone: string, session: AgentSession): Promise<{ name: string; jobSpecific: boolean }> {
   const jobData = await getJobData(phone);
   const recipients = (jobData.careRecipients as JobRecipient[]) ?? [];
-  if (recipients.length) return recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and ");
+  if (recipients.length) {
+    return { name: recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and "), jobSpecific: true };
+  }
   // A new person's name may be known before their relationship is (mid
   // jp_ask_recipient_relationship) — prefer that over the account's
   // unrelated on-file senior.
   const pendingFirst = jobData.pendingNewRecipientFirstName as string | undefined;
-  if (pendingFirst) return pendingFirst;
-  return seniorFirstName(session);
+  if (pendingFirst) return { name: pendingFirst, jobSpecific: true };
+  return { name: seniorFirstName(session), jobSpecific: false };
+}
+
+async function recipientsDisplayName(phone: string, session: AgentSession): Promise<string> {
+  return (await resolveJobRecipient(phone, session)).name;
 }
 
 async function careNeedsQuestion(phone: string): Promise<string> {

@@ -58,7 +58,8 @@ vi.mock("../../safety/outputGuard", () => ({
   guardModelOutput: () => ({ ok: true }),
   ANTI_INVENTION_CLAUSE: "ANTI_INVENTION",
 }));
-vi.mock("../profileBriefing", () => ({ describeSharedProfile: () => "" }));
+const describeSharedProfileMock = vi.fn(() => "");
+vi.mock("../profileBriefing", () => ({ describeSharedProfile: (...a: unknown[]) => describeSharedProfileMock(...a) }));
 vi.mock("../buildJobPost", () => ({
   buildAndSaveJobPost: vi.fn(async () => ({ jobId: "job-1", notifiedCount: 0 })),
   jobLiveMessage: vi.fn(() => "live"),
@@ -104,6 +105,7 @@ beforeEach(() => {
   hoisted.reset();
   sendMessage.mockClear();
   messagesCreate.mockReset();
+  describeSharedProfileMock.mockReset().mockReturnValue("");
   hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_ask_recipients", jobPostingData: { ...SCHEDULED } });
 });
 
@@ -122,6 +124,26 @@ describe("jp_ask_recipients", () => {
     expect(stored.jobPostingData.careRecipients[0].firstName).toBe("Rosie");
     expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
     expect(String(sendMessage.mock.calls[0][1])).toContain("How many caregivers");
+  });
+
+  // The re-ask copy itself advertises this ("a few is fine, e.g. \"1, 2\""),
+  // but until now nothing actually exercised selecting more than one person
+  // at once end-to-end.
+  it("selecting multiple existing people at once ('1, 2') advances with both recipients", async () => {
+    hoisted.docState.set(`job_postings/${UID}`, {
+      careRecipientFirstName: "Rosie", careRecipientLastName: "Alvarez", relationship: "daughter",
+      additionalRecipients: [],
+    });
+    modelReplies("NO", JSON.stringify({ matched: [1, 2], newName: null, newRelationship: null }));
+
+    await handleJobPostingStep(PHONE, CHAT, "1, 2", baseSession());
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.careRecipients).toHaveLength(2);
+    expect(stored.jobPostingData.careRecipients[0].isSelf).toBe(true);
+    expect(stored.jobPostingData.careRecipients[1].firstName).toBe("Rosie");
+    expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("care for you and Rosie");
   });
 
   it("a brand-new name with no stated relationship asks the relationship before advancing", async () => {
@@ -152,6 +174,21 @@ describe("jp_ask_recipients", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.jobPostingData.careRecipients).toHaveLength(1);
     expect(stored.jobPostingStep).toBe("jp_ask_caregivers_needed");
+  });
+
+  // 2026-09-08 (live-caught): "someone else" / "it's for another person" kept
+  // getting misclassified by isQuestionOrOther as needing clarification
+  // instead of being treated as a valid (if incomplete) answer — the family
+  // got stuck in a "just to clarify..." loop instead of ever being asked for
+  // the missing name. Locks in that these phrasings reach the extraction
+  // step and are recognized as "a new person, no name yet."
+  it("'someone else' / 'another person' asks specifically for the name instead of a clarifying loop", async () => {
+    hoisted.docState.set(`job_postings/${UID}`, {});
+    modelReplies("NO", JSON.stringify({ matched: [], newName: null, newRelationship: null, impliesNewPerson: true }));
+
+    await handleJobPostingStep(PHONE, CHAT, "someone else", baseSession());
+
+    expect(sendMessage.mock.calls[0][1]).toBe("Sure — what's their name?");
   });
 
   it("garbage input that matches nothing and names nobody is a re-ask, not a fabricated pick", async () => {
@@ -243,6 +280,49 @@ describe("answerQuestionMidFlow grounding (live-caught: wrong recipient in mid-f
     const answerCallSystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
     expect(answerCallSystem).toContain("David");
     expect(answerCallSystem).not.toContain("Rosie");
+  });
+
+  // 2026-09-08 (live-caught, same conversation): the "for David" line above
+  // fixed the first sentence, but describeSharedProfile's own WHO'S WHO
+  // framing — built from the ACCOUNT's original onboarding senior — still got
+  // appended right after it, flatly contradicting the correct grounding
+  // ("...for you." immediately followed by "the recipient is Samira M...
+  // never for {accountHolder}"). The model followed the louder, more
+  // specific sentence. Locks in that sharedProfile is skipped once a
+  // job-specific recipient is known.
+  it("does not append describeSharedProfile's stale WHO'S WHO framing once a job-specific recipient is known", async () => {
+    describeSharedProfileMock.mockReturnValue(
+      "WHO'S WHO: the recipient is Samira M (their parent): all care is for Samira M, never for Anahi."
+    );
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
+    });
+    modelReplies("YES", "Most families just need one caregiver for a job like this.");
+
+    await handleJobPostingStep(PHONE, CHAT, "how many do most people pick?", baseSession({
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [{ firstName: "David", lastName: "", relationship: "Parent", isSelf: false }] },
+    }));
+
+    const answerCallSystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
+    expect(answerCallSystem).not.toContain("Samira M");
+  });
+
+  it("still includes describeSharedProfile's grounding when no job-specific recipient is known yet", async () => {
+    describeSharedProfileMock.mockReturnValue(
+      "WHO'S WHO: the recipient is Samira M (their parent): all care is for Samira M, never for Anahi."
+    );
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_recipients",
+      jobPostingData: { ...SCHEDULED },
+    });
+    modelReplies("YES", "Great question!");
+
+    await handleJobPostingStep(PHONE, CHAT, "how does this work?", baseSession());
+
+    const answerCallSystem = (messagesCreate.mock.calls[1][0] as { system: string }).system;
+    expect(answerCallSystem).toContain("Samira M");
   });
 });
 

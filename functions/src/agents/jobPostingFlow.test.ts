@@ -211,6 +211,28 @@ describe("jobPostingFlow — output guard (U2, R2)", () => {
       expect.objectContaining({ jobPostingStep: expect.anything() })
     );
   });
+
+  // 2026-09-08 (live-caught): "regularly" doesn't say anything about days per
+  // week, but the classifier only ever offered three forced choices, so it
+  // guessed "part_time" and told the family that as settled fact ("Part-time!")
+  // — the family never said that. Locks in that a genuinely vague answer
+  // (model correctly replies UNCLEAR) re-asks instead of forcing a guess.
+  it("jp_ask_frequency re-asks instead of forcing a guess on a vague answer like \"regularly\"", async () => {
+    const FREQ_SESSION: any = {
+      jobPostingStep: "jp_ask_frequency",
+      jobPostingData: {},
+      onboardingData: { seniorName: "Rosie Alvarez" },
+    };
+    modelReplies("NO", "UNCLEAR");
+
+    await handleJobPostingStep(PHONE, CHAT, "regularly", FREQ_SESSION);
+
+    expect(String(sendMessage.mock.calls[0][1])).toContain("Sorry, I didn't quite catch that");
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("Part-time");
+    expect(hoisted.updateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ jobPostingStep: expect.anything() })
+    );
+  });
 });
 
 describe("formatDateForDisplay (live-caught: raw ISO echoed back in a text message)", () => {
@@ -222,5 +244,25 @@ describe("formatDateForDisplay (live-caught: raw ISO echoed back in a text messa
     expect(formatDateForDisplay("ASAP")).toBe("ASAP");
     expect(formatDateForDisplay("next Monday")).toBe("next Monday");
     expect(formatDateForDisplay("TBD")).toBe("TBD");
+  });
+});
+
+// 2026-09-08 (live-caught): the model refused outright instead of returning
+// __parse_error__ or a real date value — "I need a message with a start date
+// to extract. Your message doesn't contain one." — and that whole sentence
+// got stored as jobStartDate and echoed in the job summary as "Start: I need
+// a message...". guardModelOutput doesn't catch this (it targets a different
+// meta-response shape), so the step itself must recognize a refusal isn't a
+// date value.
+describe("jp_ask_start (live-caught: model refusal stored as the literal start date)", () => {
+  it("falls back to the user's raw text instead of storing an extraction-refusal sentence", async () => {
+    modelReplies("NO", "I need a message with a start date to extract. Your message doesn't contain one.");
+
+    await handleJobPostingStep(PHONE, CHAT, "whenever works", SESSION);
+
+    expect(hoisted.updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ jobPostingData: expect.objectContaining({ jobStartDate: "whenever works" }) })
+    );
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("I need a message");
   });
 });

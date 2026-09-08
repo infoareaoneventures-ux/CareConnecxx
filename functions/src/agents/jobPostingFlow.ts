@@ -135,6 +135,16 @@ function parseJsonLoose(raw: string, where: string): any | null {
   }
 }
 
+// 2026-09-08 (live-caught): a genuine date VALUE ("2026-09-15", "ASAP", "next
+// Monday", even a short raw echo) is never a full explanatory sentence. This
+// catches the specific refusal shape guardModelOutput doesn't (that guard
+// targets "who's the briefing for" confusion, not a data-extraction refusal)
+// — long, and/or a first-person explanation of why it couldn't find a date.
+function looksLikeExtractionRefusal(value: string): boolean {
+  if (value.length > 40) return true;
+  return /\b(i need|i don'?t|doesn'?t contain|unable to|cannot|can'?t (?:find|extract|determine))\b/i.test(value);
+}
+
 async function fetchRecipientOptions(uid: string, onboardingData: Record<string, unknown>): Promise<JobRecipient[]> {
   const options: JobRecipient[] = [];
   const seen = new Set<string>();
@@ -771,9 +781,16 @@ async function careNeedsQuestion(phone: string): Promise<string> {
   const name = recipients.length
     ? recipients.map((r) => r.isSelf ? "you" : r.firstName).join(" and ")
     : "your loved one";
-  return `What kind of care does ${name} need? Just tell me in your own words — things like personal care ` +
+  // 2026-09-08 (live-caught): "you" is second person — "does you need" reads
+  // as broken grammar; every other name here is third person ("does Samira
+  // need"). needCareVerb (below) picks the right conjugation either way.
+  return `What kind of care ${needCareVerb(name)} ${name} need? Just tell me in your own words — things like personal care ` +
     `(bathing, grooming), mobility help, memory care, medication reminders, meals, rides, companionship, ` +
     `or light housekeeping.`;
+}
+
+function needCareVerb(name: string): "do" | "does" {
+  return name === "you" ? "do" : "does";
 }
 
 // ── Step handlers: schedule / care / rate / description (unchanged 2026-09-07 fixes) ──
@@ -792,7 +809,15 @@ async function handleJpAskFrequency(
     '"1", occasional, 1-2 days = occasional. ' +
     '"2", part-time, part time, 3-4 days = part_time. ' +
     '"3", full-time, full time, every day, 5+ days = full_time. ' +
-    'Reply with exactly one of: occasional, part_time, full_time',
+    // 2026-09-08 (live-caught): "regularly" isn't any of the three — it says
+    // nothing about days/week — but the prompt only ever offered these three
+    // options, so the model forced a guess (part_time) and it got presented
+    // to the family as settled fact ("Part-time!") instead of asked about.
+    // Same principle as the JP_DIDNT_CATCH re-ask elsewhere in this file:
+    // never silently substitute a value the family didn't actually say.
+    'If the answer is vague and doesn\'t clearly indicate one of these three (e.g. "regularly", "often", ' +
+    '"sometimes", "not sure") reply UNCLEAR — do not guess. ' +
+    'Reply with exactly one of: occasional, part_time, full_time, UNCLEAR',
     text
   );
   const frequency = matchEnum(raw, ["occasional", "part_time", "full_time"]);
@@ -852,7 +877,15 @@ async function handleJpAskStart(
     "Otherwise return the date in YYYY-MM-DD format if possible, or a plain description. Reply with just the date value.",
     text
   );
-  const stored = startDate !== "__parse_error__" ? startDate : text.trim();
+  // 2026-09-08 (live-caught): the model refused outright ("I need a message
+  // with a start date to extract. Your message doesn't contain one.") instead
+  // of returning __parse_error__ or a real value — that refusal sentence isn't
+  // caught by guardModelOutput (built for a different meta-response shape:
+  // "who's the briefing for", not a data-extraction refusal) or by the
+  // __parse_error__ check, so it sailed through as the literal stored start
+  // date and got echoed back in the job summary as "Start: I need a
+  // message...". A real date VALUE is never a full explanatory sentence.
+  const stored = (startDate !== "__parse_error__" && !looksLikeExtractionRefusal(startDate)) ? startDate : text.trim();
   await mergeJobData(phone, { jobStartDate: stored });
   await updateJobStep(phone, "jp_ask_days");
   await sendMessage(chatId,
@@ -940,7 +973,7 @@ async function handleJpAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const name = await recipientsDisplayName(phone, session);
-  const REASK = `What kind of care does ${name} need? (e.g. personal care, meals, companionship, mobility)`;
+  const REASK = `What kind of care ${needCareVerb(name)} ${name} need? (e.g. personal care, meals, companionship, mobility)`;
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
     await sendMessage(chatId, answer);

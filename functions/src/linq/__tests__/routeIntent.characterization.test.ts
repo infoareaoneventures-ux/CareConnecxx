@@ -693,6 +693,51 @@ describe("characterization — caregiver selection after a match list no longer 
   });
 });
 
+// 2026-09-09 live incident: a fresh re-offer ("want me to send their
+// profiles again, or keep looking for someone new?") got its own answer
+// ("Can you send me their profiles") misclassified back into FIND_CAREGIVER,
+// which blindly re-ran the deterministic search and repeated the identical
+// canned question verbatim — the agent (which has resend_caregiver_profile
+// and can see pendingMatches) never got a turn. Fixed: FIND_CAREGIVER now
+// defers to the agent whenever pendingMatches is still fresh, instead of
+// re-running the search on the intent label alone.
+describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-09-09)", () => {
+  const pendingMatches = [
+    { id: "cg1", name: "Basra Yousuf", rate: 25 },
+    { id: "cg2", name: "Imran", rate: 24 },
+  ];
+
+  it("fresh pendingMatches: FIND_CAREGIVER falls through to runQaAgent, not a re-search", async () => {
+    seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
+    classifyIntentDetailed.mockResolvedValue({ intent: "FIND_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("Can you send me their profiles"));
+
+    expect(runQaAgent).toHaveBeenCalled();
+    expect(runMatchingForClient).not.toHaveBeenCalled();
+  });
+
+  it("no pendingMatches at all: FIND_CAREGIVER still runs the deterministic search (unchanged for a genuinely new search)", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "FIND_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("How many caregivers in my area"));
+
+    expect(runMatchingForClient).toHaveBeenCalledOnce();
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("stale pendingMatches (past the TTL): FIND_CAREGIVER still runs the deterministic search", async () => {
+    const staleSetAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // 3h ago, TTL is 2h
+    seed({ pendingMatches, pendingMatchesSetAt: staleSetAt });
+    classifyIntentDetailed.mockResolvedValue({ intent: "FIND_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("Any caregivers near me?"));
+
+    expect(runMatchingForClient).toHaveBeenCalledOnce();
+  });
+});
+
 // 2026-09-09 (live-caught): "cancel it" / "cancel that interview", asked
 // right after Evia herself described a pending interview, used to hit a
 // context-blind hardcoded "no visits to cancel" dead-end — CANCEL_REQUEST

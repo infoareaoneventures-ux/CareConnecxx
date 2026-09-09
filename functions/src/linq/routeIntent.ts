@@ -10,7 +10,7 @@ const hasAppointmentId = (v: unknown): boolean =>
   !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
 import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
-import { staleConfirmFlags, hasActiveSmsFlow } from "../utils/sessionState";
+import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../utils/sessionState";
 import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
@@ -741,9 +741,18 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       }
 
       // User isn't picking from the list — if their intent is to start a new
-      // search (FIND_CAREGIVER, REBOOK_REQUEST) or the list is stale, clear
-      // the lingering state so it doesn't keep hijacking unrelated messages.
-      const isFreshSearchIntent = intent === "FIND_CAREGIVER" || intent === "REBOOK_REQUEST" || intent === "POST_JOB";
+      // search (REBOOK_REQUEST, POST_JOB) or the list is stale, clear the
+      // lingering state so it doesn't keep hijacking unrelated messages.
+      // 2026-09-09 live incident: FIND_CAREGIVER used to be in this list too.
+      // A fresh reoffer ("want me to send their profiles again, or keep
+      // looking?") got its own answer ("Can you send me their profiles")
+      // misclassified back into FIND_CAREGIVER, which cleared pendingMatches
+      // right here and then re-ran the deterministic search below — repeating
+      // the identical canned question instead of ever reaching the agent
+      // (which has resend_caregiver_profile and could see what was just
+      // shown). Removed: the FIND_CAREGIVER branch below now makes its own
+      // freshness-aware decision instead of relying on this clearing early.
+      const isFreshSearchIntent = intent === "REBOOK_REQUEST" || intent === "POST_JOB";
       if (!isFresh || isFreshSearchIntent) {
         await db.collection("agent_sessions").doc(phone).update({
           pendingMatches:      admin.firestore.FieldValue.delete(),
@@ -1463,11 +1472,27 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       (intent === "FIND_CAREGIVER" || isCaregiverSearchMisroutedAsProviderSearch(intent, text)) &&
       session.userType !== "caregiver"
     ) {
-      const { runMatchingForClient } = await import("../agents/matchingAgent");
       const sessionSnap2 = await db.collection("agent_sessions").doc(phone).get();
       const sessionData  = sessionSnap2.data() ?? {};
-      await runMatchingForClient(phone, chatId, sessionData, sessionData);
-      return;
+      // 2026-09-09 live incident: a fresh re-offer ("want me to send their
+      // profiles again, or keep looking?") got its own answer ("Can you send
+      // me their profiles") misclassified back into FIND_CAREGIVER, which
+      // blindly re-ran this deterministic search and repeated the identical
+      // canned question — the agent (which has resend_caregiver_profile and
+      // can see exactly who was just shown, via pendingMatches) never got a
+      // turn. When pendingMatches is still fresh, defer to the agent instead
+      // of guessing from the intent label alone — it has both tools
+      // available and can decide whether to resend or search again.
+      const pendingMatches      = sessionData.pendingMatches as Array<unknown> | undefined;
+      const pendingMatchesSetAt = sessionData.pendingMatchesSetAt as string | undefined;
+      const pendingMatchesFresh = !!pendingMatches && pendingMatches.length > 0 &&
+        (!pendingMatchesSetAt || pendingMatchesSetAt > new Date(Date.now() - PENDING_MATCHES_TTL_MS).toISOString());
+      if (!pendingMatchesFresh) {
+        const { runMatchingForClient } = await import("../agents/matchingAgent");
+        await runMatchingForClient(phone, chatId, sessionData, sessionData);
+        return;
+      }
+      // Fresh pendingMatches — fall through to normal routing / runQaAgent below.
     }
 
     // ── Healthcare intents — provider search, appointment booking, Rx ────────

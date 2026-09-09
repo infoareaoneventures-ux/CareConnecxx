@@ -2991,12 +2991,6 @@ async function createVideoInterviewRequestForTool(params: {
     };
   } catch (err) {
     if (err instanceof VideoInterviewRequestError) {
-      const codeMap: Record<string, ToolErrorCode> = {
-        "invalid-argument":     "INVALID_INPUT",
-        "failed-precondition":  "NOT_FOUND",
-        "permission-denied":    "PERMISSION_DENIED",
-        "resource-exhausted":   "RATE_LIMITED",
-      };
       // 2026-09-09: only a toolErrors COUNT was ever visible in turn metrics —
       // the actual reason had to be reconstructed from screenshots + guesswork
       // live-debugging a real failure. Log the real code/message server-side
@@ -3005,6 +2999,27 @@ async function createVideoInterviewRequestForTool(params: {
         code: err.code, message: err.message, clientId, caregiverId, scheduledTime,
         jobId: jobId ?? null, applicationId: applicationId ?? null,
       });
+      // 2026-09-09: a name-fallback lookup matching MORE than one caregiver
+      // this family was shown used to collapse into the same flat "not
+      // available" error as a genuine no-match — leaving the agent nothing
+      // to ask the family other than a dead end. Surface the tied candidates
+      // (id + rate, the same shape the agent already shows families for
+      // matches) so it can ask which one, then retry with the real id.
+      if (err.code === "ambiguous") {
+        return {
+          success: false,
+          ambiguous: true,
+          candidates: err.candidates ?? [],
+          message: err.message,
+          note: "Do not guess which one they mean. Ask the family to distinguish between these caregivers (e.g. by their rate, or how you discussed each of them), then call this tool again with the correct caregiverId — always their real id from the candidates list, never their name.",
+        };
+      }
+      const codeMap: Record<string, ToolErrorCode> = {
+        "invalid-argument":     "INVALID_INPUT",
+        "failed-precondition":  "NOT_FOUND",
+        "permission-denied":    "PERMISSION_DENIED",
+        "resource-exhausted":   "RATE_LIMITED",
+      };
       return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
     }
     throw err;

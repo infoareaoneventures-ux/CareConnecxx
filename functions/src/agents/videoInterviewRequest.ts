@@ -20,13 +20,23 @@ export type VideoInterviewErrorCode =
   | "invalid-argument"
   | "failed-precondition"
   | "permission-denied"
-  | "resource-exhausted";
+  | "resource-exhausted"
+  // 2026-09-09: the name-fallback lookup below can find MORE than one match
+  // within this family's own shownCaregiverIds (two caregivers they were
+  // shown genuinely share a name) — that's not the same failure as no match
+  // at all, and collapsing both into one generic "not available" error left
+  // the agent with nothing to ask the family other than a dead end.
+  | "ambiguous";
 
 export class VideoInterviewRequestError extends Error {
   code: VideoInterviewErrorCode;
-  constructor(code: VideoInterviewErrorCode, message: string) {
+  /** Populated only for code "ambiguous" — the tied candidates, so the
+   *  caller can ask the family to pick one instead of guessing. */
+  candidates?: Array<{ id: string; hourlyRate: number }>;
+  constructor(code: VideoInterviewErrorCode, message: string, candidates?: Array<{ id: string; hourlyRate: number }>) {
     super(message);
     this.code = code;
+    this.candidates = candidates;
   }
 }
 
@@ -110,7 +120,15 @@ export async function requestVideoInterview(
         .where(admin.firestore.FieldPath.documentId(), "in", shownIds)
         .get().catch(() => null);
       const matches = (scoped?.docs ?? []).filter((d) => (d.data()?.name as string | undefined) === caregiverId);
-      if (matches.length === 1) caregiverSnap = matches[0];
+      if (matches.length === 1) {
+        caregiverSnap = matches[0];
+      } else if (matches.length > 1) {
+        throw new VideoInterviewRequestError(
+          "ambiguous",
+          `This family has been shown ${matches.length} caregivers named "${caregiverId}" — ask which one they mean, then retry with the correct caregiverId.`,
+          matches.map((d) => ({ id: d.id, hourlyRate: (d.data().hourlyRate as number | undefined) ?? 0 })),
+        );
+      }
     }
   }
   if (!caregiverSnap.exists) {

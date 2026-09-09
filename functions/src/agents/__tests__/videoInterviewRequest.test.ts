@@ -287,12 +287,23 @@ describe("requestVideoInterview", () => {
       })).rejects.toMatchObject({ code: "failed-precondition" });
     });
 
-    it("SAFETY: fails closed (does not guess) when two caregivers this family has BOTH been shown share the same name", async () => {
-      hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { name: "Alice Rivera" });
+    // 2026-09-09: collapsing this into the same flat "not available" error as
+    // a genuine no-match left the agent nothing to ask the family other than
+    // a dead end. It still fails closed (never guesses), but now surfaces
+    // the tied candidates so the agent can ask which one, then retry with
+    // the correct id.
+    it("SAFETY: fails closed (does not guess) when two caregivers this family has BOTH been shown share the same name, but surfaces both as candidates", async () => {
+      hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { name: "Alice Rivera", hourlyRate: 25 });
       hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER, "cg_alice2"] });
       await expect(requestVideoInterview({
         clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
-      })).rejects.toMatchObject({ code: "failed-precondition" });
+      })).rejects.toMatchObject({
+        code: "ambiguous",
+        candidates: expect.arrayContaining([
+          { id: CAREGIVER, hourlyRate: 0 },
+          { id: "cg_alice2", hourlyRate: 25 },
+        ]),
+      });
     });
 
     it("fails closed with no phone at all — never falls back to an unscoped global search", async () => {

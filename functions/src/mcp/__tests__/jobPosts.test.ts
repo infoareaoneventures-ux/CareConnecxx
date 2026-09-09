@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => {
     id: path.split("/").pop(),
     path,
     get: vi.fn(async () => ({
+      id:     path.split("/").pop(),
       exists: docState.has(path),
       data:   () => docState.get(path),
       ref:    makeDocRef(path),

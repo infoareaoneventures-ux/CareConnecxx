@@ -31,6 +31,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_upcoming_appointments:    ["booking", "scheduling"],
   get_caregiver_appointments:   ["booking", "scheduling"],
   schedule_interview:           ["booking"],
+  resend_caregiver_profile:     ["booking"],
   respond_to_interview_request: ["booking"],
   submit_interview_feedback:    ["booking"],
   submit_review:                ["booking"],

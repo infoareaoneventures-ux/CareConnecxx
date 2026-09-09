@@ -1507,6 +1507,31 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    // 2026-09-09 (live-caught): "I'd already sent their info before. Want me
+    // to send their profiles again?" has been a real, standing offer in the
+    // no-new-match re-offer message since 2026-09-07 with nothing behind it —
+    // there was no way to actually resend a caregiver's profile, only to send
+    // one for the first time as part of a fresh match. This tool delivers on
+    // that promise: same caption + tappable profile-link format the initial
+    // match gallery sends (services/api.ts's /p/{id} share link, which
+    // previews with the caregiver's name + photo).
+    name: "resend_caregiver_profile",
+    description:
+      "Re-send a caregiver's profile card (rate, specialties, tappable link with their name + photo preview) to " +
+      "the family — the same message format the initial match gallery sends. Use when the family asks to see a " +
+      "caregiver's profile again (e.g. after 'I'd already sent their info before — want me to send it again?'), " +
+      "or wants to resend/re-share someone's info for any reason. Pass the caregiverId from pendingMatches or " +
+      "reofferableCaregivers — never guess an id from a name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's user ID" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (from pendingMatches/reofferableCaregivers, never a name)" },
+      },
+      required: ["clientId", "caregiverId"],
+    },
+  },
+  {
     name: "respond_to_interview_request",
     description:
       "Caregiver accepts or declines a scheduled interview. If proposing a new time, include proposedDate and proposedTime.",
@@ -3532,7 +3557,8 @@ async function executeToolCall(
                 "these are still the best options near them and ask whether to resend those profiles or keep " +
                 "looking for someone new. Do not claim nobody is available — that would be false. If the family " +
                 "asks to interview one of them, call schedule_interview with that caregiver's id field from " +
-                "reofferableCaregivers above — never their name — as caregiverId."
+                "reofferableCaregivers above — never their name — as caregiverId. If they say yes to resending " +
+                "profiles, call resend_caregiver_profile for each one they want (same id field, never their name)."
               : "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
                 "only message they get. In ONE short warm message: be honest that you haven't found the right " +
                 "match yet, that you're still actively searching, and that the team has been alerted and will " +
@@ -6157,6 +6183,40 @@ async function executeToolCall(
         preferredDate: preferredDate as string, preferredTime: preferredTime as string,
         interviewType: interviewType as string | undefined,
       });
+    }
+
+    // ── resend_caregiver_profile ────────────────────────────────────────────
+    if (name === "resend_caregiver_profile") {
+      const { clientId, caregiverId, phone } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+      if (!phone) return toolError("INVALID_INPUT", "phone is required");
+      const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+      const chatId = sessSnap.data()?.chatId as string | undefined;
+      if (!chatId) return toolError("NOT_FOUND", "No active conversation to send the profile to");
+      // Same eligibility gate requestVideoInterview uses — only a caregiver
+      // visible in the public, verification-gated projection can be shared.
+      const cgSnap = await db.collection("publicCaregiverProfiles").doc(caregiverId as string).get();
+      if (!cgSnap.exists) return toolError("NOT_FOUND", "That caregiver is no longer available");
+      const cg = cgSnap.data() ?? {};
+      const cgName = ((cg.name as string) || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver";
+      const rate = (cg.hourlyRate as number | undefined) ?? null;
+      const specialties = ((cg.specialties as string[] | undefined) ?? []).slice(0, 3).join(", ");
+      const { sendMessage } = await import("../linq/client");
+      // Same caption + tappable-link format the initial match gallery sends
+      // (matchingAgent.ts) — the link auto-previews with this caregiver's
+      // name + photo via /p/{id}'s Open Graph tags, so no separate photo
+      // bubble is needed.
+      await sendMessage(chatId,
+        `${cgName}${rate ? ` — $${rate}/hr` : ""}${specialties ? `\n${specialties}` : ""}\n` +
+        `Tap to view ${cgName.split(" ")[0]}'s profile: ${getAppUrl()}/p/${caregiverId as string}`
+      );
+      logAudit({ eventType: "message_sent", userId: clientId as string, data: { source: "mcp:resend_caregiver_profile", caregiverId } }).catch(() => {});
+      return {
+        success: true,
+        sent: true,
+        caregiverName: cgName,
+        instruction: "The profile has ALREADY been texted to the family — it lands before your reply. Do NOT repeat the name, rate, or link; just acknowledge briefly.",
+      };
     }
 
     // ── respond_to_interview_request ────────────────────────────────────────

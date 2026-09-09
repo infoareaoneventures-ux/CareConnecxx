@@ -82,10 +82,27 @@ export async function requestVideoInterview(
   // interview-able. Also doubles as the name/photo source, so this is the
   // ONLY caregiver read needed (Evia's old implementation read `caregivers`
   // directly, with no eligibility check at all).
-  const caregiverSnap = await db.collection("publicCaregiverProfiles").doc(caregiverId).get();
+  let caregiverSnap = await db.collection("publicCaregiverProfiles").doc(caregiverId).get();
+  // 2026-09-09 (live-caught): Evia doesn't always have the caregiver's real
+  // id in context when this is called (e.g. referencing someone named several
+  // turns earlier, with no fresh search in between) and falls back to passing
+  // their NAME as caregiverId — which can never resolve as a doc id and fails
+  // identically regardless of date/time tried. Real Firestore auto-ids never
+  // contain a space, so a space-containing "id" is unambiguously a name, not
+  // a lookup miss — resolve it by name as a fallback rather than failing a
+  // request whose caregiver is real and simply misidentified.
+  if (!caregiverSnap.exists && caregiverId.includes(" ")) {
+    const byName = await db.collection("publicCaregiverProfiles")
+      .where("name", "==", caregiverId).limit(1).get().catch(() => null);
+    if (byName && !byName.empty) caregiverSnap = byName.docs[0];
+  }
   if (!caregiverSnap.exists) {
     throw new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews");
   }
+  // The real doc id, whichever lookup found it — every downstream write and
+  // the returned result must use this, never the original `caregiverId` param
+  // (which, on the name-fallback path above, is a name, not a real id).
+  const resolvedCaregiverId = caregiverSnap.id;
   const cg = caregiverSnap.data() ?? {};
   const caregiverName = ((cg.name as string) || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver";
   const caregiverPhoto = (cg.photoURL ?? cg.photo ?? cg.imageUrl) as string | undefined;
@@ -114,7 +131,7 @@ export async function requestVideoInterview(
   const interviewRef = db.collection("video_interviews").doc();
   const interview: VideoInterviewRequestResult = {
     id: interviewRef.id,
-    clientId, clientName, caregiverId, caregiverName,
+    clientId, clientName, caregiverId: resolvedCaregiverId, caregiverName,
     scheduledTime: new Date(scheduledMs).toISOString(),
     status: "requested",
     createdAt: now.toDate().toISOString(),
@@ -143,12 +160,12 @@ export async function requestVideoInterview(
     const caregiverIds: string[] = inWindow
       ? ((limit.data()?.caregiverIds as string[] | undefined) ?? [])
       : [];
-    const alreadyContactedToday = caregiverIds.includes(caregiverId);
+    const alreadyContactedToday = caregiverIds.includes(resolvedCaregiverId);
     if (!alreadyContactedToday && caregiverIds.length >= MAX_REQUESTS_PER_DAY) {
       throw new VideoInterviewRequestError("resource-exhausted", "Daily interview request limit reached");
     }
     transaction.set(limitRef, {
-      caregiverIds: alreadyContactedToday ? caregiverIds : [...caregiverIds, caregiverId],
+      caregiverIds: alreadyContactedToday ? caregiverIds : [...caregiverIds, resolvedCaregiverId],
       windowStartedAt: inWindow ? windowStartedAt : now,
       updatedAt: now,
     });
@@ -162,7 +179,7 @@ export async function requestVideoInterview(
   logAudit({
     eventType: "interview_scheduled",
     userId: clientId,
-    data: { source, interviewId: interviewRef.id, caregiverId, scheduledTime: interview.scheduledTime },
+    data: { source, interviewId: interviewRef.id, caregiverId: resolvedCaregiverId, scheduledTime: interview.scheduledTime },
   }).catch(() => {});
 
   return interview;

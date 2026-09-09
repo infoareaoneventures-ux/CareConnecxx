@@ -12,7 +12,7 @@ const hoisted = vi.hoisted(() => {
   const makeDocRef = (path: string): any => ({
     id: path.split("/").pop(),
     path,
-    get: vi.fn(async () => ({ exists: docState.has(path), data: () => docState.get(path) })),
+    get: vi.fn(async () => ({ id: path.split("/").pop(), exists: docState.has(path), data: () => docState.get(path) })),
     set: vi.fn(async (data: any, opts?: any) => {
       const prev = docState.get(path) ?? {};
       docState.set(path, opts?.merge ? { ...prev, ...data } : data);
@@ -22,8 +22,24 @@ const hoisted = vi.hoisted(() => {
       docState.set(path, { ...prev, ...data });
     }),
   });
+  // Minimal .where(field, "==", value).limit(n).get() — filters docState
+  // entries whose path starts with this collection's path, matching on one
+  // equality clause. Only what the name-fallback lookup needs.
+  const makeQuery = (path: string, field?: string, value?: unknown) => ({
+    where: (f: string, _op: string, v: unknown) => makeQuery(path, f, v),
+    limit: (_n: number) => makeQuery(path, field, value),
+    get: async () => {
+      const prefix = `${path}/`;
+      const docs = [...docState.entries()]
+        .filter(([p, data]) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/") &&
+          (field === undefined || data?.[field] === value))
+        .map(([p, data]) => ({ id: p.slice(prefix.length), exists: true, data: () => data }));
+      return { empty: docs.length === 0, docs };
+    },
+  });
   const makeCollRef = (path: string): any => ({
     doc: (id?: string) => makeDocRef(`${path}/${id ?? `auto_${Math.random().toString(36).slice(2)}`}`),
+    where: (field: string, _op: string, value: unknown) => makeQuery(path, field, value),
   });
 
   const runTransactionMock = async (fn: (t: any) => Promise<any>) => {
@@ -200,5 +216,43 @@ describe("requestVideoInterview", () => {
     await expect(requestVideoInterview({
       clientId: "client_2", caregiverId: CAREGIVER, scheduledTime: FUTURE_ISO, source: "test",
     })).resolves.toMatchObject({ clientId: "client_2" });
+  });
+
+  // 2026-09-09 (live-caught): Evia doesn't always have the caregiver's real
+  // id in context (referencing someone named several turns earlier with no
+  // fresh search in between) and falls back to passing their NAME as
+  // caregiverId — which used to fail identically no matter what date/time
+  // was tried, since a name is never a real doc id.
+  describe("name-shaped caregiverId fallback (2026-09-09)", () => {
+    it("resolves a caregiver by exact name when the id lookup misses and the id contains a space", async () => {
+      const result = await requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test",
+      });
+      // The REAL doc id, never the name, everywhere it matters.
+      expect(result.caregiverId).toBe(CAREGIVER);
+      expect(result.caregiverName).toBe("Alice Rivera");
+      const stored = hoisted.docState.get(`video_interviews/${result.id}`);
+      expect(stored).toMatchObject({ caregiverId: CAREGIVER });
+    });
+
+    it("still fails when no caregiver matches that name either", async () => {
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Nobody Real", scheduledTime: FUTURE_ISO, source: "test",
+      })).rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
+    it("does not attempt a name lookup for a space-free id that simply doesn't exist (real ids never contain spaces)", async () => {
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "not_a_real_id", scheduledTime: FUTURE_ISO, source: "test",
+      })).rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
+    it("stores the resolved real id in the daily rate-limit tracker too, not the name", async () => {
+      await requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test",
+      });
+      const limit = hoisted.docState.get(`interviewRequestLimits/${CLIENT}`);
+      expect(limit.caregiverIds).toEqual([CAREGIVER]);
+    });
   });
 });

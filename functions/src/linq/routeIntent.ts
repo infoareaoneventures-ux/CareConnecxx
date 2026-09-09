@@ -11,6 +11,7 @@ const hasAppointmentId = (v: unknown): boolean =>
 import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags, hasActiveSmsFlow } from "../utils/sessionState";
+import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
@@ -1489,7 +1490,19 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // to the full grounded agent instead, which has the actual conversation
     // context to answer correctly (and can still stage a real fact correction
     // itself via its own tools).
-    if (intent === "FACT_CORRECTION" && !hasActiveSmsFlow(session as unknown as Record<string, unknown>)) {
+    // 2026-09-09: that guard only covers SCRIPTED flows (a tracked session
+    // flag) — it doesn't cover a free-form agent-loop conversation like
+    // schedule_interview's "what date/time?" ask, which sets no flag at all.
+    // Live-caught there: bare "9/11", "9/12", "12pm" answers misfired into
+    // FACT_CORRECTION, once even claiming a (nonexistent) correction was
+    // staged. A message that is ENTIRELY just a date or time cannot carry a
+    // real correction's explanatory language, so skip this branch for that
+    // narrow shape regardless of hasActiveSmsFlow.
+    if (
+      intent === "FACT_CORRECTION" &&
+      !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
+      !isBareDateOrTimeAnswer(text)
+    ) {
       const { detectAndStageFactChange, factChangeAckCopy } = await import("../memory/learnedFacts");
       const factUserId = session.userType === "caregiver"
         ? (session.caregiverId ?? session.userId ?? phone)

@@ -2969,6 +2969,13 @@ async function createVideoInterviewRequestForTool(params: {
         "permission-denied":    "PERMISSION_DENIED",
         "resource-exhausted":   "RATE_LIMITED",
       };
+      // 2026-09-09: only a toolErrors COUNT was ever visible in turn metrics —
+      // the actual reason had to be reconstructed from screenshots + guesswork
+      // live-debugging a real failure. Log the real code/message server-side
+      // so the next one is diagnosable directly from Cloud Functions logs.
+      console.error("schedule_interview: requestVideoInterview failed", {
+        code: err.code, message: err.message, clientId, caregiverId, scheduledTime,
+      });
       return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
     }
     throw err;

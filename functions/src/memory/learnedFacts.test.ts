@@ -458,6 +458,53 @@ describe("detectAndStageFactChange", () => {
     });
   });
 
+  // Live-caught (2026-09-09, exposed once the cancel-routing dead-end was
+  // fixed): "cancel the interview" was matching the forget/remove language
+  // in the classifier's own instructions and getting staged as a real
+  // forget against an unrelated stored fact, hijacking the turn before
+  // cancel_interview ever got a chance to run. The classifier prompt now
+  // explicitly carves out cancel/decline/reschedule requests on a real
+  // scheduled thing as an action for a dedicated tool, not a memory op.
+  describe("canceling a real scheduled interview/visit is NOT a fact forget (2026-09-09)", () => {
+    it.each([
+      "Can you cancel this interview",
+      "Can you cancel the interview",
+      "Can you cancel the interview pending for caregiver to accept or decline",
+      "Can you cancel my interview request for Saturday",
+    ])("%s → not_correction, nothing staged", async (text) => {
+      seedActiveFact("fact-1", "Mom prefers morning visits", 4, { category: "preference" });
+      const before = new Map(h.docs);
+      h.quickComplete.mockResolvedValueOnce("null");
+
+      const outcome = await detectAndStageFactChange({ userId: USER, text });
+
+      expect(outcome).toEqual({ kind: "not_correction" });
+      expect(factChangeAckCopy(outcome)).toBeNull();
+      expect(h.docs).toEqual(before);
+    });
+
+    it("the classifier prompt itself contrasts a booking cancellation against a real forget request", async () => {
+      seedActiveFact("fact-1", "Mom prefers morning visits", 4, { category: "preference" });
+      h.quickComplete.mockResolvedValueOnce("null");
+
+      await detectAndStageFactChange({ userId: USER, text: "Can you cancel this interview" });
+
+      const [systemPrompt] = h.quickComplete.mock.calls[0] as [string, string];
+      expect(systemPrompt).toContain("cancel, decline, reschedule, or call off a real scheduled");
+      expect(systemPrompt).toContain("Can you cancel the interview pending for caregiver to accept or decline");
+      expect(systemPrompt).toContain("forget what I said about the shellfish allergy");
+    });
+
+    it("a real forget request phrased with 'cancel'-adjacent wording still forgets (prompt doesn't over-broaden to null)", async () => {
+      seedActiveFact("fact-1", SHELLFISH, 8);
+      mockDetection(SHELLFISH, (i) => JSON.stringify({ corrects: i, newFact: null }));
+
+      const outcome = await detectAndStageFactChange({ userId: USER, text: "please stop remembering the shellfish allergy" });
+
+      expect(outcome).toMatchObject({ kind: "pending", change: "forget" });
+    });
+  });
+
   it("empty fact store: not_correction normally, honest no_match when the intent classifier already said correction", async () => {
     expect(await detectAndStageFactChange({ userId: USER, text: "forget the allergy" }))
       .toEqual({ kind: "not_correction" });

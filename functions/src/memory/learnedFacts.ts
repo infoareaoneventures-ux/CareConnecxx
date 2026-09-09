@@ -745,6 +745,14 @@ export async function detectAndStageFactChange(
         "the care recipient changed, the user is only pointing at a different topic in the conversation. Contrast " +
         "with a real correction like 'her doctor is Dr. Chen, not Dr. Lee' or 'I meant Tuesday, not Monday' (about " +
         "an appointment date), which DO assert a new true value for a stored fact.\n" +
+        "Also reply null when the user is asking to cancel, decline, reschedule, or call off a real scheduled " +
+        "thing — an interview, visit, shift, or appointment — even though the words 'cancel', 'remove', or " +
+        "'delete' appear. That is an action on a live booking, handled by a dedicated tool, never a request to " +
+        "forget/remove a stored fact from memory. 'Can you cancel this interview', 'Can you cancel the interview " +
+        "pending for caregiver to accept or decline', and 'Can you cancel my interview request for Saturday' are " +
+        "NOT forget requests — none of them name a stored fact to remove, they're asking you to cancel a real " +
+        "booking. Contrast with an actual forget request like 'forget what I said about the shellfish allergy' " +
+        "or 'please stop remembering that she prefers morning visits', which DO name a specific stored fact.\n" +
         "Only pick 'corrects'/'ambiguous'/'noMatch' when the message explicitly states a replacement value ('it's " +
         "actually X', 'change that to X') for a fact about the care situation, or explicitly asks to forget/remove/" +
         "stop remembering something specific. When genuinely unsure, prefer null over noMatch — noMatch derails " +

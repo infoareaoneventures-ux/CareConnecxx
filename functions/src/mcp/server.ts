@@ -2341,7 +2341,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: "cancel_interview",
     description:
       "Cancel a scheduled interview. Either participant can cancel their own interview; the other side is notified. " +
-      "Confirm before calling. To propose a new time instead, caregivers should use respond_to_interview_request.",
+      "Call this as soon as they've expressed clear intent to cancel (e.g. 'cancel it', 'yes') — do NOT ask them " +
+      "to confirm again yourself first. The platform already requires and enforces an explicit confirmation before " +
+      "this executes, so asking twice just makes them confirm the same thing a second time. " +
+      "To propose a new time instead, caregivers should use respond_to_interview_request.",
     input_schema: {
       type: "object",
       properties: {

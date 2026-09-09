@@ -692,3 +692,47 @@ describe("characterization — caregiver selection after a match list no longer 
     expect(runQaAgent).toHaveBeenCalled();
   });
 });
+
+// 2026-09-09 (live-caught): "cancel it" / "cancel that interview", asked
+// right after Evia herself described a pending interview, used to hit a
+// context-blind hardcoded "no visits to cancel" dead-end — CANCEL_REQUEST
+// assumed "cancel" could only ever mean a confirmed visit. With no confirmed
+// appointment to cancel, the turn now hands off to the full agent (which has
+// the real conversation context and cancel_interview) instead of dead-ending.
+describe("CANCEL_REQUEST with no confirmed appointment falls through to the agent (2026-09-09)", () => {
+  it("hands off to runQaAgent instead of the hardcoded 'no visits to cancel' reply", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "CANCEL_REQUEST", degraded: false });
+    runQaAgent.mockResolvedValue("I've cancelled your interview with Basra — she'll be notified.");
+
+    await routeIntentAndRespond(ctx("Can you cancel that interview"));
+
+    expect(runQaAgent).toHaveBeenCalledOnce();
+    expect(runQaAgent).toHaveBeenCalledWith(expect.objectContaining({ text: "Can you cancel that interview" }));
+  });
+
+  it("still hands off to the agent for the bare 'cancel' keyword too, not just the classified intent", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    runQaAgent.mockResolvedValue("What would you like to cancel — a visit or an interview?");
+
+    await routeIntentAndRespond(ctx("cancel"));
+
+    expect(runQaAgent).toHaveBeenCalledOnce();
+  });
+
+  it("a REAL confirmed appointment still goes through the visit-cancellation confirm flow, unaffected", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "CANCEL_REQUEST", degraded: false });
+    hoisted.docState.set("appointments/a1", {
+      clientId: CLIENT_ID, caregiverId: "cg1", caregiverName: "Basra", date: "2026-09-20",
+      startTime: "9:00 AM", endTime: "1:00 PM", status: "confirmed",
+    });
+
+    await routeIntentAndRespond(ctx("Can you cancel it"));
+
+    expect(runQaAgent).not.toHaveBeenCalled();
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session.pendingCancelConfirm).toEqual({ appointmentId: "a1" });
+  });
+});

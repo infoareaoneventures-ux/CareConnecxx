@@ -1009,13 +1009,27 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         .where("status",   "==", "confirmed")
         .orderBy("date",   "asc").limit(1).get();
       if (upcoming.empty) {
-        await sendMessage(chatId, await generateCaraMessage({
-          audience: "family",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "The family asked to cancel a visit, but there aren't any upcoming visits on the calendar. Gently let them know, and ask what they were looking to change.",
-          fallback: "I don't see any upcoming visits to cancel. What were you looking to change?",
-          maxTokens: 70,
-        }));
+        // 2026-09-09 (live-caught): this used to hardcode "no visits to
+        // cancel" and end the turn unconditionally — including right after
+        // Evia herself had just told the family about a pending INTERVIEW
+        // waiting on the caregiver, so "cancel it" / "cancel that interview"
+        // got a context-blind dead-end instead of ever reaching
+        // cancel_interview. No confirmed appointment to cancel doesn't mean
+        // there's nothing to cancel — hand off to the full agent, which has
+        // the real conversation context and both cancellation tools, instead
+        // of assuming "cancel" can only ever mean a visit.
+        const qaReply = await runQaAgent({
+          text, phone, chatId,
+          userId:      session.userId   ?? "",
+          seniorId:    session.seniorId ?? session.userId ?? "",
+          userType:    session.userType ?? "client",
+          caregiverId: session.caregiverId,
+          zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
+          session:     session as unknown as Record<string, unknown>,
+          intent,
+          ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
+        });
+        await persistDefaultQaTurn(ctx, qaReply ?? "");
         return;
       }
       const appt = upcoming.docs[0].data();

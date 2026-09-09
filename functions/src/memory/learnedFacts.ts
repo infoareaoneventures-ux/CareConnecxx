@@ -738,10 +738,18 @@ export async function detectAndStageFactChange(
         "like a pushback or challenge a previous answer. Reply null for things like 'Is my account approved', " +
         "'Do I have a shift coming up', 'Are you sure', 'What is my name', 'Can you check my membership' — none of " +
         "these assert a corrected fact or ask to forget one, they're just questions.\n" +
+        "Also reply null when the user is clarifying what THEY THEMSELVES just asked or meant in the current " +
+        "conversation — which thing they're referring to, or a misunderstanding about their own question — rather " +
+        "than asserting a new true value for a fact about the care recipient/caregiver/care situation. 'I meant " +
+        "interviews, not jobs' and 'It's not the visit, it's the interview' are NOT corrections — nothing about " +
+        "the care recipient changed, the user is only pointing at a different topic in the conversation. Contrast " +
+        "with a real correction like 'her doctor is Dr. Chen, not Dr. Lee' or 'I meant Tuesday, not Monday' (about " +
+        "an appointment date), which DO assert a new true value for a stored fact.\n" +
         "Only pick 'corrects'/'ambiguous'/'noMatch' when the message explicitly states a replacement value ('it's " +
-        "actually X', 'change that to X') or explicitly asks to forget/remove/stop remembering something specific. " +
-        "When genuinely unsure, prefer null over noMatch — noMatch derails the conversation with an off-topic " +
-        "'I can't find that memory' reply, which is worse than silently treating an edge case as not a correction.",
+        "actually X', 'change that to X') for a fact about the care situation, or explicitly asks to forget/remove/" +
+        "stop remembering something specific. When genuinely unsure, prefer null over noMatch — noMatch derails " +
+        "the conversation with an off-topic 'I can't find that memory' reply, which is worse than silently " +
+        "treating an edge case as not a correction.",
       `Known facts:\n${factsJson}\n\nUser message: "${text}"`,
       { maxTokens: 220 },
     );

@@ -414,6 +414,50 @@ describe("detectAndStageFactChange", () => {
     expect(factChangeAckCopy(outcome)).toBeNull();
   });
 
+  // Live-caught false positives (2026-09-09): the user was pointing at a
+  // different topic already in the conversation, not correcting a stored
+  // fact about the care recipient/caregiver/care situation. The classifier
+  // prompt now explicitly contrasts this against a real correction.
+  describe("clarifying what the user meant is NOT a fact correction (2026-09-09)", () => {
+    it.each([
+      "I meant interviews, not jobs",
+      "It's not the visit, it's the interview",
+    ])("%s → not_correction, nothing staged", async (text) => {
+      seedActiveFact("fact-1", "Mom prefers morning visits", 4, { category: "preference" });
+      const before = new Map(h.docs);
+      h.quickComplete.mockResolvedValueOnce("null");
+
+      const outcome = await detectAndStageFactChange({ userId: USER, text });
+
+      expect(outcome).toEqual({ kind: "not_correction" });
+      expect(factChangeAckCopy(outcome)).toBeNull();
+      expect(h.docs).toEqual(before);
+    });
+
+    it("the classifier prompt itself contrasts self-clarification against a real fact correction", async () => {
+      seedActiveFact("fact-1", "Mom prefers morning visits", 4, { category: "preference" });
+      h.quickComplete.mockResolvedValueOnce("null");
+
+      await detectAndStageFactChange({ userId: USER, text: "I meant interviews, not jobs" });
+
+      const [systemPrompt] = h.quickComplete.mock.calls[0] as [string, string];
+      expect(systemPrompt).toContain("clarifying what THEY THEMSELVES");
+      expect(systemPrompt).toContain("I meant interviews, not jobs");
+      expect(systemPrompt).toContain("It's not the visit, it's the interview");
+      expect(systemPrompt).toContain("her doctor is Dr. Chen, not Dr. Lee");
+    });
+
+    it("a real correction phrased similarly still corrects (prompt doesn't over-broaden to null)", async () => {
+      seedActiveFact("fact-1", "Mom's doctor is Dr. Lee", 8, { category: "medical" });
+      mockDetection("Dr. Lee", (i) =>
+        JSON.stringify({ corrects: i, newFact: "Mom's doctor is Dr. Chen", category: "medical" }));
+
+      const outcome = await detectAndStageFactChange({ userId: USER, text: "her doctor is Dr. Chen, not Dr. Lee", phone: "+14085550001" });
+
+      expect(outcome).toMatchObject({ kind: "pending", change: "correction" });
+    });
+  });
+
   it("empty fact store: not_correction normally, honest no_match when the intent classifier already said correction", async () => {
     expect(await detectAndStageFactChange({ userId: USER, text: "forget the allergy" }))
       .toEqual({ kind: "not_correction" });

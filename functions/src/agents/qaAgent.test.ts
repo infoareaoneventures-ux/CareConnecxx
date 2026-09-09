@@ -1135,6 +1135,18 @@ describe("runQaAgent re-remember and grounding behavior", () => {
     expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
   });
 
+  // 2026-09-09 (live-caught): this call site runs independently of
+  // routeIntent.ts's own FACT_CORRECTION-intent guard — a bare/combined
+  // date-time answer misfired here even after that guard was fixed, since
+  // classifyIntentDetailed is never consulted before this check runs.
+  it("skips detectAndStageFactChange entirely for a bare date/time answer (2026-09-09)", async () => {
+    const reply = await runQaAgent({ ...baseParams, text: "9/12/26 at 11 AM" });
+
+    expect(reply).toBe(normalReply);
+    expect(qaHarness.detectAndStageFactChange).not.toHaveBeenCalled();
+    expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("does not classify an expired re-remember confirmation and continues the normal turn", async () => {
     const reply = await runQaAgent({
       ...baseParams,

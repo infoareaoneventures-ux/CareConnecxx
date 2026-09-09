@@ -9,6 +9,7 @@ import { redactPii } from "../safety/redactPii";
 import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
+import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
 import { getZepContextResult, type ZepContextResult } from "../memory/zepClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 import {
@@ -2038,7 +2039,13 @@ export async function runQaAgent(params: {
     // can override. Skipped for unconfirmed identity (whose facts would these
     // be?) and for non-USER channels (trigger/agent/system text is not a user
     // assertion).
-    if (!unconfirmedIdentity && channel === "[USER]") {
+    // 2026-09-09 (live-caught): this runs on EVERY user turn, completely
+    // independent of classifyIntentDetailed/routeIntent.ts's own FACT_CORRECTION
+    // guard (which the isBareDateOrTimeAnswer fix was first applied to) — a
+    // bare/combined date-time answer like "9/12/26 at 11 AM" still misfired
+    // here even after that fix shipped, since this call site never went
+    // through the intent classifier at all. Same shape-based skip applies.
+    if (!unconfirmedIdentity && channel === "[USER]" && !isBareDateOrTimeAnswer(text)) {
       let factChange: import("../memory/learnedFacts").FactChangeOutcome;
       let lf: typeof import("../memory/learnedFacts") | null = null;
       try {

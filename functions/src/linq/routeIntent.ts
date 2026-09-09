@@ -1461,12 +1461,20 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // (client-tool capability audit: the site has zero medical-appointment/
     // pharmacy feature of any kind). Always deflect — never route to a
     // healthcare-action flow.
+    // 2026-09-09 (live-caught): classifyIntentDetailed sees only the raw text,
+    // no conversation history, so "Can you schedule interview with Basra
+    // Yousuf" was misclassified as BOOK_DOCTOR_APPOINTMENT — its own few-shot
+    // examples ("book an appointment with Dr. Smith", "schedule a checkup for
+    // mom") superficially match schedule/book + a person's name. The word
+    // "interview" is never used for a real medical appointment, so its
+    // presence rules out this deflection regardless of what the classifier said.
     if (
       (intent === "FIND_NEARBY_PROVIDER" ||
        intent === "BOOK_DOCTOR_APPOINTMENT" ||
        intent === "PRESCRIPTION_REFILL" ||
        intent === "NEW_PRESCRIPTION") &&
-      session.userType !== "caregiver"
+      session.userType !== "caregiver" &&
+      !/\binterview/i.test(text)
     ) {
       await sendMessage(chatId, buildNonMedicalDeflection(intent, text));
       return;

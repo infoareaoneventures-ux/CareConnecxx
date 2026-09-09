@@ -2975,6 +2975,7 @@ async function createVideoInterviewRequestForTool(params: {
       // so the next one is diagnosable directly from Cloud Functions logs.
       console.error("schedule_interview: requestVideoInterview failed", {
         code: err.code, message: err.message, clientId, caregiverId, scheduledTime,
+        jobId: jobId ?? null, applicationId: applicationId ?? null,
       });
       return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
     }
@@ -8380,6 +8381,21 @@ async function executeToolCall(
           };
         }),
       ].sort((a, b) => String(a.scheduledTime ?? "").localeCompare(String(b.scheduledTime ?? "")));
+      // 2026-09-09: a live "0 accepted interviews" answer turned out to be
+      // false — the site showed real accepted interviews for the same
+      // account. This tool has no visibility into what it actually found vs.
+      // what the model reported, so the discrepancy was undiagnosable from
+      // logs alone. Log the query scope + status breakdown so the next
+      // mismatch is checkable directly instead of re-derived from screenshots.
+      console.log("list_interviews: query result", {
+        field, id, statusFilter: liStatus ?? null,
+        videoInterviewsCount: liSnap.docs.length,
+        smsInterviewsCount: smsSnap.docs.length,
+        statusBreakdown: interviews.reduce((acc: Record<string, number>, iv) => {
+          acc[iv.status] = (acc[iv.status] ?? 0) + 1;
+          return acc;
+        }, {}),
+      });
       return { success: true, interviews, count: interviews.length };
     }
 

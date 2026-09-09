@@ -30,6 +30,15 @@ describe("isBareDateOrTimeAnswer", () => {
     expect(isBareDateOrTimeAnswer(" 12pm ")).toBe(true);
   });
 
+  it("matches the second live-caught gap (2026-09-09): combined date+time and 'at' time", () => {
+    expect(isBareDateOrTimeAnswer("9/11 at 10AM")).toBe(true);
+    expect(isBareDateOrTimeAnswer("9/11 at 10am")).toBe(true);
+    expect(isBareDateOrTimeAnswer("9/11/26 at 11:00 AM")).toBe(true);
+    expect(isBareDateOrTimeAnswer("at 11am")).toBe(true);
+    expect(isBareDateOrTimeAnswer("at 11:00 AM")).toBe(true);
+    expect(isBareDateOrTimeAnswer("at noon")).toBe(true);
+  });
+
   it("does not match a real fact correction", () => {
     expect(isBareDateOrTimeAnswer("actually mom is 82 not 78")).toBe(false);
     expect(isBareDateOrTimeAnswer("I meant Tuesday not Monday")).toBe(false);
@@ -40,6 +49,9 @@ describe("isBareDateOrTimeAnswer", () => {
     expect(isBareDateOrTimeAnswer("9/12 works for me")).toBe(false);
     expect(isBareDateOrTimeAnswer("let's do 12pm")).toBe(false);
     expect(isBareDateOrTimeAnswer("September 12")).toBe(false);
+    expect(isBareDateOrTimeAnswer("let's do 9/11 at 10am")).toBe(false);
+    expect(isBareDateOrTimeAnswer("9/11 at")).toBe(false);
+    expect(isBareDateOrTimeAnswer("at")).toBe(false);
   });
 
   it("returns false for empty or whitespace-only text", () => {

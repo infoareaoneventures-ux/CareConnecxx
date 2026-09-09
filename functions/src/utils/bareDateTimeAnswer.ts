@@ -7,13 +7,25 @@
  * a false-positive match that claimed a (nonexistent) correction was staged.
  * A genuine fact correction always carries explanatory language per the
  * classifier's own few-shot examples ("actually mom is 82 not 78", "I meant
- * Tuesday not Monday") — a message that is ENTIRELY just a calendar date or a
- * clock time, with nothing else, cannot structurally carry that narrative.
- * This is a shape/format check (not intent parsing) used only to skip one
- * specific known misfire, matching the existing YES/NO-style carve-outs.
+ * Tuesday not Monday") — a message that is ENTIRELY just a date/time answer,
+ * with nothing else, cannot structurally carry that narrative. This is a
+ * shape/format check (not intent parsing) used only to skip one specific
+ * known misfire, matching the existing YES/NO-style carve-outs.
+ *
+ * First pass only covered a BARE date or a BARE time ("9/11", "12pm").
+ * Live-caught again the same night: the natural combined phrasing people
+ * actually use ("9/11 at 10AM", "at 11am") still fell through the gap and
+ * hit the same misfire — widened to cover DATE [at TIME] and [at] TIME.
  */
+const DATE_SRC = String.raw`\d{1,2}\/\d{1,2}(?:\/\d{2,4})?`;
+const TIME_SRC = String.raw`\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight`;
+const BARE_DATE_OR_TIME_RE = new RegExp(
+  `^(?:(?:${DATE_SRC})(?:\\s+at\\s+(?:${TIME_SRC}))?|(?:at\\s+)?(?:${TIME_SRC}))$`,
+  "i",
+);
+
 export function isBareDateOrTimeAnswer(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
-  return /^(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{1,2}(:\d{2})?\s*(am|pm)|noon|midnight)$/i.test(trimmed);
+  return BARE_DATE_OR_TIME_RE.test(trimmed);
 }

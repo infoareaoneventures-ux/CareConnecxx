@@ -22,24 +22,33 @@ const hoisted = vi.hoisted(() => {
       docState.set(path, { ...prev, ...data });
     }),
   });
-  // Minimal .where(field, "==", value).limit(n).get() — filters docState
-  // entries whose path starts with this collection's path, matching on one
-  // equality clause. Only what the name-fallback lookup needs.
-  const makeQuery = (path: string, field?: string, value?: unknown) => ({
-    where: (f: string, _op: string, v: unknown) => makeQuery(path, f, v),
-    limit: (_n: number) => makeQuery(path, field, value),
+  const DOC_ID_SENTINEL = "__id__";
+  // Minimal .where(...).limit(n).get() — filters docState entries whose path
+  // starts with this collection's path. Supports one equality clause
+  // (field, "==", value) or one document-id membership clause
+  // (DOC_ID_SENTINEL, "in", string[]) — whichever the caller applies last —
+  // only what the name-fallback lookup needs.
+  const makeQuery = (path: string, clause?: { field: string; op: string; value: unknown }) => ({
+    where: (f: string, op: string, v: unknown) => makeQuery(path, { field: f, op, value: v }),
+    limit: (_n: number) => makeQuery(path, clause),
     get: async () => {
       const prefix = `${path}/`;
       const docs = [...docState.entries()]
-        .filter(([p, data]) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/") &&
-          (field === undefined || data?.[field] === value))
+        .filter(([p, data]) => {
+          if (!p.startsWith(prefix) || p.slice(prefix.length).includes("/")) return false;
+          if (!clause) return true;
+          if (clause.field === DOC_ID_SENTINEL) {
+            return clause.op === "in" && (clause.value as string[]).includes(p.slice(prefix.length));
+          }
+          return data?.[clause.field] === clause.value;
+        })
         .map(([p, data]) => ({ id: p.slice(prefix.length), exists: true, data: () => data }));
       return { empty: docs.length === 0, docs };
     },
   });
   const makeCollRef = (path: string): any => ({
     doc: (id?: string) => makeDocRef(`${path}/${id ?? `auto_${Math.random().toString(36).slice(2)}`}`),
-    where: (field: string, _op: string, value: unknown) => makeQuery(path, field, value),
+    where: (field: string, op: string, value: unknown) => makeQuery(path, { field, op, value }),
   });
 
   const runTransactionMock = async (fn: (t: any) => Promise<any>) => {
@@ -57,6 +66,7 @@ const hoisted = vi.hoisted(() => {
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
     runTransactionMock,
     reset: () => docState.clear(),
+    DOC_ID_SENTINEL,
   };
 });
 
@@ -69,6 +79,9 @@ vi.mock("firebase-admin", () => {
           const ms = Date.now();
           return { toMillis: () => ms, toDate: () => new Date(ms) };
         },
+      },
+      FieldPath: {
+        documentId: () => hoisted.DOC_ID_SENTINEL,
       },
     },
   );
@@ -223,10 +236,13 @@ describe("requestVideoInterview", () => {
   // fresh search in between) and falls back to passing their NAME as
   // caregiverId — which used to fail identically no matter what date/time
   // was tried, since a name is never a real doc id.
-  describe("name-shaped caregiverId fallback (2026-09-09)", () => {
-    it("resolves a caregiver by exact name when the id lookup misses and the id contains a space", async () => {
+  describe("name-shaped caregiverId fallback, scoped to this family (2026-09-09)", () => {
+    const PHONE = "+15551234567";
+
+    it("resolves a caregiver by exact name when the id lookup misses, scoped to this family's shownCaregiverIds", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       const result = await requestVideoInterview({
-        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test",
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
       });
       // The REAL doc id, never the name, everywhere it matters.
       expect(result.caregiverId).toBe(CAREGIVER);
@@ -235,24 +251,61 @@ describe("requestVideoInterview", () => {
       expect(stored).toMatchObject({ caregiverId: CAREGIVER });
     });
 
-    it("still fails when no caregiver matches that name either", async () => {
+    it("still fails when no caregiver matches that name within this family's shown list", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       await expect(requestVideoInterview({
-        clientId: CLIENT, caregiverId: "Nobody Real", scheduledTime: FUTURE_ISO, source: "test",
+        clientId: CLIENT, caregiverId: "Nobody Real", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
       })).rejects.toMatchObject({ code: "failed-precondition" });
     });
 
     it("does not attempt a name lookup for a space-free id that simply doesn't exist (real ids never contain spaces)", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       await expect(requestVideoInterview({
-        clientId: CLIENT, caregiverId: "not_a_real_id", scheduledTime: FUTURE_ISO, source: "test",
+        clientId: CLIENT, caregiverId: "not_a_real_id", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
       })).rejects.toMatchObject({ code: "failed-precondition" });
     });
 
     it("stores the resolved real id in the daily rate-limit tracker too, not the name", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER] });
       await requestVideoInterview({
-        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test",
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
       });
       const limit = hoisted.docState.get(`interviewRequestLimits/${CLIENT}`);
       expect(limit.caregiverIds).toEqual([CAREGIVER]);
+    });
+
+    // The exact risk flagged before shipping: an unscoped name match could
+    // book a complete stranger who happens to share a name with the
+    // caregiver the family actually meant.
+    it("SAFETY: never matches a same-named caregiver this family was never shown (a stranger), even though a global name search would find them", async () => {
+      // A second, unrelated caregiver with the identical name, never shown to
+      // this family — only reachable via a global (unscoped) name search.
+      hoisted.docState.set("publicCaregiverProfiles/cg_stranger", { name: "Alice Rivera" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [] }); // never shown Alice at all
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
+      })).rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
+    it("SAFETY: fails closed (does not guess) when two caregivers this family has BOTH been shown share the same name", async () => {
+      hoisted.docState.set("publicCaregiverProfiles/cg_alice2", { name: "Alice Rivera" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { shownCaregiverIds: [CAREGIVER, "cg_alice2"] });
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
+      })).rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
+    it("fails closed with no phone at all — never falls back to an unscoped global search", async () => {
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test",
+      })).rejects.toMatchObject({ code: "failed-precondition" });
+    });
+
+    it("fails closed when the session has no shownCaregiverIds at all", async () => {
+      hoisted.docState.set(`agent_sessions/${PHONE}`, {});
+      await expect(requestVideoInterview({
+        clientId: CLIENT, caregiverId: "Alice Rivera", scheduledTime: FUTURE_ISO, source: "test", phone: PHONE,
+      })).rejects.toMatchObject({ code: "failed-precondition" });
     });
   });
 });

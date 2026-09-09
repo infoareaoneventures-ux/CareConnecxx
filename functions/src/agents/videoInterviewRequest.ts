@@ -43,6 +43,10 @@ export interface RequestVideoInterviewParams {
   applicationId?: string;
   /** Caller identity for the audit log ("web" or a tool name). */
   source: string;
+  /** Evia-only — scopes the name-fallback lookup (see below) to caregivers
+   *  this specific family has actually been shown. The website never needs
+   *  this: it always passes a real id from its own UI selection. */
+  phone?: string;
 }
 
 export interface VideoInterviewRequestResult {
@@ -66,7 +70,7 @@ export interface VideoInterviewRequestResult {
 export async function requestVideoInterview(
   params: RequestVideoInterviewParams,
 ): Promise<VideoInterviewRequestResult> {
-  const { clientId, caregiverId, jobId, applicationId, source } = params;
+  const { clientId, caregiverId, jobId, applicationId, source, phone } = params;
 
   const scheduledMs = Date.parse(params.scheduledTime);
   if (!Number.isFinite(scheduledMs) || scheduledMs < Date.now() - 5 * 60 * 1000) {
@@ -89,12 +93,25 @@ export async function requestVideoInterview(
   // their NAME as caregiverId — which can never resolve as a doc id and fails
   // identically regardless of date/time tried. Real Firestore auto-ids never
   // contain a space, so a space-containing "id" is unambiguously a name, not
-  // a lookup miss — resolve it by name as a fallback rather than failing a
-  // request whose caregiver is real and simply misidentified.
-  if (!caregiverSnap.exists && caregiverId.includes(" ")) {
-    const byName = await db.collection("publicCaregiverProfiles")
-      .where("name", "==", caregiverId).limit(1).get().catch(() => null);
-    if (byName && !byName.empty) caregiverSnap = byName.docs[0];
+  // a lookup miss.
+  // SAFETY (caught before shipping): a bare, unscoped `where("name", "==", …)`
+  // across the whole platform risks matching a same-named STRANGER instead of
+  // the caregiver the family actually meant — worse than the original bug.
+  // Scope strictly to this family's own shownCaregiverIds (every caregiver
+  // this client has actually been shown, via matchingAgent.ts) and require a
+  // UNIQUE match within that small set; anything ambiguous or unscoped fails
+  // closed rather than guessing. No `phone` (e.g. the website, which never
+  // hits this path — it always passes a real id) also fails closed.
+  if (!caregiverSnap.exists && caregiverId.includes(" ") && phone) {
+    const sessSnap = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+    const shownIds = ((sessSnap?.data()?.shownCaregiverIds as string[] | undefined) ?? []).slice(0, 30);
+    if (shownIds.length > 0) {
+      const scoped = await db.collection("publicCaregiverProfiles")
+        .where(admin.firestore.FieldPath.documentId(), "in", shownIds)
+        .get().catch(() => null);
+      const matches = (scoped?.docs ?? []).filter((d) => (d.data()?.name as string | undefined) === caregiverId);
+      if (matches.length === 1) caregiverSnap = matches[0];
+    }
   }
   if (!caregiverSnap.exists) {
     throw new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews");

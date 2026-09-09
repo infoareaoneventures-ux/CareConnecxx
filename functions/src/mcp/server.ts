@@ -2971,7 +2971,7 @@ async function createVideoInterviewRequestForTool(params: {
   try {
     const interview = await requestVideoInterview({
       clientId, caregiverId, scheduledTime, applicationId, interviewType, jobId, notes,
-      source: "mcp:schedule_interview",
+      source: "mcp:schedule_interview", phone,
     });
     if (phone) {
       const { resolveCommitment } = await import("../agents/commitmentTracker");

@@ -209,34 +209,20 @@ export interface MatchRunOptions {
 
 // This family's OWN match history, as a prompt block for the scorer. Global
 // outcome patterns say what families in general hire; this says what THIS
-// family has already passed on or hired. Names only — the scorer sees each
-// candidate's full signals and can reason about resemblance itself. No
-// orderBy (avoids composite indexes); recency isn't load-bearing here.
-async function buildFamilyMatchHistory(phone: string, userId?: string): Promise<string> {
-  const [reqSnap, outcomeSnap] = await Promise.all([
-    db.collection("interview_requests")
-      .where("clientPhone", "==", phone)
-      .limit(25)
-      .get()
-      .catch(() => null),
-    userId
-      ? db.collection("match_outcomes")
-          .where("clientId", "==", userId)
-          .limit(25)
-          .get()
-          .catch(() => null)
-      : Promise.resolve(null),
-  ]);
+// family has already passed on or hired. No orderBy (avoids composite
+// indexes); recency isn't load-bearing here.
+// 2026-09-09 (Hamse's call): the interview_requests half (passed/met caregiver
+// names) was removed along with the rest of the collection — nothing writes
+// it anymore, so it was frozen historical data at best, not a live signal.
+async function buildFamilyMatchHistory(_phone: string, userId?: string): Promise<string> {
+  const outcomeSnap = userId
+    ? await db.collection("match_outcomes")
+        .where("clientId", "==", userId)
+        .limit(25)
+        .get()
+        .catch(() => null)
+    : null;
 
-  const passed  = new Set<string>();
-  const met     = new Set<string>();
-  for (const d of reqSnap?.docs ?? []) {
-    const r = d.data();
-    const name = (r.caregiverName as string) || "";
-    if (!name) continue;
-    if (r.status === "client_declined" || r.status === "declined") passed.add(name);
-    else if (r.status === "scheduled") met.add(name);
-  }
   let hiredCount = 0, passedCount = 0;
   for (const d of outcomeSnap?.docs ?? []) {
     const o = d.data();
@@ -244,18 +230,15 @@ async function buildFamilyMatchHistory(phone: string, userId?: string): Promise<
     else passedCount++;
   }
 
-  if (passed.size === 0 && met.size === 0 && hiredCount === 0 && passedCount === 0) return "";
+  if (hiredCount === 0 && passedCount === 0) return "";
 
-  const lines: string[] = ["THIS FAMILY'S OWN HISTORY:"];
-  if (passed.size > 0) lines.push(`- Previously passed on: ${[...passed].slice(0, 8).join(", ")}`);
-  if (met.size > 0)    lines.push(`- Interviewed: ${[...met].slice(0, 8).join(", ")}`);
-  if (hiredCount || passedCount) lines.push(`- Web match outcomes: ${hiredCount} hired, ${passedCount} passed`);
-  lines.push(
+  return [
+    "THIS FAMILY'S OWN HISTORY:",
+    `- Web match outcomes: ${hiredCount} hired, ${passedCount} passed`,
     "Weigh what their passes have in common (rate, experience level, specialty mix) " +
     "and avoid re-offering the same shape of mismatch; if a candidate closely resembles " +
-    "someone they passed on, say so in the reasoning."
-  );
-  return lines.join("\n");
+    "someone they passed on, say so in the reasoning.",
+  ].join("\n");
 }
 
 export async function runMatchingForClient(
@@ -653,23 +636,20 @@ export async function runMatchingForClient(
     // Successful match — reset the failure counter
     await db.collection("agent_sessions").doc(phone).update({ consecutiveMatchFailures: 0 }).catch(() => {});
 
-    // Write pending interview requests (and caregiver_interest tasks for pending-bg-check caregivers)
+    // 2026-09-09 (Hamse's call): the interview_requests "candidate presented"
+    // bookkeeping this loop used to write is removed — it had no website
+    // equivalent, nothing ever closed it out once a real interview got
+    // scheduled through the unified schedule_interview path (confirmed live:
+    // every record sat at "pending_presentation" forever), and the caregiver-
+    // facing display built on it showed a fabricated fallback timestamp (the
+    // current moment, since these records never had a real scheduled time)
+    // and a generic "Client" placeholder instead of the family's name. The
+    // family-facing match message below is built from top3/top3Scores
+    // directly and was never affected by this write either way. Only the
+    // caregiver_interest task (a real, separate, independent follow-up for
+    // pending-background-check caregivers) is kept.
     for (let i = 0; i < top3.length; i++) {
       const c = top3[i];
-      const ms = top3Scores[i];
-      await db.collection("interview_requests").add({
-        clientPhone:  phone,
-        caregiverId:  c.id,
-        caregiverName: c.name,
-        status:       "pending_presentation",
-        createdAt:    new Date().toISOString(),
-        matchScore: {
-          overallScore: ms.overallScore,
-          breakdown:    ms.breakdown,
-          reasoning:    ms.reasoning,
-          confidence:   ms.confidence,
-        },
-      });
 
       if ((c as any).pendingBackgroundCheck) {
         await db.collection("agent_tasks").add({

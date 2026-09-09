@@ -48,7 +48,7 @@ interface InterviewItem {
     jobId?: string;
     interviewType?: string;
     callUrl?: string;
-    source: 'request' | 'video';
+    source: 'video';
 }
 
 type TabType = 'available' | 'my-applications' | 'interviews' | 'hidden';
@@ -232,52 +232,31 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         if (!fdb) { setInterviewsLoading(false); return; }
         setInterviewsLoading(true);
 
-        let requestData: InterviewItem[] = [];
-        let videoData: InterviewItem[] = [];
-        let resolvedCount = 0;
-
         const normalizeDate = (raw: any): string => {
             if (!raw) return new Date().toISOString();
             return raw?.toDate ? raw.toDate().toISOString() : String(raw);
         };
 
-        const merge = () => {
-            resolvedCount++;
-            const statusOrder: Record<string, number> = { pending: 0, accepted: 1, confirmed: 2, completed: 3, declined: 4, cancelled: 5 };
-            const combined = [...requestData, ...videoData].sort((a, b) => {
-                const so = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
-                if (so !== 0) return so;
-                return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
-            });
-            setInterviews(combined);
-            if (resolvedCount >= 2) setInterviewsLoading(false);
-        };
-
-        const unsub1 = fdb.collection('interview_requests')
+        const unsub = fdb.collection('video_interviews')
             .where('caregiverId', '==', profile.uid)
             .onSnapshot(snap => {
-                requestData = snap.docs.map(doc => {
-                    const d = doc.data();
-                    const rawStatus = d.status || 'pending';
-                    const status = rawStatus === 'requested' || rawStatus === 'scheduled' ? 'pending' : rawStatus;
-                    return { id: doc.id, clientId: d.clientId || '', clientName: d.clientName || 'Client', scheduledAt: normalizeDate(d.scheduledDateTime || d.scheduledAt), createdAt: normalizeDate(d.createdAt), status, notes: d.notes, jobTitle: d.jobTitle, jobId: d.jobId, interviewType: d.type || d.interviewType || 'video', source: 'request' as const };
-                });
-                merge();
-            }, () => merge());
-
-        const unsub2 = fdb.collection('video_interviews')
-            .where('caregiverId', '==', profile.uid)
-            .onSnapshot(snap => {
-                videoData = snap.docs.map(doc => {
+                const statusOrder: Record<string, number> = { pending: 0, accepted: 1, confirmed: 2, completed: 3, declined: 4, cancelled: 5 };
+                const videoData = snap.docs.map(doc => {
                     const d = doc.data();
                     const rawStatus = d.status || 'pending';
                     const status = rawStatus === 'requested' || rawStatus === 'scheduled' ? 'pending' : rawStatus;
                     return { id: doc.id, clientId: d.clientId || '', clientName: d.clientName || 'Client', scheduledAt: normalizeDate(d.scheduledTime || d.scheduledAt || d.scheduledDateTime), createdAt: normalizeDate(d.createdAt), status, notes: d.notes, jobTitle: d.jobTitle, jobId: d.jobId, interviewType: d.interviewType || 'video', callUrl: d.callUrl, source: 'video' as const };
                 });
-                merge();
-            }, () => merge());
+                videoData.sort((a, b) => {
+                    const so = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+                    if (so !== 0) return so;
+                    return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+                });
+                setInterviews(videoData);
+                setInterviewsLoading(false);
+            }, () => setInterviewsLoading(false));
 
-        return () => { unsub1(); unsub2(); };
+        return unsub;
     }, [profile?.uid]);
 
     const handleApplyToJob = async (e: React.FormEvent) => {

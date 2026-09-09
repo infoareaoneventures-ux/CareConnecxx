@@ -237,12 +237,6 @@ vi.mock("../../agents/permissionsConversation", () => ({
   updatePermissionFromText:        vi.fn(async () => true),
   getPermissions:                  vi.fn(async () => ({})),
 }));
-vi.mock("../../agents/interviewAgent", () => ({
-  handleInterviewSelection:         vi.fn(async () => {}),
-  handleInterviewConfirm:           vi.fn(async () => {}),
-  handleCaregiverAvailabilityReply: vi.fn(async () => {}),
-  writeInterviewOutcomeSignal:      vi.fn(async () => {}),
-}));
 vi.mock("../../agents/bookingExecutor", () => ({
   executeBookings:   vi.fn(async () => {}),
   createBookingTask: vi.fn(async () => ({ ok: true })),
@@ -296,7 +290,7 @@ vi.mock("../../utils/sessionState", () => ({
   // Merged in from cara-100: routeIntent now sweeps stale high-stakes confirm
   // flags. Default to none stale so existing routing assertions are unaffected.
   staleConfirmFlags: vi.fn(() => []),
-  HIGH_STAKES_CONFIRM_FLAGS: ["pendingInterviewConfirm", "pendingCancelConfirm", "awaitingRecurringConfirmation"],
+  HIGH_STAKES_CONFIRM_FLAGS: ["pendingCancelConfirm", "awaitingRecurringConfirmation"],
   CONFIRM_FLAG_TTL_MS: 60 * 60 * 1000,
   // Job-invite + multi-step flow freshness (2026-07-15). Default to fresh so
   // existing routing assertions are unaffected.

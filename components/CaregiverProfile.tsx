@@ -72,9 +72,8 @@ export const CaregiverProfile: React.FC<CaregiverProfileProps> = ({ onNavigate, 
     Promise.all([
       db.collection('job_applications').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
       db.collection('video_interviews').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
-      db.collection('interview_requests').where('caregiverId', '==', uid).limit(1).get().catch(() => null),
-    ]).then(([apps, vids, reqs]) => {
-      if (!apps?.empty || !vids?.empty || !reqs?.empty) setHasEngagement(true);
+    ]).then(([apps, vids]) => {
+      if (!apps?.empty || !vids?.empty) setHasEngagement(true);
     });
   }, [currentUser?.uid]);
 

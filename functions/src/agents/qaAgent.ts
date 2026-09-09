@@ -2532,6 +2532,13 @@ export async function runQaAgent(params: {
   // tool created an interview with a different caregiver than the one Evia's
   // reply named).
   let scheduledInterviewDetails: { interviewId: string; caregiverId: string; caregiverName: string } | null = null;
+  // 2026-09-09: complete_interview's own tool description tells the model to
+  // "MANDATORY... in the SAME reply always ask how it went" — a prompt
+  // instruction with no runtime enforcement (same class of gap as the
+  // interview-identity guard above). Tracked here so a deterministic
+  // follow-up can guarantee that ask actually happens, instead of leaving it
+  // to the model's own judgment every time.
+  let completedInterviewDetails: { interviewId: string; caregiverName: string } | null = null;
 
   try {
     if (!skipSend) await startTyping(chatId).catch(() => {});
@@ -2923,6 +2930,12 @@ export async function runQaAgent(params: {
               const r = result as { interviewId?: string; caregiverId?: string; caregiverName?: string };
               if (r.interviewId && r.caregiverId && r.caregiverName) {
                 scheduledInterviewDetails = { interviewId: r.interviewId, caregiverId: r.caregiverId, caregiverName: r.caregiverName };
+              }
+            }
+            if (!errored && block.name === "complete_interview") {
+              const r = result as { interviewId?: string; caregiverName?: string };
+              if (r.interviewId && r.caregiverName) {
+                completedInterviewDetails = { interviewId: r.interviewId, caregiverName: r.caregiverName };
               }
             }
 
@@ -3592,6 +3605,19 @@ export async function runQaAgent(params: {
       }).catch((err) => {
         console.error("qaAgent: interview-identity guard failed", err);
         return reply;
+      });
+    }
+
+    // Fit-decision follow-up guarantee (interviewFitFollowUp.ts) — skipped after
+    // a handoff/neutralized reply (3407/3419 above): appending an unrelated
+    // question to "I'm looping in a teammate" reads as incoherent, and the
+    // recurring proactive nudge still covers that case regardless.
+    if (!handedOff && !groundingNeutralizedThisTurn) {
+      const { applyFitDecisionFollowUp } = await import("./interviewFitFollowUp");
+      reply = applyFitDecisionFollowUp({
+        reply,
+        completedInterviewDetails,
+        toolNamesThisTurn: metrics.toolNames ?? [],
       });
     }
 

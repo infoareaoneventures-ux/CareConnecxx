@@ -1301,38 +1301,6 @@
       ]
     },
     {
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "clientPhone",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "expiresAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "care_journal",
       "queryScope": "COLLECTION",
       "fields": [
@@ -1973,24 +1941,6 @@
       ]
     },
     {
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "appointments",
       "queryScope": "COLLECTION",
       "fields": [
@@ -2234,20 +2184,6 @@
         },
         {
           "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "caregiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
           "order": "DESCENDING"
         }
       ]

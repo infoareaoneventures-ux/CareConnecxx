@@ -25,7 +25,6 @@ const db = admin.firestore();
  */
 
 export interface CaregiverSnapshotInput {
-  pendingInterviews:  number;
   pendingApplications: number;
   hasShiftOffer:      boolean;
   hasJobInvite:       boolean;
@@ -68,8 +67,6 @@ export function formatCaregiverSnapshot(s: CaregiverSnapshotInput): string {
     const more = s.upcomingVisits > 1 ? ` (+${s.upcomingVisits - 1} more in the next 7 days)` : "";
     lines.push(`- Next visit: ${s.nextVisit.date}${at}${more}.`);
   }
-  if (s.pendingInterviews > 0)
-    lines.push(`- ${s.pendingInterviews} interview request${s.pendingInterviews === 1 ? "" : "s"} awaiting your response.`);
   if (s.pendingApplications > 0)
     lines.push(`- ${s.pendingApplications} job application${s.pendingApplications === 1 ? "" : "s"} still pending a decision.`);
   if (lines.length === 0) return "";
@@ -98,8 +95,7 @@ export function formatClientSnapshot(s: ClientSnapshotInput): string {
 }
 
 /**
- * Caregiver snapshot. Two proven-indexed queries (interview_requests by
- * caregiverId+status — see mcp/server.ts list path; job_applications by
+ * Caregiver snapshot. Two proven-indexed queries (job_applications by
  * caregiverId — see get_my_applications) plus zero-cost session flags. Soft-fail.
  */
 export async function buildCaregiverSnapshot(
@@ -114,15 +110,7 @@ export async function buildCaregiverSnapshot(
     const weekAheadD = new Date(`${today}T12:00:00Z`);
     weekAheadD.setUTCDate(weekAheadD.getUTCDate() + 7);
     const weekAhead = weekAheadD.toISOString().slice(0, 10);
-    const [interviewSnap, appSnap, visitSnap] = await Promise.all([
-      // Statuses where the caregiver themselves must respond. Includes the SMS
-      // interview flow's "awaiting_caregiver_availability" (interviewAgent.ts) —
-      // previously missed. "pending_presentation" is excluded: it can mean
-      // awaiting presentation to the client, not the caregiver.
-      db.collection("interview_requests")
-        .where("caregiverId", "==", caregiverId)
-        .where("status", "in", ["awaiting_caregiver_availability", "awaiting_caregiver_response"])
-        .limit(10).get().catch(() => null),
+    const [appSnap, visitSnap] = await Promise.all([
       db.collection("job_applications")
         .where("caregiverId", "==", caregiverId)
         .orderBy("appliedAt", "desc")
@@ -148,7 +136,6 @@ export async function buildCaregiverSnapshot(
       : null;
 
     return formatCaregiverSnapshot({
-      pendingInterviews:   interviewSnap?.size ?? 0,
       pendingApplications,
       hasShiftOffer:       !!session?.pendingShiftOfferId,
       hasJobInvite:        !!(session?.awaitingJobResponse && session?.pendingJobId),

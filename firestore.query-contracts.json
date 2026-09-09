@@ -40,23 +40,6 @@
       "callers": ["functions/src/agents/refundHandler.ts"]
     },
     {
-      "id": "Q4",
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "caregiverId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ],
-      "disposition": "composite",
-      "status": "new",
-      "notes": "Equality and 'in' variants of status share this one definition.",
-      "callers": [
-        "functions/src/agents/interviewAgent.ts",
-        "functions/src/linq/routeCaregiver.ts"
-      ]
-    },
-    {
       "id": "Q5",
       "collectionGroup": "appointments",
       "queryScope": "COLLECTION",
@@ -261,18 +244,6 @@
       "disposition": "composite",
       "status": "new",
       "callers": ["components/admin/AuditDashboard.tsx"]
-    },
-    {
-      "id": "Q21",
-      "collectionGroup": "interview_requests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "caregiverId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ],
-      "disposition": "composite",
-      "status": "new",
-      "callers": ["components/caregiver/CaregiverCareRequestsCard.tsx"]
     },
     {
       "id": "Q22",

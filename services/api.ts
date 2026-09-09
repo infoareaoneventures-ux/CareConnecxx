@@ -3210,65 +3210,11 @@ export const dbService = {
         return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     },
 
-    createInterviewRequest: async (data: {
-        clientId: string;
-        seniorId: string;
-        caregiverId: string;
-        matchAssignmentId: string;
-        type: 'video' | 'phone' | 'in_person';
-        proposedTimes: string[];
-        clientNotes?: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const docRef = await db.collection('interview_requests').add({
-            ...data,
-            status: 'pending',
-            duration: 20,
-            createdAt: new Date().toISOString()
-        });
-        
-        return docRef.id;
-    },
-
-    getInterviewRequests: async (filters: { clientId?: string; caregiverId?: string }) => {
-        if (!isConfigured || !db) return [];
-        
-        let query: any = db.collection('interview_requests');
-        
-        if (filters.clientId) {
-            query = query.where('clientId', '==', filters.clientId);
-        }
-        if (filters.caregiverId) {
-            query = query.where('caregiverId', '==', filters.caregiverId);
-        }
-        
-        const snapshot = await query.orderBy('createdAt', 'desc').get();
-        return snapshot.docs.map((doc: firebase.firestore.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
-    },
-
-    updateInterviewRequest: async (requestId: string, updates: any) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        await db.collection('interview_requests').doc(requestId).update(updates);
-    },
-
-    // U4 (2026-07-20): getMatchScoreForCaregiver (interview_requests
-    // caregiverId+clientPhone+createdAt) removed — zero callers.
-
-    submitInterviewFeedback: async (requestId: string, feedback: {
-        fit: 'strong' | 'maybe' | 'no_match';
-        notes?: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        await db.collection('interview_requests').doc(requestId).update({
-            clientFeedback: {
-                ...feedback,
-                submittedAt: new Date().toISOString()
-            },
-            status: 'completed'
-        });
-    },
+    // 2026-09-09 (Hamse's call): createInterviewRequest / getInterviewRequests /
+    // updateInterviewRequest / submitInterviewFeedback removed along with the
+    // rest of the interview_requests collection — zero callers anywhere in the
+    // site (see functions/src/agents/matchingAgent.ts for the fuller removal
+    // rationale). Interviews are scheduled/tracked in video_interviews only.
 
     submitHireRequest: async (data: {
         clientId: string;

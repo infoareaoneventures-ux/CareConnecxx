@@ -44,6 +44,15 @@ describe("classifyGroundingClaims — plan false-negative fixtures (R18)", () =>
     ["I rejected the application.",              "action_authorization", "high"],
     ["The application has been declined.",       "action_authorization", "high"],
     ["Your request was denied.",                 "action_authorization", "high"],
+    // 2026-09-09: same gap, same shape — "marked"/"mark" was never added even
+    // after the fix above closed this exact hole for "declined". A live
+    // incident found Evia say "Done, I marked it as a strong fit" (and
+    // separately "I'll mark the interview complete") with no
+    // complete_interview/submit_interview_feedback call behind either —
+    // never classified as a claim worth checking at all.
+    ["Done, I marked it as a strong fit.",        "action_authorization", "high"],
+    ["I've marked the interview complete.",       "action_authorization", "high"],
+    ["The interview is now marked complete.",     "action_authorization", "high"],
   ] as const)("%p → %s (%s risk)", (draft, category, risk) => {
     const claims = classifyGroundingClaims(draft);
     expect(claimCategories(claims)).toContain(category);

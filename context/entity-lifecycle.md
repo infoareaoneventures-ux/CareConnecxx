@@ -51,7 +51,6 @@ terminal records drop out of user-active views but stay admin/audit-visible.
 | `chatRooms` | Participants | Participants + Admin | Participants + Admin | Admin hard-delete only | 1:1 messaging. |
 | `customers` (+`subscriptions`) | Stripe webhook | Owner | — | (write denied) | Stripe customer + subscription subcollection. |
 | `hire_requests` | Client/Caregiver/Server | Participants + Admin | Client/Admin | Admin delete only | Post-interview hire. |
-| `interview_requests` | Client/Server | Caregiver/Client/Admin | Admin/Server | Admin delete only | Interview scheduling + feedback. |
 | `interviews` | Server only | Participants + Admin | Server only | Admin delete only; create/update denied | Scheduled interview record with Google Meet link + ICS. |
 | `video_interviews` | Client/Server | Participants + Admin | Participants + Admin | Admin delete only | Google Meet link interview coordinated by Evia. |
 | `job_applications` | Caregiver (own) | Participants + Admin | Client (status) / Caregiver (`withdrawn`) / Admin | **Terminal status** `withdrawn`/`accepted`/`rejected`; admin hard-delete | `withdraw_job_application` (Evia). |

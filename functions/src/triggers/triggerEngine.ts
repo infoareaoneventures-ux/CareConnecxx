@@ -568,12 +568,6 @@ export const runTriggerEngine = functions.pubsub
           await sendIssueFollowUp(issueLogId).catch(err =>
             console.error("issue_followup failed:", err)
           );
-        } else if (trigger.message.startsWith("interview_followup:")) {
-          const interviewId = trigger.message.slice("interview_followup:".length);
-          const { sendPostInterviewFollowUp } = await import("../agents/interviewAgent");
-          await sendPostInterviewFollowUp(interviewId).catch(err =>
-            console.error("interview_followup failed:", err)
-          );
         } else if (trigger.source === "claude" && trigger.intent) {
           // Claude-scheduled follow-up: check context before firing, then regenerate message
 
@@ -771,11 +765,6 @@ export const runTriggerEngine = functions.pubsub
       console.error("checkIgnoredTriggers error:", err)
     );
 
-    // Expire stale interview requests and re-match family if no candidates remain
-    await checkExpiredInterviewRequests().catch((err) =>
-      console.error("checkExpiredInterviewRequests error:", err)
-    );
-
     // Fire any user-defined recurring reminders that are due
     await evaluateUserTriggers().catch((err) =>
       console.error("evaluateUserTriggers error:", err)
@@ -799,103 +788,12 @@ export const runTriggerEngine = functions.pubsub
 
 export { runTriggerEngine as triggerEngineScheduled };
 
-// ── Expire stale interview requests and re-match when all candidates exhausted ─
-
-async function checkExpiredInterviewRequests(): Promise<void> {
-  const now = new Date().toISOString();
-
-  const snap = await db.collection("interview_requests")
-    .where("status",    "==", "awaiting_caregiver_availability")
-    .where("expiresAt", "<=", now)
-    .get();
-
-  if (snap.empty) return;
-
-  for (const doc of snap.docs) {
-    const req = doc.data();
-    try {
-      await doc.ref.update({ status: "expired", expiredAt: now });
-
-      const clientPhone: string | undefined = req.clientPhone;
-      if (!clientPhone) continue;
-
-      // Notify family that this caregiver didn't respond
-      const caregiverName: string = req.caregiverName ?? "The caregiver";
-      await sendViaInteractionAgent(clientPhone, {
-        content:
-          `${caregiverName} didn't respond to the interview request in time. ` +
-          `I'm looking for other options — I'll send new matches shortly.`,
-        urgency:     "standard",
-        sourceAgent: "interview_agent",
-        canDrop:     false,
-      }).catch(() => {});
-
-      // Check if ALL interview requests for this client are now in terminal states
-      await checkAndTriggerRematching(clientPhone, req.caregiverId ?? "").catch(err =>
-        console.error(`checkExpiredInterviewRequests: re-match failed for ${clientPhone}:`, err)
-      );
-    } catch (err) {
-      console.error(`checkExpiredInterviewRequests: error for request ${doc.id}:`, err);
-    }
-  }
-
-  console.log(`[checkExpiredInterviewRequests] Expired ${snap.size} interview requests`);
-}
-
-// Called when a caregiver declines or an interview expires — checks if all options
-// are exhausted and kicks off a fresh matching pass if so.
-export async function checkAndTriggerRematching(clientPhone: string, excludeCaregiverId: string): Promise<void> {
-  const TERMINAL = ["declined", "expired", "caregiver_declined", "client_declined", "scheduled"];
-
-  const allReqs = await db.collection("interview_requests")
-    .where("clientPhone", "==", clientPhone)
-    .get();
-
-  if (allReqs.empty) return;
-
-  // Collect all tried caregiver IDs
-  const triedIds = allReqs.docs.map(d => d.data().caregiverId as string).filter(Boolean);
-
-  const allTerminal = allReqs.docs.every(d => TERMINAL.includes(d.data().status ?? ""));
-  const anyScheduled = allReqs.docs.some(d => d.data().status === "scheduled");
-
-  if (!allTerminal || anyScheduled) return; // Still an active request, or interview already scheduled
-
-  // All requests exhausted — trigger fresh matching with exclusions
-  const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
-  if (!sessionSnap.exists) return;
-  const session = sessionSnap.data()!;
-  if (session.optedOut) return;
-
-  // Add excluded caregivers to session so matchingAgent skips them
-  const alreadyExcluded: string[] = (session.rejectedCaregiverIds ?? []) as string[];
-  const newExclusions = triedIds.filter(id => !alreadyExcluded.includes(id));
-  if (newExclusions.length > 0) {
-    await db.collection("agent_sessions").doc(clientPhone).update({
-      rejectedCaregiverIds: admin.firestore.FieldValue.arrayUnion(...newExclusions),
-    });
-  }
-
-  await sendViaInteractionAgent(clientPhone, {
-    content: "All the caregivers I reached out to weren't available. Let me search for fresh options — I'll have new matches for you shortly.",
-    urgency:     "standard",
-    sourceAgent: "interview_agent",
-    canDrop:     false,
-  });
-
-  // Skip if a matching agent is already running for this client
-  const activeMatchSnap = await db.collection("agent_tasks_active").doc(clientPhone).get();
-  if (activeMatchSnap.exists && activeMatchSnap.data()?.type === "matching") {
-    console.log(`[checkAndTriggerRematching] Skipping re-match — matching agent already active for ${clientPhone}`);
-    return;
-  }
-
-  const { runMatchingForClient } = await import("../agents/matchingAgent");
-  const chatId = session.chatId as string ?? "";
-  await runMatchingForClient(clientPhone, chatId, session, session).catch(err =>
-    console.error("checkAndTriggerRematching: runMatchingForClient failed:", err)
-  );
-}
+// 2026-09-09 (Hamse's call): checkExpiredInterviewRequests and
+// checkAndTriggerRematching both removed along with the rest of the
+// interview_requests collection. Both only ever served the interviewAgent.ts
+// negotiation flow (deleted the same day — schedule_interview/video_interviews
+// is the only interview path now), and by this point had zero remaining
+// callers anywhere in functions/src.
 
 // ── Escalate health alert to emergency contact if family didn't acknowledge ────
 

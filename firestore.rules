@@ -760,25 +760,6 @@ service cloud.firestore {
     }
     
     // ==========================================
-    // INTERVIEW REQUESTS
-    // ==========================================
-    match /interview_requests/{requestId} {
-      // Docs carry clientPhone/clientNotes — read is participants + admin
-      // only (every client-side reader already queries by its own
-      // clientId/caregiverId).
-      allow read: if isAdmin() || (
-        isAuthenticated() && (
-          resource.data.clientId == request.auth.uid ||
-          resource.data.caregiverId == request.auth.uid
-        )
-      );
-      // Coordinators and admins can create/update
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-    
-    // ==========================================
     // HIRE REQUESTS
     // ==========================================
     match /hire_requests/{requestId} {

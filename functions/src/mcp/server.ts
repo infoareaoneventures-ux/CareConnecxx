@@ -5566,13 +5566,13 @@ async function executeToolCall(
       if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
       const iv = ivSnap.data()!;
       if (iv.clientId !== clientId) return toolError("PERMISSION_DENIED", "Interview does not belong to this client");
-      if (iv.status === "completed") return { success: true, alreadyCompleted: true, interviewId };
+      if (iv.status === "completed") return { success: true, alreadyCompleted: true, interviewId, caregiverName: iv.caregiverName ?? null };
       if (!["accepted", "confirmed"].includes(iv.status as string)) {
         return toolError("INVALID_INPUT", `Cannot complete an interview that hasn't been confirmed yet (status: ${iv.status})`);
       }
       await ivSnap.ref.update({ status: "completed", completedAt: nowIso });
       logAudit({ eventType: "interview_completed", userId: clientId as string, data: { source: "mcp:complete_interview", interviewId } }).catch(() => {});
-      return { success: true, interviewId };
+      return { success: true, interviewId, caregiverName: iv.caregiverName ?? null };
     }
 
     if (name === "request_instant_payout") {
@@ -6998,68 +6998,13 @@ async function executeToolCall(
       await cgSnap6.ref.update(upd6);
       logAudit({ eventType: "caregiver_availability_updated", userId: caregiverId as string, data: { source: "mcp:update_caregiver_availability", availableDays, unavailableDays } }).catch(() => {});
 
-      // Auto-reject pending interview_requests that fall on days no longer available
-      let conflictsCancelled = 0;
-      if (Array.isArray(unavailableDays) && (unavailableDays as string[]).length > 0) {
-        const removedDays = (unavailableDays as string[]).map((d: string) => d.toLowerCase());
-        const pendingInterviews = await db.collection("interview_requests")
-          .where("caregiverId", "==", caregiverId)
-          .where("status", "in", ["pending_presentation", "awaiting_caregiver_response", "scheduled"])
-          .get();
-
-        const DAY_NAMES = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
-        const conflictedRequests: Array<{ id: string; clientPhone: string; scheduledDate?: string }> = [];
-
-        for (const doc of pendingInterviews.docs) {
-          const req = doc.data();
-          // Check if scheduled date falls on a removed day
-          const scheduledDate = req.scheduledAt ?? req.proposedTime;
-          if (scheduledDate) {
-            // PT weekday — getDay() is the UTC weekday on Cloud Functions, so a
-            // Z-form PT-evening interview read as the NEXT weekday (wrong
-            // interviews cancelled / real conflicts kept).
-            const { parseScheduledTimeMs: parseAvailMs } = await import("../utils/scheduledTime");
-            const schedMs = parseAvailMs(String(scheduledDate));
-            const dayOfWeek = Number.isFinite(schedMs)
-              ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "long" })
-                  .format(new Date(schedMs)).toLowerCase()
-              : DAY_NAMES[new Date(scheduledDate).getDay()];
-            if (removedDays.includes(dayOfWeek)) {
-              conflictedRequests.push({ id: doc.id, clientPhone: req.clientPhone, scheduledDate });
-            }
-          }
-        }
-
-        for (const conflict of conflictedRequests) {
-          await db.collection("interview_requests").doc(conflict.id).update({
-            status:       "cancelled_availability",
-            cancelledAt:  nowIso,
-            cancelReason: "caregiver_removed_availability",
-          }).catch(() => {});
-
-          // Notify the client that this interview slot is no longer available
-          if (conflict.clientPhone) {
-            const clientSess = await db.collection("agent_sessions").doc(conflict.clientPhone).get().catch(() => null);
-            if (clientSess?.exists) {
-              const { sendToPhone } = await import("../linq/client");
-              const cgData = cgSnap6.data();
-              const cgName = cgData?.name ?? cgData?.firstName ?? "The caregiver";
-              await sendToPhone(conflict.clientPhone,
-                `${cgName} is no longer available on that day and your scheduled interview has been cancelled. ` +
-                `Would you like me to find another time or a different caregiver?`
-              ).catch(() => {});
-              // Set state so client's next YES triggers rematching
-              await db.collection("agent_sessions").doc(conflict.clientPhone).update({
-                pendingRematch: { reason: "interview_cancelled_availability", caregiverId },
-                stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-              }).catch(() => {});
-            }
-          }
-          conflictsCancelled++;
-        }
-      }
-
-      return { success: true, updated: { availableDays: availableDays ?? [], unavailableDays: unavailableDays ?? [], preferredTimeOfDay: preferredTimeOfDay ?? null }, conflictingInterviewsCancelled: conflictsCancelled };
+      // 2026-09-09 (Hamse's call): interview_requests removed entirely — this
+      // used to auto-reject pending candidate-presentation/negotiation
+      // records that conflicted with newly-unavailable days. With no new
+      // interview_requests docs ever created going forward, there's nothing
+      // left for this to find; a real, already-scheduled interview conflict
+      // is a video_interviews concern, not something this tool handled.
+      return { success: true, updated: { availableDays: availableDays ?? [], unavailableDays: unavailableDays ?? [], preferredTimeOfDay: preferredTimeOfDay ?? null }, conflictingInterviewsCancelled: 0 };
     }
 
     // ── browse_job_board ────────────────────────────────────────────────────

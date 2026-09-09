@@ -32,7 +32,7 @@ export default function InterviewOutcome() {
     const findInterview = async () => {
       const fdb = db;
       if (!fdb) { setLoading(false); return; }
-      const candidates = ['video_interviews', 'interview_requests', 'interviews'];
+      const candidates = ['video_interviews', 'interviews'];
       for (const collection of candidates) {
         try {
           const doc = await fdb.collection(collection).doc(interviewId).get();

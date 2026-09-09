@@ -177,10 +177,6 @@ vi.mock("../../agents/taskApprovalHandler", () => ({
 vi.mock("../../agents/permissionsConversation", () => ({
   updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
 }));
-vi.mock("../../agents/interviewAgent", () => ({
-  handleInterviewSelection: vi.fn(async () => {}), handleInterviewConfirm: vi.fn(async () => {}),
-  writeInterviewOutcomeSignal: vi.fn(() => Promise.resolve()),
-}));
 const executeBookings = vi.fn(async () => {});
 vi.mock("../../agents/bookingExecutor", () => ({
   executeBookings: (...a: any[]) => (executeBookings as Function).apply(null, a),
@@ -680,23 +676,19 @@ describe("characterization — caregiver selection after a match list no longer 
     { id: "cg2", name: "Imran", rate: 24 },
   ];
 
-  it("a bare number reply does NOT call handleInterviewSelection — it falls through to runQaAgent", async () => {
+  it("a bare number reply falls through to runQaAgent", async () => {
     seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
 
-    const { handleInterviewSelection } = await import("../../agents/interviewAgent");
     await routeIntentAndRespond(ctx("2"));
 
-    expect(handleInterviewSelection).not.toHaveBeenCalled();
     expect(runQaAgent).toHaveBeenCalled();
   });
 
   it("a caregiver named directly also falls through to runQaAgent (unchanged — same flow as a number reply now)", async () => {
     seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
 
-    const { handleInterviewSelection } = await import("../../agents/interviewAgent");
     await routeIntentAndRespond(ctx("let's interview Basra"));
 
-    expect(handleInterviewSelection).not.toHaveBeenCalled();
     expect(runQaAgent).toHaveBeenCalled();
   });
 });

@@ -15,10 +15,6 @@ import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgen
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
-import {
-  handleInterviewConfirm,
-  writeInterviewOutcomeSignal,
-} from "../agents/interviewAgent";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow } from "../agents/modifyScheduleFlow";
@@ -384,8 +380,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     }
 
     // ── Stale high-stakes confirmation sweep ─────────────────────────────────
-    // pendingInterviewConfirm / pendingCancelConfirm / awaitingRecurringConfirmation
-    // are checked in a fixed order by the YES/NO branches below, so a stale flag
+    // pendingCancelConfirm / awaitingRecurringConfirmation are checked in a
+    // fixed order by the YES/NO branches below, so a stale flag
     // (set long ago, never resolved) can intercept a YES meant for a newer
     // question. The global stateExpiresAt sweep in webhooks.ts only fires when a
     // stateExpiresAt is present — flags set without one never expire. Clear any
@@ -408,11 +404,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── BOOKING_CONFIRM — natural language YES ("sure", "sounds good", etc.) ──
     if (intent === "BOOKING_CONFIRM") {
-      // Interview and cancel confirm are time-sensitive — check before recurring to avoid stale flag collision
-      if ((session as any).pendingInterviewConfirm) {
-        await handleInterviewConfirm(phone, chatId, session);
-        return;
-      }
+      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
       const cancelConfirm303 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
       if (cancelConfirm303) {
         const { appointmentId } = cancelConfirm303;
@@ -476,42 +468,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── BOOKING_DECLINE — natural language NO ("never mind", "don't book", etc.) ──
     if (intent === "BOOKING_DECLINE") {
-      // Interview and cancel confirms are time-sensitive — check before recurring to avoid stale flag collision
-      if ((session as any).pendingInterviewConfirm) {
-        const pending = (session as any).pendingInterviewConfirm as { docId: string; caregiverName: string; mutualTime: string };
-        await db.collection("agent_sessions").doc(phone).update({ pendingInterviewConfirm: admin.firestore.FieldValue.delete() });
-        const reqSnap      = await db.collection("interview_requests").doc(pending.docId).get();
-        const availability = (reqSnap.data()?.caregiverAvailability ?? []) as string[];
-        const remaining    = availability.filter(t => t !== pending.mutualTime);
-        if (remaining.length > 0) {
-          const timesList = remaining.map((t, i) => `${i + 1}. ${t}`).join("\n");
-          await db.collection("agent_sessions").doc(phone).update({
-            pendingTimeSelection: { interviewRequestId: pending.docId, caregiverName: pending.caregiverName },
-            stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          });
-          await sendMessage(chatId, `No problem! ${pending.caregiverName} also offered:\n\n${timesList}\n\nReply with which time works, or PASS to find someone else.`);
-        } else {
-          // No more times — mark request client_declined
-          await db.collection("interview_requests").doc(pending.docId).update({ status: "client_declined", clientDeclinedAt: new Date().toISOString() }).catch(() => {});
-          // Notify the caregiver so they aren't left waiting
-          const _bdReqSnap  = await db.collection("interview_requests").doc(pending.docId).get().catch(() => null);
-          const _bdCgId     = _bdReqSnap?.data()?.caregiverId as string | undefined;
-          if (_bdCgId) {
-            const _bdCgSnap  = await db.collection("caregivers").doc(_bdCgId).get().catch(() => null);
-            const _bdCgPhone = _bdCgSnap?.data()?.phone as string | undefined;
-            if (_bdCgPhone) {
-              const _bdCgSess = await (await import("./client")).getOrCreateSession(_bdCgPhone);
-              await sendMessage(_bdCgSess.chatId,
-                `Hi ${pending.caregiverName}, the family was not able to find a time that works right now. ` +
-                `Thank you for your interest — I'll be in touch when there's a new opening that fits.`
-              ).catch(() => {});
-            }
-          }
-          const { checkAndTriggerRematching } = await import("../triggers/triggerEngine");
-          await checkAndTriggerRematching(phone, "").catch(() => {});
-        }
-        return;
-      }
+      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
       if ((session as any).pendingCancelConfirm) {
         await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
         await sendMessage(chatId, "Got it — visit is still on! Let me know if you need anything.");
@@ -535,30 +492,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── HIRE_CAREGIVER — "let's go with Maria", "hire James" ─────────────────
     if (intent === "HIRE_CAREGIVER") {
-      const pending = (session as any).pendingInterviewOutcome as
-        { interviewId: string; caregiverName: string; caregiverId?: string } | undefined;
-      if (pending) {
-        let caregiverId = pending.caregiverId ?? "";
-        if (!caregiverId && pending.interviewId) {
-          const reqSnap = await db.collection("interview_requests")
-            .where("interviewId", "==", pending.interviewId).limit(1).get();
-          if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data().caregiverId ?? "";
-        }
-        await db.collection("agent_sessions").doc(phone).update({
-          hireMode: { caregiverName: pending.caregiverName, caregiverId },
-          pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-          stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        if (caregiverId) writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
-        const hireMsgA = await generateCaraMessage({
-          audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
-          fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
-          maxTokens: 80,
-        });
-        await sendMessage(chatId, hireMsgA);
-        return;
-      }
       await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
       return;
     }
@@ -581,11 +514,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── YES — booking, recurring setup, or interview confirmation ───────────────
     if (norm === "YES" || norm === "Y") {
-      // Interview and cancel confirm are time-sensitive — check before recurring to avoid stale flag collision
-      if ((session as any).pendingInterviewConfirm) {
-        await handleInterviewConfirm(phone, chatId, session);
-        return;
-      }
+      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
       const cancelConfirm470 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
       if (cancelConfirm470) {
         const { appointmentId } = cancelConfirm470;
@@ -652,35 +581,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // ── NO — recurring setup declined, booking declined, or interview time rejected ──
     if (norm === "NO" || norm === "N") {
-      // Interview and cancel confirms are time-sensitive — check before recurring to avoid stale flag collision
-      if ((session as any).pendingInterviewConfirm) {
-        const pending = (session as any).pendingInterviewConfirm as {
-          docId: string; caregiverName: string; mutualTime: string;
-        };
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingInterviewConfirm: admin.firestore.FieldValue.delete(),
-        });
-        // Check if caregiver offered more times
-        const reqSnap = await db.collection("interview_requests").doc(pending.docId).get();
-        const availability = (reqSnap.data()?.caregiverAvailability ?? []) as string[];
-        // Remove the time we just rejected
-        const remaining = availability.filter(t => t !== pending.mutualTime);
-        if (remaining.length > 0) {
-          const timesList = remaining.map((t, i) => `${i + 1}. ${t}`).join("\n");
-          await db.collection("agent_sessions").doc(phone).update({
-            pendingTimeSelection: { interviewRequestId: pending.docId, caregiverName: pending.caregiverName },
-            stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          });
-          await sendMessage(chatId,
-            `No problem! ${pending.caregiverName} also offered:\n\n${timesList}\n\nReply with which time works, or PASS to find someone else.`
-          );
-        } else {
-          await sendMessage(chatId,
-            `Understood. Want me to ask ${pending.caregiverName} for different times, or reach out to the next best caregiver?`
-          );
-        }
-        return;
-      }
+      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
       // NO to cancel confirmation — abort the cancellation
       if ((session as any).pendingCancelConfirm) {
         await db.collection("agent_sessions").doc(phone).update({
@@ -740,156 +641,16 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── Post-interview outcome: classify natural language as HIRE/MAYBE/PASS ──
-    const pendingOutcome = (session as any).pendingInterviewOutcome as
-      { interviewId: string; caregiverName: string; caregiverId?: string } | undefined;
-    if (pendingOutcome && norm !== "HIRE" && norm !== "MAYBE" && norm !== "PASS") {
-      try {
-        const classRaw = await quickComplete(
-          "The user just interviewed a caregiver and is sharing their thoughts. " +
-            "Classify as HIRE (positive, wants to proceed), MAYBE (uncertain, not sure), " +
-            "or PASS (negative, concerns, didn't click). Reply with one word only.",
-          text,
-          { maxTokens: 10 },
-        );
-        const classified = classRaw.trim().toUpperCase();
-        if (classified === "HIRE" || classified === "MAYBE" || classified === "PASS") {
-          // Re-enter with classified keyword — will be picked up by the checks below
-          (text as any); // text is const; shadow norm instead
-          Object.assign(session, {}); // keep session reference
-          // Override norm for the blocks below
-          const resolvedNorm = classified;
-          if (resolvedNorm === "HIRE") {
-            let caregiverId = pendingOutcome.caregiverId ?? "";
-            if (!caregiverId && pendingOutcome.interviewId) {
-              // interviewId is an interview-doc id, NOT an interview_requests
-              // doc id — the request doc stamps it as a field (interviewAgent),
-              // so resolve by equality query like every other consumer.
-              const reqSnap = await db.collection("interview_requests")
-                .where("interviewId", "==", pendingOutcome.interviewId).limit(1).get();
-              if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data()?.caregiverId ?? "";
-            }
-            await db.collection("agent_sessions").doc(phone).update({
-              hireMode: { caregiverName: pendingOutcome.caregiverName, caregiverId },
-              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-              stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-            });
-            if (caregiverId) {
-              writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
-            }
-            const hireMsgB = await generateCaraMessage({
-              audience: "family",
-              context: `Family wants to hire caregiver ${pendingOutcome.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
-              fallback: `${pendingOutcome.caregiverName} sounds like a great fit. When would you like care to start?`,
-              maxTokens: 80,
-            });
-            await sendMessage(chatId, hireMsgB);
-          } else if (resolvedNorm === "MAYBE") {
-            const updates: Record<string, unknown> = {
-              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-            };
-            if (pendingOutcome.caregiverId) {
-              (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
-            }
-            await db.collection("agent_sessions").doc(phone).update(updates);
-            await sendMessage(chatId, `That's okay — want me to reach out to anyone else in the meantime?`);
-          } else {
-            const updates: Record<string, unknown> = {
-              pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-            };
-            if (pendingOutcome.caregiverId) {
-              (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pendingOutcome.caregiverId);
-              writeInterviewOutcomeSignal(session.userId ?? phone, pendingOutcome.caregiverId, "pass").catch(() => {});
-              // Notify caregiver of the outcome
-              db.collection("caregivers").doc(pendingOutcome.caregiverId).get().then(async cgSnap => {
-                const cgPhone = cgSnap.data()?.phone as string | undefined;
-                const cgName  = cgSnap.data()?.name ?? "Caregiver";
-                if (!cgPhone) return;
-                const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-                await sendMessage(cgSess.chatId,
-                  `Hi ${cgName}, the family has decided not to move forward at this time. ` +
-                  `Thank you for interviewing — I'll reach out when there's a new opportunity that's a great fit.`
-                );
-              }).catch(() => {});
-            }
-            await db.collection("agent_sessions").doc(phone).update(updates);
-            await sendMessage(chatId, `Understood. Want me to search for more caregivers? Reply YES and I'll get started.`);
-          }
-          return;
-        }
-      } catch (err) {
-        console.error("interview outcome classification error:", err);
-      }
-    }
-
     // ── HIRE — post-interview decision ────────────────────────────────────────
+    // 2026-09-09: this used to resolve a pendingInterviewOutcome flag (set only
+    // by interviewAgent.ts's now-removed sendPostInterviewFollowUp) into a
+    // hireMode handoff. Nothing sets that flag anymore since schedule_interview/
+    // video_interviews became the only interview path (2026-09-07) — the fit
+    // decision after a live interview now goes through submit_interview_feedback
+    // (mcp/server.ts) instead. The fallback below is what always ran regardless.
     if (norm === "HIRE") {
-      const pending = (session as any).pendingInterviewOutcome as
-        { interviewId: string; caregiverName: string; caregiverId?: string } | undefined;
-      if (pending) {
-        // Resolve caregiverId from interview_requests if not already on pending
-        let caregiverId = pending.caregiverId ?? "";
-        if (!caregiverId && pending.interviewId) {
-          const reqSnap = await db.collection("interview_requests")
-            .where("interviewId", "==", pending.interviewId)
-            .limit(1).get();
-          if (!reqSnap.empty) caregiverId = reqSnap.docs[0].data().caregiverId ?? "";
-        }
-        await db.collection("agent_sessions").doc(phone).update({
-          hireMode: { caregiverName: pending.caregiverName, caregiverId },
-          pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-          stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        });
-        if (caregiverId) {
-          writeInterviewOutcomeSignal(session.userId ?? phone, caregiverId, "hire").catch(() => {});
-        }
-        const hireMsgC = await generateCaraMessage({
-          audience: "family",
-          context: `Family wants to hire caregiver ${pending.caregiverName}. Evia is affirming the choice and asking when they'd like care to start.`,
-          fallback: `${pending.caregiverName} sounds like a great fit. When would you like care to start?`,
-          maxTokens: 80,
-        });
-        await sendMessage(chatId, hireMsgC);
-        return;
-      }
-      // No pending outcome — ask who
       await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
       return;
-    }
-
-    // ── MAYBE / PASS — post-interview ─────────────────────────────────────────
-    if (norm === "MAYBE" || norm === "PASS") {
-      const pending = (session as any).pendingInterviewOutcome as
-        { interviewId?: string; caregiverName: string; caregiverId?: string } | undefined;
-      if (pending) {
-        const updates: Record<string, unknown> = {
-          pendingInterviewOutcome: admin.firestore.FieldValue.delete(),
-        };
-        if (pending.caregiverId) {
-          (updates as any).rejectedCaregiverIds = admin.firestore.FieldValue.arrayUnion(pending.caregiverId);
-          if (norm === "PASS") {
-            writeInterviewOutcomeSignal(session.userId ?? phone, pending.caregiverId, "pass").catch(() => {});
-            // Notify caregiver of the outcome so they aren't left waiting
-            db.collection("caregivers").doc(pending.caregiverId).get().then(async cgSnap => {
-              const cgPhone = cgSnap.data()?.phone as string | undefined;
-              const cgName  = cgSnap.data()?.name ?? "Caregiver";
-              if (!cgPhone) return;
-              const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-              await sendMessage(cgSess.chatId,
-                `Hi ${cgName}, the family has decided not to move forward at this time. ` +
-                `Thank you for interviewing — I'll reach out when there's a new opportunity that's a great fit.`
-              );
-            }).catch(() => {});
-          }
-        }
-        await db.collection("agent_sessions").doc(phone).update(updates);
-        if (norm === "MAYBE") {
-          await sendMessage(chatId, `Got it — I'll keep ${pending.caregiverName} in mind. Want me to reach out to anyone else?`);
-        } else {
-          await sendMessage(chatId, `Understood. Want me to search for more caregivers? Reply YES and I'll get started.`);
-        }
-        return;
-      }
     }
 
     // ── Caregiver selection (numbers after match presentation) ────────────────
@@ -909,10 +670,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // matching the site) after asking for a date/time if needed. A number reply
     // now simply falls through to normal routing/runQaAgent like a name reply
     // already did, so both go through the one flow that matches the site.
-    // handleInterviewSelection itself is intentionally left in interviewAgent.ts
-    // (unreachable for new selections, but still resolvable) rather than deleted,
-    // so any interview_requests negotiation already in flight from before this
-    // change can still finish normally.
+    // 2026-09-09: interviewAgent.ts (handleInterviewSelection and the rest of
+    // the interview_requests-based negotiation flow it belonged to) has since
+    // been deleted outright — the collection is retired, this was its only
+    // remaining code path, and there was nothing left in flight to preserve.
     const stalePendingMatches = (session as any).pendingMatches as Array<unknown> | undefined;
     if (stalePendingMatches && stalePendingMatches.length > 0) {
       const setAt = (session as any).pendingMatchesSetAt as string | undefined;
@@ -1238,46 +999,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── pendingTimeSelection — family picking from caregiver's offered times ──
-    if ((session as any).pendingTimeSelection) {
-      const sel = (session as any).pendingTimeSelection as { interviewRequestId: string; caregiverName: string };
-
-      if (norm === "PASS") {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingTimeSelection: admin.firestore.FieldValue.delete(),
-        });
-        await db.collection("interview_requests").doc(sel.interviewRequestId).update({ status: "client_declined" });
-        await sendMessage(chatId, `No problem — want me to reach out to the next best caregiver? Reply YES and I'll get on it.`);
-        return;
-      }
-
-      // Parse which time the family chose
-      const reqSnap = await db.collection("interview_requests").doc(sel.interviewRequestId).get();
-      const availability = (reqSnap.data()?.caregiverAvailability ?? []) as string[];
-      const parsedChosen = await quickComplete(
-        `Available times: ${availability.join(", ")}. ` +
-          "The user picked one of these times. Reply with only the exact string from the list that best matches their reply, or 'NONE' if no match.",
-        text,
-        { maxTokens: 60 },
-      ).catch(() => "");
-      const chosen = parsedChosen.trim();
-      if (chosen === "NONE" || !availability.includes(chosen)) {
-        await sendMessage(chatId, `I didn't catch that — which of these works for you?\n\n${availability.join("\n")}\n\nOr reply PASS to find someone else.`);
-        return;
-      }
-
-      // Book the chosen time
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingTimeSelection:   admin.firestore.FieldValue.delete(),
-        pendingInterviewConfirm: { docId: sel.interviewRequestId, caregiverName: sel.caregiverName, mutualTime: chosen, formatted: chosen },
-        pendingInterviewConfirmSetAt: new Date().toISOString(),
-      });
-      await handleInterviewConfirm(phone, chatId, {
-        ...session,
-        pendingInterviewConfirm: { docId: sel.interviewRequestId, caregiverName: sel.caregiverName, mutualTime: chosen, formatted: chosen },
-      } as AgentSession);
-      return;
-    }
 
     // ── CANCEL intent — cancel a visit, NOT an opt-out ────────────────────────
     if (intent === "CANCEL_REQUEST" || norm === "CANCEL") {

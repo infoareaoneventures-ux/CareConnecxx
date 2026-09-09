@@ -153,11 +153,26 @@ const CLAIM_PATTERNS: ReadonlyArray<[GroundingClaimCategory, RegExp]> = [
   // an action claim worth checking, because "declined" wasn't a recognized
   // verb. Same gap class as the schedule_appointment/caregiver_availability
   // fix above — closing it here, not just for this one reply.
-  ["action_authorization", /\bI\s+(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|declined|rejected|denied)\b/i],             // legacy
-  ["action_authorization", /\bI(?:'ve| have| just| already)+\s+(?:just\s+|already\s+)?(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|authorized|approved|charged|submitted|sent|processed|declined|rejected|denied|set (?:that |this |it )?up)\b/i],
+  //
+  // 2026-09-09: same gap, same shape, one more missing verb. A live incident
+  // found Evia say "Done, I marked it as a strong fit" (and, earlier in the
+  // same thread, "I'll mark the interview complete") with no complete_interview
+  // or submit_interview_feedback call behind either — "marked"/"mark" was
+  // never added even after the 2026-09-06 fix above closed the same hole for
+  // "declined". This is exactly complete_interview's own described action
+  // ("mark a past interview completed") and submit_interview_feedback's
+  // ("also marks the interview completed") — the verb this category most
+  // needs to recognize was missing the whole time.
+  ["action_authorization", /\bI\s+(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|declined|rejected|denied|marked)\b/i],       // legacy
+  ["action_authorization", /\bI(?:'ve| have| just| already)+\s+(?:just\s+|already\s+)?(?:confirmed|scheduled|cancelled|canceled|booked|moved|paid|refunded|authorized|approved|charged|submitted|sent|processed|declined|rejected|denied|marked|set (?:that |this |it )?up)\b/i],
   ["action_authorization", /\bI\s+(?:authorized|approved|charged|submitted|processed|declined|rejected|denied|turned down|went ahead and \w+)\b/i],
-  ["action_authorization", /\b(?:has|have)\s+been\s+(?:confirmed|scheduled|cancelled|canceled|booked|paid|refunded|authorized|approved|processed|declined|rejected|denied)\b/i],
+  ["action_authorization", /\b(?:has|have)\s+been\s+(?:confirmed|scheduled|cancelled|canceled|booked|paid|refunded|authorized|approved|processed|declined|rejected|denied|marked)\b/i],
   ["action_authorization", /\b(?:is|was)\s+(?:now\s+|all\s+)?(?:confirmed|cancelled|canceled|booked|scheduled|authorized|approved|processed|declined|rejected|denied|set)\b(?:\s*[.!—-]|\s+for\b|\s+and\b|$)/i],
+  // "marked" doesn't fit the terminator-anchored pattern above — unlike
+  // "confirmed"/"cancelled" etc., it's always followed by a status word
+  // ("marked complete", "marked as a strong fit"), never standing alone
+  // right before punctuation.
+  ["action_authorization", /\b(?:is|was)\s+(?:now\s+|all\s+)?marked\b/i],
 
   // ── money / payment (HIGH) ──────────────────────────────────────────────────
   ["money_payment", /\$\s?\d[\d,]*(?:\.\d+)?/],                                                           // legacy

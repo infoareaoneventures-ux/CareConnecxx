@@ -101,20 +101,20 @@ describe("staleConfirmFlags (U2)", () => {
   });
 
   it("expires a flag with no age stamp (the never-expires case)", () => {
-    const session = { pendingInterviewConfirm: { docId: "d1" } };
-    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingInterviewConfirm"]);
+    const session = { pendingCancelConfirm: { appointmentId: "a1" } };
+    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingCancelConfirm"]);
   });
 
   it("resolves only the stale flag when a stale and a fresh flag collide", () => {
-    // Stale interview confirm should NOT intercept a YES meant for the fresh
+    // Stale cancel confirm should NOT intercept a YES meant for the fresh
     // recurring confirmation — it must be swept first.
     const session = {
-      pendingInterviewConfirm: { docId: "d1" },
-      pendingInterviewConfirmSetAt: stale,
+      pendingCancelConfirm: { appointmentId: "a1" },
+      pendingCancelConfirmSetAt: stale,
       awaitingRecurringConfirmation: true,
       awaitingRecurringConfirmationSetAt: fresh,
     };
-    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingInterviewConfirm"]);
+    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingCancelConfirm"]);
   });
 
   it("expires each high-stakes flag independently when all are stale", () => {

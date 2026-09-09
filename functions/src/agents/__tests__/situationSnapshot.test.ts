@@ -18,7 +18,7 @@ import { formatCaregiverSnapshot, formatClientSnapshot } from "../situationSnaps
 
 const cg = (over: Partial<Parameters<typeof formatCaregiverSnapshot>[0]> = {}) =>
   formatCaregiverSnapshot({
-    pendingInterviews: 0, pendingApplications: 0, hasShiftOffer: false,
+    pendingApplications: 0, hasShiftOffer: false,
     hasJobInvite: false, upcomingVisits: 0, nextVisit: null, ...over,
   });
 
@@ -36,9 +36,8 @@ describe("formatCaregiverSnapshot", () => {
     expect(out).toContain("job invite is awaiting your YES/NO");
   });
 
-  it("pluralizes interviews and applications correctly", () => {
-    expect(cg({ pendingInterviews: 1 })).toContain("1 interview request awaiting");
-    expect(cg({ pendingInterviews: 3 })).toContain("3 interview requests awaiting");
+  it("pluralizes applications correctly", () => {
+    expect(cg({ pendingApplications: 1 })).toContain("1 job application still pending");
     expect(cg({ pendingApplications: 2 })).toContain("2 job applications still pending");
   });
 
@@ -55,7 +54,7 @@ describe("formatCaregiverSnapshot", () => {
   });
 
   it("always carries the verify-before-acting header when it surfaces anything", () => {
-    expect(cg({ pendingInterviews: 1 })).toContain("verify with a tool before");
+    expect(cg({ pendingApplications: 1 })).toContain("verify with a tool before");
   });
 });
 

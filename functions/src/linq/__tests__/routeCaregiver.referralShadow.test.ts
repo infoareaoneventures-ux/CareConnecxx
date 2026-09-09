@@ -93,8 +93,6 @@ vi.mock("../../agents/caregiverProfileHandler", () => ({ handleCaregiverProfileU
 vi.mock("../../triggers/jobNotifications", () => ({
   handleJobResponse: vi.fn(async () => {}), handleAvailabilityConfirmation: vi.fn(async () => {}),
 }));
-vi.mock("../../agents/interviewAgent", () => ({ handleCaregiverAvailabilityReply: vi.fn(async () => {}) }));
-
 import { routeCaregiverMessage } from "../routeCaregiver";
 
 const CG_PHONE = "+15551110000";

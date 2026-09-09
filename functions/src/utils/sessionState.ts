@@ -3,14 +3,10 @@ import * as admin from "firebase-admin";
 export const STATE_MACHINE_FLAGS = [
   "hireMode",
   "hireModeDate",
-  "pendingTimeSelection",
   "pendingRebook",
-  "pendingInterviewOutcome",
   "pendingMatches",
   "pendingCancelConfirm",
   "pendingCancelConfirmSetAt",
-  "pendingInterviewConfirm",
-  "pendingInterviewConfirmSetAt",
   "awaitingRecurringConfirmation",
   "awaitingRecurringConfirmationSetAt",
   "pendingRecurringSchedule",
@@ -97,15 +93,14 @@ export const STATE_MACHINE_FLAGS = [
 
 export type StateFlag = typeof STATE_MACHINE_FLAGS[number];
 // ── High-stakes confirmation freshness ───────────────────────────────────────
-// pendingInterviewConfirm / pendingCancelConfirm / awaitingRecurringConfirmation
-// are checked in a fixed order by the YES/NO router. A stale flag can intercept
+// pendingCancelConfirm / awaitingRecurringConfirmation are checked in a fixed
+// order by the YES/NO router. A stale flag can intercept
 // a YES meant for a newer question, and the global stateExpiresAt sweep only
 // fires when a stateExpiresAt is present — a flag set without one never expires.
 // Each set-site now stamps a `<flag>SetAt`; the router clears any flag older
 // than this TTL (or present with no stamp — the never-expires case) before
 // acting. Kept pure here so the staleness rule is unit-testable in isolation.
 export const HIGH_STAKES_CONFIRM_FLAGS = [
-  "pendingInterviewConfirm",
   "pendingCancelConfirm",
   "awaitingRecurringConfirmation",
 ] as const;
@@ -204,7 +199,6 @@ export function isFlowStale(
 // their own reminder flows or are too low-stakes to re-ping.
 export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["hireMode",                "booking care"],
-  ["pendingTimeSelection",    "picking a time for your visit"],
   ["pendingRebook",           "rebooking your visit"],
   ["jobPostingStep",          "posting your care job"],
   ["modifyScheduleStep",      "updating your recurring schedule"],
@@ -341,16 +335,13 @@ export const INSTANT_PAYOUT_CONFIRM_TTL_MS = 10 * 60 * 1000;
  */
 export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["hireMode", "generic"],
-  ["pendingTimeSelection", "generic"],
   ["pendingRebook", "generic"],
-  ["pendingInterviewOutcome", "generic"],
   // Set by matchingAgent.ts alongside pendingMatchesSetAt; routeIntent.ts
   // treats the list as stale after 2h. Without this stamp strategy a web
   // matching turn (find_replacement_caregivers) would wedge every subsequent
   // web turn forever (pendingMatches carries no stateExpiresAt).
   ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
   ["pendingCancelConfirm", "confirm"],
-  ["pendingInterviewConfirm", "confirm"],
   ["awaitingRecurringConfirmation", "confirm"],
   ["pendingRecurringSchedule", "generic"],
   ["awaitingCareNotes", "generic"],
@@ -394,7 +385,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
 export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "hireModeDate",
   "pendingCancelConfirmSetAt",
-  "pendingInterviewConfirmSetAt",
   "awaitingRecurringConfirmationSetAt",
   "collectingCredentialSetAt",
   "stateExpiresAt",

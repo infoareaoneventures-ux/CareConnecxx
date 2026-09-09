@@ -8,7 +8,6 @@ import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/care
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
 import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
-import { handleCaregiverAvailabilityReply } from "../agents/interviewAgent";
 import { logAudit } from "../observability/auditLog";
 import { logAgentAction } from "../observability/actionLedger";
 import {
@@ -1688,7 +1687,18 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         await sendMessage(chatId, rescheduleMsg);
       },
       PASS:       async () => {
-        await handleCaregiverAvailabilityReply(phone, session.caregiverId ?? "", "", chatId, "PASS");
+        // 2026-09-09: used to delegate to handleCaregiverAvailabilityReply
+        // (interviewAgent.ts), whose interview_requests lookup could never
+        // find a live doc once schedule_interview/video_interviews became the
+        // only interview path (2026-09-07) — the ack below is exactly what
+        // that dead branch always fell through to. Inlined; no behavior change.
+        const caregiverDeclinedAckMsg = await generateCaraMessage({
+          audience: "caregiver",
+          context:  "The caregiver just declined a request by replying PASS. Acknowledge their decision warmly and let them know you'll pass the message along.",
+          fallback: "No problem — I'll let the family know.",
+          maxTokens: 80,
+        });
+        await sendMessage(chatId, caregiverDeclinedAckMsg);
       },
       PAYOUT:     async () => {
         if (!session.caregiverId) {
@@ -2022,49 +2032,15 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       }
     }
 
-    // Caregiver rescheduling — parse new times and notify family
+    // Caregiver rescheduling — parse new times and acknowledge.
+    // 2026-09-09: this used to look up a live interview_requests doc (status
+    // scheduled/awaiting_client_confirmation) to actually relay the caregiver's
+    // times to the family — but nothing has created such a doc since
+    // schedule_interview/video_interviews became the only interview path
+    // (2026-09-07), so reqSnap was always empty and that branch was already
+    // dead. The unconditional ack below is exactly what always ran regardless;
+    // removing the dead query changes no observable behavior.
     if ((session as any).caregiverRescheduling) {
-      let timeList: string[] = [];
-      try {
-        const parsedRaw = await quickComplete(
-          "Extract interview time proposals from this message as a JSON array of human-readable strings. " +
-            "Reply with only a JSON array, e.g. [\"Tuesday 2pm\",\"Wednesday 10am\"]. Keep them short.",
-          text,
-          { maxTokens: 100 },
-        );
-        timeList = JSON.parse(parsedRaw || "[]") as string[];
-      } catch { /* fall through — use raw text below */ }
-      const timesText = timeList.length > 0 ? timeList.join(", ") : text;
-
-      // Find the relevant interview request
-      const caregiverId = session.caregiverId ?? "";
-      const cgSnap      = caregiverId ? await db.collection("caregivers").doc(caregiverId).get() : null;
-      const cgName      = cgSnap?.data()?.name ?? "Your caregiver";
-      const reqSnap     = await db.collection("interview_requests")
-        .where("caregiverId", "==", caregiverId)
-        .where("status",      "in", ["scheduled", "awaiting_client_confirmation"])
-        .orderBy("createdAt", "desc").limit(1).get();
-
-      if (!reqSnap.empty) {
-        const reqData       = reqSnap.docs[0].data();
-        const familyPhone   = reqData.clientPhone as string;
-        const familySession = await db.collection("agent_sessions").doc(familyPhone).get();
-        if (familySession.exists) {
-          await sendMessage(familySession.data()!.chatId,
-            `${cgName} needs to reschedule the interview.\n\n` +
-            `They're available: ${timesText}\n\n` +
-            `Reply with which time works, or PASS to find someone new.`
-          );
-          // Let family's next reply be handled as a time selection
-          await db.collection("agent_sessions").doc(familyPhone).update({
-            pendingTimeSelection: { interviewRequestId: reqSnap.docs[0].id, caregiverName: cgName },
-            stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          });
-        }
-        await reqSnap.docs[0].ref.update({ status: "awaiting_client_confirmation", caregiverAvailability: timeList });
-      }
-
-      // Clear the flag only after the family has been notified successfully
       await db.collection("agent_sessions").doc(phone).update({ caregiverRescheduling: admin.firestore.FieldValue.delete() });
       await sendMessage(chatId, "Got it — I've sent those times to the family. I'll let you know once they confirm.");
       return "handled";

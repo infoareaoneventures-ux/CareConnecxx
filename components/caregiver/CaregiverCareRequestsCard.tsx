@@ -27,19 +27,10 @@ export const CaregiverCareRequestsCard: React.FC<Props> = ({ caregiverId }) => {
   useEffect(() => {
     if (!caregiverId || !db) return;
     const unsubs: (() => void)[] = [];
-    let irList: any[] = [];
-    let viList: any[] = [];
-    const merge = () => {
-      const combined = [...irList, ...viList].sort((a, b) => {
-        const ta = a.scheduledTime || a.createdAt || 0;
-        const tb = b.scheduledTime || b.createdAt || 0;
-        return tb > ta ? 1 : -1;
-      });
-      setMyInterviews(combined);
-    };
     const onErr = () => setError(true); // keep prior rows visible as stale
-    unsubs.push(db.collection('interview_requests').where('caregiverId', '==', caregiverId).orderBy('createdAt', 'desc').onSnapshot(snap => { irList = snap.docs.map(d => ({ id: d.id, _src: 'ir', ...d.data() })); merge(); }, onErr));
-    unsubs.push(db.collection('video_interviews').where('caregiverId', '==', caregiverId).orderBy('scheduledTime', 'desc').onSnapshot(snap => { viList = snap.docs.map(d => ({ id: d.id, _src: 'vi', ...d.data() })); merge(); }, onErr));
+    unsubs.push(db.collection('video_interviews').where('caregiverId', '==', caregiverId).orderBy('scheduledTime', 'desc').onSnapshot(snap => {
+      setMyInterviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, onErr));
 
     db.collection('job_applications')
       .where('caregiverId', '==', caregiverId)

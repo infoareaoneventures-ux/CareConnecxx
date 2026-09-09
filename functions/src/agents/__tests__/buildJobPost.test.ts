@@ -125,3 +125,68 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
     expect(notesValues.every((n) => n === BASE_JOB_DATA.jobDescription)).toBe(true);
   });
 });
+
+// 2026-09-09 live incident: this function is called for BOTH the client's
+// first-ever job post (onboarding) and every later "post another job"
+// request — but job_posts/{uid} keying is only safe for the first, to
+// converge with the clientIntakes onCreate trigger. A family's second job
+// posted over SMS silently overwrote their first post's Firestore document
+// (applicants and all) instead of creating a new one.
+describe("buildAndSaveJobPost — job_posts keying (2026-09-09 overwrite fix)", () => {
+  it("keys the first-ever job post by uid (converges with the intake trigger)", async () => {
+    const { jobId } = await buildAndSaveJobPost({
+      uid: "client4",
+      phone: "+15550004444",
+      onboardingData: BASE_ONBOARDING,
+      jobData: BASE_JOB_DATA,
+    });
+
+    expect(jobId).toBe("client4");
+    expect(hoisted.docState.get("job_posts/client4")).toBeTruthy();
+  });
+
+  it("gives a SECOND job post a fresh id instead of overwriting the first", async () => {
+    await buildAndSaveJobPost({
+      uid: "client5",
+      phone: "+15550005555",
+      onboardingData: BASE_ONBOARDING,
+      jobData: { ...BASE_JOB_DATA, jobTitle: "First job" },
+    });
+    const firstPost = hoisted.docState.get("job_posts/client5");
+    expect(firstPost).toBeTruthy();
+
+    const { jobId: secondJobId } = await buildAndSaveJobPost({
+      uid: "client5",
+      phone: "+15550005555",
+      onboardingData: BASE_ONBOARDING,
+      jobData: { ...BASE_JOB_DATA, jobTitle: "Second job" },
+    });
+
+    expect(secondJobId).not.toBe("client5");
+    // The first post is still exactly as it was — never touched.
+    expect(hoisted.docState.get("job_posts/client5")).toEqual(firstPost);
+    // The second post lives at its own new id.
+    const secondPost = hoisted.docState.get(`job_posts/${secondJobId}`);
+    expect(secondPost).toBeTruthy();
+    expect(secondPost.title).toBe("Second job");
+  });
+
+  it("a THIRD job post also gets its own fresh id, distinct from the second", async () => {
+    await buildAndSaveJobPost({
+      uid: "client6", phone: "+15550006666",
+      onboardingData: BASE_ONBOARDING, jobData: { ...BASE_JOB_DATA, jobTitle: "First" },
+    });
+    const { jobId: second } = await buildAndSaveJobPost({
+      uid: "client6", phone: "+15550006666",
+      onboardingData: BASE_ONBOARDING, jobData: { ...BASE_JOB_DATA, jobTitle: "Second" },
+    });
+    const { jobId: third } = await buildAndSaveJobPost({
+      uid: "client6", phone: "+15550006666",
+      onboardingData: BASE_ONBOARDING, jobData: { ...BASE_JOB_DATA, jobTitle: "Third" },
+    });
+
+    expect(new Set(["client6", second, third]).size).toBe(3);
+    expect(hoisted.docState.get(`job_posts/${second}`).title).toBe("Second");
+    expect(hoisted.docState.get(`job_posts/${third}`).title).toBe("Third");
+  });
+});

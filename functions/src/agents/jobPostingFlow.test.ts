@@ -293,3 +293,33 @@ describe("buildJobSummary (live-caught: captured zip code never shown)", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("1 Campbell Ave, San Jose, CA 95130");
   });
 });
+
+// 2026-09-09 (Hamse's call): jobCareLevel is derived, never asked (see the
+// JP_STEP_ORDER comment above) — showing "Care level: Moderate" in the
+// confirm summary presented a silent guess as if the family had confirmed
+// it. Dropped from the summary entirely; the underlying field is still
+// derived and stored for matching/the site's own review step, just not
+// surfaced here.
+describe("buildJobSummary (2026-09-09: care level dropped from the summary)", () => {
+  it("never shows a Care level line in the confirm summary", async () => {
+    hoisted.docGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({
+        jobPostingData: {
+          jobFrequency: "occasional",
+          jobCareNeeds: ["bathing", "medication reminders"],
+          jobCareLevel: "full",
+        },
+      }),
+    });
+    modelReplies("NO", "MAYBE");
+
+    await handleJobPostingStep(PHONE, CHAT, "not sure", {
+      ...SESSION,
+      jobPostingStep: "jp_confirm_post",
+      jobPostingData: { jobFrequency: "occasional" },
+    });
+
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("Care level");
+  });
+});

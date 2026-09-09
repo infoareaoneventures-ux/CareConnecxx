@@ -241,6 +241,16 @@ export async function buildAndSaveJobPost(params: {
     updatedAt: new Date().toISOString(),
   }, { merge: true });
 
+  // 2026-09-09 live incident: this function is called for BOTH the client's
+  // very first job post (during onboarding) AND every later "post another
+  // job" request from jobPostingFlow.ts — but job_posts/{uid} keying below is
+  // only safe for the FIRST one. A second SMS-posted job silently overwrote
+  // the family's existing post (applicants and all) instead of creating a
+  // new one. Read the flag BEFORE this write sets it, so we know which case
+  // we're in.
+  const alreadyPostedBeforeSnap = await db.collection("users").doc(uid).get().catch(() => null);
+  const alreadyPostedBefore = alreadyPostedBeforeSnap?.data()?.jobPostingCompleted === true;
+
   // users/{uid}.jobPostingCompleted — the same flag the web wizard sets at
   // Submit, so an SMS-onboarded client never sees the ClientJobPostingWizard
   // overlay if they later open the website (App.tsx's ClientRoute checks it).
@@ -249,12 +259,19 @@ export async function buildAndSaveJobPost(params: {
   }, { merge: true }).catch((err) =>
     console.error("[buildAndSaveJobPost] users.jobPostingCompleted write failed (non-fatal):", err));
 
-  // ── job_posts/{uid} — public listing in the WEB JobPost contract ───────────
-  // Keyed by the client uid, NOT an autoId: the clientIntakes onCreate trigger
-  // (aiMatchTriggers → jobNotifications.createJobPost) also writes
-  // job_posts/{uid}, so both paths converge on ONE doc instead of the board
-  // showing the same family twice (and caregivers being texted twice).
-  const jobPostRef = db.collection("job_posts").doc(uid);
+  // ── job_posts/{uid or autoId} — public listing in the WEB JobPost contract ─
+  // Keyed by the client uid ONLY for the client's first-ever job post: the
+  // clientIntakes onCreate trigger (aiMatchTriggers → jobNotifications.
+  // createJobPost) also writes job_posts/{uid} around the same time during
+  // onboarding, so both paths need to converge on ONE doc instead of the
+  // board showing the same family twice (and caregivers being texted twice).
+  // That race only exists once, at onboarding — a client posting a SECOND or
+  // later job already has jobPostingCompleted=true and no intake trigger is
+  // ever going to fire again, so it gets a real autoId instead of colliding
+  // with (and destroying) their existing post.
+  const jobPostRef = alreadyPostedBefore
+    ? db.collection("job_posts").doc()
+    : db.collection("job_posts").doc(uid);
   const jobPostDoc = buildWebJobPostDoc({
     clientId:        uid,
     source:          "cara",

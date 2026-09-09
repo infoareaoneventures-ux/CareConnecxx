@@ -1185,7 +1185,6 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
   const days      = (jobData.jobDays       as string[]) ?? [];
   const times     = (jobData.jobTimeOfDay  as string[]) ?? [];
   const careNeeds = (jobData.jobCareNeeds  as string[]) ?? [];
-  const careLevel = (jobData.jobCareLevel  as string)   ?? "moderate";
   const rate      = (jobData.jobHourlyRate as number)   ?? 0;
   const payMethod = (jobData.jobPaymentMethod as string) ?? "card";
   const pets      = (jobData.petsInHome       as boolean) ? "yes" : "no";
@@ -1221,7 +1220,6 @@ function buildJobSummary(jobData: Record<string, unknown>, session: AgentSession
     `Days: ${daysLabel}`,
     `Time: ${timesLabel}`,
     `Care needs: ${needsLabel}`,
-    `Care level: ${careLevel.charAt(0).toUpperCase() + careLevel.slice(1)}`,
     `Rate: ${rateLabel} (${payMethod})`,
     `Pets: ${pets} | Smoking: ${smoking}`,
     desc ? `"${desc}"` : "",

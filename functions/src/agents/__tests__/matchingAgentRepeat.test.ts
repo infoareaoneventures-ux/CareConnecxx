@@ -219,6 +219,15 @@ describe("runMatchingForClient — honest re-offer instead of a false 'nobody av
       expect.objectContaining({ id: "cg1", name: "Basra" }),
       expect.objectContaining({ id: "cg2", name: "Imran" }),
     ]));
+
+    // 2026-09-09 (live-caught): with no pendingMatches set on this branch, the
+    // model had no real caregiverId anywhere in its context and passed the
+    // caregiver's NAME to schedule_interview instead, which can never resolve.
+    const pendingMatches = hoisted.docState.get(`agent_sessions/${PHONE}`)?.pendingMatches;
+    expect(pendingMatches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "cg1", name: "Basra" }),
+      expect.objectContaining({ id: "cg2", name: "Imran" }),
+    ]));
   });
 
   it("still sends the honest re-offer once failureCount escalates to the urgent branch", async () => {

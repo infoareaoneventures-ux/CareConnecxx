@@ -560,6 +560,18 @@ export async function runMatchingForClient(
       if (reofferable.length > 0) {
         await db.collection("agent_sessions").doc(phone).update({
           reofferableCaregivers: reofferable.map((c) => ({ id: c.id, name: c.name, hourlyRate: c.hourlyRate })),
+          // 2026-09-09 (live-caught): this reoffer branch never set pendingMatches
+          // the way the successful-match branch below does, so qaAgent.ts's
+          // "CAREGIVERS YOU JUST SHOWED THIS FAMILY" context block (which reads
+          // ONLY pendingMatches, keyed by real caregiverId) never picked these
+          // names up. With no id available anywhere in its context, the model
+          // fell back to passing the caregiver's NAME as caregiverId when asked
+          // to schedule an interview — which can never resolve, so every
+          // schedule_interview call for a re-offered caregiver failed with
+          // "Caregiver is not available for interviews", regardless of the
+          // date/time tried.
+          pendingMatches: reofferable.map((c) => ({ id: c.id, name: c.name, rate: c.hourlyRate })),
+          pendingMatchesSetAt: new Date().toISOString(),
         }).catch(() => {});
       }
       const reofferNames = reofferable.map((c) => c.name).filter(Boolean);

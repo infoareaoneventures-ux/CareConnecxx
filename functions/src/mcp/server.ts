@@ -3511,8 +3511,14 @@ async function executeToolCall(
           // so the agent tells the truth instead of claiming zero
           // availability when real candidates actually exist.
           const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
-          const reofferable = ((freshSess.data()?.reofferableCaregivers ?? []) as Array<{ name?: string; hourlyRate?: number }>)
-            .map((m) => ({ name: m.name ?? "Caregiver", hourlyRate: m.hourlyRate ?? null }));
+          // 2026-09-09 (live-caught): this used to drop `id`, leaving the model
+          // with nothing but a name for these caregivers — it then passed the
+          // NAME as caregiverId to schedule_interview, which can never resolve
+          // (matchingAgent.ts now also sets pendingMatches for this branch, but
+          // the id belongs in the tool's own result too, not only in session
+          // state read on a later turn).
+          const reofferable = ((freshSess.data()?.reofferableCaregivers ?? []) as Array<{ id?: string; name?: string; hourlyRate?: number }>)
+            .map((m) => ({ id: m.id ?? null, name: m.name ?? "Caregiver", hourlyRate: m.hourlyRate ?? null }));
           return {
             success: true,
             outcome: "no_match",
@@ -3524,7 +3530,9 @@ async function executeToolCall(
                 "this family before — are still the closest real matches nearby. NOTHING has been texted to the " +
                 "family — your reply is the only message they get. In ONE short warm message, be honest: say " +
                 "these are still the best options near them and ask whether to resend those profiles or keep " +
-                "looking for someone new. Do not claim nobody is available — that would be false."
+                "looking for someone new. Do not claim nobody is available — that would be false. If the family " +
+                "asks to interview one of them, call schedule_interview with that caregiver's id field from " +
+                "reofferableCaregivers above — never their name — as caregiverId."
               : "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
                 "only message they get. In ONE short warm message: be honest that you haven't found the right " +
                 "match yet, that you're still actively searching, and that the team has been alerted and will " +

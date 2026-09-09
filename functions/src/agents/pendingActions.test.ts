@@ -111,6 +111,15 @@ describe("isHighRisk", () => {
     expect(isHighRisk("delete_account",           {})).toBe(true);
   });
 
+  // 2026-09-09 live incident: cancel_interview was prompt-only ("Confirm
+  // before calling" in its own tool description, unenforced) — a bare "Yes."
+  // confirming a cancellation got swallowed by the toolless quick-reply fast
+  // path and Evia falsely claimed the interview was cancelled without ever
+  // calling this tool. Now runtime-enforced like the other destructive tools.
+  it("flags cancel_interview regardless of input", () => {
+    expect(isHighRisk("cancel_interview", { interviewId: "iv1" })).toBe(true);
+  });
+
   // cancel_subscription + reactivate_subscription merged into
   // set_subscription_status (2026-09-02, freed a tool slot for delete_account)
   // — cancel stays high-stakes (was ALWAYS_CONFIRM pre-merge), reactivate

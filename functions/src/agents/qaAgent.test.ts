@@ -1,4 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
+import { TRIVIAL_YES, TRIVIAL_NO } from "./approvalHandler";
 
 const qaHarness = vi.hoisted(() => {
   const writes: Array<{ collection: string; id?: string; data: Record<string, unknown> }> = [];
@@ -394,6 +395,34 @@ describe("isTrivialQuickReply", () => {
     "How is everything",
   ])("still allows rhetorical greeting-questions on the fast path %p", (input) => {
     expect(isTrivialQuickReply(input)).toBe(true);
+  });
+
+  // 2026-09-09 live incident: a bare "Yes." confirming a pending cancel_interview
+  // action slipped past every check above (no digit, no "?", no action verb, no
+  // listed topic word) and got routed to the toolless quick-reply fast path,
+  // which fabricated "Done, I canceled that" without ever calling the tool.
+  // These are exactly the words approvalHandler.ts's classifyApproval treats as
+  // a real YES/NO decision — none of them may ever look trivial here, or a real
+  // confirmation reply can be swallowed before the agent (or the pending-action
+  // gate) ever sees it.
+  it.each([
+    "Yes.", "Yes", "yes", "Y", "Yeah", "Yep", "Yup",
+    "Ok", "Okay", "Sure", "Confirm", "Confirmed", "Go ahead", "Do it", "Go", "Proceed", "Approved",
+    "No.", "No", "no", "N", "Nope", "Nah", "Stop", "Wait", "Cancel",
+    "Don't", "Dont", "Never mind", "Nevermind", "Actually no", "Forget it",
+  ])("never treats a bare confirm/deny reply as trivial %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(false);
+  });
+
+  // Locks the two lists together: if someone later adds a new word to
+  // approvalHandler's TRIVIAL_YES/TRIVIAL_NO without this test, they won't
+  // find out it can still be swallowed by the quick-reply fast path until
+  // the next live incident. Property check > hand-typed duplicate list.
+  it("every TRIVIAL_YES/TRIVIAL_NO word is excluded, not just the ones listed above", () => {
+    for (const word of [...TRIVIAL_YES, ...TRIVIAL_NO]) {
+      const asTyped = word.charAt(0) + word.slice(1).toLowerCase();
+      expect(isTrivialQuickReply(asTyped)).toBe(false);
+    }
   });
 });
 

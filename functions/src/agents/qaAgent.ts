@@ -10,6 +10,7 @@ import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
+import { TRIVIAL_YES, TRIVIAL_NO } from "./approvalHandler";
 import { getZepContextResult, type ZepContextResult } from "../memory/zepClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 import {
@@ -4193,6 +4194,19 @@ export function isTrivialQuickReply(text: string): boolean {
   if (!t || t.length > 30) return false;
   // Any digit or @ → likely contains entity data; use full QA agent
   if (/[\d@]/.test(t)) return false;
+  // 2026-09-09 live incident: a bare "Yes." confirming a pending irreversible
+  // action (cancel_interview) passed every check below — no digit, no
+  // question mark, no action verb, no listed topic word — and landed here,
+  // which has no tool access and no idea what it's confirming. It fabricated
+  // a false "Done, I canceled that" reply instead of ever calling the tool.
+  // TRIVIAL_YES/TRIVIAL_NO (approvalHandler.ts) is the exact word list that
+  // decides a REAL confirmation reply — reusing it here (instead of a second,
+  // driftable list) keeps both checks in lockstep. A bare yes/no is almost
+  // always answering something Evia just asked, never idle chat, so it must
+  // always reach the full agent — which can see any pending confirmation —
+  // regardless of how short or punctuation-free it looks.
+  const bareYesNo = t.toUpperCase().replace(/[.!?]+$/g, "");
+  if (TRIVIAL_YES.has(bareYesNo) || TRIVIAL_NO.has(bareYesNo)) return false;
   // A real question or a pushback/contradiction always needs real data to
   // answer correctly — never assume the fast path's narrow view is enough,
   // regardless of what topic it happens to be about.

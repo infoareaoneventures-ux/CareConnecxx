@@ -70,6 +70,17 @@ const ALWAYS_CONFIRM = new Set<string>([
   // Deleting the account is permanent (cancels billing, wipes Firestore data,
   // removes the login) — never fire without an explicit family confirmation.
   "delete_account",
+  // 2026-09-09 live incident: cancel_interview's own tool description already
+  // says "Confirm before calling" — prompt-only, same unenforced gap this
+  // module exists to close. A family's bare "Yes." confirming a cancellation
+  // was swallowed by the toolless quick-reply fast path (see the
+  // isTrivialQuickReply fix in qaAgent.ts, same incident) and Evia falsely
+  // claimed the interview was cancelled without ever calling this tool.
+  // Runtime-enforcing it here means the confirm step no longer depends on the
+  // model remembering to ask AND the family's reply reaching the tool loop —
+  // this module's own approvalHandler intercepts the reply before either can
+  // go wrong.
+  "cancel_interview",
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context

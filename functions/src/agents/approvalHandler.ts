@@ -27,9 +27,11 @@ import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 export type ApprovalDecision = "YES" | "NO" | "QUESTION";
 
 // Trivial fast paths — common single-word answers we can classify without
-// an LLM call. Saves 300–500ms on the common case.
-const TRIVIAL_YES = new Set(["YES", "Y", "YEAH", "YEP", "YUP", "OK", "OKAY", "SURE", "CONFIRM", "CONFIRMED", "GO AHEAD", "DO IT", "GO", "PROCEED", "APPROVED"]);
-const TRIVIAL_NO  = new Set(["NO", "N", "NOPE", "NAH", "STOP", "WAIT", "CANCEL", "DON'T", "DONT", "NEVER MIND", "NEVERMIND", "ACTUALLY NO", "FORGET IT"]);
+// an LLM call. Saves 300–500ms on the common case. Exported so
+// qaAgent.ts's isTrivialQuickReply can keep these words OFF the toolless
+// quick-reply path — see the comment there (2026-09-09 incident).
+export const TRIVIAL_YES = new Set(["YES", "Y", "YEAH", "YEP", "YUP", "OK", "OKAY", "SURE", "CONFIRM", "CONFIRMED", "GO AHEAD", "DO IT", "GO", "PROCEED", "APPROVED"]);
+export const TRIVIAL_NO  = new Set(["NO", "N", "NOPE", "NAH", "STOP", "WAIT", "CANCEL", "DON'T", "DONT", "NEVER MIND", "NEVERMIND", "ACTUALLY NO", "FORGET IT"]);
 
 export async function classifyApproval(text: string, actionPreview: string): Promise<ApprovalDecision> {
   const trimmed = text.trim().toUpperCase().replace(/[.!?]+$/g, "");

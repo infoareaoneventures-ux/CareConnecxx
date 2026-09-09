@@ -2332,7 +2332,21 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         clientId:    { type: "string", description: "The client's user ID (provide this OR caregiverId)" },
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
-        status:      { type: "string", description: "Optional filter: scheduled, confirmed, declined, cancelled, completed" },
+        // 2026-09-09 (live-caught): the old description listed "scheduled,
+        // confirmed, cancelled" as valid values — none of those are real.
+        // An interview is "requested" until the other side responds, then
+        // "accepted" (not "confirmed", not "scheduled") or "declined". A
+        // model call filtering on "scheduled" silently got zero results and
+        // told the family "I don't see a scheduled interview" for one that
+        // was actually sitting right there, accepted.
+        status: {
+          type: "string",
+          enum: ["requested", "accepted", "declined", "completed", "cancelled"],
+          description: "Optional filter. These are the ONLY real values — there is no 'scheduled' or 'confirmed' " +
+            "status. requested = proposed, awaiting the other side's response. accepted = confirmed and upcoming " +
+            "(this is what an interview you can still reschedule or join looks like). declined, completed, cancelled " +
+            "are terminal.",
+        },
       },
       required: [],
     },

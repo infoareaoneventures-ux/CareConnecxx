@@ -60,6 +60,27 @@ describe("client KNOWLEDGE BOUNDARY — people extension (R5)", () => {
   });
 });
 
+// 2026-09-09 live incident: rescheduling an interview called schedule_interview
+// with caregiverId: "unknown" — a placeholder, never resolved via a real
+// lookup — which failed with "Caregiver is not available for interviews".
+describe("reschedule instruction requires a real caregiverId lookup first (2026-09-09)", () => {
+  it("tells the model to call list_interviews for the real caregiverId before schedule_interview, never guess or use a placeholder", () => {
+    expect(clientPrompt).toContain("FIRST call list_interviews to get the caregiver's real caregiverId");
+    expect(clientPrompt).toContain('never pass a placeholder like "unknown"');
+  });
+});
+
+// Same class of gap, a different trigger: the family accepting a caregiver's
+// counter-proposed time (decline + proposedDate/proposedTime) has no dedicated
+// instruction at all before this fix, so it was exposed to the same
+// guessed/placeholder caregiverId risk as the reschedule case above.
+describe("accepting a caregiver's counter-proposed time also requires a real caregiverId lookup (2026-09-09)", () => {
+  it("tells the model to look up the real caregiverId and not to cancel the already-declined original interview", () => {
+    expect(clientPrompt).toContain("counter-proposed time");
+    expect(clientPrompt).toContain("do NOT call cancel_interview on it");
+  });
+});
+
 describe("caregiver prompt parity details (R16)", () => {
   it("scopes stateable facts to the grounded sources", () => {
     expect(caregiverPrompt).toContain("tool results from this conversation");

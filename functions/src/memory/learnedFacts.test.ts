@@ -471,6 +471,11 @@ describe("detectAndStageFactChange", () => {
       "Can you cancel the interview",
       "Can you cancel the interview pending for caregiver to accept or decline",
       "Can you cancel my interview request for Saturday",
+      // 2026-09-09 live incident: "without" read as forget-shaped ("without
+      // the note" ~ "remove the note") even though this modifies a
+      // reschedule action, names no stored fact, and got a no_match
+      // "I checked what I have remembered, and I can't identify that memory".
+      "Can you reschedule without the note",
     ])("%s → not_correction, nothing staged", async (text) => {
       seedActiveFact("fact-1", "Mom prefers morning visits", 4, { category: "preference" });
       const before = new Map(h.docs);
@@ -492,6 +497,7 @@ describe("detectAndStageFactChange", () => {
       const [systemPrompt] = h.quickComplete.mock.calls[0] as [string, string];
       expect(systemPrompt).toContain("cancel, decline, reschedule, or call off a real scheduled");
       expect(systemPrompt).toContain("Can you cancel the interview pending for caregiver to accept or decline");
+      expect(systemPrompt).toContain("Can you reschedule without the note");
       expect(systemPrompt).toContain("forget what I said about the shellfish allergy");
     });
 

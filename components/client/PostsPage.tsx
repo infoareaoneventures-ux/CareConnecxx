@@ -18,6 +18,18 @@ import { JobPost } from '../../types';
 type MainTab = 'posts' | 'interviews';
 type PostsFilter = 'open' | 'closed';
 
+// Same half-hour slots ScheduleInterviewModal.tsx's own time picker uses
+// (9 AM–6 PM) — matches the site's one existing interview time-picker
+// convention rather than a raw native <input type="time">.
+const RESCHEDULE_TIME_SLOTS: string[] = (() => {
+  const slots: string[] = [];
+  for (let hour = 9; hour <= 18; hour++) {
+    slots.push(`${hour.toString().padStart(2, '0')}:00`);
+    if (hour < 18) slots.push(`${hour.toString().padStart(2, '0')}:30`);
+  }
+  return slots;
+})();
+
 const CARE_NEED_SUBS: Record<string, string[]> = {
   'Mobility Assistance': ['Ambulation', 'Transfer Assist'],
   'Dementia / Memory Care': ['Supervision / Safety monitoring', 'Memory support', 'Redirection / cueing'],
@@ -51,6 +63,16 @@ interface Interview {
   /** ISO datetime — the caregiver's counter-proposed time when they declined
    * with an alternative instead of outright (see interviewResponse.ts). */
   proposedTime?: string;
+  /** Who proposed reschedulePendingTime (see below). Undefined when there's
+   * no pending reschedule proposal. */
+  rescheduledBy?: 'client' | 'caregiver';
+  /** ISO datetime — a proposed new time for the in-place Reschedule action
+   * (see notificationTriggers.ts), awaiting the OTHER party's acceptance.
+   * Deliberately a SEPARATE field from proposedTime above (that one is the
+   * unrelated decline-with-counter-offer feature, gated on status==='declined'
+   * and settled via a brand-new interview, not this one) — the real
+   * scheduledTime/status never change until this is actually accepted. */
+  reschedulePendingTime?: string;
 }
 
 interface Applicant {
@@ -313,6 +335,8 @@ export const PostsPage: React.FC = () => {
             jobId: d.jobId || undefined,
             jobTitle: d.jobTitle || undefined,
             proposedTime: d.proposedTime || undefined,
+            rescheduledBy: d.rescheduledBy || undefined,
+            reschedulePendingTime: d.reschedulePendingTime || undefined,
           };
         });
         const statusOrder: Record<string, number> = { pending: 0, accepted: 1, confirmed: 2, completed: 3, declined: 4, cancelled: 5 };
@@ -514,6 +538,11 @@ export const PostsPage: React.FC = () => {
     }
   };
 
+  // 2026-09-09 (live-caught): this used to write scheduledTime/status
+  // directly, changing the CONFIRMED meeting time before the other side ever
+  // agreed to it. Store it as a proposal instead — the real scheduledTime
+  // (and Cancel, which always operates on the actual confirmed interview)
+  // stays untouched until the other party explicitly accepts.
   const handleRescheduleInterview = async (interview: Interview) => {
     if (!rescheduleDate || !rescheduleTime || !db) return;
     const scheduledDateTime = new Date(`${rescheduleDate}T${rescheduleTime}:00`);
@@ -524,26 +553,46 @@ export const PostsPage: React.FC = () => {
     setReschedulingId(interview.id);
     try {
       await db.collection('video_interviews').doc(interview.id).update({
-        scheduledTime: scheduledDateTime.toISOString(),
-        // 'requested' is the real stored value for "awaiting response" —
-        // 'pending' only exists as this file's own DISPLAY mapping (see the
-        // d.status === 'requested' ? 'pending' : ... normalization above).
-        // Writing 'pending' directly would desync every other consumer of
-        // this doc (Evia's tools, the notification trigger, status filters)
-        // that only ever recognizes the real 'requested' value.
-        status: 'requested',
+        reschedulePendingTime: scheduledDateTime.toISOString(),
         rescheduledBy: 'client',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       setInterviews(prev => prev.map(i => i.id === interview.id
-        ? { ...i, status: 'pending', date: rescheduleDate, time: rescheduleTime }
+        ? { ...i, reschedulePendingTime: scheduledDateTime.toISOString(), rescheduledBy: 'client' }
         : i));
       setRescheduleOpenId(null);
       setRescheduleDate('');
       setRescheduleTime('');
-      addToast('New time sent — waiting on the caregiver to confirm.', 'success');
+      addToast('New time proposed — waiting on the caregiver to confirm.', 'success');
     } catch {
-      addToast('Failed to update the interview time', 'error');
+      addToast('Failed to propose the new time', 'error');
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
+  // Accept the caregiver's proposed time — THIS is the moment the real
+  // scheduledTime actually changes, same doc throughout.
+  const handleAcceptRescheduledTime = async (interview: Interview) => {
+    if (!db || !interview.reschedulePendingTime) return;
+    setReschedulingId(interview.id);
+    try {
+      await db.collection('video_interviews').doc(interview.id).update({
+        scheduledTime: interview.reschedulePendingTime,
+        status: 'accepted',
+        reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      const dt = new Date(interview.reschedulePendingTime);
+      const localDateStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const localTimeStr = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      setInterviews(prev => prev.map(i => i.id === interview.id
+        ? { ...i, status: 'accepted', date: localDateStr, time: localTimeStr, reschedulePendingTime: undefined, rescheduledBy: undefined }
+        : i));
+      addToast('Interview time confirmed', 'success');
+    } catch {
+      addToast('Failed to confirm the interview time', 'error');
     } finally {
       setReschedulingId(null);
     }
@@ -1323,6 +1372,21 @@ export const PostsPage: React.FC = () => {
                           <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5 break-words">{interview.notes}</p>
                         )}
 
+                        {/* Reschedule proposal pending — the CONFIRMED time above (interview.date/
+                            time) is still what's actually scheduled until this is accepted. */}
+                        {interview.reschedulePendingTime && (
+                          <div className="mt-2 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                            <p className="text-xs font-medium text-blue-800 flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5" />
+                              {interview.rescheduledBy === 'caregiver'
+                                ? `${interview.caregiverName} proposed a new time: `
+                                : 'You proposed a new time: '}
+                              {new Date(interview.reschedulePendingTime).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                              {interview.rescheduledBy !== 'caregiver' && ' — waiting on the caregiver to confirm'}
+                            </p>
+                          </div>
+                        )}
+
                         {/* Caregiver counter-proposed a different time */}
                         {interview.status === 'declined' && interview.proposedTime && (
                           <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-lg">
@@ -1383,13 +1447,20 @@ export const PostsPage: React.FC = () => {
                           <div className="mt-2 flex flex-wrap items-end gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2">
                             <div>
                               <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
-                              <input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)}
+                              <input type="date" value={rescheduleDate} min={new Date().toISOString().split('T')[0]} onChange={(e) => setRescheduleDate(e.target.value)}
                                 className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
                             </div>
                             <div>
                               <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
-                              <input type="time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)}
-                                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                              <select value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)}
+                                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                                <option value="">Choose a time...</option>
+                                {RESCHEDULE_TIME_SLOTS.map((time) => (
+                                  <option key={time} value={time}>
+                                    {new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                             <button
                               onClick={() => handleRescheduleInterview(interview)}
@@ -1434,12 +1505,33 @@ export const PostsPage: React.FC = () => {
                                   <MessageSquare className="w-3.5 h-3.5" /> Message
                                 </button>
                               )}
-                              {(interview.status === 'pending' || interview.status === 'accepted') && rescheduleOpenId !== interview.id && (
+                              {/* The caregiver's current reschedulePendingTime is awaiting the
+                                  FAMILY's decision — this is the one case where the client (not
+                                  the caregiver) needs to Accept, not just Message/Reschedule/Cancel.
+                                  reschedulePendingTime never implies status changed — the real
+                                  scheduledTime/status above is still the last CONFIRMED meeting
+                                  until this is accepted, so Cancel below stays fully valid too. */}
+                              {!!interview.reschedulePendingTime && interview.rescheduledBy === 'caregiver' && (
+                                <button
+                                  onClick={() => handleAcceptRescheduledTime(interview)}
+                                  disabled={reschedulingId === interview.id}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                                >
+                                  {reschedulingId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} Accept new time
+                                </button>
+                              )}
+                              {/* Propose/Reschedule only comes available on your TURN — either
+                                  no proposal is pending at all, or you're reviewing the OTHER
+                                  party's proposal. Never on your own outgoing proposal (that only
+                                  gets Decline/Cancel below, same rule as the caregiver side). */}
+                              {(interview.status === 'pending' || interview.status === 'accepted') &&
+                                rescheduleOpenId !== interview.id &&
+                                interview.rescheduledBy !== 'client' && (
                                 <button
                                   onClick={() => { setRescheduleOpenId(interview.id); setRescheduleDate(interview.date); setRescheduleTime(interview.time); }}
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-50"
                                 >
-                                  <Calendar className="w-3.5 h-3.5" /> Reschedule
+                                  <Calendar className="w-3.5 h-3.5" /> {interview.reschedulePendingTime ? 'Propose different time' : 'Reschedule'}
                                 </button>
                               )}
                               {interview.status === 'pending' && (

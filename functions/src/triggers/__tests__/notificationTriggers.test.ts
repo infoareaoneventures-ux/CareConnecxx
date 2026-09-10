@@ -274,37 +274,51 @@ describe("onVideoInterviewWrite — SMS parity", () => {
     expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
   });
 
-  // 2026-09-09 (new site feature): the Reschedule/Propose new time actions on
-  // both PostsPage.tsx and JobBoard.tsx write a changed scheduledTime + a
-  // status of 'requested' directly to the SAME interview doc — no cancel, no
-  // new doc. Before this branch existed, that write matched no notification
-  // logic at all (the "new interview" branch requires !before; nothing else
-  // reacted to a status transition INTO 'requested').
-  describe("rescheduled — same interview, changed time, notifies the OTHER party", () => {
-    it("the caregiver rescheduling an accepted interview texts the client", async () => {
+  // 2026-09-09 (new site feature, redesigned mid-session after a live-caught
+  // bug): the Reschedule/Propose new time actions on both PostsPage.tsx and
+  // JobBoard.tsx write a PROPOSAL (reschedulePendingTime) — the real
+  // scheduledTime/status are deliberately left untouched until the other
+  // party actually accepts, so the confirmed meeting (and Decline/Cancel on
+  // it) never changes just from someone proposing a new time.
+  describe("reschedule proposed — same interview, notifies the OTHER party, confirmed time untouched", () => {
+    it("the caregiver proposing a new time on an accepted interview texts the client, without changing scheduledTime/status", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
-      const after  = { ...before, status: "requested", rescheduledBy: "caregiver", scheduledTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { ...before, rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
       expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
     });
 
-    it("the client rescheduling an accepted interview texts the caregiver", async () => {
+    it("the client proposing a new time on an accepted interview texts the caregiver, without changing scheduledTime/status", async () => {
       const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z" };
-      const after  = { ...before, status: "requested", rescheduledBy: "client", scheduledTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
       expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("A Family") }));
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
     });
 
-    it("still notifies when the status label doesn't change (requested → requested, only the time moved) — the case the generic statusBefore===statusAfter check would otherwise swallow", async () => {
+    it("still fires on a still-pending (requested) interview — proposals aren't limited to accepted ones", async () => {
       const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z" };
-      const after  = { ...before, status: "requested", rescheduledBy: "client", scheduledTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { ...before, rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
       expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("A Family") }));
     });
 
-    it("does NOT fire when the time is unchanged (a plain accept, no reschedule involved)", async () => {
+    it("fires again when an already-pending proposal is CHANGED to a different time", async () => {
+      const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { ...before, reschedulePendingTime: "2026-09-15T19:00:00.000Z" };
+      await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+      expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
+    });
+
+    it("does NOT fire when nothing about the proposal changed (an unrelated field update)", async () => {
+      const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { ...before, notes: "updated notes" };
+      await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+      expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    });
+
+    it("does NOT fire on a plain accept with no reschedule proposal involved", async () => {
       const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z" };
       const after  = { ...before, status: "accepted" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
@@ -313,6 +327,33 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       // the new reschedule branch didn't misfire here.
       expect(sendViaInteractionAgent).not.toHaveBeenCalled();
       expect(sendToPhone).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("reschedule ACCEPTED — the real scheduledTime finally moves, notifies whoever originally proposed it", () => {
+    it("the family accepting the caregiver's proposed time texts the caregiver back", async () => {
+      const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-14T18:00:00.000Z" };
+      await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+      expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("A Family") }));
+      expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
+    });
+
+    it("the caregiver accepting the family's proposed time texts the client back", async () => {
+      const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "client", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, caregiverName: "Alice", scheduledTime: "2026-09-14T18:00:00.000Z" };
+      await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+      expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice") }));
+      expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
+    });
+
+    it("does NOT fire when declining clears the proposal instead of accepting it (scheduledTime never changed)", async () => {
+      const before = { status: "accepted", caregiverId: CAREGIVER, clientId: CLIENT, scheduledTime: "2026-09-10T17:00:00.000Z", rescheduledBy: "caregiver", reschedulePendingTime: "2026-09-14T18:00:00.000Z" };
+      const after  = { status: "declined", caregiverId: CAREGIVER, clientId: CLIENT, scheduledTime: "2026-09-10T17:00:00.000Z" };
+      await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
+      // Falls through to the existing decline-direction branch instead — not
+      // a reschedule-accepted event, since scheduledTime never moved.
+      expect(sendViaInteractionAgent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ content: expect.stringContaining("confirmed the new interview time") }));
     });
   });
 });

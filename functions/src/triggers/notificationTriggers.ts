@@ -111,18 +111,56 @@ export const onVideoInterviewWrite = functions.firestore
         return;
       }
 
-      // Rescheduled — an EXISTING interview's time changed while awaiting
-      // response, whether or not the status label itself changed (a
-      // still-requested interview rescheduled before the other side ever
-      // responded is a real reschedule too, and would otherwise be
-      // swallowed by the statusBefore===statusAfter check below). Notify
-      // whichever party did NOT make this change — rescheduledBy is
+      // Rescheduled (proposed) — a NEW or CHANGED reschedulePendingTime.
+      // 2026-09-09 (live-caught, second pass): this used to detect a
+      // reschedule via a scheduledTime CHANGE — but that meant the write
+      // itself changed the confirmed meeting time before the other party
+      // ever agreed to it. The site now stores a proposal separately
+      // (reschedulePendingTime) and leaves scheduledTime untouched until
+      // explicitly accepted, so detect the proposal itself instead. Notify
+      // whichever party did NOT make this proposal — rescheduledBy is
       // stamped by whichever side's UI wrote it (PostsPage.tsx /
       // JobBoard.tsx); the site's Reschedule/Propose new time actions are
       // the only writers of this field.
       if (
-        before &&
-        statusAfter === 'requested' &&
+        after.reschedulePendingTime &&
+        before?.reschedulePendingTime !== after.reschedulePendingTime
+      ) {
+        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
+        const displayTime = new Date(parseScheduledTimeMs(String(after.reschedulePendingTime ?? ''))).toLocaleString('en-US', {
+          timeZone: 'America/Los_Angeles',
+          weekday: 'short', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+        if (after.rescheduledBy === 'caregiver' && after.clientId) {
+          await addNotification(after.clientId, {
+            type: 'interview_rescheduled',
+            title: 'New Time Proposed',
+            body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
+            data: { interviewId: context.params.interviewId },
+          });
+          await notifyClientByText(after.clientId,
+            `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+        } else if (after.caregiverId) {
+          await addNotification(after.caregiverId, {
+            type: 'interview_rescheduled',
+            title: 'New Time Proposed',
+            body: `${after.clientName || 'The family'} proposed a new time: ${displayTime}. Please confirm.`,
+            data: { interviewId: context.params.interviewId },
+          });
+          await notifyCaregiverByText(after.caregiverId,
+            `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+        }
+        return;
+      }
+
+      // Reschedule ACCEPTED — the pending proposal is gone and the real
+      // scheduledTime actually moved: notify whoever originally proposed it
+      // (before.rescheduledBy, since rescheduledBy is cleared on accept)
+      // that their proposed time is now confirmed.
+      if (
+        before?.reschedulePendingTime &&
+        !after.reschedulePendingTime &&
         after.scheduledTime &&
         before.scheduledTime !== after.scheduledTime
       ) {
@@ -132,24 +170,24 @@ export const onVideoInterviewWrite = functions.firestore
           weekday: 'short', month: 'short', day: 'numeric',
           hour: '2-digit', minute: '2-digit',
         });
-        if (after.rescheduledBy === 'caregiver' && after.clientId) {
-          await addNotification(after.clientId, {
-            type: 'interview_rescheduled',
-            title: 'Interview Time Changed',
-            body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
-            data: { interviewId: context.params.interviewId },
-          });
-          await notifyClientByText(after.clientId,
-            `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
-        } else if (after.caregiverId) {
+        if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
           await addNotification(after.caregiverId, {
             type: 'interview_rescheduled',
-            title: 'Interview Time Changed',
-            body: `${after.clientName || 'The family'} changed the interview time to ${displayTime}. Please confirm.`,
+            title: 'Time Confirmed',
+            body: `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
           });
           await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'The family'} changed the interview time to ${displayTime}. Reply here to confirm or suggest another time.`);
+            `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`);
+        } else if (after.clientId) {
+          await addNotification(after.clientId, {
+            type: 'interview_rescheduled',
+            title: 'Time Confirmed',
+            body: `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
+            data: { interviewId: context.params.interviewId },
+          });
+          await notifyClientByText(after.clientId,
+            `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`);
         }
         return;
       }

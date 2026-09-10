@@ -471,19 +471,30 @@ export const PostsPage: React.FC = () => {
       await db.collection('video_interviews').doc(interviewId).update({
         status: 'completed',
         completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        // Terminal status — clear any leftover reschedule proposal so it
+        // doesn't keep rendering on a done interview.
+        reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
       });
-      setInterviews(prev => prev.map(i => i.id === interviewId ? { ...i, status: 'completed' } : i));
+      setInterviews(prev => prev.map(i => i.id === interviewId ? { ...i, status: 'completed', reschedulePendingTime: undefined, rescheduledBy: undefined } : i));
     } catch { addToast('Failed to update interview', 'error'); }
   };
 
+  // 2026-09-09 (live-caught): only ever wrote status:'cancelled' — a
+  // reschedulePendingTime/rescheduledBy left over from a pending proposal
+  // kept rendering the "proposed a new time / waiting to confirm" banner and
+  // its buttons on an interview that was already over. Terminal actions must
+  // always clear these two fields.
   const handleCancelInterview = async (interviewId: string) => {
     if (!window.confirm('Cancel this interview?') || !db) return;
     try {
       await db.collection('video_interviews').doc(interviewId).update({
         status: 'cancelled',
         cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
       });
-      setInterviews(prev => prev.map(i => i.id === interviewId ? { ...i, status: 'cancelled' } : i));
+      setInterviews(prev => prev.map(i => i.id === interviewId ? { ...i, status: 'cancelled', reschedulePendingTime: undefined, rescheduledBy: undefined } : i));
     } catch { addToast('Failed to cancel interview', 'error'); }
   };
 
@@ -1534,7 +1545,9 @@ export const PostsPage: React.FC = () => {
                                   <Calendar className="w-3.5 h-3.5" /> {interview.reschedulePendingTime ? 'Propose different time' : 'Reschedule'}
                                 </button>
                               )}
-                              {interview.status === 'pending' && (
+                              {/* Cancel is always available on pending/accepted, regardless of
+                                  any pending reschedule proposal — same rule as both sides now. */}
+                              {(interview.status === 'pending' || interview.status === 'accepted') && (
                                 <button
                                   onClick={() => handleCancelInterview(interview.id)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50"

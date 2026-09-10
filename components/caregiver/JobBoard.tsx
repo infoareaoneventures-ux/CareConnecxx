@@ -372,6 +372,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
         }
     };
 
+    // 2026-09-09 (live-caught): only ever wrote status:'declined' — a
+    // reschedulePendingTime/rescheduledBy left over from a pending proposal
+    // kept rendering the "proposed a new time / waiting to confirm" banner
+    // and its buttons on an interview that was already over. Terminal
+    // actions must always clear these two fields.
     const handleDeclineInterview = async (iv: InterviewItem) => {
         if (!db || !profile) return;
         setSubmittingInterview(iv.id);
@@ -381,10 +386,35 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             await db.collection('video_interviews').doc(iv.id).update({
                 status: 'declined',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+                rescheduledBy: firebase.firestore.FieldValue.delete(),
             });
             onShowToast('Interview declined', 'info');
         } catch {
             onShowToast('Failed to decline interview', 'error');
+        } finally {
+            setSubmittingInterview(null);
+        }
+    };
+
+    // New: an ACCEPTED interview being called off is a cancellation, not a
+    // decline (decline is for an unconfirmed request, cancel is for calling
+    // off something already agreed to) — mirrors the client side's Cancel.
+    const handleCancelInterview = async (iv: InterviewItem) => {
+        if (!db || !profile) return;
+        if (!window.confirm('Cancel this interview?')) return;
+        setSubmittingInterview(iv.id);
+        try {
+            await db.collection('video_interviews').doc(iv.id).update({
+                status: 'cancelled',
+                cancelledBy: 'caregiver',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                reschedulePendingTime: firebase.firestore.FieldValue.delete(),
+                rescheduledBy: firebase.firestore.FieldValue.delete(),
+            });
+            onShowToast('Interview cancelled', 'info');
+        } catch {
+            onShowToast('Failed to cancel interview', 'error');
         } finally {
             setSubmittingInterview(null);
         }
@@ -1211,19 +1241,24 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                     Details
                                                                 </button>
                                                             ) : <span />}
+                                                            {/* Ending the interview is Decline while it's still an
+                                                                unconfirmed request (status 'pending'), or Cancel once
+                                                                it was already accepted — a confirmed meeting being
+                                                                called off is a cancellation, not a decline. Always
+                                                                available regardless of whose turn it is to respond
+                                                                to a proposal. */}
                                                             {iv.reschedulePendingTime && iv.rescheduledBy === 'caregiver' ? (
                                                                 // This caregiver's OWN outgoing proposal — Accept/Propose
                                                                 // only come available when it's your TURN to review someone
-                                                                // else's proposal, never on your own. Decline is the one
-                                                                // thing always available, regardless of whose turn it is.
+                                                                // else's proposal, never on your own.
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-sm text-slate-500 italic">Waiting on the family to confirm</span>
                                                                     <button
-                                                                        onClick={() => handleDeclineInterview(iv)}
+                                                                        onClick={() => (iv.status === 'accepted' ? handleCancelInterview(iv) : handleDeclineInterview(iv))}
                                                                         disabled={submittingInterview === iv.id}
                                                                         className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
                                                                     >
-                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (iv.status === 'accepted' ? 'Cancel' : 'Decline')}
                                                                     </button>
                                                                 </div>
                                                             ) : iv.reschedulePendingTime && iv.rescheduledBy === 'client' ? (
@@ -1240,11 +1275,11 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                         </button>
                                                                     )}
                                                                     <button
-                                                                        onClick={() => handleDeclineInterview(iv)}
+                                                                        onClick={() => (iv.status === 'accepted' ? handleCancelInterview(iv) : handleDeclineInterview(iv))}
                                                                         disabled={submittingInterview === iv.id}
                                                                         className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
                                                                     >
-                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Decline'}
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (iv.status === 'accepted' ? 'Cancel' : 'Decline')}
                                                                     </button>
                                                                     <button
                                                                         onClick={() => handleAcceptRescheduleProposal(iv)}
@@ -1262,7 +1297,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                             disabled={submittingInterview === iv.id}
                                                                             className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
                                                                         >
-                                                                            Propose new time
+                                                                            Reschedule
                                                                         </button>
                                                                     )}
                                                                     <button
@@ -1280,14 +1315,25 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                         {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
                                                                     </button>
                                                                 </div>
-                                                            ) : iv.status === 'accepted' && rescheduleOpenId !== iv.id ? (
-                                                                <button
-                                                                    onClick={() => { setRescheduleOpenId(iv.id); setRescheduleDate(date.toISOString().slice(0, 10)); setRescheduleTime(date.toTimeString().slice(0, 5)); }}
-                                                                    disabled={submittingInterview === iv.id}
-                                                                    className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
-                                                                >
-                                                                    Propose new time
-                                                                </button>
+                                                            ) : iv.status === 'accepted' ? (
+                                                                <div className="flex gap-2">
+                                                                    {rescheduleOpenId !== iv.id && (
+                                                                        <button
+                                                                            onClick={() => { setRescheduleOpenId(iv.id); setRescheduleDate(date.toISOString().slice(0, 10)); setRescheduleTime(date.toTimeString().slice(0, 5)); }}
+                                                                            disabled={submittingInterview === iv.id}
+                                                                            className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
+                                                                        >
+                                                                            Reschedule
+                                                                        </button>
+                                                                    )}
+                                                                    <button
+                                                                        onClick={() => handleCancelInterview(iv)}
+                                                                        disabled={submittingInterview === iv.id}
+                                                                        className="px-4 py-1.5 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                                                                    >
+                                                                        {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Cancel'}
+                                                                    </button>
+                                                                </div>
                                                             ) : <span />}
                                                         </div>
                                                     )}

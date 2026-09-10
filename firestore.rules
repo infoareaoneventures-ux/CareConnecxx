@@ -596,7 +596,16 @@ service cloud.firestore {
       // fields. Identity (clientId/caregiverId) and server-owned link fields
       // are immutable from the client SDK (deleting callUrl would make the
       // link trigger regenerate + re-text both parties — an SMS pump).
-      // Only the caregiver may move status to accepted/declined/confirmed.
+      // Only the caregiver may move status to accepted/declined/confirmed —
+      // EXCEPT the client may also move it to accepted, but only to accept a
+      // proposal the CAREGIVER themselves already made (rescheduledBy ==
+      // 'caregiver' on the doc as it stood before this write) — never as a
+      // way to self-confirm their own request without the caregiver's say.
+      // 2026-09-09: scheduledTime/reschedulePendingTime/rescheduledBy added
+      // for the in-place Reschedule/Propose new time feature (PostsPage.tsx /
+      // JobBoard.tsx) — the real scheduledTime only ever changes via the
+      // accept handlers, which is exactly the case this status exception
+      // covers.
       allow update: if isAdmin() || (
         isAuthenticated() && (
           resource.data.clientId == request.auth.uid ||
@@ -604,12 +613,18 @@ service cloud.firestore {
         ) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'notes', 'updatedAt', 'acceptedAt', 'declinedBy', 'declinedAt',
-          'cancelledBy', 'cancelledAt', 'cancelReason', 'completedAt', 'startedAt', 'endedAt'
+          'cancelledBy', 'cancelledAt', 'cancelReason', 'completedAt', 'startedAt', 'endedAt',
+          'scheduledTime', 'reschedulePendingTime', 'rescheduledBy'
         ]) &&
         (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
           !(request.resource.data.status in ['accepted', 'declined', 'confirmed']) ||
-          resource.data.caregiverId == request.auth.uid
+          resource.data.caregiverId == request.auth.uid ||
+          (
+            request.resource.data.status == 'accepted' &&
+            resource.data.rescheduledBy == 'caregiver' &&
+            resource.data.clientId == request.auth.uid
+          )
         )
       );
 

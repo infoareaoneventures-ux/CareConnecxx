@@ -1297,7 +1297,7 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                             disabled={submittingInterview === iv.id}
                                                                             className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
                                                                         >
-                                                                            Reschedule
+                                                                            Propose new time
                                                                         </button>
                                                                     )}
                                                                     <button

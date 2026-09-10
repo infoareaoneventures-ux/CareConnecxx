@@ -1542,7 +1542,7 @@ export const PostsPage: React.FC = () => {
                                   onClick={() => { setRescheduleOpenId(interview.id); setRescheduleDate(interview.date); setRescheduleTime(interview.time); }}
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-50"
                                 >
-                                  <Calendar className="w-3.5 h-3.5" /> {interview.reschedulePendingTime ? 'Propose different time' : 'Reschedule'}
+                                  <Calendar className="w-3.5 h-3.5" /> {interview.reschedulePendingTime ? 'Propose different time' : interview.status === 'pending' ? 'Propose new time' : 'Reschedule'}
                                 </button>
                               )}
                               {/* Cancel is always available on pending/accepted, regardless of

@@ -120,6 +120,15 @@ export const PostsPage: React.FC = () => {
   const [counterProposeDate, setCounterProposeDate] = useState('');
   const [counterProposeTime, setCounterProposeTime] = useState('');
 
+  // Reschedule the SAME interview (no cancel, no new request) while it's
+  // still pending or accepted (not yet completed). Sets status back to
+  // 'pending' so the caregiver re-confirms the (possibly new) time — same
+  // mechanism as an ordinary new request, just without losing the doc/link.
+  const [rescheduleOpenId, setRescheduleOpenId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+
   const [mainTab, setMainTab] = useState<MainTab>('posts');
   const [postsFilter, setPostsFilter] = useState<PostsFilter>('open');
 
@@ -502,6 +511,41 @@ export const PostsPage: React.FC = () => {
       addToast('Failed to send the new request. Please try again.', 'error');
     } finally {
       setRespondingToProposalId(null);
+    }
+  };
+
+  const handleRescheduleInterview = async (interview: Interview) => {
+    if (!rescheduleDate || !rescheduleTime || !db) return;
+    const scheduledDateTime = new Date(`${rescheduleDate}T${rescheduleTime}:00`);
+    if (scheduledDateTime <= new Date()) {
+      addToast('Please pick a future date and time', 'error');
+      return;
+    }
+    setReschedulingId(interview.id);
+    try {
+      await db.collection('video_interviews').doc(interview.id).update({
+        scheduledTime: scheduledDateTime.toISOString(),
+        // 'requested' is the real stored value for "awaiting response" —
+        // 'pending' only exists as this file's own DISPLAY mapping (see the
+        // d.status === 'requested' ? 'pending' : ... normalization above).
+        // Writing 'pending' directly would desync every other consumer of
+        // this doc (Evia's tools, the notification trigger, status filters)
+        // that only ever recognizes the real 'requested' value.
+        status: 'requested',
+        rescheduledBy: 'client',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      setInterviews(prev => prev.map(i => i.id === interview.id
+        ? { ...i, status: 'pending', date: rescheduleDate, time: rescheduleTime }
+        : i));
+      setRescheduleOpenId(null);
+      setRescheduleDate('');
+      setRescheduleTime('');
+      addToast('New time sent — waiting on the caregiver to confirm.', 'success');
+    } catch {
+      addToast('Failed to update the interview time', 'error');
+    } finally {
+      setReschedulingId(null);
     }
   };
 
@@ -1333,6 +1377,36 @@ export const PostsPage: React.FC = () => {
                           </div>
                         )}
 
+                        {/* Reschedule — same interview, no cancel; asks the caregiver to
+                            re-confirm the new time. Available before completion only. */}
+                        {rescheduleOpenId === interview.id && (interview.status === 'pending' || interview.status === 'accepted') && (
+                          <div className="mt-2 flex flex-wrap items-end gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2">
+                            <div>
+                              <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                              <input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)}
+                                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
+                              <input type="time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)}
+                                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                            </div>
+                            <button
+                              onClick={() => handleRescheduleInterview(interview)}
+                              disabled={reschedulingId === interview.id || !rescheduleDate || !rescheduleTime}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                            >
+                              {reschedulingId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send new time
+                            </button>
+                            <button
+                              onClick={() => { setRescheduleOpenId(null); setRescheduleDate(''); setRescheduleTime(''); }}
+                              className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+
                         {/* Actions */}
                         {(() => {
                           const key = `${interview.caregiverId}_${interview.jobId || interview.id}`;
@@ -1358,6 +1432,14 @@ export const PostsPage: React.FC = () => {
                                   className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50"
                                 >
                                   <MessageSquare className="w-3.5 h-3.5" /> Message
+                                </button>
+                              )}
+                              {(interview.status === 'pending' || interview.status === 'accepted') && rescheduleOpenId !== interview.id && (
+                                <button
+                                  onClick={() => { setRescheduleOpenId(interview.id); setRescheduleDate(interview.date); setRescheduleTime(interview.time); }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-50"
+                                >
+                                  <Calendar className="w-3.5 h-3.5" /> Reschedule
                                 </button>
                               )}
                               {interview.status === 'pending' && (

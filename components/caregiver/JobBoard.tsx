@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home } from 'lucide-react';
+import { Search, Loader2, Briefcase, MapPin, Calendar, Clock, Lock, X, FileText, CheckCircle, XCircle, Clock4, Sun, Moon, Users, CreditCard, Banknote, EyeOff, Eye, Car, SlidersHorizontal, Video, Phone, Home, Send } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { JobPost, Caregiver, AddToastFunction } from '../../types';
 import { dbService, normalizeJobPost } from '../../services/api';
@@ -124,6 +124,13 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
     const [interviews, setInterviews] = useState<InterviewItem[]>([]);
     const [interviewsLoading, setInterviewsLoading] = useState(false);
     const [submittingInterview, setSubmittingInterview] = useState<string | null>(null);
+    // Reschedule the SAME interview (no cancel, no new request) while it's
+    // still pending or accepted (not yet completed). Sets status back to
+    // 'pending' so the family re-confirms the (possibly new) time — same
+    // mechanism the client side uses.
+    const [rescheduleOpenId, setRescheduleOpenId] = useState<string | null>(null);
+    const [rescheduleDate, setRescheduleDate] = useState('');
+    const [rescheduleTime, setRescheduleTime] = useState('');
     const [appFilter, setAppFilter] = useState<'pending' | 'closed'>('pending');
     const [ivFilter, setIvFilter] = useState<'all' | 'pending' | 'accepted' | 'confirmed' | 'completed' | 'declined' | 'cancelled'>(() => {
         const f = searchParams.get('filter');
@@ -357,6 +364,38 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             onShowToast('Interview declined', 'info');
         } catch {
             onShowToast('Failed to decline interview', 'error');
+        } finally {
+            setSubmittingInterview(null);
+        }
+    };
+
+    const handleRescheduleInterview = async (iv: InterviewItem) => {
+        if (!db || !profile || !rescheduleDate || !rescheduleTime) return;
+        const scheduledDateTime = new Date(`${rescheduleDate}T${rescheduleTime}:00`);
+        if (scheduledDateTime <= new Date()) {
+            onShowToast('Please pick a future date and time', 'error');
+            return;
+        }
+        setSubmittingInterview(iv.id);
+        try {
+            await db.collection('video_interviews').doc(iv.id).update({
+                scheduledTime: scheduledDateTime.toISOString(),
+                // 'requested' is the real stored value for "awaiting response" —
+                // 'pending' only exists as this file's own DISPLAY mapping (see
+                // the rawStatus === 'requested' ? 'pending' normalization
+                // above). Writing 'pending' directly would desync every other
+                // consumer of this doc (Evia's tools, the notification
+                // trigger, status filters) that only recognizes 'requested'.
+                status: 'requested',
+                rescheduledBy: 'caregiver',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
+            setRescheduleOpenId(null);
+            setRescheduleDate('');
+            setRescheduleTime('');
+            onShowToast('New time sent — waiting on the family to confirm', 'success');
+        } catch {
+            onShowToast('Failed to update the interview time', 'error');
         } finally {
             setSubmittingInterview(null);
         }
@@ -1041,6 +1080,36 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                         {/* Notes */}
                                         {iv.notes && <p className="text-xs text-slate-500 italic bg-slate-50 rounded-lg px-3 py-2 mb-3 break-words">"{iv.notes}"</p>}
 
+                                        {/* Reschedule — same interview, no decline; asks the family to
+                                            re-confirm the new time. Available before completion only. */}
+                                        {rescheduleOpenId === iv.id && !blockReason && (iv.status === 'pending' || iv.status === 'accepted') && (
+                                            <div className="mb-3 flex flex-wrap items-end gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2">
+                                                <div>
+                                                    <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                                                    <input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)}
+                                                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
+                                                    <input type="time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)}
+                                                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                                                </div>
+                                                <button
+                                                    onClick={() => handleRescheduleInterview(iv)}
+                                                    disabled={submittingInterview === iv.id || !rescheduleDate || !rescheduleTime}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                                                >
+                                                    {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send new time
+                                                </button>
+                                                <button
+                                                    onClick={() => { setRescheduleOpenId(null); setRescheduleDate(''); setRescheduleTime(''); }}
+                                                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        )}
+
                                         {/* Footer: Details + Accept/Decline */}
                                         {(() => {
                                             return (
@@ -1082,6 +1151,15 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                             ) : <span />}
                                                             {iv.status === 'pending' ? (
                                                                 <div className="flex gap-2">
+                                                                    {rescheduleOpenId !== iv.id && (
+                                                                        <button
+                                                                            onClick={() => { setRescheduleOpenId(iv.id); setRescheduleDate(date.toISOString().slice(0, 10)); setRescheduleTime(date.toTimeString().slice(0, 5)); }}
+                                                                            disabled={submittingInterview === iv.id}
+                                                                            className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
+                                                                        >
+                                                                            Propose new time
+                                                                        </button>
+                                                                    )}
                                                                     <button
                                                                         onClick={() => handleDeclineInterview(iv)}
                                                                         disabled={submittingInterview === iv.id}
@@ -1097,6 +1175,14 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                                                                         {submittingInterview === iv.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
                                                                     </button>
                                                                 </div>
+                                                            ) : iv.status === 'accepted' && rescheduleOpenId !== iv.id ? (
+                                                                <button
+                                                                    onClick={() => { setRescheduleOpenId(iv.id); setRescheduleDate(date.toISOString().slice(0, 10)); setRescheduleTime(date.toTimeString().slice(0, 5)); }}
+                                                                    disabled={submittingInterview === iv.id}
+                                                                    className="px-4 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50"
+                                                                >
+                                                                    Propose new time
+                                                                </button>
                                                             ) : <span />}
                                                         </div>
                                                     )}

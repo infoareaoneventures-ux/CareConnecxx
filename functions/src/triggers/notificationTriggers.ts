@@ -111,6 +111,49 @@ export const onVideoInterviewWrite = functions.firestore
         return;
       }
 
+      // Rescheduled — an EXISTING interview's time changed while awaiting
+      // response, whether or not the status label itself changed (a
+      // still-requested interview rescheduled before the other side ever
+      // responded is a real reschedule too, and would otherwise be
+      // swallowed by the statusBefore===statusAfter check below). Notify
+      // whichever party did NOT make this change — rescheduledBy is
+      // stamped by whichever side's UI wrote it (PostsPage.tsx /
+      // JobBoard.tsx); the site's Reschedule/Propose new time actions are
+      // the only writers of this field.
+      if (
+        before &&
+        statusAfter === 'requested' &&
+        after.scheduledTime &&
+        before.scheduledTime !== after.scheduledTime
+      ) {
+        const { parseScheduledTimeMs } = await import('../utils/scheduledTime');
+        const displayTime = new Date(parseScheduledTimeMs(String(after.scheduledTime ?? ''))).toLocaleString('en-US', {
+          timeZone: 'America/Los_Angeles',
+          weekday: 'short', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        });
+        if (after.rescheduledBy === 'caregiver' && after.clientId) {
+          await addNotification(after.clientId, {
+            type: 'interview_rescheduled',
+            title: 'Interview Time Changed',
+            body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
+            data: { interviewId: context.params.interviewId },
+          });
+          await notifyClientByText(after.clientId,
+            `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+        } else if (after.caregiverId) {
+          await addNotification(after.caregiverId, {
+            type: 'interview_rescheduled',
+            title: 'Interview Time Changed',
+            body: `${after.clientName || 'The family'} changed the interview time to ${displayTime}. Please confirm.`,
+            data: { interviewId: context.params.interviewId },
+          });
+          await notifyCaregiverByText(after.caregiverId,
+            `${after.clientName || 'The family'} changed the interview time to ${displayTime}. Reply here to confirm or suggest another time.`);
+        }
+        return;
+      }
+
       if (statusBefore === statusAfter) return;
 
       // Accepted → notify client

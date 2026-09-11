@@ -36,15 +36,20 @@ interface Shift {
   reschedulePendingDate?: string;
   reschedulePendingStartTime?: string;
   reschedulePendingEndTime?: string;
+  /** When the pending proposal above was sent — carried into rescheduleHistory's
+   * proposedAt once accepted/declined, then cleared along with the rest. */
+  reschedulePendingAt?: string;
   /** Append-only log of accepted reschedules on this shift — from/to date +
-   * time, who proposed it, and when it was confirmed. Lives on the shift
-   * doc itself (not a separate collection) since it's only ever relevant in
-   * the context of this one shift. */
+   * time, who proposed it and when, and who accepted it and when. Lives on
+   * the shift doc itself (not a separate collection) since it's only ever
+   * relevant in the context of this one shift. */
   rescheduleHistory?: Array<{
     from: { date: string; startTime: string; endTime?: string };
     to:   { date: string; startTime: string; endTime?: string };
-    changedBy: 'client' | 'caregiver';
-    changedAt: string;
+    proposedBy: 'client' | 'caregiver';
+    proposedAt: string;
+    acceptedBy: 'client' | 'caregiver';
+    acceptedAt: string;
   }>;
   address?: string;
   notes?: string;
@@ -135,6 +140,14 @@ function conflictAt(slot: string, conflicts: Array<{ startTime: string; endTime?
 
 function rangeConflicts(start: string, end: string, conflicts: Array<{ startTime: string; endTime?: string }>): { startTime: string; endTime?: string } | null {
   return conflicts.find(c => timeRangesOverlap(start, end, c.startTime, c.endTime)) ?? null;
+}
+
+function fmtStamp(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+    ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function tsToDate(ts: any): Date | null {
@@ -855,6 +868,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
         reschedulePendingDate: rescheduleDate,
         reschedulePendingStartTime: rescheduleStart,
         reschedulePendingEndTime: rescheduleEnd,
+        reschedulePendingAt: new Date().toISOString(),
         rescheduledBy: 'client',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -891,14 +905,17 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
         reschedulePendingDate: firebase.firestore.FieldValue.delete(),
         reschedulePendingStartTime: firebase.firestore.FieldValue.delete(),
         reschedulePendingEndTime: firebase.firestore.FieldValue.delete(),
+        reschedulePendingAt: firebase.firestore.FieldValue.delete(),
         rescheduledBy: firebase.firestore.FieldValue.delete(),
         // arrayUnion can't hold a serverTimestamp() sentinel inside its
-        // elements, so changedAt is a plain client-clock ISO string here.
+        // elements, so acceptedAt is a plain client-clock ISO string here.
         rescheduleHistory: firebase.firestore.FieldValue.arrayUnion({
           from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
           to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
-          changedBy: shift.rescheduledBy,
-          changedAt: new Date().toISOString(),
+          proposedBy: shift.rescheduledBy,
+          proposedAt: shift.reschedulePendingAt ?? null,
+          acceptedBy: shift.rescheduledBy === 'caregiver' ? 'client' : 'caregiver',
+          acceptedAt: new Date().toISOString(),
         }),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -919,6 +936,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
         reschedulePendingDate: firebase.firestore.FieldValue.delete(),
         reschedulePendingStartTime: firebase.firestore.FieldValue.delete(),
         reschedulePendingEndTime: firebase.firestore.FieldValue.delete(),
+        reschedulePendingAt: firebase.firestore.FieldValue.delete(),
         rescheduledBy: firebase.firestore.FieldValue.delete(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -1211,14 +1229,33 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                   </button>
                   {historyOpenId === s.id && (
                     <ul className="mt-1 space-y-0.5">
-                      {s.rescheduleHistory.map((h, i) => (
+                      {s.rescheduleHistory.map((h, i) => {
+                        // Legacy shape (changedBy/changedAt, written before this
+                        // was split into propose+accept) — fall back gracefully
+                        // instead of showing blank "you" for both.
+                        const legacy = h as any;
+                        const isLegacy = !h.proposedBy && legacy.changedBy;
+                        return (
                         <li key={i} className="text-[11px] text-slate-400">
-                          {fmtDate(h.from.date)}, {fmtTime(h.from.startTime)}{h.from.endTime ? `–${fmtTime(h.from.endTime)}` : ''}
-                          {' → '}
-                          {fmtDate(h.to.date)}, {fmtTime(h.to.startTime)}{h.to.endTime ? `–${fmtTime(h.to.endTime)}` : ''}
-                          {' '}<span className="text-slate-300">(moved by {h.changedBy === 'caregiver' ? 'caregiver' : 'you'})</span>
+                          <div>
+                            {fmtDate(h.from.date)}, {fmtTime(h.from.startTime)}{h.from.endTime ? `–${fmtTime(h.from.endTime)}` : ''}
+                            {' → '}
+                            {fmtDate(h.to.date)}, {fmtTime(h.to.startTime)}{h.to.endTime ? `–${fmtTime(h.to.endTime)}` : ''}
+                          </div>
+                          <div className="text-slate-300">
+                            {isLegacy
+                              // Old schema only ever wrote changedBy/changedAt from inside the
+                              // accept handler — changedBy is who PROPOSED it, changedAt is
+                              // when it was ACCEPTED (by the other party) — no proposed-on
+                              // date was ever captured, so that half is left blank.
+                              ? <>Requested by {legacy.changedBy === 'caregiver' ? 'caregiver' : 'you'}
+                                  {' · '}Confirmed by {legacy.changedBy === 'caregiver' ? 'you' : 'caregiver'} on {fmtStamp(legacy.changedAt)}</>
+                              : <>Requested by {h.proposedBy === 'caregiver' ? 'caregiver' : 'you'} on {fmtStamp(h.proposedAt)}
+                                  {' · '}Confirmed by {h.acceptedBy === 'caregiver' ? 'caregiver' : 'you'} on {fmtStamp(h.acceptedAt)}</>}
+                          </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

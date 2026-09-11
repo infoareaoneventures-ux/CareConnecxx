@@ -1654,12 +1654,30 @@ export const CaregiverBookingsPage: React.FC = () => {
       const shiftData = shiftSnap.data() as any;
       const bookingRequestId: string | undefined = shiftData?.bookingRequestId;
 
-      // Cancel this shift + all future scheduled shifts for the same booking
+      // Same-day/next-day shifts get the fast replacement flow (needs_replacement)
+      // instead of a plain cancel — mirrors the per-shift "X" handler above (and
+      // ClientVisitsPage's caregiver-side cancel) so the family isn't just dropped
+      // with no visit and no chance to find someone else.
+      const isShiftUrgent = (s: any): boolean => {
+        const startsAt = new Date(`${s.date}T${s.startTime}`);
+        const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
+        return hoursUntilStart <= 24;
+      };
+
       const batch = db.batch();
-      batch.update(db.collection('shifts').doc(id), {
-        status: 'cancelled',
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      let anyUrgent = false;
+
+      const applyCancel = (ref: firebase.firestore.DocumentReference, s: any) => {
+        const urgent = isShiftUrgent(s);
+        if (urgent) anyUrgent = true;
+        batch.update(ref, {
+          status: urgent ? 'needs_replacement' : 'cancelled',
+          cancelledBy: 'caregiver',
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      };
+
+      applyCancel(db.collection('shifts').doc(id), shiftData);
 
       if (bookingRequestId) {
         const futureSnap = await db.collection('shifts')
@@ -1668,25 +1686,25 @@ export const CaregiverBookingsPage: React.FC = () => {
           .where('caregiverId', '==', uid)
           .get();
         futureSnap.docs.forEach(doc => {
-          if (doc.id !== id) {
-            batch.update(doc.ref, {
-              status: 'cancelled',
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            });
-          }
+          if (doc.id !== id) applyCancel(doc.ref, doc.data());
         });
 
         await batch.commit();
 
-        await db.collection('booking_requests').doc(bookingRequestId).update({
-          status: 'cancelled',
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }).catch(() => {});
+        // Only fully close out the booking relationship if nothing needs a
+        // replacement — an urgent shift stays "accepted" so the booking (and
+        // the family's needs_replacement prompt) remains live.
+        if (!anyUrgent) {
+          await db.collection('booking_requests').doc(bookingRequestId).update({
+            status: 'cancelled',
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          }).catch(() => {});
+        }
       } else {
         await batch.commit();
       }
 
-      addToast('Booking cancelled', 'info');
+      addToast(anyUrgent ? 'Cancelled — the family can pick a replacement for the urgent shift' : 'Booking cancelled', 'info');
     } catch {
       addToast('Failed to cancel shift', 'error');
     }

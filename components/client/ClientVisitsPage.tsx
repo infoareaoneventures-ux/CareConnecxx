@@ -971,7 +971,6 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                 <div className="px-5 pb-3 -mt-1">
                   {s.replacementRequestId ? (
                     <div className="flex items-center gap-2 flex-wrap text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                       <span className="flex-1 min-w-[160px]">Waiting on {s.replacementCaregiverName || 'the new caregiver'} to respond</span>
                       <button
                         onClick={() => onWithdrawReplacement(s.replacementRequestId!)}

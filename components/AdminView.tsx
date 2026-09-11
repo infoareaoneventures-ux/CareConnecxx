@@ -466,7 +466,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center shrink-0">
-                                <span className="text-primary-700 font-semibold text-sm">{lead.contactName?.charAt(0).toUpperCase()}</span>
+                                <span className="text-primary-700 font-semibold text-sm">{lead.contactName?.charAt(0)?.toUpperCase()}</span>
                               </div>
                               <div>
                                 <p className="font-medium text-slate-900 text-sm">{lead.contactName}</p>

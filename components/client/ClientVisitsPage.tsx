@@ -6,10 +6,12 @@ import {
   CheckCircle, ChevronDown, ChevronUp, AlertCircle, Phone, User,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
+import firebase from '../../lib/firebase';
 import { ClientNavigation } from './ClientNavigation';
 import { useAccessGates } from '../../hooks/useAccessGates';
 import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../../utils/shiftUtils';
+import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 import { paymentMethodLabel } from '../../types';
 
 interface Shift {
@@ -21,7 +23,10 @@ interface Shift {
   date: string;
   startTime: string;
   endTime?: string;
-  status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
+  status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'needs_replacement';
+  cancelledBy?: 'client' | 'caregiver';
+  replacementRequestId?: string;
+  replacementCaregiverName?: string;
   address?: string;
   notes?: string;
   completionNotes?: string;
@@ -394,6 +399,276 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
   );
 };
 
+// ─── Shift replacement (caregiver cancelled a single shift) ─────────────────
+
+interface ReplacementCandidate {
+  caregiverId: string;
+  name: string;
+  photoURL?: string | null;
+  hourlyRate?: number | null;
+  rating?: number;
+  distanceMiles?: number | null;
+  source: 'care_team' | 'match';
+}
+
+// Haversine distance in miles — mirrors hooks/useNearbyCaregiversWithScores.ts
+// exactly, so "how far" means the same thing here as everywhere else on the site.
+function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3959;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// 0–1: fraction of the recipient's care needs a caregiver's skills cover —
+// mirrors hooks/useNearbyCaregiversWithScores.ts's skillsOverlap exactly.
+function skillsOverlap(cgSkills: string[], clientNeeds: string[]): number {
+  if (!clientNeeds.length || !cgSkills.length) return 0;
+  const cgLower = cgSkills.map(s => s.toLowerCase());
+  let matched = 0;
+  clientNeeds.forEach(need => {
+    const n = need.toLowerCase();
+    if (cgLower.some(s => s.includes(n) || n.includes(s))) matched++;
+  });
+  return matched / clientNeeds.length;
+}
+
+// Care Team members with a currently-active booking fill the list first (up to
+// 5 total); any remaining slots are filled with other approved caregivers,
+// ranked by care-needs match then distance then rating (mirrors
+// useNearbyCaregiversWithScores' own ranking, minus the availability-overlap
+// term — a single ad-hoc replacement shift has no weekly schedule to compare
+// against). Tier 1 mirrors MyCareTeam.tsx's own active-caregiver derivation so
+// "Care Team" here means the same thing it does everywhere else on the site.
+async function fetchReplacementCandidates(
+  fdb: NonNullable<typeof db>,
+  clientUid: string,
+  excludeCaregiverId: string,
+  shift: Shift,
+): Promise<ReplacementCandidate[]> {
+  const MAX = 5;
+  const candidates: ReplacementCandidate[] = [];
+  const seenIds = new Set<string>([excludeCaregiverId]);
+
+  // This specific recipient's care needs (scoped to the actual shift being
+  // replaced, not the client's needs in general) — also decides the hard
+  // transportation gate below, same trigger useNearbyCaregiversWithScores uses.
+  const clientNeeds = [...new Set((shift.careRecipients || []).flatMap(r => r.careNeeds || []))];
+  const needsTransportation = clientNeeds.some(n => /transport/i.test(n));
+
+  // Tier 1: anyone the client has ever had a booking relationship with —
+  // active Care Team AND past (completed/cancelled) bookings both count,
+  // one candidate per caregiver, most recent booking wins.
+  const careTeamSnap = await fdb.collection('booking_requests')
+    .where('clientId', '==', clientUid)
+    .where('status', 'in', ['accepted', 'completed', 'cancelled'])
+    .get();
+  const byCaregiver = new Map<string, { data: any; ts: number }>();
+  careTeamSnap.docs.forEach(doc => {
+    const d = doc.data() as any;
+    if (!d.caregiverId) return;
+    const ts = d.updatedAt?.seconds ?? d.createdAt?.seconds ?? 0;
+    const existing = byCaregiver.get(d.caregiverId);
+    if (!existing || ts > existing.ts) byCaregiver.set(d.caregiverId, { data: d, ts });
+  });
+  for (const [cgId, { data: d }] of byCaregiver) {
+    if (candidates.length >= MAX) break;
+    if (seenIds.has(cgId)) continue;
+    // Care Team is an already-established relationship — the transportation
+    // hard filter below only applies to tier 2 (strangers being suggested),
+    // not to someone the family already knows and trusts.
+    seenIds.add(cgId);
+    candidates.push({
+      caregiverId: cgId,
+      name: d.caregiverName || 'Caregiver',
+      photoURL: d.caregiverPhotoURL || null,
+      hourlyRate: d.rate ?? null,
+      source: 'care_team',
+    });
+  }
+
+  if (candidates.length < MAX) {
+    // The client's own location (for distance) — same geocoded pool
+    // CarePlan.tsx's saveSection writes to on every save.
+    const cpSnap = await fdb.collection('carePlans').doc(clientUid).get().catch(() => null);
+    const locationPool = (cpSnap?.data() as any)?.locationPool || [];
+    const clientLoc = locationPool.find((l: any) => l.lat != null && l.lng != null) || null;
+
+    // caregivers is admin/owner-only for reads (firestore.rules) — clients
+    // discover caregivers via publicCaregiverProfiles instead, same as
+    // FindCaregivers.tsx / useNearbyCaregiversWithScores.
+    const pool = await fdb.collection('publicCaregiverProfiles').where('onboardingStatus', '==', 'profile_complete').limit(50).get();
+    const scored = pool.docs
+      .map(d => ({ id: d.id, ...d.data() } as any))
+      .filter(c => !seenIds.has(c.id) && isCaregiverBookable(c) && (!needsTransportation || c.hasValidTransportDocs))
+      .map(c => {
+        const cgLat = c.lat ?? c.latitude ?? null;
+        const cgLng = c.lng ?? c.longitude ?? null;
+        const distanceMiles = (clientLoc && cgLat != null && cgLng != null)
+          ? Math.round(haversineMiles(clientLoc.lat, clientLoc.lng, cgLat, cgLng) * 10) / 10
+          : null;
+        return { ...c, _distanceMiles: distanceMiles, _skillsScore: skillsOverlap(c.skills || c.specializations || [], clientNeeds) };
+      })
+      .sort((a, b) => {
+        const skillsDiff = b._skillsScore - a._skillsScore;
+        if (Math.abs(skillsDiff) > 0.01) return skillsDiff;
+        if (a._distanceMiles != null && b._distanceMiles != null && a._distanceMiles !== b._distanceMiles) {
+          return a._distanceMiles - b._distanceMiles;
+        }
+        return (b.rating || 0) - (a.rating || 0);
+      });
+    for (const c of scored) {
+      if (candidates.length >= MAX) break;
+      candidates.push({
+        caregiverId: c.id,
+        name: c.name || 'Caregiver',
+        photoURL: c.photoURL || c.photo || c.profilePhoto || c.imageUrl || null,
+        hourlyRate: c.hourlyRate ?? null,
+        rating: c.rating,
+        distanceMiles: c._distanceMiles,
+        source: 'match',
+      });
+    }
+  }
+  return candidates;
+}
+
+const REPLACEMENT_TIME_SLOTS: string[] = (() => {
+  const slots: string[] = [];
+  for (let h = 0; h < 24; h++) {
+    slots.push(`${h.toString().padStart(2, '0')}:00`);
+    slots.push(`${h.toString().padStart(2, '0')}:30`);
+  }
+  return slots;
+})();
+
+function timeSlotOptions(current: string): string[] {
+  return REPLACEMENT_TIME_SLOTS.includes(current)
+    ? REPLACEMENT_TIME_SLOTS
+    : [current, ...REPLACEMENT_TIME_SLOTS].sort();
+}
+
+interface ReplacementPickerModalProps {
+  shift: Shift;
+  clientUid: string;
+  onClose: () => void;
+  onConfirm: (candidate: ReplacementCandidate, when: { date: string; startTime: string; endTime: string }) => Promise<void>;
+}
+
+const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, clientUid, onClose, onConfirm }) => {
+  const [candidates, setCandidates] = useState<ReplacementCandidate[] | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [date, setDate] = useState(shift.date);
+  const [startTime, setStartTime] = useState(shift.startTime);
+  const [endTime, setEndTime] = useState(shift.endTime || shift.startTime);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!db) { setCandidates([]); return; }
+    fetchReplacementCandidates(db, clientUid, shift.caregiverId, shift)
+      .then(list => { if (!cancelled) setCandidates(list); })
+      .catch((err) => {
+        console.error('fetchReplacementCandidates failed:', err);
+        if (!cancelled) setCandidates([]);
+      });
+    return () => { cancelled = true; };
+  }, [clientUid, shift.caregiverId]);
+
+  const handlePick = async (candidate: ReplacementCandidate) => {
+    setConfirmingId(candidate.caregiverId);
+    try { await onConfirm(candidate, { date, startTime, endTime }); }
+    finally { setConfirmingId(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <p className="font-semibold text-slate-900">Find a replacement</p>
+          <p className="text-xs text-slate-500 mt-0.5">Originally {fmtDate(shift.date)}, {fmtTime(shift.startTime)}{shift.endTime ? ` – ${fmtTime(shift.endTime)}` : ''}</p>
+        </div>
+        <div className="px-5 pt-4 pb-2 border-b border-slate-100 grid grid-cols-3 gap-2">
+          <label className="text-xs text-slate-500">
+            Date
+            <input
+              type="date"
+              value={date}
+              min={new Date().toISOString().split('T')[0]}
+              onChange={e => setDate(e.target.value)}
+              className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-800"
+            />
+          </label>
+          <label className="text-xs text-slate-500">
+            Start
+            <select
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-800"
+            >
+              {timeSlotOptions(shift.startTime).map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
+            End
+            <select
+              value={endTime}
+              onChange={e => setEndTime(e.target.value)}
+              className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-800"
+            >
+              {timeSlotOptions(shift.endTime || shift.startTime).map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="p-5 space-y-3">
+          {candidates === null ? (
+            <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-primary-500" /></div>
+          ) : candidates.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-6">No caregivers are available for this shift right now.</p>
+          ) : (
+            candidates.map(c => (
+              <div key={c.caregiverId} className="flex items-center gap-3 border border-slate-200 rounded-xl px-3 py-2.5">
+                <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+                  {c.photoURL
+                    ? <img src={c.photoURL} alt={c.name} className="w-full h-full object-cover" />
+                    : <span className="text-primary-700 font-bold text-sm">{c.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}</span>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{c.name}</p>
+                  <p className="text-xs text-slate-400">
+                    {[c.source === 'care_team' ? 'On your Care Team' : null, c.hourlyRate != null ? `$${c.hourlyRate}/hr` : null]
+                      .filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <a
+                  href={`/client/caregiver/${c.caregiverId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-xl transition-colors shrink-0"
+                >
+                  Profile
+                </a>
+                <button
+                  onClick={() => handlePick(c)}
+                  disabled={confirmingId !== null}
+                  className="px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50 shrink-0"
+                >
+                  {confirmingId === c.caregiverId ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Request'}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Active visit group card (one per booking) ──────────────────────────────
 
 interface ActiveVisitGroupCardProps {
@@ -401,9 +676,12 @@ interface ActiveVisitGroupCardProps {
   onCancelBooking: (shiftId: string) => Promise<void>;
   navigate: ReturnType<typeof useNavigate>;
   onMessage: () => void;
+  onSkipReplacement: (shiftId: string) => Promise<void>;
+  onFindReplacement: (shift: Shift) => void;
+  onWithdrawReplacement: (replacementRequestId: string) => Promise<void>;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement }) => {
   const base = shifts[0];
   const [cancelling, setCancelling] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -650,42 +928,77 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
         <div className="divide-y divide-slate-50">
           {preview.map(s => {
             const ds = shiftDisplayStatus(s);
+            const needsReplacement = s.status === 'needs_replacement';
             return (
-            <div key={s.id} className="px-5 py-3 flex items-center gap-3">
-              {/* Cancel single shift — far left */}
-              {s.status === 'scheduled' && (
-                <button
-                  onClick={() => handleCancelShift(s.id)}
-                  disabled={cancellingShift === s.id}
-                  title="Cancel this shift only"
-                  className="p-1 text-red-300 hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
-                >
-                  {cancellingShift === s.id
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <XCircle className="w-4 h-4" />
-                  }
-                </button>
-              )}
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="text-center shrink-0 w-10">
-                  <p className="text-xs font-bold text-primary-600 leading-tight">
-                    {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
-                  </p>
-                  <p className="text-sm font-semibold text-slate-800 leading-tight">
-                    {new Date(s.date + 'T12:00:00').getDate()}
-                  </p>
+            <div key={s.id} className={needsReplacement ? 'bg-amber-50/60' : undefined}>
+              <div className="px-5 py-3 flex items-center gap-3">
+                {/* Cancel single shift — far left */}
+                {s.status === 'scheduled' && (
+                  <button
+                    onClick={() => handleCancelShift(s.id)}
+                    disabled={cancellingShift === s.id}
+                    title="Cancel this shift only"
+                    className="p-1 text-red-300 hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    {cancellingShift === s.id
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <XCircle className="w-4 h-4" />
+                    }
+                  </button>
+                )}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="text-center shrink-0 w-10">
+                    <p className="text-xs font-bold text-primary-600 leading-tight">
+                      {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800 leading-tight">
+                      {new Date(s.date + 'T12:00:00').getDate()}
+                    </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-700">{fmtDate(s.date)}</p>
+                    <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3" />
+                      {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-sm text-slate-700">{fmtDate(s.date)}</p>
-                  <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                    <Clock className="w-3 h-3" />
-                    {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
-                  </p>
-                </div>
+                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border shrink-0 ${shiftStatusBadgeClass(ds)}`}>
+                  {shiftStatusLabel(ds)}
+                </span>
               </div>
-              <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border shrink-0 ${shiftStatusBadgeClass(ds)}`}>
-                {shiftStatusLabel(ds)}
-              </span>
+              {needsReplacement && (
+                <div className="px-5 pb-3 -mt-1">
+                  {s.replacementRequestId ? (
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <span className="flex-1 min-w-[160px]">Waiting on {s.replacementCaregiverName || 'the new caregiver'} to respond</span>
+                      <button
+                        onClick={() => onWithdrawReplacement(s.replacementRequestId!)}
+                        className="px-2.5 py-1 border border-amber-300 hover:bg-amber-200 text-amber-800 text-xs font-semibold rounded-lg transition-colors shrink-0"
+                      >
+                        Choose someone else
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs text-amber-800 flex-1 min-w-[160px]">Your caregiver cancelled this visit.</p>
+                      <button
+                        onClick={() => onFindReplacement(s)}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors"
+                      >
+                        Find replacement
+                      </button>
+                      <button
+                        onClick={() => onSkipReplacement(s.id)}
+                        className="px-3 py-1.5 border border-amber-300 hover:bg-amber-100 text-amber-700 text-xs font-semibold rounded-xl transition-colors"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             );
           })}
@@ -1086,7 +1399,69 @@ export const ClientVisitsPage: React.FC = () => {
     await db.collection('booking_requests').doc(bookingId).update({ status: 'cancelled' });
   };
 
-  const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress');
+  const handleSkipReplacement = async (shiftId: string) => {
+    if (!db || !window.confirm('Skip this shift? No replacement caregiver will be arranged and it will be marked cancelled.')) return;
+    await db.collection('shifts').doc(shiftId).update({
+      status: 'cancelled',
+      cancelledBy: 'client',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
+  };
+
+  const [replacementShift, setReplacementShift] = useState<Shift | null>(null);
+
+  const handleConfirmReplacement = async (
+    shift: Shift,
+    candidate: ReplacementCandidate,
+    when: { date: string; startTime: string; endTime: string },
+  ) => {
+    if (!db || !user) return;
+    const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayName = DAY_ABBR[new Date(when.date + 'T12:00:00').getDay()];
+    const bookingRef = await db.collection('booking_requests').add({
+      clientId: user.uid,
+      clientName: user.displayName || '',
+      caregiverId: candidate.caregiverId,
+      caregiverName: candidate.name,
+      caregiverPhotoURL: candidate.photoURL || null,
+      address: shift.address || '',
+      rate: candidate.hourlyRate ?? shift.rate ?? null,
+      paymentMethod: 'credit',
+      careNeeds: [...new Set((shift.careRecipients || []).flatMap(r => r.careNeeds || []))],
+      careRecipients: shift.careRecipients || [],
+      notes: shift.notes || null,
+      emergencyContact: shift.emergencyContact || null,
+      schedule: {
+        days: [dayName],
+        startDate: when.date,
+        endDate: when.date,
+        ongoing: false,
+        dayShiftTimes: { [dayName]: [{ start: when.startTime, end: when.endTime || when.startTime }] },
+      },
+      isShiftReplacement: true,
+      replacementForShiftId: shift.id,
+      status: 'pending',
+      isResend: false,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await db.collection('shifts').doc(shift.id).update({
+      replacementRequestId: bookingRef.id,
+      replacementCaregiverName: candidate.name,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setReplacementShift(null);
+  };
+
+  const handleWithdrawReplacement = async (replacementRequestId: string) => {
+    if (!db || !window.confirm('Cancel this request and choose a different caregiver?')) return;
+    await db.collection('booking_requests').doc(replacementRequestId).update({
+      status: 'cancelled',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
+  };
+
+  const activeShifts = shifts.filter(s => s.status === 'scheduled' || s.status === 'in-progress' || s.status === 'needs_replacement');
   const pastShifts   = shifts.filter(s => s.status === 'completed'  || s.status === 'cancelled');
 
   function groupByBooking(list: Shift[]): Map<string, Shift[]> {
@@ -1175,7 +1550,7 @@ export const ClientVisitsPage: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
                       <span className="text-sm font-bold text-amber-700">
-                        {(a.caregiverName ?? '?')[0].toUpperCase()}
+                        {(a.caregiverName || '?').charAt(0).toUpperCase()}
                       </span>
                     </div>
                     <div>
@@ -1226,6 +1601,9 @@ export const ClientVisitsPage: React.FC = () => {
                 onCancelBooking={handleCancelBooking}
                 navigate={navigate}
                 onMessage={() => gate('message', groupShifts[0]?.caregiverName, () => navigate(`/client/inbox?caregiver=${groupShifts[0]?.caregiverId}`))}
+                onSkipReplacement={handleSkipReplacement}
+                onFindReplacement={setReplacementShift}
+                onWithdrawReplacement={handleWithdrawReplacement}
               />
             ))}
             {tab === 'past' && Array.from(pastGroups.entries()).map(([key, groupShifts]) => (
@@ -1239,6 +1617,14 @@ export const ClientVisitsPage: React.FC = () => {
           </div>
         )}
       </main>
+      {replacementShift && user && (
+        <ReplacementPickerModal
+          shift={replacementShift}
+          clientUid={user.uid}
+          onClose={() => setReplacementShift(null)}
+          onConfirm={(candidate, when) => handleConfirmReplacement(replacementShift, candidate, when)}
+        />
+      )}
       <GateModals />
     </div>
   );

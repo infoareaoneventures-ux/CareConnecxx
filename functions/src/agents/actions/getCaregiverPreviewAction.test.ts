@@ -95,6 +95,28 @@ describe("getCaregiverPreviewAction", () => {
     expect(result.available).toBe(false);
     expect(result.message).toContain("No charge until then");
     expect(result.message).not.toContain("reply YES");
+    expect(result.alreadyShownNames).toBeUndefined();
+  });
+
+  // 2026-09-11 (live-caught): a family who already saw real candidates and
+  // asks again later got the identical "nobody's available" message as a
+  // genuinely empty pool — implying there was truly no one, when really
+  // find_nearby_caregivers was just correctly avoiding repeating itself.
+  it("names who they've already met instead of implying nobody's available, when the zero-result is really exhaustion", () => {
+    const result = buildCaregiverPreviewResult({
+      city: "San Jose",
+      seniorName: "Samira",
+      careNeeds: ["Personal Care", "Medication Reminders"],
+      widened: false,
+      caregivers: [],
+      alreadyShownNames: ["Basra Yousuf", "Imran", "Test Caregiver"],
+    });
+
+    expect(result.available).toBe(false);
+    expect(result.alreadyShownNames).toEqual(["Basra Yousuf", "Imran", "Test Caregiver"]);
+    expect(result.message).toContain("Basra Yousuf");
+    expect(result.message).not.toContain("I don't have caregivers available");
+    expect(result.message).not.toContain("No charge until then");
   });
 
   it("is visible to Evia and web but remains read-only", () => {

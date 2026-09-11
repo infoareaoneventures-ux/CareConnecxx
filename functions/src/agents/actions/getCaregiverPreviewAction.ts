@@ -38,6 +38,12 @@ const caregiverPreviewOutputSchema = z.object({
   needsLabel: z.string(),
   items: z.array(caregiverPreviewItemSchema),
   message: z.string(),
+  // Set only on a zero-result reply when the family has already been shown
+  // real candidates before (find_nearby_caregivers) — distinguishes "already
+  // met everyone we have, nobody new yet" from a genuinely empty pool, so the
+  // agent can offer to resend/reintroduce them instead of implying nobody
+  // exists at all.
+  alreadyShownNames: z.array(z.string()).optional(),
 });
 
 export type CaregiverPreviewInput = z.infer<typeof caregiverPreviewInputSchema>;
@@ -219,6 +225,10 @@ export function buildCaregiverPreviewResult(opts: {
    *  shows discoveryCaregivers.slice(0, 4)); find_nearby_caregivers passes its
    *  own (possibly larger, family-requested) limit here instead. */
   itemLimit?: number;
+  /** Names of caregivers already shown to this family in an earlier turn —
+   *  set only when a zero-result reply is really "already met everyone we
+   *  have" rather than a genuinely empty pool (find_nearby_caregivers). */
+  alreadyShownNames?: string[];
 }): CaregiverPreviewOutput {
   const city = (opts.city ?? "").trim();
   const seniorName = (opts.seniorName ?? "").trim() || "your loved one";
@@ -230,6 +240,22 @@ export function buildCaregiverPreviewResult(opts: {
   const items = caregivers.map(toPreviewItem);
 
   if (caregivers.length === 0) {
+    const alreadyShownNames = (opts.alreadyShownNames ?? []).filter(Boolean);
+    if (alreadyShownNames.length > 0) {
+      const namesLabel = joinCaregiverPreview(alreadyShownNames);
+      return {
+        available: false,
+        widened: false,
+        total: 0,
+        locationLabel,
+        needsLabel,
+        items: [],
+        alreadyShownNames,
+        message:
+          `You've already met the caregivers I have for ${needsLabel} in ${locationLabel} — ${namesLabel}. ` +
+          `No one new has joined since. Want me to reach back out to them, or keep watching for someone new?`,
+      };
+    }
     return {
       available: false,
       widened: false,

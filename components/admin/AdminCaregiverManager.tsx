@@ -425,7 +425,7 @@ export const AdminCaregiverManager: React.FC = () => {
               className={`w-full text-left flex items-center gap-3 px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors ${selected?.uid === c.uid ? 'bg-primary-50 border-l-2 border-l-primary-500' : ''}`}
             >
               <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                <span className="text-primary-700 font-semibold text-sm">{c.name?.charAt(0).toUpperCase()}</span>
+                <span className="text-primary-700 font-semibold text-sm">{c.name?.charAt(0)?.toUpperCase()}</span>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-slate-900 text-sm truncate">{c.name}</p>
@@ -454,7 +454,7 @@ export const AdminCaregiverManager: React.FC = () => {
           <div className="flex items-center gap-4 px-6 py-4 border-b border-slate-200">
             <button onClick={() => setSelected(null)} className="lg:hidden p-1 rounded hover:bg-slate-100"><X className="w-5 h-5" /></button>
             <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-lg shrink-0">
-              {selected.name?.charAt(0).toUpperCase()}
+              {selected.name?.charAt(0)?.toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="font-bold text-slate-900 text-lg truncate">{selected.name}</h2>

@@ -624,7 +624,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
         {/* Live shift check-ins — shown when there is an active appointment today */}
         {currentUser?.uid && (() => {
-          const todayIso = new Date().toISOString().slice(0, 10);
+          const _now = new Date();
+          const todayIso = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
           const active = appointments.find(a =>
             a.isoDate === todayIso &&
             (a.status === 'confirmed' || a.status === 'in-progress')
@@ -856,9 +857,14 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-slate-900 text-sm leading-tight truncate">{shift.caregiverName}</p>
-                          <p className={`text-xs font-medium mt-0.5 ${statusColor}`}>
-                            {statusText}
-                          </p>
+                          {/* "Upcoming" restates the tab it's already in — only worth
+                              showing when it's telling you something you don't already
+                              know (overdue / in progress). */}
+                          {statusText !== 'Upcoming' && (
+                            <p className={`text-xs font-medium mt-0.5 ${statusColor}`}>
+                              {statusText}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -1171,9 +1177,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
                 {/* Upcoming tab */}
                 {bookingTab === 'upcoming' && (() => {
-                  const tomorrowStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+                  // Local-date string, not toISOString() (UTC) — mixing the two rolled
+                  // "tomorrow" forward an extra day whenever local time was already past
+                  // UTC midnight, silently skipping tomorrow's real shifts.
+                  const _now = new Date();
+                  const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
                   const upcoming = [...activeShifts]
-                    .filter((s: any) => s.date >= tomorrowStr)
+                    .filter((s: any) => s.date > todayStr)
                     .sort((a: any, b: any) => {
                       if (a.date !== b.date) return a.date > b.date ? 1 : -1;
                       return (a.startTime || '').localeCompare(b.startTime || '');
@@ -1965,7 +1975,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
 
       {/* Family emergency button — visible only when a shift is active today */}
       {currentUser?.uid && (() => {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const _now = new Date();
+        const todayIso = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
         const active = appointments.find(a =>
           a.isoDate === todayIso &&
           (a.status === 'confirmed' || a.status === 'in-progress')

@@ -841,7 +841,8 @@ service cloud.firestore {
           (resource.data.status == 'active' || resource.data.status == 'scheduled' ||
            resource.data.status == 'in-progress' || resource.data.status == 'pending')) ||
         (resource.data.clientId == request.auth.uid &&
-          (resource.data.status == 'scheduled' || resource.data.status == 'pending')) ||
+          (resource.data.status == 'scheduled' || resource.data.status == 'pending' ||
+           resource.data.status == 'needs_replacement')) ||
         isAdmin()
       );
 

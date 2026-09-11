@@ -3,7 +3,8 @@ export type ShiftDisplayStatus =
   | 'scheduled'
   | 'in-progress'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'needs_replacement';
 
 // Local calendar date (YYYY-MM-DD) — NOT UTC. Appointments store the local
 // calendar date, so conflict checks must compare against the local date; using
@@ -47,6 +48,7 @@ export function shiftStatusBlockClass(status: ShiftDisplayStatus): string {
     case 'in-progress': return 'bg-accent-500 border-accent-600';
     case 'completed':   return 'bg-slate-400 border-slate-500';
     case 'cancelled':   return 'bg-rose-600 border-rose-700';
+    case 'needs_replacement': return 'bg-amber-500 border-amber-600';
     default:            return 'bg-slate-400 border-slate-500';
   }
 }
@@ -59,6 +61,7 @@ export function shiftStatusBadgeClass(status: ShiftDisplayStatus): string {
     case 'in-progress': return 'bg-accent-100 text-accent-700 border-accent-200';
     case 'completed':   return 'bg-green-100 text-green-700 border-green-200';
     case 'cancelled':   return 'bg-rose-100 text-rose-700 border-rose-200';
+    case 'needs_replacement': return 'bg-amber-100 text-amber-800 border-amber-200';
     default:            return 'bg-slate-100 text-slate-600 border-slate-200';
   }
 }
@@ -71,6 +74,7 @@ export function shiftStatusDotClass(status: ShiftDisplayStatus): string {
     case 'in-progress': return 'bg-accent-500';
     case 'completed':   return 'bg-slate-400';
     case 'cancelled':   return 'bg-rose-600';
+    case 'needs_replacement': return 'bg-amber-500';
     default:            return 'bg-slate-400';
   }
 }
@@ -82,6 +86,7 @@ export function shiftStatusLabel(status: ShiftDisplayStatus): string {
     case 'in-progress': return 'In Progress';
     case 'completed':   return 'Completed';
     case 'cancelled':   return 'Cancelled';
+    case 'needs_replacement': return 'Needs Replacement';
     default:            return String(status);
   }
 }

@@ -612,14 +612,28 @@ async function handleColdConsentReply(
   }
 
   // ── YES: bare account first, then the same role question cold-inbound
-  // already asks today. No users/{uid} doc yet — role and name are unknown.
+  // already asks today — UNLESS createFirebaseAuthAccount resolved an
+  // EXISTING account for this phone (e.g. one created directly on the site,
+  // or a caregiver profile that predates this first SMS contact) rather than
+  // minting a fresh one. Previously this only stamped userId and always
+  // asked "are you a client or caregiver?", permanently routing an already-
+  // known caregiver through client-only conversation logic the moment
+  // userType never got set. Mirrors handlePendingConsentReply's isReturning
+  // check above — same shared helper, same pattern.
   const uid = await createFirebaseAuthAccount(phone, "").catch(() => null);
+  const userSnap = uid ? await db.collection("users").doc(uid).get().catch(() => null) : null;
+  const userData = (userSnap?.exists ? userSnap.data() : {}) as Record<string, unknown>;
+  const cgSnap = uid ? await db.collection("caregivers").doc(uid).get().catch(() => null) : null;
+  const isReturning = uid ? await userHasRealOnboardingProgress(uid, userData) : false;
+  const resolvedUserType = cgSnap?.exists ? "caregiver" : (userData.userType as string | undefined);
+
   await db.collection("agent_sessions").doc(phone).update({
     optedIn:        true,
     optedInAt:      new Date().toISOString(),
     optedOut:       false,
-    onboardingStep: "ask_role",
+    onboardingStep: isReturning ? "complete" : "ask_role",
     ...(uid ? { userId: uid } : {}),
+    ...(resolvedUserType ? { userType: resolvedUserType } : {}),
   });
 
   await initializeZepOnFirstContact(phone).catch((err) =>
@@ -627,6 +641,23 @@ async function handleColdConsentReply(
   );
 
   if (service === "iMessage") await startTyping(chatId).catch(() => {});
+
+  if (isReturning) {
+    const welcome = await generateCaraMessage({
+      audience: resolvedUserType === "caregiver" ? "caregiver" : "family",
+      language: lang,
+      context: resolvedUserType === "caregiver"
+        ? "A caregiver who already has an account just opted in to texts for the first time. Welcome them back warmly in one sentence and let them know they can text you anytime about jobs, bookings, or their schedule."
+        : "A client who already has an account just opted in to texts for the first time. Welcome them back warmly in one sentence and let them know they can text you anytime to book care or ask anything.",
+      fallback: resolvedUserType === "caregiver"
+        ? "Welcome back! Text me anytime about jobs, bookings, or your schedule."
+        : "Welcome back! Text me anytime to book care or ask anything.",
+      maxTokens: 60,
+    });
+    await sendMessage(chatId, welcome);
+    return;
+  }
+
   const roleQuestion = lang === "es"
     ? "¿Buscas cuidado para un ser querido, o eres cuidador?"
     : "Are you looking for care for a loved one, or are you a caregiver yourself?";

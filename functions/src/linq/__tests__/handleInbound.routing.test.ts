@@ -174,6 +174,12 @@ const sendBgCheckRenewalLink = vi.fn(async (..._a: any[]) => {});
 const continueAfterClientCollection = vi.fn(async (..._a: any[]) => {});
 const absorbClientFields     = vi.fn(async (..._a: any[]) => ({}));
 const drivePostCollectionHandoff = vi.fn(async (..._a: any[]) => {});
+// Cold-consent bare account creation — defaults to null (no uid resolved) so
+// existing cold-inbound consent-gate tests assert on onboardingStep/optedIn
+// without depending on a real Firebase Auth mock. Hoisted (unlike the others
+// above) so a test can override it with mockResolvedValueOnce to simulate
+// resolving an EXISTING account for the phone.
+const createFirebaseAuthAccount = vi.fn(async (..._a: any[]) => null as string | null);
 vi.mock("../../agents/onboardingConversation", () => ({
   handleOnboardingStep:   (...a: any[]) => handleOnboardingStep(...a),
   sendBgCheckRenewalLink: (...a: any[]) => sendBgCheckRenewalLink(...a),
@@ -184,10 +190,7 @@ vi.mock("../../agents/onboardingConversation", () => ({
   // the handoff proceeds without patching session.caregiverId - the __RESUME__
   // routing under test is unaffected.
   ensureCaregiverDocForOnboarding: vi.fn(async () => null),
-  // Cold-consent bare account creation — null = no uid resolved, so the
-  // cold-inbound consent-gate tests assert on onboardingStep/optedIn without
-  // depending on a real Firebase Auth mock.
-  createFirebaseAuthAccount: vi.fn(async () => null),
+  createFirebaseAuthAccount: (...a: any[]) => createFirebaseAuthAccount(...a),
 }));
 
 const absorbCaregiverFields = vi.fn(async (..._a: any[]) => ({}));
@@ -596,6 +599,69 @@ describe("cold inbound (no prior session) — consent gate", () => {
     expect(optOutPhoneNumber).toHaveBeenCalledWith(PHONE);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({ optedIn: false });
     expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  // 2026-09-11 (live-caught): createFirebaseAuthAccount resolves the EXISTING
+  // uid (not null) when this phone already has a real account — e.g. one
+  // created directly, or a caregiver profile that predates this first SMS
+  // contact. Previously that uid was stamped as session.userId with no
+  // userType check at all, permanently routing an already-known caregiver
+  // through client-only conversation logic (they were even shown their own
+  // profile as a hireable candidate). Skip straight to "complete" and the
+  // correct userType instead of asking a role question Evia already knows.
+  it("YES for an existing CAREGIVER account skips the role question and stamps userType", async () => {
+    seedColdConsentSession();
+    createFirebaseAuthAccount.mockResolvedValueOnce("cg-uid-1");
+    hoisted.docState.set("users/cg-uid-1", { phone: PHONE, userType: "caregiver" });
+    hoisted.docState.set("caregivers/cg-uid-1", { name: "Test Caregiver" });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("Yes please"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      userId:         "cg-uid-1",
+      userType:       "caregiver",
+      onboardingStep: "complete",
+    });
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("jobs, bookings, or your schedule");
+  });
+
+  it("YES for an existing CLIENT account (jobPostingCompleted, no caregivers doc) also skips the role question", async () => {
+    seedColdConsentSession();
+    createFirebaseAuthAccount.mockResolvedValueOnce("cl-uid-1");
+    hoisted.docState.set("users/cl-uid-1", { phone: PHONE, userType: "client", jobPostingCompleted: true });
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("Yes please"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      userId:         "cl-uid-1",
+      userType:       "client",
+      onboardingStep: "complete",
+    });
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain("caregiver yourself");
+    expect(String(sendMessage.mock.calls[0][1])).toContain("book care");
+  });
+
+  it("YES for a resolved uid with no real onboarding progress still asks the role question (unchanged)", async () => {
+    seedColdConsentSession();
+    createFirebaseAuthAccount.mockResolvedValueOnce("stub-uid-1");
+    hoisted.docState.set("users/stub-uid-1", { phone: PHONE }); // no userType, no jobPostingCompleted, no caregivers doc
+    parseWithClaude.mockResolvedValueOnce("yes");
+
+    await handleInbound(makeEvent("Yes please"));
+
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toMatchObject({
+      optedIn:        true,
+      userId:         "stub-uid-1",
+      onboardingStep: "ask_role",
+    });
+    // Unchanged from the cold_awaiting_consent seed — this code path never sets it.
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).userType).toBeNull();
+    expect(String(sendMessage.mock.calls[0][1])).toContain("caregiver yourself");
   });
 
   it("refusal opts out instead of silently staying pending", async () => {

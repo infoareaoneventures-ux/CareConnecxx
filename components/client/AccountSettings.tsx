@@ -333,7 +333,7 @@ export const AccountSettings: React.FC = () => {
                     ) : (
                       <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
                         <span className="text-primary-700 font-bold text-xl">
-                          {personalInfo.firstName?.charAt(0).toUpperCase() || '?'}
+                          {personalInfo.firstName?.charAt(0)?.toUpperCase() || '?'}
                         </span>
                       </div>
                     )}

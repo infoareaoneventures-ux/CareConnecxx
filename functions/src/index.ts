@@ -148,7 +148,7 @@ export { reviewProactiveDraft } from './admin/reviewProactiveDraft';
 export { evaluateTransportBadges, refreshTransportBadge } from './scheduled/transportBadge';
 
 // Shift generation: instant on acceptance + daily rolling window
-export { generateRollingShifts, onBookingAccepted } from './scheduled/shiftGenerator';
+export { generateRollingShifts, onBookingAccepted, expireStaleShiftReplacements } from './scheduled/shiftGenerator';
 
 // Evia iMessage pivot — onboarding callables (+ the /stripe-refresh redirect
 // that re-mints expired single-use Connect account links)

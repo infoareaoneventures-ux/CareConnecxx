@@ -173,7 +173,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   // Active/Past split cross-checks a live scheduled shift for the same
   // reason). Mirror that check here so the Dashboard card agrees with it.
   const activeBookingIds = new Set(
-    allShifts.filter(s => s.status === 'scheduled' && s.bookingRequestId).map(s => s.bookingRequestId)
+    allShifts.filter(s => (s.status === 'scheduled' || s.status === 'in-progress') && s.bookingRequestId).map(s => s.bookingRequestId)
   );
   const acceptedBookings = bookingRequests.filter(b => b.status === 'accepted' && activeBookingIds.has(b.id));
   const hasActiveFamilies = acceptedBookings.length > 0;
@@ -304,7 +304,12 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-slate-900 text-sm truncate">{s.clientName || 'Family'}</p>
-                          <p className={`text-xs font-medium ${statusColor}`}>{statusText}</p>
+                          {/* "Upcoming" restates the tab it's already in — only worth
+                              showing when it's telling you something you don't already
+                              know (overdue / in progress). */}
+                          {statusText !== 'Upcoming' && (
+                            <p className={`text-xs font-medium ${statusColor}`}>{statusText}</p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-slate-500">

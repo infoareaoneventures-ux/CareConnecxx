@@ -5793,10 +5793,14 @@ async function handleJobAskCareLevel(
     );
     return;
   }
+  // Values match CARE_TYPES (components/client/postJob/types.ts) exactly —
+  // these feed into the same careNeeds field the web wizard writes, which
+  // CarePlan.tsx renders as parent categories and caregiver skill-matching
+  // searches on; a near-miss variant here never matches (see careNeedCategories.ts).
   const NEEDS_MAP: Record<string, string> = {
-    "1": "Mobility & Movement", "2": "Memory Care / Dementia",
-    "3": "Medications", "4": "Personal Care",
-    "5": "Meals & Nutrition", "6": "Transportation",
+    "1": "Mobility Assistance", "2": "Dementia / Memory Care",
+    "3": "Medication Reminders", "4": "Personal Care",
+    "5": "Meal Preparation", "6": "Transportation",
     "7": "Light Housekeeping", "8": "Companionship",
   };
   const raw = await parseWithClaude(

@@ -323,3 +323,46 @@ describe("buildJobSummary (2026-09-09: care level dropped from the summary)", ()
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("Care level");
   });
 });
+
+// 2026-09-11 (live-caught): the LLM extraction is asked for standard category
+// names but sometimes returns the finer-grained symptom/task instead
+// ("bathing" rather than "Personal Care") — CarePlan.tsx then shows it as a
+// flat item with no parent category, and caregiver skill-matching (tagged at
+// category granularity) never finds a match. handleJpAskCareNeeds now runs
+// the raw extraction through normalizeCareNeeds before storing it.
+describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical categories (2026-09-11)", () => {
+  // job_posting is a DEFAULT_FLIPPED_FLOWS flow (dispatch resolves the step
+  // from field-completion, not the literal jobPostingStep string) — force the
+  // literal-step dispatcher so these tests exercise handleJpAskCareNeeds
+  // directly without needing every earlier field pre-filled.
+  beforeEach(() => { process.env.CONVERGENCE_UNFLIPPED = "job_posting"; });
+  afterEach(() => { delete process.env.CONVERGENCE_UNFLIPPED; });
+
+  it("stores the canonical category, not the fine-grained term the model returned", async () => {
+    // Call 1: isQuestionOrOther → NO. Call 2: care-needs extraction.
+    modelReplies("NO", '["bathing", "medication reminders"]');
+
+    await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
+      ...SESSION,
+      jobPostingStep: "jp_ask_care_needs",
+      jobPostingData: { jobFrequency: "occasional" },
+    });
+
+    const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
+    expect(call?.[0].jobPostingData.jobCareNeeds).toEqual(["Personal Care", "Medication Reminders"]);
+  });
+
+  it("re-asks instead of storing an empty result when nothing normalizes", async () => {
+    modelReplies("NO", '["something unrelated"]');
+
+    await handleJobPostingStep(PHONE, CHAT, "not sure what she needs", {
+      ...SESSION,
+      jobPostingStep: "jp_ask_care_needs",
+      jobPostingData: { jobFrequency: "occasional" },
+    });
+
+    const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
+    expect(call).toBeUndefined();
+    expect(String(sendMessage.mock.calls[0][1])).toMatch(/what kind of care/i);
+  });
+});

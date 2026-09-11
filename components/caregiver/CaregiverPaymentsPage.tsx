@@ -1236,7 +1236,7 @@ const SubmittableShiftCard: React.FC<{
               ) : (
                 <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
                   <span className="text-sm font-bold text-primary-700">
-                    {(shift.clientName ?? '?')[0].toUpperCase()}
+                    {(shift.clientName || '?').charAt(0).toUpperCase()}
                   </span>
                 </div>
               )}

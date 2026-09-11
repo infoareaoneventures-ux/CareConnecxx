@@ -3380,12 +3380,28 @@ async function executeToolCall(
           }, { merge: true }).catch(() => {});
         }
 
+        // A zero-result reply after already showing this family real
+        // candidates isn't "nobody's available" — it's "nobody NEW is
+        // available yet". Naming who they've already met (instead of the
+        // generic empty-pool message) lets the agent offer to resend/
+        // reintroduce them rather than implying there's truly no one.
+        let alreadyShownNames: string[] | undefined;
+        if (matches.length === 0 && shownIds.length > 0) {
+          const shownSnaps = await Promise.all(
+            shownIds.map((id) => db.collection("publicCaregiverProfiles").doc(id).get().catch(() => null)),
+          );
+          alreadyShownNames = shownSnaps
+            .map((s) => (s?.exists ? (s.data()?.name as string | undefined) : undefined))
+            .filter((n): n is string => !!n);
+        }
+
         return buildCaregiverPreviewResult({
           caregivers: matches.map((m) => m.data),
           widened,
           city: location.city as string | undefined,
           careNeeds,
           itemLimit: resultLimit,
+          alreadyShownNames,
         });
       }
 
@@ -4709,7 +4725,7 @@ async function executeToolCall(
       // careNeeds/notes/lifestyle/careLocation are all per-care-recipient on
       // the real doc (recipientPlans.{key}.*, CarePlan.tsx's getKey) — resolve
       // which recipient this update is about.
-      const { resolveRecipientKey } = await import("../agents/careRecipients");
+      const { resolveRecipientKey, recipientPlanKey } = await import("../agents/careRecipients");
       const snap = await ref.get();
       const planKeys = Object.keys((snap.data()?.recipientPlans ?? {}) as Record<string, unknown>);
       const res = resolveRecipientKey(planKeys, recipientFirstName);
@@ -4774,6 +4790,28 @@ async function executeToolCall(
       } else {
         await ref.set({ [fieldPath]: value, updatedAt: nowIso }, { merge: true });
       }
+
+      // senior_profiles.needs is the field caregiver-matching (find_nearby_
+      // caregivers) actually reads — carePlans alone was a silent dead end,
+      // the exact gap already fixed on the site's own CarePlan.tsx save path
+      // (2026-09-11). Primary recipient's doc is keyed by clientId alone;
+      // additional household members use clientId_key (householdSeniorDocId).
+      if (field === "careNeeds") {
+        const primarySnap = await db.collection("senior_profiles").doc(clientId).get().catch(() => null);
+        const primaryName = (primarySnap?.data() as Record<string, unknown> | undefined)?.name as string | undefined;
+        const [primaryFirst, ...primaryRest] = (primaryName ?? "").trim().split(/\s+/);
+        const isPrimary = !primaryName || recipientPlanKey(primaryFirst, primaryRest.join(" ")) === res.key;
+        const seniorProfileId = isPrimary ? clientId : `${clientId}_${res.key}`;
+        const seniorRef = db.collection("senior_profiles").doc(seniorProfileId);
+        if (action === "append") {
+          await seniorRef.set({ needs: admin.firestore.FieldValue.arrayUnion(value), userId: clientId, clientId }, { merge: true }).catch(() => {});
+        } else if (action === "remove") {
+          await seniorRef.set({ needs: admin.firestore.FieldValue.arrayRemove(value), userId: clientId, clientId }, { merge: true }).catch(() => {});
+        } else {
+          await seniorRef.set({ needs: value, userId: clientId, clientId }, { merge: true }).catch(() => {});
+        }
+      }
+
       return { success: true, updated: field, action };
     }
 

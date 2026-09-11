@@ -433,6 +433,22 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       }
       setRecipientPlans(prev => ({ ...prev, [key]: updated }));
       if (editingSection === 'locations') setLocationPool(cleanPool);
+      // senior_profiles.needs is the field caregiver-matching actually reads
+      // (find_nearby_caregivers) — this save only ever wrote carePlans, so an
+      // edit here never reached matching until now (2026-09-11 fix). Primary
+      // recipient's doc is keyed by uid alone; additional recipients use the
+      // same uid_key suffix householdSeniorDocId mints server-side.
+      if (currentPlanId) {
+        const seniorProfileId = activeRecipient === 0 ? currentPlanId : `${currentPlanId}_${key}`;
+        // userId/clientId included so this also satisfies firestore.rules'
+        // create case if the doc doesn't exist yet (e.g. a household member
+        // added on the site that's never gone through Evia's own senior_profiles
+        // write) — harmless, already-true fields on an update to an existing doc.
+        db.collection('senior_profiles').doc(seniorProfileId).set(
+          { needs: updated.careNeeds || [], userId: currentPlanId, clientId: currentPlanId },
+          { merge: true }
+        ).catch((err) => console.error('senior_profiles needs sync failed (non-fatal):', err));
+      }
       cancelEdit();
       onShowToast('Saved', 'success');
     } catch (err) {

@@ -67,6 +67,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       userId:    user.uid,
       seniorId:  user.uid, // seniorId === clientId for single-senior households
       service,
+      userType:  "client", // this trigger already only fires when data.userType === "client" (line 21)
       optedOut:  false,
       optedIn:   false,  // pending — wait for YES reply
       createdAt: new Date().toISOString(),

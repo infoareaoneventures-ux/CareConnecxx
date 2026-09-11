@@ -63,7 +63,7 @@ export const CaregiverFamiliesPage: React.FC = () => {
             .get(),
           (db as any).collection('shifts')
             .where('caregiverId', '==', uid)
-            .where('status', '==', 'scheduled')
+            .where('status', 'in', ['scheduled', 'in-progress'])
             .get(),
         ]);
 

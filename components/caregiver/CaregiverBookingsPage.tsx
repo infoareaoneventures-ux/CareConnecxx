@@ -83,7 +83,7 @@ interface Shift {
   date: string;
   startTime: string;
   endTime?: string;
-  status: 'pending' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'needs_replacement';
   address?: string;
   lifestylePreferences?: string[];
   schedule?: {
@@ -413,7 +413,7 @@ const RequestCard: React.FC<{
                             </div>
                           ) : (
                             <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                              <span className="text-primary-700 font-bold text-sm">{name?.charAt(0).toUpperCase() || '?'}</span>
+                              <span className="text-primary-700 font-bold text-sm">{name?.charAt(0)?.toUpperCase() || '?'}</span>
                             </div>
                           )}
                           <div>
@@ -638,11 +638,18 @@ const BookingGroupCard: React.FC<{
     await db.collection('shifts').doc(shiftId).update(update).catch(() => {}).finally(() => setSubmitting(null));
   };
 
-  const handleCancelShift = async (shiftId: string) => {
+  const handleCancelShift = async (shift: Shift) => {
     if (!db || !window.confirm('Cancel this shift only? The rest of your booking stays active.')) return;
-    setSubmitting(shiftId);
-    await db.collection('shifts').doc(shiftId).update({
-      status: 'cancelled',
+    setSubmitting(shift.id);
+    // Within 24h of the shift starting, the family gets a fast replacement
+    // picker instead of a plain cancellation — anything further out, they
+    // have time to just find/interview a new caregiver the normal way.
+    const startsAt = new Date(`${shift.date}T${shift.startTime}`);
+    const hoursUntilStart = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
+    const isUrgent = hoursUntilStart <= 24;
+    await db.collection('shifts').doc(shift.id).update({
+      status: isUrgent ? 'needs_replacement' : 'cancelled',
+      cancelledBy: 'caregiver',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(() => {}).finally(() => setSubmitting(null));
   };
@@ -992,7 +999,7 @@ const BookingGroupCard: React.FC<{
                 {/* Cancel single shift — far left */}
                 {shift.status === 'scheduled' && (
                   <button
-                    onClick={() => handleCancelShift(shift.id)}
+                    onClick={() => handleCancelShift(shift)}
                     disabled={submitting === shift.id}
                     title="Cancel this shift only"
                     className="p-1 text-red-300 hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
@@ -1854,7 +1861,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     <div className="px-5 pt-4 pb-3 flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
                         <span className="text-sm font-bold text-violet-700">
-                          {(a.clientName ?? '?')[0].toUpperCase()}
+                          {(a.clientName || '?').charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div>

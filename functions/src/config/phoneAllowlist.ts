@@ -4,6 +4,7 @@ const ALLOWED_PHONES = new Set([
   '+14087261330',
   '+14088745451',
   '+14086370483',
+  '+18302718687',
 ]);
 
 export function isPhoneAllowed(e164: string): boolean {

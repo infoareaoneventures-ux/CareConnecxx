@@ -129,11 +129,19 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
       noQueueOnFailure: true,
       onTransportReceipt: (messageId) => { providerMessageIds.push(messageId); },
     });
-    if (!sent || providerMessageIds.length === 0) {
-      await moveToRetryOrReview(outboxId, sent ? "missing_provider_receipt" : "message_suppressed");
+    if (!sent) {
+      // sendViaInteractionAgent only returns false for a genuine non-send
+      // (opted out, no session, content-hash duplicate) — noQueueOnFailure
+      // means a real transport failure throws instead (caught below). It
+      // does NOT mean "sent but no receipt" — Linq's response occasionally
+      // omits message_id on an otherwise-successful, delivered send, and
+      // treating that as a failure caused this same notice to be resent on
+      // the retry schedule below even though the family already got it.
+      await moveToRetryOrReview(outboxId, "message_suppressed");
       return false;
     }
 
+    const providerMessageId = providerMessageIds[0] ?? null;
     const now = new Date().toISOString();
     const outboxRef = db.collection("billingApprovalOutbox").doc(outboxId);
     await db.runTransaction(async (transaction) => {
@@ -141,8 +149,8 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
       if (!snap.exists || snap.data()?.state !== "processing") return;
       transaction.update(outboxRef, {
         state: "sent",
-        providerMessageId: providerMessageIds[0],
-        providerOperationId: providerMessageIds[0],
+        providerMessageId,
+        providerOperationId: providerMessageId,
         providerStatus: "sent",
         nextAttemptAt: new Date(Date.now() + DELIVERY_TIMEOUT_MS).toISOString(),
         leaseOwner: null,

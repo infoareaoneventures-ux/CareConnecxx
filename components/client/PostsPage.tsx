@@ -2631,11 +2631,17 @@ export const PostsPage: React.FC = () => {
                         Message
                       </button>
                       {(() => {
-                        const iv = interviews.find(iv => iv.caregiverId === a.caregiverId && iv.jobId === panelPostId);
+                        // An interview scheduled directly from a caregiver's profile (not
+                        // through any job post) never gets a jobId — still counts as an
+                        // existing relationship with this caregiver, not "no interview yet".
+                        const iv = interviews.find(iv => iv.caregiverId === a.caregiverId && (!iv.jobId || iv.jobId === panelPostId));
                         const booking = bookingStatuses[`${a.caregiverId}_${panelPostId}`];
                         const isHired = booking?.status === 'accepted';
                         const hasBooking = !!booking;
-                        const interviewInProgress = iv && ['pending', 'accepted', 'confirmed'].includes(iv.status);
+                        // Real stored video_interviews statuses are requested/accepted/declined/
+                        // completed/cancelled — 'pending'/'confirmed' are display-layer-only
+                        // normalizations and never actually appear here.
+                        const interviewInProgress = iv && ['requested', 'accepted'].includes(iv.status);
                         const interviewDone = iv && iv.status === 'completed';
                         const locked = isHired || hasBooking || interviewInProgress || interviewDone;
 

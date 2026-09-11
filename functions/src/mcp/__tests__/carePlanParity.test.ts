@@ -195,6 +195,66 @@ describe("update_care_plan — careLocation", () => {
   });
 });
 
+// 2026-09-11 (live-caught): an SMS-driven careNeeds update landed in carePlans
+// but never reached senior_profiles.needs — the field find_nearby_caregivers
+// actually reads — so a family updating care needs by texting Evia saw the
+// change reflected on the Care Plan page but caregiver matching kept using
+// stale data. Same root cause and fix as the site's own CarePlan.tsx save path.
+describe("update_care_plan — careNeeds syncs senior_profiles.needs (2026-09-11)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("single-recipient household: syncs to senior_profiles/{clientId} (primary, no suffix)", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: [] } } });
+    hoisted.docState.set(`senior_profiles/${CLIENT}`, { name: "Jane Doe" });
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "careNeeds", value: ["Personal Care", "Meal Preparation"], action: "set",
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.docState.get(`carePlans/${CLIENT}`).recipientPlans.jane_doe.careNeeds)
+      .toEqual(["Personal Care", "Meal Preparation"]);
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs)
+      .toEqual(["Personal Care", "Meal Preparation"]);
+  });
+
+  it("multi-recipient household: an update for the NON-primary recipient syncs to senior_profiles/{clientId}_{key}", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, {
+      recipientPlans: { jane_doe: { careNeeds: [] }, tom_doe: { careNeeds: [] } },
+    });
+    hoisted.docState.set(`senior_profiles/${CLIENT}`, { name: "Jane Doe" });
+    const r = await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "careNeeds", value: ["Companionship"], action: "set", recipientFirstName: "Tom",
+    }) as any;
+    expect(r.success).toBe(true);
+    // Primary's senior_profiles doc untouched.
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs).toBeUndefined();
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}_tom_doe`).needs).toEqual(["Companionship"]);
+  });
+
+  it("append/remove actions mirror the same operation onto senior_profiles.needs", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: ["Personal Care"] } } });
+    hoisted.docState.set(`senior_profiles/${CLIENT}`, { name: "Jane Doe", needs: ["Personal Care"] });
+
+    await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "careNeeds", value: "Mobility Assistance", action: "append",
+    });
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs).toEqual(["Personal Care", "Mobility Assistance"]);
+
+    await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "careNeeds", value: "Personal Care", action: "remove",
+    });
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs).toEqual(["Mobility Assistance"]);
+  });
+
+  it("does NOT touch senior_profiles for non-careNeeds fields (e.g. notes)", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT}`, { recipientPlans: { jane_doe: { careNeeds: ["Personal Care"] } } });
+    hoisted.docState.set(`senior_profiles/${CLIENT}`, { name: "Jane Doe", needs: ["Personal Care"] });
+    await handleToolCall("update_care_plan", {
+      clientId: CLIENT, field: "notes", value: "Loves gardening", action: "set",
+    });
+    expect(hoisted.docState.get(`senior_profiles/${CLIENT}`).needs).toEqual(["Personal Care"]);
+  });
+});
+
 describe("create_senior_profile — website roster mirror", () => {
   beforeEach(() => hoisted.reset());
 

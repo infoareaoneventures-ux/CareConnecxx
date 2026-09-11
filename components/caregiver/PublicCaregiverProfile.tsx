@@ -88,7 +88,7 @@ export const PublicCaregiverProfile: React.FC = () => {
           <div className="px-6 pb-5">
             <div className="flex items-end justify-between -mt-10 mb-4">
               <div className="w-20 h-20 rounded-full border-4 border-white bg-slate-200 overflow-hidden shadow-md flex-shrink-0 flex items-center justify-center text-slate-500 text-xl font-bold">
-                {photo ? <img src={photo} alt={profile.name} className="w-full h-full object-cover" /> : profile.name?.charAt(0).toUpperCase()}
+                {photo ? <img src={photo} alt={profile.name} className="w-full h-full object-cover" /> : profile.name?.charAt(0)?.toUpperCase()}
               </div>
             </div>
             <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">

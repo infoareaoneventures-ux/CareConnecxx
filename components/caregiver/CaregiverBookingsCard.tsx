@@ -117,8 +117,9 @@ export const CaregiverBookingsCard: React.FC<Props> = ({ caregiverId, pendingOnl
       })()}
 
       {bookingTab === 'upcoming' && (() => {
-        const tomorrowStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
-        const upcoming = upcomingShifts.filter((s: any) => s.date >= tomorrowStr);
+        // upcomingShifts (above) already excludes today via safe local-date-string
+        // math — no need to recompute "tomorrow" here.
+        const upcoming = upcomingShifts;
         if (upcoming.length === 0) return (
           <div className="text-center py-5">
             <p className="text-sm text-slate-400 mb-2">No upcoming shifts</p>

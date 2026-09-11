@@ -10,6 +10,7 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
+import { normalizeCareNeeds } from "../utils/careNeedCategories";
 
 const db = admin.firestore();
 
@@ -984,7 +985,7 @@ async function handleJpAskCareNeeds(
     'Extract care needs as a JSON array of strings. Map to these standard values: ' +
     '"Personal Care" (bathing, grooming, hygiene, dressing), ' +
     '"Mobility Assistance" (walking, transfers, fall prevention), ' +
-    '"Memory Care" (dementia, Alzheimer\'s, cognitive support), ' +
+    '"Dementia / Memory Care" (dementia, Alzheimer\'s, cognitive support), ' +
     '"Medication Reminders" (meds, pills, prescriptions), ' +
     '"Meal Preparation" (cooking, meals, food, nutrition), ' +
     '"Transportation" (driving, errands, appointments), ' +
@@ -995,7 +996,15 @@ async function handleJpAskCareNeeds(
   );
   let careNeeds: string[] = [];
   const parsedNeeds = parseJsonLoose(raw, "handleJpAskCareNeeds");
-  if (Array.isArray(parsedNeeds) && parsedNeeds.length > 0) careNeeds = parsedNeeds;
+  if (Array.isArray(parsedNeeds) && parsedNeeds.length > 0) {
+    // The LLM is asked for standard category names but sometimes returns the
+    // finer-grained symptom/task instead ("bathing" instead of "Personal
+    // Care") — normalize onto the same 8 categories the web wizard uses, so
+    // this matches what CarePlan.tsx expects and what caregiver skill-matching
+    // actually searches on (both keyed on the parent category, never the
+    // sub-task — see careNeedCategories.ts).
+    careNeeds = normalizeCareNeeds(parsedNeeds);
+  }
   if (careNeeds.length === 0) {
     await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
     return;

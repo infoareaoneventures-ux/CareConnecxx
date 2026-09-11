@@ -118,6 +118,33 @@ export const onBookingAccepted = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     const after  = change.after.exists  ? change.after.data()  : null;
 
+    // A single-shift replacement request (created when a client picks a
+    // replacement caregiver after the original one cancelled) that gets
+    // declined or cancelled reopens the original shift so the client can try
+    // someone else, instead of leaving it silently stuck "waiting to respond".
+    if (after?.isShiftReplacement) {
+      console.log('onBookingAccepted: replacement request write', {
+        bookingId: context.params.bookingId,
+        beforeStatus: before?.status ?? null,
+        afterStatus: after?.status ?? null,
+        replacementForShiftId: after?.replacementForShiftId ?? null,
+      });
+    }
+    if (
+      after?.isShiftReplacement && after?.replacementForShiftId &&
+      (after.status === 'declined' || after.status === 'cancelled' || after.status === 'expired') &&
+      before?.status !== after.status
+    ) {
+      await db.collection('shifts').doc(after.replacementForShiftId).update({
+        status: 'needs_replacement',
+        replacementRequestId: admin.firestore.FieldValue.delete(),
+        replacementCaregiverName: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).then(() => console.log(`onBookingAccepted: reopened shift ${after.replacementForShiftId} after replacement ${after.status}`))
+        .catch((err) => console.error('onBookingAccepted: failed to reopen shift after replacement decline', err));
+      return;
+    }
+
     // Only fire when status is 'accepted'
     if (!after || after.status !== 'accepted') return;
 
@@ -145,6 +172,20 @@ export const onBookingAccepted = functions.firestore
     try {
       const created = await generateShiftsForBooking(bookingId, after, generateFrom, generateTo);
       console.log(`onBookingAccepted: created ${created} shifts for booking ${bookingId}`);
+
+      // This booking is a single-shift replacement for a shift the original
+      // caregiver cancelled — now that the new caregiver has accepted and a
+      // real shift exists to cover it, the old shift is fully resolved.
+      if (after.isShiftReplacement && after.replacementForShiftId) {
+        await db.collection('shifts').doc(after.replacementForShiftId).update({
+          status: 'cancelled',
+          cancelledBy: 'caregiver',
+          supersededByBookingId: bookingId,
+          replacementRequestId: admin.firestore.FieldValue.delete(),
+          replacementCaregiverName: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch((err) => console.error('onBookingAccepted: failed to close out superseded shift', err));
+      }
 
       // Notify the client that the caregiver accepted
       if (after.clientId) {
@@ -178,6 +219,37 @@ export const onBookingAccepted = functions.firestore
       }
     } catch (err) {
       console.error(`onBookingAccepted: error for booking ${bookingId}`, err);
+    }
+  });
+
+const SHIFT_REPLACEMENT_RESPONSE_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * A single-shift replacement request is urgent by construction (it only ever
+ * gets created for a shift within 24h of starting — see ClientVisitsPage.tsx's
+ * handleConfirmReplacement). If the picked caregiver hasn't responded within
+ * 30 minutes, expire the request so the client can pick someone else instead
+ * of being stuck waiting — onBookingAccepted's reopen branch above handles the
+ * 'expired' status the same way it handles a decline.
+ */
+export const expireStaleShiftReplacements = functions.pubsub
+  .schedule('every 10 minutes')
+  .onRun(async () => {
+    const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SHIFT_REPLACEMENT_RESPONSE_MS);
+    const staleSnap = await db.collection('booking_requests')
+      .where('isShiftReplacement', '==', true)
+      .where('status', '==', 'pending')
+      .where('createdAt', '<', cutoff)
+      .get();
+
+    for (const doc of staleSnap.docs) {
+      await doc.ref.update({
+        status: 'expired',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch((err) => console.error('expireStaleShiftReplacements: failed to expire', doc.id, err));
+    }
+    if (!staleSnap.empty) {
+      console.log(`expireStaleShiftReplacements: expired ${staleSnap.size} stale replacement request(s)`);
     }
   });
 

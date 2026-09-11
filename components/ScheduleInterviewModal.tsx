@@ -187,7 +187,7 @@ export const ScheduleInterviewModal: React.FC<ScheduleInterviewModalProps> = ({
                         ) : (
                             <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center border-2 border-white shadow-md flex-shrink-0">
                                 <span className="text-primary-600 font-bold text-xl">
-                                    {caregiver.name?.charAt(0).toUpperCase() || '?'}
+                                    {caregiver.name?.charAt(0)?.toUpperCase() || '?'}
                                 </span>
                             </div>
                         )}

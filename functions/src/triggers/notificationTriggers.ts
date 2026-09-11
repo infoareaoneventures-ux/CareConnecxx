@@ -464,9 +464,117 @@ export const onShiftStatusChanged = functions.firestore
     const before = change.before.data();
     const after  = change.after.data();
 
+    const shiftId = context.params.shiftId;
+
+    // Rescheduled (proposed) — a NEW or CHANGED reschedulePendingDate, same
+    // pattern as video_interviews' reschedulePendingTime (see
+    // notificationTriggers.ts's onVideoInterviewWrite): the real date/
+    // startTime/endTime never change on this write, so status is untouched
+    // and would otherwise be swallowed by the statusBefore===statusAfter
+    // check below — these two branches must run before that return.
+    if (
+      after.reschedulePendingDate &&
+      (before?.reschedulePendingDate !== after.reschedulePendingDate ||
+       before?.reschedulePendingStartTime !== after.reschedulePendingStartTime ||
+       before?.reschedulePendingEndTime !== after.reschedulePendingEndTime)
+    ) {
+      const displayTime = new Date(after.reschedulePendingDate + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric',
+      }) + `, ${after.reschedulePendingStartTime}${after.reschedulePendingEndTime ? `–${after.reschedulePendingEndTime}` : ''}`;
+      if (after.rescheduledBy === 'caregiver' && after.clientId) {
+        await addNotification(after.clientId, {
+          type: 'shift_rescheduled',
+          title: 'New Time Proposed',
+          body: `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Please confirm.`,
+          data: { shiftId },
+        });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`);
+      } else if (after.rescheduledBy === 'client' && after.caregiverId) {
+        await addNotification(after.caregiverId, {
+          type: 'shift_rescheduled',
+          title: 'New Time Proposed',
+          body: `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Please confirm.`,
+          data: { shiftId },
+        });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'The family'} proposed moving this visit to ${displayTime}. Reply here to confirm or suggest another time.`);
+      }
+      return;
+    }
+
+    // Reschedule ACCEPTED — the pending proposal is gone and the real date/
+    // time actually moved: notify whoever originally proposed it (before.
+    // rescheduledBy, since rescheduledBy is cleared on accept) that their
+    // proposed time is now confirmed.
+    if (
+      before?.reschedulePendingDate &&
+      !after.reschedulePendingDate &&
+      (before.date !== after.date || before.startTime !== after.startTime || before.endTime !== after.endTime)
+    ) {
+      const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric',
+      }) + `, ${after.startTime}${after.endTime ? `–${after.endTime}` : ''}`;
+      if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
+        await addNotification(after.caregiverId, {
+          type: 'shift_rescheduled',
+          title: 'Time Confirmed',
+          body: `${after.clientName || 'The family'} confirmed the new visit time: ${displayTime}.`,
+          data: { shiftId },
+        });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'The family'} confirmed the new visit time: ${displayTime}.`);
+      } else if (before.rescheduledBy === 'client' && after.clientId) {
+        await addNotification(after.clientId, {
+          type: 'shift_rescheduled',
+          title: 'Time Confirmed',
+          body: `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`,
+          data: { shiftId },
+        });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} confirmed the new visit time: ${displayTime}.`);
+      }
+      return;
+    }
+
+    // Reschedule DECLINED (or withdrawn) — the pending proposal is gone but
+    // the real date/time did NOT change (that's what distinguishes this from
+    // the ACCEPTED branch above). Notify whoever originally proposed it
+    // (before.rescheduledBy, cleared on this write too) that the original
+    // time stands, so they're not left silently wondering why their
+    // proposal disappeared.
+    if (
+      before?.reschedulePendingDate &&
+      !after.reschedulePendingDate &&
+      before.date === after.date && before.startTime === after.startTime && before.endTime === after.endTime
+    ) {
+      const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric',
+      }) + `, ${after.startTime}${after.endTime ? `–${after.endTime}` : ''}`;
+      if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
+        await addNotification(after.caregiverId, {
+          type: 'shift_rescheduled',
+          title: 'Time Change Declined',
+          body: `${after.clientName || 'The family'} kept the original visit time: ${displayTime}.`,
+          data: { shiftId },
+        });
+        await notifyCaregiverByText(after.caregiverId,
+          `${after.clientName || 'The family'} isn't able to move the visit — it's staying at ${displayTime}.`);
+      } else if (before.rescheduledBy === 'client' && after.clientId) {
+        await addNotification(after.clientId, {
+          type: 'shift_rescheduled',
+          title: 'Time Change Declined',
+          body: `${after.caregiverName || 'Your caregiver'} kept the original visit time: ${displayTime}.`,
+          data: { shiftId },
+        });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} isn't able to move the visit — it's staying at ${displayTime}.`);
+      }
+      return;
+    }
+
     if (before.status === after.status) return;
 
-    const shiftId = context.params.shiftId;
     const fmtDate = after.date
       ? ` on ${new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`
       : '';

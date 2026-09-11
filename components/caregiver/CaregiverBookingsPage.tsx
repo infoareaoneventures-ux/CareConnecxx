@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
   Loader2, MessageSquare, Star, CreditCard, ChevronDown,
-  ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList, Lock,
+  ChevronUp, Phone, AlertCircle, Repeat, FileText, ClipboardList, Lock, CalendarClock,
 } from 'lucide-react';
 import { CaregiverTopNav } from './CaregiverTopNav';
 import { useCareConnex } from '../../context/CareConnexContext';
@@ -113,6 +113,25 @@ interface Shift {
   paymentMethod?: string | null;
   recurringWeekly?: boolean;
   bookingRequestId?: string;
+  /** Who proposed the pending reschedule fields below. Undefined when there's
+   * no pending proposal on this shift. */
+  rescheduledBy?: 'client' | 'caregiver';
+  /** A proposed new date/time for this same shift, awaiting the OTHER
+   * party's acceptance — the real date/startTime/endTime never change until
+   * that happens (same pattern as video_interviews' reschedulePendingTime). */
+  reschedulePendingDate?: string;
+  reschedulePendingStartTime?: string;
+  reschedulePendingEndTime?: string;
+  /** Append-only log of accepted reschedules on this shift — from/to date +
+   * time, who proposed it, and when it was confirmed. Lives on the shift
+   * doc itself (not a separate collection) since it's only ever relevant in
+   * the context of this one shift. */
+  rescheduleHistory?: Array<{
+    from: { date: string; startTime: string; endTime?: string };
+    to:   { date: string; startTime: string; endTime?: string };
+    changedBy: 'client' | 'caregiver';
+    changedAt: string;
+  }>;
 }
 
 interface BookingAmendment {
@@ -185,6 +204,49 @@ function parseMinutes(t: string): number {
   return (nextDay ? 1440 : 0) + (h || 0) * 60 + (m || 0);
 }
 
+function timeRangesOverlap(startA: string, endA: string | undefined, startB: string, endB: string | undefined): boolean {
+  const aStart = parseMinutes(startA), aEnd = parseMinutes(endA || startA);
+  const bStart = parseMinutes(startB), bEnd = parseMinutes(endB || startB);
+  return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * Fetches the CAREGIVER's own other active shifts on a date (any client),
+ * excluding the shift currently being rescheduled — used both to block a
+ * double-booking on accept and to grey out conflicting slots in the propose
+ * picker. Deliberately scoped to the caregiver's OWN shifts only:
+ * firestore.rules only lets a caregiver read shifts where caregiverId ==
+ * themselves, so a caregiver can't see (and therefore can't query for
+ * conflicts against) a client's OTHER caregivers' shifts — that cross-party
+ * check would need a server-side (admin SDK) callable, which this does not
+ * attempt.
+ */
+async function fetchOwnShiftsForDate(
+  fdb: firebase.firestore.Firestore,
+  caregiverId: string,
+  date: string,
+  excludeShiftId?: string
+): Promise<Array<{ startTime: string; endTime?: string }>> {
+  if (!date) return [];
+  const snap = await fdb.collection('shifts')
+    .where('caregiverId', '==', caregiverId)
+    .where('status', 'in', ['scheduled', 'in-progress'])
+    .where('date', '==', date)
+    .get();
+  return snap.docs
+    .filter(d => d.id !== excludeShiftId)
+    .map(d => ({ startTime: d.data().startTime, endTime: d.data().endTime }));
+}
+
+function conflictAt(slot: string, conflicts: Array<{ startTime: string; endTime?: string }>): boolean {
+  const m = parseMinutes(slot);
+  return conflicts.some(c => m >= parseMinutes(c.startTime) && m < parseMinutes(c.endTime || c.startTime));
+}
+
+function rangeConflicts(start: string, end: string, conflicts: Array<{ startTime: string; endTime?: string }>): { startTime: string; endTime?: string } | null {
+  return conflicts.find(c => timeRangesOverlap(start, end, c.startTime, c.endTime)) ?? null;
+}
+
 function calcShiftMins(start: string, end: string): number {
   if (!start || !end) return 0;
   const diff = parseMinutes(end) - parseMinutes(start);
@@ -207,6 +269,22 @@ function fmtTime(t?: string) {
     return nextDay ? `${formatted} (next day)` : formatted;
   } catch { return raw; }
 }
+
+// Quarter-hour slots spanning the full day — matches how shifts are actually
+// scheduled elsewhere in the app (existing shift start/end times routinely
+// fall on :15/:45, not just :00/:30), and unlike the interview time picker
+// (9am-6pm, since interviews are always daytime), care shifts routinely run
+// overnight (e.g. dementia/night care), so every slot from 12am through
+// 11:45pm must be selectable.
+const RESCHEDULE_TIME_SLOTS: string[] = (() => {
+  const slots: string[] = [];
+  for (let hour = 0; hour <= 23; hour++) {
+    for (const min of ['00', '15', '30', '45']) {
+      slots.push(`${hour.toString().padStart(2, '0')}:${min}`);
+    }
+  }
+  return slots;
+})();
 
 /** Sort shift blocks within a day chronologically by start time */
 function sortBlocks<T extends { start: string }>(blocks: T[]): T[] {
@@ -654,6 +732,120 @@ const BookingGroupCard: React.FC<{
     }).catch(() => {}).finally(() => setSubmitting(null));
   };
 
+  // Reschedule the SAME shift in place — no cancel, no new doc. Mirrors the
+  // video_interviews Reschedule pattern (notificationTriggers.ts /
+  // PostsPage.tsx / JobBoard.tsx) and ClientVisitsPage.tsx's mirror of it: a
+  // proposal is stored in separate reschedulePendingDate/StartTime/EndTime
+  // fields and NEVER touches the real date/startTime/endTime until the other
+  // party explicitly accepts — writing directly to the real fields would
+  // move a confirmed visit before anyone agreed to it.
+  const [rescheduleOpenId, setRescheduleOpenId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleStart, setRescheduleStart] = useState('');
+  const [rescheduleEnd, setRescheduleEnd] = useState('');
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  // Your own other shifts on the currently-picked reschedule date — used to
+  // grey out conflicting slots in the picker below (same idea as the "add a
+  // day" flow's availability filtering in Schedule.tsx).
+  const [dateConflicts, setDateConflicts] = useState<Array<{ startTime: string; endTime?: string }>>([]);
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!db || !rescheduleOpenId || !rescheduleDate) { setDateConflicts([]); return; }
+    let cancelled = false;
+    fetchOwnShiftsForDate(db, base.caregiverId, rescheduleDate, rescheduleOpenId)
+      .then(list => { if (!cancelled) setDateConflicts(list); })
+      .catch(() => { if (!cancelled) setDateConflicts([]); });
+    return () => { cancelled = true; };
+  }, [rescheduleOpenId, rescheduleDate]);
+
+  const handleProposeReschedule = async (shift: Shift) => {
+    if (!db || !rescheduleDate || !rescheduleStart || !rescheduleEnd) return;
+    const conflict = rangeConflicts(rescheduleStart, rescheduleEnd, dateConflicts);
+    if (conflict) {
+      window.alert(`That overlaps another shift you have at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+      return;
+    }
+    setReschedulingId(shift.id);
+    try {
+      await db.collection('shifts').doc(shift.id).update({
+        reschedulePendingDate: rescheduleDate,
+        reschedulePendingStartTime: rescheduleStart,
+        reschedulePendingEndTime: rescheduleEnd,
+        rescheduledBy: 'caregiver',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      setRescheduleOpenId(null);
+      setRescheduleDate('');
+      setRescheduleStart('');
+      setRescheduleEnd('');
+    } catch {
+      // non-critical
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
+  // Accept the family's proposed time — this is the moment the real
+  // date/startTime/endTime actually change, same shift doc throughout. Only
+  // checks the CAREGIVER's own other shifts (readable under firestore.rules);
+  // it can't see whether the family is now double-booked with a different
+  // caregiver — that would need a server-side check.
+  const handleAcceptReschedule = async (shift: Shift) => {
+    if (!db || !shift.reschedulePendingDate) return;
+    setReschedulingId(shift.id);
+    try {
+      const ownShifts = await fetchOwnShiftsForDate(db, shift.caregiverId, shift.reschedulePendingDate, shift.id);
+      const conflict = rangeConflicts(shift.reschedulePendingStartTime!, shift.reschedulePendingEndTime || shift.reschedulePendingStartTime!, ownShifts);
+      if (conflict) {
+        window.alert(`You already have another shift at ${fmtTime(conflict.startTime)}${conflict.endTime ? `–${fmtTime(conflict.endTime)}` : ''} that day — choose a different time.`);
+        return;
+      }
+      await db.collection('shifts').doc(shift.id).update({
+        date: shift.reschedulePendingDate,
+        startTime: shift.reschedulePendingStartTime,
+        endTime: shift.reschedulePendingEndTime,
+        reschedulePendingDate: firebase.firestore.FieldValue.delete(),
+        reschedulePendingStartTime: firebase.firestore.FieldValue.delete(),
+        reschedulePendingEndTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
+        // arrayUnion can't hold a serverTimestamp() sentinel inside its
+        // elements, so changedAt is a plain client-clock ISO string here.
+        rescheduleHistory: firebase.firestore.FieldValue.arrayUnion({
+          from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
+          to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
+          changedBy: shift.rescheduledBy,
+          changedAt: new Date().toISOString(),
+        }),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch {
+      // non-critical
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
+  // Decline a family's proposal, or withdraw your own — either way just
+  // clears the pending fields; the real, still-confirmed time is untouched.
+  const handleClearReschedule = async (shift: Shift) => {
+    if (!db) return;
+    setReschedulingId(shift.id);
+    try {
+      await db.collection('shifts').doc(shift.id).update({
+        reschedulePendingDate: firebase.firestore.FieldValue.delete(),
+        reschedulePendingStartTime: firebase.firestore.FieldValue.delete(),
+        reschedulePendingEndTime: firebase.firestore.FieldValue.delete(),
+        rescheduledBy: firebase.firestore.FieldValue.delete(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch {
+      // non-critical
+    } finally {
+      setReschedulingId(null);
+    }
+  };
+
   const toggleCategory = async (shiftId: string, subtaskKeys: string[]) => {
     const shift = shifts.find(s => s.id === shiftId);
     if (!shift || shift.status !== 'in-progress') return;
@@ -1007,6 +1199,32 @@ const BookingGroupCard: React.FC<{
                     <XCircle className="w-4 h-4" />
                   </button>
                 )}
+                {/* Reschedule — only when your turn (no proposal out, or reviewing the
+                    family's) and not while the propose form for this shift is open. Hidden
+                    inside 24h of the shift starting: a caregiver-proposed reschedule that
+                    the family declines leaves the shift exactly as it was, with no safety
+                    net (unlike Cancel, which correctly routes an urgent unavailability into
+                    needs_replacement + a replacement search) — so within 24h, Cancel is the
+                    only way to signal "I can't make the original time." A negative
+                    hours-until-start (the shift's already overdue) always fails this same
+                    > 24 check, so overdue shifts are hidden here too — no separate check
+                    needed. */}
+                {shift.status === 'scheduled' && shift.rescheduledBy !== 'caregiver' && rescheduleOpenId !== shift.id &&
+                  (new Date(`${shift.date}T${shift.startTime}`).getTime() - Date.now()) / (1000 * 60 * 60) > 24 && (
+                  <button
+                    onClick={() => {
+                      setRescheduleOpenId(shift.id);
+                      setRescheduleDate(shift.reschedulePendingDate || shift.date);
+                      setRescheduleStart(shift.reschedulePendingStartTime || shift.startTime);
+                      setRescheduleEnd(shift.reschedulePendingEndTime || shift.endTime || '');
+                    }}
+                    disabled={reschedulingId === shift.id}
+                    title={shift.reschedulePendingDate ? 'Propose a different time' : 'Reschedule this shift'}
+                    className="p-1 text-blue-300 hover:text-blue-500 transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    <CalendarClock className="w-4 h-4" />
+                  </button>
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-slate-800">{fmtDate(shift.date)}</span>
@@ -1077,6 +1295,124 @@ const BookingGroupCard: React.FC<{
                   )}
                 </div>
               </div>
+
+              {/* Reschedule history — collapsed by default, one line per past
+                  change, so a shift that's been moved a few times doesn't turn
+                  into a wall of text. */}
+              {shift.rescheduleHistory && shift.rescheduleHistory.length > 0 && (
+                <div className="px-5 pb-2 -mt-1">
+                  <button
+                    onClick={() => setHistoryOpenId(v => v === shift.id ? null : shift.id)}
+                    className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {historyOpenId === shift.id ? 'Hide' : 'Show'} reschedule history ({shift.rescheduleHistory.length})
+                  </button>
+                  {historyOpenId === shift.id && (
+                    <ul className="mt-1 space-y-0.5">
+                      {shift.rescheduleHistory.map((h, i) => (
+                        <li key={i} className="text-[11px] text-slate-400">
+                          {fmtDate(h.from.date)}, {fmtTime(h.from.startTime)}{h.from.endTime ? `–${fmtTime(h.from.endTime)}` : ''}
+                          {' → '}
+                          {fmtDate(h.to.date)}, {fmtTime(h.to.startTime)}{h.to.endTime ? `–${fmtTime(h.to.endTime)}` : ''}
+                          {' '}<span className="text-slate-300">(moved by {h.changedBy === 'client' ? 'family' : 'you'})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* Reschedule proposal pending — the CONFIRMED date/time above (shift.date/
+                  startTime/endTime) is still what's actually scheduled until accepted. */}
+              {shift.status === 'scheduled' && shift.reschedulePendingDate && (
+                <div className="px-5 pb-3 -mt-1">
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                    <span className="flex-1 min-w-[160px]">
+                      {shift.rescheduledBy === 'client'
+                        ? `${base.clientName || 'The family'} proposed moving this visit to `
+                        : 'You proposed moving this visit to '}
+                      {fmtDate(shift.reschedulePendingDate)}, {fmtTime(shift.reschedulePendingStartTime)}
+                      {shift.reschedulePendingEndTime ? ` – ${fmtTime(shift.reschedulePendingEndTime)}` : ''}
+                      {shift.rescheduledBy === 'caregiver' && ' — waiting on the family to confirm'}
+                    </span>
+                    {shift.rescheduledBy === 'client' && (
+                      <button
+                        onClick={() => handleAcceptReschedule(shift)}
+                        disabled={reschedulingId === shift.id}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                      >
+                        Accept new time
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleClearReschedule(shift)}
+                      disabled={reschedulingId === shift.id}
+                      className="px-2.5 py-1 border border-blue-300 hover:bg-blue-100 text-blue-800 text-xs font-semibold rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {shift.rescheduledBy === 'client' ? 'Decline' : 'Withdraw'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Propose form */}
+              {rescheduleOpenId === shift.id && (
+                <div className="px-5 pb-3 -mt-1">
+                  <div className="flex flex-wrap items-end gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                      <input type="date" value={rescheduleDate} min={new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setRescheduleDate(e.target.value)}
+                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Start</label>
+                      <select value={rescheduleStart} onChange={(e) => setRescheduleStart(e.target.value)}
+                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                        <option value="">Choose...</option>
+                        {/* Only genuinely open start times are listed — a slot that's the
+                            START of an already-booked shift is excluded outright, not
+                            shown-but-disabled, so every visible option is actually pickable. */}
+                        {RESCHEDULE_TIME_SLOTS.filter(t => !conflictAt(t, dateConflicts)).map((t) => (
+                          <option key={t} value={t}>{fmtTime(t)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">End</label>
+                      <select value={rescheduleEnd} onChange={(e) => setRescheduleEnd(e.target.value)}
+                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                        <option value="">Choose...</option>
+                        {/* After the chosen start, AND stopping before the next already-booked
+                            shift that day — an end time that would run into another shift is
+                            excluded, so the existing booking's start is respected as a hard cap. */}
+                        {RESCHEDULE_TIME_SLOTS.filter(t => (!rescheduleStart || t > rescheduleStart) && (!rescheduleStart || !rangeConflicts(rescheduleStart, t, dateConflicts))).map((t) => (
+                          <option key={t} value={t}>{fmtTime(t)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {dateConflicts.length > 0 && (
+                      <p className="basis-full text-[11px] text-slate-500">
+                        Already booked that day: {dateConflicts.map((c, i) => (
+                          <span key={i}>{i > 0 ? ', ' : ''}{fmtTime(c.startTime)}{c.endTime ? `–${fmtTime(c.endTime)}` : ''}</span>
+                        ))}
+                      </p>
+                    )}
+                    <button
+                      onClick={() => handleProposeReschedule(shift)}
+                      disabled={reschedulingId === shift.id || !rescheduleDate || !rescheduleStart || !rescheduleEnd}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-semibold hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      {reschedulingId === shift.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarClock className="w-3.5 h-3.5" />} Send new time
+                    </button>
+                    <button
+                      onClick={() => { setRescheduleOpenId(null); setRescheduleDate(''); setRescheduleStart(''); setRescheduleEnd(''); }}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Task checklist (expanded per shift) */}
               {isExpanded && recipients.length > 0 && (

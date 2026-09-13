@@ -1687,6 +1687,7 @@ const handleInboundInner = traceable(
       const flowKey: string | null =
         (session as any).jobPostingStep        ? "job_posting"      :
         (session as any).bookingFlowStep       ? "booking"          :
+        (session as any).interviewFlowStep     ? "interview"        :
         (session as any).refundStep            ? "refund"           :
         (session as any).clientSwapStep        ? "client_swap"      :
         (session as any).healthcareFlowStep    ? "healthcare"       :

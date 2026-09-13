@@ -11,6 +11,7 @@ import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
+import { isBackOutRequest } from "./stepHandler";
 
 const db = admin.firestore();
 
@@ -418,6 +419,31 @@ async function updateJobStep(phone: string, step: string): Promise<void> {
   await db.collection("agent_sessions").doc(phone).update({ jobPostingStep: step });
 }
 
+// 2026-09-13: every step below used to only recognize a cancel at the FINAL
+// jp_confirm_post step (its own YES/NO parse) — anywhere earlier, "never
+// mind"/"cancel this" fell through isQuestionOrOther as an off-topic aside,
+// got a brief reply, and the SAME question just re-asked itself next turn,
+// with no way to actually leave. Live-caught the worst version of this: a
+// family misrouted into this flow mid-interview-scheduling had "cancel this
+// request"/"cancel the job post" — even a direct answer to Evia's OWN
+// clarifying question — loop forever with no escape. Checked FIRST in every
+// handler below, ahead of isQuestionOrOther, using the same shared
+// classifier interviewFlow.ts was built with from the start.
+async function handleJobPostingBackOut(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  await db.collection("agent_sessions").doc(phone).update({
+    jobPostingStep: admin.firestore.FieldValue.delete(),
+    jobPostingData: admin.firestore.FieldValue.delete(),
+    stateExpiresAt: admin.firestore.FieldValue.delete(),
+  });
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "family",
+    language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+    context: "The family decided not to post the care job right now. Warmly let them know that's completely fine and they can text you anytime when they're ready to post a new job.",
+    fallback: "No problem! Text me anytime when you're ready to post a new job.",
+    maxTokens: 80,
+  }));
+}
+
 function seniorFirstName(session: AgentSession): string {
   const d = (session as any).onboardingData as Record<string, unknown> ?? {};
   const full = (d.seniorName as string) ?? "";
@@ -494,6 +520,7 @@ export async function handleJobPostingStep(
 async function handleJpAskRecipients(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const onboardingData = (session as any).onboardingData as Record<string, unknown> ?? {};
   const uid = (session as any).userId as string | undefined;
   const options = uid ? await fetchRecipientOptions(uid, onboardingData) : [];
@@ -589,6 +616,7 @@ async function finishRecipientSelection(
 async function handleJpAskRecipientRelationship(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const jobData = await getJobData(phone);
   const first = (jobData.pendingNewRecipientFirstName as string) ?? "them";
   const REASK = `What's your relationship to ${first}? (Parent, Spouse or Partner, or Other)`;
@@ -618,6 +646,7 @@ async function handleJpAskRecipientRelationship(
 async function handleJpAskCaregiversNeeded(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "How many caregivers do you need for this job? (Most families need just 1 — reply a number 1-4)";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -650,6 +679,7 @@ async function handleJpAskCaregiversNeeded(
 async function handleJpAskLocation(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const uid = (session as any).userId as string | undefined;
   const onboardingData = (session as any).onboardingData as Record<string, unknown> ?? {};
   const locations = uid ? await fetchLocationOptions(uid, onboardingData) : [];
@@ -719,6 +749,7 @@ async function handleJpAskLocation(
 async function handleJpAskLocationEnvironment(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "Are there pets in the home? Does anyone smoke in the home?";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -799,6 +830,7 @@ function needCareVerb(name: string): "do" | "does" {
 async function handleJpAskFrequency(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "How often do you need help? Occasional (1–2 days a week), part-time (3–4 days), or full-time (5+)?";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -858,6 +890,7 @@ export function formatDateForDisplay(value: string): string {
 async function handleJpAskStart(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = `When would you like care to start? (e.g. "next Monday", "ASAP", or a specific date)`;
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -897,6 +930,7 @@ async function handleJpAskStart(
 async function handleJpAskDays(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "Which days work best? (e.g. \"Mon, Wed, Fri\" or \"weekdays\")";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -930,6 +964,7 @@ async function handleJpAskDays(
 async function handleJpAskTime(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "What time of day works best? Mornings, afternoons, evenings, overnight, or a mix?";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -973,6 +1008,7 @@ async function handleJpAskTime(
 async function handleJpAskCareNeeds(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const name = await recipientsDisplayName(phone, session);
   const REASK = `What kind of care ${needCareVerb(name)} ${name} need? (e.g. personal care, meals, companionship, mobility)`;
   if (await isQuestionOrOther(text, REASK)) {
@@ -1023,6 +1059,7 @@ async function handleJpAskCareNeeds(
 async function handleJpAskRate(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const REASK = "What hourly rate are you offering? (e.g. \"$20\", \"18 an hour\", \"flexible\")";
   if (await isQuestionOrOther(text, REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);
@@ -1062,6 +1099,7 @@ async function handleJpAskRate(
 async function handleJpAskDescription(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const name = await recipientsDisplayName(phone, session);
   const REASK = `Can you describe a typical care day for ${name}? A sentence or two is great.`;
   if (await isQuestionOrOther(text, REASK)) {
@@ -1083,6 +1121,7 @@ async function handleJpAskDescription(
 async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleJobPostingBackOut(phone, chatId, session);
   const CONFIRM_REASK = "Confirming whether to post this job for caregivers to see — reply YES to post it, or NO to start over.";
   if (await isQuestionOrOther(text, CONFIRM_REASK)) {
     const answer = await answerQuestionMidFlow(phone, text, session);

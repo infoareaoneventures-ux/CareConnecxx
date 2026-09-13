@@ -27,6 +27,9 @@ export const STATE_MACHINE_FLAGS = [
   // Scripted booking flow (bookingFlow.ts, 2026-09-13)
   "bookingFlowStep",
   "bookingFlowData",
+  // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
+  "interviewFlowStep",
+  "interviewFlowData",
   // Mid-shift task acknowledgment flow
   "awaitingTaskAck",
   // Pre-shift family task check-in
@@ -202,6 +205,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["pendingRebook",           "rebooking your visit"],
   ["jobPostingStep",          "posting your care job"],
   ["bookingFlowStep",         "sending your booking request"],
+  ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["timesheetStep",           "reviewing the timesheet"],
   ["pendingDisputeDetail",    "the hours you flagged"],
@@ -359,6 +363,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["collectingCredential", { setAtField: "collectingCredentialSetAt", ttlMs: CREDENTIAL_FLOW_TTL_MS }],
   ["jobPostingStep", "generic"],
   ["bookingFlowStep", "generic"],
+  ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
   // pendingSwapRequestIdSetAt); routeCaregiver.ts clears on the same stamp.
@@ -390,6 +395,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "stateExpiresAt",
   "jobPostingData",
   "bookingFlowData",
+  "interviewFlowData",
   "awaitingTaskAck",
   "awaitingPreShiftUpdate",
   "pendingShiftConfirmation",

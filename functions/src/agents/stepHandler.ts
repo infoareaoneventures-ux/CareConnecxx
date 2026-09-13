@@ -29,6 +29,34 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
   return result.trim().toUpperCase().startsWith("Y");
 }
 
+// True when the user's reply is a genuine request to abandon the flow
+// entirely right now — "never mind", "cancel this", "stop", "forget it" —
+// as opposed to an off-topic question/comment (isQuestionOrOther's job) or a
+// request to change something ABOUT the flow (an edit, not a cancellation).
+// 2026-09-13: every scripted flow used to only recognize a cancel at its own
+// FINAL confirm step — anywhere earlier, "never mind" fell through
+// isQuestionOrOther as "off-topic," got a brief reply, and the SAME question
+// just got re-asked next turn with no way to actually leave. Live-caught the
+// worst version of this: a family got misrouted into jobPostingFlow.ts
+// mid-interview-scheduling and, with no early exit there either, "cancel
+// this request" / "cancel the job post" just re-asked the flow's own
+// question every time — a genuine dead end. This is the shared fix, meant
+// to be checked FIRST in every step handler, ahead of isQuestionOrOther.
+export async function isBackOutRequest(text: string): Promise<boolean> {
+  const result = await parseWithClaude(
+    "The user is in the middle of a guided step-by-step flow with Evia (e.g. scheduling an interview, sending a " +
+      "booking, posting a job). Reply YES only if their message is a clear, genuine request to stop, cancel, or " +
+      "abandon this flow entirely right now — e.g. \"never mind\", \"forget it\", \"cancel this\", \"cancel the " +
+      "request\", \"stop\", \"I don't want to do this anymore\", \"let's not do this\". Reply NO for anything else " +
+      "— a real answer to the current question (even a partial or vague one), an off-topic question, an " +
+      "unrelated comment, or a request to CHANGE something about this flow (that's an edit, not a cancellation). " +
+      "Only reply YES or NO.",
+    text,
+    5,
+  ).catch(() => "NO"); // fail toward NOT cancelling — never silently abandon on an ambiguous/failed parse
+  return result.trim().toUpperCase().startsWith("Y");
+}
+
 // Classify a reply sent while Evia is WAITING on the user to finish an
 // out-of-band action (tap a link, finish a Checkr form, complete a payment).
 // These steps have no question to answer, so the two-way question/answer split

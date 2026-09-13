@@ -33,6 +33,7 @@ import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
+import { isBackOutRequest } from "./stepHandler";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingCaregiverName,
   resolveCareLocation, formatCareLocationOptions, listCareLocationOptions, resolveRecipientAttribution,
@@ -187,6 +188,24 @@ async function clearFlow(phone: string): Promise<void> {
   });
 }
 
+// 2026-09-13: every step below used to only recognize a cancel at the FINAL
+// bk_confirm step (its own YES/NO/edit classification) — anywhere earlier,
+// "never mind"/"cancel this" fell through isQuestionOrOther as an off-topic
+// aside, got a brief reply, and the SAME question just re-asked itself next
+// turn, with no way to actually leave. Checked FIRST in every handler below,
+// ahead of isQuestionOrOther, using the same shared classifier interviewFlow.
+// ts/jobPostingFlow.ts were already given this same fix with.
+async function handleBookingBackOut(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  await clearFlow(phone);
+  await sendMessage(chatId, await generateCaraMessage({
+    audience: "family",
+    language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
+    context: "The family decided not to send the booking request after all. Warmly confirm nothing was sent, and let them know you're here whenever they're ready.",
+    fallback: "No problem — I haven't sent anything. Let me know whenever you're ready.",
+    maxTokens: 70,
+  }));
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function startBookingFlow(
@@ -278,6 +297,7 @@ const RATE_QUESTION = (jobPostRate?: number) =>
 async function handleBkAskRate(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = RATE_QUESTION(data.jobPostRate);
   if (await isQuestionOrOther(text, question)) {
@@ -319,6 +339,7 @@ const DAYS_QUESTION = (jobPostDays?: string[]) =>
 async function handleBkAskDays(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = DAYS_QUESTION(data.jobPostDays);
   if (await isQuestionOrOther(text, question)) {
@@ -364,6 +385,7 @@ const TIMES_QUESTION = (days: string[]) =>
 async function handleBkAskTimes(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const days = data.days ?? [];
   const question = data.scheduleKind === "recurring" ? TIMES_QUESTION(days) : `What time should the visit run? (e.g. "9am to 3pm")`;
@@ -448,6 +470,7 @@ async function advanceFromTimes(phone: string, chatId: string, session: AgentSes
 async function handleBkAskOngoing(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   if (await isQuestionOrOther(text, ONGOING_QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
@@ -561,6 +584,7 @@ async function applyRecipientSelection(phone: string, chatId: string, session: A
 async function handleBkAskRecipients(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const options = data.recipientOptions ?? [];
   const QUESTION = options.length
@@ -606,6 +630,7 @@ const MESSAGE_QUESTION = (caregiverName: string) =>
 async function handleBkAskMessage(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const QUESTION = MESSAGE_QUESTION(data.caregiverName);
   if (await isQuestionOrOther(text, QUESTION)) {
@@ -638,6 +663,7 @@ async function handleBkAskMessage(
 async function handleBkAskLocation(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const options = data.careLocationOptions ?? [];
   const QUESTION = options.length
@@ -805,6 +831,7 @@ const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this booking reque
 async function handleBkConfirm(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
+  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
 
   const raw = await parseWithClaude(
@@ -843,17 +870,7 @@ async function handleBkConfirm(
   const parsed = parseJsonLoose(raw, "handleBkConfirm");
   const action = parsed?.action;
 
-  if (action === "cancel") {
-    await clearFlow(phone);
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: (session as any)?.preferredLanguage === "es" ? "es" : "en",
-      context: "The family decided not to send the booking request after all. Warmly confirm nothing was sent, and let them know you're here whenever they're ready.",
-      fallback: "No problem — I haven't sent anything. Let me know whenever you're ready.",
-      maxTokens: 70,
-    }));
-    return;
-  }
+  if (action === "cancel") return handleBookingBackOut(phone, chatId, session);
 
   if (action === "edit_rate") {
     if (typeof parsed?.newRate === "number" && parsed.newRate > 0) {

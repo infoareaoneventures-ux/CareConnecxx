@@ -1468,24 +1468,40 @@ export const MCP_TOOLS: McpTool[] = [
 
   // ── Full-platform coverage tools ─────────────────────────────────────────
   {
+    name: "start_interview_flow",
+    description:
+      "Start Evia's own scripted, step-by-step interview-scheduling flow for a caregiver — the PREFERRED way to " +
+      "request an interview once the family is ready (e.g. after naming a caregiver, or right after finding a " +
+      "match). This tool itself asks the family every remaining question (related job post, if any are open — date " +
+      "— time — an optional note) one at a time and shows a full recap matching the website's 'Request Interview' " +
+      "modal before sending — you do NOT need to collect any of that yourself, and should NOT call " +
+      "schedule_interview directly for a new request. This tool ALREADY TEXTS THE FAMILY the first question itself " +
+      "— do not send anything else this turn beyond a brief acknowledgment that you're setting up the interview, " +
+      "if anything at all. The flow also lets the family back out cleanly at any point (\"never mind\"/\"cancel " +
+      "this\") — you don't need to handle that yourself either.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:   { type: "string", description: "The caregiver being interviewed." },
+        applicationId: { type: "string", description: "Pass this when the family is interviewing someone who applied to a specific job post — the job is already known and won't be asked about again. Omit for a direct/matching-flow interview with no application involved." },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "schedule_interview",
     description:
-      "Schedule a video interview between a client and a caregiver applicant. " +
+      "Low-level interview commit — prefer start_interview_flow instead, which handles the whole conversation for " +
+      "you and matches the website's Request Interview modal exactly. Only call this tool directly for an interview " +
+      "OUTSIDE the scripted flow (e.g. respond_to_job_application's accept branch, which already knows the job and " +
+      "caregiver deterministically). " +
       "Creates the interview record; the Google Meet link is generated and texted to both parties automatically " +
       "once the caregiver confirms via respond_to_interview_request — do NOT tell the family a link exists yet. " +
-      "Confirm date/time with the client before calling. Same rules as the website's own Request Interview modal: " +
-      "the caregiver must be a real, currently-bookable match, and families are capped at 5 interview requests per " +
-      "day — if you get a RATE_LIMITED error, tell them honestly they've hit today's limit and to try again tomorrow. " +
-      "The website's modal also offers interview type (video/phone/in-person) and optional notes — mention these are " +
-      "options if it fits naturally (e.g. after they name a caregiver: \"video, phone, or in person? And anything " +
-      "you'd like me to note for the interview?\"), but never make them a required extra question — video with no " +
-      "notes is a completely normal default, same as leaving the site's fields blank. The modal's related-job-post " +
-      "dropdown is different: unless this call is already coming from accepting a job application (jobId already " +
-      "known), call list_client_jobs first — if the family has any open job posts on file, actively offer them as a " +
-      "short numbered list (matching the website's own dropdown, e.g. \"1. Senior care in Springfield · Sep 10  2. " +
-      "No specific post\") and let them pick, rather than only mentioning it in passing. Still entirely optional — " +
-      "no pick / \"no specific post\" is a completely valid answer, same as leaving the site's field on its default; " +
-      "ask once, don't block the interview on an answer. " +
+      "Same rules as the website's own Request Interview modal: the caregiver must be a real, currently-bookable " +
+      "match, and families are capped at 5 interview requests per day — if you get a RATE_LIMITED error, tell them " +
+      "honestly they've hit today's limit and to try again tomorrow. No interview-type question — the website " +
+      "removed Phone/In-Person entirely (2026-09-08); every interview is video, always pass/default interviewType " +
+      "to video. " +
       "The platform requires and enforces its own confirmation before this actually executes (it will show the " +
       "family the exact caregiver name it resolved and ask them to confirm) — do NOT ask the family to confirm the " +
       "caregiver a second time yourself first, just call it once you have the caregiverId and date/time.",
@@ -1497,7 +1513,7 @@ export const MCP_TOOLS: McpTool[] = [
         applicationId: { type: "string", description: "The job_applications document ID (optional)" },
         preferredDate: { type: "string", description: "Date in YYYY-MM-DD format" },
         preferredTime: { type: "string", description: "Time in HH:MM (24h) format" },
-        interviewType: { type: "string", enum: ["video","phone","in_person"], description: "Default: video" },
+        interviewType: { type: "string", enum: ["video","phone","in_person"], description: "Default: video — the website has no selector, every interview is video." },
         jobId:         { type: "string", description: "Optional — the job_posts document ID this interview relates to, if the family mentions a specific posted job." },
         notes:         { type: "string", description: "Optional — anything the family wants to flag for the interview (topics to discuss, etc.), same as the website modal's Notes field." },
       },
@@ -3741,6 +3757,31 @@ async function executeToolCall(
         const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
         if (!rate.ok) return toolError(rate.code, rate.message);
         return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
+      }
+
+      case "start_interview_flow": {
+        const { clientId, caregiverId, applicationId, phone } = input as Record<string, unknown>;
+        if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const ivSessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const ivSessionData = ivSessSnap.data();
+        const ivChatId = ivSessionData?.chatId as string | undefined;
+        if (!ivChatId || !ivSessionData) return toolError("NOT_FOUND", "No active conversation to start the interview flow in");
+        const { startInterviewFlow } = await import("../agents/interviewFlow");
+        const ivResult = await startInterviewFlow(phone as string, ivChatId, ivSessionData as any, {
+          caregiverId: caregiverId as string,
+          ...(applicationId ? { applicationId: applicationId as string } : {}),
+        });
+        if (!ivResult.started) {
+          return {
+            success: false, reason: ivResult.reason ?? "failed_to_start",
+            instruction: "The family has already been told what went wrong (or asked who to interview) — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family to start the interview flow. Do not send anything else this turn beyond a brief acknowledgment, if anything — the flow now owns the conversation until it finishes.",
+        };
       }
 
       case "start_booking_flow": {

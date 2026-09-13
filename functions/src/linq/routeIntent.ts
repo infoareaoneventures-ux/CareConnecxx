@@ -11,6 +11,7 @@ const hasAppointmentId = (v: unknown): boolean =>
 import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../utils/sessionState";
+import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
@@ -1487,12 +1488,28 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const pendingMatchesSetAt = sessionData.pendingMatchesSetAt as string | undefined;
       const pendingMatchesFresh = !!pendingMatches && pendingMatches.length > 0 &&
         (!pendingMatchesSetAt || pendingMatchesSetAt > new Date(Date.now() - PENDING_MATCHES_TTL_MS).toISOString());
-      if (!pendingMatchesFresh) {
+      // 2026-09-13 live incident: "can you setup interview with Basra Yousuf"
+      // (a caregiver just shown via find_nearby_caregivers, which only writes
+      // shownCaregiverIds — never pendingMatches) classified as FIND_CAREGIVER
+      // and sailed past pendingMatchesFresh, restarting a brand-new matching/
+      // intake flow ("how often would the help be needed...") instead of
+      // letting the agent recognize the named caregiver it already knows
+      // about and call schedule_interview. shownCaregiverIds has no freshness
+      // timestamp (it only ever grows via arrayUnion), so treat any caregiver
+      // already shown this session the same as fresh pendingMatches — the
+      // agent still has find_nearby_caregivers itself and can kick off a real
+      // new search when that's actually what's being asked for; it just
+      // shouldn't be pre-empted by this deterministic shortcut once there's
+      // already caregiver context in play.
+      const shownCaregiverIds  = sessionData.shownCaregiverIds as Array<string> | undefined;
+      const hasShownCaregivers = !!shownCaregiverIds && shownCaregiverIds.length > 0;
+      if (!pendingMatchesFresh && !hasShownCaregivers) {
         const { runMatchingForClient } = await import("../agents/matchingAgent");
         await runMatchingForClient(phone, chatId, sessionData, sessionData);
         return;
       }
-      // Fresh pendingMatches — fall through to normal routing / runQaAgent below.
+      // Fresh pendingMatches, or a caregiver already shown this session —
+      // fall through to normal routing / runQaAgent below.
     }
 
     // ── Healthcare intents — provider search, appointment booking, Rx ────────
@@ -1545,8 +1562,23 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // staged. A message that is ENTIRELY just a date or time cannot carry a
     // real correction's explanatory language, so skip this branch for that
     // narrow shape regardless of hasActiveSmsFlow.
+    // 2026-09-12: same misfire, a THIRD shape — the family corrected which
+    // caregiver a PENDING confirmation (e.g. schedule_interview's "confirm
+    // Imran?") referred to ("no i said basra"). handlePendingApprovals
+    // (webhooks.ts) already judged this reply too complex to be a clean
+    // YES/NO and fell through here so the full agent could use the pending
+    // action's context to fix the mistake — but FACT_CORRECTION intercepted
+    // first and tried to stage "basra" as a corrected MEMORY FACT about the
+    // care situation, producing the nonsensical "I've updated that" ack
+    // instead of ever touching the still-awaiting pending action. A reply
+    // while a confirmation is awaiting is a correction to THAT action, never
+    // a stored fact — skip this branch whenever one exists.
+    const pendingDuringFactCheck = intent === "FACT_CORRECTION"
+      ? await getLatestPending(phone).catch(() => null)
+      : null;
     if (
       intent === "FACT_CORRECTION" &&
+      !pendingDuringFactCheck &&
       !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
       !isBareDateOrTimeAnswer(text)
     ) {

@@ -2312,6 +2312,40 @@ export async function runQaAgent(params: {
         `If you don't yet have their preferred date and time, ask for it first, then call schedule_interview. ` +
         `If it's unclear which of these caregivers they mean, ask them to confirm by name or number before scheduling. ` +
         `Do NOT run find_replacement_caregivers again just because they replied with a time or a name from this list.`;
+    } else {
+      // 2026-09-13 live incident: find_nearby_caregivers (answering "how many
+      // caregivers near me") writes shownCaregiverIds, never pendingMatches —
+      // so this block used to stay silent and the agent had NO id for a
+      // caregiver it had just named in its own reply, then told the family
+      // "I don't have that ID in this thread yet" for someone it had named
+      // seconds earlier. Fall back to shownCaregiverIds (bounded to the most
+      // recent 30, same cap resolveCaregiverForInterview's name-fallback
+      // uses) so the family can still say "send Basra's profile" or "set up
+      // an interview with her" right after being told who's nearby, not just
+      // after the separate formal "here are your matches" flow.
+      const shownCaregiverIds = (session as Record<string, unknown> | undefined)?.shownCaregiverIds as
+        | string[]
+        | undefined;
+      if (shownCaregiverIds && shownCaregiverIds.length) {
+        const ids = shownCaregiverIds.slice(-30);
+        const shownSnap = await db.collection("publicCaregiverProfiles")
+          .where(admin.firestore.FieldPath.documentId(), "in", ids)
+          .get().catch(() => null);
+        const list = (shownSnap?.docs ?? [])
+          .map((d, i) => {
+            const cg = d.data() ?? {};
+            const nm = (cg.name as string) || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Caregiver";
+            const rate = cg.hourlyRate as number | undefined;
+            return `  ${i + 1}. ${nm}${rate ? ` ($${rate}/hr)` : ""} — caregiverId="${d.id}"`;
+          })
+          .join("\n");
+        if (list) {
+          systemPrompt +=
+            `\n\nCAREGIVERS YOU'VE SHOWN THIS FAMILY THIS SESSION:\n${list}\n` +
+            `If the family names one of them, asks to meet/interview them, or asks you to resend their profile, use that caregiverId (schedule_interview / resend_caregiver_profile) — do NOT say you don't have their id or start a new search. ` +
+            `If it's unclear which of these they mean, ask them to confirm by name before acting.`;
+        }
+      }
     }
   }
 

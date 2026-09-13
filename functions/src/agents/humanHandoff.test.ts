@@ -187,6 +187,22 @@ describe("U7: current-inbound evidence block (R19)", () => {
     expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("skepticism is not support");
     expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("never one that merely asks about or challenges");
   });
+
+  // 2026-09-12 (live-caught): asked "who's on my care team", Evia claimed a
+  // caregiver (deleted from booking_requests, with no appointments record
+  // either — genuinely no longer any relationship on file) was still "your
+  // only care team member" — apparently supported only by RECENT
+  // CONVERSATION (that name had been mentioned a few turns earlier as a
+  // shown/discussed candidate), with no tool actually called to check
+  // current membership. The RECENT-CONVERSATION-insufficient exception
+  // already existed for schedule/availability claims (2026-09-06) but never
+  // covered care-team/role claims (relationship_identity) — the exact same
+  // gap shape, one more category.
+  it("the RECENT-CONVERSATION-insufficient exception also covers who currently holds a care-team role, not just schedule/availability", () => {
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("who is on the family's care team");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("A caregiver merely SHOWN or DISCUSSED earlier in this conversation");
+    expect(HANDOFF_GROUNDING_SYSTEM_PROMPT).toContain("NOT the same claim as that caregiver currently being an");
+  });
 });
 
 describe("U7: parseGroundingVerdictTyped (strict, R19)", () => {

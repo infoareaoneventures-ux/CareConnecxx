@@ -98,6 +98,8 @@ export type AuditEventType =
   | "senior_profile_archived"
   | "family_member_updated"
   | "interview_cancelled"
+  | "interview_rescheduled"
+  | "interview_reschedule_accepted"
   | "memory_file_deleted"
   | "cash_payment_confirmed"
   // Memory-grounding U4b: durable completion records for cross-store fact

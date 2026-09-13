@@ -139,8 +139,12 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.caregiverName || 'Your caregiver'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
           });
-          await notifyClientByText(after.clientId,
-            `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+          // reschedule_interview (mcp/server.ts) already texts this direction
+          // itself and stamps rescheduledViaAgent — skip to avoid a double text.
+          if (!after.rescheduledViaAgent) {
+            await notifyClientByText(after.clientId,
+              `${after.caregiverName || 'Your caregiver'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+          }
         } else if (after.caregiverId) {
           await addNotification(after.caregiverId, {
             type: 'interview_rescheduled',
@@ -148,8 +152,10 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.clientName || 'The family'} proposed a new time: ${displayTime}. Please confirm.`,
             data: { interviewId: context.params.interviewId },
           });
-          await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+          if (!after.rescheduledViaAgent) {
+            await notifyCaregiverByText(after.caregiverId,
+              `${after.clientName || 'The family'} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`);
+          }
         }
         return;
       }
@@ -177,8 +183,14 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
           });
-          await notifyCaregiverByText(after.caregiverId,
-            `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`);
+          // accept_interview_reschedule (mcp/server.ts) already texts this
+          // direction itself and stamps acceptedRescheduleViaAgent — skip to
+          // avoid a double text. rescheduledViaAgent itself is already
+          // cleared by the accept write, so it can't be checked here.
+          if (!after.acceptedRescheduleViaAgent) {
+            await notifyCaregiverByText(after.caregiverId,
+              `${after.clientName || 'The family'} confirmed the new interview time: ${displayTime}.`);
+          }
         } else if (after.clientId) {
           await addNotification(after.clientId, {
             type: 'interview_rescheduled',
@@ -186,8 +198,10 @@ export const onVideoInterviewWrite = functions.firestore
             body: `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`,
             data: { interviewId: context.params.interviewId },
           });
-          await notifyClientByText(after.clientId,
-            `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`);
+          if (!after.acceptedRescheduleViaAgent) {
+            await notifyClientByText(after.clientId,
+              `${after.caregiverName || 'Your caregiver'} confirmed the new interview time: ${displayTime}.`);
+          }
         }
         return;
       }

@@ -1,12 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // 2026-09-09: a name-fallback lookup finding MORE than one caregiver this
-// family was shown (requestVideoInterview's own "ambiguous" code) used to
-// collapse into the exact same flat "not available" tool error as a genuine
-// no-match, leaving the agent nothing to ask the family other than a dead
-// end. This exercises createVideoInterviewRequestForTool's own mapping of
-// that code — requestVideoInterview itself (the lookup logic + its
-// candidates) is covered independently in videoInterviewRequest.test.ts.
+// family was shown (resolveCaregiverForInterview's own "ambiguous" code) used
+// to collapse into the exact same flat "not available" tool error as a
+// genuine no-match, leaving the agent nothing to ask the family other than a
+// dead end. This exercises createVideoInterviewRequestForTool's own mapping
+// of that code — the lookup logic + its candidates is covered independently
+// in videoInterviewRequest.test.ts.
+//
+// 2026-09-12: caregiver resolution now runs on the PROPOSE step (before the
+// family confirms), via resolveCaregiverForInterview directly — not inside
+// requestVideoInterview, which only runs on the confirmed commit. Mock the
+// resolution step, not the commit, to exercise the code path these tests
+// actually hit on a single (unconfirmed) call.
 
 const hoisted = vi.hoisted(() => {
   const docState = new Map<string, any>();
@@ -40,26 +46,27 @@ vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().moc
 import { VideoInterviewRequestError } from "../../agents/videoInterviewRequest";
 vi.mock("../../agents/videoInterviewRequest", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../agents/videoInterviewRequest")>();
-  return { ...actual, requestVideoInterview: vi.fn() };
+  return { ...actual, resolveCaregiverForInterview: vi.fn(), requestVideoInterview: vi.fn() };
 });
-import { requestVideoInterview } from "../../agents/videoInterviewRequest";
+import { resolveCaregiverForInterview } from "../../agents/videoInterviewRequest";
 import { handleToolCall } from "../server";
 
 const CLIENT = "client_1";
 const baseInput = {
   clientId: CLIENT, caregiverId: "Alice Rivera",
   preferredDate: "2026-09-01", preferredTime: "10:00",
+  phone: "+15551234567",
 };
 
 describe("schedule_interview — ambiguous name-fallback surfaces candidates instead of a dead end", () => {
   beforeEach(() => {
     hoisted.reset();
-    vi.mocked(requestVideoInterview).mockReset();
+    vi.mocked(resolveCaregiverForInterview).mockReset();
     hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "active" });
   });
 
   it("returns the tied candidates and an instruction to ask, instead of a flat error", async () => {
-    vi.mocked(requestVideoInterview).mockRejectedValueOnce(
+    vi.mocked(resolveCaregiverForInterview).mockRejectedValueOnce(
       new VideoInterviewRequestError(
         "ambiguous",
         'This family has been shown 2 caregivers named "Alice Rivera" — ask which one they mean, then retry with the correct caregiverId.',
@@ -78,7 +85,7 @@ describe("schedule_interview — ambiguous name-fallback surfaces candidates ins
   });
 
   it("a genuine no-match still returns the plain NOT_FOUND tool error, unchanged", async () => {
-    vi.mocked(requestVideoInterview).mockRejectedValueOnce(
+    vi.mocked(resolveCaregiverForInterview).mockRejectedValueOnce(
       new VideoInterviewRequestError("failed-precondition", "Caregiver is not available for interviews"),
     );
 

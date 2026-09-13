@@ -20,15 +20,15 @@ describe("U9 financial-flow gating", () => {
     expect(isHighRisk("review_shift_hours", { action: "escalate" })).toBe(false);
   });
 
-  it("builds an approval-quality refund preview (amount + target, not generic)", () => {
-    const p = buildActionPreview("create_refund_request", { amount: 240, invoiceId: "inv1" });
+  it("builds an approval-quality refund preview (amount + target, not generic)", async () => {
+    const p = await buildActionPreview("create_refund_request", { amount: 240, invoiceId: "inv1" });
     expect(p).toContain("$240");
     expect(p).toContain("inv1");
     expect(p).not.toContain("irreversible");
   });
 
-  it("builds an approval-quality timesheet preview (decision + hours + caregiver)", () => {
-    const p = buildActionPreview("review_shift_hours", { action: "approve", hours: 6, amount: 132, caregiverName: "Jane" });
+  it("builds an approval-quality timesheet preview (decision + hours + caregiver)", async () => {
+    const p = await buildActionPreview("review_shift_hours", { action: "approve", hours: 6, amount: 132, caregiverName: "Jane" });
     expect(p).toContain("approve");
     expect(p).toContain("6h");
     expect(p).toContain("Jane");

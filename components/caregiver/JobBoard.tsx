@@ -437,6 +437,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
             await db.collection('video_interviews').doc(iv.id).update({
                 reschedulePendingTime: scheduledDateTime.toISOString(),
                 rescheduledBy: 'caregiver',
+                // Clears a stale marker a PRIOR accept cycle (via Evia's
+                // accept_interview_reschedule tool) may have left behind —
+                // otherwise it would wrongly suppress the notification
+                // trigger's own SMS when THIS new proposal is later accepted
+                // here on the site.
+                acceptedRescheduleViaAgent: firebase.firestore.FieldValue.delete(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             setRescheduleOpenId(null);
@@ -461,6 +467,12 @@ export const JobBoard: React.FC<JobBoardProps> = ({ onShowToast, profile, onJobA
                 status: 'accepted',
                 reschedulePendingTime: firebase.firestore.FieldValue.delete(),
                 rescheduledBy: firebase.firestore.FieldValue.delete(),
+                // onVideoInterviewLinkEnsure (interviewLinkTrigger.ts) skips
+                // re-scheduling the 1h-before reminder once remindersScheduledAt
+                // is already set from the original accept — without clearing it
+                // here, a rescheduled interview keeps its reminder pointed at
+                // the OLD time.
+                remindersScheduledAt: firebase.firestore.FieldValue.delete(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             onShowToast('Interview time confirmed', 'success');

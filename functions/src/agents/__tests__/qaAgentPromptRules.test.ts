@@ -60,13 +60,20 @@ describe("client KNOWLEDGE BOUNDARY — people extension (R5)", () => {
   });
 });
 
-// 2026-09-09 live incident: rescheduling an interview called schedule_interview
-// with caregiverId: "unknown" — a placeholder, never resolved via a real
-// lookup — which failed with "Caregiver is not available for interviews".
-describe("reschedule instruction requires a real caregiverId lookup first (2026-09-09)", () => {
-  it("tells the model to call list_interviews for the real caregiverId before schedule_interview, never guess or use a placeholder", () => {
-    expect(clientPrompt).toContain("FIRST call list_interviews to get the caregiver's real caregiverId");
-    expect(clientPrompt).toContain('never pass a placeholder like "unknown"');
+// 2026-09-12: the old reschedule instruction (cancel_interview + schedule_interview)
+// caused a real 2026-09-09 incident (schedule_interview called with a
+// caregiverId: "unknown" placeholder) precisely because it required looking up
+// the OTHER party's real id to book a brand-new interview. The new
+// reschedule_interview/accept_interview_reschedule tools move the SAME interview
+// in place — no second interview is created, so there is no caregiverId to guess.
+describe("reschedule instruction uses the in-place reschedule tools, not cancel+rebook (2026-09-12)", () => {
+  it("tells the model to use reschedule_interview on the same interview, never cancel_interview + schedule_interview", () => {
+    expect(clientPrompt).toContain("use reschedule_interview, passing the SAME interviewId");
+    expect(clientPrompt).toContain("Do NOT use cancel_interview + schedule_interview for this anymore");
+  });
+  it("tells the model accept_interview_reschedule confirms a pending proposal instead of re-proposing", () => {
+    expect(clientPrompt).toContain("call accept_interview_reschedule");
+    expect(clientPrompt).toContain("do NOT call reschedule_interview again for an acceptance");
   });
 });
 

@@ -81,6 +81,15 @@ const ALWAYS_CONFIRM = new Set<string>([
   // this module's own approvalHandler intercepts the reply before either can
   // go wrong.
   "cancel_interview",
+  // NOTE: schedule_interview does NOT go through this generic upfront gate —
+  // it needs its own access-gate/ambiguous-name/NOT_FOUND validation to run
+  // BEFORE asking for confirmation (this gate intercepts before ANY
+  // tool-specific code runs, which would mask those specific errors behind a
+  // generic PERMISSION_DENIED). See schedule_interview's own confirm-before-
+  // commit logic in mcp/server.ts, built for the same 2026-09-12 incident
+  // this gate protects against elsewhere (wrong caregiver id despite correct
+  // context) — just implemented locally so existing validation still runs
+  // first, unchanged.
 ]);
 
 // Care-plan fields that are harmless note-like additions — free-text context
@@ -126,11 +135,39 @@ export function isHighRisk(toolName: string, toolInput: Record<string, unknown>)
   return pred ? pred(toolInput) : false;
 }
 
+// Resolves a caregiverId to a real name for a confirmation preview — reused
+// across every tool where Evia picks a specific caregiver by id and the
+// family needs to SEE who that resolved to before anything commits. This is
+// the actual safety net for a live-caught bug (2026-09-12): the family asked
+// to interview "Basra Yousuf" from a list Evia had just shown them (each
+// entry correctly paired with its real id in Evia's own context), but the
+// model's schedule_interview call carried a DIFFERENT caregiver's id anyway —
+// a tool-argument selection mistake, not a data bug. Showing the family the
+// real resolved name before committing catches this even when the model's
+// own reasoning slips, the same way cancel_interview's enforced confirmation
+// already catches a forgotten/skipped confirmation.
+async function resolveCaregiverNameForPreview(caregiverId: unknown): Promise<string> {
+  if (typeof caregiverId !== "string" || !caregiverId) return "an unspecified caregiver";
+  try {
+    const snap = await db.collection("publicCaregiverProfiles").doc(caregiverId).get();
+    const name = snap.data()?.name as string | undefined;
+    return name || `caregiver ${caregiverId}`;
+  } catch {
+    return `caregiver ${caregiverId}`;
+  }
+}
+
 // Build a short human-readable preview of the action so support / debugging
-// can see what was proposed without parsing the raw input JSON. Falls back
-// to a generic summary when no special-cased shape applies.
-export function buildActionPreview(toolName: string, toolInput: Record<string, unknown>): string {
+// can see what was proposed without parsing the raw input JSON, AND so the
+// family sees exactly who/what is about to happen before confirming. Falls
+// back to a generic summary when no special-cased shape applies.
+export async function buildActionPreview(toolName: string, toolInput: Record<string, unknown>): Promise<string> {
   switch (toolName) {
+    case "schedule_interview": {
+      const name = await resolveCaregiverNameForPreview(toolInput.caregiverId);
+      const when = [toolInput.preferredDate, toolInput.preferredTime].filter(Boolean).join(" at ");
+      return `Schedule an interview with ${name}${when ? ` for ${when}` : ""}`;
+    }
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
     case "set_subscription_status":
@@ -186,7 +223,7 @@ export async function proposePendingAction(params: {
     userId:     params.userId,
     toolName:   params.toolName,
     toolInput:  params.toolInput,
-    preview:    buildActionPreview(params.toolName, params.toolInput),
+    preview:    await buildActionPreview(params.toolName, params.toolInput),
     proposedAt: new Date(now).toISOString(),
     expiresAt:  new Date(now + PENDING_ACTION_TTL_MS).toISOString(),
     status:     "awaiting",

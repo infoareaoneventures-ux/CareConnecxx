@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { runMatchingForClient } from "../agents/matchingAgent";
-import { requestVideoInterview, VideoInterviewRequestError } from "../agents/videoInterviewRequest";
+import { requestVideoInterview, VideoInterviewRequestError, resolveCaregiverForInterview } from "../agents/videoInterviewRequest";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
 import {
   readMemoryFile,
@@ -1490,7 +1490,10 @@ export const MCP_TOOLS: McpTool[] = [
       "The website's modal also offers interview type (video/phone/in-person), an optional related job post, and " +
       "optional notes — mention these are options if it fits naturally (e.g. after they name a caregiver: \"video, " +
       "phone, or in person? And anything you'd like me to note for the interview?\"), but never make them a required " +
-      "extra question — video with no notes is a completely normal default, same as leaving the site's fields blank.",
+      "extra question — video with no notes is a completely normal default, same as leaving the site's fields blank. " +
+      "The platform requires and enforces its own confirmation before this actually executes (it will show the " +
+      "family the exact caregiver name it resolved and ask them to confirm) — do NOT ask the family to confirm the " +
+      "caregiver a second time yourself first, just call it once you have the caregiverId and date/time.",
     input_schema: {
       type: "object",
       properties: {
@@ -2322,11 +2325,14 @@ export const MCP_TOOLS: McpTool[] = [
     name: "list_interviews",
     description:
       "List scheduled/pending video or phone interviews for the caller. Pass clientId for a family's interviews or " +
-      "caregiverId for a caregiver's. Use before cancel_interview or when someone asks 'when is my interview?'. " +
-      "Each result's scheduledTimeLocal is already in the family's local time (e.g. 'Monday, September 7 at 5:00 PM') " +
-      "— always read dates/times from scheduledTimeLocal, never compute them yourself from the raw scheduledTime " +
-      "(a UTC timestamp); converting several of these by hand is exactly how a real reply once spliced one " +
-      "interview's real date onto a different interview's real time.",
+      "caregiverId for a caregiver's. Use before cancel_interview/reschedule_interview or when someone asks 'when " +
+      "is my interview?'. Each result's scheduledTimeLocal is already in the family's local time (e.g. 'Monday, " +
+      "September 7 at 5:00 PM') — always read dates/times from scheduledTimeLocal, never compute them yourself " +
+      "from the raw scheduledTime (a UTC timestamp); converting several of these by hand is exactly how a real " +
+      "reply once spliced one interview's real date onto a different interview's real time. If " +
+      "reschedulePendingTimeLocal is set, someone (rescheduledBy) has proposed moving THIS interview to that time " +
+      "— the real scheduledTime is still what's actually confirmed until accept_interview_reschedule is called by " +
+      "the OTHER party (never the same party named in rescheduledBy).",
     input_schema: {
       type: "object",
       properties: {
@@ -2358,7 +2364,7 @@ export const MCP_TOOLS: McpTool[] = [
       "Call this as soon as they've expressed clear intent to cancel (e.g. 'cancel it', 'yes') — do NOT ask them " +
       "to confirm again yourself first. The platform already requires and enforces an explicit confirmation before " +
       "this executes, so asking twice just makes them confirm the same thing a second time. " +
-      "To propose a new time instead, caregivers should use respond_to_interview_request.",
+      "To move the interview to a different time instead of cancelling, use reschedule_interview.",
     input_schema: {
       type: "object",
       properties: {
@@ -2366,6 +2372,45 @@ export const MCP_TOOLS: McpTool[] = [
         clientId:    { type: "string", description: "The client's user ID (when the family cancels)" },
         caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver cancels)" },
         reason:      { type: "string", description: "Optional short reason passed to the other side" },
+      },
+      required: ["interviewId"],
+    },
+  },
+  {
+    name: "reschedule_interview",
+    description:
+      "Propose a new date/time for an already-scheduled interview (status requested or accepted) — the SAME " +
+      "interview record, no cancellation, no new doc, same video call link. Matches the website's own Reschedule / " +
+      "Propose different time button exactly. This only PROPOSES the new time — the real scheduled time does not " +
+      "change until the other party confirms via accept_interview_reschedule. Use this instead of cancelling and " +
+      "calling schedule_interview again, which loses the interview's history and sends a duplicate request. If the " +
+      "other party already has a proposal pending on this interview, calling this again replaces it with a " +
+      "counter-proposal (mirrors the website's 'Propose different time').",
+    input_schema: {
+      type: "object",
+      properties: {
+        interviewId: { type: "string", description: "The video_interviews document ID" },
+        clientId:    { type: "string", description: "The client's user ID (when the family proposes)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver proposes)" },
+        newDate:     { type: "string", description: "Proposed new date, YYYY-MM-DD" },
+        newTime:     { type: "string", description: "Proposed new time, HH:MM (24h)" },
+      },
+      required: ["interviewId", "newDate", "newTime"],
+    },
+  },
+  {
+    name: "accept_interview_reschedule",
+    description:
+      "Confirm the OTHER party's pending proposed interview time (sent via reschedule_interview) — this is the " +
+      "moment the interview's real scheduled time actually changes. Use list_interviews first if it's unclear " +
+      "whether a proposal is pending or who proposed it — you cannot accept your own proposal, only the other " +
+      "party's.",
+    input_schema: {
+      type: "object",
+      properties: {
+        interviewId: { type: "string", description: "The video_interviews document ID" },
+        clientId:    { type: "string", description: "The client's user ID (when the family accepts)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (when the caregiver accepts)" },
       },
       required: ["interviewId"],
     },
@@ -2971,6 +3016,78 @@ export function isReadOnlyTool(name: string): boolean {
 // (publicCaregiverProfiles), same job-ownership check, same 5/day rate
 // limit. Evia used to have its own independent write here with none of
 // those checks (2026-09-06 parity fix).
+// Shared by reschedule_interview / accept_interview_reschedule: interviews
+// live in two collections (video_interviews for web/MCP, interviews for the
+// older Evia-SMS-only flow), mirrored together via linkedInterviewId — same
+// twin-resolution cancel_interview above uses, factored out since these two
+// new tools need it twice each (once here, once in accept).
+async function resolveInterviewWithTwin(interviewId: string): Promise<{
+  primary: FirebaseFirestore.DocumentSnapshot;
+  iv:      FirebaseFirestore.DocumentData;
+  twin:    FirebaseFirestore.DocumentSnapshot | null;
+} | null> {
+  let primary = await db.collection("video_interviews").doc(interviewId).get();
+  if (!primary.exists) primary = await db.collection("interviews").doc(interviewId).get();
+  if (!primary.exists) return null;
+  const iv = primary.data()!;
+  let twin: FirebaseFirestore.DocumentSnapshot | null = null;
+  if (primary.ref.parent.id === "video_interviews") {
+    if (typeof iv.linkedInterviewId === "string" && iv.linkedInterviewId) {
+      const s = await db.collection("interviews").doc(iv.linkedInterviewId).get().catch(() => null);
+      twin = s?.exists ? s : null;
+    }
+  } else {
+    const mirror = await db.collection("video_interviews")
+      .where("linkedInterviewId", "==", interviewId)
+      .limit(1)
+      .get()
+      .catch(() => null);
+    twin = mirror && !mirror.empty ? mirror.docs[0] : null;
+  }
+  return { primary, iv, twin };
+}
+
+// Shared error mapping for a VideoInterviewRequestError thrown either by the
+// standalone resolve-only step (propose path) or by requestVideoInterview's
+// full commit (confirmed path) — same shape either way.
+function mapVideoInterviewRequestError(
+  err: unknown,
+  ctx: { clientId: string; caregiverId: string; scheduledTime: string; jobId?: string; applicationId?: string },
+): Record<string, unknown> {
+  if (err instanceof VideoInterviewRequestError) {
+    // 2026-09-09: only a toolErrors COUNT was ever visible in turn metrics —
+    // the actual reason had to be reconstructed from screenshots + guesswork
+    // live-debugging a real failure. Log the real code/message server-side
+    // so the next one is diagnosable directly from Cloud Functions logs.
+    console.error("schedule_interview: caregiver resolution failed", {
+      code: err.code, message: err.message, ...ctx,
+    });
+    // 2026-09-09: a name-fallback lookup matching MORE than one caregiver
+    // this family was shown used to collapse into the same flat "not
+    // available" error as a genuine no-match — leaving the agent nothing
+    // to ask the family other than a dead end. Surface the tied candidates
+    // (id + rate, the same shape the agent already shows families for
+    // matches) so it can ask which one, then retry with the real id.
+    if (err.code === "ambiguous") {
+      return {
+        success: false,
+        ambiguous: true,
+        candidates: err.candidates ?? [],
+        message: err.message,
+        note: "Do not guess which one they mean. Ask the family to distinguish between these caregivers (e.g. by their rate, or how you discussed each of them), then call this tool again with the correct caregiverId — always their real id from the candidates list, never their name.",
+      };
+    }
+    const codeMap: Record<string, ToolErrorCode> = {
+      "invalid-argument":     "INVALID_INPUT",
+      "failed-precondition":  "NOT_FOUND",
+      "permission-denied":    "PERMISSION_DENIED",
+      "resource-exhausted":   "RATE_LIMITED",
+    };
+    return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
+  }
+  throw err;
+}
+
 async function createVideoInterviewRequestForTool(params: {
   clientId: string; caregiverId: string; applicationId?: string;
   preferredDate: string; preferredTime: string; interviewType?: string;
@@ -2978,12 +3095,59 @@ async function createVideoInterviewRequestForTool(params: {
   /** Resolves any open "interview" commitment (interviewPromiseNet.ts) the
    *  instant a real schedule_interview call actually succeeds. */
   phone?: string;
+  /** Set by the MCP gate's confirmed re-dispatch — already validated against
+   *  the stored pending action (tool name, phone, AND this exact input) by
+   *  handleToolCall before execution ever reaches here. */
+  confirmedActionId?: string;
+  /** True for callers where the caregiverId is already deterministically
+   *  known — not the model picking a name off a rendered list — so the
+   *  confirm-the-real-name checkpoint below has nothing to protect against.
+   *  respond_to_job_application sets this: its caregiverId comes straight
+   *  from the specific job_applications doc being processed, never a name
+   *  the model has to correctly match. Only schedule_interview (the model
+   *  picks a caregiverId itself, from a list it saw earlier) needs the gate. */
+  skipConfirmationGate?: boolean;
 }): Promise<Record<string, unknown>> {
-  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, jobId, notes, phone } = params;
+  const { clientId, caregiverId, applicationId, preferredDate, preferredTime, interviewType, jobId, notes, phone, confirmedActionId, skipConfirmationGate } = params;
   const { parseScheduledTimeMs } = await import("../utils/scheduledTime");
   const startMs = parseScheduledTimeMs(`${preferredDate}T${preferredTime}:00`);
   if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "preferredDate/preferredTime could not be parsed");
   const scheduledTime = new Date(startMs).toISOString();
+
+  // 2026-09-12 live incident: the family asked to interview "Basra Yousuf" —
+  // named from a list Evia had just shown them, each entry correctly paired
+  // with its real caregiverId in Evia's own context — but the model's
+  // schedule_interview call carried a DIFFERENT caregiver's id anyway. The
+  // data was right; the model's own tool-argument selection was not.
+  // Deliberately NOT routed through the generic ALWAYS_CONFIRM gate (which
+  // intercepts before ANY tool-specific validation runs, masking
+  // IDENTITY_REQUIRED/MEMBERSHIP_REQUIRED/INVALID_INPUT/ambiguous/NOT_FOUND
+  // behind a flat PERMISSION_DENIED) — instead, resolve the caregiver FIRST
+  // (identical validation to before, same errors, unchanged), and only once
+  // that succeeds, show the family the REAL resolved name and require an
+  // explicit confirmation before the interview actually gets created.
+  if (!skipConfirmationGate && !confirmedActionId) {
+    let resolved;
+    try {
+      resolved = await resolveCaregiverForInterview(caregiverId, phone);
+    } catch (err) {
+      return mapVideoInterviewRequestError(err, { clientId, caregiverId, scheduledTime, jobId, applicationId });
+    }
+    if (!phone) {
+      // Mirrors the generic gate's own "no phone, can't confirm" refusal.
+      return toolError("PERMISSION_DENIED", "This action requires explicit confirmation and cannot be executed without an SMS session.");
+    }
+    const action = await proposePendingAction({
+      phone,
+      userId: clientId,
+      toolName: "schedule_interview",
+      toolInput: {
+        clientId, caregiverId: resolved.resolvedCaregiverId, applicationId, jobId, notes, phone,
+        preferredDate, preferredTime, interviewType,
+      },
+    });
+    return buildPendingActionStub(action);
+  }
 
   try {
     const interview = await requestVideoInterview({
@@ -3004,39 +3168,7 @@ async function createVideoInterviewRequestForTool(params: {
       note: "The interview request has been sent to the caregiver — I'll share the video link with both of you the moment they confirm. Do not tell the family a link exists yet.",
     };
   } catch (err) {
-    if (err instanceof VideoInterviewRequestError) {
-      // 2026-09-09: only a toolErrors COUNT was ever visible in turn metrics —
-      // the actual reason had to be reconstructed from screenshots + guesswork
-      // live-debugging a real failure. Log the real code/message server-side
-      // so the next one is diagnosable directly from Cloud Functions logs.
-      console.error("schedule_interview: requestVideoInterview failed", {
-        code: err.code, message: err.message, clientId, caregiverId, scheduledTime,
-        jobId: jobId ?? null, applicationId: applicationId ?? null,
-      });
-      // 2026-09-09: a name-fallback lookup matching MORE than one caregiver
-      // this family was shown used to collapse into the same flat "not
-      // available" error as a genuine no-match — leaving the agent nothing
-      // to ask the family other than a dead end. Surface the tied candidates
-      // (id + rate, the same shape the agent already shows families for
-      // matches) so it can ask which one, then retry with the real id.
-      if (err.code === "ambiguous") {
-        return {
-          success: false,
-          ambiguous: true,
-          candidates: err.candidates ?? [],
-          message: err.message,
-          note: "Do not guess which one they mean. Ask the family to distinguish between these caregivers (e.g. by their rate, or how you discussed each of them), then call this tool again with the correct caregiverId — always their real id from the candidates list, never their name.",
-        };
-      }
-      const codeMap: Record<string, ToolErrorCode> = {
-        "invalid-argument":     "INVALID_INPUT",
-        "failed-precondition":  "NOT_FOUND",
-        "permission-denied":    "PERMISSION_DENIED",
-        "resource-exhausted":   "RATE_LIMITED",
-      };
-      return toolError(codeMap[err.code] ?? "INVALID_INPUT", err.message);
-    }
-    throw err;
+    return mapVideoInterviewRequestError(err, { clientId, caregiverId, scheduledTime, jobId, applicationId });
   }
 }
 
@@ -5621,6 +5753,10 @@ async function executeToolCall(
           phone: input.phone as string | undefined,
           preferredDate: preferredDate as string, preferredTime: preferredTime as string,
           interviewType: interviewType as string | undefined,
+          // caregiverId here is app.caregiverId — pulled straight from the
+          // specific application doc being processed, not a name the model
+          // picked off a list. No confirm-the-name checkpoint needed.
+          skipConfirmationGate: true,
         });
       }
 
@@ -6252,6 +6388,7 @@ async function executeToolCall(
         phone: input.phone as string | undefined,
         preferredDate: preferredDate as string, preferredTime: preferredTime as string,
         interviewType: interviewType as string | undefined,
+        confirmedActionId,
       });
     }
 
@@ -8499,6 +8636,12 @@ async function executeToolCall(
             callUrl:       iv.callUrl ?? null,
             proposedTime:  iv.proposedTime ?? null,
             applicationId: iv.applicationId ?? null,
+            // A pending reschedule proposal (reschedule_interview) — awaiting
+            // the OTHER party's accept_interview_reschedule. The real
+            // scheduledTime above is unchanged and still what's confirmed.
+            reschedulePendingTime:      iv.reschedulePendingTime ?? null,
+            reschedulePendingTimeLocal: scheduledTimeLocal(iv.reschedulePendingTime),
+            rescheduledBy:              iv.rescheduledBy ?? null,
           };
         }),
         ...smsSnap.docs.filter(d => !mirroredIds.has(d.id)).map(d => {
@@ -8642,6 +8785,189 @@ async function executeToolCall(
       }
       logAudit({ eventType: "interview_cancelled", userId: (cancelledBy === "caregiver" ? ciCaregiverId : ciClientId) as string, data: { source: "mcp:cancel_interview", interviewId: ciInterviewId, cancelledBy, notificationSent: notification.sent } }).catch(() => {});
       return { success: true, cancelled: true, interviewId: ciInterviewId, cancelledBy, notification };
+    }
+
+    // ── reschedule_interview ─────────────────────────────────────────────────
+    // Mirrors the website's own Reschedule / Propose different time button
+    // exactly (PostsPage.tsx / JobBoard.tsx, 2026-09-09): stores the proposal
+    // in reschedulePendingTime/rescheduledBy WITHOUT touching the real
+    // scheduledTime/status — those only change once accept_interview_reschedule
+    // is called by the OTHER party. Replaces the old cancel_interview +
+    // schedule_interview two-step, which lost the interview's history/link
+    // and sent the caregiver a duplicate request.
+    if (name === "reschedule_interview") {
+      const riInterviewId = input.interviewId as string | undefined;
+      const riClientId    = input.clientId as string | undefined;
+      const riCaregiverId = input.caregiverId as string | undefined;
+      const riNewDate     = input.newDate as string | undefined;
+      const riNewTime     = input.newTime as string | undefined;
+      if (!riInterviewId || !riNewDate || !riNewTime) {
+        return toolError("INVALID_INPUT", "interviewId, newDate, and newTime are required");
+      }
+
+      const resolved = await resolveInterviewWithTwin(riInterviewId);
+      if (!resolved) return toolError("NOT_FOUND", "Interview not found");
+      const { primary, iv, twin } = resolved;
+
+      const proposedBy = riCaregiverId && iv.caregiverId === riCaregiverId
+        ? "caregiver"
+        : riClientId && iv.clientId === riClientId
+          ? "client"
+          : null;
+      if (!proposedBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
+
+      if (iv.status !== "requested" && iv.status !== "accepted") {
+        return toolError("INVALID_INPUT", `Cannot reschedule a ${iv.status} interview`);
+      }
+
+      const startMs = parseScheduledTimeMs(`${riNewDate}T${riNewTime}:00`);
+      if (Number.isNaN(startMs)) return toolError("INVALID_INPUT", "newDate/newTime could not be parsed");
+      if (startMs <= Date.now()) return toolError("INVALID_INPUT", "The new time must be in the future");
+      const newScheduledTime = new Date(startMs).toISOString();
+      const displayTime = formatInterviewTime(startMs);
+
+      const proposalPatch = {
+        reschedulePendingTime: newScheduledTime,
+        rescheduledBy:         proposedBy,
+        // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
+        // text the counterpart — this tool already does it below.
+        rescheduledViaAgent:   true,
+        // A stale marker from a PRIOR accept cycle (on this same interview,
+        // rescheduled more than once) would otherwise wrongly suppress the
+        // trigger's own SMS on a future site-driven accept that has nothing
+        // to do with this tool.
+        acceptedRescheduleViaAgent: admin.firestore.FieldValue.delete(),
+        updatedAt:             nowIso,
+      };
+      await primary.ref.update(proposalPatch);
+      if (twin) await twin.ref.update(proposalPatch).catch(() => {});
+
+      // Notify whichever party did NOT propose this, following cancel_interview's
+      // own notify convention (trySend for caregivers, Linq session for clients).
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
+      if (proposedBy === "client") {
+        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          const { trySend } = await import("../utils/toolNotify");
+          const clName = (iv.clientName as string | undefined) ?? "The family";
+          notification = await trySend(cgPhone, `${clName} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`, "mcp:reschedule_interview");
+        }
+      } else {
+        const clientSess  = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
+        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
+        if (clientPhone) {
+          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
+          const cgName = (cgData?.name as string | undefined) ?? (iv.caregiverName as string | undefined) ?? "Your caregiver";
+          const { sendToPhone } = await import("../linq/client");
+          const sent = await sendToPhone(clientPhone, `${cgName} proposed a new interview time: ${displayTime}. Reply here to confirm or suggest another time.`)
+            .then(() => true)
+            .catch(() => false);
+          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
+        }
+      }
+
+      logAudit({
+        eventType: "interview_rescheduled",
+        userId:    (proposedBy === "caregiver" ? riCaregiverId : riClientId) as string,
+        data: { source: "mcp:reschedule_interview", interviewId: riInterviewId, proposedBy, notificationSent: notification.sent },
+      }).catch(() => {});
+
+      return {
+        success: true,
+        proposed: true,
+        interviewId: riInterviewId,
+        proposedBy,
+        newScheduledTime,
+        newScheduledTimeLocal: displayTime,
+        notification,
+        note: "This only proposes the new time — nothing is confirmed until the other party accepts. Do not tell them the interview has moved yet.",
+      };
+    }
+
+    // ── accept_interview_reschedule ──────────────────────────────────────────
+    // The moment the real scheduledTime actually changes — mirrors the
+    // website's Accept new time button. Also clears remindersScheduledAt so
+    // onVideoInterviewLinkEnsure (interviewLinkTrigger.ts) reprocesses and
+    // reschedules the 1h-before reminder for the NEW time (it otherwise skips
+    // re-processing once that field is already set from the original accept).
+    if (name === "accept_interview_reschedule") {
+      const arInterviewId = input.interviewId as string | undefined;
+      const arClientId    = input.clientId as string | undefined;
+      const arCaregiverId = input.caregiverId as string | undefined;
+      if (!arInterviewId) return toolError("INVALID_INPUT", "interviewId is required");
+
+      const resolved = await resolveInterviewWithTwin(arInterviewId);
+      if (!resolved) return toolError("NOT_FOUND", "Interview not found");
+      const { primary, iv, twin } = resolved;
+
+      const acceptedBy = arCaregiverId && iv.caregiverId === arCaregiverId
+        ? "caregiver"
+        : arClientId && iv.clientId === arClientId
+          ? "client"
+          : null;
+      if (!acceptedBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
+
+      if (!iv.reschedulePendingTime) {
+        return toolError("INVALID_INPUT", "There is no pending reschedule proposal on this interview");
+      }
+      if (iv.rescheduledBy === acceptedBy) {
+        return toolError("INVALID_INPUT", "You proposed this time yourself — waiting on the other party to accept it, not you");
+      }
+
+      const newScheduledTime = iv.reschedulePendingTime as string;
+      const acceptPatch = {
+        scheduledTime:         newScheduledTime,
+        status:                "accepted",
+        reschedulePendingTime: admin.firestore.FieldValue.delete(),
+        rescheduledBy:         admin.firestore.FieldValue.delete(),
+        rescheduledViaAgent:   admin.firestore.FieldValue.delete(),
+        acceptedRescheduleViaAgent: true,
+        remindersScheduledAt:  admin.firestore.FieldValue.delete(),
+        updatedAt:             nowIso,
+      };
+      await primary.ref.update(acceptPatch);
+      if (twin) await twin.ref.update(acceptPatch).catch(() => {});
+
+      const displayTime = formatInterviewTime(Date.parse(newScheduledTime));
+
+      // Notify whoever originally proposed it that their time is now confirmed.
+      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
+      if (acceptedBy === "caregiver") {
+        const clientSess  = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
+        const clientPhone = !clientSess.empty ? clientSess.docs[0].id : (iv.clientPhone as string | undefined);
+        if (clientPhone) {
+          const cgData = iv.caregiverId ? (await db.collection("caregivers").doc(iv.caregiverId as string).get()).data() : undefined;
+          const cgName = (cgData?.name as string | undefined) ?? (iv.caregiverName as string | undefined) ?? "Your caregiver";
+          const { sendToPhone } = await import("../linq/client");
+          const sent = await sendToPhone(clientPhone, `${cgName} confirmed the new interview time: ${displayTime}.`).then(() => true).catch(() => false);
+          notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
+        }
+      } else {
+        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
+        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        if (cgPhone) {
+          const { trySend } = await import("../utils/toolNotify");
+          const clName = (iv.clientName as string | undefined) ?? "The family";
+          notification = await trySend(cgPhone, `${clName} confirmed the new interview time: ${displayTime}.`, "mcp:accept_interview_reschedule");
+        }
+      }
+
+      logAudit({
+        eventType: "interview_reschedule_accepted",
+        userId:    (acceptedBy === "caregiver" ? arCaregiverId : arClientId) as string,
+        data: { source: "mcp:accept_interview_reschedule", interviewId: arInterviewId, acceptedBy, notificationSent: notification.sent },
+      }).catch(() => {});
+
+      return {
+        success: true,
+        accepted: true,
+        interviewId: arInterviewId,
+        acceptedBy,
+        newScheduledTime,
+        newScheduledTimeLocal: displayTime,
+        notification,
+      };
     }
 
     // ── delete_memory_file ──────────────────────────────────────────────────

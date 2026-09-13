@@ -50,6 +50,20 @@ const hoisted = vi.hoisted(() => {
     }),
   };
 
+  // Minimal doc store for publicCaregiverProfiles — only used by
+  // buildActionPreview's schedule_interview name-resolution lookup.
+  const caregiverProfiles = new Map<string, Record<string, unknown>>();
+  const caregiverProfilesCol = {
+    doc: vi.fn((id: string) => ({
+      get: vi.fn(async () => {
+        const data = caregiverProfiles.get(id);
+        return data
+          ? { exists: true, data: () => data }
+          : { exists: false, data: () => undefined };
+      }),
+    })),
+  };
+
   const firestore = () => ({
     collection: vi.fn((name: string) => {
       if (name === "pending_actions") {
@@ -57,6 +71,7 @@ const hoisted = vi.hoisted(() => {
         (col.where as any).mockClear();
         return col;
       }
+      if (name === "publicCaregiverProfiles") return caregiverProfilesCol;
       throw new Error(`unexpected collection: ${name}`);
     }),
     runTransaction: vi.fn(async (fn: any) => {
@@ -70,6 +85,7 @@ const hoisted = vi.hoisted(() => {
 
   return {
     firestore,
+    caregiverProfiles,
     seed: (entries: Array<[string, any]>) => {
       docs = new Map(entries);
       autoId = Math.max(0, ...entries.map(([k]) => parseInt(k.replace("pa_", ""), 10) || 0));
@@ -173,19 +189,39 @@ describe("isHighRisk", () => {
 });
 
 describe("buildActionPreview", () => {
-  it("produces human-readable previews for known tools", () => {
-    expect(buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
-    expect(buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
-    expect(buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
-    expect(buildActionPreview("manage_recurring_schedule", { action: "cancel", scheduleId: "sched_1" })).toContain("cancel recurring schedule sched_1");
+  it("produces human-readable previews for known tools", async () => {
+    expect(await buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
+    expect(await buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
+    expect(await buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
+    expect(await buildActionPreview("manage_recurring_schedule", { action: "cancel", scheduleId: "sched_1" })).toContain("cancel recurring schedule sched_1");
   });
 
-  it("falls back to a generic preview for unknown tools", () => {
-    expect(buildActionPreview("future_irreversible_tool", { foo: "bar" })).toBe("future_irreversible_tool (irreversible)");
+  it("falls back to a generic preview for unknown tools", async () => {
+    expect(await buildActionPreview("future_irreversible_tool", { foo: "bar" })).toBe("future_irreversible_tool (irreversible)");
   });
 
-  it("handles missing ID fields gracefully", () => {
-    expect(buildActionPreview("remove_family_member", {})).toBe("Remove family member ?");
+  it("handles missing ID fields gracefully", async () => {
+    expect(await buildActionPreview("remove_family_member", {})).toBe("Remove family member ?");
+  });
+
+  // 2026-09-12 live incident: schedule_interview resolved and confirmed with
+  // a DIFFERENT caregiver than the one the family named, even though Evia's
+  // own context correctly paired the right id with the right name. Runtime-
+  // enforced confirmation only closes that gap if the preview shows the REAL
+  // resolved name — echoing back the raw id wouldn't have caught anything.
+  describe("schedule_interview — shows the REAL resolved caregiver name (2026-09-12)", () => {
+    it("resolves caregiverId to the caregiver's real name from publicCaregiverProfiles", async () => {
+      hoisted.caregiverProfiles.set("cg_imran", { name: "Imran" });
+      const preview = await buildActionPreview("schedule_interview", {
+        caregiverId: "cg_imran", preferredDate: "2026-09-13", preferredTime: "10:00",
+      });
+      expect(preview).toBe("Schedule an interview with Imran for 2026-09-13 at 10:00");
+    });
+
+    it("falls back gracefully when the caregiverId doesn't resolve to a profile", async () => {
+      const preview = await buildActionPreview("schedule_interview", { caregiverId: "cg_missing" });
+      expect(preview).toBe("Schedule an interview with caregiver cg_missing");
+    });
   });
 });
 

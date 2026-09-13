@@ -77,20 +77,24 @@ export interface VideoInterviewRequestResult {
   applicationId?: string;
 }
 
-export async function requestVideoInterview(
-  params: RequestVideoInterviewParams,
-): Promise<VideoInterviewRequestResult> {
-  const { clientId, caregiverId, jobId, applicationId, source, phone } = params;
+export interface ResolvedInterviewCaregiver {
+  resolvedCaregiverId: string;
+  caregiverName: string;
+  caregiverPhoto?: string;
+}
 
-  const scheduledMs = Date.parse(params.scheduledTime);
-  if (!Number.isFinite(scheduledMs) || scheduledMs < Date.now() - 5 * 60 * 1000) {
-    throw new VideoInterviewRequestError("invalid-argument", "scheduledTime must be in the future");
-  }
-  const interviewType = ["video", "phone", "in-person"].includes(params.interviewType ?? "")
-    ? (params.interviewType as string)
-    : "video";
-  const notes = (params.notes ?? "").slice(0, 2000);
-
+// Extracted (2026-09-12) so a caller can resolve+validate WHICH caregiver a
+// schedule_interview request actually points at — same bookability + name-
+// fallback logic requestVideoInterview always ran, just usable standalone,
+// BEFORE anything commits. This is what backs the "confirm the real caregiver
+// name" checkpoint (mcp/server.ts's schedule_interview handler): run this
+// first (unchanged access-gate/ambiguous/NOT_FOUND behavior, nothing new),
+// and only once it resolves cleanly, ask the family to confirm that exact
+// name before requestVideoInterview is called for real.
+export async function resolveCaregiverForInterview(
+  caregiverId: string,
+  phone?: string,
+): Promise<ResolvedInterviewCaregiver> {
   // Same bookability gate the website enforces (createVideoInterviewRequest.ts)
   // — only a caregiver visible in the public, verification-gated projection is
   // interview-able. Also doubles as the name/photo source, so this is the
@@ -141,6 +145,24 @@ export async function requestVideoInterview(
   const cg = caregiverSnap.data() ?? {};
   const caregiverName = ((cg.name as string) || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver";
   const caregiverPhoto = (cg.photoURL ?? cg.photo ?? cg.imageUrl) as string | undefined;
+  return { resolvedCaregiverId, caregiverName, caregiverPhoto };
+}
+
+export async function requestVideoInterview(
+  params: RequestVideoInterviewParams,
+): Promise<VideoInterviewRequestResult> {
+  const { clientId, caregiverId, jobId, applicationId, source, phone } = params;
+
+  const scheduledMs = Date.parse(params.scheduledTime);
+  if (!Number.isFinite(scheduledMs) || scheduledMs < Date.now() - 5 * 60 * 1000) {
+    throw new VideoInterviewRequestError("invalid-argument", "scheduledTime must be in the future");
+  }
+  const interviewType = ["video", "phone", "in-person"].includes(params.interviewType ?? "")
+    ? (params.interviewType as string)
+    : "video";
+  const notes = (params.notes ?? "").slice(0, 2000);
+
+  const { resolvedCaregiverId, caregiverName, caregiverPhoto } = await resolveCaregiverForInterview(caregiverId, phone);
 
   const clientSnap = await db.collection("users").doc(clientId).get();
   const cl = clientSnap.data() ?? {};

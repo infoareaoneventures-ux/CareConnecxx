@@ -151,6 +151,8 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   senior_profile_archived:            { included: false },
   family_member_updated:              { included: false },
   interview_cancelled:                { included: false },
+  interview_rescheduled:              { included: false },
+  interview_reschedule_accepted:      { included: false },
   memory_file_deleted:                { included: false },
   cash_payment_confirmed:             { included: false },
   memory_fact_corrected:              { included: false },

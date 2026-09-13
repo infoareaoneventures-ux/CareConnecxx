@@ -147,8 +147,10 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── CRUD/parity gap closures (agent-native audit 2026-07) ───────────────
   archive_senior_profile: ["care_plan"],
   update_family_member:   ["messaging"],
-  list_interviews:        ["booking"],
-  cancel_interview:       ["booking"],
+  list_interviews:            ["booking"],
+  cancel_interview:           ["booking"],
+  reschedule_interview:       ["booking"],
+  accept_interview_reschedule: ["booking"],
   complete_interview:     ["booking"],
   list_blocked_users:     ["messaging"],
   list_shift_swaps:       ["booking", "scheduling", "messaging"],
@@ -335,6 +337,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // an archive, member edit, interview cancel, or memory delete as done
   // would be believed and acted on.
   "archive_senior_profile", "update_family_member", "cancel_interview",
+  "reschedule_interview", "accept_interview_reschedule",
   "delete_memory_file", "remove_care_recipient",
   // Booking-pipeline parity (2026-08-30) — cancelling/resending a booking or
   // visit, or accepting/declining a schedule amendment, is exactly the kind

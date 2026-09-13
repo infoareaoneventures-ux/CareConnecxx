@@ -385,11 +385,25 @@ describe("MCP tool smoke coverage", () => {
     expect(((await handleToolCall("get_checkr_report", { caregiverId: "cg1" })) as any)._toolError).toBe(true);
   });
 
-  it("get_recurring_schedule returns null when no schedule", async () => {
-    hoisted.collState.set("recurring_schedules", []);
+  it("get_recurring_schedule returns empty when no accepted booking has a schedule", async () => {
+    hoisted.collState.set("booking_requests", []);
     const r = await handleToolCall("get_recurring_schedule", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
-    expect(r.schedule).toBeNull();
+    expect(r.schedules).toEqual([]);
+  });
+
+  it("get_recurring_schedule reads the real booking_requests schedule (site parity)", async () => {
+    hoisted.collState.set("booking_requests", [
+      { id: "br1", clientId: "c1", caregiverId: "cg1", caregiverName: "Sam", status: "accepted",
+        schedule: { dayShiftTimes: { Mon: { start: "09:00", end: "17:00" } }, ongoing: true } },
+      // A one-off accepted booking has no schedule.dayShiftTimes — excluded,
+      // matching Schedule.tsx's own filter.
+      { id: "br2", clientId: "c1", caregiverId: "cg2", caregiverName: "Alex", status: "accepted" },
+    ]);
+    const r = await handleToolCall("get_recurring_schedule", { clientId: "c1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.schedules).toHaveLength(1);
+    expect(r.schedules[0]).toMatchObject({ bookingRequestId: "br1", caregiverName: "Sam", ongoing: true });
   });
 
   it("get_family_group happy path", async () => {

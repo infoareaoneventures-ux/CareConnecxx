@@ -20,7 +20,6 @@ import { updatePermissionFromText, getPermissions } from "../agents/permissionsC
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
 import { resolveCaregiverRate as resolveCaregiverRateShared, coerceHourlyRate } from "../utils/caregiverRate";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
-import { startModifyScheduleFlow } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleEarningsView } from "../agents/earningsHandler";
@@ -1259,12 +1258,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         intent,
         ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
-      return;
-    }
-
-    // ── MODIFY_SCHEDULE — change days/times of recurring care schedule ────────
-    if (intent === "MODIFY_SCHEDULE" && session.userType !== "caregiver") {
-      await startModifyScheduleFlow(phone, chatId, session);
       return;
     }
 

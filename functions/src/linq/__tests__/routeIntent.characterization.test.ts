@@ -185,7 +185,6 @@ vi.mock("../../agents/bookingExecutor", () => ({
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
-vi.mock("../../agents/modifyScheduleFlow", () => ({ startModifyScheduleFlow: vi.fn(async () => {}) }));
 vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
 vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
 vi.mock("../../agents/earningsHandler", () => ({ handleEarningsView: vi.fn(async () => {}) }));

@@ -65,7 +65,6 @@ vi.mock("../client", () => ({
 vi.mock("../../utils/openaiClient", () => ({ quickComplete: vi.fn(async () => "") }));
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg") }));
 vi.mock("../../agents/jobPostingFlow", () => ({ handleJobPostingStep: vi.fn(async () => {}) }));
-vi.mock("../../agents/modifyScheduleFlow", () => ({ handleModifyScheduleStep: vi.fn(async () => {}) }));
 vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
 vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
 vi.mock("../../agents/availabilityHandler", () => ({ handleAvailabilityUpdate: vi.fn(async () => {}) }));

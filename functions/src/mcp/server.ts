@@ -21,9 +21,8 @@ import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
-import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
-import { BILLING_AUTHORITY_VERSION, bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
+import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
 import { resolveShiftBillableAmount } from "../billing/shiftBillingAmounts";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
@@ -60,13 +59,6 @@ const db = admin.firestore();
 // Shared literal union for structured tool failures (see toolError below).
 type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "RATE_LIMITED";
 
-// "HH:MM" → minutes since midnight, or null if malformed.
-function bookingTimeToMinutes(t: unknown): number | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
-  if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
 // Legacy prod caregiver docs can carry hourlyRate as a STRING ("25", "$25"):
 // the onboarding correction path stored the raw user text whenever Number()
 // failed to parse it (onboardingConversation.ts), and update_signup_field
@@ -74,7 +66,16 @@ function bookingTimeToMinutes(t: unknown): number | null {
 // — both were found still carrying the exact hardcoded-$20-fallback pattern
 // R9 (below) already killed here; extracting this to utils/caregiverRate.ts
 // means all three booking-creating call sites can never drift apart again.
-import { resolveCaregiverRate as resolveCaregiverRateShared, resolveCaregiverName, coerceHourlyRate } from "../utils/caregiverRate";
+import { resolveCaregiverRate as resolveCaregiverRateShared } from "../utils/caregiverRate";
+// request_booking's own resolution logic — extracted 2026-09-13 into
+// bookingResolution.ts so it has exactly one home (also used by the new
+// scripted bookingFlow.ts) instead of being duplicated.
+import {
+  bookingTimeToMinutes, parseBookingDateRange, resolveInterviewLinkage, resolveBookingRate,
+  resolveBookingCaregiverName, resolveCareLocation, formatCareLocationOptions,
+  resolveRecipientAttribution, resolveEmergencyContact, resolveTopLevelCareNeedsAndLifestyle,
+  enrichRecipientAgeRelationship,
+} from "../agents/bookingResolution";
 
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
 // name fallbacks used by the live `request_booking` path (name/fullName) so a
@@ -96,30 +97,6 @@ async function resolveCaregiverRate(
   if (result.ok) return result;
   const code: ToolErrorCode = result.message === "caregiver not found" ? "NOT_FOUND" : "RATE_UNKNOWN";
   return { ok: false, code, message: result.message };
-}
-
-// Date/time-range parsing for request_booking's one-off commit shape —
-// deliberately decoupled from rate resolution (2026-09-13) so a caregiver
-// with no listed rate on file never blocks a commit that has its own
-// agreedRate/job-post-rate override.
-function parseBookingDateRange(input: {
-  dates?:     unknown;
-  startTime?: unknown;
-  endTime?:   unknown;
-}): { ok: true; dateList: string[]; durationHours: number } | { ok: false; code: ToolErrorCode; message: string } {
-  if (!input.dates || !input.startTime || !input.endTime) {
-    return { ok: false, code: "INVALID_INPUT", message: "dates, startTime, endTime are required" };
-  }
-  const dateList = (Array.isArray(input.dates) ? input.dates : [input.dates]).map(String).filter(Boolean);
-  if (dateList.length === 0) return { ok: false, code: "INVALID_INPUT", message: "at least one date is required" };
-
-  const startMin = bookingTimeToMinutes(input.startTime);
-  const endMin   = bookingTimeToMinutes(input.endTime);
-  if (startMin === null || endMin === null || endMin <= startMin) {
-    return { ok: false, code: "INVALID_INPUT", message: "startTime/endTime must be 'HH:MM' with end after start" };
-  }
-  const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
-  return { ok: true, dateList, durationHours };
 }
 
 // Short referral code (mirrors the frontend dbService.generateReferralCode shape:
@@ -291,9 +268,32 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "start_booking_flow",
+    description:
+      "Start Evia's own scripted, step-by-step booking flow for a caregiver — the PREFERRED way to send a booking " +
+      "request once the family is ready to move forward (e.g. right after a 'strong' submit_interview_feedback " +
+      "result, or when they ask to book/hire a specific caregiver). This tool itself asks the family every " +
+      "remaining question (rate, schedule, care location if ambiguous) one at a time and shows a full recap " +
+      "matching the website's 'Send Booking Request' modal before sending — you do NOT need to collect any of " +
+      "that yourself, and should NOT call request_booking directly for a new booking. This tool ALREADY TEXTS THE " +
+      "FAMILY the first question itself — do not send anything else this turn beyond a brief acknowledgment that " +
+      "you're setting up the booking, if anything at all.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver being booked." },
+        interviewId: { type: "string", description: "Pass this when the family is booking right after a completed interview — links the booking back to the job post and marks the application accepted. Omit for a direct/matching-flow booking with no interview involved." },
+      },
+      required: ["caregiverId"],
+    },
+  },
+  {
     name: "request_booking",
     description:
-      "Commit a booking request for a caregiver, matching the website's own 'Send Booking Request' modal field for " +
+      "Low-level booking commit — prefer start_booking_flow instead, which handles the whole conversation for you " +
+      "and matches the website's review modal exactly. Only call this tool directly for a booking OUTSIDE the " +
+      "scripted flow (e.g. a caregiver-initiated rebook already resolved elsewhere in the conversation). " +
+      "Matches the website's own 'Send Booking Request' modal field for " +
       "field. This tool ALREADY confirms before committing (a pending-action gate, same as the modal's own 'Review " +
       "and edit before sending' step) — but you must still gather every field conversationally first; nothing here " +
       "is optional to consider, even if some fields are optional to fill in. clientId is injected automatically — " +
@@ -688,7 +688,10 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_recurring_schedule",
-    description: "Get the active recurring care schedule for a client — days of the week, times, caregiver, and status.",
+    description:
+      "Get the client's active recurring care schedule(s) — days of the week, times, and caregiver. Reads the " +
+      "same booking_requests the website's own Calendar page shows; a household with more than one caregiver " +
+      "can have more than one active recurring schedule at once.",
     input_schema: {
       type: "object",
       properties: {
@@ -1153,22 +1156,6 @@ export const MCP_TOOLS: McpTool[] = [
         userId: { type: "string", description: "The user's ID (client or caregiver)" },
       },
       required: ["userId"],
-    },
-  },
-  {
-    name: "manage_recurring_schedule",
-    description:
-      "Pause, resume, or cancel a recurring care schedule. " +
-      "Cancel removes all future confirmed visits — confirm with family first.",
-    input_schema: {
-      type: "object",
-      properties: {
-        scheduleId:  { type: "string", description: "The recurring_schedules document ID" },
-        clientId:    { type: "string", description: "The client's user ID" },
-        action:      { type: "string", enum: ["pause", "resume", "cancel"], description: "Action to take" },
-        pauseReason: { type: "string", description: "Optional reason for pausing" },
-      },
-      required: ["scheduleId", "clientId", "action"],
     },
   },
   {
@@ -1830,24 +1817,6 @@ export const MCP_TOOLS: McpTool[] = [
         limit:    { type: "number", description: "Number of entries (default 5, max 20)" },
       },
       required: ["clientId"],
-    },
-  },
-  {
-    name: "modify_recurring_schedule",
-    description:
-      "Change the days and/or times of an active recurring care schedule. " +
-      "Cancels future appointments from the old schedule and generates new ones with the updated days/times. " +
-      "Confirm with the client before calling.",
-    input_schema: {
-      type: "object",
-      properties: {
-        scheduleId:   { type: "string", description: "The recurring_schedules document ID" },
-        clientId:     { type: "string", description: "The client's user ID (ownership check)" },
-        newDays:      { type: "array", items: { type: "string" }, description: "New days of the week (e.g. ['Tuesday','Thursday']). Omit to keep current days." },
-        newStartTime: { type: "string", description: "New start time HH:MM. Omit to keep current start time." },
-        newEndTime:   { type: "string", description: "New end time HH:MM. Omit to keep current end time." },
-      },
-      required: ["scheduleId", "clientId"],
     },
   },
   {
@@ -3768,6 +3737,31 @@ async function executeToolCall(
         return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
       }
 
+      case "start_booking_flow": {
+        const { clientId, caregiverId, interviewId, phone } = input as Record<string, unknown>;
+        if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the booking flow in");
+        const { startBookingFlow } = await import("../agents/bookingFlow");
+        const result = await startBookingFlow(phone as string, chatId, sessionData as any, {
+          caregiverId: caregiverId as string,
+          ...(interviewId ? { interviewId: interviewId as string } : {}),
+        });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what went wrong (or asked who to book) — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family to start the booking flow. Do not send anything else this turn beyond a brief acknowledgment, if anything — the flow now owns the conversation until it finishes.",
+        };
+      }
+
       case "request_booking": {
         // NOTE: deliberately NOT wrapped in runActionNativeMcpWrite here — its
         // postcondition verifier expects a real committed write (a taskId to
@@ -3795,53 +3789,10 @@ async function executeToolCall(
         // carries the same linkage handleSendBooking stamps on the website,
         // and the caregiver's application gets marked accepted. Fail-soft
         // throughout — a lookup miss or ownership mismatch just proceeds as
-        // an unlinked booking, never blocks it.
-        let jobId: string | undefined;
-        let jobTitle: string | undefined;
-        let applicationId: string | undefined;
-        // Real fields already on the job post the family posted — matches
-        // the website's own "Send Booking Request" fallback (post?.daysOfWeek/
-        // startDate/endDate/rate in handleSendBooking). NEVER a source for
-        // exact shift times: job_posts only stores a vague timeOfDay category
-        // (morning/afternoon/evening/overnight), so times are always asked,
-        // never invented from it.
-        let jobPostSchedule: { daysOfWeek?: string[]; startDate?: string; endDate?: string } | undefined;
-        // The job post's own `rate` field — confirmed 2026-09-13 this is the
-        // ONLY thing the website's booking modal ever defaults the agreed
-        // rate from (`bookingDraft.agreedRate ?? post?.rate ?? null` in
-        // handleSendBooking); a caregiver's own listed hourlyRate is
-        // browsing/display data only (search results, profile page) and is
-        // NEVER used as a booking-rate default on the site, so this tool
-        // must not use it that way either.
-        let jobPostRate: number | undefined;
-        if (interviewId) {
-          try {
-            const ivSnap = await db.collection("video_interviews").doc(interviewId as string).get();
-            const iv = ivSnap.data();
-            if (iv && iv.clientId === clientId && iv.caregiverId === caregiverId) {
-              applicationId = iv.applicationId as string | undefined;
-              if (applicationId) {
-                const appSnap = await db.collection("job_applications").doc(applicationId).get();
-                jobId = appSnap.data()?.jobId as string | undefined;
-                if (jobId) {
-                  const jobSnap = await db.collection("job_posts").doc(jobId).get();
-                  const jobData = jobSnap.data();
-                  jobTitle = jobData?.title as string | undefined;
-                  const daysOfWeek = jobData?.daysOfWeek as string[] | undefined;
-                  const jps: { daysOfWeek?: string[]; startDate?: string; endDate?: string } = {};
-                  if (Array.isArray(daysOfWeek) && daysOfWeek.length) jps.daysOfWeek = daysOfWeek;
-                  if (jobData?.startDate) jps.startDate = String(jobData.startDate);
-                  if (jobData?.endDate) jps.endDate = String(jobData.endDate);
-                  if (Object.keys(jps).length) jobPostSchedule = jps;
-                  const coercedJobRate = coerceHourlyRate(jobData?.rate);
-                  if (coercedJobRate !== null) jobPostRate = coercedJobRate;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn("[request_booking] interview/job linkage lookup failed (booking proceeds unlinked):", e);
-          }
-        }
+        // an unlinked booking, never blocks it. (Extracted 2026-09-13 into
+        // bookingResolution.ts — see resolveInterviewLinkage.)
+        const { jobId, jobTitle, applicationId, jobPostSchedule, jobPostRate } =
+          await resolveInterviewLinkage(clientId as string, caregiverId as string | undefined, interviewId as string | undefined);
 
         const isRecurring = recurring === true;
         let caregiverName: string;
@@ -3883,7 +3834,7 @@ async function executeToolCall(
             return toolError("INVALID_INPUT", "endDate is required when recurring is true and ongoing is not true");
           }
 
-          const nameRes = await resolveCaregiverName(caregiverId as string);
+          const nameRes = await resolveBookingCaregiverName(caregiverId as string);
           if (!nameRes.ok) return toolError("NOT_FOUND", nameRes.message);
           caregiverName = nameRes.caregiverName;
           // Committed rate — matches the website's own modal precedence
@@ -3892,18 +3843,9 @@ async function executeToolCall(
           // own rate, else refuse. The caregiver's own listed hourlyRate is
           // browsing/display data only and is NEVER used as a booking
           // default on the site — this tool must not use it that way either.
-          if (agreedRate !== undefined && agreedRate !== null) {
-            hourlyRate = Number(agreedRate);
-          } else if (jobPostRate !== undefined) {
-            hourlyRate = jobPostRate;
-          } else {
-            return toolError(
-              "INVALID_INPUT",
-              "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
-              "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +
-              "(and caregiver, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.",
-            );
-          }
+          const rateRes = resolveBookingRate(agreedRate, jobPostRate);
+          if (!rateRes.ok) return toolError("INVALID_INPUT", rateRes.reason);
+          hourlyRate = rateRes.hourlyRate;
 
           let weeklyHours = 0;
           const normalizedDst: Record<string, { start: string; end: string }> = {};
@@ -3928,22 +3870,13 @@ async function executeToolCall(
           // Caregiver existence is still checked (NOT_FOUND), just decoupled
           // from whether they happen to have a listed hourlyRate on file.
           const range = parseBookingDateRange(input);
-          if (!range.ok) return toolError(range.code, range.message);
-          const nameRes = await resolveCaregiverName(caregiverId as string);
+          if (!range.ok) return toolError("INVALID_INPUT", range.message);
+          const nameRes = await resolveBookingCaregiverName(caregiverId as string);
           if (!nameRes.ok) return toolError("NOT_FOUND", nameRes.message);
           caregiverName = nameRes.caregiverName;
-          if (agreedRate !== undefined && agreedRate !== null) {
-            hourlyRate = Number(agreedRate);
-          } else if (jobPostRate !== undefined) {
-            hourlyRate = jobPostRate;
-          } else {
-            return toolError(
-              "INVALID_INPUT",
-              "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
-              "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +
-              "(and caregiver, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.",
-            );
-          }
+          const rateRes = resolveBookingRate(agreedRate, jobPostRate);
+          if (!rateRes.ok) return toolError("INVALID_INPUT", rateRes.reason);
+          hourlyRate = rateRes.hourlyRate;
           appointments = range.dateList.map((d) => ({
             date:          d,
             startTime:     startTime as string,
@@ -3961,92 +3894,17 @@ async function executeToolCall(
         // single-recipient households keep today's shape (absent = the sole
         // recipient, fail-soft everywhere). Ambiguity NEVER blocks the money
         // path: no name in a multi-home defaults to the primary senior + a
-        // note the agent can use to confirm.
-        let recipientName: string | undefined;
-        let recipientKey:  string | undefined;
-        let recipientResolved: "named" | "defaulted_primary" | undefined;
-        let careRecipients: Array<Record<string, unknown>> | undefined;
-        try {
-          const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
-          if (multiRecipientScopingEnabled()) {
-            const { resolveRecipientKey, recipientPlanKey } = await import("../agents/careRecipients");
-            const webPlanSnap = await db.collection("carePlans").doc(clientId as string).get();
-            const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-            const planKeys = Object.keys(plans);
-            const names = Array.isArray(recipientFirstNames) && recipientFirstNames.length
-              ? recipientFirstNames.map(String)
-              : (recipientFirstName ? [String(recipientFirstName)] : []);
-
-            if (names.length > 1) {
-              // Multiple named recipients for one booking (matches the
-              // website's multi-select care recipients list) — resolve each
-              // independently; unmatched names are simply skipped rather
-              // than blocking the whole booking.
-              const resolved: Array<{ key: string; name: string }> = [];
-              for (const n of names) {
-                const res = resolveRecipientKey(planKeys, n);
-                if (res.ok) resolved.push({ key: res.key, name: String(plans[res.key]?.name ?? n).trim() || n });
-              }
-              if (resolved.length) {
-                recipientKey  = resolved[0].key;
-                recipientName = resolved[0].name;
-                recipientResolved = "named";
-                careRecipients = resolved.map(({ key, name }) => {
-                  const plan = plans[key] ?? {};
-                  return {
-                    name,
-                    careNeeds:       plan.careNeeds ?? [],
-                    careNeedDetails: plan.careNeedDetails ?? {},
-                    lifestyle:       plan.lifestyle ?? {},
-                    notes:           plan.notes ?? "",
-                    // Matches the website's own per-recipient fields
-                    // (PostsPage.tsx's selectedRecipients build) — specific
-                    // tasks/locations for this recipient's care plan.
-                    tasks:           plan.tasks ?? {},
-                    locations:       plan.locations ?? [],
-                  };
-                });
-              }
-            } else if (planKeys.length > 1) {
-              const res = resolveRecipientKey(planKeys, names[0]);
-              if (res.ok) {
-                recipientKey  = res.key;
-                recipientName = String(plans[res.key]?.name ?? names[0] ?? "").trim() || undefined;
-                recipientResolved = "named";
-              } else {
-                const userSnap = await db.collection("users").doc(clientId as string).get();
-                const primary = String(userSnap.data()?.seniorName ?? "").trim();
-                if (primary) {
-                  recipientName = primary;
-                  recipientKey  = recipientPlanKey(primary.split(" ")[0]);
-                  recipientResolved = "defaulted_primary";
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("[request_booking] recipient attribution failed (booking proceeds unattributed):", e);
-        }
+        // note the agent can use to confirm. (Extracted 2026-09-13 — see
+        // resolveRecipientAttribution in bookingResolution.ts.)
+        const recipientAttribution = await resolveRecipientAttribution(clientId as string, recipientFirstName, recipientFirstNames);
+        const { recipientName, recipientKey, recipientResolved } = recipientAttribution;
+        let careRecipients = recipientAttribution.careRecipients;
 
         // Emergency contact — pulled from the family's care plan on file,
         // matching the website's own pre-fill (carePlans.emergencyContacts,
         // isPrimary wins else the first on file). Never asked for in
         // conversation; fail-soft if none is on file.
-        let emergencyContact: { name: string; phone: string; relationship?: string } | undefined;
-        try {
-          const cpSnapForEc = await db.collection("carePlans").doc(clientId as string).get();
-          const contacts = (cpSnapForEc.data()?.emergencyContacts ?? []) as Array<{ name?: string; relation?: string; relationship?: string; phone?: string; isPrimary?: boolean }>;
-          const primaryContact = contacts.find((c) => c.isPrimary) ?? contacts[0];
-          if (primaryContact?.phone) {
-            emergencyContact = {
-              name:         primaryContact.name ?? "",
-              phone:        primaryContact.phone,
-              relationship: primaryContact.relationship ?? primaryContact.relation,
-            };
-          }
-        } catch (e) {
-          console.warn("[request_booking] emergency contact lookup failed (booking proceeds without it):", e);
-        }
+        const emergencyContact = await resolveEmergencyContact(clientId as string);
 
         // Care location — REQUIRED, matching the website's own "Care
         // Location" selector (carePlans/{uid}.locationPool — the SAME
@@ -4059,55 +3917,21 @@ async function executeToolCall(
         // asks the family to type an address from scratch when one is
         // already on file. Only when nothing is saved at all does it fall
         // back to a single on-file address, then finally refuse.
-        let resolvedCareLocation = careLocation ? String(careLocation) : undefined;
-        if (!resolvedCareLocation) {
-          try {
-            const cpSnapForLoc = await db.collection("carePlans").doc(clientId as string).get();
-            const pool = (cpSnapForLoc.data()?.locationPool ?? []) as Array<{
-              street?: string; city?: string; state?: string; zipCode?: string;
-              petsInHome?: boolean; smokingHousehold?: boolean;
-            }>;
-            const validPool = pool.filter((a) => a && [a.street, a.city, a.state, a.zipCode].some(Boolean));
-            if (validPool.length === 1) {
-              const a = validPool[0];
-              resolvedCareLocation = [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ");
-            } else if (validPool.length > 1) {
-              const options = validPool.map((a, i) => {
-                const addr = [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ");
-                const tags = [a.petsInHome ? "pets in home" : null, a.smokingHousehold ? "smoking household" : null]
-                  .filter(Boolean).join(", ");
-                return `${i + 1}) ${addr}${tags ? ` (${tags})` : ""}`;
-              }).join("; ");
-              return toolError(
-                "INVALID_INPUT",
-                `This family has more than one saved address on file — offer them the SAME choices the website's ` +
-                `Care Location selector shows, do NOT ask them to type an address from scratch: ${options}. Ask ` +
-                `which one this booking is for (mention any tag, e.g. smoking household, so they know what they're ` +
-                `picking), then pass the matching address string as careLocation.`,
-              );
-            }
-          } catch (e) {
-            console.warn("[request_booking] care location pool lookup failed:", e);
+        const careLocationRes = await resolveCareLocation(clientId as string, careLocation);
+        if (!careLocationRes.ok) {
+          if (careLocationRes.ambiguous) {
+            const options = formatCareLocationOptions(careLocationRes.options);
+            return toolError(
+              "INVALID_INPUT",
+              `This family has more than one saved address on file — offer them the SAME choices the website's ` +
+              `Care Location selector shows, do NOT ask them to type an address from scratch: ${options}. Ask ` +
+              `which one this booking is for (mention any tag, e.g. smoking household, so they know what they're ` +
+              `picking), then pass the matching address string as careLocation.`,
+            );
           }
+          return toolError("INVALID_INPUT", careLocationRes.reason);
         }
-        if (!resolvedCareLocation) {
-          try {
-            const clientSnapForAddr = await db.collection("users").doc(clientId as string).get();
-            const cd = clientSnapForAddr.data() ?? {};
-            const onFileAddress = [cd.street, cd.city, cd.state, cd.zipCode].filter(Boolean).join(", ");
-            if (onFileAddress) resolvedCareLocation = onFileAddress;
-          } catch (e) {
-            console.warn("[request_booking] client address lookup failed:", e);
-          }
-        }
-        if (!resolvedCareLocation) {
-          return toolError(
-            "INVALID_INPUT",
-            "No care location is on file for this family and none was given. Ask where care will happen " +
-            "(their home address, or a specific facility/location) and pass it as careLocation before booking — " +
-            "matching the website's own required 'Care Location' field.",
-          );
-        }
+        const resolvedCareLocation = careLocationRes.location;
 
         // Top-level careNeeds + lifestylePreferences (2026-09-13): the website
         // ALSO stamps two root-level fields onto the booking_requests doc
@@ -4117,39 +3941,8 @@ async function executeToolCall(
         // home/smoking-household tags of whichever saved address was
         // actually picked for this visit. Both were previously dropped
         // silently; fail-soft throughout, never blocks the booking.
-        let topLevelCareNeeds: string[] | undefined;
-        let lifestylePreferences: string[] | undefined;
-        try {
-          const cpSnapForNeeds = await db.collection("carePlans").doc(clientId as string).get();
-          const cpData = cpSnapForNeeds.data() ?? {};
-          const plans = (cpData.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-          if (careRecipients?.length) {
-            const union = new Set<string>();
-            for (const r of careRecipients) for (const n of (r.careNeeds as string[] | undefined) ?? []) union.add(n);
-            if (union.size) topLevelCareNeeds = Array.from(union);
-          } else {
-            const soleKey = recipientKey ?? (Object.keys(plans).length === 1 ? Object.keys(plans)[0] : undefined);
-            const needs = soleKey ? (plans[soleKey]?.careNeeds as string[] | undefined) : undefined;
-            if (needs?.length) topLevelCareNeeds = needs;
-          }
-
-          const pool = (cpData.locationPool ?? []) as Array<{
-            street?: string; city?: string; state?: string; zipCode?: string;
-            petsInHome?: boolean; smokingHousehold?: boolean;
-          }>;
-          const selectedEntry = pool.find(
-            (a) => a && [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ") === resolvedCareLocation,
-          );
-          if (selectedEntry) {
-            const tags = [
-              selectedEntry.petsInHome ? "Pets in home" : null,
-              selectedEntry.smokingHousehold ? "Smoking household" : null,
-            ].filter((t): t is string => t !== null);
-            if (tags.length) lifestylePreferences = tags;
-          }
-        } catch (e) {
-          console.warn("[request_booking] top-level care needs/lifestyle lookup failed (booking proceeds without them):", e);
-        }
+        const { topLevelCareNeeds, lifestylePreferences } =
+          await resolveTopLevelCareNeedsAndLifestyle(clientId as string, careRecipients, recipientKey, resolvedCareLocation);
 
         // Per-recipient age/relationship (2026-09-13) — matches the website's
         // own recipient cards (e.g. "parent · Age 22"). This is NOT on
@@ -4160,32 +3953,7 @@ async function executeToolCall(
         // top-level relationship, plus an additionalRecipients array for
         // everyone else. Matched onto careRecipients by first name; only
         // enriches the multi-recipient array already built above.
-        if (careRecipients?.length) {
-          try {
-            const jpSnap = await db.collection("job_postings").doc(clientId as string).get();
-            const jp = jpSnap.data() ?? {};
-            const jpRecipients: Array<{ firstName: string; age?: string; relationship?: string }> = [];
-            if (jp.careRecipientFirstName) {
-              jpRecipients.push({
-                firstName:    String(jp.careRecipientFirstName),
-                age:          jp.careRecipientAge as string | undefined,
-                relationship: jp.relationship as string | undefined,
-              });
-            }
-            for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; age?: string; relationship?: string }>) {
-              if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), age: r.age, relationship: r.relationship });
-            }
-            if (jpRecipients.length) {
-              careRecipients = careRecipients.map((r) => {
-                const firstName = String(r.name ?? "").split(" ")[0].toLowerCase();
-                const match = jpRecipients.find((jr) => jr.firstName.toLowerCase() === firstName);
-                return match ? { ...r, ...(match.age ? { age: match.age } : {}), ...(match.relationship ? { relationship: match.relationship } : {}) } : r;
-              });
-            }
-          } catch (e) {
-            console.warn("[request_booking] recipient age/relationship lookup failed (booking proceeds without them):", e);
-          }
-        }
+        careRecipients = await enrichRecipientAgeRelationship(clientId as string, careRecipients);
 
         // Confirm-before-commit (2026-09-13): a real booking is a financial
         // commitment the caregiver is then asked to accept, matching the
@@ -4999,13 +4767,29 @@ async function executeToolCall(
 
       case "get_recurring_schedule": {
         if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
-        const snap = await db.collection("recurring_schedules")
+        // Reads the same booking_requests the website's Calendar/Schedule.tsx
+        // reads (schedule.dayShiftTimes on an accepted booking) — there is no
+        // separate recurring_schedules collection on either channel anymore.
+        // A one-off (non-recurring) accepted booking has no schedule at all,
+        // so it's filtered out here the same way Schedule.tsx skips it
+        // (`if (Object.keys(dayShiftTimes).length === 0) continue`).
+        const snap = await db.collection("booking_requests")
           .where("clientId", "==", input.clientId)
-          .where("status",   "==", "active")
-          .limit(1)
+          .where("status",   "==", "accepted")
           .get();
-        if (snap.empty) return { success: true, schedule: null, message: "No active recurring schedule found" };
-        return { success: true, schedule: snap.docs[0].data() };
+        const schedules = snap.docs
+          .map((d) => ({ id: d.id, data: d.data() }))
+          .filter(({ data }) => Object.keys(data.schedule?.dayShiftTimes ?? {}).length > 0)
+          .map(({ id, data }) => ({
+            bookingRequestId: id,
+            caregiverId:      data.caregiverId,
+            caregiverName:    data.caregiverName ?? "",
+            dayShiftTimes:    data.schedule.dayShiftTimes,
+            ongoing:          Boolean(data.schedule.ongoing),
+            endDate:          data.schedule.endDate ?? null,
+          }));
+        if (schedules.length === 0) return { success: true, schedules: [], message: "No active recurring schedule found" };
+        return { success: true, schedules, total: schedules.length };
       }
 
       case "get_family_group": {
@@ -5641,44 +5425,6 @@ async function executeToolCall(
       }
       logAudit({ eventType: "subscription_reactivated", userId: clientId as string, data: { source: "mcp:set_subscription_status" } }).catch(() => {});
       return { success: true, ...result };
-    }
-
-    if (name === "manage_recurring_schedule") {
-      const { scheduleId, clientId, action, pauseReason } = input as Record<string, unknown>;
-      if (!scheduleId || !clientId || !action) return toolError("INVALID_INPUT", "scheduleId, clientId, and action are required");
-      const schedSnap = await db.collection("recurring_schedules").doc(scheduleId as string).get();
-      if (!schedSnap.exists) return toolError("NOT_FOUND", "Recurring schedule not found");
-      const sched = schedSnap.data()!;
-      if (sched.clientId !== clientId) return toolError("PERMISSION_DENIED", "This schedule does not belong to this client");
-      const today = nowIso.slice(0, 10);
-      if (action === "pause") {
-        if (sched.status === "paused")    return toolError("INVALID_INPUT", "Schedule is already paused");
-        if (sched.status === "cancelled") return toolError("INVALID_INPUT", "Cannot pause a cancelled schedule");
-        await schedSnap.ref.update({ status: "paused", pausedAt: nowIso, pausedReason: pauseReason ?? "client_request" });
-        logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { action: "pause", scheduleId } }).catch(() => {});
-        return { success: true, action: "paused", scheduleId };
-      }
-      if (action === "resume") {
-        if (sched.status !== "paused") return toolError("INVALID_INPUT", "Schedule is not currently paused");
-        await schedSnap.ref.update({ status: "active", pausedAt: admin.firestore.FieldValue.delete(), pausedReason: admin.firestore.FieldValue.delete() });
-        logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { action: "resume", scheduleId } }).catch(() => {});
-        return { success: true, action: "resumed", scheduleId };
-      }
-      if (action === "cancel") {
-        if (sched.status === "cancelled") return toolError("INVALID_INPUT", "Schedule is already cancelled");
-        // orderBy(date desc) shares the Q5 composite (recurringScheduleId,
-        // status, date DESC) with modifyScheduleFlow/recurringScheduler; the
-        // date> inequality already excludes missing dates and every match is
-        // cancelled, so ordering does not change the batch.
-        const futureSnap = await db.collection("appointments").where("recurringScheduleId", "==", scheduleId).where("date", ">", today).where("status", "in", ["confirmed"]).orderBy("date", "desc").get();
-        const batch = db.batch();
-        batch.update(schedSnap.ref, { status: "cancelled", cancelledAt: nowIso });
-        for (const doc of futureSnap.docs) batch.update(doc.ref, { status: "cancelled_by_client", cancelledAt: nowIso });
-        await batch.commit();
-        logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { action: "cancel", scheduleId, futureVisitsRemoved: futureSnap.size } }).catch(() => {});
-        return { success: true, action: "cancelled", futureVisitsRemoved: futureSnap.size };
-      }
-      return toolError("INVALID_INPUT", `Unknown action '${action}'. Must be pause, resume, or cancel`);
     }
 
     if (name === "create_care_journal_entry") {
@@ -7809,89 +7555,6 @@ async function executeToolCall(
         })
       );
       return { success: true, entries, total: entries.length };
-    }
-
-    // ── modify_recurring_schedule ───────────────────────────────────────────
-    if (name === "modify_recurring_schedule") {
-      const { scheduleId, clientId, newDays, newStartTime, newEndTime } = input as Record<string, unknown>;
-      if (!scheduleId || !clientId) return toolError("INVALID_INPUT", "scheduleId and clientId are required");
-      if (!newDays && !newStartTime && !newEndTime) return toolError("INVALID_INPUT", "At least one of newDays, newStartTime, or newEndTime is required");
-
-      const schedSnap = await db.collection("recurring_schedules").doc(scheduleId as string).get();
-      if (!schedSnap.exists) return toolError("NOT_FOUND", "Recurring schedule not found");
-      const sched = schedSnap.data()!;
-      if (sched.clientId !== clientId) return toolError("PERMISSION_DENIED", "Schedule does not belong to this client");
-      if (sched.status === "cancelled") return toolError("INVALID_INPUT", "Cannot modify a cancelled schedule");
-
-      const resolvedDays  = (newDays  as string[] | undefined) ?? (sched.days  as string[]);
-      const resolvedStart = (newStartTime as string | undefined) ?? (sched.startTime as string);
-      const resolvedEnd   = (newEndTime   as string | undefined) ?? (sched.endTime   as string);
-
-      // Validate times
-      const timePattern = /^\d{2}:\d{2}$/;
-      if (!timePattern.test(resolvedStart) || !timePattern.test(resolvedEnd)) {
-        return toolError("INVALID_INPUT", "Start and end times must be in HH:MM format");
-      }
-      const [sh, sm] = resolvedStart.split(":").map(Number);
-      const [eh, em] = resolvedEnd.split(":").map(Number);
-      if (eh * 60 + em <= sh * 60 + sm) return toolError("INVALID_INPUT", "End time must be after start time");
-      const newDurationHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-
-      const today = nowIso.slice(0, 10);
-
-      // Cancel all future confirmed appointments from the old schedule.
-      // orderBy(date desc) shares the Q5 composite; membership unchanged (see
-      // the identical query in modifyScheduleFlow.ts).
-      const futureSnap = await db.collection("appointments")
-        .where("recurringScheduleId", "==", scheduleId)
-        .where("date", ">", today)
-        .where("status", "in", ["confirmed"])
-        .orderBy("date", "desc")
-        .get();
-
-      const { generateRecurringDates } = await import("../scheduled/recurringScheduler");
-      const newDatesArr = generateRecurringDates(today, resolvedDays, 4);
-
-      const batchMs = db.batch();
-      for (const doc of futureSnap.docs) {
-        batchMs.update(doc.ref, { status: "cancelled_modified", cancelledAt: nowIso, cancelReason: "schedule_modified" });
-      }
-      batchMs.update(schedSnap.ref, {
-        days: resolvedDays, startTime: resolvedStart, endTime: resolvedEnd,
-        durationHours: newDurationHours, modifiedAt: nowIso,
-        lastExtendedAt: nowIso, weeksBookedAhead: 4,
-      });
-      for (const { date } of newDatesArr) {
-        const apptRef = db.collection("appointments").doc();
-        batchMs.set(apptRef, {
-          clientId,
-          caregiverId:         sched.caregiverId,
-          caregiverName:       sched.caregiverName,
-          seniorName:          sched.seniorName || null,
-          date, startTime: resolvedStart, endTime: resolvedEnd,
-          durationHours: newDurationHours, hourlyRate: sched.hourlyRate,
-          ...canonicalApptFields({ startTime: resolvedStart, durationHours: newDurationHours, hourlyRate: sched.hourlyRate as number | undefined }),
-          status: "confirmed", recurringScheduleId: scheduleId,
-          billingAuthority: BILLING_AUTHORITY_VERSION,
-          humanApproved: true, createdByAgent: true, createdAt: nowIso,
-        });
-      }
-      await batchMs.commit();
-
-      // Notify caregiver
-      const cgPhone = await resolveCaregiverPhone(sched.caregiverId as string | undefined);
-      let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
-      if (cgPhone) {
-        const { trySend } = await import("../utils/toolNotify");
-        notification = await trySend(cgPhone,
-          `Your recurring schedule with this family has been updated. New schedule: ${resolvedDays.join(", ")}, ${resolvedStart}–${resolvedEnd}. ` +
-          `Old upcoming visits were replaced with new ones.`,
-          "mcp:modify_recurring_schedule",
-        );
-      }
-
-      logAudit({ eventType: "recurring_schedule_updated", userId: clientId as string, data: { source: "mcp:modify_recurring_schedule", scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, scheduleId, newDays: resolvedDays, newStartTime: resolvedStart, newEndTime: resolvedEnd, newVisitsCreated: newDatesArr.length, oldVisitsCancelled: futureSnap.size, notification };
     }
 
     // ── get_payment_update_link ─────────────────────────────────────────────

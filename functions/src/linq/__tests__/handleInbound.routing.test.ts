@@ -263,10 +263,6 @@ vi.mock("../../agents/jobPostingFlow", () => ({
   handleJobPostingStep: vi.fn(async () => {}),
   startJobPostingFlow:  vi.fn(async () => {}),
 }));
-vi.mock("../../agents/modifyScheduleFlow", () => ({
-  startModifyScheduleFlow:  vi.fn(async () => {}),
-  handleModifyScheduleStep: vi.fn(async () => {}),
-}));
 vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
 vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
 vi.mock("../../agents/earningsHandler", () => ({ handleEarningsView: vi.fn(async () => {}) }));

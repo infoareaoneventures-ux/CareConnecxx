@@ -151,12 +151,6 @@ describe("isHighRisk", () => {
     expect(isHighRisk("send_caregiver_message",   { caregiverId: "x", body: "hi" })).toBe(false);
   });
 
-  it("conditionally flags manage_recurring_schedule only on cancel", () => {
-    expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "cancel" })).toBe(true);
-    expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "pause" })).toBe(false);
-    expect(isHighRisk("manage_recurring_schedule", { scheduleId: "x", action: "resume" })).toBe(false);
-  });
-
   // block_user + unblock_user + report_user merged into set_block_status
   // (2026-08-31, freed tool slots for delete_conversation/mark_messages_read)
   // — block and report stay high-stakes (both were ALWAYS_CONFIRM pre-merge),
@@ -193,7 +187,6 @@ describe("buildActionPreview", () => {
     expect(await buildActionPreview("set_subscription_status", { action: "cancel" })).toBe("Cancel Evia subscription");
     expect(await buildActionPreview("set_subscription_status", { action: "reactivate" })).toBe("Reactivate Evia subscription");
     expect(await buildActionPreview("remove_family_member", { memberPhone: "+15551234567" })).toBe("Remove family member +15551234567");
-    expect(await buildActionPreview("manage_recurring_schedule", { action: "cancel", scheduleId: "sched_1" })).toContain("cancel recurring schedule sched_1");
   });
 
   it("falls back to a generic preview for unknown tools", async () => {

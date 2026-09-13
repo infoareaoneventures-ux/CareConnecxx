@@ -3,7 +3,7 @@
 // The mandatory Evia checklist (CLAUDE.md) — isQuestionOrOther guard → parse →
 // acknowledge → ask — was reimplemented ~10 times across handlers
 // (onboardingConversation, availabilityHandler, jobPostingFlow,
-// caregiverProfileHandler, modifyScheduleFlow, ...), each a hand-rolled copy.
+// caregiverProfileHandler, ...), each a hand-rolled copy.
 // This module is the single source of truth so the checklist is STRUCTURALLY
 // enforced rather than remembered per-handler. New handlers should use runStep;
 // existing handlers migrate to it incrementally (one per commit, behind

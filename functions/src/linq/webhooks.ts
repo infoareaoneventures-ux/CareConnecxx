@@ -1686,8 +1686,8 @@ const handleInboundInner = traceable(
       // Names track the state-flag families defined in utils/sessionState.ts.
       const flowKey: string | null =
         (session as any).jobPostingStep        ? "job_posting"      :
+        (session as any).bookingFlowStep       ? "booking"          :
         (session as any).refundStep            ? "refund"           :
-        (session as any).modifyScheduleStep    ? "modify_schedule"  :
         (session as any).clientSwapStep        ? "client_swap"      :
         (session as any).healthcareFlowStep    ? "healthcare"       :
         (session as any).collectingCredential  ? "credential"       :
@@ -2991,7 +2991,7 @@ const handleInboundInner = traceable(
   // ── Client-side pre-intent state machines (extracted to routeClient.ts) ──────
   // Covers: awaitingPreShiftUpdate, awaitingEmergencyContactUpdate,
   // pendingShiftApproval, pendingDisputeDetail, collectingCredential,
-  // jobPostingStep, modifyScheduleStep, healthcareFlowStep, refundStep,
+  // jobPostingStep, bookingFlowStep, healthcareFlowStep, refundStep,
   // timesheetStep, availabilityStep, clientSwapStep. Deliberately NOT wrapped
   // in a userType check — some blocks run for caregivers too.
   if (await routeClientStateMachines({ phone, chatId, text, norm, session }) === "handled") return;

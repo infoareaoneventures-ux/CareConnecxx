@@ -15,12 +15,13 @@ vi.mock("../linq/client", () => ({ sendMessage: vi.fn(), signalThinking: vi.fn()
 vi.mock("./buildJobPost", () => ({ buildAndSaveJobPost: vi.fn() }));
 
 import { resolveJobStep } from "./jobPostingFlow";
-import { resolveScheduleStep } from "./modifyScheduleFlow";
 
-// U13: the two flows that have multi-step sequencing get the same data-driven
-// dispatch as U12 (dark behind their own CONVERGENCE_FLIPPED flow keys). These
-// pin the resolvers' field-schema contract / branch logic so the dark path can't
-// silently drift from the legacy machine's progression.
+// U13: job-posting's multi-step sequencing gets the same data-driven dispatch
+// as U12 (dark behind its own CONVERGENCE_FLIPPED flow key). This pins the
+// resolver's field-schema contract / branch logic so the dark path can't
+// silently drift from the legacy machine's progression. (modifyScheduleFlow's
+// equivalent resolver was removed 2026-09-13 along with the rest of that
+// module — see AGENT_NATIVE_EXCLUSIONS.md.)
 describe("jobPostingFlow.resolveJobStep (U13 — linear)", () => {
   it("walks the field order, then hands off to the confirm step", () => {
     // 2026-09-07: reordered to full parity with the website's own wizard —
@@ -57,24 +58,5 @@ describe("jobPostingFlow.resolveJobStep (U13 — linear)", () => {
     expect(resolveJobStep({ ...mid, jobCareNeeds: ["bathing"], jobHourlyRate: 25 })).toBe("jp_ask_description");
     const full = { ...mid, jobCareNeeds: ["bathing"], jobHourlyRate: 25, jobDescription: "Daytime care" };
     expect(resolveJobStep(full)).toBe("jp_confirm_post");
-  });
-});
-
-describe("modifyScheduleFlow.resolveScheduleStep (U13 — conditional)", () => {
-  it("asks what to change first", () => {
-    expect(resolveScheduleStep({})).toBe("ms_ask_what");
-  });
-  it("days_only: days then straight to confirm (no times)", () => {
-    expect(resolveScheduleStep({ changeWhat: "days_only" })).toBe("ms_ask_days");
-    expect(resolveScheduleStep({ changeWhat: "days_only", newDays: ["Tuesday"] })).toBe("ms_confirm");
-  });
-  it("times_only: skips days, asks times, then confirm", () => {
-    expect(resolveScheduleStep({ changeWhat: "times_only" })).toBe("ms_ask_times");
-    expect(resolveScheduleStep({ changeWhat: "times_only", newStartTime: "09:00" })).toBe("ms_confirm");
-  });
-  it("both: days, then times, then confirm", () => {
-    expect(resolveScheduleStep({ changeWhat: "both" })).toBe("ms_ask_days");
-    expect(resolveScheduleStep({ changeWhat: "both", newDays: ["Tuesday"] })).toBe("ms_ask_times");
-    expect(resolveScheduleStep({ changeWhat: "both", newDays: ["Tuesday"], newStartTime: "09:00" })).toBe("ms_confirm");
   });
 });

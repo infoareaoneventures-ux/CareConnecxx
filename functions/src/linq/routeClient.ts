@@ -5,7 +5,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
-import { handleModifyScheduleStep } from "../agents/modifyScheduleFlow";
+import { handleBookingFlowStep } from "../agents/bookingFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
@@ -321,11 +321,21 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     return "handled";
   }
 
-  // ── Recurring schedule modification flow ─────────────────────────────────
-  if ((session as any).modifyScheduleStep) {
+  // ── Booking flow — multi-step state machine (2026-09-13) ────────────────────
+  // Captures every reply deterministically once started (start_booking_flow),
+  // exactly like jobPostingStep above — this is what protects the flow from
+  // an in-progress reply ("are you there") being hijacked by intent
+  // classification (e.g. a FACT_CORRECTION misfire) before it ever reaches
+  // the flow's own step handler. See bookingFlow.ts.
+  if ((session as any).bookingFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["bookingFlowStep", "bookingFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your booking session timed out. Text me anytime to start a new one!");
+      return "handled";
+    }
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
-      await handleModifyScheduleStep(phone, chatId, text, session);
+      await handleBookingFlowStep(phone, chatId, text, session);
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }
@@ -334,7 +344,9 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
 
   // Real-world healthcare/browser-automation actions were removed 2026-09-05
   // (no site equivalent) — healthcareFlowStep can no longer be set, so there's
-  // nothing left to resume here.
+  // nothing left to resume here. The recurring-schedule modification flow
+  // (modifyScheduleFlow.ts) was removed 2026-09-13 for the same reason —
+  // modifyScheduleStep can no longer be set either.
 
   // ── Refund self-service flow (multi-step state machine) ───────────────────
   // 24h freshness gate — an abandoned refund flow had NO expiry and would

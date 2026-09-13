@@ -162,6 +162,7 @@ export const t = {
 export const flowLabel = (key: string, lang: Language): string => {
   const labels: Record<string, { en: string; es: string }> = {
     job_posting:           { en: "posting a job",                  es: "publicar un trabajo" },
+    booking:               { en: "sending a booking request",      es: "enviar una solicitud de reserva" },
     refund:                { en: "requesting a refund",            es: "solicitar un reembolso" },
     modify_schedule:       { en: "changing your recurring schedule", es: "cambiar tu horario recurrente" },
     client_swap:           { en: "swapping a caregiver",            es: "cambiar de cuidador/a" },

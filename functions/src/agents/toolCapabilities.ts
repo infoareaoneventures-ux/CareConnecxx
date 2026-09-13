@@ -19,6 +19,7 @@ export type Capability =
 // memory, suggest care, pending tasks, support tickets, agent resume).
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
+  start_booking_flow:           ["booking"],  // preferred entry point — see bookingFlow.ts
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
   get_callout_backups:          ["booking"],            // parity: caregiver-callout backup options (read)
@@ -60,8 +61,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
 
   // ── scheduling ───────────────────────────────────────────────────────────
   get_recurring_schedule:        ["scheduling"],
-  modify_recurring_schedule:     ["scheduling"],
-  manage_recurring_schedule:     ["scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
   get_caregiver_availability:    ["scheduling"],
@@ -308,7 +307,7 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
   "request_booking",
-  "manage_recurring_schedule", "modify_recurring_schedule", "initiate_client_swap",
+  "initiate_client_swap",
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
   "complete_interview", "respond_to_job_application", "apply_to_job",

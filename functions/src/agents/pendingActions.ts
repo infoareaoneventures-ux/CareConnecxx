@@ -102,8 +102,6 @@ const CARE_PLAN_NOTE_FIELDS = new Set(["notes"]);
 // Tools whose risk depends on an argument value. The predicate inspects the
 // input and returns true when this specific call is irreversible.
 const CONDITIONAL_CONFIRM: Record<string, (input: Record<string, unknown>) => boolean> = {
-  // Only cancel — pause and resume are reversible.
-  manage_recurring_schedule: (input) => input.action === "cancel",
   // Rejecting an applicant is irreversible (caregiver sees the decline).
   // Accept is also high-stakes but happens via a separate hire flow.
   respond_to_job_application: (input) => input.decision === "reject",
@@ -258,8 +256,6 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
     }
     case "cancel_job_post":
       return `Cancel job post ${String(toolInput.jobId ?? "?")}`;
-    case "manage_recurring_schedule":
-      return `${String(toolInput.action ?? "modify")} recurring schedule ${String(toolInput.scheduleId ?? "")}`.trim();
     case "respond_to_job_application":
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
     case "update_care_plan":

@@ -8,7 +8,6 @@ vi.mock("../utils/openaiClient", () => ({ quickComplete: (...a: any[]) => quickC
 vi.mock("./client", () => ({ sendMessage: vi.fn(), startTyping: vi.fn(), stopTyping: vi.fn() }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async () => "") }));
 vi.mock("../agents/jobPostingFlow", () => ({ handleJobPostingStep: vi.fn() }));
-vi.mock("../agents/modifyScheduleFlow", () => ({ handleModifyScheduleStep: vi.fn() }));
 vi.mock("../agents/refundHandler", () => ({ handleRefundRequest: vi.fn() }));
 vi.mock("../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn() }));
 vi.mock("../agents/availabilityHandler", () => ({ handleAvailabilityUpdate: vi.fn() }));

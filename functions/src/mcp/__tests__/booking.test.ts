@@ -295,12 +295,29 @@ describe("booking tools", () => {
 
   // ── U9b: request_booking now commits via the SAME quote primitive ────────────
   describe("request_booking (U9b — commit path shares buildBookingQuote)", () => {
+    // 2026-09-13: request_booking now confirms-before-commit (matching the
+    // website's own "Review and edit before sending" modal) — _confirmedActionId
+    // reaches the commit path via this file's own pendingActions mock above
+    // (getPendingActionById/isConfirmedActionValid accept any id). Every test
+    // in this block exercises the commit path (or a validation error that
+    // fires BEFORE the confirm gate is ever reached), so both fixtures live
+    // on the shared baseInput rather than per-test. careLocation is now
+    // required (matching the website's own required "Care Location" field);
+    // these tests pass it explicitly rather than seeding a users/c1 address.
+    // agreedRate is also required now (2026-09-13: confirmed the website's
+    // modal NEVER defaults a booking's rate from the caregiver's own listed
+    // hourlyRate — that's browsing/display data only — so request_booking no
+    // longer falls back to it either; these tests pass agreedRate explicitly
+    // rather than relying on the seeded caregivers/cg1.hourlyRate).
     const baseInput = {
       clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
       dates: ["2026-07-01", "2026-07-02"], startTime: "09:00", endTime: "17:00", // 8h
+      careLocation: "123 Main St, Springfield",
+      agreedRate: 30,
+      _confirmedActionId: "test-confirm-1",
     };
 
-    it("commits the booking with the quote's computed rate/duration and returns the estimate", async () => {
+    it("commits the booking with the family's agreed rate and duration, returning the estimate", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
       const r = await handleToolCall("request_booking", baseInput) as any;
       expect(r.success).toBe(true);
@@ -326,7 +343,10 @@ describe("booking tools", () => {
       hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
       hoisted.docState.set("job_posts/job1", { title: "Weekend companionship" });
 
-      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1" }) as any;
+      // Each test needs its own _confirmedActionId — the action-native ledger
+      // treats a repeated id + tool name as a replay of the same completed
+      // action, not a fresh call, across tests in this file.
+      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1", _confirmedActionId: "test-confirm-2" }) as any;
       expect(r.success).toBe(true);
       const arg = createBookingTask.mock.calls[0][0] as any;
       expect(arg.interviewId).toBe("iv1");
@@ -335,11 +355,83 @@ describe("booking tools", () => {
       expect(arg.applicationId).toBe("app1");
     });
 
+    // Top-level careNeeds + lifestylePreferences (2026-09-13): the website's
+    // handleSendBooking stamps these onto booking_requests ALONGSIDE the
+    // per-recipient careRecipients array — a deduped union of every selected
+    // recipient's careNeeds, and the pets/smoking tags of whichever saved
+    // address was actually picked. Both were previously dropped silently.
+    it("stamps a deduped top-level careNeeds and per-recipient tasks/locations for a multi-recipient booking", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        recipientPlans: {
+          samira_noname: { name: "Samira", careNeeds: ["Mobility", "Meal prep"], tasks: { bathing: true }, locations: ["Bedroom"] },
+          imran_noname:  { name: "Imran",  careNeeds: ["Meal prep", "Companionship"], tasks: { medication: true }, locations: ["Living room"] },
+        },
+      });
+      const r = await handleToolCall("request_booking", {
+        ...baseInput, recipientFirstNames: ["Samira", "Imran"], _confirmedActionId: "test-confirm-needs-1",
+      }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careNeeds.sort()).toEqual(["Companionship", "Meal prep", "Mobility"]);
+      expect(arg.careRecipients[0].tasks).toEqual({ bathing: true });
+      expect(arg.careRecipients[0].locations).toEqual(["Bedroom"]);
+      expect(arg.careRecipients[1].tasks).toEqual({ medication: true });
+    });
+
+    // Age/relationship (2026-09-13): matches the website's recipient cards
+    // (e.g. "parent · Age 22") — confirmed this data lives on
+    // job_postings/{clientUid} (a household profile doc), NOT on
+    // carePlans.recipientPlans, so it needs its own lookup + name match.
+    it("enriches multi-recipient careRecipients with age/relationship from job_postings", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        recipientPlans: {
+          samira_noname: { name: "Samira", careNeeds: ["Mobility"] },
+          imran_noname:  { name: "Imran",  careNeeds: ["Companionship"] },
+        },
+      });
+      hoisted.docState.set("job_postings/c1", {
+        careRecipientFirstName: "Samira", careRecipientAge: "22", relationship: "parent",
+        additionalRecipients: [{ firstName: "Imran", age: "45", relationship: "Other" }],
+      });
+      const r = await handleToolCall("request_booking", {
+        ...baseInput, recipientFirstNames: ["Samira", "Imran"], _confirmedActionId: "test-confirm-needs-4",
+      }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careRecipients[0]).toMatchObject({ name: "Samira", age: "22", relationship: "parent" });
+      expect(arg.careRecipients[1]).toMatchObject({ name: "Imran", age: "45", relationship: "Other" });
+    });
+
+    it("stamps top-level careNeeds from the sole recipient plan for a single-recipient household", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        recipientPlans: { onlyone: { name: "Grandma Rose", careNeeds: ["Medication reminders"] } },
+      });
+      const r = await handleToolCall("request_booking", { ...baseInput, _confirmedActionId: "test-confirm-needs-2" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careNeeds).toEqual(["Medication reminders"]);
+    });
+
+    it("stamps lifestylePreferences tags from whichever saved address was actually picked", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        locationPool: [{ street: "9 Oak Ave", city: "Springfield", state: "IL", zipCode: "62701", smokingHousehold: true, petsInHome: true }],
+      });
+      const { careLocation: _omit, ...noLocation } = baseInput;
+      const r = await handleToolCall("request_booking", { ...noLocation, _confirmedActionId: "test-confirm-needs-3" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.lifestylePreferences.sort()).toEqual(["Pets in home", "Smoking household"]);
+    });
+
     it("an interviewId that doesn't belong to this client/caregiver books unlinked instead of failing", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
       hoisted.docState.set("video_interviews/iv1", { clientId: "someone_else", caregiverId: "cg1", applicationId: "app1" });
 
-      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1" }) as any;
+      const r = await handleToolCall("request_booking", { ...baseInput, interviewId: "iv1", _confirmedActionId: "test-confirm-3" }) as any;
       expect(r.success).toBe(true);
       const arg = createBookingTask.mock.calls[0][0] as any;
       expect(arg.jobId).toBeUndefined();
@@ -349,12 +441,149 @@ describe("booking tools", () => {
 
     it("booking with no interviewId at all stays unlinked (direct/matching-flow booking)", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
-      const r = await handleToolCall("request_booking", baseInput) as any;
+      const r = await handleToolCall("request_booking", { ...baseInput, _confirmedActionId: "test-confirm-4" }) as any;
       expect(r.success).toBe(true);
       const arg = createBookingTask.mock.calls[0][0] as any;
       expect(arg.interviewId).toBeUndefined();
       expect(arg.jobId).toBeUndefined();
       expect(arg.applicationId).toBeUndefined();
+    });
+
+    // Recurring shape (2026-09-13): dayShiftTimes/ongoing/endDate instead of
+    // dates/startTime/endTime — matches the website's own weekly shift
+    // generator shape (shiftGenerator.ts's dayShiftTimes contract).
+    it("commits a recurring booking with dayShiftTimes and computes weekly-hours estimate", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("request_booking", {
+        clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+        careLocation: "123 Main St, Springfield",
+        agreedRate: 20,
+        recurring: true,
+        dayShiftTimes: { Mon: { start: "09:00", end: "17:00" }, Wed: { start: "09:00", end: "17:00" } },
+        ongoing: true,
+        _confirmedActionId: "test-confirm-recurring-1",
+      }) as any;
+      expect(r.success).toBe(true);
+      expect(r.estimatedTotal).toBe(320); // 16h/week * $20
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.schedule.dayShiftTimes).toEqual({ Mon: { start: "09:00", end: "17:00" }, Wed: { start: "09:00", end: "17:00" } });
+      expect(arg.schedule.ongoing).toBe(true);
+    });
+
+    it("a recurring booking with no dayShiftTimes and a linked job post's days hints them in the error instead of guessing", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
+      hoisted.docState.set("job_posts/job1", { title: "Weekday care", daysOfWeek: ["Mon", "Wed", "Fri"] });
+
+      const r = await handleToolCall("request_booking", {
+        clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+        careLocation: "123 Main St, Springfield",
+        interviewId: "iv1", recurring: true,
+        _confirmedActionId: "test-confirm-recurring-2",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+      expect(r.message).toMatch(/Mon, Wed, Fri/);
+      expect(r.message).toMatch(/only.*times/i);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("defaults endDate/ongoing from the linked job post's own schedule when the agent omits both", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
+      hoisted.docState.set("job_posts/job1", { title: "Short-term care", daysOfWeek: ["Tue"], endDate: "2026-12-01" });
+
+      const r = await handleToolCall("request_booking", {
+        clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+        careLocation: "123 Main St, Springfield",
+        agreedRate: 20,
+        interviewId: "iv1", recurring: true,
+        dayShiftTimes: { Tue: { start: "10:00", end: "14:00" } },
+        // ongoing/endDate deliberately omitted — should come from the job post, not be invented
+        _confirmedActionId: "test-confirm-recurring-3",
+      }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.schedule.ongoing).toBe(false);
+      expect(arg.schedule.endDate).toBe("2026-12-01");
+    });
+
+    it("a job post with no endDate on file still requires an explicit ongoing/endDate answer (never assumes ongoing)", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
+      hoisted.docState.set("job_posts/job1", { title: "Open-ended care", daysOfWeek: ["Tue"] }); // no endDate on file
+
+      const r = await handleToolCall("request_booking", {
+        clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+        careLocation: "123 Main St, Springfield",
+        interviewId: "iv1", recurring: true,
+        dayShiftTimes: { Tue: { start: "10:00", end: "14:00" } },
+        _confirmedActionId: "test-confirm-recurring-4",
+      }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+      expect(r.message).toMatch(/endDate is required/i);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    // Care Location (2026-09-13): must match the website's own multi-address
+    // picker (carePlans.locationPool), not just a single flat address.
+    it("a single saved address in locationPool is used automatically, tags and all", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        locationPool: [{ street: "9 Oak Ave", city: "Springfield", state: "IL", zipCode: "62701", smokingHousehold: true }],
+      });
+      const { careLocation: _omit, ...noLocation } = baseInput;
+      const r = await handleToolCall("request_booking", { ...noLocation, _confirmedActionId: "test-confirm-loc-1" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careLocation).toBe("9 Oak Ave, Springfield, IL, 62701");
+    });
+
+    it("more than one saved address refuses and lists the real options instead of guessing", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        locationPool: [
+          { street: "9 Oak Ave", city: "Springfield", state: "IL", zipCode: "62701" },
+          { street: "42 Elm St", city: "Springfield", state: "IL", zipCode: "62702", smokingHousehold: true },
+        ],
+      });
+      const { careLocation: _omit, ...noLocation } = baseInput;
+      const r = await handleToolCall("request_booking", { ...noLocation, _confirmedActionId: "test-confirm-loc-2" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+      expect(r.message).toMatch(/9 Oak Ave/);
+      expect(r.message).toMatch(/42 Elm St/);
+      expect(r.message).toMatch(/smoking household/i);
+      expect(r.message).toMatch(/do NOT ask them to type an address from scratch/i);
+      expect(createBookingTask).not.toHaveBeenCalled();
+    });
+
+    it("an explicit careLocation from the agent is used as-is even with multiple saved addresses on file", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("carePlans/c1", {
+        locationPool: [
+          { street: "9 Oak Ave", city: "Springfield", state: "IL", zipCode: "62701" },
+          { street: "42 Elm St", city: "Springfield", state: "IL", zipCode: "62702" },
+        ],
+      });
+      const r = await handleToolCall("request_booking", { ...baseInput, careLocation: "42 Elm St, Springfield, IL, 62702", _confirmedActionId: "test-confirm-loc-3" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careLocation).toBe("42 Elm St, Springfield, IL, 62702");
+    });
+
+    it("no locationPool at all falls back to the single on-file users address", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
+      hoisted.docState.set("users/c1", { identityCheckStatus: "verified", membershipStatus: "active", street: "1 Fallback Rd", city: "Springfield", state: "IL", zipCode: "62703" });
+      const { careLocation: _omit, ...noLocation } = baseInput;
+      const r = await handleToolCall("request_booking", { ...noLocation, _confirmedActionId: "test-confirm-loc-4" }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.careLocation).toBe("1 Fallback Rd, Springfield, IL, 62703");
     });
 
     it("rejects an unknown caregiver BEFORE any booking write (shared NOT_FOUND)", async () => {
@@ -368,41 +597,40 @@ describe("booking tools", () => {
     // hourlyRate on file must NEVER be booked at a silent $20. The tool
     // returns a structured error instructing the agent to ask for / confirm
     // the rate, and no booking task is created.
-    it("returns a structured ask-for-rate error (RATE_UNKNOWN) instead of booking at a silent $20", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no hourlyRate
-      const r = await handleToolCall("request_booking", baseInput) as any;
+    // Rate precedence (2026-09-13, confirmed against the site's own modal):
+    // the caregiver's own listed hourlyRate is browsing/display data only —
+    // request_booking must NEVER fall back to it for the actual committed
+    // rate. Only an explicit agreedRate, or the linked job post's own rate,
+    // may ever set it; caregivers/cg1.hourlyRate below is deliberately
+    // irrelevant/absent to prove neither test path touches it.
+    it("refuses and asks for a rate when neither agreedRate nor a linked job post's rate exists", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no hourlyRate on file — must not matter either way
+      const { agreedRate: _omit, ...noRate } = baseInput;
+      const r = await handleToolCall("request_booking", noRate) as any;
       expect(r._toolError).toBe(true);
-      expect(r.code).toBe("RATE_UNKNOWN");
-      expect(r.message).toMatch(/confirm/i);
-      expect(r.message).toMatch(/rate/i);
+      expect(r.code).toBe("INVALID_INPUT");
+      expect(r.message).toMatch(/agreed rate/i);
+      expect(r.message).toMatch(/never assumes the caregiver's own listed rate/i);
       expect(createBookingTask).not.toHaveBeenCalled();
     });
 
-    it("a non-numeric hourlyRate is treated as unknown (no coerced booking)", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "flexible" });
-      const r = await handleToolCall("request_booking", baseInput) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("RATE_UNKNOWN");
-      expect(createBookingTask).not.toHaveBeenCalled();
-    });
+    it("falls back to the linked job post's own rate when agreedRate is omitted", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 999 }); // must be ignored
+      hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1", caregiverId: "cg1" });
+      hoisted.docState.set("job_posts/job1", { title: "Weekend companionship", rate: 22 });
 
-    // Legacy string rates: a doc carrying hourlyRate "$27.50" (raw user text
-    // written straight through) must book exactly as if it were 27.5 — same
-    // quote math, same createBookingTask payload, agreement preserved.
-    it('books with a coerced legacy "$27.50" string rate exactly like 27.5', async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "$27.50" });
-      const r = await handleToolCall("request_booking", baseInput) as any;
+      const { agreedRate: _omit, ...noRate } = baseInput;
+      const r = await handleToolCall("request_booking", { ...noRate, interviewId: "iv1", _confirmedActionId: "test-confirm-5" }) as any;
       expect(r.success).toBe(true);
-      expect(r.estimatedTotal).toBe(440); // 8h * $27.50 * 2 days
-      expect(createBookingTask).toHaveBeenCalledTimes(1);
       const arg = createBookingTask.mock.calls[0][0] as any;
-      expect(arg.hourlyRate).toBe(27.5);
+      expect(arg.hourlyRate).toBe(22);
     });
 
     it("surfaces a blocked booking (e.g. pending background check) without erroring", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
       createBookingTask.mockResolvedValueOnce(""); // executor blocked it + already messaged the family
-      const r = await handleToolCall("request_booking", baseInput) as any;
+      const r = await handleToolCall("request_booking", { ...baseInput, _confirmedActionId: "test-confirm-6" }) as any;
       expect(r.success).toBe(false);
       expect(r.blocked).toBe(true);
       expect(r.reason).toBe("booking_blocked_pending_background_check");

@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "../linq/client";
 import { createBookingTask } from "./bookingExecutor";
+import { resolveCaregiverRate } from "../utils/caregiverRate";
 import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanQuestionOnly } from "./humanReply";
@@ -130,10 +131,23 @@ export async function finalizeTaskApproval(
 
   const task = taskSnap.data()!;
 
-  // Create a real booking task that goes through the standard confirmation flow
+  // Create a real booking task that goes through the standard confirmation flow.
+  // 2026-09-13: this used to fall back to a hardcoded $20/hr when the
+  // caregiver had no rate on file — a fabricated rate here becomes a
+  // fabricated charge the caregiver is asked to accept. Resolve the real
+  // rate the same way request_booking does; refuse rather than guess.
   const clientId = (session as any).userId ?? phone;
-  const cgSnap   = await db.collection("caregivers").doc(pending.caregiverId).get();
-  const hourlyRate = (cgSnap.data()?.hourlyRate ?? 20) as number;
+  const rateResult = await resolveCaregiverRate(pending.caregiverId);
+  if (!rateResult.ok) {
+    await sendMessage(chatId,
+      `I wasn't able to confirm ${pending.caregiverName}'s current rate, so I couldn't complete this booking yet — ` +
+      `I'll get that sorted and follow up.`);
+    await db.collection("agent_sessions").doc(phone).update({
+      pendingTaskConfirm: admin.firestore.FieldValue.delete(),
+    }).catch(() => {});
+    return;
+  }
+  const hourlyRate = rateResult.hourlyRate;
 
   // Use appointments from original task or fall back to stored time
   const appointments = (task.appointments ?? [{

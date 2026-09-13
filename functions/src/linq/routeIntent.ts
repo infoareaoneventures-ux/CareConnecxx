@@ -18,6 +18,7 @@ import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
 import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
+import { resolveCaregiverRate as resolveCaregiverRateShared, coerceHourlyRate } from "../utils/caregiverRate";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { startModifyScheduleFlow } from "../agents/modifyScheduleFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
@@ -1059,6 +1060,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const rebook = (session as any).pendingRebook as {
         caregiverId: string; caregiverName: string;
         startTime: string; endTime: string; durationHours: number;
+        hourlyRate?: number;
       };
       const parsedDateRaw = await quickComplete(
         `Today is ${businessTodayStr()}. ` +
@@ -1072,13 +1074,37 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         return;
       }
       const clientId = session.userId ?? phone;
+      // 2026-09-13: this used to hardcode hourlyRate: 20 regardless of the
+      // caregiver's actual rate — a fabricated rate here becomes a
+      // fabricated charge the caregiver is asked to accept. A rebook is
+      // "same arrangement, new date" (matches the website's own `?rebook=`
+      // flow, which reuses the prior booking doc's own rate) — so the rate
+      // of THAT arrangement (carried onto pendingRebook above) takes
+      // precedence; caregivers.hourlyRate (browsing/display data, confirmed
+      // never used by the site as a booking default) is only a last-resort
+      // fallback for an old arrangement that somehow never recorded a rate,
+      // and refusing (never guessing) is the final fallback either way.
+      let effectiveHourlyRate = rebook.hourlyRate;
+      if (effectiveHourlyRate === undefined) {
+        const rebookRate = await resolveCaregiverRateShared(rebook.caregiverId);
+        if (!rebookRate.ok) {
+          // rebookRate.message is written as an agent-facing tool-error
+          // instruction, not customer copy — never text that verbatim.
+          await sendMessage(chatId,
+            `I wasn't able to confirm ${rebook.caregiverName}'s current rate, so I couldn't rebook this yet — ` +
+            `I'll get that sorted and follow up.`);
+          await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
+          return;
+        }
+        effectiveHourlyRate = rebookRate.hourlyRate;
+      }
       const taskId   = await createBookingTask({
         clientPhone:   phone,
         clientId,
         caregiverId:   rebook.caregiverId,
         caregiverName: rebook.caregiverName,
         appointments:  [{ date: dateStr, startTime: rebook.startTime, endTime: rebook.endTime, durationHours: rebook.durationHours }],
-        hourlyRate:    20,
+        hourlyRate:    effectiveHourlyRate,
       });
       await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
       const perms = await getPermissions(session.userId ?? phone).catch(() => null);
@@ -1105,7 +1131,10 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           await rmfc3(phone, chatId, sd, sd).catch(() => {});
         }
       } else {
-        const cost = (rebook.durationHours * 20).toFixed(2);
+        // 2026-09-13: this also hardcoded * 20 — the same bug as the
+        // createBookingTask call above, just in the summary text shown when
+        // auto-booking isn't permitted. Must use the same resolved rate.
+        const cost = (rebook.durationHours * effectiveHourlyRate).toFixed(2);
         await sendMessage(chatId,
           `Here's your booking summary:\n\n` +
           `${dateStr} · ${rebook.startTime}–${rebook.endTime}\n` +
@@ -1141,9 +1170,18 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const startTime     = last.startTime     as string;
       const endTime       = last.endTime       as string;
       const durationHours = (last.durationHours ?? 4) as number;
+      // The rate of THIS arrangement — matches the website's own rebook flow
+      // (PostsPage.tsx's `?rebook=` entry reuses `prevBookingData.rate` from
+      // the prior booking doc, never the caregiver's browsing-listed rate).
+      // A rebook is "same arrangement, new date," so its rate is whatever
+      // was actually agreed for this arrangement, not a fresh lookup.
+      const priorHourlyRate = coerceHourlyRate(last.hourlyRate);
 
       await db.collection("agent_sessions").doc(phone).update({
-        pendingRebook: { caregiverId, caregiverName, startTime, endTime, durationHours },
+        pendingRebook: {
+          caregiverId, caregiverName, startTime, endTime, durationHours,
+          ...(priorHourlyRate !== null ? { hourlyRate: priorHourlyRate } : {}),
+        },
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
       await sendMessage(chatId,

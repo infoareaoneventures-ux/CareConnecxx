@@ -90,22 +90,11 @@ function bookingTimeToMinutes(t: unknown): number | null {
 // Legacy prod caregiver docs can carry hourlyRate as a STRING ("25", "$25"):
 // the onboarding correction path stored the raw user text whenever Number()
 // failed to parse it (onboardingConversation.ts), and update_signup_field
-// accepts free-text field values. A caregiver with a perfectly good "25" on
-// file must stay bookable, so coerce STRICT plain-numeric strings — trimmed,
-// with at most one leading "$" stripped (the plausible user-typed shape).
-// Anything else ("flexible", "25/hr", "", "abc") stays unknown: returns null.
-function coerceHourlyRate(raw: unknown): number | null {
-  if (typeof raw === "number") return Number.isFinite(raw) && raw > 0 ? raw : null;
-  if (typeof raw === "string") {
-    const trimmed = raw.trim().replace(/^\$/, "");
-    // Strict shape: digits with an optional decimal part. Rejects "", "-5",
-    // "Infinity", "25/hr", "1e3" — those are RATE_UNKNOWN, not a guess.
-    if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
-    const n = Number(trimmed);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
-  return null;
-}
+// Shared with routeIntent.ts's rebook flow and taskApprovalHandler.ts (2026-09-13)
+// — both were found still carrying the exact hardcoded-$20-fallback pattern
+// R9 (below) already killed here; extracting this to utils/caregiverRate.ts
+// means all three booking-creating call sites can never drift apart again.
+import { resolveCaregiverRate as resolveCaregiverRateShared, resolveCaregiverName, coerceHourlyRate } from "../utils/caregiverRate";
 
 // Resolve caregiver name + hourly rate from the caregiver doc. Mirrors the
 // name fallbacks used by the live `request_booking` path (name/fullName) so a
@@ -117,39 +106,31 @@ function coerceHourlyRate(raw: unknown): number | null {
 // booking charge — the agent must ask for / confirm the real rate instead.
 // String rates that parse cleanly (legacy docs) coerce via coerceHourlyRate
 // and flow exactly like numeric rates — quote and booking agree either way.
+// Thin wrapper over the shared core: only this file's ToolErrorCode-typed
+// contract (NOT_FOUND vs RATE_UNKNOWN vs INVALID_INPUT) lives here.
 async function resolveCaregiverRate(
   caregiverId: string,
 ): Promise<{ ok: true; caregiverName: string; hourlyRate: number } | { ok: false; code: ToolErrorCode; message: string }> {
   if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId is required" };
-  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
-  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
-  const cg = cgSnap.data() || {};
-  const caregiverName = (cg.name ?? cg.fullName ?? "your caregiver") as string;
-  const hourlyRate = coerceHourlyRate(cg.hourlyRate);
-  if (hourlyRate === null) {
-    return {
-      ok:   false,
-      code: "RATE_UNKNOWN",
-      message:
-        `${caregiverName} has no hourly rate on file, so nothing was quoted or booked. ` +
-        `Do NOT assume, invent, or state any dollar rate. Tell the family you need to confirm ` +
-        `this caregiver's rate first, and do not quote or book until a real rate is on file. ` +
-        `If the family needs this resolved now, use create_support_ticket so the team can confirm the caregiver's rate.`,
-    };
-  }
-  return { ok: true, caregiverName, hourlyRate };
+  const result = await resolveCaregiverRateShared(caregiverId);
+  if (result.ok) return result;
+  const code: ToolErrorCode = result.message === "caregiver not found" ? "NOT_FOUND" : "RATE_UNKNOWN";
+  return { ok: false, code, message: result.message };
 }
 
-// Build a full cost quote for a proposed booking. No write — safe to call freely.
-async function buildBookingQuote(input: {
-  caregiverId?: unknown;
-  dates?:       unknown;
-  startTime?:   unknown;
-  endTime?:     unknown;
-}): Promise<BookingQuoteResult> {
-  const caregiverId = String(input.caregiverId ?? "");
-  if (!caregiverId || !input.dates || !input.startTime || !input.endTime) {
-    return { ok: false, code: "INVALID_INPUT", message: "caregiverId, dates, startTime, endTime are required" };
+// Date/time-range parsing shared between quote_booking's informational
+// estimate and request_booking's actual commit — deliberately decoupled
+// from rate resolution (2026-09-13) so a caregiver with no listed rate on
+// file never blocks a commit that has its own agreedRate/job-post-rate
+// override; only quote_booking (which needs a real number to estimate
+// anything) also requires resolveCaregiverRate to succeed.
+function parseBookingDateRange(input: {
+  dates?:     unknown;
+  startTime?: unknown;
+  endTime?:   unknown;
+}): { ok: true; dateList: string[]; durationHours: number } | { ok: false; code: ToolErrorCode; message: string } {
+  if (!input.dates || !input.startTime || !input.endTime) {
+    return { ok: false, code: "INVALID_INPUT", message: "dates, startTime, endTime are required" };
   }
   const dateList = (Array.isArray(input.dates) ? input.dates : [input.dates]).map(String).filter(Boolean);
   if (dateList.length === 0) return { ok: false, code: "INVALID_INPUT", message: "at least one date is required" };
@@ -160,21 +141,35 @@ async function buildBookingQuote(input: {
     return { ok: false, code: "INVALID_INPUT", message: "startTime/endTime must be 'HH:MM' with end after start" };
   }
   const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
+  return { ok: true, dateList, durationHours };
+}
+
+// Build a full cost quote for a proposed booking. No write — safe to call freely.
+async function buildBookingQuote(input: {
+  caregiverId?: unknown;
+  dates?:       unknown;
+  startTime?:   unknown;
+  endTime?:     unknown;
+}): Promise<BookingQuoteResult> {
+  const caregiverId = String(input.caregiverId ?? "");
+  if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId, dates, startTime, endTime are required" };
+  const range = parseBookingDateRange(input);
+  if (!range.ok) return range;
 
   const rate = await resolveCaregiverRate(caregiverId);
   if (!rate.ok) return rate;
 
-  const perVisit  = Math.round(durationHours * rate.hourlyRate * 100) / 100;
-  const lineItems = dateList.map((date) => ({ date, hours: durationHours, amount: perVisit }));
-  const totalEstimate = Math.round(perVisit * dateList.length * 100) / 100;
+  const perVisit  = Math.round(range.durationHours * rate.hourlyRate * 100) / 100;
+  const lineItems = range.dateList.map((date) => ({ date, hours: range.durationHours, amount: perVisit }));
+  const totalEstimate = Math.round(perVisit * range.dateList.length * 100) / 100;
 
   return {
     ok:            true,
     caregiverId,
     caregiverName: rate.caregiverName,
     hourlyRate:    rate.hourlyRate,
-    durationHours,
-    dates:         dateList,
+    durationHours: range.durationHours,
+    dates:         range.dateList,
     lineItems,
     totalEstimate,
   };
@@ -364,18 +359,75 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "request_booking",
-    description: "Commit a booking request for a caregiver (the final step — this is the write). Returns the booking task ID; the family then approves it. Prefer calling quote_booking first so the family sees the cost before you commit. clientId is injected automatically — do NOT ask the user for it.",
+    description:
+      "Commit a booking request for a caregiver, matching the website's own 'Send Booking Request' modal field for " +
+      "field. This tool ALREADY confirms before committing (a pending-action gate, same as the modal's own 'Review " +
+      "and edit before sending' step) — but you must still gather every field conversationally first; nothing here " +
+      "is optional to consider, even if some fields are optional to fill in. clientId is injected automatically — " +
+      "do NOT ask the user for it.\n" +
+      "TWO SCHEDULE SHAPES — pick one: (1) a one-off/short booking: pass dates + startTime + endTime (a single time " +
+      "block applied to each listed date). (2) A recurring/ongoing arrangement (the common case, e.g. 'every Mon/Wed/Fri " +
+      "9-5' or 'ongoing care'): pass recurring:true and dayShiftTimes (a real weekly schedule, generated going forward " +
+      "the same way the website's own recurring shift generator works) instead of dates/startTime/endTime. Set " +
+      "ongoing:true for no end date, or give endDate for a fixed-length arrangement. REQUIRED — the website shows " +
+      "'No schedule set' until this is filled; ask for it if not already known.\n" +
+      "If interviewId links this booking to a job post that already lists daysOfWeek/startDate/endDate, do NOT " +
+      "re-ask the family which days or the arrangement's end date — this tool already knows and will fill them in " +
+      "for you (if you omit ongoing/endDate, it falls back to the job post's own on file; if you omit dayShiftTimes " +
+      "entirely, the resulting error tells you the days already on file so you only have to ask for TIMES). The job " +
+      "post NEVER carries exact clock times (only a vague morning/afternoon/evening/overnight), so you must always " +
+      "ask the family for the actual start/end time on each day — never invent a time, matching the website's own " +
+      "behavior (it defaults days from the post but always leaves exact times for the family to set).\n" +
+      "RATE is REQUIRED — the website shows 'Rate & Payment: Required' until an agreed rate exists, and its modal " +
+      "NEVER defaults this from the caregiver's own listed/browsing rate (that number is display-only, shown when " +
+      "browsing caregivers — it is not a booking default anywhere on the site). Pass agreedRate with whatever the " +
+      "family and caregiver actually agreed on. If this booking is linked to a job post (interviewId given) and you " +
+      "omit agreedRate, this tool falls back to that SPECIFIC job post's own listed rate (matching the website's " +
+      "own modal default) — but if neither an agreedRate nor a job-post rate exists, it refuses rather than " +
+      "guessing a number; ask the family what rate they're booking at.\n" +
+      "CARE LOCATION is REQUIRED too — the website shows 'Care Location: Required' until one is set. If the family " +
+      "has MORE THAN ONE saved address on file (the website's own multi-address picker, with tags like 'smoking " +
+      "household'), this tool refuses and lists the real options — offer the family that SAME list over SMS rather " +
+      "than asking them to describe an address from scratch. With exactly one saved address, or none at all (falls " +
+      "back to the home address on file), it's used automatically. If nothing is on file AND no careLocation is " +
+      "given, this tool refuses — ask where care will happen.\n" +
+      "CARE RECIPIENTS: use recipientFirstNames (plural) for more than one recipient in the same booking (matches " +
+      "the website's multi-select list). Each recipient's care needs/care tasks/locations/lifestyle notes are pulled " +
+      "from their care plan automatically, and a deduped summary of everyone's care needs is also attached at the " +
+      "top level (matching the website's own booking_requests shape) — READ THESE BACK to the family as part of " +
+      "your confirmation (matches the website's visible 'Care Plan Details' review section) so they can catch " +
+      "anything wrong before it's sent, not just silently attach them.\n" +
+      "EMERGENCY CONTACT is pulled automatically from the family's care plan on file — never ask for it, but it's " +
+      "fine to mention who it is in your recap (matches the website showing it for review, not as an editable field).\n" +
+      "message is an optional note to the caregiver (matches the website's visible-but-optional 'Message to " +
+      "[caregiver]' field) — ask if they'd like to add one even though skipping is fine.\n" +
+      "BEFORE calling this tool, recap the full booking in plain English — caregiver, rate, schedule, location, " +
+      "recipients (with their care needs), and the emergency contact and note if set — and wait for the family's " +
+      "go-ahead, matching the website's own review screen. If they want to change anything, adjust and recap again " +
+      "rather than calling this tool with something they haven't actually seen. If they reply with a correction " +
+      "instead of a plain confirmation, build a fresh corrected call — never just re-send the old one.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string" },
-        dates:       { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
-        startTime:   { type: "string", description: "e.g. '09:00'" },
-        endTime:     { type: "string", description: "e.g. '17:00'" },
+        dates:       { type: "array", items: { type: "string" }, description: "One-off shape only: ISO date strings (YYYY-MM-DD)" },
+        startTime:   { type: "string", description: "One-off shape only: e.g. '09:00'" },
+        endTime:     { type: "string", description: "One-off shape only: e.g. '17:00'" },
+        recurring:   { type: "boolean", description: "True for a recurring/ongoing weekly arrangement — use dayShiftTimes/ongoing/endDate instead of dates/startTime/endTime." },
+        dayShiftTimes: {
+          type: "object",
+          description: "Recurring shape only, required when recurring:true. Maps day abbreviation (Sun/Mon/Tue/Wed/Thu/Fri/Sat) to that day's time block, e.g. {\"Mon\": {\"start\":\"09:00\",\"end\":\"17:00\"}, \"Wed\": {\"start\":\"09:00\",\"end\":\"17:00\"}}. Only include the days actually worked.",
+        },
+        ongoing:  { type: "boolean", description: "Recurring shape only: true for no end date (keeps generating shifts indefinitely, matching the website's 'Ongoing' option)." },
+        endDate:  { type: "string", description: "Recurring shape only, required when recurring:true and ongoing is not true: ISO date (YYYY-MM-DD) the arrangement ends." },
+        agreedRate: { type: "number", description: "The hourly rate the family and caregiver actually agreed on, if different from the caregiver's listed rate (matches the website's 'Rate & Payment' field). Omit to use the caregiver's listed rate." },
+        careLocation: { type: "string", description: "Where care will happen, only if DIFFERENT from the family's home address on file (matches the website's 'Care Location' field). Omit to default to their home address." },
+        message: { type: "string", description: "Optional note to send the caregiver along with the booking request (matches the website's 'Message to [caregiver]' field)." },
         recipientFirstName: { type: "string", description: "First name of the care recipient this visit is for. Pass it whenever the household cares for more than one person (so the visit is attributed to the right person); omit for single-recipient households." },
+        recipientFirstNames: { type: "array", items: { type: "string" }, description: "Use instead of recipientFirstName when the visit is for MORE THAN ONE care recipient at once (matches the website's multi-select care recipients list) — e.g. [\"Samira\", \"Imran\"]." },
         interviewId: { type: "string", description: "Pass this when the family is booking this caregiver right after a completed interview (e.g. after a 'strong' fit from submit_interview_feedback). Links the booking back to the job post and marks the caregiver's application accepted, matching the website's Send Booking Request flow. Omit for a direct/matching-flow booking with no job post involved." },
       },
-      required: ["caregiverId", "dates", "startTime", "endTime"],
+      required: ["caregiverId"],
     },
   },
   {
@@ -1255,7 +1307,21 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Submit your decision after interviewing a caregiver. Also marks the interview completed (the website's own separate " +
       "'Mark as Completed' step, done automatically here since it's one turn in a conversation, not two button clicks). " +
-      "Options: 'strong' (proceed to hire), 'maybe' (keep considering), 'no' (not a fit — matches the website's 'Not Selected').",
+      "Options: 'strong' (the family wants to hire), 'maybe' (keep considering), 'no' (not a fit — matches the website's 'Not Selected'). " +
+      "IMPORTANT: 'strong' only RECORDS the decision and lets the caregiver know the family wants to move forward — it does NOT " +
+      "create an actual booking (no schedule, no rate, nothing for the caregiver to accept yet, matching the website's own " +
+      "'Mark as Completed' + fit-decision step, which is likewise separate from its 'Send Booking' button). On a 'strong' " +
+      "result, immediately continue the conversation to actually set up the booking, matching every field the website's " +
+      "'Send Booking Request' modal collects: ask for (or confirm, if already known from the job post) the days/times " +
+      "they want (recurring/ongoing is the common case — see request_booking's recurring:true shape); if the caregiver's " +
+      "own listed rate isn't what they agreed on, or nothing is on file, ask for and pass agreedRate; if the family's " +
+      "address on file isn't where care will happen, ask for and pass careLocation. Also ask whether they'd like to add " +
+      "a note for the caregiver (optional — matches the website's visible-but-optional 'Message to [caregiver]' field; " +
+      "still worth asking even though it's fine to skip). Emergency contact is pulled automatically — never ask for that. " +
+      "Then call quote_booking to show the cost, and request_booking with this same interviewId — that is the real, " +
+      "bookable write the website's 'Send Booking' button performs. Never leave a 'strong' decision without following " +
+      "through to request_booking in the same or next turn; if the conversation stalls first, a follow-up nudge " +
+      "(bookingFollowupNudge.ts) will check back in after an hour and every ~48h until a real booking exists.",
     input_schema: {
       type: "object",
       properties: {
@@ -3787,11 +3853,18 @@ async function executeToolCall(
       }
 
       case "request_booking": {
-        return runActionNativeMcpWrite(name, input, async () => {
-        const { clientId, caregiverId, startTime, endTime, phone, recipientFirstName, interviewId } = input;
+        // NOTE: deliberately NOT wrapped in runActionNativeMcpWrite here — its
+        // postcondition verifier expects a real committed write (a taskId to
+        // check), which the confirm-gate's pending-action stub below doesn't
+        // have. Only the actual commit section further down (past the gate)
+        // is wrapped, so the verifier only ever sees real writes.
+        const {
+          clientId, caregiverId, startTime, endTime, phone, recipientFirstName, recipientFirstNames,
+          interviewId, recurring, dayShiftTimes, ongoing, endDate, agreedRate, careLocation, message,
+        } = input;
         // Session-injected ownership fields are checked here; the booking shape
-        // (caregiverId/dates/times) + caregiver lookup are validated by the shared
-        // quote primitive below, so the two paths can never diverge.
+        // (caregiverId/dates/times, or the recurring shape) + caregiver lookup
+        // are validated below, so the two paths can never diverge on ownership.
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
         if (!phone)    return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
         // Mirrors the website's own paywall for the same 'booking' action
@@ -3799,29 +3872,185 @@ async function executeToolCall(
         const gateError = await checkClientAccessGate(clientId as string, "booking");
         if (gateError) return gateError;
 
-        // Commit via the SAME primitive quote_booking exposes (U9b): the duration,
-        // rate, and caregiver name the family approved in the quote and the values
-        // we book are computed by one function — no duplicated parse/lookup logic.
-        const quote = await buildBookingQuote(input);
-        if (!quote.ok) return toolError(quote.code, quote.message);
+        // Job/interview linkage (2026-08-30, moved earlier 2026-09-13 so the
+        // job post's own schedule fields are available to the recurring-shape
+        // defaulting below): when this booking follows a completed interview,
+        // resolve jobId/jobTitle/applicationId so the booking_requests doc
+        // carries the same linkage handleSendBooking stamps on the website,
+        // and the caregiver's application gets marked accepted. Fail-soft
+        // throughout — a lookup miss or ownership mismatch just proceeds as
+        // an unlinked booking, never blocks it.
+        let jobId: string | undefined;
+        let jobTitle: string | undefined;
+        let applicationId: string | undefined;
+        // Real fields already on the job post the family posted — matches
+        // the website's own "Send Booking Request" fallback (post?.daysOfWeek/
+        // startDate/endDate/rate in handleSendBooking). NEVER a source for
+        // exact shift times: job_posts only stores a vague timeOfDay category
+        // (morning/afternoon/evening/overnight), so times are always asked,
+        // never invented from it.
+        let jobPostSchedule: { daysOfWeek?: string[]; startDate?: string; endDate?: string } | undefined;
+        // The job post's own `rate` field — confirmed 2026-09-13 this is the
+        // ONLY thing the website's booking modal ever defaults the agreed
+        // rate from (`bookingDraft.agreedRate ?? post?.rate ?? null` in
+        // handleSendBooking); a caregiver's own listed hourlyRate is
+        // browsing/display data only (search results, profile page) and is
+        // NEVER used as a booking-rate default on the site, so this tool
+        // must not use it that way either.
+        let jobPostRate: number | undefined;
+        if (interviewId) {
+          try {
+            const ivSnap = await db.collection("video_interviews").doc(interviewId as string).get();
+            const iv = ivSnap.data();
+            if (iv && iv.clientId === clientId && iv.caregiverId === caregiverId) {
+              applicationId = iv.applicationId as string | undefined;
+              if (applicationId) {
+                const appSnap = await db.collection("job_applications").doc(applicationId).get();
+                jobId = appSnap.data()?.jobId as string | undefined;
+                if (jobId) {
+                  const jobSnap = await db.collection("job_posts").doc(jobId).get();
+                  const jobData = jobSnap.data();
+                  jobTitle = jobData?.title as string | undefined;
+                  const daysOfWeek = jobData?.daysOfWeek as string[] | undefined;
+                  const jps: { daysOfWeek?: string[]; startDate?: string; endDate?: string } = {};
+                  if (Array.isArray(daysOfWeek) && daysOfWeek.length) jps.daysOfWeek = daysOfWeek;
+                  if (jobData?.startDate) jps.startDate = String(jobData.startDate);
+                  if (jobData?.endDate) jps.endDate = String(jobData.endDate);
+                  if (Object.keys(jps).length) jobPostSchedule = jps;
+                  const coercedJobRate = coerceHourlyRate(jobData?.rate);
+                  if (coercedJobRate !== null) jobPostRate = coercedJobRate;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[request_booking] interview/job linkage lookup failed (booking proceeds unlinked):", e);
+          }
+        }
 
-        const appointments = quote.dates.map((d) => ({
-          date:          d,
-          startTime:     startTime as string,
-          endTime:       endTime as string,
-          durationHours: quote.durationHours,
-        }));
+        const isRecurring = recurring === true;
+        let caregiverName: string;
+        let hourlyRate: number;
+        let appointments: Array<{ date: string; startTime: string; endTime: string; durationHours: number }> = [];
+        let schedule: { dayShiftTimes: Record<string, { start: string; end: string }>; ongoing: boolean; endDate?: string } | undefined;
+        let estimatedTotal: number;
+        let quoteDates: string[] = [];
 
-        // Recipient attribution (2026-07-16): resolve WHO this visit is for so
-        // multi-recipient households get correctly-attributed appointments.
-        // Only stamped when the household actually has 2+ recipients on file —
+        if (isRecurring) {
+          // Recurring/ongoing shape — matches the website's own weekly
+          // dayShiftTimes pattern (see shiftGenerator.ts) instead of a fixed
+          // dates list. This is the common real-world case ("every Mon/Wed/Fri").
+          const dst = (dayShiftTimes ?? {}) as Record<string, { start?: string; end?: string }>;
+          const days = Object.keys(dst);
+          if (days.length === 0) {
+            // Days are real data once a job post is linked — surface them so
+            // the agent only has to ask the family for TIMES, never invent
+            // the days itself. No job post / no days on it: ask for both, same as the site.
+            const hint = jobPostSchedule?.daysOfWeek?.length
+              ? ` This booking's job post already lists these days: ${jobPostSchedule.daysOfWeek.join(", ")}. ` +
+                `Do not ask the family which days — ask only for the start/end time on each of those days, ` +
+                `then pass dayShiftTimes keyed by those same day names.`
+              : "";
+            return toolError("INVALID_INPUT", `dayShiftTimes is required (at least one day) when recurring is true.${hint}`);
+          }
+          for (const d of days) {
+            if (!dst[d]?.start || !dst[d]?.end) return toolError("INVALID_INPUT", `dayShiftTimes.${d} needs both start and end`);
+          }
+          // endDate/ongoing: default from the linked job post's OWN real
+          // fields when the agent didn't pass either — matches the website's
+          // fallback (post?.startDate/endDate) instead of asking the family
+          // to repeat something they already told the site. A job post with
+          // no endDate on file is NOT treated as "ongoing" (that's a real
+          // commitment decision) — still require an explicit answer then.
+          const effectiveOngoing = ongoing === true ? true : (ongoing === false ? false : undefined);
+          const effectiveEndDate = endDate ? String(endDate) : (effectiveOngoing !== true ? jobPostSchedule?.endDate : undefined);
+          if (effectiveOngoing !== true && !effectiveEndDate) {
+            return toolError("INVALID_INPUT", "endDate is required when recurring is true and ongoing is not true");
+          }
+
+          const nameRes = await resolveCaregiverName(caregiverId as string);
+          if (!nameRes.ok) return toolError("NOT_FOUND", nameRes.message);
+          caregiverName = nameRes.caregiverName;
+          // Committed rate — matches the website's own modal precedence
+          // exactly (bookingDraft.agreedRate ?? post?.rate ?? null): an
+          // explicit agreedRate the family gave, else the linked job post's
+          // own rate, else refuse. The caregiver's own listed hourlyRate is
+          // browsing/display data only and is NEVER used as a booking
+          // default on the site — this tool must not use it that way either.
+          if (agreedRate !== undefined && agreedRate !== null) {
+            hourlyRate = Number(agreedRate);
+          } else if (jobPostRate !== undefined) {
+            hourlyRate = jobPostRate;
+          } else {
+            return toolError(
+              "INVALID_INPUT",
+              "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
+              "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +
+              "(and caregiver, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.",
+            );
+          }
+
+          let weeklyHours = 0;
+          const normalizedDst: Record<string, { start: string; end: string }> = {};
+          for (const d of days) {
+            const startMin = bookingTimeToMinutes(dst[d].start);
+            const endMin   = bookingTimeToMinutes(dst[d].end);
+            if (startMin === null || endMin === null || endMin <= startMin) {
+              return toolError("INVALID_INPUT", `dayShiftTimes.${d}: start/end must be 'HH:MM' with end after start`);
+            }
+            weeklyHours += (endMin - startMin) / 60;
+            normalizedDst[d] = { start: dst[d].start as string, end: dst[d].end as string };
+          }
+          estimatedTotal = Math.round(weeklyHours * hourlyRate * 100) / 100;
+          schedule = {
+            dayShiftTimes: normalizedDst,
+            ongoing: effectiveOngoing === true,
+            ...(effectiveOngoing !== true && effectiveEndDate ? { endDate: effectiveEndDate } : {}),
+          };
+        } else {
+          // Duration/date-list parsing is shared with quote_booking (U9b),
+          // but rate resolution is NOT (2026-09-13) — see the recurring
+          // branch's comment above for why. Caregiver existence is still
+          // checked (NOT_FOUND), just decoupled from whether they happen to
+          // have a listed hourlyRate on file.
+          const range = parseBookingDateRange(input);
+          if (!range.ok) return toolError(range.code, range.message);
+          const nameRes = await resolveCaregiverName(caregiverId as string);
+          if (!nameRes.ok) return toolError("NOT_FOUND", nameRes.message);
+          caregiverName = nameRes.caregiverName;
+          if (agreedRate !== undefined && agreedRate !== null) {
+            hourlyRate = Number(agreedRate);
+          } else if (jobPostRate !== undefined) {
+            hourlyRate = jobPostRate;
+          } else {
+            return toolError(
+              "INVALID_INPUT",
+              "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
+              "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +
+              "(and caregiver, if not already agreed) what hourly rate this booking is at, and pass it as agreedRate.",
+            );
+          }
+          appointments = range.dateList.map((d) => ({
+            date:          d,
+            startTime:     startTime as string,
+            endTime:       endTime as string,
+            durationHours: range.durationHours,
+          }));
+          estimatedTotal = Math.round(range.durationHours * hourlyRate * range.dateList.length * 100) / 100;
+          quoteDates = range.dateList;
+        }
+
+        // Recipient attribution (2026-07-16, extended for multi-recipient
+        // bookings): resolve WHO this visit is for so multi-recipient
+        // households get correctly-attributed appointments. Only stamped
+        // when the household actually has 2+ recipients on file —
         // single-recipient households keep today's shape (absent = the sole
         // recipient, fail-soft everywhere). Ambiguity NEVER blocks the money
-        // path: no name in a multi-home defaults to the primary senior + a note
-        // the agent can use to confirm.
+        // path: no name in a multi-home defaults to the primary senior + a
+        // note the agent can use to confirm.
         let recipientName: string | undefined;
         let recipientKey:  string | undefined;
         let recipientResolved: "named" | "defaulted_primary" | undefined;
+        let careRecipients: Array<Record<string, unknown>> | undefined;
         try {
           const { multiRecipientScopingEnabled } = await import("../config/featureFlags");
           if (multiRecipientScopingEnabled()) {
@@ -3829,11 +4058,45 @@ async function executeToolCall(
             const webPlanSnap = await db.collection("carePlans").doc(clientId as string).get();
             const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
             const planKeys = Object.keys(plans);
-            if (planKeys.length > 1) {
-              const res = resolveRecipientKey(planKeys, recipientFirstName ? String(recipientFirstName) : undefined);
+            const names = Array.isArray(recipientFirstNames) && recipientFirstNames.length
+              ? recipientFirstNames.map(String)
+              : (recipientFirstName ? [String(recipientFirstName)] : []);
+
+            if (names.length > 1) {
+              // Multiple named recipients for one booking (matches the
+              // website's multi-select care recipients list) — resolve each
+              // independently; unmatched names are simply skipped rather
+              // than blocking the whole booking.
+              const resolved: Array<{ key: string; name: string }> = [];
+              for (const n of names) {
+                const res = resolveRecipientKey(planKeys, n);
+                if (res.ok) resolved.push({ key: res.key, name: String(plans[res.key]?.name ?? n).trim() || n });
+              }
+              if (resolved.length) {
+                recipientKey  = resolved[0].key;
+                recipientName = resolved[0].name;
+                recipientResolved = "named";
+                careRecipients = resolved.map(({ key, name }) => {
+                  const plan = plans[key] ?? {};
+                  return {
+                    name,
+                    careNeeds:       plan.careNeeds ?? [],
+                    careNeedDetails: plan.careNeedDetails ?? {},
+                    lifestyle:       plan.lifestyle ?? {},
+                    notes:           plan.notes ?? "",
+                    // Matches the website's own per-recipient fields
+                    // (PostsPage.tsx's selectedRecipients build) — specific
+                    // tasks/locations for this recipient's care plan.
+                    tasks:           plan.tasks ?? {},
+                    locations:       plan.locations ?? [],
+                  };
+                });
+              }
+            } else if (planKeys.length > 1) {
+              const res = resolveRecipientKey(planKeys, names[0]);
               if (res.ok) {
                 recipientKey  = res.key;
-                recipientName = String(plans[res.key]?.name ?? recipientFirstName ?? "").trim() || undefined;
+                recipientName = String(plans[res.key]?.name ?? names[0] ?? "").trim() || undefined;
                 recipientResolved = "named";
               } else {
                 const userSnap = await db.collection("users").doc(clientId as string).get();
@@ -3850,47 +4113,228 @@ async function executeToolCall(
           console.warn("[request_booking] recipient attribution failed (booking proceeds unattributed):", e);
         }
 
-        // Job/interview linkage (2026-08-30): when this booking follows a
-        // completed interview, resolve jobId/jobTitle/applicationId so the
-        // booking_requests doc carries the same linkage handleSendBooking
-        // stamps on the website, and the caregiver's application gets marked
-        // accepted. Fail-soft throughout — a lookup miss or ownership
-        // mismatch just proceeds as an unlinked booking, never blocks it.
-        let jobId: string | undefined;
-        let jobTitle: string | undefined;
-        let applicationId: string | undefined;
-        if (interviewId) {
+        // Emergency contact — pulled from the family's care plan on file,
+        // matching the website's own pre-fill (carePlans.emergencyContacts,
+        // isPrimary wins else the first on file). Never asked for in
+        // conversation; fail-soft if none is on file.
+        let emergencyContact: { name: string; phone: string; relationship?: string } | undefined;
+        try {
+          const cpSnapForEc = await db.collection("carePlans").doc(clientId as string).get();
+          const contacts = (cpSnapForEc.data()?.emergencyContacts ?? []) as Array<{ name?: string; relation?: string; relationship?: string; phone?: string; isPrimary?: boolean }>;
+          const primaryContact = contacts.find((c) => c.isPrimary) ?? contacts[0];
+          if (primaryContact?.phone) {
+            emergencyContact = {
+              name:         primaryContact.name ?? "",
+              phone:        primaryContact.phone,
+              relationship: primaryContact.relationship ?? primaryContact.relation,
+            };
+          }
+        } catch (e) {
+          console.warn("[request_booking] emergency contact lookup failed (booking proceeds without it):", e);
+        }
+
+        // Care location — REQUIRED, matching the website's own "Care
+        // Location" selector (carePlans/{uid}.locationPool — the SAME
+        // saved/tagged addresses the site's multi-address picker offers,
+        // e.g. a primary home plus a "Smoking household" alternate). When
+        // the family has more than one saved address on file and the agent
+        // hasn't already named one, this tool refuses and lists the real
+        // options (with their tags) so Evia offers the SAME choices the
+        // site shows over SMS — never silently guesses which one, and never
+        // asks the family to type an address from scratch when one is
+        // already on file. Only when nothing is saved at all does it fall
+        // back to a single on-file address, then finally refuse.
+        let resolvedCareLocation = careLocation ? String(careLocation) : undefined;
+        if (!resolvedCareLocation) {
           try {
-            const ivSnap = await db.collection("video_interviews").doc(interviewId as string).get();
-            const iv = ivSnap.data();
-            if (iv && iv.clientId === clientId && iv.caregiverId === caregiverId) {
-              applicationId = iv.applicationId as string | undefined;
-              if (applicationId) {
-                const appSnap = await db.collection("job_applications").doc(applicationId).get();
-                jobId = appSnap.data()?.jobId as string | undefined;
-                if (jobId) {
-                  const jobSnap = await db.collection("job_posts").doc(jobId).get();
-                  jobTitle = jobSnap.data()?.title as string | undefined;
-                }
-              }
+            const cpSnapForLoc = await db.collection("carePlans").doc(clientId as string).get();
+            const pool = (cpSnapForLoc.data()?.locationPool ?? []) as Array<{
+              street?: string; city?: string; state?: string; zipCode?: string;
+              petsInHome?: boolean; smokingHousehold?: boolean;
+            }>;
+            const validPool = pool.filter((a) => a && [a.street, a.city, a.state, a.zipCode].some(Boolean));
+            if (validPool.length === 1) {
+              const a = validPool[0];
+              resolvedCareLocation = [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ");
+            } else if (validPool.length > 1) {
+              const options = validPool.map((a, i) => {
+                const addr = [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ");
+                const tags = [a.petsInHome ? "pets in home" : null, a.smokingHousehold ? "smoking household" : null]
+                  .filter(Boolean).join(", ");
+                return `${i + 1}) ${addr}${tags ? ` (${tags})` : ""}`;
+              }).join("; ");
+              return toolError(
+                "INVALID_INPUT",
+                `This family has more than one saved address on file — offer them the SAME choices the website's ` +
+                `Care Location selector shows, do NOT ask them to type an address from scratch: ${options}. Ask ` +
+                `which one this booking is for (mention any tag, e.g. smoking household, so they know what they're ` +
+                `picking), then pass the matching address string as careLocation.`,
+              );
             }
           } catch (e) {
-            console.warn("[request_booking] interview/job linkage lookup failed (booking proceeds unlinked):", e);
+            console.warn("[request_booking] care location pool lookup failed:", e);
           }
+        }
+        if (!resolvedCareLocation) {
+          try {
+            const clientSnapForAddr = await db.collection("users").doc(clientId as string).get();
+            const cd = clientSnapForAddr.data() ?? {};
+            const onFileAddress = [cd.street, cd.city, cd.state, cd.zipCode].filter(Boolean).join(", ");
+            if (onFileAddress) resolvedCareLocation = onFileAddress;
+          } catch (e) {
+            console.warn("[request_booking] client address lookup failed:", e);
+          }
+        }
+        if (!resolvedCareLocation) {
+          return toolError(
+            "INVALID_INPUT",
+            "No care location is on file for this family and none was given. Ask where care will happen " +
+            "(their home address, or a specific facility/location) and pass it as careLocation before booking — " +
+            "matching the website's own required 'Care Location' field.",
+          );
+        }
+
+        // Top-level careNeeds + lifestylePreferences (2026-09-13): the website
+        // ALSO stamps two root-level fields onto the booking_requests doc
+        // itself (PostsPage.tsx's handleSendBooking) alongside the per-
+        // recipient careRecipients array already built above — a deduped
+        // union of every selected recipient's careNeeds, and the pets-in-
+        // home/smoking-household tags of whichever saved address was
+        // actually picked for this visit. Both were previously dropped
+        // silently; fail-soft throughout, never blocks the booking.
+        let topLevelCareNeeds: string[] | undefined;
+        let lifestylePreferences: string[] | undefined;
+        try {
+          const cpSnapForNeeds = await db.collection("carePlans").doc(clientId as string).get();
+          const cpData = cpSnapForNeeds.data() ?? {};
+          const plans = (cpData.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
+          if (careRecipients?.length) {
+            const union = new Set<string>();
+            for (const r of careRecipients) for (const n of (r.careNeeds as string[] | undefined) ?? []) union.add(n);
+            if (union.size) topLevelCareNeeds = Array.from(union);
+          } else {
+            const soleKey = recipientKey ?? (Object.keys(plans).length === 1 ? Object.keys(plans)[0] : undefined);
+            const needs = soleKey ? (plans[soleKey]?.careNeeds as string[] | undefined) : undefined;
+            if (needs?.length) topLevelCareNeeds = needs;
+          }
+
+          const pool = (cpData.locationPool ?? []) as Array<{
+            street?: string; city?: string; state?: string; zipCode?: string;
+            petsInHome?: boolean; smokingHousehold?: boolean;
+          }>;
+          const selectedEntry = pool.find(
+            (a) => a && [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ") === resolvedCareLocation,
+          );
+          if (selectedEntry) {
+            const tags = [
+              selectedEntry.petsInHome ? "Pets in home" : null,
+              selectedEntry.smokingHousehold ? "Smoking household" : null,
+            ].filter((t): t is string => t !== null);
+            if (tags.length) lifestylePreferences = tags;
+          }
+        } catch (e) {
+          console.warn("[request_booking] top-level care needs/lifestyle lookup failed (booking proceeds without them):", e);
+        }
+
+        // Per-recipient age/relationship (2026-09-13) — matches the website's
+        // own recipient cards (e.g. "parent · Age 22"). This is NOT on
+        // carePlans.recipientPlans at all — confirmed it lives on
+        // job_postings/{clientUid} (the household profile doc, keyed by
+        // client, not by job post), written by buildJobPostingsDoc: the
+        // primary recipient's own careRecipientFirstName/LastName/Age +
+        // top-level relationship, plus an additionalRecipients array for
+        // everyone else. Matched onto careRecipients by first name; only
+        // enriches the multi-recipient array already built above.
+        if (careRecipients?.length) {
+          try {
+            const jpSnap = await db.collection("job_postings").doc(clientId as string).get();
+            const jp = jpSnap.data() ?? {};
+            const jpRecipients: Array<{ firstName: string; age?: string; relationship?: string }> = [];
+            if (jp.careRecipientFirstName) {
+              jpRecipients.push({
+                firstName:    String(jp.careRecipientFirstName),
+                age:          jp.careRecipientAge as string | undefined,
+                relationship: jp.relationship as string | undefined,
+              });
+            }
+            for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; age?: string; relationship?: string }>) {
+              if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), age: r.age, relationship: r.relationship });
+            }
+            if (jpRecipients.length) {
+              careRecipients = careRecipients.map((r) => {
+                const firstName = String(r.name ?? "").split(" ")[0].toLowerCase();
+                const match = jpRecipients.find((jr) => jr.firstName.toLowerCase() === firstName);
+                return match ? { ...r, ...(match.age ? { age: match.age } : {}), ...(match.relationship ? { relationship: match.relationship } : {}) } : r;
+              });
+            }
+          } catch (e) {
+            console.warn("[request_booking] recipient age/relationship lookup failed (booking proceeds without them):", e);
+          }
+        }
+
+        // Confirm-before-commit (2026-09-13): a real booking is a financial
+        // commitment the caregiver is then asked to accept, matching the
+        // website's own "Review and edit before sending" modal — nothing
+        // should commit before the family has seen and confirmed the full
+        // picture. Every value below is already fully RESOLVED (real rate,
+        // real schedule shape, real recipients, real location) before this
+        // point, so the re-dispatch on confirmation is deterministic — it
+        // re-runs the exact same resolution logic, not a second guess.
+        if (!confirmedActionId) {
+          if (!phone) {
+            return toolError("PERMISSION_DENIED", "This action requires explicit confirmation and cannot be executed without an SMS session.");
+          }
+          const action = await proposePendingAction({
+            phone: phone as string,
+            userId: clientId as string,
+            toolName: "request_booking",
+            toolInput: {
+              clientId, caregiverId, phone,
+              agreedRate: hourlyRate,
+              careLocation: resolvedCareLocation,
+              ...(isRecurring
+                ? { recurring: true, dayShiftTimes: schedule!.dayShiftTimes, ongoing: schedule!.ongoing, ...(schedule!.endDate ? { endDate: schedule!.endDate } : {}) }
+                : { dates: quoteDates, startTime, endTime }),
+              ...(message ? { message: String(message) } : {}),
+              ...(recipientFirstNames ? { recipientFirstNames } : (recipientFirstName ? { recipientFirstName } : {})),
+              ...(interviewId ? { interviewId } : {}),
+              // Preview-only (2026-09-13): already-resolved fields not read
+              // by the confirmed re-dispatch (it recomputes them fresh from
+              // the same source data) but needed so buildActionPreview can
+              // render the SAME full picture the website's modal shows —
+              // care needs, emergency contact, and lifestyle tags — without
+              // a second carePlans fetch.
+              ...(topLevelCareNeeds     ? { careNeeds: topLevelCareNeeds }     : {}),
+              ...(lifestylePreferences  ? { lifestylePreferences }            : {}),
+              ...(emergencyContact      ? { emergencyContact }                : {}),
+            },
+          });
+          return buildPendingActionStub(action);
         }
 
         // Route through the REAL booking path: createBookingTask writes an
         // `agent_tasks` `booking_confirmation` (which the YES/CONFIRM webhook flow and
         // executeBookings actually consume) and enforces the pending-bgcheck booking
         // guard. The old `booking_tasks` collection was read by nothing.
+        // Wrapped in runActionNativeMcpWrite HERE (not around the whole case) —
+        // this is the only branch that performs a real write, so it's the only
+        // branch the postcondition verifier should ever see.
+        return runActionNativeMcpWrite(name, input, async () => {
         const { createBookingTask } = await import("../agents/bookingExecutor");
         const taskId = await createBookingTask({
           clientPhone:   phone as string,
           clientId:      clientId as string,
           caregiverId:   caregiverId as string,
-          caregiverName: quote.caregiverName,
+          caregiverName,
           appointments,
-          hourlyRate:    quote.hourlyRate,
+          hourlyRate,
+          ...(schedule          ? { schedule, totalCostOverride: estimatedTotal } : {}),
+          careLocation:  resolvedCareLocation,
+          ...(message           ? { message: String(message) }                  : {}),
+          ...(careRecipients    ? { careRecipients }                            : {}),
+          ...(topLevelCareNeeds     ? { careNeeds: topLevelCareNeeds }          : {}),
+          ...(lifestylePreferences  ? { lifestylePreferences }                 : {}),
+          ...(emergencyContact  ? { emergencyContact }                          : {}),
           ...(recipientName ? { recipientName } : {}),
           ...(recipientKey  ? { recipientKey }  : {}),
           ...(jobId         ? { jobId }         : {}),
@@ -3915,9 +4359,10 @@ async function executeToolCall(
               "most one short line answering whatever else they asked, or nothing new at all.",
           };
         }
-        logBookingCreated(clientId as string, caregiverId as string, quote.dates).catch(() => {});
+        logBookingCreated(clientId as string, caregiverId as string, quoteDates).catch(() => {});
         return {
-          success: true, taskId, status: "awaiting_approval", estimatedTotal: quote.totalEstimate,
+          success: true, taskId, status: "awaiting_approval", estimatedTotal,
+          ...(isRecurring ? { recurring: true } : {}),
           ...(recipientResolved === "defaulted_primary" && recipientName
             ? { recipientResolved, recipientName,
                 note: `This household has more than one care recipient and no recipientFirstName was given — the visit was attributed to ${recipientName}. If it's for someone else, confirm with the family and rebook with recipientFirstName.` }

@@ -2374,6 +2374,26 @@ export async function runQaAgent(params: {
         `Call list_interviews first to confirm its current status and details before acting (it may have changed since the check-in went out). ` +
         `Do not confuse this with any OTHER interview mentioned elsewhere in this conversation, even one with the same caregiver — if more than one plausible interview exists, ask which one they mean rather than guessing.`;
     }
+
+    // Sibling of the completion-nudge anchor above, same reasoning: without
+    // it, a reply like "not a fit" to interviewFeedbackNudge.ts's "strong,
+    // maybe, or not a fit?" check-in has nothing telling the agent which
+    // interview it concerns.
+    const pendingFeedbackInterviewId = (session as Record<string, unknown> | undefined)?.pendingFeedbackNudgeInterviewId as
+      | string
+      | undefined;
+    const pendingFeedbackSetAt = (session as Record<string, unknown> | undefined)?.pendingFeedbackNudgeSetAt as
+      | string
+      | undefined;
+    const feedbackNudgeFresh = !!pendingFeedbackInterviewId &&
+      (!pendingFeedbackSetAt || pendingFeedbackSetAt > new Date(Date.now() - PENDING_COMPLETION_NUDGE_TTL_MS).toISOString());
+    if (feedbackNudgeFresh) {
+      systemPrompt +=
+        `\n\nYOU JUST ASKED THIS FAMILY FOR A FIT DECISION ON A SPECIFIC INTERVIEW (the "strong, maybe, or not a fit?" check-in): interviewId="${pendingFeedbackInterviewId}". ` +
+        `If their reply gives a fit decision (hire/strong, still deciding/maybe, or pass/not a fit) — and they haven't clearly named a DIFFERENT interview — call submit_interview_feedback for THIS interviewId, never a guessed or reused one from earlier in the conversation. ` +
+        `Call list_interviews first to confirm it's still awaiting a decision before acting. ` +
+        `Do not confuse this with any OTHER interview mentioned elsewhere in this conversation, even one with the same caregiver — if more than one plausible interview exists, ask which one they mean rather than guessing.`;
+    }
   }
 
   // Sprint 7 — composable prompt augmenters. Today this only runs the A/B

@@ -168,6 +168,45 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
       const when = [toolInput.preferredDate, toolInput.preferredTime].filter(Boolean).join(" at ");
       return `Schedule an interview with ${name}${when ? ` for ${when}` : ""}`;
     }
+    case "request_booking": {
+      // Full recap, matching the website's own "Review and edit before
+      // sending" modal — the family should see everything before a real,
+      // caregiver-facing booking commits.
+      const name = await resolveCaregiverNameForPreview(toolInput.caregiverId);
+      const rate = toolInput.agreedRate ? `$${toolInput.agreedRate}/hr` : undefined;
+      let scheduleLine: string;
+      if (toolInput.recurring) {
+        const dst = (toolInput.dayShiftTimes ?? {}) as Record<string, { start?: string; end?: string }>;
+        const days = Object.entries(dst)
+          .map(([d, t]) => `${d} ${t.start ?? "?"}-${t.end ?? "?"}`)
+          .join(", ");
+        const span = toolInput.ongoing ? "ongoing" : `through ${toolInput.endDate ?? "?"}`;
+        scheduleLine = `${days} (${span})`;
+      } else {
+        const dates = Array.isArray(toolInput.dates) ? (toolInput.dates as string[]).join(", ") : String(toolInput.dates ?? "?");
+        scheduleLine = `${dates}, ${toolInput.startTime ?? "?"}-${toolInput.endTime ?? "?"}`;
+      }
+      const recipients = Array.isArray(toolInput.recipientFirstNames) && toolInput.recipientFirstNames.length
+        ? (toolInput.recipientFirstNames as string[]).join(" & ")
+        : (toolInput.recipientFirstName ? String(toolInput.recipientFirstName) : undefined);
+      const careNeeds = Array.isArray(toolInput.careNeeds) && toolInput.careNeeds.length
+        ? `care needs: ${(toolInput.careNeeds as string[]).join(", ")}` : undefined;
+      const lifestyle = Array.isArray(toolInput.lifestylePreferences) && toolInput.lifestylePreferences.length
+        ? (toolInput.lifestylePreferences as string[]).join(", ") : undefined;
+      const ec = toolInput.emergencyContact as { name?: string; phone?: string } | undefined;
+      const emergencyContact = ec?.phone ? `emergency contact: ${ec.name ?? "on file"} (${ec.phone})` : undefined;
+      const parts = [
+        `Book ${name}`,
+        rate,
+        scheduleLine,
+        toolInput.careLocation ? `at ${toolInput.careLocation}${lifestyle ? ` (${lifestyle})` : ""}` : undefined,
+        recipients ? `for ${recipients}` : undefined,
+        careNeeds,
+        emergencyContact,
+        toolInput.message ? `note: "${toolInput.message}"` : undefined,
+      ].filter(Boolean);
+      return parts.join(" — ");
+    }
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;
     case "set_subscription_status":

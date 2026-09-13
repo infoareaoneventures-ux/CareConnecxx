@@ -285,6 +285,9 @@ export { sendInterviewCompletionNudges } from './scheduled/interviewCompletionNu
 // INTERVIEW FEEDBACK NUDGE (every 15min — asks for the hire/pass decision on a completed interview with none recorded)
 export { sendInterviewFeedbackNudges } from './scheduled/interviewFeedbackNudge';
 
+// BOOKING FOLLOW-UP NUDGE (every 15min — a 'strong' fit decision with no real booking started yet gets followed up)
+export { sendBookingFollowupNudges } from './scheduled/bookingFollowupNudge';
+
 // FIRST-VISIT ACTIVATION (daily 3pm — offers to help families who onboarded but never booked)
 export { sendFirstVisitActivation } from './scheduled/firstVisitActivation';
 

@@ -178,9 +178,10 @@ vi.mock("../../agents/permissionsConversation", () => ({
   updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
 }));
 const executeBookings = vi.fn(async () => {});
+const createBookingTask = vi.fn(async (..._a: any[]) => "task-1");
 vi.mock("../../agents/bookingExecutor", () => ({
   executeBookings: (...a: any[]) => (executeBookings as Function).apply(null, a),
-  createBookingTask: vi.fn(async () => "task-1"),
+  createBookingTask: (...a: any[]) => (createBookingTask as Function).apply(null, a),
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
@@ -234,6 +235,7 @@ beforeEach(() => {
   quickComplete.mockResolvedValue("");
   sendMessage.mockResolvedValue({ message_id: "m1" });
   executeBookings.mockReset().mockResolvedValue(undefined);
+  createBookingTask.mockReset().mockResolvedValue("task-1");
   runMatchingForClient.mockReset().mockResolvedValue(undefined);
   runQaAgent.mockResolvedValue("");
   runQuickReply.mockResolvedValue("");
@@ -443,6 +445,87 @@ describe("characterization — executeBookings failure fallback (U4)", () => {
       resolved: false,
     });
     expect(fallbackAlert.error).toContain("stripe timeout");
+  });
+});
+
+// ── Rebook rate parity (2026-09-13): confirmed the website's own rebook
+// entry point (PostsPage.tsx's `?rebook=` flow) reuses the RATE OF THE PRIOR
+// ARRANGEMENT being rebooked — never the caregiver's browsing-listed rate,
+// and never a hardcoded number. These pin that same behavior in the coded
+// SMS rebook flow (routeIntent.ts's REBOOK_REQUEST + pendingRebook branches).
+describe("characterization — rebook reuses the prior arrangement's rate (2026-09-13)", () => {
+  it("REBOOK_REQUEST carries the prior confirmed appointment's own hourlyRate onto pendingRebook", async () => {
+    seed();
+    hoisted.docState.set("appointments/a1", {
+      clientId: CLIENT_ID, status: "confirmed", date: "2026-08-01",
+      caregiverId: "cg1", caregiverName: "Maria",
+      startTime: "09:00", endTime: "13:00", durationHours: 4,
+      hourlyRate: 27.5, // the ACTUAL rate this arrangement was booked at
+    });
+    classifyIntentDetailed.mockResolvedValue({ intent: "REBOOK_REQUEST", degraded: false });
+
+    await routeIntentAndRespond(ctx("book Maria again"));
+
+    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(session.pendingRebook).toMatchObject({ caregiverId: "cg1", hourlyRate: 27.5 });
+  });
+
+  it("confirming a rebook books at the prior arrangement's rate, NOT the caregiver's current listed rate", async () => {
+    seed({
+      pendingRebook: {
+        caregiverId: "cg1", caregiverName: "Maria",
+        startTime: "09:00", endTime: "13:00", durationHours: 4,
+        hourlyRate: 27.5, // carried forward from the arrangement being rebooked
+      },
+    });
+    // Deliberately different from the carried-forward rate — proves it's
+    // never consulted when the prior arrangement's own rate is known.
+    hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 999 });
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    quickComplete.mockResolvedValue("2026-08-08");
+
+    await routeIntentAndRespond(ctx("next Saturday"));
+
+    expect(createBookingTask).toHaveBeenCalledOnce();
+    const arg = createBookingTask.mock.calls[0][0] as any;
+    expect(arg.hourlyRate).toBe(27.5);
+  });
+
+  it("a legacy pendingRebook with no carried-forward rate falls back to the caregiver's on-file rate rather than hardcoding 20", async () => {
+    seed({
+      pendingRebook: {
+        caregiverId: "cg1", caregiverName: "Maria",
+        startTime: "09:00", endTime: "13:00", durationHours: 4,
+        // no hourlyRate — simulates a session written before this fix
+      },
+    });
+    hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 32 });
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    quickComplete.mockResolvedValue("2026-08-08");
+
+    await routeIntentAndRespond(ctx("next Saturday"));
+
+    expect(createBookingTask).toHaveBeenCalledOnce();
+    const arg = createBookingTask.mock.calls[0][0] as any;
+    expect(arg.hourlyRate).toBe(32);
+  });
+
+  it("refuses (never books at a hardcoded 20) when neither a carried-forward rate nor a caregiver rate exists", async () => {
+    seed({
+      pendingRebook: {
+        caregiverId: "cg1", caregiverName: "Maria",
+        startTime: "09:00", endTime: "13:00", durationHours: 4,
+      },
+    });
+    hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no hourlyRate at all
+    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
+    quickComplete.mockResolvedValue("2026-08-08");
+
+    await routeIntentAndRespond(ctx("next Saturday"));
+
+    expect(createBookingTask).not.toHaveBeenCalled();
+    const sentText = String(sendMessage.mock.calls[0]?.[1] ?? "");
+    expect(sentText).not.toContain("20");
   });
 });
 

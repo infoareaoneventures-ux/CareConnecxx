@@ -30,16 +30,24 @@ export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // space repeats ~2 days
 /**
  * Pure decision: should this completed-but-undecided interview get a
  * feedback nudge now? Mirrors shouldNudgeInterviewCompletion.
+ *
+ * 2026-09-13 (Hamse's call): "maybe" is not a final answer — the family said
+ * they're still deciding, not that they're done deciding. submit_interview_
+ * feedback stamps feedbackSubmitted:true for ALL three fitLevels alike, which
+ * used to stop this nudge dead the moment ANY answer came in, "maybe"
+ * included — silently dropping a still-open hiring decision with nothing
+ * ever following up again. Only "strong" and "no" are terminal; "maybe" (or
+ * no fitLevel at all yet) keeps the same 48h re-ask cycle going.
  */
 export function shouldNudgeInterviewFeedback(p: {
-  status:           string;
-  feedbackSubmitted: boolean;
-  completedMs:      number | null;
-  lastNudgedMs:     number | null;
-  nowMs:            number;
+  status:       string;
+  fitLevel:     string | undefined;
+  completedMs:  number | null;
+  lastNudgedMs: number | null;
+  nowMs:        number;
 }): boolean {
   if (p.status !== "completed") return false;
-  if (p.feedbackSubmitted) return false;
+  if (p.fitLevel === "strong" || p.fitLevel === "no") return false;
   if (p.completedMs === null) return false;
   if (p.nowMs - p.completedMs < NUDGE_DELAY_MS) return false;
   if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
@@ -47,11 +55,12 @@ export function shouldNudgeInterviewFeedback(p: {
 }
 
 /**
- * Fit-decision nudge. A completed interview with no fitLevel recorded gets
- * asked about, 1h later — "did you want to move forward, or pass?" — so a
+ * Fit-decision nudge. A completed interview with no fitLevel recorded — or
+ * left at "maybe" (still deciding, not a final answer) — gets asked about,
+ * 1h later, then every ~48h until an actual strong/no decision lands. So a
  * skipped in-conversation ask (or a website "Mark as Completed" click with no
- * follow-up) doesn't leave the interview stuck with no decision forever.
- * Repeats every ~48h for as long as it stays undecided — no hard cap.
+ * follow-up), and an open-ended "maybe" alike, don't leave the decision
+ * stuck forever. No hard cap.
  *
  * Read-only except the send + a per-interview nudge counter/timestamp; the
  * nudge does NOT record any decision itself — a reply routes through Evia's
@@ -77,9 +86,10 @@ export const sendInterviewFeedbackNudges = functions.pubsub
           ? Date.parse(interview.feedbackNudgedAt as string) || null
           : null;
 
+        const fitLevel = interview.fitLevel as string | undefined;
         if (!shouldNudgeInterviewFeedback({
           status: interview.status as string,
-          feedbackSubmitted: interview.feedbackSubmitted === true,
+          fitLevel,
           completedMs: Number.isNaN(completedMs) ? null : completedMs,
           lastNudgedMs,
           nowMs,
@@ -103,12 +113,16 @@ export const sendInterviewFeedbackNudges = functions.pubsub
 
         const message = await generateCaraMessage({
           audience: "family",
-          context:
-            `The family's interview with ${caregiverName} is marked completed, but they never gave a fit decision. ` +
-            `Ask whether they'd like to move forward with ${caregiverName} or pass, so you can help book them or ` +
-            `keep looking. One or two warm sentences.`,
-          fallback:
-            `Following up on your interview with ${caregiverName} — would you like to move forward with them, or keep looking?`,
+          context: fitLevel === "maybe"
+            ? `The family said they were still deciding ("maybe") about ${caregiverName} after their interview, and ` +
+              `still haven't given a final answer. Check back in warmly — any updates, ready to move forward, or ` +
+              `would they rather pass? One or two warm sentences.`
+            : `The family's interview with ${caregiverName} is marked completed, but they never gave a fit decision. ` +
+              `Ask whether they'd like to move forward with ${caregiverName} or pass, so you can help book them or ` +
+              `keep looking. One or two warm sentences.`,
+          fallback: fitLevel === "maybe"
+            ? `Checking back in — any more thoughts on ${caregiverName}? Ready to move forward, or would you rather keep looking?`
+            : `Following up on your interview with ${caregiverName} — would you like to move forward with them, or keep looking?`,
           maxTokens: 100,
         });
 
@@ -126,6 +140,16 @@ export const sendInterviewFeedbackNudges = functions.pubsub
         await doc.ref.update({
           feedbackNudgeCount: nudgeCount + 1,
           feedbackNudgedAt:   new Date(nowMs).toISOString(),
+        }).catch(() => {});
+
+        // Same anchor as interviewCompletionNudge.ts's pendingCompletionNudge*
+        // (2026-09-13 live incident) — without it, a reply like "not a fit"
+        // has nothing telling the agent which interview it concerns, and with
+        // more than one completed-but-undecided interview in play it could
+        // get attributed to the wrong one. qaAgent.ts reads this (24h TTL).
+        await sessionDoc.ref.update({
+          pendingFeedbackNudgeInterviewId: doc.id,
+          pendingFeedbackNudgeSetAt:       new Date(nowMs).toISOString(),
         }).catch(() => {});
       } catch (err) {
         console.error(`[sendInterviewFeedbackNudges] error for interview ${doc.id}:`, err);

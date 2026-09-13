@@ -223,6 +223,39 @@ describe("buildActionPreview", () => {
       expect(preview).toBe("Schedule an interview with caregiver cg_missing");
     });
   });
+
+  // 2026-09-13: the preview is the deterministic backstop shown alongside
+  // the agent's own conversational recap before a family confirms — it must
+  // carry the SAME full picture the website's "Send Booking Request" modal
+  // shows (care needs, emergency contact, lifestyle tags), not just
+  // rate/schedule/location, since these are auto-pulled server-side and the
+  // agent may not otherwise have surfaced them accurately in conversation.
+  describe("request_booking — full recap includes care needs/emergency contact/lifestyle (2026-09-13)", () => {
+    it("includes care needs, emergency contact, and lifestyle tags when present", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      const preview = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 30, careLocation: "9 Oak Ave, Springfield, IL, 62701",
+        dates: ["2026-07-01"], startTime: "09:00", endTime: "17:00",
+        careNeeds: ["Mobility", "Meal prep"],
+        lifestylePreferences: ["Pets in home"],
+        emergencyContact: { name: "Jane Doe", phone: "+15551234567" },
+      });
+      expect(preview).toContain("Mobility, Meal prep");
+      expect(preview).toContain("Pets in home");
+      expect(preview).toContain("Jane Doe");
+      expect(preview).toContain("+15551234567");
+    });
+
+    it("omits those sections cleanly when none are on file", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      const preview = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 30, careLocation: "9 Oak Ave, Springfield, IL, 62701",
+        dates: ["2026-07-01"], startTime: "09:00", endTime: "17:00",
+      });
+      expect(preview).not.toContain("care needs");
+      expect(preview).not.toContain("emergency contact");
+    });
+  });
 });
 
 describe("proposePendingAction", () => {

@@ -38,6 +38,16 @@ interface BookingAppointment {
   durationHours: number;
 }
 
+// Matches the website's own recurring-shift shape (see shiftGenerator.ts's
+// onBookingAccepted, which reads booking_requests.schedule.dayShiftTimes/
+// ongoing/endDate to generate real shifts) — Evia's recurring bookings plug
+// into the exact same generator instead of a parallel mechanism.
+export interface BookingSchedule {
+  dayShiftTimes: Record<string, { start: string; end: string }>;
+  ongoing:       boolean;
+  endDate?:      string;
+}
+
 export interface BookingTask {
   type:                  "booking_confirmation" | "cancellation_confirmation" | "rebook_confirmation";
   clientId:              string;
@@ -66,6 +76,15 @@ export interface BookingTask {
   jobTitle?:             string;
   interviewId?:          string;
   applicationId?:        string;
+  // Website "Send Booking Request" modal parity fields (2026-09-13) — see
+  // createBookingTask's matching params for what stamps these.
+  schedule?:             BookingSchedule;
+  careLocation?:         string;
+  message?:              string;
+  careRecipients?:       Array<Record<string, unknown>>;
+  careNeeds?:            string[];
+  lifestylePreferences?: string[];
+  emergencyContact?:     { name: string; phone: string; relationship?: string };
 }
 
 // Writes the real, per-date `shifts` docs once a booking is truly confirmed —
@@ -247,31 +266,41 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
 
   // Write ONE booking_requests doc — the site's own real booking shape
   // (matches PostsPage.tsx's handleSendBooking), not a per-date appointments
-  // doc. `schedule` is deliberately left empty: Evia's dates are often
-  // irregular and don't fit the site's weekly dayShiftTimes pattern, and the
-  // site's own shift-generator no-ops safely on an empty schedule — the real
-  // shifts docs get written directly by writeConfirmedShifts() once the
-  // caregiver actually confirms (see shiftOffer.ts's onOfferAccepted), or
-  // immediately below for the no-phone fallback. Family approval does NOT
+  // doc. For a one-off/short booking (no task.schedule), `schedule` is
+  // deliberately left empty: those dates are often irregular and don't fit
+  // the site's weekly dayShiftTimes pattern, and the site's own shift-
+  // generator no-ops safely on an empty schedule — the real shifts docs get
+  // written directly by writeConfirmedShifts() once the caregiver actually
+  // confirms (see shiftOffer.ts's onOfferAccepted), or immediately below for
+  // the no-phone fallback. For a recurring/ongoing booking (request_booking's
+  // recurring:true path), task.schedule IS the real weekly shape and plugs
+  // straight into the same shiftGenerator.ts trigger the website's own
+  // recurring bookings use — no separate mechanism. Family approval does NOT
   // confirm the visit: the caregiver must accept the shift offer first, so
   // this is written status:'pending' — the exact status a website-sent
   // booking starts at too.
   const bookingRequestRef = db.collection("booking_requests").doc();
   const batch = db.batch();
+  const bookingAddress = (task.careLocation as string | undefined) || offerAddress;
   batch.set(bookingRequestRef, {
     clientId:      task.clientId,
     clientName:    offerClientName ?? "",
     caregiverId:   task.caregiverId,
     caregiverName: task.caregiverName,
-    ...(offerAddress ? { address: offerAddress } : {}),
+    ...(bookingAddress ? { address: bookingAddress } : {}),
     ...(offerSeniorName ? { seniorName: offerSeniorName } : {}),
     ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
+    ...(task.careRecipients ? { careRecipients: task.careRecipients } : {}),
+    ...(task.careNeeds ? { careNeeds: task.careNeeds } : {}),
+    ...(task.lifestylePreferences ? { lifestylePreferences: task.lifestylePreferences } : {}),
+    ...(task.emergencyContact ? { emergencyContact: task.emergencyContact } : {}),
+    ...(task.schedule ? { schedule: task.schedule } : {}),
     ...(task.jobId ? { jobId: task.jobId } : {}),
     ...(task.jobTitle ? { jobTitle: task.jobTitle } : {}),
     ...(task.interviewId ? { interviewId: task.interviewId } : {}),
     rate:          task.hourlyRate ?? null,
     paymentMethod: "credit",
-    notes:         "",
+    notes:         (task.message as string | undefined) || "",
     status:        "pending",
     isResend:      false,
     agentTaskId:   taskId,
@@ -527,6 +556,21 @@ export async function createBookingTask(params: {
   jobTitle?:              string;
   interviewId?:           string;
   applicationId?:         string;
+  // Recurring/ongoing arrangements (matches the website's own recurring
+  // booking shape) — appointments is empty for these; totalCostOverride
+  // supplies the weekly estimate since totalCost's usual appointments.reduce
+  // has nothing to sum over.
+  schedule?:              BookingSchedule;
+  totalCostOverride?:     number;
+  // Website "Send Booking Request" modal parity fields — all optional,
+  // all pass straight through to the final booking_requests write in
+  // executeBookings below.
+  careLocation?:          string;
+  message?:               string;
+  careRecipients?:        Array<Record<string, unknown>>;
+  careNeeds?:             string[];
+  lifestylePreferences?:  string[];
+  emergencyContact?:      { name: string; phone: string; relationship?: string };
 }): Promise<string> {
   // Canonical eligibility gate — only profile_complete + approved caregivers
   // are bookable (covers pending/failed background checks, adverse actions,
@@ -554,7 +598,7 @@ export async function createBookingTask(params: {
     return ""; // Early return — no booking written
   }
 
-  const totalCost = params.appointments.reduce(
+  const totalCost = params.totalCostOverride ?? params.appointments.reduce(
     (sum, a) => sum + params.hourlyRate * a.durationHours, 0
   );
 
@@ -578,6 +622,13 @@ export async function createBookingTask(params: {
     ...(params.jobTitle      ? { jobTitle:      params.jobTitle }      : {}),
     ...(params.interviewId   ? { interviewId:   params.interviewId }   : {}),
     ...(params.applicationId ? { applicationId: params.applicationId } : {}),
+    ...(params.schedule         ? { schedule: params.schedule }                 : {}),
+    ...(params.careLocation     ? { careLocation: params.careLocation }         : {}),
+    ...(params.message          ? { message: params.message }                  : {}),
+    ...(params.careRecipients   ? { careRecipients: params.careRecipients }     : {}),
+    ...(params.careNeeds            ? { careNeeds: params.careNeeds }                       : {}),
+    ...(params.lifestylePreferences ? { lifestylePreferences: params.lifestylePreferences } : {}),
+    ...(params.emergencyContact ? { emergencyContact: params.emergencyContact } : {}),
   });
   return ref.id;
 }

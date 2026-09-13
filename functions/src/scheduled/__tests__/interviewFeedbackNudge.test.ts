@@ -6,12 +6,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // same-reply ask being a prompt-level instruction with no runtime enforcement.
 
 const store = {
-  interviews: new Map<string, any>(),
-  sessions:   new Map<string, any>(),
-  updates:    [] as Array<{ id: string; data: any }>,
+  interviews:     new Map<string, any>(),
+  sessions:       new Map<string, any>(),
+  updates:        [] as Array<{ id: string; data: any }>,
+  sessionUpdates: [] as Array<{ id: string; data: any }>,
 };
 
-function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
+function makeQueryCollection(map: Map<string, any>, updatesSink: Array<{ id: string; data: any }> | null) {
   return {
     where: (field: string, _op: string, value: any) => ({
       limit: (_n: number) => ({
@@ -22,7 +23,7 @@ function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
             docs: matches.map(([id, data]) => ({
               id,
               data: () => data,
-              ...(withRef ? { ref: { update: vi.fn(async (upd: any) => { store.updates.push({ id, data: upd }); }) } } : {}),
+              ...(updatesSink ? { ref: { update: vi.fn(async (upd: any) => { updatesSink.push({ id, data: upd }); }) } } : {}),
             })),
           };
         },
@@ -33,8 +34,12 @@ function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
 
 vi.mock("firebase-admin", () => {
   const collection = (name: string) => {
-    if (name === "video_interviews") return makeQueryCollection(store.interviews, true);
-    if (name === "agent_sessions")   return makeQueryCollection(store.sessions, false);
+    if (name === "video_interviews") return makeQueryCollection(store.interviews, store.updates);
+    // agent_sessions now needs a ref too — interviewFeedbackNudge.ts stamps
+    // pendingFeedbackNudgeInterviewId there so the next turn knows which
+    // interview a fit-decision reply concerns (2026-09-13, same fix as
+    // interviewCompletionNudge.ts's pendingCompletionNudgeInterviewId).
+    if (name === "agent_sessions")   return makeQueryCollection(store.sessions, store.sessionUpdates);
     return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
   };
   const firestore = () => ({ collection });
@@ -64,47 +69,58 @@ const NOW = 1_000_000_000_000;
 describe("shouldNudgeInterviewFeedback", () => {
   it("does not fire for a non-completed status", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "accepted", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
+      status: "accepted", fitLevel: undefined, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
     expect(shouldNudgeInterviewFeedback({
-      status: "declined", feedbackSubmitted: false, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
+      status: "declined", fitLevel: undefined, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
-  it("does not fire once feedback has already been submitted", () => {
+  it("does not fire once a final decision (strong or no) has been recorded", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: true, completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", fitLevel: "strong", completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
+    expect(shouldNudgeInterviewFeedback({
+      status: "completed", fitLevel: "no", completedMs: NOW - NUDGE_DELAY_MS - 1, lastNudgedMs: null, nowMs: NOW,
+    })).toBe(false);
+  });
+
+  // 2026-09-13 (Hamse's call): "maybe" is not a final answer — it keeps the
+  // same re-ask cycle going instead of silently stopping like strong/no do.
+  it("still fires when the family answered 'maybe' — not a final decision", () => {
+    expect(shouldNudgeInterviewFeedback({
+      status: "completed", fitLevel: "maybe", completedMs: NOW - (NUDGE_DELAY_MS + 1), lastNudgedMs: null, nowMs: NOW,
+    })).toBe(true);
   });
 
   it("does not fire before completedAt has passed by NUDGE_DELAY_MS", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS - 1), lastNudgedMs: null, nowMs: NOW,
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_DELAY_MS - 1), lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("fires once the delay has elapsed on a completed, undecided interview", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1), lastNudgedMs: null, nowMs: NOW,
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_DELAY_MS + 1), lastNudgedMs: null, nowMs: NOW,
     })).toBe(true);
   });
 
   it("does not fire with no parseable completedAt", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: null, lastNudgedMs: null, nowMs: NOW,
+      status: "completed", fitLevel: undefined, completedMs: null, lastNudgedMs: null, nowMs: NOW,
     })).toBe(false);
   });
 
   it("respects the repeat cooldown", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS - 1), nowMs: NOW,
     })).toBe(false);
   });
 
   it("fires the repeat once the cooldown elapses", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
     })).toBe(true);
   });
@@ -113,7 +129,7 @@ describe("shouldNudgeInterviewFeedback", () => {
   // times it's already nudged, as long as the cooldown has elapsed.
   it("still fires after many prior nudges, once the cooldown has elapsed", () => {
     expect(shouldNudgeInterviewFeedback({
-      status: "completed", feedbackSubmitted: false, completedMs: NOW - (NUDGE_DELAY_MS + 1),
+      status: "completed", fitLevel: undefined, completedMs: NOW - (NUDGE_DELAY_MS + 1),
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
     })).toBe(true);
   });
@@ -151,6 +167,7 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     store.interviews.clear();
     store.sessions.clear();
     store.updates.length = 0;
+    store.sessionUpdates.length = 0;
     sendSpy.mockReset();
   });
 
@@ -175,6 +192,36 @@ describe("sendInterviewFeedbackNudges — only counts a nudge when it actually s
     expect(store.updates).toEqual([
       { id: "iv-sent", data: { feedbackNudgeCount: 1, feedbackNudgedAt: expect.any(String) } },
     ]);
+  });
+
+  // 2026-09-13: same anchor as interviewCompletionNudge.ts — a reply like
+  // "not a fit" needs to know which interview it concerns.
+  it("stamps the session with which interview this feedback nudge concerns, only on an actual send", async () => {
+    sendSpy.mockResolvedValueOnce(true);
+    seedInterview("iv-breadcrumb");
+    seedSession("+15550000005");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(store.sessionUpdates).toEqual([
+      {
+        id: "+15550000005",
+        data: {
+          pendingFeedbackNudgeInterviewId: "iv-breadcrumb",
+          pendingFeedbackNudgeSetAt: expect.any(String),
+        },
+      },
+    ]);
+  });
+
+  it("does not stamp the session breadcrumb when the send is suppressed", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-breadcrumb-suppressed");
+    seedSession("+15550000006");
+
+    await (sendInterviewFeedbackNudges as any)();
+
+    expect(store.sessionUpdates).toHaveLength(0);
   });
 
   it("retries next run instead of advancing the counter on a suppressed send", async () => {

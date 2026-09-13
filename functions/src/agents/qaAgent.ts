@@ -2347,6 +2347,33 @@ export async function runQaAgent(params: {
         }
       }
     }
+
+    // 2026-09-13 live incident: interviewCompletionNudge.ts's "did your
+    // interview happen?" text never left any breadcrumb for the NEXT turn —
+    // so a reply like "reschedule it" had nothing concrete to anchor to and
+    // had to reconstruct which interview was meant purely from conversation
+    // text. With a second interview also active for the same caregiver, the
+    // agent grabbed the WRONG one's date, then completely lost the thread
+    // and started a brand-new caregiver search instead. Surface the nudge's
+    // own interview id (stamped on the session when it sent) so a reply
+    // about completing/rescheduling/cancelling has something solid to
+    // resolve against instead of guessing between multiple candidates.
+    const pendingNudgeInterviewId = (session as Record<string, unknown> | undefined)?.pendingCompletionNudgeInterviewId as
+      | string
+      | undefined;
+    const pendingNudgeSetAt = (session as Record<string, unknown> | undefined)?.pendingCompletionNudgeSetAt as
+      | string
+      | undefined;
+    const PENDING_COMPLETION_NUDGE_TTL_MS = 24 * 60 * 60 * 1000;
+    const nudgeFresh = !!pendingNudgeInterviewId &&
+      (!pendingNudgeSetAt || pendingNudgeSetAt > new Date(Date.now() - PENDING_COMPLETION_NUDGE_TTL_MS).toISOString());
+    if (nudgeFresh) {
+      systemPrompt +=
+        `\n\nYOU JUST ASKED THIS FAMILY ABOUT A SPECIFIC INTERVIEW (the "did it happen?" check-in): interviewId="${pendingNudgeInterviewId}". ` +
+        `If their reply is about whether it happened, marking it complete, rescheduling it, or cancelling it — and they haven't clearly named a DIFFERENT interview — this is the one they mean. ` +
+        `Call list_interviews first to confirm its current status and details before acting (it may have changed since the check-in went out). ` +
+        `Do not confuse this with any OTHER interview mentioned elsewhere in this conversation, even one with the same caregiver — if more than one plausible interview exists, ask which one they mean rather than guessing.`;
+    }
   }
 
   // Sprint 7 — composable prompt augmenters. Today this only runs the A/B

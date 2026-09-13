@@ -158,6 +158,19 @@ export const sendInterviewCompletionNudges = functions.pubsub
           completionNudgeCount: nudgeCount + 1,
           completionNudgedAt:   new Date(nowMs).toISOString(),
         }).catch(() => {});
+
+        // 2026-09-13 live incident: without this, a reply like "reschedule
+        // it" had nothing to anchor to — the agent had to guess which
+        // interview was meant purely from conversation text, and with a
+        // second interview also active for the same caregiver it grabbed the
+        // wrong one entirely, then lost the thread into a brand-new
+        // caregiver search. qaAgent.ts reads this (24h TTL) to tell the next
+        // turn exactly which interview a completion/reschedule/cancel reply
+        // concerns, instead of reconstructing it from scratch.
+        await sessionDoc.ref.update({
+          pendingCompletionNudgeInterviewId: doc.id,
+          pendingCompletionNudgeSetAt:       new Date(nowMs).toISOString(),
+        }).catch(() => {});
       } catch (err) {
         console.error(`[sendInterviewCompletionNudges] error for interview ${doc.id}:`, err);
       }

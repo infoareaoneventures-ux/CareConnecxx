@@ -8,12 +8,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // couple of misses, matching shouldNudgeStaleApplicants/pendingTimesheets).
 
 const store = {
-  interviews: new Map<string, any>(),
-  sessions:   new Map<string, any>(),
-  updates:    [] as Array<{ id: string; data: any }>,
+  interviews:     new Map<string, any>(),
+  sessions:       new Map<string, any>(),
+  updates:        [] as Array<{ id: string; data: any }>,
+  sessionUpdates: [] as Array<{ id: string; data: any }>,
 };
 
-function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
+function makeQueryCollection(map: Map<string, any>, updatesSink: Array<{ id: string; data: any }> | null) {
   return {
     where: (field: string, _op: string, value: any) => ({
       limit: (_n: number) => ({
@@ -24,7 +25,7 @@ function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
             docs: matches.map(([id, data]) => ({
               id,
               data: () => data,
-              ...(withRef ? { ref: { update: vi.fn(async (upd: any) => { store.updates.push({ id, data: upd }); }) } } : {}),
+              ...(updatesSink ? { ref: { update: vi.fn(async (upd: any) => { updatesSink.push({ id, data: upd }); }) } } : {}),
             })),
           };
         },
@@ -35,8 +36,12 @@ function makeQueryCollection(map: Map<string, any>, withRef: boolean) {
 
 vi.mock("firebase-admin", () => {
   const collection = (name: string) => {
-    if (name === "video_interviews") return makeQueryCollection(store.interviews, true);
-    if (name === "agent_sessions")   return makeQueryCollection(store.sessions, false);
+    if (name === "video_interviews") return makeQueryCollection(store.interviews, store.updates);
+    // agent_sessions now needs a ref too — interviewCompletionNudge.ts stamps
+    // pendingCompletionNudgeInterviewId there so the next turn knows which
+    // interview a reply concerns (2026-09-13). Separate sink from `updates`
+    // so existing interview-update assertions stay exact-match clean.
+    if (name === "agent_sessions")   return makeQueryCollection(store.sessions, store.sessionUpdates);
     return { where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [] }) }) }) };
   };
   const firestore = () => ({ collection });
@@ -183,6 +188,7 @@ describe("sendInterviewCompletionNudges — only counts a nudge when it actually
     store.interviews.clear();
     store.sessions.clear();
     store.updates.length = 0;
+    store.sessionUpdates.length = 0;
     sendSpy.mockReset();
   });
 
@@ -207,6 +213,39 @@ describe("sendInterviewCompletionNudges — only counts a nudge when it actually
     expect(store.updates).toEqual([
       { id: "iv-sent", data: { completionNudgeCount: 1, completionNudgedAt: expect.any(String) } },
     ]);
+  });
+
+  // 2026-09-13 (live-caught): a reply like "reschedule it" had nothing to
+  // anchor to and, with a second interview also active for the same
+  // caregiver, the agent grabbed the wrong one and lost the thread entirely.
+  // Stamping which interview this nudge concerns on the session lets
+  // qaAgent.ts tell the next turn exactly which one a reply is about.
+  it("stamps the session with which interview this nudge concerns, only on an actual send", async () => {
+    sendSpy.mockResolvedValueOnce(true);
+    seedInterview("iv-breadcrumb");
+    seedSession("+15550000005");
+
+    await (sendInterviewCompletionNudges as any)();
+
+    expect(store.sessionUpdates).toEqual([
+      {
+        id: "+15550000005",
+        data: {
+          pendingCompletionNudgeInterviewId: "iv-breadcrumb",
+          pendingCompletionNudgeSetAt: expect.any(String),
+        },
+      },
+    ]);
+  });
+
+  it("does not stamp the session breadcrumb when the send is suppressed", async () => {
+    sendSpy.mockResolvedValueOnce(false);
+    seedInterview("iv-breadcrumb-suppressed");
+    seedSession("+15550000006");
+
+    await (sendInterviewCompletionNudges as any)();
+
+    expect(store.sessionUpdates).toHaveLength(0);
   });
 
   it("retries next run instead of advancing the counter on a suppressed send", async () => {

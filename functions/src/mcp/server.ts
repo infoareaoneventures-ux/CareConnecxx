@@ -19,6 +19,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
+import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
 import { canonicalApptFields } from "../utils/appointmentDoc";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
@@ -4312,8 +4313,7 @@ async function executeToolCall(
           await brSnap.ref.update({ status: "pending", isResend: true });
           let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
           if (br.caregiverId) {
-            const cgSnap = await db.collection("caregivers").doc(br.caregiverId as string).get();
-            const cgPhone = cgSnap.data()?.phone as string | undefined;
+            const cgPhone = await resolveCaregiverPhone(br.caregiverId as string);
             if (cgPhone) {
               const { trySend } = await import("../utils/toolNotify");
               notification = await trySend(cgPhone, "A family would like to send you a booking request again — reply here to accept or decline.", "mcp:manage_booking");
@@ -4460,7 +4460,7 @@ async function executeToolCall(
         if (cgSnap.data()?.profileVisibility === "hidden") {
           return toolError("NOT_FOUND", "Caregiver not found");
         }
-        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        const cgPhone = await resolveCaregiverPhone(caregiverId as string);
         if (!cgPhone) return toolError("NOT_FOUND", "Caregiver phone not on file");
         const caregiverName = (cgSnap.data()?.name as string | undefined) ?? "";
         const { trySend } = await import("../utils/toolNotify");
@@ -4955,7 +4955,11 @@ async function executeToolCall(
       const caregiverRef = db.collection("caregivers").doc(caregiverId as string);
       const caregiverSnap = await caregiverRef.get();
       if (!caregiverSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const ownerPhone = caregiverSnap.data()?.phone;
+      // 2026-09-13 live incident: this used to read caregivers/{uid}.phone
+      // directly, a field that never exists under the unified identity model
+      // (real phone lives on users/{uid}.phone) — ownerPhone was always
+      // undefined, so this check rejected EVERY caregiver unconditionally.
+      const ownerPhone = await resolveCaregiverPhone(caregiverId as string);
       if (!ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only update your own caregiver profile");
       }
@@ -4999,10 +5003,14 @@ async function executeToolCall(
       if (!until || typeof until !== "string") return toolError("INVALID_INPUT", "until is required ('YYYY-MM-DD' or 'indefinite')");
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const ownerPhone = snap.data()?.phone;
       // Ownership: the acting phone must own this caregiver doc. Fail CLOSED unless
       // BOTH phones exist and match — a missing/empty ownerPhone must not bypass the
       // check, and we do NOT trust a model-supplied caregiverId alone.
+      // 2026-09-13 live incident: this used to read caregivers/{uid}.phone
+      // directly, which never exists under the unified identity model — that
+      // made ownerPhone always undefined, unconditionally rejecting every
+      // caregiver regardless of who was asking.
+      const ownerPhone = await resolveCaregiverPhone(caregiverId as string);
       if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only pause your own account");
       }
@@ -5016,8 +5024,10 @@ async function executeToolCall(
       if (!caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
       const snap = await db.collection("caregivers").doc(caregiverId as string).get();
       if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-      const ownerPhone = snap.data()?.phone;
       // Fail CLOSED unless BOTH phones exist and match (see pause_account above).
+      // 2026-09-13: reads via resolveCaregiverPhone, not caregivers/{uid}.phone
+      // directly — see pause_account's comment for why the old read always failed.
+      const ownerPhone = await resolveCaregiverPhone(caregiverId as string);
       if (!actingPhone || !ownerPhone || ownerPhone !== actingPhone) {
         return toolError("PERMISSION_DENIED", "You can only reactivate your own account");
       }
@@ -6522,10 +6532,14 @@ async function executeToolCall(
         entries.map(async ([cid, meta]) => {
           const cgSnap = await db.collection("caregivers").doc(cid).get();
           const cg = cgSnap.data() ?? {};
+          // 2026-09-13: cg.phone is always undefined (caregivers/{uid} never
+          // carries a phone field under the unified identity model) — resolve
+          // via users/{uid}.phone instead of always returning null here.
+          const cgPhone = await resolveCaregiverPhone(cid);
           return {
             caregiverId: cid,
             name:        cg.name ?? (`${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || meta.name) ?? "Caregiver",
-            phone:       cg.phone ?? null,
+            phone:       cgPhone ?? null,
             rating:      cg.rating ?? null,
             active:      meta.active,
             nextShift:   meta.nextShift,
@@ -7496,8 +7510,7 @@ async function executeToolCall(
       await batchMs.commit();
 
       // Notify caregiver
-      const cgSnap = await db.collection("caregivers").doc(sched.caregiverId as string).get().catch(() => null);
-      const cgPhone = cgSnap?.data()?.phone as string | undefined;
+      const cgPhone = await resolveCaregiverPhone(sched.caregiverId as string | undefined);
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
       if (cgPhone) {
         const { trySend } = await import("../utils/toolNotify");
@@ -8762,8 +8775,7 @@ async function executeToolCall(
       const when = typeof iv.scheduledTime === "string" ? iv.scheduledTime.slice(0, 10) : "the scheduled time";
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
       if (cancelledBy === "client") {
-        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
-        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        const cgPhone = await resolveCaregiverPhone(iv.caregiverId as string | undefined);
         if (cgPhone) {
           const { trySend } = await import("../utils/toolNotify");
           notification = await trySend(cgPhone, `The interview scheduled for ${when} has been cancelled by the family.${ciReason ? ` Reason: ${ciReason}` : ""}`, "mcp:cancel_interview");
@@ -8846,8 +8858,7 @@ async function executeToolCall(
       // own notify convention (trySend for caregivers, Linq session for clients).
       let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_counterpart_phone" };
       if (proposedBy === "client") {
-        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
-        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        const cgPhone = await resolveCaregiverPhone(iv.caregiverId as string | undefined);
         if (cgPhone) {
           const { trySend } = await import("../utils/toolNotify");
           const clName = (iv.clientName as string | undefined) ?? "The family";
@@ -8944,8 +8955,7 @@ async function executeToolCall(
           notification = sent ? { sent: true } : { sent: false, reason: "linq_send_failed" };
         }
       } else {
-        const cgSnap  = await db.collection("caregivers").doc(iv.caregiverId as string).get();
-        const cgPhone = cgSnap.data()?.phone as string | undefined;
+        const cgPhone = await resolveCaregiverPhone(iv.caregiverId as string | undefined);
         if (cgPhone) {
           const { trySend } = await import("../utils/toolNotify");
           const clName = (iv.clientName as string | undefined) ?? "The family";

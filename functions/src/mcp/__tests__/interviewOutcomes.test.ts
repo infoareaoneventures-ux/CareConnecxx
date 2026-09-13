@@ -153,6 +153,37 @@ describe("submit_interview_feedback", () => {
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.completedAt).toBeUndefined();
   });
+
+  // 2026-09-13: "maybe" used to permanently lock the interview out of ever
+  // recording a real decision — feedbackSubmitted:true was stamped for ALL
+  // three fitLevels alike, and this tool's own guard blocked any further call
+  // once that flag was set, with no exception for a non-terminal "maybe".
+  // interviewFeedbackNudge.ts already keeps re-asking after "maybe" (its own
+  // terminal check is fitLevel === "strong" || "no"); this tool's guard now
+  // matches that same terminal check so the eventual real answer isn't
+  // rejected as "already submitted."
+  it("lets a later 'strong' decision overwrite a prior 'maybe' (maybe is not terminal)", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, {
+      clientId: CLIENT, caregiverId: "cg1", clientName: "A Family", caregiverName: "Alice",
+      status: "completed", fitLevel: "maybe", feedbackSubmitted: true,
+    });
+    const r = await handleToolCall("submit_interview_feedback", { interviewId: IV_ID, clientId: CLIENT, fitLevel: "strong" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
+    expect(update?.data.fitLevel).toBe("strong");
+    const decision = hoisted.adds.find(a => a.path === "hire_decisions");
+    expect(decision?.data).toMatchObject({ decision: "hire" });
+  });
+
+  it("still refuses a second decision once the prior one was terminal ('no')", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, {
+      clientId: CLIENT, caregiverId: "cg1", clientName: "A Family", caregiverName: "Alice",
+      status: "declined", fitLevel: "no", feedbackSubmitted: true,
+    });
+    const r = await handleToolCall("submit_interview_feedback", { interviewId: IV_ID, clientId: CLIENT, fitLevel: "strong" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("INVALID_INPUT");
+  });
 });
 
 describe("respond_to_interview_request", () => {

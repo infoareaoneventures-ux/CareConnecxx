@@ -5903,7 +5903,18 @@ async function executeToolCall(
       if (!ivSnap.exists) return toolError("NOT_FOUND", "Interview not found");
       const iv = ivSnap.data()!;
       if (iv.clientId !== clientId) return toolError("PERMISSION_DENIED", "Interview does not belong to this client");
-      if (iv.feedbackSubmitted === true) return toolError("INVALID_INPUT", "Feedback already submitted for this interview");
+      // Only "strong"/"no" are terminal (matches shouldNudgeInterviewFeedback's
+      // own terminal check in interviewFeedbackNudge.ts) — a prior "maybe"
+      // means the family was still deciding, not done deciding. Blocking here
+      // unconditionally used to permanently lock out the real answer once it
+      // finally came in: the feedback nudge keeps re-asking after "maybe" for
+      // exactly this reason, but this guard rejected every one of those
+      // replies with "already submitted," so the decision could never
+      // actually be recorded. Found 2026-09-13 while confirming the nudge's
+      // own fix (same date) was reachable end-to-end.
+      if (iv.feedbackSubmitted === true && (iv.fitLevel === "strong" || iv.fitLevel === "no")) {
+        return toolError("INVALID_INPUT", "Feedback already submitted for this interview");
+      }
       const ivUpdate: Record<string, unknown> = { fitLevel, clientNotes: fbNotes ?? "", feedbackSubmitted: true, feedbackAt: nowIso };
       // Matches the website's "Mark as Completed" — done automatically here
       // since giving a fit decision IS confirming the interview happened, in
@@ -6923,7 +6934,12 @@ async function executeToolCall(
         const data = d.data();
         return {
           id:             d.id,
-          title:          data.summary ?? `Care job — ${(data.careTypes as string[] ?? []).slice(0,2).join(", ")}`,
+          // Matches the site's own normalizeJobPost fallback chain
+          // (services/api.ts): title is the real, required field the site
+          // itself displays (e.g. in the Request Interview modal's job-post
+          // dropdown) — summary/careTypes are only synthesized fallbacks for
+          // an older doc shape that predates title being required.
+          title:          data.title ?? data.summary ?? `Care job — ${(data.careTypes as string[] ?? []).slice(0,2).join(", ")}`,
           status:         data.status,
           // The doc has always had this field — it just never made it into
           // the response, so a client asking Evia their own posted rate had

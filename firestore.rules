@@ -614,7 +614,8 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'notes', 'updatedAt', 'acceptedAt', 'declinedBy', 'declinedAt',
           'cancelledBy', 'cancelledAt', 'cancelReason', 'completedAt', 'startedAt', 'endedAt',
-          'scheduledTime', 'reschedulePendingTime', 'rescheduledBy'
+          'scheduledTime', 'reschedulePendingTime', 'rescheduledBy', 'remindersScheduledAt',
+          'rescheduledViaAgent', 'acceptedRescheduleViaAgent'
         ]) &&
         (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
@@ -625,6 +626,31 @@ service cloud.firestore {
             resource.data.rescheduledBy == 'caregiver' &&
             resource.data.clientId == request.auth.uid
           )
+        ) &&
+        // 2026-09-13: PostsPage.tsx/JobBoard.tsx's reschedule-accept handlers
+        // clear remindersScheduledAt so interviewLinkTrigger.ts re-schedules
+        // the 1h-before reminder for the NEW time instead of leaving it
+        // pointed at the old one — this field is otherwise server-owned
+        // (Cloud Functions set its real value), so only ever allow a client
+        // write to REMOVE it, never to set an arbitrary value.
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['remindersScheduledAt']) ||
+          !('remindersScheduledAt' in request.resource.data)
+        ) &&
+        // 2026-09-13 (same incident): the propose/accept handlers also clear
+        // whichever of rescheduledViaAgent / acceptedRescheduleViaAgent Evia's
+        // OWN reschedule tools may have stamped on a PRIOR cycle — otherwise a
+        // stale flag wrongly suppresses this trigger's SMS for a brand new
+        // site-driven proposal or acceptance. Both are otherwise stamped only
+        // by Evia's tools (Admin SDK, bypasses rules); a client write may only
+        // ever remove them, never set either to true itself.
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['rescheduledViaAgent']) ||
+          !('rescheduledViaAgent' in request.resource.data)
+        ) &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['acceptedRescheduleViaAgent']) ||
+          !('acceptedRescheduleViaAgent' in request.resource.data)
         )
       );
 

@@ -130,6 +130,23 @@ describe("shouldNudgeInterviewCompletion", () => {
       lastNudgedMs: NOW - (RENUDGE_COOLDOWN_MS + 1), nowMs: NOW,
     })).toBe(true);
   });
+
+  // 2026-09-13 (live-caught): a reschedule proposed but not yet accepted
+  // means both parties already know the original time isn't happening —
+  // firing "did your interview happen?" about it is confusing/redundant.
+  it("does not fire while a reschedule is pending, even past the original scheduled time", () => {
+    expect(shouldNudgeInterviewCompletion({
+      status: "accepted", scheduledMs: NOW - (NUDGE_DELAY_MS + 1),
+      lastNudgedMs: null, nowMs: NOW, hasPendingReschedule: true,
+    })).toBe(false);
+  });
+
+  it("fires normally once nothing is absent for hasPendingReschedule (default false)", () => {
+    expect(shouldNudgeInterviewCompletion({
+      status: "accepted", scheduledMs: NOW - (NUDGE_DELAY_MS + 1),
+      lastNudgedMs: null, nowMs: NOW,
+    })).toBe(true);
+  });
 });
 
 // 2026-09-07 (live-caught): a completed-yet-undelivered nudge. The interview
@@ -200,6 +217,18 @@ describe("sendInterviewCompletionNudges — only counts a nudge when it actually
     await (sendInterviewCompletionNudges as any)();
 
     // Counter untouched — a later real run can still try again.
+    expect(store.updates).toHaveLength(0);
+  });
+
+  // 2026-09-13 (live-caught): the scheduled job itself must pass the pending-
+  // reschedule flag through, not just the pure function in isolation.
+  it("skips an interview with a pending reschedule entirely — no send, no update", async () => {
+    seedInterview("iv-rescheduling", { reschedulePendingTime: new Date(NOW + 100_000).toISOString() });
+    seedSession("+15550000004");
+
+    await (sendInterviewCompletionNudges as any)();
+
+    expect(sendSpy).not.toHaveBeenCalled();
     expect(store.updates).toHaveLength(0);
   });
 });

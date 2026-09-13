@@ -571,6 +571,15 @@ export const PostsPage: React.FC = () => {
         // it would wrongly suppress the notification trigger's own SMS when
         // THIS new proposal is later accepted here on the site.
         acceptedRescheduleViaAgent: firebase.firestore.FieldValue.delete(),
+        // 2026-09-13 live incident: a PRIOR Evia-driven propose cycle
+        // (reschedule_interview) stamps rescheduledViaAgent: true so its own
+        // SMS isn't doubled by this trigger — but that flag never got
+        // cleared here, so when the client LATER proposed a different time
+        // right on the site, the trigger saw the stale flag and silently
+        // skipped texting the caregiver about THIS new proposal, assuming
+        // Evia already had. Evia's own tool clears the opposite flag on
+        // every propose/accept (mcp/server.ts) — mirror that symmetry here.
+        rescheduledViaAgent: firebase.firestore.FieldValue.delete(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       setInterviews(prev => prev.map(i => i.id === interview.id

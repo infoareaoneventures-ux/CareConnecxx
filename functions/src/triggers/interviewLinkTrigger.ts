@@ -162,9 +162,7 @@ async function processInterview(
   const updates: Record<string, unknown> = {};
 
   if (!delivery.caregiver?.status) {
-    const cgPhone = doc.caregiverId
-      ? ((await db.collection("caregivers").doc(doc.caregiverId).get()).data()?.phone as string | undefined)
-      : undefined;
+    const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
     const outcome = await deliverLink(cgPhone, interviewId, "caregiver",
       `Your interview with ${clientName} is confirmed for ${formatted}. Join from your phone: ${callUrl}` +
       (icsUrl ? `\n\nCalendar invite: ${icsUrl}` : ""));
@@ -224,6 +222,29 @@ async function resolveClientPhone(clientId?: string): Promise<string | undefined
   return sessSnap.empty ? undefined : sessSnap.docs[0].id; // agent_sessions are phone-keyed
 }
 
+// 2026-09-13 live incident: this file's three caregiver-phone lookups all read
+// caregivers/{uid}.phone directly — a field that doesn't exist under the
+// unified identity model (caregivers/{uid} = users/{uid} = Auth uid; phone
+// lives on users/{uid}.phone, same source resolveClientPhone above already
+// uses). Every caregiver interview-link/reminder SMS was silently recording
+// "missing_phone" and never sending, even for caregivers with a real phone on
+// file — confirmed live for a real caregiver doc with zero phone-shaped field
+// at all, whose users/{uid}.phone had the real number. Mirrors
+// resolveClientPhone's fallback order; keeps the old caregivers/{uid}.phone
+// read as a last-resort fallback in case any legacy pre-unification doc still
+// carries its own phone field.
+async function resolveCaregiverPhone(caregiverId?: string): Promise<string | undefined> {
+  if (!caregiverId) return undefined;
+  const userSnap = await db.collection("users").doc(caregiverId).get();
+  const userPhone = userSnap.data()?.phone as string | undefined;
+  if (userPhone) return userPhone;
+  const cgSnap = await db.collection("caregivers").doc(caregiverId).get();
+  const cgPhone = cgSnap.data()?.phone as string | undefined;
+  if (cgPhone) return cgPhone;
+  const sessSnap = await db.collection("agent_sessions").where("userId", "==", caregiverId).limit(1).get();
+  return sessSnap.empty ? undefined : sessSnap.docs[0].id; // agent_sessions are phone-keyed
+}
+
 async function scheduleReminders(
   doc: InterviewDoc,
   interviewId: string,
@@ -248,9 +269,7 @@ async function scheduleReminders(
       refId,
     }, { bypassCalibration: true }).catch((err) => console.error("interview reminder (client) error:", err));
   }
-  const cgPhone = doc.caregiverId
-    ? ((await db.collection("caregivers").doc(doc.caregiverId).get()).data()?.phone as string | undefined)
-    : undefined;
+  const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
   if (cgPhone) {
     await scheduleTrigger({
       userId:      doc.caregiverId ?? cgPhone,
@@ -272,10 +291,8 @@ async function notifyCaregiverOfRequest(
   doc: InterviewDoc
 ): Promise<void> {
   if (!doc.caregiverId) return;
-  const cgPhone = (await db.collection("caregivers").doc(doc.caregiverId).get()).data()?.phone as
-    | string
-    | undefined;
-  if (!cgPhone) return; // auth-account caregivers get the in-app notification instead
+  const cgPhone = await resolveCaregiverPhone(doc.caregiverId);
+  if (!cgPhone) return; // no phone on file anywhere — in-app notification is the only path left
 
   const startMs = parseScheduledTimeMs(doc.scheduledTime ?? "");
   const when = Number.isNaN(startMs) ? "a time that works" : formatInterviewTime(startMs);

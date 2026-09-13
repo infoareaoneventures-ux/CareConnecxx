@@ -47,12 +47,21 @@ export function formatPacificDateTime(iso: string | undefined): string {
  * Firestore. Mirrors shouldNudgePendingTimesheets/shouldNudgeStaleApplicants.
  */
 export function shouldNudgeInterviewCompletion(p: {
-  status:        string;
-  scheduledMs:   number | null;
-  lastNudgedMs:  number | null;
-  nowMs:         number;
+  status:               string;
+  scheduledMs:          number | null;
+  lastNudgedMs:         number | null;
+  nowMs:                number;
+  hasPendingReschedule?: boolean;
 }): boolean {
   if (p.status !== "accepted") return false;
+  // 2026-09-13: a reschedule already proposed (reschedulePendingTime set,
+  // not yet accepted) means both parties already know the original
+  // scheduledTime isn't happening — asking "did your interview happen?"
+  // about the slot that's actively being moved reads as confused/redundant.
+  // Once the proposal is accepted, scheduledTime itself updates to the new
+  // time and this field clears, so the normal 1h-after-scheduledTime check
+  // picks it up correctly from there with no special-casing needed.
+  if (p.hasPendingReschedule) return false;
   if (p.scheduledMs === null) return false;
   if (p.nowMs - p.scheduledMs < NUDGE_DELAY_MS) return false;
   if (p.lastNudgedMs !== null && p.nowMs - p.lastNudgedMs < RENUDGE_COOLDOWN_MS) return false;
@@ -96,6 +105,7 @@ export const sendInterviewCompletionNudges = functions.pubsub
           scheduledMs: Number.isNaN(scheduledMs) ? null : scheduledMs,
           lastNudgedMs,
           nowMs,
+          hasPendingReschedule: !!interview.reschedulePendingTime,
         })) continue;
 
         const clientId = interview.clientId as string | undefined;

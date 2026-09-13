@@ -493,10 +493,35 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       }
     }
 
-    // ── HIRE_CAREGIVER — "let's go with Maria", "hire James" ─────────────────
+    // ── HIRE_CAREGIVER — "let's go with Maria", "hire James", "I want to
+    // book Sarah" ────────────────────────────────────────────────────────
+    // 2026-09-13 live-testing find: this used to reply "Who would you like
+    // to hire?" UNCONDITIONALLY, even when the family's own message already
+    // named the caregiver (the classifier's own prompt example for this
+    // intent IS "I want to book Sarah") — the name was thrown away and the
+    // conversation dead-ended right here every time, never reaching
+    // request_booking in that turn. Mirrors the FIND_CAREGIVER fix pattern
+    // (2026-09-09/13, same file, below): only ask the generic question when
+    // there's genuinely no caregiver context to resolve a name against;
+    // otherwise fall through to runQaAgent, which already has the context
+    // injection (pendingMatches/shownCaregiverIds) to resolve "her"/a named
+    // caregiver and take the real next step (schedule_interview or
+    // request_booking) itself.
     if (intent === "HIRE_CAREGIVER") {
-      await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
-      return;
+      const sessionSnapHire      = await db.collection("agent_sessions").doc(phone).get();
+      const sessionDataHire      = sessionSnapHire.data() ?? {};
+      const pendingMatchesHire   = sessionDataHire.pendingMatches as Array<unknown> | undefined;
+      const pendingMatchesSetAt  = sessionDataHire.pendingMatchesSetAt as string | undefined;
+      const pendingMatchesFresh  = !!pendingMatchesHire && pendingMatchesHire.length > 0 &&
+        (!pendingMatchesSetAt || pendingMatchesSetAt > new Date(Date.now() - PENDING_MATCHES_TTL_MS).toISOString());
+      const shownCaregiverIdsHire  = sessionDataHire.shownCaregiverIds as Array<string> | undefined;
+      const hasShownCaregiversHire = !!shownCaregiverIdsHire && shownCaregiverIdsHire.length > 0;
+      if (!pendingMatchesFresh && !hasShownCaregiversHire) {
+        await sendMessage(chatId, "Who would you like to hire? Reply with their name and I'll set it up.");
+        return;
+      }
+      // Fresh pendingMatches, or a caregiver already shown this session —
+      // fall through to normal routing / runQaAgent below.
     }
 
     // ── CAREGIVER_DECLINE_JOB — natural language job decline from caregiver ──

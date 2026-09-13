@@ -937,27 +937,3 @@ export interface InterviewRequest {
   completedAt?: string;
 }
 
-export interface HireRequest {
-  id: string;
-  clientId: string;
-  seniorId: string;
-  matchAssignmentId: string;
-  caregiverId: string;
-  interviewedCaregiverIds: string[];
-  clientNotes?: string;
-  proposedStartDate: string;
-  proposedSchedule: {
-    days: string[];
-    startTime: string;
-    endTime: string;
-  };
-  serviceType: 'ongoing' | 'one_time' | 'respite';
-  status: 'pending_coordinator_review' | 'coordinator_approved' | 'coordinator_declined' | 'caregiver_accepted' | 'caregiver_declined' | 'booking_created';
-  requestedAt: string;
-  coordinatorReviewedAt?: string;
-  coordinatorId?: string;
-  coordinatorNotes?: string;
-  caregiverNotifiedAt?: string;
-  caregiverRespondedAt?: string;
-  bookingId?: string;
-}

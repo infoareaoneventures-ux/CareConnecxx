@@ -266,13 +266,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     webReads: false,
     notes: "Payment/appointment dispute records with SLA escalation (functions/src/triggers/disputeResolution.ts). Server-only today; no web reader. Audit-sensitive: client-destructive delete is blocked.",
   },
-  hire_requests: {
-    path: "hire_requests",
-    docId: "auto",
-    caraWrites: true,
-    webReads: true,
-    notes: "Formal hire request after interview (services/api.ts submitHireRequest; functions matching.ts + mcp/server.ts). Client/caregiver/admin read; coordinator approves.",
-  },
   hire_decisions: {
     path: "hire_decisions",
     docId: "auto",

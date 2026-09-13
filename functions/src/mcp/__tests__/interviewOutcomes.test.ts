@@ -123,15 +123,25 @@ describe("submit_interview_feedback", () => {
     expect(update?.data.completedAt).toBeTruthy();
   });
 
-  it("'strong' creates a hire_request AND a hire_decisions record", async () => {
+  // 2026-09-13: "strong" no longer creates a hire_requests doc (that
+  // collection was removed entirely — it never led to a real booking, and
+  // its dormant Firestore trigger would have bypassed booking_requests/
+  // request_booking if ever activated). Only hire_decisions (a record, not
+  // a booking) is written; the actual booking is request_booking, matching
+  // the site's single pipeline. The caregiver is also NOT messaged at this
+  // stage (confirmed against the site: its own "strong fit" step has no
+  // caregiver-facing side effect at all — the caregiver only hears
+  // something once the real booking_requests doc is written).
+  it("'strong' creates a hire_decisions record, no hire_requests doc, and messages nobody", async () => {
     hoisted.docState.set(`video_interviews/${IV_ID}`, {
       clientId: CLIENT, caregiverId: "cg1", clientName: "A Family", caregiverName: "Alice", status: "accepted",
     });
     const r = await handleToolCall("submit_interview_feedback", { interviewId: IV_ID, clientId: CLIENT, fitLevel: "strong" }) as any;
-    expect(r.hireRequestCreated).toBe(true);
-    expect(hoisted.adds.find(a => a.path === "hire_requests")).toBeTruthy();
+    expect(r.success).toBe(true);
+    expect(hoisted.adds.find(a => a.path === "hire_requests")).toBeUndefined();
     const decision = hoisted.adds.find(a => a.path === "hire_decisions");
     expect(decision?.data).toMatchObject({ decision: "hire" });
+    expect(sendToPhone).not.toHaveBeenCalled();
   });
 
   it("does not overwrite an already-completed interview's completedAt", async () => {

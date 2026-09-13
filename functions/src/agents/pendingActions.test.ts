@@ -256,6 +256,58 @@ describe("buildActionPreview", () => {
       expect(preview).not.toContain("emergency contact");
     });
   });
+
+  // 2026-09-13: the total shown here must be computed FRESH from this
+  // specific pending action's own schedule/rate — never carried over from
+  // anything discussed earlier in conversation, which goes stale the
+  // instant the family changes a day/time while finalizing.
+  describe("request_booking — total is computed fresh from the final schedule (2026-09-13)", () => {
+    it("computes a one-off total from dates/startTime/endTime x rate", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      const preview = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 30, careLocation: "9 Oak Ave, Springfield, IL, 62701",
+        dates: ["2026-07-01", "2026-07-02"], startTime: "09:00", endTime: "17:00", // 8h x 2 days x $30
+      });
+      expect(preview).toContain("$480 total");
+    });
+
+    it("computes a weekly total for a recurring schedule from dayShiftTimes x rate", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      const preview = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 20, careLocation: "9 Oak Ave, Springfield, IL, 62701",
+        recurring: true, ongoing: true,
+        dayShiftTimes: { Mon: { start: "09:00", end: "17:00" }, Wed: { start: "09:00", end: "17:00" } }, // 16h/wk x $20
+      });
+      expect(preview).toContain("$320/week");
+    });
+
+    it("reflects a CHANGED schedule instead of an earlier stale quote — different days/times produce a different total", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      // Family originally discussed Mon/Wed/Fri, then changed to just Tue/Thu
+      // before actually finalizing — the preview must reflect the FINAL
+      // schedule being proposed, not whatever was quoted earlier.
+      const original = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 20, recurring: true, ongoing: true,
+        dayShiftTimes: { Mon: { start: "09:00", end: "17:00" }, Wed: { start: "09:00", end: "17:00" }, Fri: { start: "09:00", end: "17:00" } },
+      });
+      const changed = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", agreedRate: 20, recurring: true, ongoing: true,
+        dayShiftTimes: { Tue: { start: "09:00", end: "13:00" }, Thu: { start: "09:00", end: "13:00" } },
+      });
+      expect(original).toContain("$480/week"); // 24h x $20
+      expect(changed).toContain("$160/week");  // 8h x $20
+      expect(original).not.toBe(changed);
+    });
+
+    it("omits the total when no agreed rate is present (never invents a number)", async () => {
+      hoisted.caregiverProfiles.set("cg1", { name: "Maria" });
+      const preview = await buildActionPreview("request_booking", {
+        caregiverId: "cg1", dates: ["2026-07-01"], startTime: "09:00", endTime: "17:00",
+      });
+      expect(preview).not.toContain("total");
+      expect(preview).not.toContain("/week");
+    });
+  });
 });
 
 describe("proposePendingAction", () => {

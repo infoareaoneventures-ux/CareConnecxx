@@ -57,28 +57,8 @@ import {
 
 const db = admin.firestore();
 
-// ── Booking quote primitive (U9b) ─────────────────────────────────────────────
-// The read/compute concern extracted out of `request_booking` so the model can
-// reason about a booking in steps — look up the rate, quote the cost, THEN commit
-// — instead of one opaque all-or-nothing tool. This helper is pure (one Firestore
-// READ + arithmetic, no writes), shared by `get_caregiver_booking_rate`,
-// `quote_booking`, and reusable by the committing `request_booking` path.
 // Shared literal union for structured tool failures (see toolError below).
 type ToolErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" | "UNAVAILABLE" | "CONFLICT" | "FORBIDDEN" | "RATE_UNKNOWN" | "IDENTITY_REQUIRED" | "MEMBERSHIP_REQUIRED" | "RATE_LIMITED";
-
-type BookingQuoteResult =
-  | { ok: false; code: ToolErrorCode; message: string }
-  | {
-      ok: true;
-      caregiverId:   string;
-      caregiverName: string;
-      hourlyRate:    number;
-      durationHours: number;
-      dates:         string[];
-      // One line per visit date so the family sees exactly what they're paying for.
-      lineItems:     Array<{ date: string; hours: number; amount: number }>;
-      totalEstimate: number;
-    };
 
 // "HH:MM" → minutes since midnight, or null if malformed.
 function bookingTimeToMinutes(t: unknown): number | null {
@@ -118,12 +98,10 @@ async function resolveCaregiverRate(
   return { ok: false, code, message: result.message };
 }
 
-// Date/time-range parsing shared between quote_booking's informational
-// estimate and request_booking's actual commit — deliberately decoupled
-// from rate resolution (2026-09-13) so a caregiver with no listed rate on
-// file never blocks a commit that has its own agreedRate/job-post-rate
-// override; only quote_booking (which needs a real number to estimate
-// anything) also requires resolveCaregiverRate to succeed.
+// Date/time-range parsing for request_booking's one-off commit shape —
+// deliberately decoupled from rate resolution (2026-09-13) so a caregiver
+// with no listed rate on file never blocks a commit that has its own
+// agreedRate/job-post-rate override.
 function parseBookingDateRange(input: {
   dates?:     unknown;
   startTime?: unknown;
@@ -142,37 +120,6 @@ function parseBookingDateRange(input: {
   }
   const durationHours = Math.round(((endMin - startMin) / 60) * 100) / 100;
   return { ok: true, dateList, durationHours };
-}
-
-// Build a full cost quote for a proposed booking. No write — safe to call freely.
-async function buildBookingQuote(input: {
-  caregiverId?: unknown;
-  dates?:       unknown;
-  startTime?:   unknown;
-  endTime?:     unknown;
-}): Promise<BookingQuoteResult> {
-  const caregiverId = String(input.caregiverId ?? "");
-  if (!caregiverId) return { ok: false, code: "INVALID_INPUT", message: "caregiverId, dates, startTime, endTime are required" };
-  const range = parseBookingDateRange(input);
-  if (!range.ok) return range;
-
-  const rate = await resolveCaregiverRate(caregiverId);
-  if (!rate.ok) return rate;
-
-  const perVisit  = Math.round(range.durationHours * rate.hourlyRate * 100) / 100;
-  const lineItems = range.dateList.map((date) => ({ date, hours: range.durationHours, amount: perVisit }));
-  const totalEstimate = Math.round(perVisit * range.dateList.length * 100) / 100;
-
-  return {
-    ok:            true,
-    caregiverId,
-    caregiverName: rate.caregiverName,
-    hourlyRate:    rate.hourlyRate,
-    durationHours: range.durationHours,
-    dates:         range.dateList,
-    lineItems,
-    totalEstimate,
-  };
 }
 
 // Short referral code (mirrors the frontend dbService.generateReferralCode shape:
@@ -341,20 +288,6 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string" },
       },
       required: ["caregiverId"],
-    },
-  },
-  {
-    name: "quote_booking",
-    description: "Estimate what a booking will COST without creating it: returns per-visit hours, the hourly rate, a line item per date, and the total estimate. Read-only — books nothing. Call this to tell the family the price first, then call request_booking to actually commit once they're happy. clientId is injected automatically.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string" },
-        dates:       { type: "array", items: { type: "string" }, description: "ISO date strings (YYYY-MM-DD)" },
-        startTime:   { type: "string", description: "e.g. '09:00'" },
-        endTime:     { type: "string", description: "e.g. '17:00'" },
-      },
-      required: ["caregiverId", "dates", "startTime", "endTime"],
     },
   },
   {
@@ -1308,18 +1241,20 @@ export const MCP_TOOLS: McpTool[] = [
       "Submit your decision after interviewing a caregiver. Also marks the interview completed (the website's own separate " +
       "'Mark as Completed' step, done automatically here since it's one turn in a conversation, not two button clicks). " +
       "Options: 'strong' (the family wants to hire), 'maybe' (keep considering), 'no' (not a fit — matches the website's 'Not Selected'). " +
-      "IMPORTANT: 'strong' only RECORDS the decision and lets the caregiver know the family wants to move forward — it does NOT " +
-      "create an actual booking (no schedule, no rate, nothing for the caregiver to accept yet, matching the website's own " +
-      "'Mark as Completed' + fit-decision step, which is likewise separate from its 'Send Booking' button). On a 'strong' " +
-      "result, immediately continue the conversation to actually set up the booking, matching every field the website's " +
-      "'Send Booking Request' modal collects: ask for (or confirm, if already known from the job post) the days/times " +
-      "they want (recurring/ongoing is the common case — see request_booking's recurring:true shape); if the caregiver's " +
-      "own listed rate isn't what they agreed on, or nothing is on file, ask for and pass agreedRate; if the family's " +
-      "address on file isn't where care will happen, ask for and pass careLocation. Also ask whether they'd like to add " +
-      "a note for the caregiver (optional — matches the website's visible-but-optional 'Message to [caregiver]' field; " +
-      "still worth asking even though it's fine to skip). Emergency contact is pulled automatically — never ask for that. " +
-      "Then call quote_booking to show the cost, and request_booking with this same interviewId — that is the real, " +
-      "bookable write the website's 'Send Booking' button performs. Never leave a 'strong' decision without following " +
+      "IMPORTANT: 'strong' only RECORDS the decision — it does NOT create an actual booking and does NOT notify the " +
+      "caregiver of anything (no schedule, no rate, nothing for them to accept yet, and nothing sent to them at this " +
+      "stage — matching the website's own 'Mark as Completed' + fit-decision step exactly: the caregiver hears " +
+      "nothing until the family's own 'Send Booking' button/its Evia equivalent, request_booking, actually creates " +
+      "the real booking). On a 'strong' result, immediately continue the conversation to actually set up the " +
+      "booking, matching every field the website's 'Send Booking Request' modal collects: ask for (or confirm, if " +
+      "already known from the job post) the days/times they want (recurring/ongoing is the common case — see " +
+      "request_booking's recurring:true shape); if the caregiver's own listed rate isn't what they agreed on, or " +
+      "nothing is on file, ask for and pass agreedRate; if the family's address on file isn't where care will " +
+      "happen, ask for and pass careLocation. Also ask whether they'd like to add a note for the caregiver (optional " +
+      "— matches the website's visible-but-optional 'Message to [caregiver]' field; still worth asking even though " +
+      "it's fine to skip). Emergency contact is pulled automatically — never ask for that. Then call request_booking " +
+      "with this same interviewId — that is the real, bookable write the website's 'Send Booking' button performs, " +
+      "and the ONLY point at which the caregiver is ever notified. Never leave a 'strong' decision without following " +
       "through to request_booking in the same or next turn; if the conversation stalls first, a follow-up nudge " +
       "(bookingFollowupNudge.ts) will check back in after an hour and every ~48h until a real booking exists.",
     input_schema: {
@@ -3833,25 +3768,6 @@ async function executeToolCall(
         return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
       }
 
-      case "quote_booking": {
-        // U9b: pure cost estimate — lets Evia show the family the price before
-        // request_booking commits. No write; safe to call freely.
-        const quote = await buildBookingQuote(input);
-        if (!quote.ok) return toolError(quote.code, quote.message);
-        return {
-          success:       true,
-          caregiverId:   quote.caregiverId,
-          caregiverName: quote.caregiverName,
-          hourlyRate:    quote.hourlyRate,
-          durationHours: quote.durationHours,
-          dates:         quote.dates,
-          lineItems:     quote.lineItems,
-          totalEstimate: quote.totalEstimate,
-          committed:     false,
-          note:          "Estimate only — nothing has been booked. Call request_booking to commit.",
-        };
-      }
-
       case "request_booking": {
         // NOTE: deliberately NOT wrapped in runActionNativeMcpWrite here — its
         // postcondition verifier expects a real committed write (a taskId to
@@ -4007,11 +3923,10 @@ async function executeToolCall(
             ...(effectiveOngoing !== true && effectiveEndDate ? { endDate: effectiveEndDate } : {}),
           };
         } else {
-          // Duration/date-list parsing is shared with quote_booking (U9b),
-          // but rate resolution is NOT (2026-09-13) — see the recurring
-          // branch's comment above for why. Caregiver existence is still
-          // checked (NOT_FOUND), just decoupled from whether they happen to
-          // have a listed hourlyRate on file.
+          // Rate resolution is decoupled from caregiver-listed-rate lookups
+          // (2026-09-13) — see the recurring branch's comment above for why.
+          // Caregiver existence is still checked (NOT_FOUND), just decoupled
+          // from whether they happen to have a listed hourlyRate on file.
           const range = parseBookingDateRange(input);
           if (!range.ok) return toolError(range.code, range.message);
           const nameRes = await resolveCaregiverName(caregiverId as string);
@@ -6239,16 +6154,25 @@ async function executeToolCall(
       // since giving a fit decision IS confirming the interview happened, in
       // one conversational turn instead of two separate button clicks.
       if (iv.status !== "completed") { ivUpdate.status = "completed"; ivUpdate.completedAt = nowIso; }
-      let hireRequestCreated = false;
       if (fitLevel === "strong") {
-        await db.collection("hire_requests").add({ clientId, caregiverId: iv.caregiverId, interviewId, status: "pending", createdAt: nowIso });
+        // NOTE: this only records the decision (hire_decisions) — it does
+        // NOT create a bookable record. There is no "hire_requests"
+        // collection (removed 2026-09-13, was a dead end with no reader
+        // that ever turned it into a real booking, plus dormant trigger
+        // code that would have bypassed booking_requests entirely if ever
+        // activated). The ONLY way this booking actually happens is
+        // request_booking, same as the website's own single pipeline —
+        // bookingFollowupNudge.ts follows up if the family stalls after this.
+        //
+        // Deliberately does NOT message the caregiver here (2026-09-13,
+        // confirmed against the site): the site's own "strong fit"/hire
+        // step has no caregiver-facing side effect at all — the caregiver
+        // hears nothing until the real booking_requests doc is written
+        // (its own Cloud Function trigger, onBookingRequestWrite, is what
+        // notifies them). Messaging the caregiver at this earlier, no-
+        // schedule-no-rate-yet stage would tell them something is coming
+        // before there's an actual booking on the table.
         await db.collection("hire_decisions").add({ clientId, clientName: iv.clientName ?? "", caregiverId: iv.caregiverId, caregiverName: iv.caregiverName ?? "", decision: "hire", createdAt: nowIso }).catch(() => {});
-        hireRequestCreated = true;
-        const cgSessSnap2 = await db.collection("agent_sessions").where("userId", "==", iv.caregiverId).limit(1).get();
-        if (!cgSessSnap2.empty) {
-          const { sendToPhone } = await import("../linq/client");
-          await sendToPhone(cgSessSnap2.docs[0].id, "Great news — the family would like to move forward with you! They'll reach out soon to finalize the schedule.").catch(() => {});
-        }
       } else if (fitLevel === "no") {
         // Matches the website's "Not Selected" exactly: video_interviews →
         // 'declined' (declinedBy:'client') + a hire_decisions record.
@@ -6259,7 +6183,7 @@ async function executeToolCall(
       await ivSnap.ref.update(ivUpdate);
       await db.collection("admin_alerts").add({ type: "interview_feedback_submitted", fitLevel, interviewId, clientId, caregiverId: iv.caregiverId, priority: fitLevel === "strong" ? "high" : "low", resolved: false, createdAt: nowIso });
       logAudit({ eventType: "interview_feedback_submitted", userId: clientId as string, data: { source: "mcp:submit_interview_feedback", interviewId, fitLevel } }).catch(() => {});
-      return { success: true, fitLevel, hireRequestCreated };
+      return { success: true, fitLevel };
     }
 
     if (name === "complete_interview") {

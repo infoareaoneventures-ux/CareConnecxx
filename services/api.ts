@@ -2833,18 +2833,6 @@ export const dbService = {
         }
     },
 
-    recordMatchDismissal: async (clientId: string, caregiverId: string): Promise<void> => {
-        if (!isConfigured || !db) return;
-        try {
-            await db.collection('hire_requests').add({
-                clientId,
-                caregiverId,
-                status: 'client_rejected',
-                createdAt: new Date().toISOString(),
-            });
-        } catch { /* best effort */ }
-    },
-
     storeAIMatchScores: async (clientId: string, scores: any[]): Promise<void> => {
         if (!isConfigured || !db) return;
         try { await db.collection('ai_match_scores').doc(clientId).set({ scores, updatedAt: new Date().toISOString() }); } catch { /* best effort */ }
@@ -3216,86 +3204,15 @@ export const dbService = {
     // site (see functions/src/agents/matchingAgent.ts for the fuller removal
     // rationale). Interviews are scheduled/tracked in video_interviews only.
 
-    submitHireRequest: async (data: {
-        clientId: string;
-        seniorId: string;
-        matchAssignmentId: string;
-        caregiverId: string;
-        interviewedCaregiverIds: string[];
-        proposedStartDate: string;
-        proposedSchedule: { days: string[]; startTime: string; endTime: string };
-        serviceType: 'ongoing' | 'one_time' | 'respite';
-        clientNotes?: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const docRef = await db.collection('hire_requests').add({
-            ...data,
-            status: 'pending_coordinator_review',
-            requestedAt: new Date().toISOString()
-        });
-        
-        // Update match assignment status
-        await db.collection('match_assignments').doc(data.matchAssignmentId).update({
-            status: 'hire_requested'
-        });
-        
-        return docRef.id;
-    },
-
-    getHireRequests: async (filters?: { status?: string; coordinatorId?: string }) => {
-        if (!isConfigured || !db) return [];
-        
-        let query: any = db.collection('hire_requests');
-        
-        if (filters?.status) {
-            query = query.where('status', '==', filters.status);
-        }
-        
-        const snapshot = await query.orderBy('requestedAt', 'desc').get();
-        return snapshot.docs.map((doc: firebase.firestore.QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
-    },
-
-    updateHireRequestStatus: async (requestId: string, updates: {
-        status: string;
-        coordinatorId?: string;
-        coordinatorNotes?: string;
-    }) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        const updateData: any = {
-            status: updates.status,
-            coordinatorReviewedAt: new Date().toISOString()
-        };
-        
-        if (updates.coordinatorId) {
-            updateData.coordinatorId = updates.coordinatorId;
-        }
-        if (updates.coordinatorNotes) {
-            updateData.coordinatorNotes = updates.coordinatorNotes;
-        }
-        
-        await db.collection('hire_requests').doc(requestId).update(updateData);
-    },
-
-    approveHireRequest: async (requestId: string, coordinatorId: string) => {
-        if (!isConfigured || !db) throw new Error("Database not connected");
-        
-        await db.collection('hire_requests').doc(requestId).update({
-            status: 'coordinator_approved',
-            coordinatorId,
-            coordinatorReviewedAt: new Date().toISOString()
-        });
-
-        // Caregiver notification is owned by the server-side Firestore trigger
-        // `onHireRequestApproved` (functions/src/matching.ts), which fires on this
-        // exact `coordinator_approved` status transition and delivers the in-app
-        // notification doc + hire-offer email + Linq SMS/iMessage via the Admin SDK.
-        // Do not add a client-side notify here (would double-notify).
-        // Note: this callable currently has zero frontend callers; kept intentionally
-        // (do not delete) — the coordinator approval path may be wired to UI later.
-    },
-
+    // 2026-09-13 (Hamse's call): submitHireRequest / getHireRequests /
+    // updateHireRequestStatus / approveHireRequest / recordMatchDismissal and
+    // the whole `hire_requests` collection removed — it never led to a real
+    // booking (the only reader that would have turned it into one,
+    // functions/src/matching.ts's onCaregiverAcceptsHire, was dormant/
+    // unreachable dead code that wrote straight to `appointments`, bypassing
+    // booking_requests/request_booking entirely) and had zero live callers
+    // on either side. The one real booking pipeline is request_booking
+    // (Evia) / handleSendBooking (site), both writing booking_requests.
 
     // U4 (2026-07-20): getShiftHistory (shifts caregiverId+clientId+timestamp)
     // and the legacy timesheets CRUD block (submitTimesheet, getClientTimesheets,

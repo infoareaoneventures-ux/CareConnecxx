@@ -66,15 +66,15 @@ describe("graders (U9/KTD20)", () => {
 
   it("trajectory grade enforces required order, forbidden tools, and duplicate caps (R25)", () => {
     const spec = {
-      requiredTools: ["quote_booking", "request_booking"],
+      requiredTools: ["get_caregiver_booking_rate", "request_booking"],
       requiredInOrder: true,
       forbiddenTools: ["cancel_subscription"],
       maxCallsPerTool: { request_booking: 1 },
     };
-    expect(gradeTrajectory(spec, ["quote_booking", "request_booking"]).passed).toBe(true);
-    expect(gradeTrajectory(spec, ["request_booking", "quote_booking"]).failures[0]).toMatch(/order broken/);
-    expect(gradeTrajectory(spec, ["quote_booking", "request_booking", "request_booking"]).failures[0]).toMatch(/duplicate effect/);
-    expect(gradeTrajectory(spec, ["quote_booking", "cancel_subscription", "request_booking"]).failures[0]).toMatch(/forbidden/);
+    expect(gradeTrajectory(spec, ["get_caregiver_booking_rate", "request_booking"]).passed).toBe(true);
+    expect(gradeTrajectory(spec, ["request_booking", "get_caregiver_booking_rate"]).failures[0]).toMatch(/order broken/);
+    expect(gradeTrajectory(spec, ["get_caregiver_booking_rate", "request_booking", "request_booking"]).failures[0]).toMatch(/duplicate effect/);
+    expect(gradeTrajectory(spec, ["get_caregiver_booking_rate", "cancel_subscription", "request_booking"]).failures[0]).toMatch(/forbidden/);
   });
 
   it("flailing cap", () => {

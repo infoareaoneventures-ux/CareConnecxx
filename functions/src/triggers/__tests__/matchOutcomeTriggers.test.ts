@@ -62,13 +62,11 @@ import { writeMatchOutcome } from "../../ai/matchOutcomes";
 import {
   onJobApplicationOutcome,
   onVideoInterviewClientDecline,
-  onHireRequestFeedback,
 } from "../aiMatchTriggers";
 
 type Handler = (change: any, context: any) => Promise<any>;
 const jobAppHandler = onJobApplicationOutcome as unknown as Handler;
 const ivDeclineHandler = onVideoInterviewClientDecline as unknown as Handler;
-const hireHandler = onHireRequestFeedback as unknown as Handler;
 
 function change(before: any | null, after: any | null) {
   return {
@@ -99,7 +97,7 @@ describe("writeMatchOutcome", () => {
   it("skips silently when clientId or caregiverId is missing", async () => {
     await writeMatchOutcome({
       clientId: undefined, caregiverId: "cg1", outcome: "rejected",
-      source: "hire_request", refId: "r1",
+      source: "job_application", refId: "r1",
     });
     expect(hoisted.sets.size).toBe(0);
   });
@@ -160,40 +158,5 @@ describe("onVideoInterviewClientDecline", () => {
       { params: { interviewId: "iv2" } }
     );
     expect(hoisted.sets.has("match_outcomes/video_interview_iv2")).toBe(false);
-  });
-});
-
-describe("onHireRequestFeedback → match_outcomes", () => {
-  const base = { clientId: "cl1", caregiverId: "cg1" };
-
-  it("records hired on positive status alongside match_history", async () => {
-    await hireHandler(
-      change({ ...base, status: "pending" }, { ...base, status: "coordinator_approved" }),
-      { params: { requestId: "hr1" } }
-    );
-    expect(hoisted.sets.get("match_outcomes/hire_request_hr1")).toMatchObject({
-      outcome: "hired", source: "hire_request",
-    });
-    // pre-existing behavior still intact
-    expect(hoisted.sets.get("users/cl1/match_history/cg1")).toMatchObject({ signal: "hired" });
-  });
-
-  it("records rejected on negative status", async () => {
-    await hireHandler(
-      change({ ...base, status: "pending" }, { ...base, status: "client_rejected" }),
-      { params: { requestId: "hr2" } }
-    );
-    expect(hoisted.sets.get("match_outcomes/hire_request_hr2")).toMatchObject({
-      outcome: "rejected",
-    });
-  });
-
-  it("evolving positive statuses upsert the same outcome doc", async () => {
-    await hireHandler(
-      change({ ...base, status: "coordinator_approved" }, { ...base, status: "booking_created" }),
-      { params: { requestId: "hr1" } }
-    );
-    const outcomes = [...hoisted.sets.keys()].filter(k => k.startsWith("match_outcomes/"));
-    expect(outcomes).toEqual(["match_outcomes/hire_request_hr1"]);
   });
 });

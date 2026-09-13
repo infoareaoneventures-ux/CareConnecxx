@@ -801,23 +801,6 @@ service cloud.firestore {
     }
     
     // ==========================================
-    // HIRE REQUESTS
-    // ==========================================
-    match /hire_requests/{requestId} {
-      // Participants + admin only — who is hiring whom is not public.
-      allow read: if isAdmin() || (
-        isAuthenticated() && (
-          resource.data.clientId == request.auth.uid ||
-          resource.data.caregiverId == request.auth.uid
-        )
-      );
-      // Coordinators and admins can create/update
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    // ==========================================
     // MATCH OUTCOMES (AI matching learning loop)
     // ==========================================
     match /match_outcomes/{outcomeId} {

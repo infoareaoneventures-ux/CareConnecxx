@@ -43,7 +43,7 @@ export function shouldNudgeBookingFollowup(p: {
  *
  * Read-only except the send + a per-interview nudge counter/timestamp; the
  * nudge does NOT create the booking itself — a reply routes through Evia's
- * normal turn handling, which already has quote_booking/request_booking.
+ * normal turn handling, which already has request_booking.
  */
 export const sendBookingFollowupNudges = functions.pubsub
   .schedule("*/15 * * * *")

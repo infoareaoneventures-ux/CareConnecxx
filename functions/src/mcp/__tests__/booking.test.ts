@@ -224,77 +224,8 @@ describe("booking tools", () => {
     });
   });
 
-  describe("quote_booking (U9b)", () => {
-    it("computes per-visit hours, line items, and a multi-date total without booking", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 30 });
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "cg1",
-        clientId:    "c1",
-        dates:       ["2026-07-01", "2026-07-02"],
-        startTime:   "09:00",
-        endTime:     "17:00", // 8h
-      }) as any;
-      expect(r.success).toBe(true);
-      expect(r.committed).toBe(false);
-      expect(r.durationHours).toBe(8);
-      expect(r.lineItems).toHaveLength(2);
-      expect(r.lineItems[0]).toEqual({ date: "2026-07-01", hours: 8, amount: 240 });
-      expect(r.totalEstimate).toBe(480); // 8h * $30 * 2 days
-      // No write — quoting must not create a booking task.
-      expect(hoisted.adds.length).toBe(0);
-    });
-
-    it("accepts a single date (not wrapped in an array)", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "cg1", dates: "2026-07-01", startTime: "10:00", endTime: "12:00", // 2h
-      }) as any;
-      expect(r.success).toBe(true);
-      expect(r.totalEstimate).toBe(40);
-    });
-
-    it("rejects an end time at or before the start time", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "cg1", dates: ["2026-07-01"], startTime: "17:00", endTime: "09:00",
-      }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-
-    it("returns NOT_FOUND when the caregiver doesn't exist", async () => {
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "ghost", dates: ["2026-07-01"], startTime: "09:00", endTime: "10:00",
-      }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("NOT_FOUND");
-    });
-
-    it('quotes with a coerced legacy string rate ("25") exactly like a numeric 25', async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: "25" });
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "cg1", dates: "2026-07-01", startTime: "10:00", endTime: "12:00", // 2h
-      }) as any;
-      expect(r.success).toBe(true);
-      expect(r.hourlyRate).toBe(25);
-      expect(r.totalEstimate).toBe(50); // 2h * $25
-      expect(hoisted.adds.length).toBe(0); // still no write
-    });
-
-    // U6 (R9): a quote must never be built on a fabricated $20 either — the
-    // quote and the eventual booking share one rate resolver, and both refuse.
-    it("returns RATE_UNKNOWN instead of quoting a fabricated $20 when no rate is on file", async () => {
-      hoisted.docState.set("caregivers/cg3", { name: "Pat" });
-      const r = await handleToolCall("quote_booking", {
-        caregiverId: "cg3", dates: ["2026-07-01"], startTime: "09:00", endTime: "10:00",
-      }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("RATE_UNKNOWN");
-    });
-  });
-
-  // ── U9b: request_booking now commits via the SAME quote primitive ────────────
-  describe("request_booking (U9b — commit path shares buildBookingQuote)", () => {
+  // ── U9b: request_booking's own rate/schedule resolution ───────────────────────
+  describe("request_booking (U9b — commit path)", () => {
     // 2026-09-13: request_booking now confirms-before-commit (matching the
     // website's own "Review and edit before sending" modal) — _confirmedActionId
     // reaches the commit path via this file's own pendingActions mock above
@@ -323,8 +254,8 @@ describe("booking tools", () => {
       expect(r.success).toBe(true);
       expect(r.taskId).toBe("task-123");
       expect(r.status).toBe("awaiting_approval");
-      expect(r.estimatedTotal).toBe(480); // 8h * $30 * 2 days — same math as quote_booking
-      // Delegated to createBookingTask with the quote-derived values.
+      expect(r.estimatedTotal).toBe(480); // 8h * $30 * 2 days
+      // Delegated to createBookingTask with the resolved values.
       expect(createBookingTask).toHaveBeenCalledTimes(1);
       const arg = createBookingTask.mock.calls[0][0] as any;
       expect(arg.caregiverName).toBe("Maria");

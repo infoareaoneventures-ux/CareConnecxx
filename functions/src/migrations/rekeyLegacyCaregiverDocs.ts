@@ -12,7 +12,6 @@ const CAREGIVER_REF_COLLECTIONS = [
   "job_applications",
   "video_interviews",
   "interview_requests",
-  "hire_requests",
   "shift_offers",
   "reviews",
 ] as const;

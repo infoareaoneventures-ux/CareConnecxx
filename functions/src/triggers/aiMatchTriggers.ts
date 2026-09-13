@@ -1,6 +1,5 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
 import {
     ensureCaregiverEmbedding,
     runMatchingForIntake,
@@ -158,81 +157,6 @@ export const onIntakeUpdatedAiMatch = functions.firestore
             );
         } catch (err) {
             console.error("[onIntakeUpdatedAiMatch] failed:", err);
-        }
-        return null;
-    });
-
-export const onHireRequestFeedback = functions.firestore
-    .document("hire_requests/{requestId}")
-    .onWrite(async (change, context) => {
-        const after = change.after.exists ? change.after.data() : null;
-        if (!after) return null;
-        const before = change.before.exists ? change.before.data() : null;
-        if (before && before.status === after.status) return null;
-
-        const clientId = after.clientId;
-        const caregiverId = after.caregiverId;
-        if (!clientId || !caregiverId) return null;
-
-        const positiveStatuses = ["coordinator_approved", "caregiver_accepted", "booking_created"];
-        const negativeStatuses = ["rejected", "dismissed", "coordinator_rejected", "client_rejected"];
-
-        const isPositive = positiveStatuses.includes(after.status);
-        const isNegative = negativeStatuses.includes(after.status);
-        if (!isPositive && !isNegative) return null;
-
-        try {
-            if (isPositive) {
-                await admin
-                    .firestore()
-                    .collection("users")
-                    .doc(clientId)
-                    .collection("match_history")
-                    .doc(caregiverId)
-                    .set(
-                        {
-                            caregiverId,
-                            signal: "hired",
-                            signals: { hired: FieldValue.serverTimestamp() },
-                            weight: FieldValue.increment(5),
-                            updatedAt: FieldValue.serverTimestamp(),
-                        },
-                        { merge: true }
-                    );
-                console.log(
-                    `[onHireRequestFeedback] Logged 'hired' for client ${clientId} ↔ caregiver ${caregiverId}`
-                );
-            } else {
-                // Negative signal: reduce boost weight so this caregiver ranks lower in future
-                await admin
-                    .firestore()
-                    .collection("users")
-                    .doc(clientId)
-                    .collection("match_history")
-                    .doc(caregiverId)
-                    .set(
-                        {
-                            caregiverId,
-                            signal: "rejected",
-                            signals: { rejected: FieldValue.serverTimestamp() },
-                            weight: FieldValue.increment(-3),
-                            updatedAt: FieldValue.serverTimestamp(),
-                        },
-                        { merge: true }
-                    );
-                console.log(
-                    `[onHireRequestFeedback] Logged 'rejected' for client ${clientId} ↔ caregiver ${caregiverId}`
-                );
-            }
-            await writeMatchOutcome({
-                clientId,
-                caregiverId,
-                outcome: isPositive ? "hired" : "rejected",
-                source: "hire_request",
-                refId: context.params.requestId,
-            });
-        } catch (err) {
-            console.error("[onHireRequestFeedback] failed:", err);
         }
         return null;
     });

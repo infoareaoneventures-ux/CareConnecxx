@@ -821,6 +821,58 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
   });
 });
 
+// 2026-09-13 live-testing find: "I would like to book Maria" classified as
+// HIRE_CAREGIVER used to get a hardcoded "Who would you like to hire?" no
+// matter what — even though the family's own message already named the
+// caregiver — and dead-ended right there, never reaching runQaAgent/
+// request_booking in that turn. Mirrors the FIND_CAREGIVER fix above: only
+// ask the generic question when there's genuinely no caregiver context.
+describe("HIRE_CAREGIVER defers to the agent when caregiver context exists (2026-09-13)", () => {
+  const pendingMatches = [
+    { id: "cg1", name: "Maria", rate: 25 },
+  ];
+
+  it("fresh pendingMatches: HIRE_CAREGIVER falls through to runQaAgent instead of re-asking who", async () => {
+    seed({ pendingMatches, pendingMatchesSetAt: new Date().toISOString() });
+    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("I would like to book Maria"));
+
+    expect(runQaAgent).toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Who would you like to hire"));
+  });
+
+  it("shownCaregiverIds present (no pendingMatches): HIRE_CAREGIVER still falls through to runQaAgent", async () => {
+    seed({ shownCaregiverIds: ["cg1"] });
+    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("let's hire her"));
+
+    expect(runQaAgent).toHaveBeenCalled();
+  });
+
+  it("no caregiver context at all: HIRE_CAREGIVER still asks who (genuinely ambiguous)", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("hire her"));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Who would you like to hire"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("stale pendingMatches (past the TTL) and no shownCaregiverIds: HIRE_CAREGIVER still asks who", async () => {
+    const staleSetAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // 3h ago, TTL is 2h
+    seed({ pendingMatches, pendingMatchesSetAt: staleSetAt });
+    classifyIntentDetailed.mockResolvedValue({ intent: "HIRE_CAREGIVER", degraded: false });
+
+    await routeIntentAndRespond(ctx("book her"));
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Who would you like to hire"));
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+});
+
 // 2026-09-09 (live-caught): "cancel it" / "cancel that interview", asked
 // right after Evia herself described a pending interview, used to hit a
 // context-blind hardcoded "no visits to cancel" dead-end — CANCEL_REQUEST

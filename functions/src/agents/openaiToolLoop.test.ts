@@ -11,7 +11,7 @@ describe("openaiToolLoop", () => {
         content: [{
           type: "tool_use",
           id: "call_1",
-          name: "quote_booking",
+          name: "get_caregiver_booking_rate",
           input: { caregiverId: "cg1" },
         }],
       },
@@ -20,7 +20,7 @@ describe("openaiToolLoop", () => {
         content: [{
           type: "tool_result",
           tool_use_id: "call_1",
-          content: "Quote is $120",
+          content: "Rate is $30/hr",
         }],
       },
     ];
@@ -34,12 +34,12 @@ describe("openaiToolLoop", () => {
           id: "call_1",
           type: "function",
           function: {
-            name: "quote_booking",
+            name: "get_caregiver_booking_rate",
             arguments: "{\"caregiverId\":\"cg1\"}",
           },
         }],
       },
-      { role: "tool", tool_call_id: "call_1", content: "Quote is $120" },
+      { role: "tool", tool_call_id: "call_1", content: "Rate is $30/hr" },
     ]);
   });
 

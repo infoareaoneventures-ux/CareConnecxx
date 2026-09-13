@@ -21,7 +21,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
-  quote_booking:                ["booking"],  // U9b: read-only cost estimate (no write)
   get_callout_backups:          ["booking"],            // parity: caregiver-callout backup options (read)
   select_callout_backup:        ["booking"],            // parity: assign a callout backup
   request_callout_refund:       ["booking", "billing"], // parity: callout refund request

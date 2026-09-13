@@ -1,13 +1,16 @@
 // Scripted, step-by-step booking flow — mirrors jobPostingFlow.ts's pattern
 // (session-state field machine, one question per turn, isQuestionOrOther
 // guard, parseWithClaude extraction with re-ask-never-silently-default,
-// ending in a structured recap + explicit YES/NO). Built 2026-09-13 after a
-// live SMS test stalled: request_booking was only ever collected ad hoc
-// inside the general qaAgent tool loop, so a mid-collection reply (e.g. "are
-// you there") was exposed to intent-classification misfires (FACT_CORRECTION)
-// instead of being captured deterministically, and there was no structured
-// recap matching the website's own "Send Booking Request" review modal
-// (components/client/PostsPage.tsx, handleSendBooking).
+// ending in a structured recap + explicit YES/NO/edit — see handleBkConfirm).
+// Built 2026-09-13 after a live SMS test stalled: request_booking was only
+// ever collected ad hoc inside the general qaAgent loop, so a mid-collection
+// reply (e.g. "are you there") was exposed to intent-classification
+// misfires (FACT_CORRECTION) instead of being captured deterministically,
+// and there was no structured recap matching the website's own "Send
+// Booking Request" review modal (components/client/PostsPage.tsx,
+// handleSendBooking) — including that modal's own Edit affordance, which
+// this flow's bk_confirm step mirrors by classifying a correction
+// ("actually make it $28/hr") as its own action rather than only YES/NO.
 //
 // Ask/show order matches the modal's own top-to-bottom section order
 // (Caregiver → Rate & Payment → Schedule → Care Recipients → Care Plan
@@ -31,8 +34,8 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr } from "../utils/scheduledTime";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingRate, resolveBookingCaregiverName,
-  resolveCareLocation, formatCareLocationOptions, resolveRecipientAttribution, resolveEmergencyContact,
-  resolveTopLevelCareNeedsAndLifestyle, enrichRecipientAgeRelationship,
+  resolveCareLocation, formatCareLocationOptions, listCareLocationOptions, resolveRecipientAttribution,
+  resolveEmergencyContact, resolveTopLevelCareNeedsAndLifestyle, enrichRecipientAgeRelationship,
   type LocationOption,
 } from "./bookingResolution";
 
@@ -49,12 +52,18 @@ export interface BookingFlowData {
   applicationId?: string;
   jobPostRate?: number;
   jobPostDays?: string[];
+  jobPostEndDate?: string;
   hourlyRate?: number;
   scheduleKind?: "recurring" | "one_off";
   days?: string[];
   dates?: string[];
   startTime?: string;
   endTime?: string;
+  // Recurring schedules only — whether the arrangement is open-ended or has
+  // a set end date (matches request_booking's ongoing/endDate pair and the
+  // site's own recurring-booking shape). Never applies to a one-off visit.
+  ongoing?: boolean;
+  scheduleEndDate?: string;
   careLocation?: string;
   careLocationOptions?: LocationOption[];
   recipientName?: string;
@@ -198,6 +207,7 @@ export async function startBookingFlow(
     ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
     ...(linkage.jobPostRate !== undefined ? { jobPostRate: linkage.jobPostRate } : {}),
     ...(linkage.jobPostSchedule?.daysOfWeek?.length ? { jobPostDays: linkage.jobPostSchedule.daysOfWeek } : {}),
+    ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
     ...(recipientAttribution.recipientName ? { recipientName: recipientAttribution.recipientName } : {}),
     ...(recipientAttribution.recipientKey ? { recipientKey: recipientAttribution.recipientKey } : {}),
     ...(recipientAttribution.recipientResolved ? { recipientResolved: recipientAttribution.recipientResolved } : {}),
@@ -237,6 +247,7 @@ export async function handleBookingFlowStep(
     case "bk_ask_rate":     return handleBkAskRate(phone, chatId, text, session);
     case "bk_ask_days":     return handleBkAskDays(phone, chatId, text, session);
     case "bk_ask_times":    return handleBkAskTimes(phone, chatId, text, session);
+    case "bk_ask_ongoing":  return handleBkAskOngoing(phone, chatId, text, session);
     case "bk_ask_location": return handleBkAskLocation(phone, chatId, text, session);
     case "bk_confirm":      return handleBkConfirm(phone, chatId, text, session);
     default:
@@ -363,7 +374,56 @@ async function handleBkAskTimes(
     return;
   }
   await mergeFlowData(phone, { startTime: rawStart, endTime: rawEnd });
-  await advanceToLocation(phone, chatId, session);
+  await advanceFromTimes(phone, chatId, session);
+}
+
+// ── Step: ongoing vs. a set end date (recurring schedules only) ─────────────
+
+const ONGOING_QUESTION =
+  "Is this an ongoing arrangement with no end date, or does it have a specific end date? " +
+  "(e.g. \"ongoing\" or \"through December 1\")";
+
+async function advanceFromTimes(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const data = await getFlowData(phone);
+  if (data.scheduleKind !== "recurring") {
+    return advanceToLocation(phone, chatId, session);
+  }
+  if (data.jobPostEndDate) {
+    // Matches request_booking's own existing fallback — a job post with a
+    // real end date on file is used silently, never re-asked.
+    await mergeFlowData(phone, { ongoing: false, scheduleEndDate: data.jobPostEndDate });
+    return advanceToLocation(phone, chatId, session);
+  }
+  await updateStep(phone, "bk_ask_ongoing");
+  await sendMessage(chatId, ONGOING_QUESTION);
+}
+
+async function handleBkAskOngoing(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+  if (await isQuestionOrOther(text, ONGOING_QUESTION)) {
+    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    await sendMessage(chatId, ONGOING_QUESTION);
+    return;
+  }
+  const today = businessTodayStr();
+  const raw = await parseWithClaude(
+    `Today is ${today}. Does the family want this recurring arrangement to be ongoing (no end date), or does it ` +
+    'have a specific end date? Return ONLY a JSON object: {"ongoing": true or false, "endDate": "YYYY-MM-DD" or ' +
+    'null — required when ongoing is false, resolved relative to today}. Never invent a date the message doesn\'t support.',
+    text
+  );
+  const parsed = parseJsonLoose(raw, "handleBkAskOngoing");
+  if (parsed?.ongoing === true) {
+    await mergeFlowData(phone, { ongoing: true });
+    return advanceToLocation(phone, chatId, session);
+  }
+  if (parsed?.ongoing === false && typeof parsed.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.endDate)) {
+    await mergeFlowData(phone, { ongoing: false, scheduleEndDate: parsed.endDate });
+    return advanceToLocation(phone, chatId, session);
+  }
+  await sendMessage(chatId, `${BK_DIDNT_CATCH} ${ONGOING_QUESTION}`);
 }
 
 // ── Step: location (only asked when ambiguous) ───────────────────────────────
@@ -390,6 +450,21 @@ async function advanceToLocation(phone: string, chatId: string, session: AgentSe
   await sendMessage(chatId, "Where will this care take place? (street address + zip)");
 }
 
+// Explicit "change the address" edit from bk_confirm — unlike advanceToLocation,
+// this always shows the real options (even just one) rather than silently
+// re-picking the same on-file address, since the whole point is to change it.
+async function promptLocationEdit(phone: string, chatId: string, session: AgentSession): Promise<void> {
+  const clientId = session.userId as string | undefined;
+  const options = clientId ? await listCareLocationOptions(clientId) : [];
+  await mergeFlowData(phone, { careLocationOptions: options });
+  await updateStep(phone, "bk_ask_location");
+  await sendMessage(chatId,
+    options.length
+      ? `Which address should this be instead?\n\n${formatCareLocationOptions(options)}\n\nReply with a number, or a new street address + zip.`
+      : "Where should this care take place instead? (street address + zip)"
+  );
+}
+
 async function handleBkAskLocation(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
@@ -407,8 +482,9 @@ async function handleBkAskLocation(
   if (options.length) {
     const raw = await parseWithClaude(
       `Known addresses:\n${formatCareLocationOptions(options)}\n\n` +
-      'Match the family\'s reply to ONE of the numbered addresses above. Return ONLY a JSON object: ' +
-      '{"matchedIndex": number or null}. Never invent a match.',
+      "Match the family's reply to ONE of the numbered addresses above, OR extract a NEW street address if they " +
+      'gave one not on the list. Return ONLY a JSON object: {"matchedIndex": number or null, "newAddress": string ' +
+      "or null}. Never invent a match or an address.",
       text
     );
     const parsed = parseJsonLoose(raw, "handleBkAskLocation");
@@ -417,6 +493,10 @@ async function handleBkAskLocation(
       const a = options[idx - 1];
       const location = [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ");
       await mergeFlowData(phone, { careLocation: location });
+      return advanceToConfirm(phone, chatId, session);
+    }
+    if (typeof parsed?.newAddress === "string" && parsed.newAddress.trim().length >= 5) {
+      await mergeFlowData(phone, { careLocation: parsed.newAddress.trim() });
       return advanceToConfirm(phone, chatId, session);
     }
     await sendMessage(chatId, `${BK_DIDNT_CATCH} ${QUESTION}`);
@@ -458,7 +538,8 @@ async function advanceToConfirm(phone: string, chatId: string, session: AgentSes
 // Details, Lifestyle & Preferences, Care Location, Emergency Contact.
 export function buildBookingRecap(data: BookingFlowData): string {
   const scheduleLine = data.scheduleKind === "recurring"
-    ? `${(data.days ?? []).join(", ")}, ${data.startTime}–${data.endTime}`
+    ? `${(data.days ?? []).join(", ")}, ${data.startTime}–${data.endTime} ` +
+      (data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${data.scheduleEndDate})` : "")
     : `${(data.dates ?? []).join(", ")}, ${data.startTime}–${data.endTime}`;
   const recipients = data.careRecipients?.length
     ? data.careRecipients.map((r) => {
@@ -490,24 +571,34 @@ export function buildBookingRecap(data: BookingFlowData): string {
 
 const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this booking request — reply YES to send it, or NO to cancel.";
 
+// Mirrors the site's own Edit button (which reveals every section for
+// in-place changes rather than forcing a cancel-and-restart) — added
+// 2026-09-13 after Hamse asked whether the recap supported editing. A
+// correction ("actually make it $28/hr") is classified here as its own
+// action, distinct from YES/NO/a genuine question, so it never gets
+// mis-routed into the mid-flow question answerer or silently ignored.
 async function handleBkConfirm(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
   const data = await getFlowData(phone);
-  if (await isQuestionOrOther(text, CONFIRM_QUESTION_FALLBACK)) {
-    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
-    await sendMessage(chatId, buildBookingRecap(data));
-    return;
-  }
 
-  const norm = await parseWithClaude(
-    'The user is confirming or declining to send a booking request. ' +
-    '"yes", "yep", "send it", "go ahead", "confirm", "looks good" = YES. ' +
-    '"no", "cancel", "never mind", "stop" = NO. Reply with exactly YES or NO.',
+  const raw = await parseWithClaude(
+    "The family is reviewing a booking request summary before it sends. Classify their reply. Return ONLY a JSON " +
+    'object: {"action": "confirm" | "cancel" | "edit_rate" | "edit_schedule" | "edit_location" | "other", ' +
+    '"newRate": number or null}. ' +
+    '"confirm" = yes/send it/go ahead/looks good. "cancel" = no/never mind/stop. ' +
+    '"edit_rate" = wants to change the hourly rate/price — set newRate to the new dollar amount ONLY if this ' +
+    "exact message states one, else null. " +
+    '"edit_schedule" = wants to change the days/times/how long the arrangement runs. ' +
+    '"edit_location" = wants to change the address/where care happens. ' +
+    '"other" = a genuine question, or anything that isn\'t a decision or a change to one of those three things. ' +
+    "Never invent a rate the message doesn't state.",
     text
   );
+  const parsed = parseJsonLoose(raw, "handleBkConfirm");
+  const action = parsed?.action;
 
-  if (norm.toUpperCase() === "NO") {
+  if (action === "cancel") {
     await clearFlow(phone);
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
@@ -519,7 +610,41 @@ async function handleBkConfirm(
     return;
   }
 
-  if (!norm.toUpperCase().startsWith("Y")) {
+  if (action === "edit_rate") {
+    if (typeof parsed?.newRate === "number" && parsed.newRate > 0) {
+      await mergeFlowData(phone, { hourlyRate: parsed.newRate });
+      const updated = await getFlowData(phone);
+      await sendMessage(chatId, `Got it — $${parsed.newRate}/hr.`);
+      await sendMessage(chatId, buildBookingRecap(updated));
+      return;
+    }
+    await updateStep(phone, "bk_ask_rate");
+    await sendMessage(chatId, RATE_QUESTION);
+    return;
+  }
+
+  if (action === "edit_schedule") {
+    // Full redo (matches the site's Edit button revealing the whole
+    // Schedule section at once) — the next real answer at each step simply
+    // overwrites days/times/ongoing/scheduleEndDate the same way it does
+    // during initial collection, so nothing needs clearing here.
+    await updateStep(phone, "bk_ask_days");
+    await sendMessage(chatId, "No problem — let's redo the schedule.");
+    await sendMessage(chatId, DAYS_QUESTION);
+    return;
+  }
+
+  if (action === "edit_location") {
+    await promptLocationEdit(phone, chatId, session);
+    return;
+  }
+
+  if (action !== "confirm") {
+    // "other" (a genuine question) or an unclassifiable reply — answer if
+    // it's a real question, then re-show the recap either way.
+    if (await isQuestionOrOther(text, CONFIRM_QUESTION_FALLBACK)) {
+      await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    }
     await sendMessage(chatId, buildBookingRecap(data));
     return;
   }
@@ -547,7 +672,8 @@ async function handleBkConfirm(
     const schedule = data.scheduleKind === "recurring"
       ? {
           dayShiftTimes: Object.fromEntries((data.days ?? []).map((d) => [d, { start: data.startTime!, end: data.endTime! }])),
-          ongoing: true,
+          ongoing: data.ongoing === true,
+          ...(data.ongoing !== true && data.scheduleEndDate ? { endDate: data.scheduleEndDate } : {}),
         }
       : undefined;
     // Recurring bookings carry no appointments array — totalCostOverride

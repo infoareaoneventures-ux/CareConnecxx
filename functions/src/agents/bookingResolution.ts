@@ -167,6 +167,21 @@ export async function resolveCareLocation(
   };
 }
 
+// Every valid saved address on file, with no auto-pick/ambiguity logic — for
+// callers that want to present the full list regardless of count (e.g. an
+// explicit "change the address" edit request, where auto-resolving straight
+// back to the only option on file would be a no-op).
+export async function listCareLocationOptions(clientId: string): Promise<LocationOption[]> {
+  try {
+    const cpSnap = await db.collection("carePlans").doc(clientId).get();
+    const pool = (cpSnap.data()?.locationPool ?? []) as LocationOption[];
+    return pool.filter((a) => a && [a.street, a.city, a.state, a.zipCode].some(Boolean));
+  } catch (e) {
+    console.warn("[bookingResolution] listCareLocationOptions lookup failed:", e);
+    return [];
+  }
+}
+
 // Formats the same ambiguous-address listing the MCP tool's toolError used to
 // inline — kept here so both callers render identical option text/tags.
 export function formatCareLocationOptions(options: LocationOption[]): string {

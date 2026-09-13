@@ -186,27 +186,64 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     modelReplies("NO", "09:00", "17:00");
     await handleBookingFlowStep(PHONE, CHAT, "9am to 5pm", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_ongoing");
+
+    modelReplies("NO", JSON.stringify({ ongoing: true }));
+    await handleBookingFlowStep(PHONE, CHAT, "ongoing", session({ bookingFlowStep: "bk_ask_ongoing", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.ongoing).toBe(true);
     expect(stored.bookingFlowData.careLocation).toBe("1 Elm St, Springfield, CA, 90000");
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Reply YES to send it");
   });
 
-  it("an ambiguous address list is asked, and picking by number advances to confirm", async () => {
-    const timesData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, scheduleKind: "recurring", days: ["Tuesday"] };
+  it("a job post with a known end date skips the ongoing question entirely", async () => {
+    const timesData = {
+      caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26,
+      scheduleKind: "recurring", days: ["Tuesday"], jobPostEndDate: "2026-12-01",
+    };
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_times", bookingFlowData: timesData });
+    hoisted.docState.set("carePlans/client-uid", {
+      locationPool: [{ street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" }],
+    });
+    modelReplies("NO", "09:00", "17:00");
+    await handleBookingFlowStep(PHONE, CHAT, "9am to 5pm", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: timesData }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.ongoing).toBe(false);
+    expect(stored.bookingFlowData.scheduleEndDate).toBe("2026-12-01");
+  });
+
+  it("a stated end date is captured instead of ongoing", async () => {
+    const ongoingData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, scheduleKind: "recurring", days: ["Tuesday"], startTime: "09:00", endTime: "17:00" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_ongoing", bookingFlowData: ongoingData });
+    hoisted.docState.set("carePlans/client-uid", {
+      locationPool: [{ street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" }],
+    });
+    modelReplies("NO", JSON.stringify({ ongoing: false, endDate: "2026-12-01" }));
+    await handleBookingFlowStep(PHONE, CHAT, "through December 1", session({ bookingFlowStep: "bk_ask_ongoing", bookingFlowData: ongoingData }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.ongoing).toBe(false);
+    expect(stored.bookingFlowData.scheduleEndDate).toBe("2026-12-01");
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+  });
+
+  it("an ambiguous address list is asked, and picking by number advances to confirm", async () => {
+    const ongoingData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, scheduleKind: "recurring", days: ["Tuesday"], startTime: "09:00", endTime: "17:00" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_ongoing", bookingFlowData: ongoingData });
     hoisted.docState.set("carePlans/client-uid", {
       locationPool: [
         { street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" },
         { street: "2 Oak Ave", city: "Springfield", state: "CA", zipCode: "90000", smokingHousehold: true },
       ],
     });
-    modelReplies("NO", "09:00", "17:00");
-    await handleBookingFlowStep(PHONE, CHAT, "9am to 5pm", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: timesData }));
+    modelReplies("NO", JSON.stringify({ ongoing: true }));
+    await handleBookingFlowStep(PHONE, CHAT, "ongoing", session({ bookingFlowStep: "bk_ask_ongoing", bookingFlowData: ongoingData }));
     let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_location");
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("smoking household");
 
-    modelReplies("NO", JSON.stringify({ matchedIndex: 2 }));
+    modelReplies("NO", JSON.stringify({ matchedIndex: 2, newAddress: null }));
     await handleBookingFlowStep(PHONE, CHAT, "the smoking one", session({ bookingFlowStep: "bk_ask_location", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
@@ -217,13 +254,13 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
 describe("bk_confirm", () => {
   const CONFIRM_DATA = {
     caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26,
-    scheduleKind: "recurring", days: ["Tuesday", "Thursday"], startTime: "09:00", endTime: "17:00",
+    scheduleKind: "recurring", days: ["Tuesday", "Thursday"], startTime: "09:00", endTime: "17:00", ongoing: true,
     careLocation: "1 Elm St, Springfield, CA, 90000",
   };
 
   it("YES commits via createBookingTask directly and clears the flow", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
-    modelReplies("NO", "YES");
+    modelReplies(JSON.stringify({ action: "confirm" }));
 
     await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
@@ -235,6 +272,7 @@ describe("bk_confirm", () => {
       Tuesday: { start: "09:00", end: "17:00" },
       Thursday: { start: "09:00", end: "17:00" },
     });
+    expect(call.schedule.ongoing).toBe(true);
     expect(call.careLocation).toBe(CONFIRM_DATA.careLocation);
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
@@ -245,13 +283,66 @@ describe("bk_confirm", () => {
 
   it("NO cancels without ever calling createBookingTask", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
-    modelReplies("NO", "NO");
+    modelReplies(JSON.stringify({ action: "cancel" }));
 
     await handleBookingFlowStep(PHONE, CHAT, "actually never mind", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
     expect(createBookingTask).not.toHaveBeenCalled();
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBeUndefined();
+  });
+
+  it("an in-message rate correction updates the rate in place and re-shows the recap", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_rate", newRate: 30 }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "actually make it $30/hr", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    expect(createBookingTask).not.toHaveBeenCalled();
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.hourlyRate).toBe(30);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Rate: $30/hr");
+  });
+
+  it("a rate-change request with no stated number re-asks the rate question", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_rate", newRate: null }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "wait, let's change the rate", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("What hourly rate");
+  });
+
+  it("an edit_schedule request sends the flow back to the days question", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_schedule" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "can we change the days", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_days");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("What days would you like");
+  });
+
+  it("an edit_location request lists the saved addresses again for a fresh pick", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    hoisted.docState.set("carePlans/client-uid", {
+      locationPool: [
+        { street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" },
+        { street: "2 Oak Ave", city: "Springfield", state: "CA", zipCode: "90000", smokingHousehold: true },
+      ],
+    });
+    modelReplies(JSON.stringify({ action: "edit_location" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "can we use a different address", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_location");
+    expect(stored.bookingFlowData.careLocationOptions).toHaveLength(2);
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("smoking household");
   });
 });
 

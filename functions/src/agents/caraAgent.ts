@@ -3,7 +3,7 @@ import { quickComplete } from "../utils/openaiClient";
 import { AgentSession, sendMessage, LinqMessage, LinqService } from "../linq/client";
 import { runMatchingForClient } from "./matchingAgent";
 import { executeBookings } from "./bookingExecutor";
-import { getPreferences, isInDND, isActiveHour, CaraPreferences } from "../memory/preferences";
+import { getPreferences, isInDND, isActiveHour, validatedTz, CaraPreferences } from "../memory/preferences";
 import { supervise } from "../safety/supervisor";
 import { logAudit } from "../observability/auditLog";
 import { buildConsentAuditRecord } from "../observability/consentAudit";
@@ -93,13 +93,25 @@ async function shouldSend(
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5_000);
+      // 2026-09-13 live incident: this used to pass the raw UTC hour with no
+      // timezone framing at all. For any US family, UTC morning hours (0-8)
+      // are actually their PREVIOUS evening (5pm-1am local) — the model had
+      // no way to know that and could read "hour 5" as "5am, too early",
+      // silently holding back messages during a family's normal evening.
+      // isActiveHour (above) already gated on the real local window; this is
+      // just giving the LLM step the same correct clock instead of a raw,
+      // unlabeled UTC number it has no basis to interpret.
+      const tz = validatedTz(prefs.timezone || "America/Los_Angeles");
+      const localTime = new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit", minute: "2-digit", hour12: true, timeZone: tz,
+      }).format(new Date());
       const raw = await quickComplete(
         "You decide if a care update should be sent to a family right now.\n" +
           "Consider: Is this new info? Is it timely? Would a human coordinator send this now?\n" +
           "Reply SEND or WAIT — one word only.",
         `Message: "${output.content.slice(0, 200)}"\n` +
           `Last sent: ${lastSentAt ?? "never"}\n` +
-          `Current UTC hour: ${new Date().getUTCHours()}`,
+          `Current local time for this family: ${localTime} (${tz})`,
         { maxTokens: 5, signal: controller.signal },
       );
       clearTimeout(timer);

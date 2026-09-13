@@ -44,7 +44,7 @@ export async function updatePreferences(
   await db.collection("user_preferences").doc(userId).set(patch, { merge: true });
 }
 
-function validatedTz(tz: string): string {
+export function validatedTz(tz: string): string {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
     return tz;

@@ -103,7 +103,7 @@ describe("startBookingFlow", () => {
     expect(sendMessage.mock.calls.map((c: any[]) => c[1]).join(" | ")).toContain("What hourly rate");
   });
 
-  it("skips the rate question when a linked job post already has one, and moves to days", async () => {
+  it("always asks the rate explicitly even when a linked job post has one — matching the site's own Required field — but offers it as a suggestion", async () => {
     hoisted.docState.set("video_interviews/iv1", { clientId: UID, caregiverId: CG_ID, applicationId: "app1" });
     hoisted.docState.set("job_applications/app1", { jobId: "job1" });
     hoisted.docState.set("job_posts/job1", { title: "Care", rate: "25" });
@@ -111,19 +111,34 @@ describe("startBookingFlow", () => {
     await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID, interviewId: "iv1" });
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.bookingFlowData.hourlyRate).toBe(25);
-    expect(stored.bookingFlowStep).toBe("bk_ask_days");
-    expect(sendMessage.mock.calls.map((c: any[]) => c[1]).join(" | ")).toContain("What days would you like");
+    expect(stored.bookingFlowData.hourlyRate).toBeUndefined();
+    expect(stored.bookingFlowData.jobPostRate).toBe(25);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+    const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(lastMsg).toContain("What hourly rate");
+    expect(lastMsg).toContain("$25/hr");
   });
 
-  it("skips straight to the times question when the linked job post already lists days", async () => {
+  it("always asks days explicitly even when the job post already lists them, offering them as a suggestion", async () => {
     hoisted.docState.set("video_interviews/iv1", { clientId: UID, caregiverId: CG_ID, applicationId: "app1" });
     hoisted.docState.set("job_applications/app1", { jobId: "job1" });
     hoisted.docState.set("job_posts/job1", { title: "Care", rate: "25", daysOfWeek: ["Monday", "Wednesday"] });
 
     await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID, interviewId: "iv1" });
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
 
-    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    modelReplies("NO", "25");
+    await handleBookingFlowStep(PHONE, CHAT, "25", session({ bookingFlowStep: "bk_ask_rate", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_days");
+    const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(lastMsg).toContain("What days would you like");
+    expect(lastMsg).toContain("Monday, Wednesday");
+
+    modelReplies("NO", JSON.stringify({ kind: "recurring", days: ["Monday", "Wednesday"] }));
+    await handleBookingFlowStep(PHONE, CHAT, "Monday and Wednesday works", session({ bookingFlowStep: "bk_ask_days", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_times");
     expect(stored.bookingFlowData.scheduleKind).toBe("recurring");
     expect(stored.bookingFlowData.days).toEqual(["Monday", "Wednesday"]);
@@ -183,18 +198,44 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     expect(stored.bookingFlowStep).toBe("bk_ask_times");
     expect(stored.bookingFlowData.days).toEqual(["Tuesday", "Thursday"]);
 
-    modelReplies("NO", "09:00", "17:00");
+    modelReplies("NO", JSON.stringify({ Tuesday: { start: "09:00", end: "17:00" }, Thursday: { start: "09:00", end: "17:00" } }));
     await handleBookingFlowStep(PHONE, CHAT, "9am to 5pm", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_ongoing");
+    expect(stored.bookingFlowData.dayTimes).toEqual({
+      Tuesday: { start: "09:00", end: "17:00" },
+      Thursday: { start: "09:00", end: "17:00" },
+    });
 
     modelReplies("NO", JSON.stringify({ ongoing: true }));
     await handleBookingFlowStep(PHONE, CHAT, "ongoing", session({ bookingFlowStep: "bk_ask_ongoing", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    // Lands on the proactive message-note ask first (matches the site's
+    // modal position, right above Send) — not the recap yet.
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
     expect(stored.bookingFlowData.ongoing).toBe(true);
     expect(stored.bookingFlowData.careLocation).toBe("1 Elm St, Springfield, CA, 90000");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Want to include a note");
+
+    modelReplies("NO", "SKIP");
+    await handleBookingFlowStep(PHONE, CHAT, "no thanks", session({ bookingFlowStep: "bk_ask_message", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Reply YES to send it");
+  });
+
+  it("requires a start/end for EVERY day — a reply missing one day re-asks instead of leaving it blank", async () => {
+    const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, scheduleKind: "recurring", days: ["Tuesday", "Thursday"] };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_times", bookingFlowData: daysData });
+    // Only Tuesday comes back — Thursday is missing entirely.
+    modelReplies("NO", JSON.stringify({ Tuesday: { start: "09:00", end: "17:00" } }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "Tuesday 9 to 5", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: daysData }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_times");
+    expect(stored.bookingFlowData.dayTimes).toBeUndefined();
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch");
   });
 
   it("a job post with a known end date skips the ongoing question entirely", async () => {
@@ -206,10 +247,11 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     hoisted.docState.set("carePlans/client-uid", {
       locationPool: [{ street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" }],
     });
-    modelReplies("NO", "09:00", "17:00");
+    modelReplies("NO", JSON.stringify({ Tuesday: { start: "09:00", end: "17:00" } }));
     await handleBookingFlowStep(PHONE, CHAT, "9am to 5pm", session({ bookingFlowStep: "bk_ask_times", bookingFlowData: timesData }));
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    // Lands on the proactive message-note ask, not the recap yet.
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
     expect(stored.bookingFlowData.ongoing).toBe(false);
     expect(stored.bookingFlowData.scheduleEndDate).toBe("2026-12-01");
   });
@@ -225,10 +267,10 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowData.ongoing).toBe(false);
     expect(stored.bookingFlowData.scheduleEndDate).toBe("2026-12-01");
-    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
   });
 
-  it("an ambiguous address list is asked, and picking by number advances to confirm", async () => {
+  it("an ambiguous address list is asked, and picking by number advances to the message ask, then confirm", async () => {
     const ongoingData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, scheduleKind: "recurring", days: ["Tuesday"], startTime: "09:00", endTime: "17:00" };
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_ongoing", bookingFlowData: ongoingData });
     hoisted.docState.set("carePlans/client-uid", {
@@ -246,15 +288,23 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     modelReplies("NO", JSON.stringify({ matchedIndex: 2, newAddress: null }));
     await handleBookingFlowStep(PHONE, CHAT, "the smoking one", session({ bookingFlowStep: "bk_ask_location", bookingFlowData: stored.bookingFlowData }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
     expect(stored.bookingFlowData.careLocation).toBe("2 Oak Ave, Springfield, CA, 90000");
+
+    modelReplies("NO", "NOTE");
+    await handleBookingFlowStep(PHONE, CHAT, "she has a spare key", session({ bookingFlowStep: "bk_ask_message", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.message).toBe("she has a spare key");
   });
 });
 
 describe("bk_confirm", () => {
   const CONFIRM_DATA = {
     caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26,
-    scheduleKind: "recurring", days: ["Tuesday", "Thursday"], startTime: "09:00", endTime: "17:00", ongoing: true,
+    scheduleKind: "recurring", days: ["Tuesday", "Thursday"],
+    dayTimes: { Tuesday: { start: "09:00", end: "17:00" }, Thursday: { start: "09:00", end: "17:00" } },
+    ongoing: true,
     careLocation: "1 Elm St, Springfield, CA, 90000",
   };
 
@@ -302,7 +352,7 @@ describe("bk_confirm", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowData.hourlyRate).toBe(30);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Rate: $30/hr");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Agreed rate: $30/hr");
   });
 
   it("a rate-change request with no stated number re-asks the rate question", async () => {
@@ -344,26 +394,234 @@ describe("bk_confirm", () => {
     expect(stored.bookingFlowData.careLocationOptions).toHaveLength(2);
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("smoking household");
   });
+
+  it("an edit_recipients request with names stated re-attributes in place, matching the site's select/deselect", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    hoisted.docState.set("carePlans/client-uid", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    modelReplies(JSON.stringify({ action: "edit_recipients", recipientNames: ["Samira"] }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "just Samira for this one", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.careRecipients.map((r: any) => r.name)).toEqual(["Samira M"]);
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Samira M: Meal Preparation");
+  });
+
+  it("an edit_recipients request with no names stated lists the household to pick from", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    hoisted.docState.set("carePlans/client-uid", {
+      recipientPlans: { samira_m: { name: "Samira M" }, imran_mohammed: { name: "Imran Mohammed" } },
+    });
+    modelReplies(JSON.stringify({ action: "edit_recipients", recipientNames: null }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "can we change who this is for", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_recipients");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Imran Mohammed");
+  });
+
+  it("picking recipients by number at bk_ask_recipients applies the selection and returns to confirm", async () => {
+    const recipData = { ...CONFIRM_DATA, recipientOptions: [{ key: "samira_m", name: "Samira M" }, { key: "imran_mohammed", name: "Imran Mohammed" }] };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_recipients", bookingFlowData: recipData });
+    hoisted.docState.set("carePlans/client-uid", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    modelReplies("NO", JSON.stringify([1, 2]));
+
+    await handleBookingFlowStep(PHONE, CHAT, "1 and 2", session({ bookingFlowStep: "bk_ask_recipients", bookingFlowData: recipData }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.careRecipients.map((r: any) => r.name)).toEqual(["Samira M", "Imran Mohammed"]);
+  });
+
+  it("an edit_message request with text stated applies it in place", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_message", newMessage: "I'll leave the front door unlocked" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "tell her I'll leave the front door unlocked", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.message).toBe("I'll leave the front door unlocked");
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("front door unlocked");
+  });
+
+  it("an edit_message request with no text stated asks for the note, then applies the follow-up", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_message", newMessage: null }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "let's add a note", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
+
+    modelReplies("NO", "NOTE");
+    await handleBookingFlowStep(PHONE, CHAT, "she has a key already", session({ bookingFlowStep: "bk_ask_message", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.message).toBe("she has a key already");
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+  });
+
+  it("an edit_care_needs request adds a need for the named recipient in a multi-recipient booking", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [
+        { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      ],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({
+      action: "edit_care_needs", careNeedsRecipient: "Samira", addCareNeeds: ["mobility assistance"], removeCareNeeds: null,
+    }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "add mobility assistance for Samira", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    const samira = stored.bookingFlowData.careRecipients.find((r: any) => r.name === "Samira M");
+    const imran  = stored.bookingFlowData.careRecipients.find((r: any) => r.name === "Imran Mohammed");
+    expect(samira.careNeeds).toEqual(expect.arrayContaining(["Meal Preparation", "Mobility Assistance"]));
+    expect(imran.careNeeds).toEqual(["Bathing"]);
+    expect(stored.bookingFlowData.topLevelCareNeeds).toEqual(expect.arrayContaining(["Meal Preparation", "Mobility Assistance", "Bathing"]));
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+  });
+
+  it("an edit_care_needs request with no recipient named in a multi-recipient booking asks who it's for", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [
+        { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      ],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_care_needs", careNeedsRecipient: null, addCareNeeds: ["mobility assistance"], removeCareNeeds: null }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "add mobility assistance", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Whose care needs");
+  });
+
+  it("an edit_care_needs request removes a need in a single-recipient booking", async () => {
+    // "bathing" normalizes to the canonical "Personal Care" category
+    // (careNeedCategories.ts's synonym map) — the fixture stores the
+    // canonical name, matching how it's stored everywhere else.
+    const data = { ...CONFIRM_DATA, careRecipients: undefined, topLevelCareNeeds: ["Meal Preparation", "Personal Care"] };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_care_needs", addCareNeeds: null, removeCareNeeds: ["bathing"] }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "remove bathing", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowData.topLevelCareNeeds).toEqual(["Meal Preparation"]);
+  });
+
+  it("an edit_lifestyle request structures free text into the recipient's lifestyle object and merges with what's there", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [{ name: "Samira M", careNeeds: ["Meal Preparation"], lifestyle: { favoriteActivities: ["gardening"] } }],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(
+      JSON.stringify({ action: "edit_lifestyle", lifestyleRecipient: null, lifestyleText: "she loves painting and prefers a quiet morning" }),
+      JSON.stringify({ favoriteActivities: ["painting"], prefersQuiet: true }),
+    );
+
+    await handleBookingFlowStep(PHONE, CHAT, "she loves painting and prefers a quiet morning", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    const samira = stored.bookingFlowData.careRecipients[0];
+    expect(samira.lifestyle.favoriteActivities).toEqual(expect.arrayContaining(["gardening", "painting"]));
+    expect(samira.lifestyle.prefersQuiet).toBe(true);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Lifestyle: enjoys gardening, painting; prefers quiet");
+  });
+
+  it("an edit_lifestyle request with no recipient named in a multi-recipient booking asks who it's for", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [{ name: "Samira M", careNeeds: [] }, { name: "Imran Mohammed", careNeeds: [] }],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_lifestyle", lifestyleRecipient: null, lifestyleText: "loves painting" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "she loves painting", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Whose lifestyle");
+  });
+
+  it("an edit_notes request overwrites (not appends to) the named recipient's note", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [
+        { name: "Samira M", careNeeds: [], notes: "likes to go shopping" },
+        { name: "Imran Mohammed", careNeeds: [] },
+      ],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_notes", notesRecipient: "Samira", notesText: "prefers afternoon visits" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "add a note for Samira: prefers afternoon visits", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    const samira = stored.bookingFlowData.careRecipients.find((r: any) => r.name === "Samira M");
+    expect(samira.notes).toBe("prefers afternoon visits");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Notes: prefers afternoon visits");
+  });
+
+  it("an edit_notes request with no recipient named in a multi-recipient booking asks who it's for", async () => {
+    const data = {
+      ...CONFIRM_DATA,
+      careRecipients: [{ name: "Samira M", careNeeds: [] }, { name: "Imran Mohammed", careNeeds: [] }],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    modelReplies(JSON.stringify({ action: "edit_notes", notesRecipient: null, notesText: "likes tea in the morning" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "add a note: likes tea in the morning", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Whose notes");
+  });
 });
 
 describe("buildBookingRecap", () => {
-  it("lists every section in the site modal's order", () => {
+  it("lists every section in the site modal's order, with each recipient's own care needs and lifestyle", () => {
     const recap = buildBookingRecap({
       caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26,
-      scheduleKind: "recurring", days: ["Tuesday", "Thursday"], startTime: "09:00", endTime: "17:00",
+      scheduleKind: "recurring", days: ["Tuesday", "Thursday"],
+      dayTimes: { Tuesday: { start: "09:00", end: "17:00" }, Thursday: { start: "10:00", end: "14:00" } },
+      ongoing: true,
       careLocation: "1 Elm St, Springfield, CA, 90000",
-      careRecipients: [{ name: "Samira M", relationship: "parent", age: "22" }, { name: "Imran Mohammed" }],
-      topLevelCareNeeds: ["Meal Preparation", "Personal Care"],
+      lifestylePreferences: ["Smoking household"],
+      careRecipients: [
+        { name: "Samira M", relationship: "parent", age: "22", careNeeds: ["Meal Preparation", "Personal Care"], notes: "likes to go shopping", lifestyle: { prefersQuiet: true } },
+        { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      ],
       emergencyContact: { name: "Bo", phone: "4086370483", relationship: "Daughter" },
     });
-    const order = ["Caregiver:", "Rate:", "Schedule:", "Care recipients:", "Care needs:", "Lifestyle", "Care location:", "Emergency contact:"];
+    const order = ["Caregiver:", "Agreed rate:", "Schedule:", "Care recipients:", "Care location:", "Emergency contact:", "Message to"];
     let lastIndex = -1;
     for (const label of order) {
       const idx = recap.indexOf(label);
       expect(idx).toBeGreaterThan(lastIndex);
       lastIndex = idx;
     }
-    expect(recap).toContain("Samira M (parent, Age 22)");
+    expect(recap).toContain("Tuesday 09:00–17:00, Thursday 10:00–14:00");
+    expect(recap).toContain("Samira M (parent, Age 22): Meal Preparation, Personal Care");
+    expect(recap).toContain("Notes: likes to go shopping");
+    expect(recap).toContain("Lifestyle: prefers quiet");
+    expect(recap).toContain("Imran Mohammed: Bathing");
+    expect(recap).toContain("Notes: None");
+    expect(recap).toContain("Care location: 1 Elm St, Springfield, CA, 90000 (Smoking household)");
     expect(recap).toContain("Reply YES to send it to Basra Yousuf");
   });
 });

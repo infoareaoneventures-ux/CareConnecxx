@@ -1476,10 +1476,16 @@ export const MCP_TOOLS: McpTool[] = [
       "Confirm date/time with the client before calling. Same rules as the website's own Request Interview modal: " +
       "the caregiver must be a real, currently-bookable match, and families are capped at 5 interview requests per " +
       "day — if you get a RATE_LIMITED error, tell them honestly they've hit today's limit and to try again tomorrow. " +
-      "The website's modal also offers interview type (video/phone/in-person), an optional related job post, and " +
-      "optional notes — mention these are options if it fits naturally (e.g. after they name a caregiver: \"video, " +
-      "phone, or in person? And anything you'd like me to note for the interview?\"), but never make them a required " +
-      "extra question — video with no notes is a completely normal default, same as leaving the site's fields blank. " +
+      "The website's modal also offers interview type (video/phone/in-person) and optional notes — mention these are " +
+      "options if it fits naturally (e.g. after they name a caregiver: \"video, phone, or in person? And anything " +
+      "you'd like me to note for the interview?\"), but never make them a required extra question — video with no " +
+      "notes is a completely normal default, same as leaving the site's fields blank. The modal's related-job-post " +
+      "dropdown is different: unless this call is already coming from accepting a job application (jobId already " +
+      "known), call list_client_jobs first — if the family has any open job posts on file, actively offer them as a " +
+      "short numbered list (matching the website's own dropdown, e.g. \"1. Senior care in Springfield · Sep 10  2. " +
+      "No specific post\") and let them pick, rather than only mentioning it in passing. Still entirely optional — " +
+      "no pick / \"no specific post\" is a completely valid answer, same as leaving the site's field on its default; " +
+      "ask once, don't block the interview on an answer. " +
       "The platform requires and enforces its own confirmation before this actually executes (it will show the " +
       "family the exact caregiver name it resolved and ask them to confirm) — do NOT ask the family to confirm the " +
       "caregiver a second time yourself first, just call it once you have the caregiverId and date/time.",
@@ -4046,9 +4052,12 @@ async function executeToolCall(
         return {
           success: true, taskId, status: "awaiting_approval", estimatedTotal,
           ...(isRecurring ? { recurring: true } : {}),
-          ...(recipientResolved === "defaulted_primary" && recipientName
-            ? { recipientResolved, recipientName,
-                note: `This household has more than one care recipient and no recipientFirstName was given — the visit was attributed to ${recipientName}. If it's for someone else, confirm with the family and rebook with recipientFirstName.` }
+          ...(recipientResolved === "defaulted_all" && careRecipients?.length
+            ? { recipientResolved,
+                note: `This household has more than one care recipient and no recipientFirstName was given — ` +
+                  `the visit was attributed to all of them (${careRecipients.map((r) => r.name).join(", ")}), ` +
+                  `matching the website's own default. If it's for just one, confirm with the family and rebook ` +
+                  `with recipientFirstName.` }
             : {}),
         };
         });

@@ -203,7 +203,7 @@ export const PostsPage: React.FC = () => {
   const [bookingDraft, setBookingDraft] = useState<{
     note: string;
     selectedRecipientKeys: string[];
-    recipientDrafts: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; lifestyle: ReturnType<typeof emptyLifestyleDraft> }>;
+    recipientDrafts: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; notes: string; lifestyle: ReturnType<typeof emptyLifestyleDraft> }>;
     lifestyleNotes: string[];
     selectedAddress: string;
     emergencyContactFirstName: string;
@@ -754,13 +754,14 @@ export const PostsPage: React.FC = () => {
       const limit = post?.recipientsCount ?? recipients.length;
       const allKeys = recipients.slice(0, limit).map(r => r.key);
       // Build per-recipient drafts from stored plan data
-      const recipientDrafts: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; lifestyle: ReturnType<typeof emptyLifestyleDraft> }> = {};
+      const recipientDrafts: Record<string, { careNeeds: string[]; careNeedDetails: Record<string, string[]>; notes: string; lifestyle: ReturnType<typeof emptyLifestyleDraft> }> = {};
       recipients.forEach(r => {
         const rp = (recipientPlans as any)[r.key];
         const ls = rp?.lifestyle || {};
         recipientDrafts[r.key] = {
           careNeeds: rp?.careNeeds || [],
           careNeedDetails: rp?.careNeedDetails || {},
+          notes: rp?.notes || '',
           lifestyle: {
             favoriteActivities: ls.favoriteActivities || [],
             favoriteActivitiesOther: ls.favoriteActivitiesOther || '',
@@ -899,7 +900,7 @@ export const PostsPage: React.FC = () => {
             lifestyle: draft?.lifestyle || null,
             tasks: plan?.tasks || {},
             locations: plan?.locations || [],
-            notes: plan?.notes || '',
+            notes: draft?.notes ?? plan?.notes ?? '',
           };
         });
 
@@ -2206,7 +2207,7 @@ export const PostsPage: React.FC = () => {
                             {selectedRecipients.length === 0
                               ? <p className="px-4 py-3 text-xs text-slate-400">Select at least one recipient above</p>
                               : selectedRecipients.map(r => {
-                                const rd = d.recipientDrafts[r.key] || { careNeeds: [], careNeedDetails: {}, lifestyle: emptyLifestyleDraft() };
+                                const rd = d.recipientDrafts[r.key] || { careNeeds: [], careNeedDetails: {}, notes: '', lifestyle: emptyLifestyleDraft() };
                                 const ls = rd.lifestyle;
                                 const hasLifestyle = ls.favoriteActivities.length > 0 || ls.helpActivities.length > 0 || ls.entertainment.length > 0 || ls.enjoysConversation !== null || ls.prefersQuiet !== null || ls.familyInArea !== null || ls.friendsVisitors !== null;
                                 const updRd = (patch: Partial<typeof rd>) => setBookingDraft(prev => ({ ...prev, recipientDrafts: { ...prev.recipientDrafts, [r.key]: { ...prev.recipientDrafts[r.key], ...patch } } }));
@@ -2286,6 +2287,24 @@ export const PostsPage: React.FC = () => {
                                             })
                                           }
                                         </div>
+                                      )}
+                                    </div>
+
+                                    {/* Notes */}
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Notes</p>
+                                      {editingBookingDetails ? (
+                                        <textarea
+                                          value={rd.notes}
+                                          onChange={e => updRd({ notes: e.target.value })}
+                                          placeholder="Add notes specific to this care recipient…"
+                                          rows={2}
+                                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary-300"
+                                        />
+                                      ) : rd.notes ? (
+                                        <p className="text-xs text-slate-600 whitespace-pre-wrap break-words">{rd.notes}</p>
+                                      ) : (
+                                        <span className="text-xs text-slate-400">No notes added</span>
                                       )}
                                     </div>
 

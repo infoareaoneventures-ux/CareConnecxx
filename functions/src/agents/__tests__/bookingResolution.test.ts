@@ -134,14 +134,42 @@ describe("resolveRecipientAttribution", () => {
     expect(await resolveRecipientAttribution("client1", undefined, undefined)).toEqual({});
   });
 
-  it("defaults to the primary senior when the household has 2+ recipients and none is named", async () => {
+  it("populates careRecipients (not just recipientName/Key) for a single-recipient household", async () => {
     hoisted.docState.set("carePlans/client1", {
-      recipientPlans: { samira_m: { name: "Samira M" }, imran_mohammed: { name: "Imran Mohammed" } },
+      recipientPlans: { samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"], lifestyle: { prefersQuiet: true } } },
     });
-    hoisted.docState.set("users/client1", { seniorName: "Samira M" });
     const res = await resolveRecipientAttribution("client1", undefined, undefined);
-    expect(res.recipientResolved).toBe("defaulted_primary");
+    expect(res.recipientKey).toBe("samira_m");
     expect(res.recipientName).toBe("Samira M");
+    expect(res.careRecipients).toEqual([
+      expect.objectContaining({ name: "Samira M", careNeeds: ["Meal Preparation"], lifestyle: { prefersQuiet: true } }),
+    ]);
+  });
+
+  it("defaults to EVERY recipient (matching the site's pre-selected-all default) when the household has 2+ and none is named", async () => {
+    hoisted.docState.set("carePlans/client1", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    const res = await resolveRecipientAttribution("client1", undefined, undefined);
+    expect(res.recipientResolved).toBe("defaulted_all");
+    expect(res.recipientName).toBeUndefined();
+    expect(res.careRecipients?.map((r) => r.name)).toEqual(["Samira M", "Imran Mohammed"]);
+  });
+
+  it("still populates careRecipients when exactly one recipient is explicitly named among several", async () => {
+    hoisted.docState.set("carePlans/client1", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    const res = await resolveRecipientAttribution("client1", "Samira", undefined);
+    expect(res.recipientResolved).toBe("named");
+    expect(res.recipientKey).toBe("samira_m");
+    expect(res.careRecipients?.map((r) => r.name)).toEqual(["Samira M"]);
   });
 
   it("resolves multiple named recipients for one booking", async () => {

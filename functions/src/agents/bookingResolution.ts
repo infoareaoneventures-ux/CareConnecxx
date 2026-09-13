@@ -7,7 +7,7 @@
 import * as admin from "firebase-admin";
 import { resolveCaregiverName, coerceHourlyRate } from "../utils/caregiverRate";
 import { multiRecipientScopingEnabled } from "../config/featureFlags";
-import { resolveRecipientKey, recipientPlanKey } from "./careRecipients";
+import { resolveRecipientKey } from "./careRecipients";
 
 const db = admin.firestore();
 
@@ -196,16 +196,55 @@ export function formatCareLocationOptions(options: LocationOption[]): string {
 export interface RecipientAttribution {
   recipientName?: string;
   recipientKey?: string;
-  recipientResolved?: "named" | "defaulted_primary";
+  recipientResolved?: "named" | "defaulted_all";
   careRecipients?: Array<Record<string, unknown>>;
+}
+
+export interface RecipientOption { key: string; name: string; }
+
+// Every recipient on the household's care plan, for a caller that wants to
+// present them as a pick list (e.g. an explicit "who is this booking for"
+// edit — matches the site's own Care Recipients section, which lets you
+// select/deselect any subset of the household, not just all-or-nothing).
+export async function listRecipientOptions(clientId: string): Promise<RecipientOption[]> {
+  try {
+    const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
+    const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
+    return Object.entries(plans).map(([key, plan]) => ({ key, name: String(plan.name ?? key) }));
+  } catch (e) {
+    console.warn("[bookingResolution] listRecipientOptions lookup failed:", e);
+    return [];
+  }
+}
+
+// Matches the website's own per-recipient fields (PostsPage.tsx's
+// selectedRecipients build) — specific tasks/locations for this recipient's
+// care plan.
+function careRecipientEntry(name: string, plan: Record<string, unknown>): Record<string, unknown> {
+  return {
+    name,
+    careNeeds:       plan.careNeeds ?? [],
+    careNeedDetails: plan.careNeedDetails ?? {},
+    lifestyle:       plan.lifestyle ?? {},
+    notes:           plan.notes ?? "",
+    tasks:           plan.tasks ?? {},
+    locations:       plan.locations ?? [],
+  };
 }
 
 // Resolve WHO this visit is for so multi-recipient households get
 // correctly-attributed appointments. Only stamped when the household
 // actually has 2+ recipients on file — single-recipient households keep the
 // simple shape (absent = the sole recipient, fail-soft everywhere).
-// Ambiguity NEVER blocks the money path: no name in a multi-home defaults to
-// the primary senior + a note the caller can use to confirm.
+// Ambiguity NEVER blocks the money path: with no name given in a multi-
+// recipient household, this defaults to EVERY recipient (2026-09-13 —
+// matches the website's own "Send Booking Request" modal, which shows every
+// household recipient's card pre-selected by default, not just one). A
+// previous version of this function defaulted to just the account's primary
+// senior, which is why a live booking for a 2-recipient household ("Samira
+// M" + "Imran Mohammed") came back with no care needs/recipients at all —
+// their combined care-needs union only gets computed when careRecipients is
+// actually populated (see resolveTopLevelCareNeedsAndLifestyle).
 export async function resolveRecipientAttribution(
   clientId: string, recipientFirstName: unknown, recipientFirstNames: unknown,
 ): Promise<RecipientAttribution> {
@@ -232,36 +271,28 @@ export async function resolveRecipientAttribution(
         result.recipientKey  = resolved[0].key;
         result.recipientName = resolved[0].name;
         result.recipientResolved = "named";
-        result.careRecipients = resolved.map(({ key, name }) => {
-          const plan = plans[key] ?? {};
-          return {
-            name,
-            careNeeds:       plan.careNeeds ?? [],
-            careNeedDetails: plan.careNeedDetails ?? {},
-            lifestyle:       plan.lifestyle ?? {},
-            notes:           plan.notes ?? "",
-            // Matches the website's own per-recipient fields
-            // (PostsPage.tsx's selectedRecipients build) — specific
-            // tasks/locations for this recipient's care plan.
-            tasks:           plan.tasks ?? {},
-            locations:       plan.locations ?? [],
-          };
-        });
+        result.careRecipients = resolved.map(({ key, name }) => careRecipientEntry(name, plans[key] ?? {}));
       }
+    } else if (planKeys.length === 1) {
+      // Single-recipient household — always populate careRecipients (not
+      // just recipientKey/recipientName) so downstream code (the recap,
+      // care-needs/lifestyle edits) has the same one-shape-fits-all
+      // careRecipients array to work with regardless of household size,
+      // instead of a single-recipient-only fallback with nothing to edit.
+      const key = planKeys[0];
+      result.recipientKey  = key;
+      result.recipientName = String(plans[key]?.name ?? "").trim() || undefined;
+      result.careRecipients = [careRecipientEntry(result.recipientName ?? "", plans[key] ?? {})];
     } else if (planKeys.length > 1) {
       const res = resolveRecipientKey(planKeys, names[0]);
       if (res.ok) {
         result.recipientKey  = res.key;
         result.recipientName = String(plans[res.key]?.name ?? names[0] ?? "").trim() || undefined;
         result.recipientResolved = "named";
+        result.careRecipients = [careRecipientEntry(result.recipientName ?? names[0], plans[res.key] ?? {})];
       } else {
-        const userSnap = await db.collection("users").doc(clientId).get();
-        const primary = String(userSnap.data()?.seniorName ?? "").trim();
-        if (primary) {
-          result.recipientName = primary;
-          result.recipientKey  = recipientPlanKey(primary.split(" ")[0]);
-          result.recipientResolved = "defaulted_primary";
-        }
+        result.careRecipients = planKeys.map((key) => careRecipientEntry(String(plans[key]?.name ?? key), plans[key] ?? {}));
+        result.recipientResolved = "defaulted_all";
       }
     }
   } catch (e) {

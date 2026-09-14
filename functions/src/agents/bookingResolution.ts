@@ -83,6 +83,8 @@ export async function resolveInterviewLinkage(
 
 export interface SendBookingEligibleInterview {
   id:             string;
+  caregiverId:    string;
+  caregiverName:  string;
   scheduledLabel: string;
   jobTitle?:      string;
 }
@@ -94,25 +96,32 @@ export interface SendBookingEligibleInterview {
 // on the site (submit_interview_feedback's own doc comments: a strong result
 // is the hire DECISION, not the booking itself; a separate booking step
 // follows either way). Used when start_booking_flow is called with no
-// explicit interviewId and the caregiver has interview history to
-// disambiguate against (2026-09-14, live-caught: a booking sent with no
+// explicit interviewId (2026-09-14, live-caught: a booking sent with no
 // interview reference at all left the family with no way to tell which
 // interview it followed, and the site's OTHER "Send Booking" rows for the
 // same caregiver stayed active, risking an accidental duplicate).
+//
+// caregiverId is OPTIONAL — omit it to scope across every caregiver this
+// client has (used when the family hasn't named a specific one yet; each
+// result carries its own caregiverId/caregiverName so a mixed-caregiver list
+// can still be shown and picked from in one question). The site itself has
+// no equivalent "book somebody, not sure who yet" entry point — every real
+// "Send Booking" row already lives under one specific caregiver's interview
+// — but scoping the SAME eligibility rule across all of them, rather than
+// inventing a new one, is the closest match when Evia doesn't yet know who.
 export async function findSendBookingEligibleInterviews(
-  clientId: string, caregiverId: string,
+  clientId: string, caregiverId?: string,
 ): Promise<SendBookingEligibleInterview[]> {
   try {
-    const ivSnap = await db.collection("video_interviews")
+    let ivQuery = db.collection("video_interviews")
       .where("clientId", "==", clientId)
-      .where("caregiverId", "==", caregiverId)
-      .where("status", "==", "completed")
-      .get();
+      .where("status", "==", "completed");
+    if (caregiverId) ivQuery = ivQuery.where("caregiverId", "==", caregiverId);
+    const ivSnap = await ivQuery.get();
     if (ivSnap.empty) return [];
 
     const bookingsSnap = await db.collection("booking_requests")
       .where("clientId", "==", clientId)
-      .where("caregiverId", "==", caregiverId)
       .get();
     const activelyBookedInterviewIds = new Set(
       bookingsSnap.docs
@@ -121,11 +130,27 @@ export async function findSendBookingEligibleInterviews(
         .map((b) => b.interviewId as string)
     );
 
+    // Sort most-recent-first (ISO strings sort lexically in date order) so a
+    // mixed or multi-interview list reads in a sensible order.
+    const docs = [...ivSnap.docs].sort((a, b) => {
+      const at = String(a.data()?.scheduledTime ?? "");
+      const bt = String(b.data()?.scheduledTime ?? "");
+      return bt.localeCompare(at);
+    });
+
+    const caregiverNameCache = new Map<string, string>();
     const results: SendBookingEligibleInterview[] = [];
-    for (const doc of ivSnap.docs) {
+    for (const doc of docs) {
       const iv = doc.data();
       if (iv.fitLevel === "no") continue;
       if (activelyBookedInterviewIds.has(doc.id)) continue;
+
+      const ivCaregiverId = iv.caregiverId as string | undefined;
+      if (!ivCaregiverId) continue;
+      if (!caregiverNameCache.has(ivCaregiverId)) {
+        const nameRes = await resolveCaregiverName(ivCaregiverId);
+        caregiverNameCache.set(ivCaregiverId, nameRes.ok ? nameRes.caregiverName : "your caregiver");
+      }
 
       let jobTitle: string | undefined;
       if (iv.applicationId) {
@@ -141,7 +166,13 @@ export async function findSendBookingEligibleInterviews(
             weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
           })
         : "an earlier interview";
-      results.push({ id: doc.id, scheduledLabel, ...(jobTitle ? { jobTitle } : {}) });
+      results.push({
+        id: doc.id,
+        caregiverId: ivCaregiverId,
+        caregiverName: caregiverNameCache.get(ivCaregiverId)!,
+        scheduledLabel,
+        ...(jobTitle ? { jobTitle } : {}),
+      });
     }
     return results;
   } catch (e) {

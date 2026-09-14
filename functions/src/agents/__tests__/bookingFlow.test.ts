@@ -108,6 +108,18 @@ function seedCaregiver() {
   hoisted.docState.set(`caregivers/${CG_ID}`, { name: "Basra Yousuf" });
 }
 
+// Every real booking traces back to a completed interview (site parity,
+// 2026-09-14 — the site itself never shows "Send Booking" without one).
+// Tests that aren't specifically about interview disambiguation just need
+// exactly one eligible interview on file so startBookingFlow auto-links
+// past that gate silently, the same as any other single-eligible case.
+function seedOneEligibleInterview(id = "iv-default") {
+  hoisted.docState.set(`video_interviews/${id}`, {
+    clientId: UID, caregiverId: CG_ID, status: "completed",
+    scheduledTime: "2026-09-01T09:00:00.000Z",
+  });
+}
+
 beforeEach(() => {
   hoisted.reset();
   sendMessage.mockClear();
@@ -121,6 +133,7 @@ beforeEach(() => {
 
 describe("startBookingFlow", () => {
   it("asks for the rate when no job post rate is known", async () => {
+    seedOneEligibleInterview();
     await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
@@ -211,16 +224,112 @@ describe("startBookingFlow", () => {
       expect(stored.bookingFlowData.jobTitle).toBe("Senior care in San Jose");
     });
 
-    it("proceeds as a direct booking (no interviewId) when no interview is eligible at all", async () => {
+    // 2026-09-14 (Hamse-confirmed): the site itself never shows a "Send
+    // Booking" button without a completed, non-declined interview behind it
+    // — there is no direct/no-interview booking path on the site at all —
+    // so Evia must not invent one either. 0 eligible stops the flow instead
+    // of proceeding.
+    it("blocks and tells the family plainly when no interview is eligible at all, instead of proceeding as a direct booking", async () => {
       hoisted.docState.set("video_interviews/iv1", {
         clientId: UID, caregiverId: CG_ID, status: "completed", fitLevel: "no",
       });
 
-      await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      const result = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
 
+      expect(result.started).toBe(false);
+      expect(result.reason).toBe("no_eligible_interview");
+      expect(hoisted.docState.get(`agent_sessions/${PHONE}`)).toBeUndefined();
+      const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(lastMsg).toContain("Basra Yousuf");
+      expect(lastMsg).toContain("no completed interview");
+    });
+
+    it("blocks with a caregiver-agnostic message when no caregiver was named and nothing is eligible for any of them", async () => {
+      const result = await startBookingFlow(PHONE, CHAT, session(), {});
+
+      expect(result.started).toBe(false);
+      expect(result.reason).toBe("no_eligible_interview");
+      const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(lastMsg).toContain("don't see any completed interviews");
+    });
+
+    it("scopes across every caregiver and shows a mixed list when no caregiverId is given and 2+ are eligible", async () => {
+      hoisted.docState.set(`caregivers/cg-2`, { name: "Maria Santos" });
+      hoisted.docState.set("video_interviews/iv1", {
+        clientId: UID, caregiverId: CG_ID, status: "completed", applicationId: "app1",
+        scheduledTime: "2026-09-12T21:10:00.000Z",
+      });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: "cg-2", status: "completed",
+        scheduledTime: "2026-09-08T15:00:00.000Z",
+      });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1" });
+      hoisted.docState.set("job_posts/job1", { title: "Senior care in San Jose" });
+
+      const result = await startBookingFlow(PHONE, CHAT, session(), {});
+
+      expect(result.started).toBe(true);
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.bookingFlowStep).toBe("bk_ask_interview");
+      expect(stored.bookingFlowData.interviewOptions).toHaveLength(2);
+      const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(lastMsg).toContain("1. Basra Yousuf — Senior care in San Jose");
+      expect(lastMsg).toContain("2. Maria Santos (");
+
+      modelReplies("NO", "2");
+      await handleBookingFlowStep(PHONE, CHAT, "2", session({ bookingFlowStep: "bk_ask_interview" }));
+      const updated = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(updated.bookingFlowData.caregiverId).toBe("cg-2");
+      expect(updated.bookingFlowData.caregiverName).toBe("Maria Santos");
+      expect(updated.bookingFlowData.interviewId).toBe("iv2");
+      expect(updated.bookingFlowStep).toBe("bk_ask_rate");
+    });
+
+    it("auto-links across every caregiver with no ask at all when no caregiverId is given and exactly one is eligible", async () => {
+      hoisted.docState.set(`caregivers/cg-2`, { name: "Maria Santos" });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: "cg-2", status: "completed",
+        scheduledTime: "2026-09-08T15:00:00.000Z",
+      });
+
+      const result = await startBookingFlow(PHONE, CHAT, session(), {});
+
+      expect(result.started).toBe(true);
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.bookingFlowStep).toBe("bk_ask_rate");
-      expect(stored.bookingFlowData.interviewId).toBeUndefined();
+      expect(stored.bookingFlowData.caregiverId).toBe("cg-2");
+      expect(stored.bookingFlowData.caregiverName).toBe("Maria Santos");
+      expect(stored.bookingFlowData.interviewId).toBe("iv2");
+      const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(lastMsg).toContain("Maria Santos");
+    });
+
+    // 2026-09-14 fix: picking from 2+ used to skip straight to the rate
+    // question, bypassing the same upfront recipients-ambiguity check every
+    // other entry path into the flow gets.
+    it("still asks the recipients-confirm question after picking from 2+ interviews, when the default is genuinely ambiguous", async () => {
+      hoisted.docState.set("video_interviews/iv1", {
+        clientId: UID, caregiverId: CG_ID, status: "completed",
+        scheduledTime: "2026-09-13T09:00:00.000Z",
+      });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: CG_ID, status: "completed",
+        scheduledTime: "2026-09-12T21:10:00.000Z",
+      });
+      hoisted.docState.set(`carePlans/${UID}`, {
+        recipientPlans: {
+          samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+          imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+        },
+      });
+
+      await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      modelReplies("NO", "1");
+      await handleBookingFlowStep(PHONE, CHAT, "1", session({ bookingFlowStep: "bk_ask_interview" }));
+
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.bookingFlowStep).toBe("bk_confirm_recipients");
+      expect(stored.bookingFlowData.recipientResolved).toBe("defaulted_all");
     });
   });
 
@@ -256,6 +365,7 @@ describe("startBookingFlow", () => {
   // — let alone correct — an unrelated name swept in until they'd already
   // answered rate/schedule/location. This proactively confirms it upfront.
   it("proactively confirms who the booking covers upfront when the default is genuinely ambiguous (2+ recipients, none named)", async () => {
+    seedOneEligibleInterview();
     hoisted.docState.set(`carePlans/${UID}`, {
       recipientPlans: {
         samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
@@ -271,6 +381,7 @@ describe("startBookingFlow", () => {
   });
 
   it("skips straight to the rate question when there's only one recipient on file (nothing ambiguous to confirm)", async () => {
+    seedOneEligibleInterview();
     hoisted.docState.set(`carePlans/${UID}`, {
       recipientPlans: { samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] } },
     });

@@ -270,21 +270,26 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_booking_flow",
     description:
-      "Start Evia's own scripted, step-by-step booking flow for a caregiver — the PREFERRED way to send a booking " +
-      "request once the family is ready to move forward (e.g. right after a 'strong' submit_interview_feedback " +
-      "result, or when they ask to book/hire a specific caregiver). This tool itself asks the family every " +
-      "remaining question (rate, schedule, care location if ambiguous) one at a time and shows a full recap " +
-      "matching the website's 'Send Booking Request' modal before sending — you do NOT need to collect any of " +
-      "that yourself, and should NOT call request_booking directly for a new booking. This tool ALREADY TEXTS THE " +
-      "FAMILY the first question itself — do not send anything else this turn beyond a brief acknowledgment that " +
-      "you're setting up the booking, if anything at all.",
+      "Start Evia's own scripted, step-by-step booking flow — the PREFERRED way to send a booking request once " +
+      "the family is ready to move forward (e.g. right after a 'strong' submit_interview_feedback result, or when " +
+      "they ask to book/hire a caregiver). Every booking must trace back to a completed interview, same as the " +
+      "site (there is no 'Send Booking' button without one) — this tool finds and, if needed, asks which one. " +
+      "Both caregiverId and interviewId are OPTIONAL: pass caregiverId when a specific caregiver was named (still " +
+      "narrows to that caregiver's own eligible interviews); omit it entirely when the family hasn't named one " +
+      "yet ('let's send a booking') and this will show every completed-interview-ready option across ALL their " +
+      "caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after " +
+      "submit_interview_feedback) — otherwise leave it out and this resolves/asks for it itself. This tool then " +
+      "asks every remaining question (rate, schedule, care location if ambiguous) one at a time and shows a full " +
+      "recap matching the website's 'Send Booking Request' modal before sending — you do NOT need to collect any " +
+      "of that yourself, and should NOT call request_booking directly for a new booking. This tool ALREADY TEXTS " +
+      "THE FAMILY the first question itself — do not send anything else this turn beyond a brief acknowledgment " +
+      "that you're setting up the booking, if anything at all.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId: { type: "string", description: "The caregiver being booked." },
-        interviewId: { type: "string", description: "Pass this when the family is booking right after a completed interview — links the booking back to the job post and marks the application accepted. Omit for a direct/matching-flow booking with no interview involved." },
+        caregiverId: { type: "string", description: "The caregiver being booked, if the family named one. Omit when they haven't — Evia will show every eligible caregiver+interview to pick from." },
+        interviewId: { type: "string", description: "Pass this only when you already have the exact interview id (e.g. right after submit_interview_feedback). Omit otherwise — this tool resolves or asks for it itself from completed interviews." },
       },
-      required: ["caregiverId"],
     },
   },
   {
@@ -3786,7 +3791,7 @@ async function executeToolCall(
 
       case "start_booking_flow": {
         const { clientId, caregiverId, interviewId, phone } = input as Record<string, unknown>;
-        if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
         if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
         const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
         const sessionData = sessSnap.data();
@@ -3794,7 +3799,7 @@ async function executeToolCall(
         if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the booking flow in");
         const { startBookingFlow } = await import("../agents/bookingFlow");
         const result = await startBookingFlow(phone as string, chatId, sessionData as any, {
-          caregiverId: caregiverId as string,
+          ...(caregiverId ? { caregiverId: caregiverId as string } : {}),
           ...(interviewId ? { interviewId: interviewId as string } : {}),
         });
         if (!result.started) {

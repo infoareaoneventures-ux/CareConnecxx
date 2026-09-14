@@ -47,16 +47,23 @@ const db = admin.firestore();
 // ── Session data shape ────────────────────────────────────────────────────────
 
 export interface BookingFlowData {
+  // Required from bk_ask_rate onward. While bookingFlowStep === "bk_ask_interview"
+  // and no caregiver was named yet (options may span several caregivers),
+  // these are placeholder "" — always resolved (to the picked option's own
+  // caregiverId/caregiverName) before advancing past that step.
   caregiverId: string;
   caregiverName: string;
   interviewId?: string;
-  // Populated when start_booking_flow was called with no interviewId and the
-  // caregiver has 2+ interviews eligible for a fresh booking (matches the
-  // site's own per-row "Send Booking" — see findSendBookingEligibleInterviews).
-  // Never populated (and bk_ask_interview never reached) when there's 0 or
-  // exactly 1 eligible interview — 0 proceeds as a direct/no-interview
-  // booking (the site's own matching-flow path), 1 auto-links with nothing
-  // to ask.
+  // Populated when start_booking_flow was called with no interviewId and
+  // there are 2+ interviews eligible for a fresh booking — scoped to one
+  // caregiver if the family named one, or across ALL of the client's
+  // caregivers otherwise (matches the site's own per-row "Send Booking" —
+  // see findSendBookingEligibleInterviews). Never populated (and
+  // bk_ask_interview never reached) when there's exactly 1 eligible
+  // interview (auto-links with nothing to ask) — and there is NO path that
+  // proceeds with 0 eligible interviews: the site itself never shows a
+  // "Send Booking" button without a completed interview behind it, so Evia
+  // doesn't invent one either (see startBookingFlow's 0-eligible branch).
   interviewOptions?: SendBookingEligibleInterview[];
   jobId?: string;
   jobTitle?: string;
@@ -152,7 +159,7 @@ async function isQuestionOrOther(text: string, currentQuestion: string): Promise
 
 const BK_MIDFLOW_FALLBACK = "Good question — I don't want to guess on that one.";
 
-async function answerQuestionMidFlow(text: string, caregiverName: string): Promise<string> {
+async function answerQuestionMidFlow(text: string, caregiverName?: string): Promise<string> {
   // 2026-09-08-pattern (same fix already applied to jobPostingFlow.ts/
   // modifyScheduleFlow.ts): this sees ONLY the current message, never the
   // rest of the conversation — including anything Evia herself said earlier.
@@ -162,8 +169,9 @@ async function answerQuestionMidFlow(text: string, caregiverName: string): Promi
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 100,
     system:
-      "You are Evia, a care coordinator helping a family send a booking request to a caregiver named " +
-      `${caregiverName}. You see ONLY this one message, not the rest of the conversation — including anything ` +
+      "You are Evia, a care coordinator helping a family send a booking request" +
+      (caregiverName ? ` to a caregiver named ${caregiverName}` : "") +
+      ". You see ONLY this one message, not the rest of the conversation — including anything " +
       "Evia herself said earlier. NEVER claim something was or wasn't mentioned before; you cannot know that. " +
       "If the message is clearly about something OTHER than finishing this booking — a different topic entirely " +
       "(an interview, a different booking, billing, a job post) — do not try to answer it or guess what it's " +
@@ -235,9 +243,9 @@ function openingLine(caregiverName: string, jobTitle?: string): string {
 
 // ── Step: which interview (only asked when 2+ eligible) ─────────────────────
 
-function INTERVIEW_PICK_QUESTION(caregiverName: string, options: SendBookingEligibleInterview[]): string {
+function INTERVIEW_PICK_QUESTION(options: SendBookingEligibleInterview[]): string {
   const lines = options.map((o, i) =>
-    `${i + 1}. ${caregiverName}${o.jobTitle ? ` — ${o.jobTitle}` : ""} (${o.scheduledLabel})`
+    `${i + 1}. ${o.caregiverName}${o.jobTitle ? ` — ${o.jobTitle}` : ""} (${o.scheduledLabel})`
   );
   return `Which interview is this booking for?\n\n${lines.join("\n")}`;
 }
@@ -247,10 +255,10 @@ async function handleBkAskInterview(
 ): Promise<void> {
   const data = await getFlowData(phone);
   const options = data.interviewOptions ?? [];
-  const question = INTERVIEW_PICK_QUESTION(data.caregiverName, options);
+  const question = INTERVIEW_PICK_QUESTION(options);
   if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
-    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    await sendMessage(chatId, await answerQuestionMidFlow(text));
     await sendMessage(chatId, question);
     return;
   }
@@ -266,9 +274,11 @@ async function handleBkAskInterview(
   }
   const chosen = options[idx - 1];
   const clientId = session.userId as string | undefined;
-  const linkage = clientId ? await resolveInterviewLinkage(clientId, data.caregiverId, chosen.id) : {};
+  const linkage = clientId ? await resolveInterviewLinkage(clientId, chosen.caregiverId, chosen.id) : {};
   await mergeFlowData(phone, {
-    interviewId: chosen.id,
+    caregiverId:   chosen.caregiverId,
+    caregiverName: chosen.caregiverName,
+    interviewId:   chosen.id,
     ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
     ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
     ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
@@ -277,72 +287,28 @@ async function handleBkAskInterview(
     ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
   });
   const updated = await getFlowData(phone);
+  // Same recipients-ambiguity check every other path into rate goes through
+  // (2026-09-14 fix: this used to skip straight to advanceToRate, bypassing
+  // bk_confirm_recipients entirely for the one path that resolves the
+  // caregiver from a pick instead of from an already-known caregiverId).
+  if (clientId) return resolveRecipientsAndAdvance(phone, chatId, session, clientId, updated);
   await advanceToRate(phone, chatId, updated);
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
-export async function startBookingFlow(
-  phone: string, chatId: string, session: AgentSession,
-  args: { caregiverId: string; interviewId?: string },
-): Promise<{ started: boolean; reason?: string }> {
-  const clientId = session.userId as string | undefined;
-  if (!clientId) {
-    await sendMessage(chatId, "I couldn't find your account to start this booking. Please try again.");
-    return { started: false, reason: "no_client_id" };
-  }
-
-  const nameRes = await resolveBookingCaregiverName(args.caregiverId);
-  if (!nameRes.ok) {
-    await sendMessage(chatId, "I couldn't find that caregiver to book. Can you tell me who you'd like to book?");
-    return { started: false, reason: "caregiver_not_found" };
-  }
-
-  // 2026-09-14 (live-caught): a booking sent with no interview reference at
-  // all left the family with no way to tell which interview it followed —
-  // and the site's OTHER "Send Booking" rows for the same caregiver stayed
-  // active, risking an accidental duplicate. When the caller didn't already
-  // resolve a specific interviewId and this caregiver has 2+ interviews
-  // eligible for a fresh booking, ask which one BEFORE anything else — same
-  // principle as the numbered job-post pick already used elsewhere. 0 or 1
-  // eligible interview needs no ask (0 = direct/no-interview booking, the
-  // site's own matching-flow path; 1 auto-links with nothing ambiguous).
-  let effectiveInterviewId = args.interviewId;
-  if (!effectiveInterviewId) {
-    const eligible = await findSendBookingEligibleInterviews(clientId, args.caregiverId);
-    if (eligible.length > 1) {
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      const data: BookingFlowData = {
-        caregiverId:   args.caregiverId,
-        caregiverName: nameRes.caregiverName,
-        interviewOptions: eligible,
-      };
-      await db.collection("agent_sessions").doc(phone).update({
-        bookingFlowStep: "bk_ask_interview",
-        bookingFlowData: data,
-        stateExpiresAt:  expiresAt,
-      });
-      await sendMessage(chatId, `${openingLine(nameRes.caregiverName)}\n\n${INTERVIEW_PICK_QUESTION(nameRes.caregiverName, eligible)}`);
-      return { started: true };
-    }
-    if (eligible.length === 1) effectiveInterviewId = eligible[0].id;
-  }
-
-  const linkage = await resolveInterviewLinkage(clientId, args.caregiverId, effectiveInterviewId);
+// Resolves recipients/emergency contact for a caregiver+interview that's
+// already settled (either passed in directly, auto-linked from exactly one
+// eligible interview, or just picked from 2+), then either asks the upfront
+// recipients-confirm question (when the default is genuinely ambiguous) or
+// goes straight to the rate question — same branch, one shared home, so
+// every entry path into the flow gets identical treatment.
+async function resolveRecipientsAndAdvance(
+  phone: string, chatId: string, session: AgentSession, clientId: string, base: BookingFlowData,
+): Promise<void> {
   const recipientAttribution = await resolveRecipientAttribution(clientId, undefined, undefined);
   const emergencyContact = await resolveEmergencyContact(clientId);
-
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const data: BookingFlowData = {
-    caregiverId:   args.caregiverId,
-    caregiverName: nameRes.caregiverName,
-    ...(effectiveInterviewId ? { interviewId: effectiveInterviewId } : {}),
-    ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
-    ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
-    ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
-    ...(linkage.jobPostRate !== undefined ? { jobPostRate: linkage.jobPostRate } : {}),
-    ...(linkage.jobPostSchedule?.daysOfWeek?.length ? { jobPostDays: linkage.jobPostSchedule.daysOfWeek } : {}),
-    ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
+    ...base,
     ...(recipientAttribution.recipientName ? { recipientName: recipientAttribution.recipientName } : {}),
     ...(recipientAttribution.recipientKey ? { recipientKey: recipientAttribution.recipientKey } : {}),
     ...(recipientAttribution.recipientResolved ? { recipientResolved: recipientAttribution.recipientResolved } : {}),
@@ -371,8 +337,8 @@ export async function startBookingFlow(
       stateExpiresAt:  expiresAt,
     });
     const names = recipients.map((r) => String(r.name ?? "")).filter(Boolean);
-    await sendMessage(chatId, `${openingLine(nameRes.caregiverName, data.jobTitle)}\n\n${RECIPIENTS_CONFIRM_QUESTION(names)}`);
-    return { started: true };
+    await sendMessage(chatId, `${openingLine(data.caregiverName, data.jobTitle)}\n\n${RECIPIENTS_CONFIRM_QUESTION(names)}`);
+    return;
   }
 
   await db.collection("agent_sessions").doc(phone).update({
@@ -390,7 +356,111 @@ export async function startBookingFlow(
   // occasionally arrive out of order relative to the model's own trailing
   // turn reply (a live-caught delivery race, 2026-09-13), reading as
   // confusing/backwards. One atomic send removes that risk entirely.
-  await sendMessage(chatId, `${openingLine(nameRes.caregiverName, data.jobTitle)}\n\n${RATE_QUESTION(data.jobPostRate)}`);
+  await sendMessage(chatId, `${openingLine(data.caregiverName, data.jobTitle)}\n\n${RATE_QUESTION(data.jobPostRate)}`);
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+export async function startBookingFlow(
+  phone: string, chatId: string, session: AgentSession,
+  args: { caregiverId?: string; interviewId?: string },
+): Promise<{ started: boolean; reason?: string }> {
+  const clientId = session.userId as string | undefined;
+  if (!clientId) {
+    await sendMessage(chatId, "I couldn't find your account to start this booking. Please try again.");
+    return { started: false, reason: "no_client_id" };
+  }
+
+  // Case A: the caller already resolved a specific interview (e.g. right
+  // after a "strong" submit_interview_feedback result) — trust it directly,
+  // no eligibility scan needed, since this IS the interview being discussed.
+  if (args.interviewId) {
+    const ivSnap = await db.collection("video_interviews").doc(args.interviewId).get();
+    const iv = ivSnap.data();
+    if (!iv || iv.clientId !== clientId) {
+      await sendMessage(chatId, "I couldn't find that interview to book from. Who would you like to book?");
+      return { started: false, reason: "interview_not_found" };
+    }
+    const caregiverId = args.caregiverId ?? (iv.caregiverId as string | undefined);
+    if (!caregiverId) {
+      await sendMessage(chatId, "I couldn't tell which caregiver that interview was with. Who would you like to book?");
+      return { started: false, reason: "caregiver_not_found" };
+    }
+    const nameRes = await resolveBookingCaregiverName(caregiverId);
+    if (!nameRes.ok) {
+      await sendMessage(chatId, "I couldn't find that caregiver to book. Can you tell me who you'd like to book?");
+      return { started: false, reason: "caregiver_not_found" };
+    }
+    const linkage = await resolveInterviewLinkage(clientId, caregiverId, args.interviewId);
+    await resolveRecipientsAndAdvance(phone, chatId, session, clientId, {
+      caregiverId, caregiverName: nameRes.caregiverName, interviewId: args.interviewId,
+      ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
+      ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
+      ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
+      ...(linkage.jobPostRate !== undefined ? { jobPostRate: linkage.jobPostRate } : {}),
+      ...(linkage.jobPostSchedule?.daysOfWeek?.length ? { jobPostDays: linkage.jobPostSchedule.daysOfWeek } : {}),
+      ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
+    });
+    return { started: true };
+  }
+
+  // Case B: no specific interview given — one single process regardless of
+  // whether a caregiver was named: find what's eligible (scoped to that
+  // caregiver if named, across all of them otherwise), then branch only on
+  // COUNT. 2026-09-14 (site-parity, Hamse-confirmed): the site itself never
+  // shows a "Send Booking" button without a completed, non-declined
+  // interview behind it — there is NO direct/no-interview booking path on
+  // the site at all — so 0 eligible here must stop, never proceed.
+  let caregiverName: string | undefined;
+  if (args.caregiverId) {
+    const nameRes = await resolveBookingCaregiverName(args.caregiverId);
+    if (!nameRes.ok) {
+      await sendMessage(chatId, "I couldn't find that caregiver to book. Can you tell me who you'd like to book?");
+      return { started: false, reason: "caregiver_not_found" };
+    }
+    caregiverName = nameRes.caregiverName;
+  }
+
+  const eligible = await findSendBookingEligibleInterviews(clientId, args.caregiverId);
+
+  if (eligible.length === 0) {
+    await sendMessage(chatId, caregiverName
+      ? `There's no completed interview with ${caregiverName} ready for a booking yet — once one's marked as a fit, I can send the booking from there.`
+      : "I don't see any completed interviews ready for a booking yet — once one's marked as a fit, I can send the booking from there.");
+    return { started: false, reason: "no_eligible_interview" };
+  }
+
+  if (eligible.length > 1) {
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const data: BookingFlowData = {
+      caregiverId:   args.caregiverId ?? "",
+      caregiverName: caregiverName ?? "",
+      interviewOptions: eligible,
+    };
+    await db.collection("agent_sessions").doc(phone).update({
+      bookingFlowStep: "bk_ask_interview",
+      bookingFlowData: data,
+      stateExpiresAt:  expiresAt,
+    });
+    // The pick is the WHOLE first message — nothing before it (2026-09-14,
+    // Hamse-confirmed: naming a caregiver upfront doesn't make sense yet
+    // when the options themselves might span more than one caregiver).
+    await sendMessage(chatId, INTERVIEW_PICK_QUESTION(eligible));
+    return { started: true };
+  }
+
+  // Exactly one eligible interview — auto-link with nothing to ask.
+  const only = eligible[0];
+  const linkage = await resolveInterviewLinkage(clientId, only.caregiverId, only.id);
+  await resolveRecipientsAndAdvance(phone, chatId, session, clientId, {
+    caregiverId: only.caregiverId, caregiverName: only.caregiverName, interviewId: only.id,
+    ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
+    ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
+    ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
+    ...(linkage.jobPostRate !== undefined ? { jobPostRate: linkage.jobPostRate } : {}),
+    ...(linkage.jobPostSchedule?.daysOfWeek?.length ? { jobPostDays: linkage.jobPostSchedule.daysOfWeek } : {}),
+    ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
+  });
   return { started: true };
 }
 

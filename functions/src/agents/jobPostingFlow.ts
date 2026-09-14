@@ -11,7 +11,7 @@ import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
-import { isBackOutRequest } from "./stepHandler";
+import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 
 const db = admin.firestore();
 
@@ -1122,24 +1122,35 @@ async function handleJpConfirmPost(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const CONFIRM_REASK = "Confirming whether to post this job for caregivers to see — reply YES to post it, or NO to start over.";
-  if (await isBackOutRequest(text, CONFIRM_REASK)) return handleJobPostingBackOut(phone, chatId, session);
-  // 2026-09-13 (live-caught, "it's keep repeating" — same fix given to
-  // bookingFlow.ts/interviewFlow.ts's confirm steps): a real question gets
-  // answered plus a short reminder, not the whole job-post summary again.
-  if (await isQuestionOrOther(text, CONFIRM_REASK)) {
-    const answer = await answerQuestionMidFlow(phone, text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, CONFIRM_REASK);
-    return;
-  }
 
-  const norm = await parseWithClaude(
-    'The user is confirming or declining to post a job. ' +
-    '"yes", "yep", "post it", "go ahead", "do it", "confirm", "looks good", "perfect" = YES. ' +
-    '"no", "start over", "restart", "redo", "nope", "cancel" = NO. ' +
-    'Reply with exactly YES or NO.',
-    text
-  );
+  // 2026-09-14 — same fix as bookingFlow.ts's handleBkConfirm: a bare,
+  // unambiguous affirmative can never reasonably mean "cancel", so it skips
+  // the probabilistic isBackOutRequest/classify calls entirely instead of
+  // trusting them to get a borderline call right.
+  const bareYes = text.trim().toUpperCase().replace(/[.!?]+$/g, "");
+  let norm: string;
+  if (TRIVIAL_CONFIRM_WORDS.has(bareYes)) {
+    norm = "YES";
+  } else {
+    if (await isBackOutRequest(text, CONFIRM_REASK)) return handleJobPostingBackOut(phone, chatId, session);
+    // 2026-09-13 (live-caught, "it's keep repeating" — same fix given to
+    // bookingFlow.ts/interviewFlow.ts's confirm steps): a real question gets
+    // answered plus a short reminder, not the whole job-post summary again.
+    if (await isQuestionOrOther(text, CONFIRM_REASK)) {
+      const answer = await answerQuestionMidFlow(phone, text, session);
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, CONFIRM_REASK);
+      return;
+    }
+
+    norm = await parseWithClaude(
+      'The user is confirming or declining to post a job. ' +
+      '"yes", "yep", "post it", "go ahead", "do it", "confirm", "looks good", "perfect" = YES. ' +
+      '"no", "start over", "restart", "redo", "nope", "cancel" = NO. ' +
+      'Reply with exactly YES or NO.',
+      text
+    );
+  }
 
   if (norm.toUpperCase() === "NO") {
     await db.collection("agent_sessions").doc(phone).update({

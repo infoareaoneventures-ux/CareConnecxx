@@ -55,6 +55,17 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
 // the worst possible place for this ambiguity to bite. currentQuestion is
 // now REQUIRED (not optional) specifically so no call site can accidentally
 // omit it the way this one originally did.
+// Duplicated from approvalHandler.ts's TRIVIAL_YES (kept as a separate,
+// locally-owned copy rather than an import — approvalHandler.ts pulls in
+// mcp/server.ts, which pulls back in every *Flow.ts module that calls
+// isBackOutRequest, forming an import cycle that breaks under test mocking
+// (firebase-admin's storage() export goes missing). Same canonical word
+// list; keep both in sync if either changes.
+export const TRIVIAL_CONFIRM_WORDS = new Set([
+  "YES", "Y", "YEAH", "YEP", "YUP", "OK", "OKAY", "SURE", "CONFIRM", "CONFIRMED",
+  "GO AHEAD", "DO IT", "GO", "PROCEED", "APPROVED",
+]);
+
 export async function isBackOutRequest(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
     `The user is in the middle of a guided step-by-step flow with Evia (e.g. scheduling an interview, sending a ` +

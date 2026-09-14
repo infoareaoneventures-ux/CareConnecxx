@@ -81,6 +81,75 @@ export async function resolveInterviewLinkage(
   }
 }
 
+export interface SendBookingEligibleInterview {
+  id:             string;
+  scheduledLabel: string;
+  jobTitle?:      string;
+}
+
+// Matches the site's own "Send Booking" eligibility exactly (PostsPage.tsx):
+// a completed interview, not already marked "Not Selected" (fitLevel: "no"),
+// with no booking_requests already pending/accepted against it. A "strong"
+// fit decision — or no decision at all yet — both still show "Send Booking"
+// on the site (submit_interview_feedback's own doc comments: a strong result
+// is the hire DECISION, not the booking itself; a separate booking step
+// follows either way). Used when start_booking_flow is called with no
+// explicit interviewId and the caregiver has interview history to
+// disambiguate against (2026-09-14, live-caught: a booking sent with no
+// interview reference at all left the family with no way to tell which
+// interview it followed, and the site's OTHER "Send Booking" rows for the
+// same caregiver stayed active, risking an accidental duplicate).
+export async function findSendBookingEligibleInterviews(
+  clientId: string, caregiverId: string,
+): Promise<SendBookingEligibleInterview[]> {
+  try {
+    const ivSnap = await db.collection("video_interviews")
+      .where("clientId", "==", clientId)
+      .where("caregiverId", "==", caregiverId)
+      .where("status", "==", "completed")
+      .get();
+    if (ivSnap.empty) return [];
+
+    const bookingsSnap = await db.collection("booking_requests")
+      .where("clientId", "==", clientId)
+      .where("caregiverId", "==", caregiverId)
+      .get();
+    const activelyBookedInterviewIds = new Set(
+      bookingsSnap.docs
+        .map((d) => d.data())
+        .filter((b) => b.interviewId && (b.status === "pending" || b.status === "accepted"))
+        .map((b) => b.interviewId as string)
+    );
+
+    const results: SendBookingEligibleInterview[] = [];
+    for (const doc of ivSnap.docs) {
+      const iv = doc.data();
+      if (iv.fitLevel === "no") continue;
+      if (activelyBookedInterviewIds.has(doc.id)) continue;
+
+      let jobTitle: string | undefined;
+      if (iv.applicationId) {
+        const appSnap = await db.collection("job_applications").doc(iv.applicationId as string).get().catch(() => null);
+        const jobId = appSnap?.data()?.jobId as string | undefined;
+        if (jobId) {
+          const jobSnap = await db.collection("job_posts").doc(jobId).get().catch(() => null);
+          jobTitle = jobSnap?.data()?.title as string | undefined;
+        }
+      }
+      const scheduledLabel = typeof iv.scheduledTime === "string" && !isNaN(Date.parse(iv.scheduledTime))
+        ? new Date(iv.scheduledTime).toLocaleString("en-US", {
+            weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+          })
+        : "an earlier interview";
+      results.push({ id: doc.id, scheduledLabel, ...(jobTitle ? { jobTitle } : {}) });
+    }
+    return results;
+  } catch (e) {
+    console.warn("[bookingResolution] findSendBookingEligibleInterviews failed (booking proceeds unlinked):", e);
+    return [];
+  }
+}
+
 export const NO_RATE_MESSAGE =
   "No agreed rate is set for this booking. The website's own booking modal blocks sending until a " +
   "specific rate is confirmed — it never assumes the caregiver's own listed rate. Ask the family " +

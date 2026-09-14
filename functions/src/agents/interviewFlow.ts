@@ -31,7 +31,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
 import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
-import { isBackOutRequest } from "./stepHandler";
+import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   resolveCaregiverForInterview, requestVideoInterview, VideoInterviewRequestError,
 } from "./videoInterviewRequest";
@@ -452,12 +452,7 @@ export function buildInterviewRecap(data: InterviewFlowData): string {
 
 const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this interview request — reply YES to send it, or NO to cancel.";
 
-async function handleIvConfirm(
-  phone: string, chatId: string, text: string, session: AgentSession,
-): Promise<void> {
-  const data = await getFlowData(phone);
-  if (await isBackOutRequest(text, buildInterviewRecap(data))) return handleBackOut(phone, chatId, session);
-
+async function classifyIvConfirmReply(text: string): Promise<any | null> {
   const raw = await parseWithClaude(
     "The family is reviewing an interview request summary before it sends. Classify their reply. Return ONLY a " +
     'JSON object: {"action": "confirm" | "cancel" | "edit_job" | "edit_date" | "edit_time" | "edit_notes" | ' +
@@ -473,8 +468,28 @@ async function handleIvConfirm(
     "Never invent a date, time, note, or job pick the message doesn't state.",
     text
   );
-  const parsed = parseJsonLoose(raw, "handleIvConfirm");
-  const action = parsed?.action;
+  return parseJsonLoose(raw, "handleIvConfirm");
+}
+
+async function handleIvConfirm(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+
+  // 2026-09-14 — same fix as bookingFlow.ts's handleBkConfirm: a bare,
+  // unambiguous affirmative can never reasonably mean "cancel", so it skips
+  // the probabilistic isBackOutRequest/classify calls entirely instead of
+  // trusting them to get a borderline call right against a long recap.
+  const bareYes = text.trim().toUpperCase().replace(/[.!?]+$/g, "");
+  let action: string | undefined;
+  let parsed: any | null = null;
+  if (TRIVIAL_CONFIRM_WORDS.has(bareYes)) {
+    action = "confirm";
+  } else {
+    if (await isBackOutRequest(text, buildInterviewRecap(data))) return handleBackOut(phone, chatId, session);
+    parsed = await classifyIvConfirmReply(text);
+    action = parsed?.action;
+  }
 
   if (action === "cancel") return handleBackOut(phone, chatId, session);
 

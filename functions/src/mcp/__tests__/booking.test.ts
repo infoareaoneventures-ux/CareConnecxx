@@ -397,7 +397,13 @@ describe("booking tools", () => {
       expect(r.success).toBe(true);
       expect(r.estimatedTotal).toBe(320); // 16h/week * $20
       const arg = createBookingTask.mock.calls[0][0] as any;
-      expect(arg.schedule.dayShiftTimes).toEqual({ Mon: { start: "09:00", end: "17:00" }, Wed: { start: "09:00", end: "17:00" } });
+      // Array-wrapped per day (2026-09-14, live-caught) — the input param
+      // stays a flat {start,end} per day (the model-facing shape), but the
+      // OUTPUT passed to createBookingTask must match the site's own
+      // dayShiftTimes shape (an array of blocks per day), or
+      // shiftGenerator.ts's onBookingAccepted trigger never generates any
+      // real shifts for this booking at all.
+      expect(arg.schedule.dayShiftTimes).toEqual({ Mon: [{ start: "09:00", end: "17:00" }], Wed: [{ start: "09:00", end: "17:00" }] });
       expect(arg.schedule.ongoing).toBe(true);
     });
 

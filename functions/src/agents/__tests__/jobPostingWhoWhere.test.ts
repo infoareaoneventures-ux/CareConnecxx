@@ -463,7 +463,10 @@ describe("jp_confirm_post (live-caught: a bare 'yes' never actually posted the j
     hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA, userId: UID });
     modelReplies("NO", "YES");
 
-    await handleJobPostingStep(PHONE, CHAT, "yes", baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA }));
+    // Not a bare "yes"-class word (see TRIVIAL_CONFIRM_WORDS in stepHandler.ts)
+    // so this still exercises the real classify call being asserted on below —
+    // a canonical bare "yes" now skips it entirely by design.
+    await handleJobPostingStep(PHONE, CHAT, "looks good, post it", baseSession({ jobPostingStep: "jp_confirm_post", jobPostingData: READY_JOB_DATA }));
 
     const classifySystem = (messagesCreate.mock.calls[0][0] as { system: string }).system;
     expect(classifySystem).not.toContain("someone else");

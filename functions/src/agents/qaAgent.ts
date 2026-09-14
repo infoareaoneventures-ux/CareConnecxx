@@ -2743,6 +2743,16 @@ export async function runQaAgent(params: {
     const cachedTools = withToolsCacheControl(activeTools);
 
     let reply = "";
+    // 2026-09-14 (live-caught): start_booking_flow/start_interview_flow both
+    // already text the family themselves, in one combined message, and their
+    // tool-result "instruction" field tells the model to send NOTHING else
+    // this turn — but that's a prompt instruction, not an enforced one, and
+    // the model kept adding a trailing "Yes, I've started the booking flow…"
+    // acknowledgment anyway, which can arrive out of order against the
+    // flow's own message and reads as a confusing, redundant second reply.
+    // Enforce it in code instead of trusting compliance: once either tool
+    // succeeds this turn, the model's own reply text is discarded below.
+    let selfSendingFlowStartedThisTurn = false;
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early
     // once the running total exceeds the budget.
@@ -2975,6 +2985,12 @@ export async function runQaAgent(params: {
             metrics.toolCalls = (metrics.toolCalls ?? 0) + 1;
             (metrics.toolNames ??= []).push(block.name);
             iterationToolCalls += 1;
+            if (
+              (block.name === "start_booking_flow" || block.name === "start_interview_flow")
+              && (result as { success?: boolean })?.success === true
+            ) {
+              selfSendingFlowStartedThisTurn = true;
+            }
             const errored = !!(result as { _toolError?: boolean; error?: unknown })?._toolError
               || !!(result as { error?: unknown })?.error;
             if (errored) {
@@ -3759,6 +3775,12 @@ export async function runQaAgent(params: {
         }
       }
     }
+
+    // Enforced in code, not just the tool's own "instruction" text — see
+    // selfSendingFlowStartedThisTurn above. Applied last, after every other
+    // post-processing step above has had its say, so nothing downstream can
+    // reintroduce trailing text once a self-sending flow already replied.
+    if (selfSendingFlowStartedThisTurn) reply = "";
 
     await saveConversationTurn(phone, text, reply);
     // saveConversationTurn just persisted this reply — skip the transport's

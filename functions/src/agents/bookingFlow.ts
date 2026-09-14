@@ -33,12 +33,13 @@ import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
-import { isBackOutRequest } from "./stepHandler";
+import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingCaregiverName,
   resolveCareLocation, formatCareLocationOptions, listCareLocationOptions, resolveRecipientAttribution,
   resolveEmergencyContact, resolveTopLevelCareNeedsAndLifestyle, enrichRecipientAgeRelationship,
-  listRecipientOptions, type LocationOption, type RecipientOption,
+  listRecipientOptions, findSendBookingEligibleInterviews, type LocationOption, type RecipientOption,
+  type SendBookingEligibleInterview,
 } from "./bookingResolution";
 
 const db = admin.firestore();
@@ -49,6 +50,14 @@ export interface BookingFlowData {
   caregiverId: string;
   caregiverName: string;
   interviewId?: string;
+  // Populated when start_booking_flow was called with no interviewId and the
+  // caregiver has 2+ interviews eligible for a fresh booking (matches the
+  // site's own per-row "Send Booking" — see findSendBookingEligibleInterviews).
+  // Never populated (and bk_ask_interview never reached) when there's 0 or
+  // exactly 1 eligible interview — 0 proceeds as a direct/no-interview
+  // booking (the site's own matching-flow path), 1 auto-links with nothing
+  // to ask.
+  interviewOptions?: SendBookingEligibleInterview[];
   jobId?: string;
   jobTitle?: string;
   applicationId?: string;
@@ -56,19 +65,25 @@ export interface BookingFlowData {
   jobPostDays?: string[];
   jobPostEndDate?: string;
   hourlyRate?: number;
-  scheduleKind?: "recurring" | "one_off";
+  // 2026-09-14: unified to match the site's OWN single schedule model
+  // exactly (its "Send Booking Request" modal never distinguishes
+  // "recurring" from "one-off" — it always just has day-of-week chips, a
+  // start date, and an Ongoing checkbox or a set end date; even a single
+  // one-time visit is "days=[Fri], startDate=endDate=that Friday,
+  // ongoing=false"). Evia previously forked into a separate "one_off" shape
+  // (a raw dates[] list, no startDate at all) — that false dichotomy is what
+  // caused "recurring weekly" (confirming only the type) to get misread as
+  // every day of the week, and the recurring path never asked for a start
+  // date at all despite the site always having one.
   days?: string[];
-  dates?: string[];
-  // One-off visits only — a single shared start/end across the listed dates.
-  startTime?: string;
-  endTime?: string;
-  // Recurring schedules only — EACH day gets its own start/end (matches the
-  // site's per-day schedule builder and the real dayShiftTimes shape); never
-  // a single shared time applied uniformly.
+  startDate?: string;
+  // EACH day gets its own start/end (matches the site's per-day schedule
+  // builder, dayShiftTimes) — never a single shared time silently applied,
+  // even when there's only one day.
   dayTimes?: Record<string, { start: string; end: string }>;
-  // Recurring schedules only — whether the arrangement is open-ended or has
-  // a set end date (matches request_booking's ongoing/endDate pair and the
-  // site's own recurring-booking shape). Never applies to a one-off visit.
+  // Whether the arrangement is open-ended or has a set end date (matches
+  // the site's own Ongoing checkbox / End date pair) — always asked,
+  // regardless of how many days were picked, same as the site.
   ongoing?: boolean;
   scheduleEndDate?: string;
   careLocation?: string;
@@ -218,6 +233,53 @@ function openingLine(caregiverName: string, jobTitle?: string): string {
     : `Let's get a booking request over to ${caregiverName}!`;
 }
 
+// ── Step: which interview (only asked when 2+ eligible) ─────────────────────
+
+function INTERVIEW_PICK_QUESTION(caregiverName: string, options: SendBookingEligibleInterview[]): string {
+  const lines = options.map((o, i) =>
+    `${i + 1}. ${caregiverName}${o.jobTitle ? ` — ${o.jobTitle}` : ""} (${o.scheduledLabel})`
+  );
+  return `Which interview is this booking for?\n\n${lines.join("\n")}`;
+}
+
+async function handleBkAskInterview(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+  const options = data.interviewOptions ?? [];
+  const question = INTERVIEW_PICK_QUESTION(data.caregiverName, options);
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
+  if (await isQuestionOrOther(text, question)) {
+    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    await sendMessage(chatId, question);
+    return;
+  }
+  const raw = await parseWithClaude(
+    `The family is picking which of ${options.length} interviews this booking follows. Return ONLY the number ` +
+    "(1-based) they picked, or \"0\" if the message doesn't clearly pick one. Never guess.",
+    text
+  );
+  const idx = parseInt(raw.trim(), 10);
+  if (isNaN(idx) || idx < 1 || idx > options.length) {
+    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    return;
+  }
+  const chosen = options[idx - 1];
+  const clientId = session.userId as string | undefined;
+  const linkage = clientId ? await resolveInterviewLinkage(clientId, data.caregiverId, chosen.id) : {};
+  await mergeFlowData(phone, {
+    interviewId: chosen.id,
+    ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
+    ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
+    ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
+    ...(linkage.jobPostRate !== undefined ? { jobPostRate: linkage.jobPostRate } : {}),
+    ...(linkage.jobPostSchedule?.daysOfWeek?.length ? { jobPostDays: linkage.jobPostSchedule.daysOfWeek } : {}),
+    ...(linkage.jobPostSchedule?.endDate ? { jobPostEndDate: linkage.jobPostSchedule.endDate } : {}),
+  });
+  const updated = await getFlowData(phone);
+  await advanceToRate(phone, chatId, updated);
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function startBookingFlow(
@@ -236,7 +298,37 @@ export async function startBookingFlow(
     return { started: false, reason: "caregiver_not_found" };
   }
 
-  const linkage = await resolveInterviewLinkage(clientId, args.caregiverId, args.interviewId);
+  // 2026-09-14 (live-caught): a booking sent with no interview reference at
+  // all left the family with no way to tell which interview it followed —
+  // and the site's OTHER "Send Booking" rows for the same caregiver stayed
+  // active, risking an accidental duplicate. When the caller didn't already
+  // resolve a specific interviewId and this caregiver has 2+ interviews
+  // eligible for a fresh booking, ask which one BEFORE anything else — same
+  // principle as the numbered job-post pick already used elsewhere. 0 or 1
+  // eligible interview needs no ask (0 = direct/no-interview booking, the
+  // site's own matching-flow path; 1 auto-links with nothing ambiguous).
+  let effectiveInterviewId = args.interviewId;
+  if (!effectiveInterviewId) {
+    const eligible = await findSendBookingEligibleInterviews(clientId, args.caregiverId);
+    if (eligible.length > 1) {
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const data: BookingFlowData = {
+        caregiverId:   args.caregiverId,
+        caregiverName: nameRes.caregiverName,
+        interviewOptions: eligible,
+      };
+      await db.collection("agent_sessions").doc(phone).update({
+        bookingFlowStep: "bk_ask_interview",
+        bookingFlowData: data,
+        stateExpiresAt:  expiresAt,
+      });
+      await sendMessage(chatId, `${openingLine(nameRes.caregiverName)}\n\n${INTERVIEW_PICK_QUESTION(nameRes.caregiverName, eligible)}`);
+      return { started: true };
+    }
+    if (eligible.length === 1) effectiveInterviewId = eligible[0].id;
+  }
+
+  const linkage = await resolveInterviewLinkage(clientId, args.caregiverId, effectiveInterviewId);
   const recipientAttribution = await resolveRecipientAttribution(clientId, undefined, undefined);
   const emergencyContact = await resolveEmergencyContact(clientId);
 
@@ -244,7 +336,7 @@ export async function startBookingFlow(
   const data: BookingFlowData = {
     caregiverId:   args.caregiverId,
     caregiverName: nameRes.caregiverName,
-    ...(args.interviewId ? { interviewId: args.interviewId } : {}),
+    ...(effectiveInterviewId ? { interviewId: effectiveInterviewId } : {}),
     ...(linkage.jobId ? { jobId: linkage.jobId } : {}),
     ...(linkage.jobTitle ? { jobTitle: linkage.jobTitle } : {}),
     ...(linkage.applicationId ? { applicationId: linkage.applicationId } : {}),
@@ -351,8 +443,10 @@ export async function handleBookingFlowStep(
 ): Promise<void> {
   const step = (session as any).bookingFlowStep as string ?? "";
   switch (step) {
+    case "bk_ask_interview": return handleBkAskInterview(phone, chatId, text, session);
     case "bk_ask_rate":     return handleBkAskRate(phone, chatId, text, session);
     case "bk_ask_days":     return handleBkAskDays(phone, chatId, text, session);
+    case "bk_ask_start_date": return handleBkAskStartDate(phone, chatId, text, session);
     case "bk_ask_times":    return handleBkAskTimes(phone, chatId, text, session);
     case "bk_ask_ongoing":  return handleBkAskOngoing(phone, chatId, text, session);
     case "bk_ask_location": return handleBkAskLocation(phone, chatId, text, session);
@@ -412,11 +506,11 @@ async function advanceToDays(phone: string, chatId: string, data: BookingFlowDat
   await sendMessage(chatId, `Got it — $${data.hourlyRate}/hr! ${DAYS_QUESTION(data.jobPostDays)}`);
 }
 
-// ── Step: days (recurring weekdays OR a specific date) ───────────────────────
+// ── Step: days of the week ───────────────────────────────────────────────────
 
 const DAYS_QUESTION = (jobPostDays?: string[]) =>
-  "What days would you like this to start with — a recurring weekly schedule (e.g. \"every Tue and Thu\"), " +
-  "or a specific one-off visit (e.g. \"this Friday\")?" +
+  'What days of the week would you like — e.g. "every Tue and Thu", "weekdays", "every day", or just one day ' +
+  'like "Friday"?' +
   (jobPostDays?.length ? ` (Your job post lists ${jobPostDays.join(", ")} — reply with that, or different days.)` : "");
 
 async function handleBkAskDays(
@@ -431,33 +525,59 @@ async function handleBkAskDays(
     return;
   }
 
-  const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. Classify what the family wants for a caregiver booking's schedule. ` +
-    'Return ONLY a JSON object: {"kind": "recurring" | "one_off" | "unclear", ' +
-    '"days": ["Monday", ...] (recurring only, full weekday names — "weekdays"=Mon-Fri, "every Tue and Thu"=[Tuesday,Thursday]), ' +
-    '"dates": ["YYYY-MM-DD", ...] (one_off only, resolved relative to today)}. ' +
-    '"unclear" if the message doesn\'t clearly pick either. Never invent days/dates the message doesn\'t support.',
+    "Extract which days of the week the family wants, as full weekday names. Return ONLY a JSON object: " +
+    '{"days": ["Monday", ...]}. "weekdays" = Monday-Friday. "every day"/"all week" = all 7. "weekends" = ' +
+    'Saturday+Sunday. "every Tue and Thu" = [Tuesday,Thursday]. A single day name = just that one day. Never ' +
+    "invent a day the message doesn't name or clearly imply — an empty array is correct if none is stated.",
     text
   );
   const parsed = parseJsonLoose(raw, "handleBkAskDays");
-  const kind = parsed?.kind;
-  if (kind === "recurring" && Array.isArray(parsed.days) && parsed.days.length > 0) {
-    await mergeFlowData(phone, { scheduleKind: "recurring", days: parsed.days });
-    await updateStep(phone, "bk_ask_times");
-    await sendMessage(chatId, `${parsed.days.join(", ")} — got it! ${TIMES_QUESTION(parsed.days)}`);
+  const days: string[] = Array.isArray(parsed?.days) ? parsed.days.filter((d: unknown) => typeof d === "string") : [];
+  if (!days.length) {
+    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
     return;
   }
-  if (kind === "one_off" && Array.isArray(parsed.dates) && parsed.dates.length > 0) {
-    await mergeFlowData(phone, { scheduleKind: "one_off", dates: parsed.dates });
-    await updateStep(phone, "bk_ask_times");
-    await sendMessage(chatId, `${parsed.dates.join(", ")} — got it! What time should the visit run? (e.g. "9am to 3pm")`);
-    return;
-  }
-  await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+  await mergeFlowData(phone, { days });
+  await updateStep(phone, "bk_ask_start_date");
+  await sendMessage(chatId, `${days.join(", ")} — got it! ${START_DATE_QUESTION}`);
 }
 
-// ── Step: times (recurring schedules require a start/end for EVERY day) ─────
+// ── Step: start date (matches the site's own separate Start date field) ────
+
+const START_DATE_QUESTION = 'What date would you like this to start? (e.g. "tomorrow", "this Friday", "March 5")';
+
+async function handleBkAskStartDate(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+  const question = START_DATE_QUESTION;
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
+  if (await isQuestionOrOther(text, question)) {
+    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    await sendMessage(chatId, question);
+    return;
+  }
+
+  const today = businessTodayStr();
+  const raw = await parseWithClaude(
+    `Today is ${today}. Extract the date the family wants this to start, resolved to an absolute date relative ` +
+    'to today. Return ONLY a JSON object: {"date": "YYYY-MM-DD" or null}. Never invent a date the message ' +
+    "doesn't state or clearly imply.",
+    text
+  );
+  const parsed = parseJsonLoose(raw, "handleBkAskStartDate");
+  const startDate = typeof parsed?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : null;
+  if (!startDate) {
+    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+    return;
+  }
+  await mergeFlowData(phone, { startDate });
+  await updateStep(phone, "bk_ask_times");
+  await sendMessage(chatId, `Starting ${startDate} — got it! ${TIMES_QUESTION(data.days ?? [])}`);
+}
+
+// ── Step: times (every day needs its own start/end) ─────────────────────────
 
 const TIMES_QUESTION = (days: string[]) =>
   days.length > 1
@@ -470,7 +590,7 @@ async function handleBkAskTimes(
 ): Promise<void> {
   const data = await getFlowData(phone);
   const days = data.days ?? [];
-  const question = data.scheduleKind === "recurring" ? TIMES_QUESTION(days) : `What time should the visit run? (e.g. "9am to 3pm")`;
+  const question = TIMES_QUESTION(days);
   if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
@@ -478,27 +598,7 @@ async function handleBkAskTimes(
     return;
   }
 
-  if (data.scheduleKind === "one_off") {
-    const rawStart = await parseWithClaude(
-      'Extract the START time from this message. Return HH:MM in 24-hour format (e.g. "9am" → "09:00"). Return only the time string.',
-      text
-    );
-    const rawEnd = await parseWithClaude(
-      'Extract the END time from this message. Return HH:MM in 24-hour format (e.g. "3pm" → "15:00"). Return only the time string.',
-      text
-    );
-    const startMin = bookingTimeToMinutes(rawStart);
-    const endMin   = bookingTimeToMinutes(rawEnd);
-    if (startMin === null || endMin === null || endMin <= startMin) {
-      await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
-      return;
-    }
-    await mergeFlowData(phone, { startTime: rawStart, endTime: rawEnd });
-    await advanceFromTimes(phone, chatId, session);
-    return;
-  }
-
-  // Recurring — every day needs its OWN start/end (matches the site's
+  // Every day needs its OWN start/end (matches the site's
   // per-day schedule builder, dayShiftTimes). A message giving one shared
   // time is applied to every day; the model is instructed to do that, but
   // EVERY day must still come back with a valid, real start/end — a
@@ -529,17 +629,16 @@ async function handleBkAskTimes(
   await advanceFromTimes(phone, chatId, session);
 }
 
-// ── Step: ongoing vs. a set end date (recurring schedules only) ─────────────
+// ── Step: ongoing vs. a set end date — ALWAYS asked, matching the site's own
+// Ongoing checkbox / End date pair, which is present regardless of how many
+// days were picked (even a single one-time visit still shows it). ─────────
 
 const ONGOING_QUESTION =
-  "Is this an ongoing arrangement with no end date, or does it have a specific end date? " +
-  "(e.g. \"ongoing\" or \"through December 1\")";
+  "Is this an ongoing arrangement with no end date, or does it have a specific end date — e.g. if this is just a " +
+  "single one-time visit, say so? (e.g. \"ongoing\", \"just this once\", or \"through December 1\")";
 
 async function advanceFromTimes(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const data = await getFlowData(phone);
-  if (data.scheduleKind !== "recurring") {
-    return advanceToLocation(phone, chatId, session);
-  }
   if (data.jobPostEndDate) {
     // Matches request_booking's own existing fallback — a job post with a
     // real end date on file is used silently, never re-asked.
@@ -562,9 +661,12 @@ async function handleBkAskOngoing(
   }
   const today = businessTodayStr();
   const raw = await parseWithClaude(
-    `Today is ${today}. Does the family want this recurring arrangement to be ongoing (no end date), or does it ` +
-    'have a specific end date? Return ONLY a JSON object: {"ongoing": true or false, "endDate": "YYYY-MM-DD" or ' +
-    'null — required when ongoing is false, resolved relative to today}. Never invent a date the message doesn\'t support.',
+    `Today is ${today}. This booking starts ${data.startDate ?? "an unspecified date"}. Does the family want this ` +
+    "arrangement to be ongoing (no end date), or does it have a specific end date? Return ONLY a JSON object: " +
+    '{"ongoing": true or false, "endDate": "YYYY-MM-DD" or null — required when ongoing is false, resolved ' +
+    'relative to today}. A reply like "just once", "just this one time", or "one-time only" means NOT ongoing ' +
+    "with endDate equal to the booking's own start date given above. Never invent a date the message doesn't " +
+    "support otherwise.",
     text
   );
   const parsed = parseJsonLoose(raw, "handleBkAskOngoing");
@@ -872,12 +974,12 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
 
 export function buildBookingRecap(data: BookingFlowData): string {
   const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${data.scheduleEndDate})` : "";
-  const scheduleLine = data.scheduleKind === "recurring"
-    ? `${(data.days ?? []).map((d) => {
-        const t = data.dayTimes?.[d];
-        return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
-      }).join(", ")} ${spanLine}`
-    : `${(data.dates ?? []).join(", ")}, ${formatTimeForDisplay(data.startTime ?? "")}–${formatTimeForDisplay(data.endTime ?? "")}`;
+  const scheduleLine =
+    `${(data.days ?? []).map((d) => {
+      const t = data.dayTimes?.[d];
+      return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
+    }).join(", ")}` +
+    `${data.startDate ? `, starting ${data.startDate}` : ""} ${spanLine}`;
 
   const recipientLines: string[] = [];
   if (data.careRecipients?.length) {
@@ -934,18 +1036,7 @@ export function buildBookingRecap(data: BookingFlowData): string {
 
 const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this booking request — reply YES to send it, or NO to cancel.";
 
-// Mirrors the site's own Edit button (which reveals every section for
-// in-place changes rather than forcing a cancel-and-restart) — added
-// 2026-09-13 after Hamse asked whether the recap supported editing. A
-// correction ("actually make it $28/hr") is classified here as its own
-// action, distinct from YES/NO/a genuine question, so it never gets
-// mis-routed into the mid-flow question answerer or silently ignored.
-async function handleBkConfirm(
-  phone: string, chatId: string, text: string, session: AgentSession,
-): Promise<void> {
-  const data = await getFlowData(phone);
-  if (await isBackOutRequest(text, buildBookingRecap(data))) return handleBookingBackOut(phone, chatId, session);
-
+async function classifyBkConfirmReply(text: string): Promise<any | null> {
   const raw = await parseWithClaude(
     "The family is reviewing a booking request summary before it sends. Classify their reply. Return ONLY a JSON " +
     'object: {"action": "confirm" | "cancel" | "edit_rate" | "edit_schedule" | "edit_location" | "edit_recipients" ' +
@@ -985,8 +1076,39 @@ async function handleBkConfirm(
     "Never invent a rate, name, note, care need, or preference the message doesn't state.",
     text
   );
-  const parsed = parseJsonLoose(raw, "handleBkConfirm");
-  const action = parsed?.action;
+  return parseJsonLoose(raw, "handleBkConfirm");
+}
+
+// Mirrors the site's own Edit button (which reveals every section for
+// in-place changes rather than forcing a cancel-and-restart) — added
+// 2026-09-13 after Hamse asked whether the recap supported editing. A
+// correction ("actually make it $28/hr") is classified here as its own
+// action, distinct from YES/NO/a genuine question, so it never gets
+// mis-routed into the mid-flow question answerer or silently ignored.
+async function handleBkConfirm(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+
+  // 2026-09-14 (live-caught, twice in one session): a bare "yes" against this
+  // long, multi-section recap got misclassified by isBackOutRequest as a
+  // cancel request — a probabilistic classifier call is too risky as the
+  // ONLY gate on a money-moving confirm step. An unambiguous affirmative
+  // (the same canonical word set approvalHandler.ts treats as a real YES
+  // everywhere else) can never reasonably mean "cancel", so it skips both
+  // the back-out check and the full classify call entirely and goes
+  // straight to commit — removing the misclassification risk by construction
+  // instead of hoping the model gets a borderline call right.
+  const bareYes = text.trim().toUpperCase().replace(/[.!?]+$/g, "");
+  let action: string | undefined;
+  let parsed: any | null = null;
+  if (TRIVIAL_CONFIRM_WORDS.has(bareYes)) {
+    action = "confirm";
+  } else {
+    if (await isBackOutRequest(text, buildBookingRecap(data))) return handleBookingBackOut(phone, chatId, session);
+    parsed = await classifyBkConfirmReply(text);
+    action = parsed?.action as string | undefined;
+  }
 
   if (action === "cancel") return handleBookingBackOut(phone, chatId, session);
 
@@ -1211,31 +1333,38 @@ async function handleBkConfirm(
   }
   try {
     const { createBookingTask, executeBookings } = await import("./bookingExecutor");
-    const appointments = data.scheduleKind === "one_off"
-      ? (data.dates ?? []).map((d) => ({
-          date: d, startTime: data.startTime!, endTime: data.endTime!,
-          durationHours: ((bookingTimeToMinutes(data.endTime) ?? 0) - (bookingTimeToMinutes(data.startTime) ?? 0)) / 60,
-        }))
-      : [];
-    const schedule = data.scheduleKind === "recurring"
-      ? {
-          dayShiftTimes: data.dayTimes ?? {},
-          ongoing: data.ongoing === true,
-          ...(data.ongoing !== true && data.scheduleEndDate ? { endDate: data.scheduleEndDate } : {}),
-        }
-      : undefined;
-    // Recurring bookings carry no appointments array — totalCostOverride
-    // supplies the weekly estimate (createBookingTask's totalCost otherwise
-    // sums appointments.reduce, which is empty here). Matches
-    // request_booking's own estimatedTotal computation. Summed per-day since
-    // each day can now have its own start/end.
-    const totalCostOverride = schedule
-      ? Math.round(Object.values(data.dayTimes ?? {}).reduce((sum, t) => {
-          const s = bookingTimeToMinutes(t.start);
-          const e = bookingTimeToMinutes(t.end);
-          return sum + ((s !== null && e !== null) ? (e - s) / 60 : 0);
-        }, 0) * data.hourlyRate! * 100) / 100
-      : undefined;
+    // 2026-09-14: unified to match the site's own schedule shape exactly —
+    // always days + startDate + ongoing/endDate, never a separate raw
+    // appointments-dates path. onBookingAccepted (shiftGenerator.ts, the
+    // SAME trigger the site's own bookings rely on) correctly generates
+    // exactly one shift for a single-day, non-ongoing schedule (startDate
+    // === endDate), so a genuine one-time visit needs nothing special here.
+    const appointments: never[] = [];
+    // 2026-09-14 (live-caught): the site's own dayShiftTimes shape is an
+    // ARRAY of blocks per day (it supports more than one time block on the
+    // same day) — writing a bare {start,end} object per day instead meant
+    // shiftGenerator.ts's onBookingAccepted trigger (which calls
+    // .filter()/.forEach() on each day's value) silently never generated any
+    // real shifts docs at all for an Evia-originated booking, and the
+    // client's own booking card (same array-length check) rendered a blank
+    // schedule line.
+    const schedule = {
+      dayShiftTimes: Object.fromEntries(
+        Object.entries(data.dayTimes ?? {}).map(([day, t]) => [day, [t]])
+      ),
+      ongoing: data.ongoing === true,
+      startDate: data.startDate ?? businessTodayStr(),
+      ...(data.ongoing !== true && data.scheduleEndDate ? { endDate: data.scheduleEndDate } : {}),
+    };
+    // No appointments array to sum — totalCostOverride supplies the
+    // per-cycle estimate instead (matches request_booking's own
+    // estimatedTotal computation). Summed per-day since each day can have
+    // its own start/end.
+    const totalCostOverride = Math.round(Object.values(data.dayTimes ?? {}).reduce((sum, t) => {
+      const s = bookingTimeToMinutes(t.start);
+      const e = bookingTimeToMinutes(t.end);
+      return sum + ((s !== null && e !== null) ? (e - s) / 60 : 0);
+    }, 0) * data.hourlyRate! * 100) / 100;
 
     const taskId = await createBookingTask({
       clientPhone:   phoneForTask,
@@ -1244,7 +1373,8 @@ async function handleBkConfirm(
       caregiverName: data.caregiverName,
       appointments,
       hourlyRate:    data.hourlyRate!,
-      ...(schedule ? { schedule, totalCostOverride } : {}),
+      schedule,
+      totalCostOverride,
       careLocation:  data.careLocation!,
       ...(data.careRecipients ? { careRecipients: data.careRecipients } : {}),
       ...(data.topLevelCareNeeds ? { careNeeds: data.topLevelCareNeeds } : {}),

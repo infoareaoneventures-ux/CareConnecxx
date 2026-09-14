@@ -3845,7 +3845,7 @@ async function executeToolCall(
         let caregiverName: string;
         let hourlyRate: number;
         let appointments: Array<{ date: string; startTime: string; endTime: string; durationHours: number }> = [];
-        let schedule: { dayShiftTimes: Record<string, { start: string; end: string }>; ongoing: boolean; endDate?: string } | undefined;
+        let schedule: { dayShiftTimes: Record<string, Array<{ start: string; end: string }>>; ongoing: boolean; endDate?: string } | undefined;
         let estimatedTotal: number;
         let quoteDates: string[] = [];
 
@@ -3895,7 +3895,13 @@ async function executeToolCall(
           hourlyRate = rateRes.hourlyRate;
 
           let weeklyHours = 0;
-          const normalizedDst: Record<string, { start: string; end: string }> = {};
+          // Array-wrapped per day (2026-09-14, live-caught) — the site's own
+          // shape supports multiple time blocks on the same day, and
+          // shiftGenerator.ts's onBookingAccepted trigger calls array methods
+          // directly on each day's value; a bare {start,end} object there
+          // silently generated zero real shifts for every recurring booking
+          // this tool ever created.
+          const normalizedDst: Record<string, Array<{ start: string; end: string }>> = {};
           for (const d of days) {
             const startMin = bookingTimeToMinutes(dst[d].start);
             const endMin   = bookingTimeToMinutes(dst[d].end);
@@ -3903,7 +3909,7 @@ async function executeToolCall(
               return toolError("INVALID_INPUT", `dayShiftTimes.${d}: start/end must be 'HH:MM' with end after start`);
             }
             weeklyHours += (endMin - startMin) / 60;
-            normalizedDst[d] = { start: dst[d].start as string, end: dst[d].end as string };
+            normalizedDst[d] = [{ start: dst[d].start as string, end: dst[d].end as string }];
           }
           estimatedTotal = Math.round(weeklyHours * hourlyRate * 100) / 100;
           schedule = {

@@ -8,6 +8,8 @@ import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
 import { formatHHMMForDisplay } from "../utils/scheduledTime";
+import { bookingTimeToMinutes } from "./bookingResolution";
+import { nextOccurrenceOnOrAfter } from "../scheduled/shiftGenerator";
 
 async function hasConflict(
   caregiverId: string,
@@ -43,9 +45,20 @@ interface BookingAppointment {
 // onBookingAccepted, which reads booking_requests.schedule.dayShiftTimes/
 // ongoing/endDate to generate real shifts) — Evia's recurring bookings plug
 // into the exact same generator instead of a parallel mechanism.
+//
+// 2026-09-14 (live-caught): dayShiftTimes MUST be an array of blocks per day
+// (the site supports multiple time blocks on the same day, e.g. a morning
+// and an evening visit) — this was previously typed and written as a single
+// {start,end} object per day. shiftGenerator.ts's generateShiftsForBooking
+// calls `.filter()`/`.forEach()` directly on each day's value, which silently
+// no-ops (or throws) on a plain object instead of an array — meaning every
+// Evia-originated recurring/ongoing booking never actually generated real
+// `shifts` docs at all, and the client's own booking card (which does the
+// same `dst[d]?.length` array check) rendered a blank schedule line.
 export interface BookingSchedule {
-  dayShiftTimes: Record<string, { start: string; end: string }>;
+  dayShiftTimes: Record<string, Array<{ start: string; end: string }>>;
   ongoing:       boolean;
+  startDate?:    string;
   endDate?:      string;
 }
 
@@ -132,6 +145,39 @@ export async function writeConfirmedShifts(
     });
   }
   await batch.commit();
+}
+
+// The caregiver's shift-offer text (below, in the phone-reachable branch)
+// needs ONE representative visit to quote a date/time/pay for — historically
+// always task.appointments[0]. bookingFlow.ts (2026-09-14) no longer ever
+// populates appointments — every booking, one-time or ongoing, goes through
+// task.schedule instead, matching the site's own single schedule shape. This
+// derives the same "first visit" shape from schedule.dayShiftTimes/startDate
+// using the exact day-resolution logic shiftGenerator.ts itself uses, so the
+// quoted date is guaranteed to be the same one the real shift eventually
+// generates as. Falls back to appointments[0] for any other caller (e.g.
+// request_booking) that still passes a literal appointments array.
+function deriveFirstOccurrence(
+  task: BookingTask,
+): { date: string; startTime: string; endTime: string; durationHours: number } | null {
+  if (task.appointments.length > 0) {
+    const a = task.appointments[0];
+    return { date: a.date, startTime: a.startTime, endTime: a.endTime, durationHours: a.durationHours };
+  }
+  const dayShiftTimes = task.schedule?.dayShiftTimes ?? {};
+  const anchor = task.schedule?.startDate ?? new Date().toISOString().split("T")[0];
+  let best: { date: string; startTime: string; endTime: string; durationHours: number } | null = null;
+  for (const [day, blocks] of Object.entries(dayShiftTimes)) {
+    const t = blocks?.[0];
+    if (!t?.start || !t?.end) continue;
+    const date = nextOccurrenceOnOrAfter(anchor, day);
+    const s = bookingTimeToMinutes(t.start);
+    const e = bookingTimeToMinutes(t.end);
+    if (s === null || e === null) continue;
+    const candidate = { date, startTime: t.start, endTime: t.end, durationHours: (e - s) / 60 };
+    if (!best || candidate.date < best.date) best = candidate;
+  }
+  return best;
 }
 
 export async function executeBookings(taskId: string, clientPhone: string): Promise<void> {
@@ -375,15 +421,26 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     return;
   }
 
-  const offerFirstAppt = task.appointments[0];
+  const offerFirstAppt = deriveFirstOccurrence(task);
   // Prefer the rate the family actually agreed to for THIS booking over the
   // caregiver's own generic listed rate — those can differ (negotiated up
   // or down from what's on their profile), and quoting the wrong one here
   // means the caregiver sees a different number than what gets billed.
-  const offerVisitPay  = ((task.hourlyRate ?? caregiverSnapForOffer.data()?.hourlyRate ?? 20) * offerFirstAppt.durationHours).toFixed(2);
+  const offerVisitPay  = ((task.hourlyRate ?? caregiverSnapForOffer.data()?.hourlyRate ?? 20) * (offerFirstAppt?.durationHours ?? 0)).toFixed(2);
   const offerClientLabel = offerSeniorName ? `with ${offerSeniorName}` : "with a client";
-  const offerLines = task.appointments.map((a) => `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n");
-  const offerSummary = `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt.date} at ${formatHHMMForDisplay(offerFirstAppt.startTime)}, $${offerVisitPay} per visit`;
+  // task.appointments carries literal per-date visits (any caller still
+  // using that shape, e.g. request_booking); bookingFlow.ts (2026-09-14)
+  // always uses task.schedule instead — describe the weekly pattern itself
+  // rather than any specific dates, since the real dates are generated
+  // ongoing by shiftGenerator.ts, not fixed up front.
+  const offerLines = task.appointments.length > 0
+    ? task.appointments.map((a) => `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n")
+    : Object.entries(task.schedule?.dayShiftTimes ?? {})
+        .map(([day, blocks]) => `${day} · ${blocks.map((t) => `${formatHHMMForDisplay(t.start)}–${formatHHMMForDisplay(t.end)}`).join(", ")}`)
+        .join("\n") + (task.schedule?.startDate ? `\nStarting ${task.schedule.startDate}` : "");
+  const offerSummary = task.appointments.length > 0
+    ? `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt?.date ?? ""} at ${formatHHMMForDisplay(offerFirstAppt?.startTime ?? "")}, $${offerVisitPay} per visit`
+    : `New booking ${offerClientLabel}: ${Object.keys(task.schedule?.dayShiftTimes ?? {}).join(", ")}, starting ${task.schedule?.startDate ?? offerFirstAppt?.date ?? ""}, $${offerVisitPay} per visit`;
 
   await createShiftOffer({
     kind:           "booking",

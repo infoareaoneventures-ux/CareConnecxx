@@ -237,7 +237,7 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
     expect(recap).toContain("Caregiver: Basra Yousuf");
     expect(recap).toContain("Related job post: Senior care in San Jose");
-    expect(recap).toContain("Date & time: 2026-09-20 at 14:00");
+    expect(recap).toContain("Date & time: 2026-09-20 at 2:00 PM");
     expect(recap).toContain("Notes: None");
   });
 

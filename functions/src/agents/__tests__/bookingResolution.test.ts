@@ -183,6 +183,44 @@ describe("resolveRecipientAttribution", () => {
     expect(res.recipientResolved).toBe("named");
     expect(res.careRecipients?.map((r) => r.name)).toEqual(["Samira M", "Imran Mohammed"]);
   });
+
+  // 2026-09-13 (live-caught): carePlans.recipientPlans is additive-only — the
+  // website's own "delete recipient" action (CarePlan.tsx deleteRecipient)
+  // only removes someone from job_postings/{uid}'s roster, never from
+  // carePlans, so a deleted household member's plan entry sits there orphaned
+  // forever. A booking defaulted a caregiver interview to a recipient deleted
+  // three days earlier because this function iterated recipientPlans keys
+  // with no cross-check against the roster at all.
+  it("excludes a recipientPlans entry no longer on the job_postings roster (deleted household member)", async () => {
+    hoisted.docState.set("carePlans/client1", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+        hamse_noname: { name: "Hamse", careNeeds: ["Companionship"] },
+      },
+    });
+    hoisted.docState.set("job_postings/client1", {
+      careRecipientFirstName: "Samira",
+      careRecipientLastName: "M",
+      additionalRecipients: [{ firstName: "Imran", lastName: "Mohammed" }],
+      // "Hamse" was removed here; carePlans never got the memo.
+      deletedRecipients: [{ firstName: "Hamse", lastName: "", relationship: "myself" }],
+    });
+    const res = await resolveRecipientAttribution("client1", undefined, undefined);
+    expect(res.recipientResolved).toBe("defaulted_all");
+    expect(res.careRecipients?.map((r) => r.name)).toEqual(["Samira M", "Imran Mohammed"]);
+  });
+
+  it("does not filter at all when there's no roster doc to check against (fail-soft)", async () => {
+    hoisted.docState.set("carePlans/client1", {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    const res = await resolveRecipientAttribution("client1", undefined, undefined);
+    expect(res.careRecipients?.map((r) => r.name)).toEqual(["Samira M", "Imran Mohammed"]);
+  });
 });
 
 describe("resolveEmergencyContact", () => {

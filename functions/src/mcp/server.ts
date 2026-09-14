@@ -3780,7 +3780,7 @@ async function executeToolCall(
         }
         return {
           success: true,
-          instruction: "This tool already texted the family to start the interview flow. Do not send anything else this turn beyond a brief acknowledgment, if anything — the flow now owns the conversation until it finishes.",
+          instruction: "This tool already texted the family to start the interview flow, in one message. Send NOTHING else this turn — not even a brief acknowledgment — it can arrive out of order against the flow's own message. The flow now owns the conversation until it finishes.",
         };
       }
 
@@ -3805,7 +3805,7 @@ async function executeToolCall(
         }
         return {
           success: true,
-          instruction: "This tool already texted the family to start the booking flow. Do not send anything else this turn beyond a brief acknowledgment, if anything — the flow now owns the conversation until it finishes.",
+          instruction: "This tool already texted the family to start the booking flow, in one message. Send NOTHING else this turn — not even a brief acknowledgment — it can arrive out of order against the flow's own message. The flow now owns the conversation until it finishes.",
         };
       }
 

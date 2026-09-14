@@ -100,7 +100,7 @@ describe("startBookingFlow", () => {
     await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
-    expect(sendMessage.mock.calls.map((c: any[]) => c[1]).join(" | ")).toContain("What hourly rate");
+    expect(sendMessage.mock.calls.map((c: any[]) => c[1]).join(" | ")).toContain("agreed hourly rate");
   });
 
   it("always asks the rate explicitly even when a linked job post has one — matching the site's own Required field — but offers it as a suggestion", async () => {
@@ -115,7 +115,7 @@ describe("startBookingFlow", () => {
     expect(stored.bookingFlowData.jobPostRate).toBe(25);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
     const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
-    expect(lastMsg).toContain("What hourly rate");
+    expect(lastMsg).toContain("agreed hourly rate");
     expect(lastMsg).toContain("$25/hr");
   });
 
@@ -142,6 +142,91 @@ describe("startBookingFlow", () => {
     expect(stored.bookingFlowStep).toBe("bk_ask_times");
     expect(stored.bookingFlowData.scheduleKind).toBe("recurring");
     expect(stored.bookingFlowData.days).toEqual(["Monday", "Wednesday"]);
+  });
+
+  // 2026-09-13 (live-caught): the site's own job_posts doc only ever records
+  // a recipientsCount NUMBER, never which household member a posting/
+  // interview was actually for — resolveRecipientAttribution's "defaulted_
+  // all" is the best available default, but silently applying it and only
+  // surfacing who it picked in the FINAL recap left the family unable to see
+  // — let alone correct — an unrelated name swept in until they'd already
+  // answered rate/schedule/location. This proactively confirms it upfront.
+  it("proactively confirms who the booking covers upfront when the default is genuinely ambiguous (2+ recipients, none named)", async () => {
+    hoisted.docState.set(`carePlans/${UID}`, {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm_recipients");
+    expect(stored.bookingFlowData.recipientResolved).toBe("defaulted_all");
+    const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(lastMsg).toContain("this booking is for: Samira M, Imran Mohammed");
+  });
+
+  it("skips straight to the rate question when there's only one recipient on file (nothing ambiguous to confirm)", async () => {
+    hoisted.docState.set(`carePlans/${UID}`, {
+      recipientPlans: { samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] } },
+    });
+    await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+  });
+});
+
+describe("bk_confirm_recipients", () => {
+  function seedAtConfirmRecipients() {
+    // resolveAndMergeRecipients (the "naming who it's actually for" path)
+    // re-resolves against carePlans, not just the in-flight flow data — seed
+    // both so a name-narrowing reply can actually find a real match.
+    hoisted.docState.set(`carePlans/${UID}`, {
+      recipientPlans: {
+        samira_m: { name: "Samira M", careNeeds: ["Meal Preparation"] },
+        imran_mohammed: { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+      },
+    });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      bookingFlowStep: "bk_confirm_recipients",
+      bookingFlowData: {
+        caregiverId: CG_ID, caregiverName: "Basra Yousuf",
+        careRecipients: [
+          { name: "Samira M", careNeeds: ["Meal Preparation"] },
+          { name: "Imran Mohammed", careNeeds: ["Bathing"] },
+        ],
+        recipientResolved: "defaulted_all",
+      },
+    });
+  }
+
+  it("a plain confirmation advances straight to the rate question, unchanged", async () => {
+    seedAtConfirmRecipients();
+    modelReplies("NO", '{"confirmed": true, "recipientNames": null}');
+    await handleBookingFlowStep(PHONE, CHAT, "yes that's right", session({ bookingFlowStep: "bk_confirm_recipients" }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+    expect(stored.bookingFlowData.careRecipients).toHaveLength(2);
+  });
+
+  it("naming who it's actually for narrows the recipients, then advances to rate", async () => {
+    seedAtConfirmRecipients();
+    modelReplies("NO", '{"confirmed": false, "recipientNames": ["Samira"]}');
+    await handleBookingFlowStep(PHONE, CHAT, "just for Samira", session({ bookingFlowStep: "bk_confirm_recipients" }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+    expect(stored.bookingFlowData.careRecipients).toHaveLength(1);
+    expect(stored.bookingFlowData.careRecipients[0].name).toBe("Samira M");
+    expect(stored.bookingFlowData.recipientResolved).toBe("named");
+  });
+
+  it("re-asks on an unclassifiable reply instead of guessing", async () => {
+    seedAtConfirmRecipients();
+    modelReplies("NO", '{"confirmed": false, "recipientNames": null}');
+    await handleBookingFlowStep(PHONE, CHAT, "hmm not sure", session({ bookingFlowStep: "bk_confirm_recipients" }));
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm_recipients");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch that");
   });
 });
 
@@ -180,7 +265,7 @@ describe("bk_ask_rate", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(String(sendMessage.mock.calls[1][1])).toContain("What hourly rate");
+    expect(String(sendMessage.mock.calls[1][1])).toContain("agreed hourly rate");
   });
 });
 
@@ -342,6 +427,19 @@ describe("bk_confirm", () => {
     expect(stored.bookingFlowStep).toBeUndefined();
   });
 
+  // 2026-09-13 (live-caught, "it's keep repeating"): a genuine mid-flow
+  // question at confirm used to re-send the ENTIRE (long) recap every time —
+  // now it gets a short reminder instead, so answering a question doesn't
+  // feel like the flow reset itself.
+  it("a genuine question at confirm gets answered plus a short reminder, not the full recap again", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "other" }), "YES", "Interviews usually run 15-30 minutes.");
+    await handleBookingFlowStep(PHONE, CHAT, "how long does the interview usually take", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+    const sentTexts = sendMessage.mock.calls.map((c: any[]) => String(c[1]));
+    expect(sentTexts.at(-1)).toContain("Confirming whether to send this booking request");
+    expect(sentTexts.some((t) => t.includes("Here's your booking request:"))).toBe(false);
+  });
+
   it("an in-message rate correction updates the rate in place and re-shows the recap", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     modelReplies(JSON.stringify({ action: "edit_rate", newRate: 30 }));
@@ -363,7 +461,7 @@ describe("bk_confirm", () => {
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("What hourly rate");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("agreed hourly rate");
   });
 
   it("an edit_schedule request sends the flow back to the days question", async () => {
@@ -615,7 +713,7 @@ describe("buildBookingRecap", () => {
       expect(idx).toBeGreaterThan(lastIndex);
       lastIndex = idx;
     }
-    expect(recap).toContain("Tuesday 09:00–17:00, Thursday 10:00–14:00");
+    expect(recap).toContain("Tuesday 9:00 AM–5:00 PM, Thursday 10:00 AM–2:00 PM");
     expect(recap).toContain("Samira M (parent, Age 22): Meal Preparation, Personal Care");
     expect(recap).toContain("Notes: likes to go shopping");
     expect(recap).toContain("Lifestyle: prefers quiet");

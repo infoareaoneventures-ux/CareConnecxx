@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { notifyAreaCaregivers } from "../triggers/jobNotifications";
-import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
+import { recipientPlanKey, resolveRecipientKey, normalizeAdditionalRecipients, allCareRecipients, CareRecipient } from "./careRecipients";
 import { buildWebJobPostDoc, defaultJobTitle } from "./jobPostContract";
 import { geocodeZip, geocodeCity } from "../utils/geocode";
 import { buildJobPostingsDoc, buildCarePlanLocationEntry, mapJobPostingsDocToOnboardingData } from "./clientJobPostingContract";
@@ -187,11 +187,30 @@ export async function buildAndSaveJobPost(params: {
   // CarePlan.tsx getKey format (recipientPlanKey) so the web tabs find Evia's
   // data. Needs/conditions are shared at signup (same as the web PostJob
   // flow); per-person edits happen in the CarePlan tabs afterward.
+  //
+  // 2026-09-13 (live-caught): resolve each recipient's key against whatever
+  // recipientPlans keys ALREADY exist for this client — the same prefix-match
+  // resolveRecipientKey uses for every other recipient-scoped write (e.g.
+  // save_care_task_detail in mcp/server.ts) — instead of always minting a
+  // fresh "firstname_noname" key from just the first name. Minting blind used
+  // to silently create a SECOND entry for someone already on file under a
+  // real "first_last" key (e.g. the site's own "samira_m"), so the same
+  // person showed up twice — once under each key — in any later recap or
+  // pick list.
+  const cpSnap = await db.collection("carePlans").doc(uid).get().catch(() => null);
+  const existingPlanKeys = Object.keys((cpSnap?.data()?.recipientPlans ?? {}) as Record<string, unknown>);
+  const seniorFirstName = (seniorName || "").trim().split(/\s+/)[0] || seniorName;
+  const seniorKeyRes = resolveRecipientKey(existingPlanKeys, seniorFirstName);
+  const seniorKey = seniorKeyRes.ok ? seniorKeyRes.key : recipientPlanKey(seniorFirstName);
+
   const recipientPlans: Record<string, unknown> = {};
   for (const r of recipients.length ? recipients : [{ name: seniorName, relationship, age: seniorAge }]) {
-    recipientPlans[recipientPlanKey((r.name || "").split(" ")[0] || r.name || "primary")] = {
+    const firstName = (r.name || "").trim().split(/\s+/)[0] || r.name || "primary";
+    const keyRes = resolveRecipientKey(existingPlanKeys, firstName);
+    const key = keyRes.ok ? keyRes.key : recipientPlanKey(firstName);
+    recipientPlans[key] = {
       name:         r.name || seniorName,
-      age:          r.age ?? (recipientPlanKey(r.name || "") === recipientPlanKey(seniorName) ? seniorAge : undefined),
+      age:          r.age ?? (key === seniorKey ? seniorAge : undefined),
       relationship: r.relationship ?? "",
       careNeeds,
       careLevel,
@@ -211,7 +230,6 @@ export async function buildAndSaveJobPost(params: {
   // locationPool is a growing history of addresses (Step2WhoWhere.tsx reads it
   // as one of its candidate sources) — upsert THIS job's address into it
   // instead of overwriting the whole pool down to one entry every job post.
-  const cpSnap = await db.collection("carePlans").doc(uid).get().catch(() => null);
   const existingPool = (cpSnap?.exists ? ((cpSnap.data() as Record<string, unknown>).locationPool as Array<Record<string, unknown>> | undefined) : undefined) ?? [];
   const newLocEntry = buildCarePlanLocationEntry(effectiveOnboarding, coords ?? undefined) as unknown as Record<string, unknown>;
   let locationPool: Array<Record<string, unknown>>;

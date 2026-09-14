@@ -206,6 +206,18 @@ async function handleBookingBackOut(phone: string, chatId: string, session: Agen
   }));
 }
 
+// 2026-09-13 (live-caught): "on the site I can see it and know which one
+// I'm clicking to send booking for" — clicking Send Booking on a specific
+// interview row makes the context unambiguous there; naming only the
+// caregiver here left the family with no equivalent upfront signal for
+// WHICH interview/job post this follows. Named in the very first message
+// now, not just (as of the fix right below this) the final recap.
+function openingLine(caregiverName: string, jobTitle?: string): string {
+  return jobTitle
+    ? `Let's get a booking request over to ${caregiverName}, following ${jobTitle}!`
+    : `Let's get a booking request over to ${caregiverName}!`;
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function startBookingFlow(
@@ -246,6 +258,31 @@ export async function startBookingFlow(
     ...(emergencyContact ? { emergencyContact } : {}),
   };
 
+  // 2026-09-13 (live-caught): the site's own job_posts doc only ever records
+  // a recipientsCount NUMBER, never which specific household member a given
+  // posting/interview was actually for — so "defaulted_all" (every recipient
+  // ever mentioned across this account's job posts) is genuinely the best
+  // available default, matching the site's own pre-selected-all checkboxes.
+  // But silently defaulting and only surfacing it in the FINAL recap left
+  // the family with no idea upfront who a booking actually covers until
+  // they'd already answered rate/schedule/location — confirmed live: two
+  // unrelated names (another job post's recipient, the account holder's own
+  // onboarding self-entry) got swept into a booking meant for one person.
+  // Ask upfront, right away, whenever the default is genuinely ambiguous
+  // (2+ recipients and none explicitly named) — one number/name reply either
+  // confirms or narrows it before anything else is asked.
+  const recipients = data.careRecipients ?? [];
+  if (data.recipientResolved === "defaulted_all" && recipients.length > 1) {
+    await db.collection("agent_sessions").doc(phone).update({
+      bookingFlowStep: "bk_confirm_recipients",
+      bookingFlowData: data,
+      stateExpiresAt:  expiresAt,
+    });
+    const names = recipients.map((r) => String(r.name ?? "")).filter(Boolean);
+    await sendMessage(chatId, `${openingLine(nameRes.caregiverName, data.jobTitle)}\n\n${RECIPIENTS_CONFIRM_QUESTION(names)}`);
+    return { started: true };
+  }
+
   await db.collection("agent_sessions").doc(phone).update({
     bookingFlowStep: "bk_ask_rate",
     bookingFlowData: data,
@@ -257,9 +294,54 @@ export async function startBookingFlow(
   // already-agreed; the field shows Required (empty) regardless. A known
   // job-post rate is offered as a suggestion in the question, never silently
   // assumed.
-  await sendMessage(chatId, `Let's get a booking request over to ${nameRes.caregiverName}!`);
-  await sendMessage(chatId, RATE_QUESTION(data.jobPostRate));
+  // Single combined message — two separate sendMessage calls here used to
+  // occasionally arrive out of order relative to the model's own trailing
+  // turn reply (a live-caught delivery race, 2026-09-13), reading as
+  // confusing/backwards. One atomic send removes that risk entirely.
+  await sendMessage(chatId, `${openingLine(nameRes.caregiverName, data.jobTitle)}\n\n${RATE_QUESTION(data.jobPostRate)}`);
   return { started: true };
+}
+
+// ── Step: recipients confirm (proactive, only when the default is genuinely ambiguous) ──
+
+const RECIPIENTS_CONFIRM_QUESTION = (names: string[]) =>
+  `Just to confirm — this booking is for: ${names.join(", ")}. Reply "yes" if that's right, or tell me who it's actually for.`;
+
+async function handleBkConfirmRecipients(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+  const names = (data.careRecipients ?? []).map((r) => String(r.name ?? "")).filter(Boolean);
+  const question = RECIPIENTS_CONFIRM_QUESTION(names);
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
+  if (await isQuestionOrOther(text, question)) {
+    await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+    await sendMessage(chatId, question);
+    return;
+  }
+  const raw = await parseWithClaude(
+    `Currently listed recipients for this booking: ${names.join(", ")}. The family is confirming whether that's ` +
+    'correct, or naming who it should ACTUALLY be for. Return ONLY a JSON object: {"confirmed": true or false, ' +
+    '"recipientNames": array of first names actually stated, or null}. "confirmed" is true for a plain yes/looks ' +
+    "good/that's right with no names stated. Never invent a name the message doesn't state.",
+    text
+  );
+  const parsed = parseJsonLoose(raw, "handleBkConfirmRecipients");
+  if (parsed?.confirmed === true) {
+    return advanceToRate(phone, chatId, data);
+  }
+  const stated = Array.isArray(parsed?.recipientNames) ? (parsed.recipientNames as unknown[]).map(String).filter(Boolean) : [];
+  if (stated.length) {
+    await resolveAndMergeRecipients(phone, session, stated);
+    const updated = await getFlowData(phone);
+    return advanceToRate(phone, chatId, updated);
+  }
+  await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+}
+
+async function advanceToRate(phone: string, chatId: string, data: BookingFlowData): Promise<void> {
+  await updateStep(phone, "bk_ask_rate");
+  await sendMessage(chatId, RATE_QUESTION(data.jobPostRate));
 }
 
 // ── Step dispatch ─────────────────────────────────────────────────────────────
@@ -275,6 +357,7 @@ export async function handleBookingFlowStep(
     case "bk_ask_ongoing":  return handleBkAskOngoing(phone, chatId, text, session);
     case "bk_ask_location": return handleBkAskLocation(phone, chatId, text, session);
     case "bk_ask_recipients": return handleBkAskRecipients(phone, chatId, text, session);
+    case "bk_confirm_recipients": return handleBkConfirmRecipients(phone, chatId, text, session);
     case "bk_ask_message":  return handleBkAskMessage(phone, chatId, text, session);
     case "bk_confirm":      return handleBkConfirm(phone, chatId, text, session);
     default:
@@ -291,15 +374,15 @@ export async function handleBookingFlowStep(
 // post's rate as already-agreed; it shows Required/empty regardless). A
 // known job-post rate is offered as a suggestion, never silently assumed.
 const RATE_QUESTION = (jobPostRate?: number) =>
-  `What hourly rate are you offering for this booking?` +
-  (jobPostRate ? ` (Your job post lists $${jobPostRate}/hr — reply with that, or a different amount.)` : "");
+  `What's the agreed hourly rate for this booking?` +
+  (jobPostRate ? ` (Your job post lists $${jobPostRate}/hr — reply with that, or the different rate you agreed on.)` : "");
 
 async function handleBkAskRate(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = RATE_QUESTION(data.jobPostRate);
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -339,9 +422,9 @@ const DAYS_QUESTION = (jobPostDays?: string[]) =>
 async function handleBkAskDays(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = DAYS_QUESTION(data.jobPostDays);
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -385,10 +468,10 @@ const TIMES_QUESTION = (days: string[]) =>
 async function handleBkAskTimes(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const days = data.days ?? [];
   const question = data.scheduleKind === "recurring" ? TIMES_QUESTION(days) : `What time should the visit run? (e.g. "9am to 3pm")`;
+  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -470,7 +553,7 @@ async function advanceFromTimes(phone: string, chatId: string, session: AgentSes
 async function handleBkAskOngoing(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
+  if (await isBackOutRequest(text, ONGOING_QUESTION)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   if (await isQuestionOrOther(text, ONGOING_QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
@@ -510,7 +593,7 @@ async function advanceToLocation(phone: string, chatId: string, session: AgentSe
     await updateStep(phone, "bk_ask_location");
     await sendMessage(chatId,
       `Which address is this for?\n\n${formatCareLocationOptions(locRes.options)}\n\n` +
-      "Reply with a number, or mention which one (e.g. by the smoking/pets tag)."
+      "Reply with a number, or the street name."
     );
     return;
   }
@@ -562,7 +645,11 @@ async function promptRecipientEdit(phone: string, chatId: string, session: Agent
 // recipientName via the same resolver used at flow start, then recomputes
 // the fields that depend on it (care-needs union, lifestyle tags, age/
 // relationship) before returning to the recap.
-async function applyRecipientSelection(phone: string, chatId: string, session: AgentSession, names: string[]): Promise<void> {
+// Shared by both the recap's "edit_recipients" action and the proactive
+// upfront confirm (bk_confirm_recipients) — only the resolve+merge, no
+// navigation, since the two callers land on different next steps (the
+// former returns to the final recap, the latter continues on to rate).
+async function resolveAndMergeRecipients(phone: string, session: AgentSession, names: string[]): Promise<void> {
   const clientId = session.userId as string | undefined;
   if (!clientId || !names.length) return;
   const attribution = await resolveRecipientAttribution(
@@ -576,6 +663,11 @@ async function applyRecipientSelection(phone: string, chatId: string, session: A
     recipientKey:      attribution.recipientKey,
     recipientResolved: attribution.recipientResolved,
   });
+}
+
+async function applyRecipientSelection(phone: string, chatId: string, session: AgentSession, names: string[]): Promise<void> {
+  const clientId = session.userId as string | undefined;
+  await resolveAndMergeRecipients(phone, session, names);
   const data = await refreshDerivedRecipientFields(phone, clientId);
   await updateStep(phone, "bk_confirm");
   await sendMessage(chatId, buildBookingRecap(data));
@@ -584,12 +676,12 @@ async function applyRecipientSelection(phone: string, chatId: string, session: A
 async function handleBkAskRecipients(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const options = data.recipientOptions ?? [];
   const QUESTION = options.length
     ? `Who should this booking be for?\n\n${formatRecipientOptions(options)}`
     : "Who is this booking for?";
+  if (await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, QUESTION);
@@ -630,9 +722,9 @@ const MESSAGE_QUESTION = (caregiverName: string) =>
 async function handleBkAskMessage(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const QUESTION = MESSAGE_QUESTION(data.caregiverName);
+  if (await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, QUESTION);
@@ -663,12 +755,12 @@ async function handleBkAskMessage(
 async function handleBkAskLocation(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const options = data.careLocationOptions ?? [];
   const QUESTION = options.length
     ? `Which address is this for?\n\n${formatCareLocationOptions(options)}`
     : "Where will this care take place? (street address + zip)";
+  if (await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, QUESTION);
@@ -769,30 +861,42 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
   return parts.join("; ");
 }
 
+// The stored time values stay 24h "HH:MM" internally (matches the site's
+// own dayShiftTimes/appointments shape) — a family reading a text message
+// shouldn't see "09:00–12:00" echoed back at them. Same helper/reasoning as
+// interviewFlow.ts's formatTimeForDisplay.
+function formatTimeForDisplay(time: string): string {
+  const m = time.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return time;
+  const period = parseInt(m[1], 10) >= 12 ? "PM" : "AM";
+  const hour12 = parseInt(m[1], 10) % 12 || 12;
+  return `${hour12}:${m[2]} ${period}`;
+}
+
 export function buildBookingRecap(data: BookingFlowData): string {
   const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${data.scheduleEndDate})` : "";
   const scheduleLine = data.scheduleKind === "recurring"
     ? `${(data.days ?? []).map((d) => {
         const t = data.dayTimes?.[d];
-        return t ? `${d} ${t.start}–${t.end}` : d;
+        return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
       }).join(", ")} ${spanLine}`
-    : `${(data.dates ?? []).join(", ")}, ${data.startTime}–${data.endTime}`;
+    : `${(data.dates ?? []).join(", ")}, ${formatTimeForDisplay(data.startTime ?? "")}–${formatTimeForDisplay(data.endTime ?? "")}`;
 
   const recipientLines: string[] = [];
   if (data.careRecipients?.length) {
-    for (const r of data.careRecipients) {
+    data.careRecipients.forEach((r, i) => {
       const name = String(r.name ?? "");
       const rel  = r.relationship ? ` (${r.relationship}${r.age ? `, Age ${r.age}` : ""})` : "";
       const needs = Array.isArray(r.careNeeds) && r.careNeeds.length ? (r.careNeeds as string[]).join(", ") : "General care";
       const lifestyle = formatRecipientLifestyle(r.lifestyle);
       const notes = typeof r.notes === "string" ? r.notes.trim() : "";
-      recipientLines.push(`- ${name}${rel}: ${needs}`);
-      recipientLines.push(`  Notes: ${notes || "None"}`);
-      recipientLines.push(`  Lifestyle: ${lifestyle || "Not specified"}`);
-    }
+      recipientLines.push(`${i + 1}. ${name}${rel}: ${needs}`);
+      recipientLines.push(`   Notes: ${notes || "None"}`);
+      recipientLines.push(`   Lifestyle: ${lifestyle || "Not specified"}`);
+    });
   } else {
     const needs = data.topLevelCareNeeds?.length ? data.topLevelCareNeeds.join(", ") : "General care";
-    recipientLines.push(`- ${data.recipientName ?? "your household"}: ${needs}`);
+    recipientLines.push(`1. ${data.recipientName ?? "your household"}: ${needs}`);
   }
 
   // Address pet/smoking tags travel with the location line (matches the
@@ -808,6 +912,11 @@ export function buildBookingRecap(data: BookingFlowData): string {
     `Here's your booking request:`,
     ``,
     `Caregiver: ${data.caregiverName}`,
+    // 2026-09-13 (live-caught): unlike the site — where clicking "Send
+    // Booking" on a specific interview/job row makes it unambiguous what
+    // you're sending — nothing here ever named WHICH interview/job post
+    // this booking follows, even though jobTitle is already tracked.
+    ...(data.jobTitle ? [`Following: ${data.jobTitle}`] : []),
     `Agreed rate: $${data.hourlyRate}/hr`,
     `Schedule: ${scheduleLine}`,
     `Care recipients:`,
@@ -831,8 +940,8 @@ const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this booking reque
 async function handleBkConfirm(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBookingBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
+  if (await isBackOutRequest(text, buildBookingRecap(data))) return handleBookingBackOut(phone, chatId, session);
 
   const raw = await parseWithClaude(
     "The family is reviewing a booking request summary before it sends. Classify their reply. Return ONLY a JSON " +
@@ -857,12 +966,18 @@ async function handleBkConfirm(
     "conversation or prefer quiet, family/friends visiting, upcoming appointments — NOT a care need/task) — set " +
     "lifestyleRecipient to whose preferences this is about if a name is stated (else null), and lifestyleText to " +
     "the exact preference details stated, else null. " +
-    '"edit_notes" = wants to add/change a general free-text NOTE about a care recipient (e.g. "add a note that ' +
-    'she likes to go shopping") — distinct from a care need/task or a lifestyle preference — set notesRecipient ' +
-    "to whose note this is if a name is stated (else null), and notesText to the exact note content stated, else " +
-    "null. " +
-    '"edit_message" = wants to add/change the note sent to the CAREGIVER (not a note about the care recipient) — ' +
-    "set newMessage to the exact text stated, else null. " +
+    '"edit_notes" = wants to add/change a general free-text NOTE ABOUT A CARE RECIPIENT specifically — ONLY when ' +
+    'the message names or clearly implies a specific person being cared for (e.g. "add a note that Samira likes ' +
+    'to go shopping", "note for her: prefers mornings") — distinct from a care need/task or a lifestyle ' +
+    "preference — set notesRecipient to whose note this is if a name is stated (else null), and notesText to the " +
+    "exact note content stated, else null. " +
+    '"edit_message" = wants to add/change the optional note sent TO THE CAREGIVER — this is the default for any ' +
+    '"add/change a note" request that does NOT specifically name or imply a care recipient (matches the site\'s ' +
+    'own single "Message to {caregiver}" field, which is what most families mean by a plain "add a note" with no ' +
+    'one else specified) — e.g. "add this note: running late today", "can you add a note saying thanks" both set ' +
+    'newMessage to the actual note text (strip only a leading instruction like "add this note"/"add a note that " ' +
+    'if present, e.g. "add this note. this is for a testing" -> newMessage "this is for a testing"). Set ' +
+    "newMessage to the exact remaining text stated, else null if truly no text follows. " +
     '"other" = a genuine question, or anything that isn\'t a decision or a change to one of those things. ' +
     "Never invent a rate, name, note, care need, or preference the message doesn't state.",
     text
@@ -1068,10 +1183,15 @@ async function handleBkConfirm(
   }
 
   if (action !== "confirm") {
-    // "other" (a genuine question) or an unclassifiable reply — answer if
-    // it's a real question, then re-show the recap either way.
+    // 2026-09-13 (live-caught, "it's keep repeating"): re-sending the WHOLE
+    // recap after every genuine mid-flow question made the confirm step
+    // feel like a broken record. A real question gets answered plus a SHORT
+    // reminder now — only a truly unclassifiable reply re-shows the full
+    // recap, to help the family re-orient when nothing else matched.
     if (await isQuestionOrOther(text, CONFIRM_QUESTION_FALLBACK)) {
       await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+      await sendMessage(chatId, CONFIRM_QUESTION_FALLBACK);
+      return;
     }
     await sendMessage(chatId, buildBookingRecap(data));
     return;

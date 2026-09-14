@@ -105,7 +105,7 @@ beforeEach(() => {
 
 describe("bookingFlow — back-off at every step (2026-09-13)", () => {
   const steps = [
-    "bk_ask_rate", "bk_ask_days", "bk_ask_times", "bk_ask_ongoing",
+    "bk_confirm_recipients", "bk_ask_rate", "bk_ask_days", "bk_ask_times", "bk_ask_ongoing",
     "bk_ask_location", "bk_ask_recipients", "bk_ask_message", "bk_confirm",
   ];
 

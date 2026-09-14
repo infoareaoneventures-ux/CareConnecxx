@@ -249,8 +249,11 @@ export async function startInterviewFlow(
         interviewFlowData: { ...data, jobOptions },
         stateExpiresAt:    expiresAt,
       });
-      await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!`);
-      await sendMessage(chatId, JOB_QUESTION(jobOptions));
+      // Single combined message — two separate sendMessage calls here used to
+      // occasionally arrive out of order relative to the model's own trailing
+      // turn reply (a live-caught delivery race, 2026-09-13). One atomic send
+      // removes that risk entirely.
+      await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!\n\n${JOB_QUESTION(jobOptions)}`);
       return { started: true };
     }
   }
@@ -260,8 +263,7 @@ export async function startInterviewFlow(
     interviewFlowData: data,
     stateExpiresAt:    expiresAt,
   });
-  await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!`);
-  await sendMessage(chatId, DATE_QUESTION(data.caregiverName));
+  await sendMessage(chatId, `Let's set up an interview with ${data.caregiverName}!\n\n${DATE_QUESTION(data.caregiverName)}`);
   return { started: true };
 }
 
@@ -298,10 +300,10 @@ const JOB_QUESTION = (options: JobPostOption[]) =>
 async function handleIvAskJob(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const options = data.jobOptions ?? [];
   const question = JOB_QUESTION(options);
+  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -335,9 +337,9 @@ const DATE_QUESTION = (caregiverName: string) => `What day would you like the in
 async function handleIvAskDate(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = DATE_QUESTION(data.caregiverName);
+  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -367,9 +369,9 @@ const TIME_QUESTION = (date: string) => `What time on ${date} works?`;
 async function handleIvAskTime(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = TIME_QUESTION(data.date ?? "");
+  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -400,9 +402,9 @@ const NOTES_QUESTION = (caregiverName: string) =>
 async function handleIvAskNotes(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
   const question = NOTES_QUESTION(data.caregiverName);
+  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
     await sendMessage(chatId, question);
@@ -432,15 +434,28 @@ async function handleIvAskNotes(
 
 // ── Confirm / recap ───────────────────────────────────────────────────────────
 
+// The stored time value stays 24h "HH:MM" internally (matches preferredTime's
+// contract into requestVideoInterview) — a family reading a text message
+// shouldn't see "17:00" echoed back at them, same reasoning as
+// jobPostingFlow.ts's formatDateForDisplay for its own stored dates.
+function formatTimeForDisplay(time: string): string {
+  const m = time.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return time;
+  const period = parseInt(m[1], 10) >= 12 ? "PM" : "AM";
+  const hour12 = parseInt(m[1], 10) % 12 || 12;
+  return `${hour12}:${m[2]} ${period}`;
+}
+
 export function buildInterviewRecap(data: InterviewFlowData): string {
   const jobLine = data.jobTitle ?? "No specific post";
   const notesLine = data.notes ? `"${data.notes}"` : "None";
+  const timeLabel = data.time ? formatTimeForDisplay(data.time) : data.time;
   return [
     `Here's the interview request:`,
     ``,
     `Caregiver: ${data.caregiverName}`,
     `Related job post: ${jobLine}`,
-    `Date & time: ${data.date} at ${data.time}`,
+    `Date & time: ${data.date} at ${timeLabel}`,
     `Notes: ${notesLine}`,
     ``,
     `Reply YES to send it, or tell me what to change.`,
@@ -452,8 +467,8 @@ const CONFIRM_QUESTION_FALLBACK = "Confirming whether to send this interview req
 async function handleIvConfirm(
   phone: string, chatId: string, text: string, session: AgentSession,
 ): Promise<void> {
-  if (await isBackOutRequest(text)) return handleBackOut(phone, chatId, session);
   const data = await getFlowData(phone);
+  if (await isBackOutRequest(text, buildInterviewRecap(data))) return handleBackOut(phone, chatId, session);
 
   const raw = await parseWithClaude(
     "The family is reviewing an interview request summary before it sends. Classify their reply. Return ONLY a " +
@@ -536,10 +551,13 @@ async function handleIvConfirm(
   }
 
   if (action !== "confirm") {
-    // "other" (a genuine question) or an unclassifiable reply — answer if
-    // it's a real question, then re-show the recap either way.
+    // 2026-09-13 (same live-caught repetition fix as bookingFlow.ts): a real
+    // question gets answered plus a short reminder, not the whole recap
+    // again — only a truly unclassifiable reply re-shows the full recap.
     if (await isQuestionOrOther(text, CONFIRM_QUESTION_FALLBACK)) {
       await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));
+      await sendMessage(chatId, CONFIRM_QUESTION_FALLBACK);
+      return;
     }
     await sendMessage(chatId, buildInterviewRecap(data));
     return;

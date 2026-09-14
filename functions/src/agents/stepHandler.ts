@@ -42,15 +42,29 @@ export async function isQuestionOrOther(text: string, currentQuestion?: string):
 // this request" / "cancel the job post" just re-asked the flow's own
 // question every time — a genuine dead end. This is the shared fix, meant
 // to be checked FIRST in every step handler, ahead of isQuestionOrOther.
-export async function isBackOutRequest(text: string): Promise<boolean> {
+//
+// 2026-09-13 (same-day live incident, caught right after shipping): this
+// function originally took ONLY the reply text, with no idea what question
+// was just asked — unlike isQuestionOrOther above, which has always taken
+// currentQuestion for exactly this reason. A bare "yes" answering "Reply YES
+// to send it, or tell me what to change" got misclassified as a cancel in
+// BOTH interviewFlow.ts's and jobPostingFlow.ts's final confirm step
+// (confirmed live: the family got "Got it, we didn't send anything" /
+// "Totally understand, no rush at all" instead of the thing actually
+// sending), silently clearing the flow one question away from completion —
+// the worst possible place for this ambiguity to bite. currentQuestion is
+// now REQUIRED (not optional) specifically so no call site can accidentally
+// omit it the way this one originally did.
+export async function isBackOutRequest(text: string, currentQuestion: string): Promise<boolean> {
   const result = await parseWithClaude(
-    "The user is in the middle of a guided step-by-step flow with Evia (e.g. scheduling an interview, sending a " +
-      "booking, posting a job). Reply YES only if their message is a clear, genuine request to stop, cancel, or " +
-      "abandon this flow entirely right now — e.g. \"never mind\", \"forget it\", \"cancel this\", \"cancel the " +
-      "request\", \"stop\", \"I don't want to do this anymore\", \"let's not do this\". Reply NO for anything else " +
-      "— a real answer to the current question (even a partial or vague one), an off-topic question, an " +
-      "unrelated comment, or a request to CHANGE something about this flow (that's an edit, not a cancellation). " +
-      "Only reply YES or NO.",
+    `The user is in the middle of a guided step-by-step flow with Evia (e.g. scheduling an interview, sending a ` +
+      `booking, posting a job). Evia just asked: "${currentQuestion}". Reply YES only if their message is a clear, ` +
+      "genuine request to stop, cancel, or abandon this flow entirely right now — e.g. \"never mind\", \"forget " +
+      "it\", \"cancel this\", \"cancel the request\", \"stop\", \"I don't want to do this anymore\", \"let's not " +
+      "do this\". Reply NO for anything else — a real answer to the question just asked (even a partial, vague, " +
+      "or one-word one — this includes a plain \"yes\"/\"no\" answering a yes/no or confirm/decline question, " +
+      "which is NOT the same as wanting to abandon the flow), an off-topic question, an unrelated comment, or a " +
+      "request to CHANGE something about this flow (that's an edit, not a cancellation). Only reply YES or NO.",
     text,
     5,
   ).catch(() => "NO"); // fail toward NOT cancelling — never silently abandon on an ambiguous/failed parse

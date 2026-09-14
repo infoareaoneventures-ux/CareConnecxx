@@ -7,7 +7,7 @@
 import * as admin from "firebase-admin";
 import { resolveCaregiverName, coerceHourlyRate } from "../utils/caregiverRate";
 import { multiRecipientScopingEnabled } from "../config/featureFlags";
-import { resolveRecipientKey } from "./careRecipients";
+import { resolveRecipientKey, recipientPlanKey } from "./careRecipients";
 
 const db = admin.firestore();
 
@@ -202,6 +202,47 @@ export interface RecipientAttribution {
 
 export interface RecipientOption { key: string; name: string; }
 
+// carePlans.recipientPlans is additive-only — nothing ever deletes an entry
+// from it, including the website's own "delete recipient" action (CarePlan.tsx
+// deleteRecipient), which only removes them from job_postings/{uid}'s roster
+// (careRecipientFirstName/LastName + additionalRecipients, archiving into
+// deletedRecipients) and leaves their carePlans plan orphaned in place. The
+// site never notices because it always goes roster → recipientPlans lookup,
+// never the reverse — but code that iterates recipientPlans KEYS directly
+// (both functions below) has to cross-check the roster itself, or a
+// household member the family explicitly removed keeps resurfacing in every
+// later booking (2026-09-13, live-caught: a caregiver interview's booking
+// defaulted in a recipient deleted three days earlier). Returns null (skip
+// filtering) when there's no roster to check against, so accounts predating
+// job_postings tracking aren't blocked.
+async function getActiveRosterKeys(clientId: string): Promise<Set<string> | null> {
+  try {
+    const jpSnap = await db.collection("job_postings").doc(clientId).get();
+    const jp = jpSnap.data() ?? {};
+    const keys = new Set<string>();
+    if (jp.careRecipientFirstName) {
+      keys.add(recipientPlanKey(String(jp.careRecipientFirstName), String(jp.careRecipientLastName ?? "")));
+    }
+    for (const r of (jp.additionalRecipients as Array<{ firstName?: string; lastName?: string }> | undefined) ?? []) {
+      if (r?.firstName) keys.add(recipientPlanKey(String(r.firstName), String(r.lastName ?? "")));
+    }
+    return keys.size ? keys : null;
+  } catch (e) {
+    console.warn("[bookingResolution] active roster lookup failed (skipping filter):", e);
+    return null;
+  }
+}
+
+// Drops any recipientPlans key no longer on the active roster — fail-soft: if
+// filtering would empty the list entirely (e.g. a household whose roster
+// predates or otherwise doesn't cover any plan key), the unfiltered list wins
+// rather than blocking the booking outright.
+function filterToActiveRoster(planKeys: string[], activeKeys: Set<string> | null): string[] {
+  if (!activeKeys) return planKeys;
+  const filtered = planKeys.filter((k) => activeKeys.has(k));
+  return filtered.length ? filtered : planKeys;
+}
+
 // Every recipient on the household's care plan, for a caller that wants to
 // present them as a pick list (e.g. an explicit "who is this booking for"
 // edit — matches the site's own Care Recipients section, which lets you
@@ -210,7 +251,9 @@ export async function listRecipientOptions(clientId: string): Promise<RecipientO
   try {
     const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
     const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-    return Object.entries(plans).map(([key, plan]) => ({ key, name: String(plan.name ?? key) }));
+    const activeKeys = await getActiveRosterKeys(clientId);
+    const keys = filterToActiveRoster(Object.keys(plans), activeKeys);
+    return keys.map((key) => ({ key, name: String(plans[key].name ?? key) }));
   } catch (e) {
     console.warn("[bookingResolution] listRecipientOptions lookup failed:", e);
     return [];
@@ -253,7 +296,8 @@ export async function resolveRecipientAttribution(
     if (!multiRecipientScopingEnabled()) return result;
     const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
     const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-    const planKeys = Object.keys(plans);
+    const activeKeys = await getActiveRosterKeys(clientId);
+    const planKeys = filterToActiveRoster(Object.keys(plans), activeKeys);
     const names = Array.isArray(recipientFirstNames) && recipientFirstNames.length
       ? (recipientFirstNames as unknown[]).map(String)
       : (recipientFirstName ? [String(recipientFirstName)] : []);

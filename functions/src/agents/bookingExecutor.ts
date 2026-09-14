@@ -7,6 +7,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
+import { formatHHMMForDisplay } from "../utils/scheduledTime";
 
 async function hasConflict(
   caregiverId: string,
@@ -252,8 +253,18 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
     db.collection("caregivers").doc(task.caregiverId).get(),
     db.collection("users").doc(task.clientId).get(),
   ]);
-  const offerClientName = (clientSnapForOffer.data()?.name as string | undefined) || undefined;
   const offerClientData = clientSnapForOffer.data() ?? {};
+  // 2026-09-13 (live-caught): users/{uid} docs for an Evia-onboarded client
+  // never have a top-level `name` field at all — onboarding only ever
+  // writes firstName(/lastName). Reading `.name` unconditionally silently
+  // produced an empty clientName on every SMS-originated booking, which the
+  // caregiver's own booking card then rendered as a bare "Client" fallback
+  // instead of the family's real name — something a website-originated
+  // booking (built from Firebase Auth's displayName) never hits.
+  const offerClientName =
+    [offerClientData.firstName, offerClientData.lastName].filter(Boolean).join(" ")
+    || (offerClientData.name as string | undefined)
+    || undefined;
   const offerAddress = [offerClientData.street, offerClientData.city, offerClientData.state, offerClientData.zipCode]
     .filter(Boolean).join(", ") || null;
   // Hoisted above the write so the booking_requests doc carries the recipient
@@ -285,8 +296,10 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   batch.set(bookingRequestRef, {
     clientId:      task.clientId,
     clientName:    offerClientName ?? "",
+    ...(offerClientData.photoURL ? { clientPhotoURL: offerClientData.photoURL } : {}),
     caregiverId:   task.caregiverId,
     caregiverName: task.caregiverName,
+    ...(caregiverSnapForOffer.data()?.photo ? { caregiverPhotoURL: caregiverSnapForOffer.data()?.photo } : {}),
     ...(bookingAddress ? { address: bookingAddress } : {}),
     ...(offerSeniorName ? { seniorName: offerSeniorName } : {}),
     ...(task.recipientKey ? { recipientKey: task.recipientKey } : {}),
@@ -324,8 +337,17 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   const offerCgPhone = caregiverSnapForOffer.data()?.phone as string | undefined;
 
   if (!offerCgPhone) {
-    // Can't reach the caregiver over SMS — fall back to immediate confirmation
-    // (legacy behavior) and flag for admin follow-up so a human verifies coverage.
+    // 2026-09-13 (live-caught): SMS is only EVIA's OWN notification channel —
+    // it was never the only way a caregiver can respond. The site's own
+    // Requests tab already shows this booking (the batch.set above already
+    // wrote it as status:"pending") regardless of whether Evia can text
+    // them, and they can Accept/Decline there the exact same way as any
+    // other caregiver. Auto-accepting on their behalf just because SMS
+    // delivery isn't possible was a real site-parity violation — no booking
+    // on the site is ever silently confirmed without the caregiver's own
+    // Accept, phone on file or not. Just flag it so a human follows up on
+    // reaching them some other way (call, email); the request itself stays
+    // exactly as pending as every other one.
     await db.collection("admin_alerts").add({
       type:          "shift_offer_undeliverable",
       caregiverId:   task.caregiverId,
@@ -335,18 +357,33 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       createdAt:     now,
       resolved:      false,
     }).catch(() => {});
-    await bookingRequestRef.update({ status: "accepted" });
-    await writeConfirmedShifts(bookingRequestRef.id, task, offerClientName ?? "", offerSeniorName, offerAddress);
-    await taskRef.update({ status: "approved" });
-    await finalizeAcceptedBooking(taskId, clientPhone);
+
+    // Family still deserves the same honest "it's out, not confirmed yet"
+    // update the phone-reachable path sends below — the booking really is
+    // pending on the site regardless of whether Evia could text the
+    // caregiver about it.
+    const undeliverableSessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
+    if (undeliverableSessionSnap.exists) {
+      const undeliverableMsg = await generateCaraMessage({
+        audience: "family",
+        context:  `You just sent ${task.caregiverName} the booking request. Tell the family you've asked ${task.caregiverName} to confirm and you'll let them know once they respond. Do NOT say the booking is confirmed yet.`,
+        fallback: `I've sent the request to ${task.caregiverName} — I'll let you know as soon as they respond.`,
+        maxTokens: 80,
+      });
+      await sendMessage(undeliverableSessionSnap.data()!.chatId, undeliverableMsg);
+    }
     return;
   }
 
   const offerFirstAppt = task.appointments[0];
-  const offerVisitPay  = ((caregiverSnapForOffer.data()?.hourlyRate ?? 20) * offerFirstAppt.durationHours).toFixed(2);
+  // Prefer the rate the family actually agreed to for THIS booking over the
+  // caregiver's own generic listed rate — those can differ (negotiated up
+  // or down from what's on their profile), and quoting the wrong one here
+  // means the caregiver sees a different number than what gets billed.
+  const offerVisitPay  = ((task.hourlyRate ?? caregiverSnapForOffer.data()?.hourlyRate ?? 20) * offerFirstAppt.durationHours).toFixed(2);
   const offerClientLabel = offerSeniorName ? `with ${offerSeniorName}` : "with a client";
-  const offerLines = task.appointments.map((a) => `${a.date} · ${a.startTime}–${a.endTime}`).join("\n");
-  const offerSummary = `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt.date} at ${offerFirstAppt.startTime}, $${offerVisitPay} per visit`;
+  const offerLines = task.appointments.map((a) => `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n");
+  const offerSummary = `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt.date} at ${formatHHMMForDisplay(offerFirstAppt.startTime)}, $${offerVisitPay} per visit`;
 
   await createShiftOffer({
     kind:           "booking",
@@ -425,7 +462,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
   const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
   if (sessionSnap.exists) {
     const lines = task.appointments.map((a) =>
-      `${a.date} · ${a.startTime}–${a.endTime} · ${task.caregiverName}`
+      `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)} · ${task.caregiverName}`
     ).join("\n");
 
     const bookingConfirmOpener = await generateCaraMessage({
@@ -452,7 +489,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
     if (task.appointments.length === 1) {
       const firstAppt = task.appointments[0];
       const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(firstAppt.date).getDay()];
-      const schedDesc = `${dayOfWeek}s ${firstAppt.startTime}–${firstAppt.endTime}`;
+      const schedDesc = `${dayOfWeek}s ${formatHHMMForDisplay(firstAppt.startTime)}–${formatHHMMForDisplay(firstAppt.endTime)}`;
 
       // Write session flag BEFORE sending the message to avoid a race where a fast
       // YES reply arrives before the Firestore write lands.
@@ -611,6 +648,11 @@ export async function createBookingTask(params: {
     caregiverName:         params.caregiverName,
     appointments:          params.appointments,
     totalCost,
+    // 2026-09-13 (live-caught): never written before, despite BookingTask
+    // declaring it and executeBookings reading task.hourlyRate straight into
+    // the booking_requests doc's `rate` field — every booking created this
+    // way wrote rate:null regardless of what the family actually agreed to.
+    hourlyRate:            params.hourlyRate,
     status:                "awaiting_approval",
     humanApproved:         false,
     expiresAt:             new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),

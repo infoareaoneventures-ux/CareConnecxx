@@ -127,3 +127,19 @@ export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): 
     hour: "numeric", minute: "2-digit",
   });
 }
+
+// Stored appointment/shift times stay 24h "HH:MM" internally (matches the
+// site's own dayShiftTimes/appointments shape) — a family reading an SMS
+// shouldn't see "13:00" echoed back at them. Originally duplicated
+// separately in bookingFlow.ts and interviewFlow.ts's own recaps; a THIRD
+// spot (bookingExecutor.ts's finalizeAcceptedBooking confirmation) leaked
+// the same raw 24h time (2026-09-13, live-caught), so this is now the one
+// shared home — every caller should import from here instead of adding a
+// fourth copy.
+export function formatHHMMForDisplay(time: string): string {
+  const m = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!m) return time;
+  const period = parseInt(m[1], 10) >= 12 ? "PM" : "AM";
+  const hour12 = parseInt(m[1], 10) % 12 || 12;
+  return `${hour12}:${m[2]} ${period}`;
+}

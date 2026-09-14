@@ -424,6 +424,18 @@ describe("isTrivialQuickReply", () => {
       expect(isTrivialQuickReply(asTyped)).toBe(false);
     }
   });
+
+  // 2026-09-13 live incident: "yes we did" answered a proactive nudge ("did
+  // the interview happen? I can mark it complete") but isn't a BARE yes/no,
+  // so it slipped past the check above, landed on the no-tools quick-reply
+  // path, and fabricated "Perfect, I've marked Basra's interview complete"
+  // without ever calling complete_interview.
+  it.each([
+    "yes we did", "Yes we did", "yeah it happened", "yep, went great",
+    "no we didn't", "nope, had to reschedule", "yes it went well",
+  ])("never treats a yes/no-PREFIXED reply as trivial either %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(false);
+  });
 });
 
 describe("WARMTH_REFLECTION_OPENERS", () => {

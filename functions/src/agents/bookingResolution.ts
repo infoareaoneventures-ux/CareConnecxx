@@ -215,20 +215,32 @@ export interface RecipientOption { key: string; name: string; }
 // defaulted in a recipient deleted three days earlier). Returns null (skip
 // filtering) when there's no roster to check against, so accounts predating
 // job_postings tracking aren't blocked.
-async function getActiveRosterKeys(clientId: string): Promise<Set<string> | null> {
+// Keyed by recipientPlanKey, valued with the real display name — the site's
+// own CarePlan.tsx never writes a `name` field into recipientPlans[key] at
+// all (it always derives display names from THIS roster + a getKey lookup),
+// so plan.name is an Evia-only convention that's absent on any recipient the
+// site itself created. Falling back to the bare key when it's missing shows
+// the family raw internal text like "samira_m" instead of "Samira M"
+// (2026-09-13, live-caught).
+async function getRosterNames(clientId: string): Promise<Map<string, string> | null> {
   try {
     const jpSnap = await db.collection("job_postings").doc(clientId).get();
     const jp = jpSnap.data() ?? {};
-    const keys = new Set<string>();
+    const names = new Map<string, string>();
     if (jp.careRecipientFirstName) {
-      keys.add(recipientPlanKey(String(jp.careRecipientFirstName), String(jp.careRecipientLastName ?? "")));
+      const first = String(jp.careRecipientFirstName);
+      const last  = String(jp.careRecipientLastName ?? "");
+      names.set(recipientPlanKey(first, last), [first, last].filter(Boolean).join(" "));
     }
     for (const r of (jp.additionalRecipients as Array<{ firstName?: string; lastName?: string }> | undefined) ?? []) {
-      if (r?.firstName) keys.add(recipientPlanKey(String(r.firstName), String(r.lastName ?? "")));
+      if (!r?.firstName) continue;
+      const first = String(r.firstName);
+      const last  = String(r.lastName ?? "");
+      names.set(recipientPlanKey(first, last), [first, last].filter(Boolean).join(" "));
     }
-    return keys.size ? keys : null;
+    return names.size ? names : null;
   } catch (e) {
-    console.warn("[bookingResolution] active roster lookup failed (skipping filter):", e);
+    console.warn("[bookingResolution] roster lookup failed (skipping filter/name lookup):", e);
     return null;
   }
 }
@@ -237,9 +249,9 @@ async function getActiveRosterKeys(clientId: string): Promise<Set<string> | null
 // filtering would empty the list entirely (e.g. a household whose roster
 // predates or otherwise doesn't cover any plan key), the unfiltered list wins
 // rather than blocking the booking outright.
-function filterToActiveRoster(planKeys: string[], activeKeys: Set<string> | null): string[] {
-  if (!activeKeys) return planKeys;
-  const filtered = planKeys.filter((k) => activeKeys.has(k));
+function filterToActiveRoster(planKeys: string[], rosterNames: Map<string, string> | null): string[] {
+  if (!rosterNames) return planKeys;
+  const filtered = planKeys.filter((k) => rosterNames.has(k));
   return filtered.length ? filtered : planKeys;
 }
 
@@ -251,9 +263,9 @@ export async function listRecipientOptions(clientId: string): Promise<RecipientO
   try {
     const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
     const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-    const activeKeys = await getActiveRosterKeys(clientId);
-    const keys = filterToActiveRoster(Object.keys(plans), activeKeys);
-    return keys.map((key) => ({ key, name: String(plans[key].name ?? key) }));
+    const rosterNames = await getRosterNames(clientId);
+    const keys = filterToActiveRoster(Object.keys(plans), rosterNames);
+    return keys.map((key) => ({ key, name: rosterNames?.get(key) ?? String(plans[key].name ?? key) }));
   } catch (e) {
     console.warn("[bookingResolution] listRecipientOptions lookup failed:", e);
     return [];
@@ -296,8 +308,12 @@ export async function resolveRecipientAttribution(
     if (!multiRecipientScopingEnabled()) return result;
     const webPlanSnap = await db.collection("carePlans").doc(clientId).get();
     const plans = (webPlanSnap.data()?.recipientPlans ?? {}) as Record<string, Record<string, unknown>>;
-    const activeKeys = await getActiveRosterKeys(clientId);
-    const planKeys = filterToActiveRoster(Object.keys(plans), activeKeys);
+    const rosterNames = await getRosterNames(clientId);
+    const planKeys = filterToActiveRoster(Object.keys(plans), rosterNames);
+    // The roster is the real name authority (see getRosterNames) — plan.name
+    // is only an Evia-written convenience field the site itself never sets.
+    const displayName = (key: string, fallback: string) =>
+      rosterNames?.get(key) ?? (String(plans[key]?.name ?? fallback).trim() || fallback);
     const names = Array.isArray(recipientFirstNames) && recipientFirstNames.length
       ? (recipientFirstNames as unknown[]).map(String)
       : (recipientFirstName ? [String(recipientFirstName)] : []);
@@ -309,7 +325,7 @@ export async function resolveRecipientAttribution(
       const resolved: Array<{ key: string; name: string }> = [];
       for (const n of names) {
         const res = resolveRecipientKey(planKeys, n);
-        if (res.ok) resolved.push({ key: res.key, name: String(plans[res.key]?.name ?? n).trim() || n });
+        if (res.ok) resolved.push({ key: res.key, name: displayName(res.key, n) });
       }
       if (resolved.length) {
         result.recipientKey  = resolved[0].key;
@@ -325,17 +341,17 @@ export async function resolveRecipientAttribution(
       // instead of a single-recipient-only fallback with nothing to edit.
       const key = planKeys[0];
       result.recipientKey  = key;
-      result.recipientName = String(plans[key]?.name ?? "").trim() || undefined;
+      result.recipientName = displayName(key, "") || undefined;
       result.careRecipients = [careRecipientEntry(result.recipientName ?? "", plans[key] ?? {})];
     } else if (planKeys.length > 1) {
       const res = resolveRecipientKey(planKeys, names[0]);
       if (res.ok) {
         result.recipientKey  = res.key;
-        result.recipientName = String(plans[res.key]?.name ?? names[0] ?? "").trim() || undefined;
+        result.recipientName = displayName(res.key, names[0] ?? "") || undefined;
         result.recipientResolved = "named";
         result.careRecipients = [careRecipientEntry(result.recipientName ?? names[0], plans[res.key] ?? {})];
       } else {
-        result.careRecipients = planKeys.map((key) => careRecipientEntry(String(plans[key]?.name ?? key), plans[key] ?? {}));
+        result.careRecipients = planKeys.map((key) => careRecipientEntry(displayName(key, key), plans[key] ?? {}));
         result.recipientResolved = "defaulted_all";
       }
     }
@@ -419,13 +435,20 @@ export async function resolveTopLevelCareNeedsAndLifestyle(
   return result;
 }
 
-// Per-recipient age/relationship — matches the website's own recipient cards
-// (e.g. "parent · Age 22"). NOT on carePlans.recipientPlans at all — lives on
-// job_postings/{clientUid} (the household profile doc, keyed by client, not
-// by job post): the primary recipient's own
-// careRecipientFirstName/LastName/Age + top-level relationship, plus an
-// additionalRecipients array for everyone else. Matched onto careRecipients
+// Per-recipient age/relationship/photo — matches the website's own recipient
+// cards (e.g. "parent · Age 22" plus their photo). NOT on carePlans.
+// recipientPlans at all — lives on job_postings/{clientUid} (the household
+// profile doc, keyed by client, not by job post): the primary recipient's own
+// careRecipientFirstName/LastName/Age/PhotoURL + top-level relationship, plus
+// an additionalRecipients array for everyone else. Matched onto careRecipients
 // by first name; only enriches the multi-recipient array already built.
+//
+// 2026-09-13 (live-caught): photoURL was missing entirely — careRecipientEntry
+// (bookingResolution.ts) never carried it, unlike the website's own
+// handleSendBooking, which always includes each recipient's photoURL. The
+// caregiver's own booking view (CaregiverBookingsPage.tsx) renders it when
+// present, so every Evia-sent booking showed a plain initial-letter avatar
+// instead of the recipient's real photo.
 export async function enrichRecipientAgeRelationship(
   clientId: string, careRecipients: Array<Record<string, unknown>> | undefined,
 ): Promise<Array<Record<string, unknown>> | undefined> {
@@ -433,22 +456,30 @@ export async function enrichRecipientAgeRelationship(
   try {
     const jpSnap = await db.collection("job_postings").doc(clientId).get();
     const jp = jpSnap.data() ?? {};
-    const jpRecipients: Array<{ firstName: string; age?: string; relationship?: string }> = [];
+    const jpRecipients: Array<{ firstName: string; age?: string; relationship?: string; photoURL?: string }> = [];
     if (jp.careRecipientFirstName) {
       jpRecipients.push({
         firstName:    String(jp.careRecipientFirstName),
         age:          jp.careRecipientAge as string | undefined,
         relationship: jp.relationship as string | undefined,
+        photoURL:     jp.careRecipientPhotoURL as string | undefined,
       });
     }
-    for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; age?: string; relationship?: string }>) {
-      if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), age: r.age, relationship: r.relationship });
+    for (const r of (jp.additionalRecipients ?? []) as Array<{ firstName?: string; age?: string; relationship?: string; photoURL?: string }>) {
+      if (r?.firstName) jpRecipients.push({ firstName: String(r.firstName), age: r.age, relationship: r.relationship, photoURL: r.photoURL });
     }
     if (!jpRecipients.length) return careRecipients;
     return careRecipients.map((r) => {
       const firstName = String(r.name ?? "").split(" ")[0].toLowerCase();
       const match = jpRecipients.find((jr) => jr.firstName.toLowerCase() === firstName);
-      return match ? { ...r, ...(match.age ? { age: match.age } : {}), ...(match.relationship ? { relationship: match.relationship } : {}) } : r;
+      return match
+        ? {
+            ...r,
+            ...(match.age ? { age: match.age } : {}),
+            ...(match.relationship ? { relationship: match.relationship } : {}),
+            ...(match.photoURL ? { photoURL: match.photoURL } : {}),
+          }
+        : r;
     });
   } catch (e) {
     console.warn("[bookingResolution] recipient age/relationship lookup failed (booking proceeds without them):", e);

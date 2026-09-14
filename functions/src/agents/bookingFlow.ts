@@ -31,7 +31,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
 import { isBackOutRequest } from "./stepHandler";
 import {
@@ -657,8 +657,17 @@ async function resolveAndMergeRecipients(phone: string, session: AgentSession, n
     names.length === 1 ? names[0] : undefined,
     names.length > 1 ? names : undefined,
   );
+  // 2026-09-13 (live-caught): age/relationship/photo enrichment used to only
+  // happen inside refreshDerivedRecipientFields — which requires careLocation
+  // to already be known, so it's a no-op this early in the flow. The
+  // proactive bk_confirm_recipients narrowing ("for samira") runs BEFORE
+  // location is ever asked, so a narrowed recipient shipped with none of
+  // this: no age, no relationship, no photo — just a bare name, unlike the
+  // site's own booking cards. Age/relationship/photo don't depend on
+  // location at all, so enrich here immediately instead of waiting.
+  const enrichedRecipients = await enrichRecipientAgeRelationship(clientId, attribution.careRecipients);
   await mergeFlowData(phone, {
-    careRecipients:    attribution.careRecipients,
+    careRecipients:    enrichedRecipients ?? attribution.careRecipients,
     recipientName:     attribution.recipientName,
     recipientKey:      attribution.recipientKey,
     recipientResolved: attribution.recipientResolved,
@@ -861,18 +870,6 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
   return parts.join("; ");
 }
 
-// The stored time values stay 24h "HH:MM" internally (matches the site's
-// own dayShiftTimes/appointments shape) — a family reading a text message
-// shouldn't see "09:00–12:00" echoed back at them. Same helper/reasoning as
-// interviewFlow.ts's formatTimeForDisplay.
-function formatTimeForDisplay(time: string): string {
-  const m = time.match(/^(\d{2}):(\d{2})$/);
-  if (!m) return time;
-  const period = parseInt(m[1], 10) >= 12 ? "PM" : "AM";
-  const hour12 = parseInt(m[1], 10) % 12 || 12;
-  return `${hour12}:${m[2]} ${period}`;
-}
-
 export function buildBookingRecap(data: BookingFlowData): string {
   const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${data.scheduleEndDate})` : "";
   const scheduleLine = data.scheduleKind === "recurring"
@@ -891,7 +888,13 @@ export function buildBookingRecap(data: BookingFlowData): string {
       const lifestyle = formatRecipientLifestyle(r.lifestyle);
       const notes = typeof r.notes === "string" ? r.notes.trim() : "";
       recipientLines.push(`${i + 1}. ${name}${rel}: ${needs}`);
-      recipientLines.push(`   Notes: ${notes || "None"}`);
+      // 2026-09-13 (live-caught): "Notes: None" per recipient read as if that
+      // literal placeholder gets forwarded to the caregiver — it never does
+      // (the site's own caregiver booking view doesn't render per-recipient
+      // notes at all; only the top-level "Message to {caregiver}" field ever
+      // reaches them, and only when non-empty). Omit the line entirely
+      // instead of asserting an absence nobody needs stated.
+      if (notes) recipientLines.push(`   Notes: ${notes}`);
       recipientLines.push(`   Lifestyle: ${lifestyle || "Not specified"}`);
     });
   } else {
@@ -1207,7 +1210,7 @@ async function handleBkConfirm(
     return;
   }
   try {
-    const { createBookingTask } = await import("./bookingExecutor");
+    const { createBookingTask, executeBookings } = await import("./bookingExecutor");
     const appointments = data.scheduleKind === "one_off"
       ? (data.dates ?? []).map((d) => ({
           date: d, startTime: data.startTime!, endTime: data.endTime!,
@@ -1264,9 +1267,19 @@ async function handleBkConfirm(
       return;
     }
 
-    await sendMessage(chatId,
-      `Sent to ${data.caregiverName} — I'll let you know as soon as they respond.`
-    );
+    // 2026-09-13 (live-caught): createBookingTask only STAGES an agent_tasks
+    // doc (status: "awaiting_approval") — it never touches booking_requests,
+    // the collection the site's own UI and the caregiver's shift-offer flow
+    // actually read from. Evia told the family "Sent to Basra Yousuf" while
+    // the site still showed "Send Booking" available and the caregiver was
+    // never notified at all. executeBookings is the second step every other
+    // caller of createBookingTask already goes through (taskApprovalHandler,
+    // routeIntent's approval paths) — it does the real booking_requests
+    // write, accepts the caregiver's application, and sends the caregiver's
+    // shift offer. It also sends its OWN "request sent, awaiting their
+    // confirmation" message to the family, so this flow must NOT also send
+    // one — that would be a second, redundant confirmation.
+    await executeBookings(taskId, phoneForTask);
   } catch (err) {
     console.error("[bookingFlow] createBookingTask error:", err);
     await sendMessage(chatId, await generateCaraMessage({

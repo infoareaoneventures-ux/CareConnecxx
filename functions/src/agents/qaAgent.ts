@@ -4288,6 +4288,15 @@ export function isTrivialQuickReply(text: string): boolean {
   // regardless of how short or punctuation-free it looks.
   const bareYesNo = t.toUpperCase().replace(/[.!?]+$/g, "");
   if (TRIVIAL_YES.has(bareYesNo) || TRIVIAL_NO.has(bareYesNo)) return false;
+  // 2026-09-13 live incident: "yes we did" (confirming a proactive nudge —
+  // "did the interview happen? I can mark it complete") isn't a BARE yes/no
+  // so it slipped past the check above, landed on this no-tools path, and
+  // fabricated "Perfect, I've marked Basra's interview complete" without
+  // ever calling complete_interview. Same root cause as the bare-"Yes."
+  // incident above, just one word longer — a short reply that STARTS with
+  // an affirmation/negation is answering something Evia just asked, whatever
+  // trails it, and must always reach the full agent.
+  if (/^(?:yes|yeah|yep|yup|no|nope|nah)\b/i.test(t)) return false;
   // A real question or a pushback/contradiction always needs real data to
   // answer correctly — never assume the fast path's narrow view is enough,
   // regardless of what topic it happens to be about.

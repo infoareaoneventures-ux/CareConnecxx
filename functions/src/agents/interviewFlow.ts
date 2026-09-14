@@ -30,7 +30,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
-import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
+import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
 import { isBackOutRequest } from "./stepHandler";
 import {
   resolveCaregiverForInterview, requestVideoInterview, VideoInterviewRequestError,
@@ -433,18 +433,6 @@ async function handleIvAskNotes(
 }
 
 // ── Confirm / recap ───────────────────────────────────────────────────────────
-
-// The stored time value stays 24h "HH:MM" internally (matches preferredTime's
-// contract into requestVideoInterview) — a family reading a text message
-// shouldn't see "17:00" echoed back at them, same reasoning as
-// jobPostingFlow.ts's formatDateForDisplay for its own stored dates.
-function formatTimeForDisplay(time: string): string {
-  const m = time.match(/^(\d{2}):(\d{2})$/);
-  if (!m) return time;
-  const period = parseInt(m[1], 10) >= 12 ? "PM" : "AM";
-  const hour12 = parseInt(m[1], 10) % 12 || 12;
-  return `${hour12}:${m[2]} ${period}`;
-}
 
 export function buildInterviewRecap(data: InterviewFlowData): string {
   const jobLine = data.jobTitle ?? "No specific post";

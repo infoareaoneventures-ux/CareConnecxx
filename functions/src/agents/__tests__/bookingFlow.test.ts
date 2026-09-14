@@ -65,7 +65,11 @@ vi.mock("../../utils/claudeClient", () => ({
   getSharedClient: () => ({ messages: { create: (...a: unknown[]) => messagesCreate(...a) } }),
 }));
 const createBookingTask = vi.fn(async (_params: any) => "task-1");
-vi.mock("../bookingExecutor", () => ({ createBookingTask: (params: unknown) => createBookingTask(params) }));
+const executeBookings   = vi.fn(async (_taskId: string, _phone: string) => {});
+vi.mock("../bookingExecutor", () => ({
+  createBookingTask: (params: unknown) => createBookingTask(params),
+  executeBookings:   (taskId: string, phone: string) => executeBookings(taskId, phone),
+}));
 
 import { startBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
 
@@ -92,6 +96,8 @@ beforeEach(() => {
   messagesCreate.mockReset();
   createBookingTask.mockClear();
   createBookingTask.mockResolvedValue("task-1");
+  executeBookings.mockClear();
+  executeBookings.mockResolvedValue(undefined);
   seedCaregiver();
 });
 
@@ -393,7 +399,7 @@ describe("bk_confirm", () => {
     careLocation: "1 Elm St, Springfield, CA, 90000",
   };
 
-  it("YES commits via createBookingTask directly and clears the flow", async () => {
+  it("YES commits via createBookingTask, then actually executes it — not just stages it", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     modelReplies(JSON.stringify({ action: "confirm" }));
 
@@ -410,10 +416,42 @@ describe("bk_confirm", () => {
     expect(call.schedule.ongoing).toBe(true);
     expect(call.careLocation).toBe(CONFIRM_DATA.careLocation);
 
+    // 2026-09-13 (live-caught): createBookingTask alone only stages an
+    // agent_tasks doc — the real booking_requests write, the caregiver's
+    // shift offer, and the family's "request sent" confirmation all happen
+    // inside executeBookings. Evia was telling the family "Sent to Basra
+    // Yousuf" without this ever running, while the site still showed "Send
+    // Booking" available and the caregiver was never notified.
+    expect(executeBookings).toHaveBeenCalledTimes(1);
+    expect(executeBookings).toHaveBeenCalledWith("task-1", PHONE);
+
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBeUndefined();
     expect(stored.bookingFlowData).toBeUndefined();
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Sent to Basra Yousuf");
+  });
+
+  it("never sends its own success message — executeBookings owns the family-facing confirmation", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "confirm" }));
+
+    await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    // executeBookings is mocked to a no-op here, so if bookingFlow.ts sent
+    // its own "Sent to..." message this call would be the giveaway — a
+    // second, redundant confirmation on top of whatever executeBookings
+    // itself sends in production.
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("an execution failure still reaches the family as an honest apology, not a false success", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "confirm" }));
+    executeBookings.mockRejectedValueOnce(new Error("booking_requests write failed"));
+
+    await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toMatch(/problem|wrong|sorry/i);
+    expect(String(sendMessage.mock.calls.at(-1)![1])).not.toContain("Sent to");
   });
 
   it("NO cancels without ever calling createBookingTask", async () => {
@@ -718,7 +756,11 @@ describe("buildBookingRecap", () => {
     expect(recap).toContain("Notes: likes to go shopping");
     expect(recap).toContain("Lifestyle: prefers quiet");
     expect(recap).toContain("Imran Mohammed: Bathing");
-    expect(recap).toContain("Notes: None");
+    // 2026-09-13 (live-caught): "Notes: None" read as if that literal
+    // placeholder gets forwarded to the caregiver — it never does, so the
+    // line is now omitted entirely for a recipient with no note, instead of
+    // asserting an absence nobody needs stated.
+    expect(recap).not.toContain("Notes: None");
     expect(recap).toContain("Care location: 1 Elm St, Springfield, CA, 90000 (Smoking household)");
     expect(recap).toContain("Reply YES to send it to Basra Yousuf");
   });

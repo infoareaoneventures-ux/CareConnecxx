@@ -390,7 +390,7 @@ export async function handleWebChatTurn(args: {
       }
     }
 
-    const MATCH_TOOLS  = new Set(["find_replacement_caregivers", "request_booking"]);
+    const MATCH_TOOLS  = new Set(["find_nearby_caregivers", "get_callout_backups", "request_booking"]);
     const showMatches  = toolsCalled.some((t) => MATCH_TOOLS.has(t));
 
     // Turn succeeded: stamp the claim permanent so a retry short-circuits.

@@ -20,11 +20,11 @@ export type Capability =
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   start_booking_flow:           ["booking"],  // preferred entry point — see bookingFlow.ts
+  start_replacement_flow:       ["booking"],  // Find Replacement modal, step for step — see replacementFlow.ts
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
   get_callout_backups:          ["booking"],            // parity: real Find Replacement candidates (read)
   select_callout_backup:        ["booking"],            // parity: sends a real replacement booking request
-  find_replacement_caregivers:  ["booking"],
   find_nearby_caregivers:       ["booking"],
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],

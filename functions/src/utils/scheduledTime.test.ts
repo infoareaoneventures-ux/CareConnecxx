@@ -6,7 +6,30 @@ import {
   slotHourKey,
   apptSlotHourKey,
   formatDateForDisplay,
+  weekdayForDate,
+  formatDateWithWeekday,
 } from "./scheduledTime";
+
+// Live-caught 2026-09-14: given only the bare date, the model (and one
+// `new Date("YYYY-MM-DD").getDay()` call site) said "Tuesday, Sep 16" for a
+// Wednesday — UTC-midnight parsing is still the previous day in Pacific after
+// 5pm. The weekday is now computed from the date components and supplied.
+describe("weekdayForDate / formatDateWithWeekday", () => {
+  it("names the correct weekday regardless of the process timezone", () => {
+    expect(weekdayForDate("2026-09-16")).toBe("Wednesday");
+    expect(weekdayForDate("2026-09-15")).toBe("Tuesday");
+    expect(weekdayForDate("2026-09-13")).toBe("Sunday");
+  });
+
+  it("prefixes the weekday onto the display date", () => {
+    expect(formatDateWithWeekday("2026-09-16")).toBe("Wednesday, September 16, 2026");
+  });
+
+  it("passes non-ISO values through unchanged, with no weekday", () => {
+    expect(weekdayForDate("ASAP")).toBeNull();
+    expect(formatDateWithWeekday("ASAP")).toBe("ASAP");
+  });
+});
 
 describe("formatDateForDisplay (live-caught: raw ISO echoed back in a text message)", () => {
   it("formats a YYYY-MM-DD value as a human-readable date", () => {

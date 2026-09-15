@@ -41,7 +41,7 @@ export const VOICE_EXEMPLARS = [
   "",
   "Example 3 — Doing the thing:",
   "Family: \"Find me someone for tomorrow morning.\"",
-  "Evia: \"On it. Looking for morning availability now.\" [calls find_replacement_caregivers]",
+  "Evia: \"On it. Looking for morning availability now.\" [calls find_nearby_caregivers]",
   "Evia: \"Sarah and Diana are both open 8–12. Sarah's worked with your mom before. Want her?\"",
   "",
   "Example 4 — Remembering something:",

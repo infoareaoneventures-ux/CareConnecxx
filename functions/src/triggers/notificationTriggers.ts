@@ -311,9 +311,11 @@ export const onJobApplicationCreate = functions.firestore
 
 // ── booking_requests ────────────────────────────────────────────────────────
 // New request → notify caregiver
+// Accepted → text client (in-app bell is written by onBookingAccepted in
+//   shiftGenerator.ts; that trigger never texted, so a website-button accept
+//   reached the family's phone nowhere — live-caught 2026-09-14)
 // Declined → notify client
 // Cancelled → notify caregiver
-// (Accepted is already handled by onBookingAccepted in shiftGenerator.ts)
 export const onBookingRequestWrite = functions.firestore
   .document('booking_requests/{bookingId}')
   .onWrite(async (change, context) => {
@@ -346,6 +348,15 @@ export const onBookingRequestWrite = functions.firestore
       }
 
       if (statusBefore === statusAfter) return;
+
+      // Accepted → text client. An Evia-negotiated booking (agentTaskId set)
+      // is accepted through shiftOffer.ts, which already texts the family
+      // "Great news — X accepted!" itself — only a website-button accept has
+      // nothing else reaching the family's phone.
+      if (statusAfter === 'accepted' && after.clientId && !after.agentTaskId) {
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} accepted your booking request — the visits are on your My Bookings page.`);
+      }
 
       // Declined → notify client
       if (statusAfter === 'declined' && after.clientId) {

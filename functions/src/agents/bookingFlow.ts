@@ -34,7 +34,7 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
 import { normDay } from "../scheduled/shiftGenerator";
-import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
+import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingCaregiverName,
   resolveCareLocation, formatCareLocationOptions, listCareLocationOptions, resolveRecipientAttribution,
@@ -257,21 +257,24 @@ async function handleBkAskInterview(
   const data = await getFlowData(phone);
   const options = data.interviewOptions ?? [];
   const question = INTERVIEW_PICK_QUESTION(options);
-  if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, question)) {
-    await sendMessage(chatId, await answerQuestionMidFlow(text));
-    await sendMessage(chatId, question);
-    return;
-  }
-  const raw = await parseWithClaude(
-    `The family is picking which of ${options.length} interviews this booking follows. Return ONLY the number ` +
-    "(1-based) they picked, or \"0\" if the message doesn't clearly pick one. Never guess.",
-    text
-  );
-  const idx = parseInt(raw.trim(), 10);
-  if (isNaN(idx) || idx < 1 || idx > options.length) {
-    await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
-    return;
+  let idx = bareNumberPick(text, options.length);
+  if (idx === null) {
+    if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
+    if (await isQuestionOrOther(text, question)) {
+      await sendMessage(chatId, await answerQuestionMidFlow(text));
+      await sendMessage(chatId, question);
+      return;
+    }
+    const raw = await parseWithClaude(
+      `The family is picking which of ${options.length} interviews this booking follows. Return ONLY the number ` +
+      "(1-based) they picked, or \"0\" if the message doesn't clearly pick one. Never guess.",
+      text
+    );
+    idx = parseInt(raw.trim(), 10);
+    if (isNaN(idx) || idx < 1 || idx > options.length) {
+      await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+      return;
+    }
   }
   const chosen = options[idx - 1];
   const clientId = session.userId as string | undefined;
@@ -942,6 +945,12 @@ async function handleBkAskLocation(
   const QUESTION = options.length
     ? `Which address is this for?\n\n${formatCareLocationOptions(options)}`
     : "Where will this care take place? (street address + zip)";
+  const picked = bareNumberPick(text, options.length);
+  if (picked !== null) {
+    const a = options[picked - 1];
+    await mergeFlowData(phone, { careLocation: [a.street, a.city, a.state, a.zipCode].filter(Boolean).join(", ") });
+    return advanceToConfirm(phone, chatId, session);
+  }
   if (await isBackOutRequest(text, QUESTION)) return handleBookingBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, QUESTION)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text, data.caregiverName));

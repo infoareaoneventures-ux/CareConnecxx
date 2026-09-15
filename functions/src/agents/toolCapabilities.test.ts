@@ -64,7 +64,7 @@ describe("selectToolsForIntent", () => {
 
   it("filters down to booking-relevant tools for FIND_CAREGIVER", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "FIND_CAREGIVER"));
-    expect(filtered.has("find_replacement_caregivers")).toBe(true);
+    expect(filtered.has("find_nearby_caregivers")).toBe(true);
     expect(filtered.has("request_booking")).toBe(true);
     expect(filtered.has("get_caregiver_info")).toBe(true);
     // Billing tools should NOT be included

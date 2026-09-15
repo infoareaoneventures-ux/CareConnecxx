@@ -483,7 +483,7 @@ describe("patchDanglingToolCalls", () => {
       { role: "user", content: "find caregivers" },
       {
         role: "assistant",
-        content: [toolUse("call_1", "find_replacement_caregivers")],
+        content: [toolUse("call_1", "find_nearby_caregivers")],
       },
     ];
     const patches = patchDanglingToolCalls(messages);
@@ -494,7 +494,7 @@ describe("patchDanglingToolCalls", () => {
     expect(blocks[0].type).toBe("tool_result");
     expect(blocks[0].tool_use_id).toBe("call_1");
     expect((blocks[0] as any).is_error).toBe(true);
-    expect(String(blocks[0].content)).toContain("find_replacement_caregivers");
+    expect(String(blocks[0].content)).toContain("find_nearby_caregivers");
   });
 
   it("appends placeholders to an existing user-message array when some tool_uses are unanswered", () => {

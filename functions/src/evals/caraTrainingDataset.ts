@@ -189,7 +189,7 @@ export const STARTER_CARA_TRAINING_EXAMPLES: CaraTrainingExample[] = [
       intent: "missed_visit_replacement",
       risk: "high",
       missingInfo: [],
-      expectedTools: ["get_upcoming_appointments", "find_replacement_caregivers"],
+      expectedTools: ["get_upcoming_appointments", "find_nearby_caregivers"],
       expectedCollections: ["appointments", "admin_alerts", "agent_action_ledger"],
       expectedPageVisibility: ["admin_cara_control_room", "client_appointments"],
       forbidden: COMMON_FORBIDDEN,

@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
-import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateWithWeekday, formatHHMMForDisplay } from "../utils/scheduledTime";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { buildClickableMessage } from "./caraAgent";
@@ -9,7 +9,7 @@ import { redactPii } from "../safety/redactPii";
 import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
-import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
+import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { getZepContextResult, type ZepContextResult } from "../memory/zepClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 import {
@@ -690,7 +690,7 @@ export function buildClientSystemPrompt(
     : "No recent journal entries.";
 
   const apptLine = nextAppt
-    ? `Next visit: ${formatDateForDisplay(nextAppt.date)} ${nextAppt.startTime ? `at ${formatHHMMForDisplay(nextAppt.startTime)}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
+    ? `Next visit: ${formatDateWithWeekday(nextAppt.date)} ${nextAppt.startTime ? `at ${formatHHMMForDisplay(nextAppt.startTime)}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
     : "No upcoming visits currently scheduled.";
 
   const autoBook = permissions?.canBookAutomatically
@@ -732,7 +732,7 @@ export function buildClientSystemPrompt(
     `PROMISES MUST BE ACTIONS (non-negotiable): If you say "let me pull up", "let me find", "I'll check", "let me look that up", "give me a moment", "I'll get back to you with X", or any phrase implying deferred work, you MUST call the relevant tool IN THE SAME TURN. Never end your reply with a promise to do work without having already called the tool that does it. The user gets the text reply and any tool calls as one atomic turn; if the tool isn't called now, the work never happens.`,
     `Examples:`,
     `- BAD: "Got it, I'll find caregivers — let me pull up options." (no tool call → user waits forever)`,
-    `- GOOD: call find_replacement_caregivers, then follow the instruction in its result — it tells you exactly what the family has already been sent and what your one reply should say.`,
+    `- GOOD: call find_nearby_caregivers, then follow the instruction in its result — it tells you exactly what the family has already been sent and what your one reply should say.`,
     `- BAD: "Let me check your next visit." (no tool call)`,
     `- GOOD: call get_upcoming_appointments, then reply with the actual answer.`,
     `If you need more info from the family before you can call the tool (e.g. you don't know what they want), ASK a concrete question — don't say "let me check" first.`,
@@ -742,7 +742,7 @@ export function buildClientSystemPrompt(
     ``,
     MEMORY_SOURCE_PRIORITY_POLICY,
     ``,
-    `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names", call find_replacement_caregivers IMMEDIATELY. Do not re-ask about care needs if you already have them in the cached context above. The tool runs the full search before your reply is composed, and its result tells you the real outcome ("matched", "no_match", or "failed") plus exactly what the family has already been sent and what your one reply should say — follow that instruction (ONE VOICE). Never add your own status update on top of what the tool already texted, and never claim you're "actively searching" or "will bring names" when the result says no match was found — be honest about the outcome instead.`,
+    `CAREGIVER SEARCH — when the family asks for caregivers, options, or "give me names" in general, call find_nearby_caregivers IMMEDIATELY (the website's own Browse / Nearby Caregivers). EXCEPTION (non-negotiable): if the ask is about covering or replacing a visit the caregiver cancelled — "who is available for replacement", "find someone to cover Tuesday", a visit showing "Needs Replacement" — do NOT run a caregiver search; call get_upcoming_appointments to get that visit's id (status "needs_replacement"), then start_replacement_flow with that shiftId (the website's own Find Replacement modal, step for step — excludes the caregiver who cancelled and ends in a replacement booking request, never an interview). Do not re-ask about care needs if you already have them in the cached context above. The tool runs the full search before your reply is composed, and its result tells you the real outcome ("matched", "no_match", or "failed") plus exactly what the family has already been sent and what your one reply should say — follow that instruction (ONE VOICE). Never add your own status update on top of what the tool already texted, and never claim you're "actively searching" or "will bring names" when the result says no match was found — be honest about the outcome instead.`,
     `When a family member expresses interest in a specific caregiver (e.g. "yes let's connect", "let's go with him", "I like her"), proactively call start_interview_flow to set up an intro — it asks for date/time itself, you don't need to collect that first. Do not punt them to a website or "team".`,
     ``,
     `Care needs: ${needs.join(", ") || "none recorded"}.`,
@@ -765,6 +765,7 @@ export function buildClientSystemPrompt(
     `Do not fill gaps with plausible-sounding details. Do not speculate beyond what's documented.`,
     `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the cached context above. If it isn't there, ASK — never substitute a plausible-sounding city (e.g. don't say "Santa Clara" when the context shows "Gilroy", and don't pick a city out of thin air just because one is geographically nearby).`,
     `Never invent a person's name, a caregiver, or a relationship. If a name or relationship isn't in the sources above, say you don't have it and ASK — never guess a name or attach a made-up person to this family's care.`,
+    `Never compute a weekday yourself from a date. The context above and tool results give each visit's weekday (dayOfWeek / "Wednesday, September 16, 2026") — repeat that exactly; if no weekday is given, state only the date.`,
     `An empty or null tool result means none exist — say so plainly ("nothing on file"), never invent entries.`,
     `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
     ``,
@@ -773,14 +774,16 @@ export function buildClientSystemPrompt(
     `- For multi-step requests (e.g. "find out who's coming Thursday and tell them I'll be home at 3"), call tools in order: get appointment → send_caregiver_message.`,
     `- You can take real actions on behalf of the family:`,
     `  · send_caregiver_message — relay a message; tell the family what you're sending`,
-    `  · find_replacement_caregivers — when they need coverage`,
+    `  · find_nearby_caregivers — the website's own Browse / Nearby Caregivers: general "show me caregivers" / "who's available near me". It texts the family each caregiver's profile card itself and records them in pendingMatches; a pick from that list goes to start_interview_flow. NEVER use it for a visit the caregiver cancelled: for anything about replacing/covering a cancelled visit or a visit showing "Needs Replacement", call get_upcoming_appointments to find that visit's id (status "needs_replacement"), then start_replacement_flow — that is the website's own Find Replacement flow and ends in a replacement booking request, not an interview.`,
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · start_booking_flow — once the family is ready to book, call this INSTEAD of collecting rate/schedule/location yourself. caregiverId and interviewId are BOTH OPTIONAL: pass caregiverId when a specific caregiver was named; OMIT it entirely when they haven't ("let's send a booking") and this will show every completed-interview-ready option across all their caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after submit_interview_feedback) — otherwise leave it out. It runs Evia's own scripted flow (which interview if that's still ambiguous, rate, schedule, location if ambiguous, then a full recap matching the website's review modal, then the family's own YES/NO) and ALREADY TEXTS THE FAMILY ITSELF, in one combined message. Send NOTHING else this turn — not even a brief acknowledgment like "on it" or "starting that now" — a separate reply from you can arrive out of order against the flow's own message and read as confusing or backwards.`,
     `  · request_booking — low-level booking commit; prefer start_booking_flow instead. Only call this directly for a booking already fully resolved outside the scripted flow (e.g. a caregiver-initiated rebook). If this household cares for more than one person, always pass recipientFirstName so the visit is attributed to the right person.`,
     `  · manage_booking — cancel, resend, reschedule, or manage a replacement for a booking/visit/amendment. action:"cancel_pending_request" withdraws a booking still awaiting the caregiver's YES/NO; "cancel_whole_booking" cancels an ENTIRE accepted booking (all remaining visits — tell them how many first); "cancel_visit" cancels a SINGLE visit, leaving the rest intact (also works on a "Needs Replacement" visit — the family deciding they don't need a replacement after all); "resend_booking" sends a declined/cancelled request to the same caregiver again; "cancel_pending_amendment" withdraws a schedule-change request still awaiting the caregiver's response; "withdraw_replacement_request" cancels a pending replacement request sent via select_callout_backup so a different candidate can be chosen; "propose_reschedule" moves ONE existing visit to a new day/time in place (needs date/startTime/endTime — the caregiver gets a YES/NO text, the real time doesn't change until they accept — use this instead of cancelling and re-requesting a visit); "accept_reschedule"/"clear_reschedule" confirm or decline a day/time the CAREGIVER proposed for one of the family's visits. Always confirm with the family first.`,
+    `  · RESCHEDULING A VISIT (non-negotiable): "move it", "reschedule it", "can we do a different day/time" → first get_upcoming_appointments (each visit's id is its shiftId), then manage_booking action:"propose_reschedule" with that shiftId + the new date/startTime/endTime — ask for the new day/time if they haven't given one. This is the website's own Reschedule button. NEVER run a caregiver search for a reschedule, and never hand this off — the tools above are the complete path.`,
     `  · request_schedule_amendment — add a brand-new recurring day to an ongoing booking (or a genuinely new one-off visit, not an existing one). To move an EXISTING already-scheduled visit to a different day/time instead, use manage_booking's propose_reschedule — do not cancel_visit + request_schedule_amendment for that, it loses the original visit instead of just moving it. Confirm the date/time with the family, then call; the caregiver gets a YES/NO text.`,
     `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
-    `  · get_callout_backups / select_callout_backup — when a caregiver calls out (a visit shows "Needs Replacement"): get_callout_backups finds candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches) and ALREADY TEXTS THE FAMILY each one's real profile card itself (tappable photo-preview link, same as find_nearby_caregivers/find_replacement_caregivers) — send NOTHING else this turn beyond following its own instruction (which one they'd like). The candidates also land in pendingMatches, so a later "send me Maria's profile again" works via resend_caregiver_profile exactly like any other caregiver search. select_callout_backup then sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
+    `  · start_replacement_flow — THE way to handle a visit that shows "Needs Replacement" (the caregiver cancelled it): first get_upcoming_appointments to find that visit's id (status "needs_replacement") if you don't have it, then call start_replacement_flow with that shiftId. It runs Evia's own scripted flow matching the website's Find Replacement modal step for step (texts each candidate's profile card, asks which one and whether to keep or change the visit's day/time, shows a recap, and only on the family's YES sends the replacement booking request) and ALREADY TEXTS THE FAMILY ITSELF — send NOTHING else this turn. Never start_interview_flow here: there is no interview step in a replacement.`,
+    `  · get_callout_backups / select_callout_backup — the same two steps as individual tools, only for a replacement already mid-conversation outside the flow. get_callout_backups finds candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches) and ALREADY TEXTS THE FAMILY each one's real profile card itself (tappable photo-preview link, same as find_nearby_caregivers) — send NOTHING else this turn beyond following its own instruction (which one they'd like). The candidates also land in pendingMatches, so a later "send me Maria's profile again" works via resend_caregiver_profile exactly like any other caregiver search. select_callout_backup then sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
     `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
@@ -944,7 +947,7 @@ export function buildCaregiverSystemPrompt(
   const rate = typeof caregiver?.hourlyRate === "number" ? (caregiver.hourlyRate as number) : null;
 
   const apptLine = todayAppt
-    ? `Today's visit: ${formatDateForDisplay(todayAppt.date)} at ${todayAppt.startTime ? formatHHMMForDisplay(todayAppt.startTime) : "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
+    ? `Today's visit: ${formatDateWithWeekday(todayAppt.date)} at ${todayAppt.startTime ? formatHHMMForDisplay(todayAppt.startTime) : "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
     : "No visits scheduled for today.";
 
   const zepSection = zepContext ? `\n${zepContext}\n` : "";
@@ -2050,7 +2053,7 @@ export async function runQaAgent(params: {
     // bare/combined date-time answer like "9/12/26 at 11 AM" still misfired
     // here even after that fix shipped, since this call site never went
     // through the intent classifier at all. Same shape-based skip applies.
-    if (!unconfirmedIdentity && channel === "[USER]" && !isBareDateOrTimeAnswer(text)) {
+    if (!unconfirmedIdentity && channel === "[USER]" && !isBareDateOrTimeAnswer(text) && !isBareYesNoAnswer(text)) {
       let factChange: import("../memory/learnedFacts").FactChangeOutcome;
       let lf: typeof import("../memory/learnedFacts") | null = null;
       try {
@@ -2308,11 +2311,20 @@ export async function runQaAgent(params: {
       const list = pendingMatches
         .map((m, i) => `  ${i + 1}. ${m.name ?? "Caregiver"}${m.rate ? ` ($${m.rate}/hr)` : ""} — caregiverId="${m.id ?? ""}"`)
         .join("\n");
-      systemPrompt +=
-        `\n\nCAREGIVERS YOU JUST SHOWED THIS FAMILY (most recent match list):\n${list}\n` +
-        `If the family wants to interview or meet one of them — whether they name the caregiver, say "him"/"her", or give a number — call start_interview_flow with that caregiverId (NOT a new search); it asks for date/time itself. ` +
-        `If it's unclear which of these caregivers they mean, ask them to confirm by name or number before scheduling. ` +
-        `Do NOT run find_replacement_caregivers again just because they replied with a time or a name from this list.`;
+      const sess = session as Record<string, unknown> | undefined;
+      const isReplacementList = sess?.pendingMatchesSource === "replacement" && typeof sess?.pendingReplacementShiftId === "string";
+      systemPrompt += isReplacementList
+        // A Needs-Replacement candidate list (get_callout_backups): a pick here
+        // is the website's Request button — a replacement booking request for
+        // that visit — never an interview (live-caught detour, 2026-09-14).
+        ? `\n\nREPLACEMENT CANDIDATES YOU JUST SHOWED THIS FAMILY for the visit that needs a replacement (shiftId="${sess!.pendingReplacementShiftId}"):\n${list}\n` +
+          `When the family picks one — by name, "him"/"her", or a number — call select_callout_backup with shiftId="${sess!.pendingReplacementShiftId}" and that caregiverId. That sends the replacement booking request, exactly like the website's Request button. ` +
+          `Omit date/startTime/endTime unless they asked to change the visit's day/time. Do NOT call start_interview_flow or schedule_interview for this pick — there is no interview step in a replacement. ` +
+          `If it's unclear which candidate they mean, ask them to confirm by name or number first.`
+        : `\n\nCAREGIVERS YOU JUST SHOWED THIS FAMILY (most recent match list):\n${list}\n` +
+          `If the family wants to interview or meet one of them — whether they name the caregiver, say "him"/"her", or give a number — call start_interview_flow with that caregiverId (NOT a new search); it asks for date/time itself. ` +
+          `If it's unclear which of these caregivers they mean, ask them to confirm by name or number before scheduling. ` +
+          `Do NOT run find_nearby_caregivers again just because they replied with a time or a name from this list.`;
     } else {
       // 2026-09-13 live incident: find_nearby_caregivers (answering "how many
       // caregivers near me") writes shownCaregiverIds, never pendingMatches —
@@ -3023,7 +3035,7 @@ export async function runQaAgent(params: {
             }
             if (!errored && (result as { sent?: boolean })?.sent === true) {
               // A self-delivering tool (send_onboarding_link, the matched-path
-              // find_replacement_caregivers gallery, a blocked request_booking
+              // find_nearby_caregivers / get_callout_backups gallery, a blocked request_booking
               // explanation) already pushed its message to this chat. Remember it
               // so the exhausted-loop and outer-catch paths confirm rather than
               // contradict — and never schedule a retry that would re-send /

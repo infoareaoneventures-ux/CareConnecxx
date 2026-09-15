@@ -71,7 +71,7 @@ export const CARE_RECIPES: readonly CareRecipe[] = [
     roleScope: ["client", "admin"],
     triggerPhrases: ["caregiver late", "no show", "need backup", "not here"],
     requiredContext: ["appointment", "eligible caregiver supply"],
-    toolPlan: ["find_replacement_caregivers", "create_support_ticket"],
+    toolPlan: ["find_nearby_caregivers", "create_support_ticket"],
     authorityRule: "Clients can request backup; admin handles unsafe or unresolved coverage failures.",
     deliveryRule: "private_primary",
     failureVisibility: "Coverage failures are admin-visible and remain on the action ledger until resolved.",

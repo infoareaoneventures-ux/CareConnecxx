@@ -69,8 +69,10 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
 describe("time/date formatting coverage — every audited SMS/LLM-prompt site is formatted", () => {
   it.each(MIN_FORMATTER_CALLS)("%s calls the shared formatters at least %i time(s)", (rel, minCalls) => {
     const src = read(rel);
-    const calls = count(src, "formatDateForDisplay(") + count(src, "formatHHMMForDisplay(");
-    expect(calls, `${rel} must call formatDateForDisplay/formatHHMMForDisplay at least ${minCalls} time(s) — found ${calls}. If a raw date/time interpolation crept back in, wrap it in the shared formatter instead of removing this assertion.`)
+    // formatDateWithWeekday (2026-09-14) is the same shared formatter family —
+    // formatDateForDisplay with the weekday in front — so it counts too.
+    const calls = count(src, "formatDateForDisplay(") + count(src, "formatHHMMForDisplay(") + count(src, "formatDateWithWeekday(");
+    expect(calls, `${rel} must call formatDateForDisplay/formatDateWithWeekday/formatHHMMForDisplay at least ${minCalls} time(s) — found ${calls}. If a raw date/time interpolation crept back in, wrap it in the shared formatter instead of removing this assertion.`)
       .toBeGreaterThanOrEqual(minCalls);
   });
 

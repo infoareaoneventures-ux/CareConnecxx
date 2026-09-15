@@ -346,6 +346,27 @@ describe("jp_ask_caregivers_needed", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("Campbell Ave");
   });
 
+  // Same class as bookingFlow's interview picker (live, 2026-09-14): a bare
+  // in-range number is a strict-protocol reply and must never reach the model.
+  it("a bare number 1-4 is taken directly with no model call", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [ROSIE] },
+    });
+    hoisted.docState.set(`job_postings/${UID}`, { street: "4746 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130" });
+    // No modelReplies queued.
+
+    await handleJobPostingStep(PHONE, CHAT, "2", baseSession({
+      jobPostingStep: "jp_ask_caregivers_needed",
+      jobPostingData: { ...SCHEDULED, careRecipients: [ROSIE] },
+    }));
+
+    expect(messagesCreate).not.toHaveBeenCalled();
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.caregiversNeeded).toBe(2);
+    expect(stored.jobPostingStep).toBe("jp_ask_location");
+  });
+
   it("an unrecognized answer re-asks instead of defaulting to 1", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, {
       jobPostingStep: "jp_ask_caregivers_needed",
@@ -392,6 +413,29 @@ describe("jp_ask_location", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("What kind of care");
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("pets"); // no re-ask of pets/smoking
     expect(String(sendMessage.mock.calls[0][1])).not.toContain("title"); // never asked
+  });
+
+  it("a bare number picks a listed address directly with no model call", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {
+      jobPostingStep: "jp_ask_location",
+      jobPostingData: { ...SCHEDULED, careRecipients: [ROSIE], caregiversNeeded: 1 },
+    });
+    hoisted.docState.set(`job_postings/${UID}`, {
+      street: "4746 Campbell Ave", city: "San Jose", state: "CA", zipCode: "95130",
+      petsInHome: true, smokingHousehold: false,
+    });
+    // No modelReplies queued.
+
+    await handleJobPostingStep(PHONE, CHAT, "1", baseSession({
+      jobPostingStep: "jp_ask_location",
+      jobPostingData: { ...SCHEDULED, careRecipients: [ROSIE], caregiversNeeded: 1 },
+    }));
+
+    expect(messagesCreate).not.toHaveBeenCalled();
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.jobPostingData.streetAddress).toBe("4746 Campbell Ave");
+    expect(stored.jobPostingData.isNewLocation).toBe(false);
+    expect(stored.jobPostingStep).toBe("jp_ask_care_needs");
   });
 
   it("a brand-new address asks pets/smoking before advancing", async () => {

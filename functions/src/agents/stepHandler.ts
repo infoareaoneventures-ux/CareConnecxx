@@ -82,6 +82,19 @@ export async function isBackOutRequest(text: string, currentQuestion: string): P
   return result.trim().toUpperCase().startsWith("Y");
 }
 
+// A bare number answering a numbered list ("1", "2.", "3)") is a strict-protocol
+// reply, like YES/NO after "Reply YES or NO" — it can't be a back-out or an
+// off-topic question, so pickers resolve it here before any model call.
+// 2026-09-14 (live): the router model misread a bare "1" to a 2-option
+// interview picker as "didn't catch that" — three model calls for a reply
+// that needed zero.
+export function bareNumberPick(text: string, count: number): number | null {
+  const m = text.trim().match(/^(\d{1,2})[.)]?$/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 1 && n <= count ? n : null;
+}
+
 // Classify a reply sent while Evia is WAITING on the user to finish an
 // out-of-band action (tap a link, finish a Checkr form, complete a payment).
 // These steps have no question to answer, so the two-way question/answer split

@@ -12,7 +12,7 @@ import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDisco
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../utils/sessionState";
 import { getLatestPending } from "../agents/pendingActions";
-import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
+import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { handleTaskApproval } from "../agents/taskApprovalHandler";
@@ -1636,7 +1636,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       intent === "FACT_CORRECTION" &&
       !pendingDuringFactCheck &&
       !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
-      !isBareDateOrTimeAnswer(text)
+      !isBareDateOrTimeAnswer(text) &&
+      !isBareYesNoAnswer(text)
     ) {
       const { detectAndStageFactChange, factChangeAckCopy } = await import("../memory/learnedFacts");
       const factUserId = session.userType === "caregiver"

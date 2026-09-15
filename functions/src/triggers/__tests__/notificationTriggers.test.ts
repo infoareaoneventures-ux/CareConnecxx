@@ -103,6 +103,23 @@ describe("onBookingRequestWrite — SMS parity", () => {
     expect(sendToPhone).not.toHaveBeenCalled();
   });
 
+  // Live-caught 2026-09-14: a website-button accept wrote the in-app bell
+  // (onBookingAccepted) but no text ever reached the family's phone.
+  it("a website-button accept (no agentTaskId) texts the client", async () => {
+    const before = { status: "pending", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice" };
+    const after  = { ...before, status: "accepted" };
+    await (onBookingRequestWrite as any)(change(before, "br1", after), { params: { bookingId: "br1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice accepted") }));
+  });
+
+  it("an Evia-negotiated accept (agentTaskId set) does NOT double-text — shiftOffer.ts already did", async () => {
+    const before = { status: "pending", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", agentTaskId: "task1" };
+    const after  = { ...before, status: "accepted" };
+    await (onBookingRequestWrite as any)(change(before, "br1", after), { params: { bookingId: "br1" } });
+    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(sendToPhone).not.toHaveBeenCalled();
+  });
+
   it("cancelled always texts the caregiver, Evia-negotiated or not", async () => {
     const before = { status: "accepted", clientId: CLIENT, caregiverId: CAREGIVER, agentTaskId: "task1" };
     const after  = { ...before, status: "cancelled" };

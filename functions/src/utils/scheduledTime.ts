@@ -183,3 +183,25 @@ export function formatDateForDisplay(value: string): string {
   const monthName = MONTH_NAMES[parseInt(mo, 10) - 1];
   return monthName ? `${monthName} ${parseInt(d, 10)}, ${y}` : value;
 }
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Weekday of a stored "YYYY-MM-DD", computed from the components (Date.UTC +
+// getUTCDay) so it can never shift. `new Date("2026-09-16").getDay()` reads
+// the string as UTC midnight, which is still the PREVIOUS day in Pacific after
+// 5pm — and the model, given only the bare date, computed the weekday itself
+// and got it wrong the same way (live-caught 2026-09-14: "Tuesday, Sep 16").
+// Supply the weekday from here instead of letting anything derive it.
+export function weekdayForDate(value: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  return WEEKDAY_NAMES[new Date(Date.UTC(parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10))).getUTCDay()] ?? null;
+}
+
+// "Wednesday, September 16, 2026" — formatDateForDisplay with the weekday in
+// front, for any family/caregiver-facing mention of a specific visit date.
+export function formatDateWithWeekday(value: string): string {
+  const weekday = weekdayForDate(value);
+  return weekday ? `${weekday}, ${formatDateForDisplay(value)}` : formatDateForDisplay(value);
+}

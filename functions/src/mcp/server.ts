@@ -1,5 +1,4 @@
 import * as admin from "firebase-admin";
-import { runMatchingForClient } from "../agents/matchingAgent";
 import { requestVideoInterview, VideoInterviewRequestError, resolveCaregiverForInterview } from "../agents/videoInterviewRequest";
 import { logHealthDataAccessed, logBookingCreated, logAudit } from "../observability/auditLog";
 import {
@@ -20,7 +19,7 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
-import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, weekdayForDate } from "../utils/scheduledTime";
 import { normDay } from "../scheduled/shiftGenerator";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
@@ -158,7 +157,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_upcoming_appointments",
-    description: "Get upcoming confirmed or pending appointments for a client.",
+    description: "Get a client's upcoming visits — the same list the website's My Bookings > Active Bookings shows under UPCOMING SHIFTS: scheduled and in-progress visits AND any visit marked 'needs_replacement' (the caregiver cancelled it). Each result carries its id (the shiftId) and status — use that id for manage_booking (cancel_visit/propose_reschedule) and, for a needs_replacement visit, for get_callout_backups.",
     input_schema: {
       type: "object",
       properties: {
@@ -183,7 +182,10 @@ export const MCP_TOOLS: McpTool[] = [
       "caregiver this can ever return is already background-check cleared — that's a precondition of showing " +
       "up here at all, not an optional filter, so never ask the family whether they want that. Never re-shows " +
       "someone already shown this conversation — a follow-up call (e.g. a 'show me more' ask) automatically " +
-      "excludes everyone already surfaced and returns new people instead.",
+      "excludes everyone already surfaced and returns new people instead. This tool ALREADY TEXTS the family each " +
+      "shown caregiver's profile card itself (name, rate, tappable photo-preview link) and records them in " +
+      "pendingMatches — never repeat the names/rates/links in your reply; follow the instruction in its result. " +
+      "NOT for a visit the caregiver cancelled (a 'Needs Replacement' visit) — that is get_callout_backups.",
     input_schema: {
       type: "object",
       properties: {
@@ -244,20 +246,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "find_replacement_caregivers",
-    description: "Find a REPLACEMENT caregiver for an existing booking — a specific visit or ongoing arrangement that's falling through (the current caregiver cancelled, isn't working out, etc.). This is NOT the tool for a general 'show me caregivers' / 'who's available near me' request — use find_nearby_caregivers for that (it has the real distance/skills/rating filters and matches what the website itself shows; this tool doesn't). Session context (phone, chatId, clientId) is injected automatically — do NOT ask the user for these. Optionally narrow the search with the filters below when the family is specific (e.g. 'find someone available mornings near 95020 who can do dementia care').",
-    input_schema: {
-      type: "object",
-      properties: {
-        needs:              { type: "string", description: "Specific care needs to bias matching, e.g. 'dementia care, mobility assistance' (optional)" },
-        nearZip:            { type: "string", description: "ZIP code to center the search on, overriding the profile default (optional)" },
-        availabilityWindow: { type: "string", description: "Desired availability, e.g. 'weekday mornings', 'overnights' (optional)" },
-        radiusMiles:        { type: "number", description: "Search radius in miles (optional)" },
-      },
-      required: [],
-    },
-  },
-  {
     name: "get_caregiver_booking_rate",
     description: "Look up a caregiver's name and hourly rate. Read-only — books nothing. Use this when the family asks what a caregiver charges, before quoting or committing a booking.",
     input_schema: {
@@ -266,6 +254,25 @@ export const MCP_TOOLS: McpTool[] = [
         caregiverId: { type: "string" },
       },
       required: ["caregiverId"],
+    },
+  },
+  {
+    name: "start_replacement_flow",
+    description:
+      "THE way to handle a visit marked 'Needs Replacement' (the caregiver cancelled it): starts Evia's own scripted " +
+      "flow that walks the website's Find Replacement modal step for step — it texts the family each candidate's " +
+      "profile card (Care Team first, then nearby matches, never the caregiver who cancelled), asks which one and " +
+      "whether to keep the visit's date/time or change it, shows a recap, and only on the family's YES sends the " +
+      "replacement booking request (the same booking_requests write the modal's Request button makes). No interview " +
+      "step exists in this flow. Get the shiftId from get_upcoming_appointments (the visit whose status is " +
+      "'needs_replacement') if you don't have it. This tool ALREADY TEXTS THE FAMILY itself — send NOTHING else this " +
+      "turn. The flow then owns the conversation until it finishes or the family backs out.",
+    input_schema: {
+      type: "object",
+      properties: {
+        shiftId: { type: "string", description: "The shift (visit) that needs a replacement — status 'needs_replacement'." },
+      },
+      required: ["shiftId"],
     },
   },
   {
@@ -383,7 +390,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_callout_backups",
-    description: "Find and TEXT the family backup caregiver candidates for a visit marked 'Needs Replacement' (the caregiver cancelled it) — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers/find_replacement_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
+    description: "THE tool for a visit marked 'Needs Replacement' (the caregiver cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating, and it EXCLUDES the caregiver who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it — never use find_replacement_caregivers for this. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
       type: "object",
       properties: { shiftId: { type: "string", description: "The shift (visit) that needs a replacement." } },
@@ -2922,7 +2929,7 @@ async function stageMcpMemoryFileChange(params: {
 
 function shouldTrackMcpTool(name: string): boolean {
   if (/^(get|list|search|read)_/.test(name)) return false;
-  if (name === "find_replacement_caregivers") return false;
+  if (name === "find_nearby_caregivers") return false;
   if (name === "resume_execution_agent") return false;
   return true;
 }
@@ -3026,15 +3033,11 @@ const READ_ONLY_TOOLS = new Set<string>([
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
   "get_pending_booking_requests",
-  // find_nearby_caregivers is a pure read: scores/ranks already-fetched
-  // publicCaregiverProfiles docs and returns them — no writes, no SMS, no
-  // side effects (unlike find_replacement_caregivers above).
-  "find_nearby_caregivers",
-  // find_replacement_caregivers was WRONGLY on this list (double-send audit
-  // 2026-07-06): it texts the family (match gallery / status), writes
-  // interview_requests + agent_sessions + admin_alerts, and resolves
-  // commitments — a shadow run was sending real SMS. It is mutating; it must
-  // be synthesized under shadow like every other side-effecting tool.
+  // find_nearby_caregivers is NOT here (2026-09-14): it took over the removed
+  // find_replacement_caregivers' job of texting the family each caregiver's
+  // profile card and writing pendingMatches, so it sends real SMS and must be
+  // synthesized under shadow — the same double-send-audit lesson (2026-07-06)
+  // that got the old tool off this list.
   "list_saved_caregivers",
   "get_recurring_schedule",
   "get_billing_summary", "get_invoice_history", "get_invoice_details",
@@ -3446,16 +3449,24 @@ async function executeToolCall(
             .orderBy("date", "asc")
             .limit(6)
             .get(),
+          // 'needs_replacement' included (2026-09-14): the site's own UPCOMING
+          // SHIFTS list shows a cancelled-by-caregiver visit right alongside the
+          // scheduled ones (with its Find Replacement/Skip buttons) — leaving it
+          // out here meant the agent could never learn the shiftId it needs for
+          // get_callout_backups / cancel_visit and fell back to the general
+          // find_replacement_caregivers search instead (live-caught).
           db.collection("shifts")
             .where("clientId", "==", input.clientId)
-            .where("status", "in", ["scheduled", "in-progress"])
+            .where("status", "in", ["scheduled", "in-progress", "needs_replacement"])
             .where("date", ">=", today)
             .orderBy("date", "asc")
             .limit(6)
             .get(),
         ]);
+        // id is returned so the agent can pass a real shiftId to manage_booking /
+        // get_callout_backups — data() alone left it with nothing to act on.
         const merged = [...apptSnap.docs, ...shiftSnap.docs]
-          .map((d) => d.data())
+          .map((d): Record<string, unknown> => ({ id: d.id, ...d.data(), dayOfWeek: weekdayForDate(String(d.data().date ?? "")) }))
           .sort((a, b) => String(a.date).localeCompare(String(b.date)));
         const docs = merged.slice(0, 5);
         return { success: true, results: docs, hasMore: merged.length > 5 };
@@ -3586,7 +3597,7 @@ async function executeToolCall(
             .filter((n): n is string => !!n);
         }
 
-        return buildCaregiverPreviewResult({
+        const preview = buildCaregiverPreviewResult({
           caregivers: matches.map((m) => m.data),
           widened,
           city: location.city as string | undefined,
@@ -3594,6 +3605,45 @@ async function executeToolCall(
           itemLimit: resultLimit,
           alreadyShownNames,
         });
+
+        // Browse parity (2026-09-14): the website's Nearby Caregivers widget
+        // shows real profile cards, and the removed find_replacement_caregivers
+        // used to be the only thing that texted them. Text each shown caregiver's
+        // card (same tappable photo-preview link every other gallery uses) and
+        // record pendingMatches so a later "meet Imran" / "send her profile
+        // again" resolves to a real id. Only when there's a live chat to send to.
+        const shown = matches.slice(0, resultLimit).map((m) => m.data as Record<string, unknown>);
+        const chatId = sessionRef ? ((await sessionRef.get()).data()?.chatId as string | undefined) : undefined;
+        if (chatId && shown.length > 0) {
+          const { sendMessage } = await import("../linq/client");
+          for (const c of shown) {
+            const name = String(c.name ?? "Caregiver");
+            const rate = c.hourlyRate as number | undefined;
+            try {
+              await sendMessage(chatId,
+                `${name}${rate ? ` — $${rate}/hr` : ""}\nTap to view ${name.split(" ")[0]}'s profile: ${getAppUrl()}/p/${c.id}`);
+              await new Promise<void>((r) => setTimeout(r, 400));
+            } catch (err) {
+              console.warn("[find_nearby_caregivers] card send failed", { phone, id: c.id, err: (err as Error)?.message });
+            }
+          }
+          await sessionRef!.set({
+            pendingMatches: shown.map((c) => ({ id: c.id, name: String(c.name ?? "Caregiver"), rate: (c.hourlyRate as number) ?? null })),
+            pendingMatchesSetAt: nowIso,
+            pendingMatchesSource: "browse",
+            pendingReplacementShiftId: admin.firestore.FieldValue.delete(),
+          }, { merge: true }).catch(() => {});
+          const { addKnownNames } = await import("../utils/knownNames");
+          await addKnownNames(phone as string, shown.map((c) => String(c.name ?? "Caregiver"))).catch(() => {});
+          return {
+            ...preview,
+            sent: true,
+            instruction:
+              "This tool already texted the family each caregiver's profile card (name, rate, tappable photo-preview link) — do NOT repeat the names, rates, or links. " +
+              "Your entire reply is ONE short closing line asking which caregiver they'd like to meet (reply with a name or number); a pick goes to start_interview_flow with that caregiverId from pendingMatches.",
+          };
+        }
+        return preview;
       }
 
       case "get_caregiver_info": {
@@ -3687,137 +3737,6 @@ async function executeToolCall(
         };
       }
 
-      case "find_replacement_caregivers": {
-        const { phone, chatId, clientId, needs, nearZip, availabilityWindow, radiusMiles } = input;
-        if (!phone || !chatId || !clientId) return toolError("INVALID_INPUT", "phone, chatId, and clientId are required");
-        logAudit({ eventType: "caregiver_matched", userId: clientId as string, data: { source: "mcp:find_replacement_caregivers" } }).catch(() => {});
-        const sessionSnap    = await db.collection("agent_sessions").doc(phone as string).get();
-        const session        = sessionSnap.data() ?? {};
-        const clientSnap     = await db.collection("users").doc(clientId as string).get();
-        const clientProfile  = clientSnap.data() ?? {};
-        // Apply optional agent-supplied filters as overrides on the matching
-        // intake (the object runMatchingForClient reads zipCode/careNeeds from),
-        // so the agent can parameterize the search instead of an opaque zero-arg
-        // call. Omitted filters leave the profile defaults untouched.
-        //
-        // 2026-09-03 fix: this used to spread the raw session doc ({...session}) —
-        // but city/zipCode live nested under session.onboardingData, not at the
-        // session's own top level (AgentSession has no such fields), so any call
-        // without an explicit nearZip silently searched with NO location at all,
-        // deterministically returning whatever the fallback ordering happened to
-        // surface first (found while tracing why a client kept seeing the same
-        // one caregiver on repeat, separate asks). Start from onboardingData
-        // (which does have them), then prefer the client's LIVE current
-        // location — same helper find_nearby_caregivers uses — since a frozen
-        // onboarding-time snapshot can be stale or simply wrong.
-        const liveLocation = await import("../agents/onboardingConversation")
-          .then((m) => m.loadLiveClientLocation(clientId as string))
-          .catch(() => null);
-        const matchIntake: Record<string, unknown> = {
-          ...(session.onboardingData as Record<string, unknown> ?? {}),
-          ...(liveLocation ?? {}),
-        };
-        // Validate the agent-supplied overrides before applying them: a malformed
-        // ZIP or an out-of-range radius must not flow into the matching intake.
-        const needsOk  = typeof needs === "string" && !!needs;
-        const zipOk    = typeof nearZip === "string" && /^\d{5}(-\d{4})?$/.test(nearZip);
-        const availOk  = typeof availabilityWindow === "string" && !!availabilityWindow;
-        const radiusOk = typeof radiusMiles === "number" && Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusMiles <= 100;
-        if (zipOk)    matchIntake.zipCode            = nearZip;
-        if (needsOk)  matchIntake.careNeeds          = needs;
-        if (availOk)  matchIntake.availabilityWindow = availabilityWindow;
-        if (radiusOk) matchIntake.radiusMiles        = radiusMiles;
-        // ONE VOICE: this runs the search synchronously. suppressConversationalSends
-        // keeps matching from texting its own status/closer lines — the agent turn
-        // that called us is about to speak, and the family must hear one voice, not
-        // a canned tool message AND an agent reply back-to-back (double-send bug,
-        // founder screenshot 2026-07-06). On a match the tool still delivers the
-        // intro + photo gallery (artifacts only it can send); the tool result below
-        // tells the agent exactly what the family has already seen and what its one
-        // reply should be.
-        const matchOutcome = await runMatchingForClient(
-          phone as string, chatId as string, matchIntake, clientProfile,
-          { suppressConversationalSends: true },
-        );
-        // Report only the filters that actually passed validation and were
-        // applied — not the raw input (a malformed nearZip is reported as null).
-        const filtersApplied = {
-          needs:              needsOk  ? (needs as string) : null,
-          nearZip:            zipOk    ? (nearZip as string) : null,
-          availabilityWindow: availOk  ? (availabilityWindow as string) : null,
-          radiusMiles:        radiusOk ? (radiusMiles as number) : null,
-        };
-        if (matchOutcome === "matched") {
-          // Names the family was just shown — freshly written to the session by
-          // runMatchingForClient. Given to the agent for follow-up context only.
-          const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
-          const presented = ((freshSess.data()?.pendingMatches ?? []) as Array<{ name?: string; rate?: number }>)
-            .map((m) => ({ name: m.name ?? "Caregiver", hourlyRate: m.rate ?? null }));
-          return {
-            success: true,
-            outcome: "matched",
-            // sent:true = self-delivering tool (same contract as send_onboarding_link):
-            // the intro line + per-caregiver photo gallery already went to this chat.
-            sent: true,
-            matchesPresented: presented,
-            instruction:
-              "The family has ALREADY been texted an intro line plus each caregiver's photo, rate, and " +
-              "numbered profile link — those messages land BEFORE your reply. Do NOT repeat the names, " +
-              "rates, or links, and do NOT say 'I found N caregivers' again. Your entire reply must be " +
-              "ONE short closing line asking which caregiver they'd like to meet (reply with a name or number).",
-            filtersApplied,
-          };
-        }
-        if (matchOutcome === "no_match") {
-          // 2026-09-07: runMatchingForClient distinguishes "genuinely nobody
-          // nearby" from "real people exist, they were just already shown
-          // before" and writes the latter here when it applies — read it back
-          // so the agent tells the truth instead of claiming zero
-          // availability when real candidates actually exist.
-          const freshSess = await db.collection("agent_sessions").doc(phone as string).get();
-          // 2026-09-09 (live-caught): this used to drop `id`, leaving the model
-          // with nothing but a name for these caregivers — it then passed the
-          // NAME as caregiverId to schedule_interview, which can never resolve
-          // (matchingAgent.ts now also sets pendingMatches for this branch, but
-          // the id belongs in the tool's own result too, not only in session
-          // state read on a later turn).
-          const reofferable = ((freshSess.data()?.reofferableCaregivers ?? []) as Array<{ id?: string; name?: string; hourlyRate?: number }>)
-            .map((m) => ({ id: m.id ?? null, name: m.name ?? "Caregiver", hourlyRate: m.hourlyRate ?? null }));
-          return {
-            success: true,
-            outcome: "no_match",
-            matchesFound: 0,
-            teamAlerted: true,
-            reofferableCaregivers: reofferable,
-            instruction: reofferable.length > 0
-              ? `No NEW caregivers matched, but ${reofferable.map((c) => c.name).join(" and ")} — already sent to ` +
-                "this family before — are still the closest real matches nearby. NOTHING has been texted to the " +
-                "family — your reply is the only message they get. In ONE short warm message, be honest: say " +
-                "these are still the best options near them and ask whether to resend those profiles or keep " +
-                "looking for someone new. Do not claim nobody is available — that would be false. If the family " +
-                "asks to interview one of them, call schedule_interview with that caregiver's id field from " +
-                "reofferableCaregivers above — never their name — as caregiverId. If they say yes to resending " +
-                "profiles, call resend_caregiver_profile for each one they want (same id field, never their name)."
-              : "No caregivers matched right now. NOTHING has been texted to the family — your reply is the " +
-                "only message they get. In ONE short warm message: be honest that you haven't found the right " +
-                "match yet, that you're still actively searching, and that the team has been alerted and will " +
-                "personally reach out. Do not invent caregiver names and do not promise a specific timeline.",
-            filtersApplied,
-          };
-        }
-        return {
-          success: false,
-          outcome: "failed",
-          followUpTracked: true,
-          instruction:
-            "The search hit a technical snag; a retry is already scheduled and the care team was alerted. " +
-            "NOTHING has been texted to the family — in ONE short message tell them you're pulling up " +
-            "matches and will text names as soon as they come through. Stay warm and calm; never sound " +
-            "broken or blame technology.",
-          filtersApplied,
-        };
-      }
-
       case "get_caregiver_booking_rate": {
         // U9b: read-only rate lookup extracted from request_booking. No write.
         const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
@@ -3847,6 +3766,29 @@ async function executeToolCall(
         return {
           success: true,
           instruction: "This tool already texted the family to start the interview flow, in one message. Send NOTHING else this turn — not even a brief acknowledgment — it can arrive out of order against the flow's own message. The flow now owns the conversation until it finishes.",
+        };
+      }
+
+      case "start_replacement_flow": {
+        const { clientId, shiftId, phone } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+        if (!shiftId) return toolError("INVALID_INPUT", "shiftId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the replacement flow in");
+        const { startReplacementFlow } = await import("../agents/replacementFlow");
+        const result = await startReplacementFlow(phone as string, chatId, sessionData as any, { shiftId: shiftId as string });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what went wrong — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family the candidates and the one question that starts the flow. Send NOTHING else this turn — not even an acknowledgment. The flow now owns the conversation until it finishes.",
         };
       }
 
@@ -4251,46 +4193,37 @@ async function executeToolCall(
       // caregiver-search path already uses — this flow was missing that
       // entirely before, unlike find_nearby_caregivers/find_replacement_
       // caregivers, which already send real profile cards.
+      // Thin wrapper over the shared Find-Replacement building blocks in
+      // agents/shiftReplacement.ts — the scripted replacementFlow.ts (the
+      // preferred path) uses the exact same helpers, so both write the same thing.
       case "get_callout_backups": {
         const { clientId, shiftId, phone } = input;
         if (!clientId || !shiftId) return toolError("INVALID_INPUT", "shiftId is required");
         if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
-        const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
-        if (!shiftSnap.exists) return toolError("NOT_FOUND", "shift not found");
-        const shift = shiftSnap.data()!;
-        if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit does not belong to this client");
-        if (shift.status !== "needs_replacement") return toolError("INVALID_INPUT", `This visit isn't awaiting a replacement (status: ${shift.status})`);
+        const { loadReplacementShift, findReplacementCandidates, sendReplacementCandidateCards, describeVisitWindow } = await import("../agents/shiftReplacement");
+        const loaded = await loadReplacementShift(clientId as string, shiftId as string);
+        if (!loaded.ok) return toolError(loaded.code, loaded.message);
+        const shift = loaded.shift;
         const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
         const chatId = sessSnap.data()?.chatId as string | undefined;
         if (!chatId) return toolError("NOT_FOUND", "No active conversation to send the candidates to");
-        const { findReplacementCandidates } = await import("../agents/shiftReplacement");
         const candidates = await findReplacementCandidates(clientId as string, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
         if (candidates.length === 0) {
           return { success: true, shiftId, caregivers: [], count: 0, instruction: "No candidates were found — tell the family plainly and ask if they'd like to search more broadly, or skip the replacement." };
         }
-        const { sendMessage } = await import("../linq/client");
-        for (const c of candidates) {
-          try {
-            await sendMessage(chatId,
-              `${c.name}${c.hourlyRate ? ` — $${c.hourlyRate}/hr` : ""}${c.source === "care_team" ? " (on your Care Team)" : ""}\n` +
-              `Tap to view ${c.name.split(" ")[0]}'s profile: ${getAppUrl()}/p/${c.caregiverId}`
-            );
-            await new Promise<void>((r) => setTimeout(r, 400));
-          } catch (err) {
-            console.warn("[get_callout_backups] gallery send failed for candidate", { phone, id: c.caregiverId, err: (err as Error)?.message });
-          }
-        }
-        await db.collection("agent_sessions").doc(phone as string).update({
-          pendingMatches: candidates.map((c) => ({ id: c.caregiverId, name: c.name, rate: c.hourlyRate })),
-          pendingMatchesSetAt: nowIso,
-          shownCaregiverIds: admin.firestore.FieldValue.arrayUnion(...candidates.map((c) => c.caregiverId)),
-        });
-        const { addKnownNames } = await import("../utils/knownNames");
-        await addKnownNames(phone as string, candidates.map((c) => c.name));
+        await sendReplacementCandidateCards(phone as string, chatId, shiftId as string, candidates, nowIso);
         logAudit({ eventType: "message_sent", userId: clientId as string, data: { source: "mcp:get_callout_backups", shiftId, count: candidates.length } }).catch(() => {});
+        // Same two fields the website's Find Replacement modal shows alongside
+        // the candidate list (Date / Start / End, pre-filled from the visit):
+        // the family confirms or changes them in the same breath as the pick.
+        const visitWhen = describeVisitWindow(shift);
         return {
           success: true, shiftId, caregivers: candidates, count: candidates.length,
-          instruction: "This tool already texted the family each candidate's profile card (tappable link with photo preview) — do not repeat their names/rates yourself. Just ask which one they'd like to send the request to, then call select_callout_backup with that caregiverId (from this result or pendingMatches, never guessed from a name).",
+          originalVisit: { date: shift.date ?? null, startTime: shift.startTime ?? null, endTime: shift.endTime ?? null, display: visitWhen },
+          instruction:
+            "This tool already texted the family each candidate's profile card (tappable link with photo preview) — do not repeat their names/rates yourself. " +
+            `Your ONE reply: ask which one they'd like to send the request to, and whether to keep the visit as is (${visitWhen}) or change the day/time — the same two choices the website's Find Replacement modal shows. ` +
+            "Then call select_callout_backup with that caregiverId (from this result or pendingMatches, never guessed from a name); omit date/startTime/endTime to keep the original, pass them only if they asked for a change. No interview step — this sends a replacement booking request.",
         };
       }
 
@@ -4304,52 +4237,20 @@ async function executeToolCall(
       case "select_callout_backup": {
         const { clientId, shiftId, backupCaregiverId, date, startTime, endTime } = input;
         if (!clientId || !shiftId || !backupCaregiverId) return toolError("INVALID_INPUT", "shiftId and backupCaregiverId are required");
-        const shiftRef = db.collection("shifts").doc(shiftId as string);
-        const shiftSnap = await shiftRef.get();
-        if (!shiftSnap.exists) return toolError("NOT_FOUND", "shift not found");
-        const shift = shiftSnap.data()!;
-        if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit does not belong to this client");
-        if (shift.status !== "needs_replacement") return toolError("INVALID_INPUT", `This visit isn't awaiting a replacement (status: ${shift.status})`);
-        const cgSnap = await db.collection("caregivers").doc(backupCaregiverId as string).get();
-        if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
-        const cg = cgSnap.data() || {};
-        const caregiverName = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
-        const effDate      = (date as string | undefined) ?? (shift.date as string);
-        const effStartTime = (startTime as string | undefined) ?? (shift.startTime as string);
-        const effEndTime   = (endTime as string | undefined) ?? (shift.endTime as string | undefined) ?? effStartTime;
-        const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${effDate}T12:00:00`).getDay()];
-        const bookingRef = db.collection("booking_requests").doc();
-        await bookingRef.set({
-          clientId,
-          clientName:    shift.clientName ?? "",
-          caregiverId:   backupCaregiverId,
-          caregiverName,
-          address:       shift.address ?? "",
-          rate:          (cg.hourlyRate as number | undefined) ?? shift.rate ?? null,
-          paymentMethod: shift.paymentMethod ?? "credit",
-          careNeeds:     [...new Set(((shift.careRecipients ?? []) as Array<{ careNeeds?: string[] }>).flatMap((r) => r.careNeeds || []))],
-          careRecipients: shift.careRecipients ?? [],
-          notes:         shift.notes ?? null,
-          emergencyContact: shift.emergencyContact ?? null,
-          schedule: {
-            days: [dayName],
-            startDate: effDate,
-            endDate: effDate,
-            ongoing: false,
-            dayShiftTimes: { [dayName]: [{ start: effStartTime, end: effEndTime }] },
-          },
-          isShiftReplacement: true,
-          replacementForShiftId: shiftId,
-          status: "pending",
-          isResend: false,
-          createdAt: nowIso,
+        const { loadReplacementShift, createReplacementRequest } = await import("../agents/shiftReplacement");
+        const loaded = await loadReplacementShift(clientId as string, shiftId as string);
+        if (!loaded.ok) return toolError(loaded.code, loaded.message);
+        const created = await createReplacementRequest({
+          clientId: clientId as string, shiftId: shiftId as string, shift: loaded.shift, shiftRef: loaded.ref,
+          backupCaregiverId: backupCaregiverId as string,
+          ...(date ? { date: date as string } : {}),
+          ...(startTime ? { startTime: startTime as string } : {}),
+          ...(endTime ? { endTime: endTime as string } : {}),
+          nowIso,
         });
-        await shiftRef.update({
-          replacementRequestId: bookingRef.id,
-          replacementCaregiverName: caregiverName,
-        });
-        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", shiftId, backupCaregiverId, bookingRequestId: bookingRef.id } }).catch(() => {});
-        return { success: true, shiftId, bookingRequestId: bookingRef.id, caregiverId: backupCaregiverId, caregiverName, status: "pending" };
+        if (!created.ok) return toolError(created.code, created.message);
+        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", shiftId, backupCaregiverId, bookingRequestId: created.bookingRequestId } }).catch(() => {});
+        return { success: true, shiftId, bookingRequestId: created.bookingRequestId, caregiverId: backupCaregiverId, caregiverName: created.caregiverName, status: "pending" };
       }
 
       case "send_referral": {

@@ -549,7 +549,10 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
     // Ask about recurring care — only for single-visit (one-time) bookings
     if (task.appointments.length === 1) {
       const firstAppt = task.appointments[0];
-      const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(firstAppt.date).getDay()];
+      // T12:00 — a bare "YYYY-MM-DD" parses as UTC midnight, which is still the
+      // PREVIOUS weekday in Pacific after 5pm; this day is persisted into
+      // pendingRecurringSchedule.days, so the recurring booking landed a day early.
+      const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${firstAppt.date}T12:00:00`).getDay()];
       const schedDesc = `${dayOfWeek}s ${formatHHMMForDisplay(firstAppt.startTime)}–${formatHHMMForDisplay(firstAppt.endTime)}`;
 
       // Write session flag BEFORE sending the message to avoid a race where a fast

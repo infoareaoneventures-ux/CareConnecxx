@@ -39,7 +39,7 @@ describe("Evia training dataset", () => {
     for (const tool of [
       "get_upcoming_appointments",
       "send_caregiver_message",
-      "find_replacement_caregivers",
+      "find_nearby_caregivers",
       "get_care_journal_client",
       "add_family_member",
       "review_shift_hours",

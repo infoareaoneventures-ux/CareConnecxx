@@ -12,8 +12,136 @@
 import * as admin from "firebase-admin";
 import { isCaregiverBookable, type CaregiverEligibilityFields } from "../utils/caregiverEligibility";
 import { haversineDistanceMiles, skillsOverlap } from "./caregiverMatchScoring";
+import { sendMessage } from "../linq/client";
+import { getAppUrl } from "../config/appUrl";
+import { addKnownNames } from "../utils/knownNames";
+import { formatDateWithWeekday, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
+
+// ── Shared building blocks (2026-09-14) ──────────────────────────────────────
+// One implementation of the website's Find Replacement modal, used by BOTH the
+// MCP tools (get_callout_backups / select_callout_backup) and the scripted
+// replacementFlow.ts — so the tool path and the conversation path can never
+// drift apart in what they write.
+
+export type ReplacementShiftLoad =
+  | { ok: true; shift: FirebaseFirestore.DocumentData; ref: FirebaseFirestore.DocumentReference }
+  | { ok: false; code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT"; message: string };
+
+// The visit must exist, belong to this client, and be the one status the
+// site's Find Replacement button appears on.
+export async function loadReplacementShift(clientId: string, shiftId: string): Promise<ReplacementShiftLoad> {
+  const ref = db.collection("shifts").doc(shiftId);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, code: "NOT_FOUND", message: "shift not found" };
+  const shift = snap.data()!;
+  if (shift.clientId !== clientId) return { ok: false, code: "PERMISSION_DENIED", message: "This visit does not belong to this client" };
+  if (shift.status !== "needs_replacement") {
+    return { ok: false, code: "INVALID_INPUT", message: `This visit isn't awaiting a replacement (status: ${shift.status})` };
+  }
+  return { ok: true, shift, ref };
+}
+
+// "Tuesday, September 15, 2026, 11:00 AM–1:00 PM" — the modal's Date / Start /
+// End fields as one line.
+export function describeVisitWindow(v: { date?: unknown; startTime?: unknown; endTime?: unknown }): string {
+  const start = formatHHMMForDisplay(String(v.startTime ?? ""));
+  const end = v.endTime ? `–${formatHHMMForDisplay(String(v.endTime))}` : "";
+  return `${formatDateWithWeekday(String(v.date ?? ""))}, ${start}${end}`;
+}
+
+// Text the family one profile card per candidate (same tappable photo-preview
+// link every other gallery uses) and record the list on the session.
+// pendingMatchesSource:"replacement" marks it so a pick is a booking request
+// (select_callout_backup), never an interview.
+export async function sendReplacementCandidateCards(
+  phone: string, chatId: string, shiftId: string, candidates: ReplacementCandidate[], nowIso: string,
+): Promise<void> {
+  for (const c of candidates) {
+    try {
+      await sendMessage(chatId,
+        `${c.name}${c.hourlyRate ? ` — $${c.hourlyRate}/hr` : ""}${c.source === "care_team" ? " (on your Care Team)" : ""}\n` +
+        `Tap to view ${c.name.split(" ")[0]}'s profile: ${getAppUrl()}/p/${c.caregiverId}`,
+      );
+      await new Promise<void>((r) => setTimeout(r, 400));
+    } catch (err) {
+      console.warn("[shiftReplacement] candidate card send failed", { phone, id: c.caregiverId, err: (err as Error)?.message });
+    }
+  }
+  await db.collection("agent_sessions").doc(phone).update({
+    pendingMatches: candidates.map((c) => ({ id: c.caregiverId, name: c.name, rate: c.hourlyRate })),
+    pendingMatchesSetAt: nowIso,
+    pendingMatchesSource: "replacement",
+    pendingReplacementShiftId: shiftId,
+    shownCaregiverIds: admin.firestore.FieldValue.arrayUnion(...candidates.map((c) => c.caregiverId)),
+  });
+  await addKnownNames(phone, candidates.map((c) => c.name));
+}
+
+export type CreateReplacementResult =
+  | { ok: true; bookingRequestId: string; caregiverName: string; date: string; startTime: string; endTime: string }
+  | { ok: false; code: "NOT_FOUND"; message: string };
+
+// Matches the site's own handleConfirmReplacement EXACTLY: a real NEW
+// booking_requests doc (the candidate gets the normal accept/decline text)
+// rather than reassigning the visit — the original shift stays
+// 'needs_replacement' until the candidate accepts. Only the bookkeeping
+// (replacementRequestId/replacementCaregiverName) is written onto it here.
+// Omit date/startTime/endTime to keep the visit's own; pass them to change it
+// (the modal's editable Date / Start / End fields).
+export async function createReplacementRequest(args: {
+  clientId: string;
+  shiftId: string;
+  shift: FirebaseFirestore.DocumentData;
+  shiftRef: FirebaseFirestore.DocumentReference;
+  backupCaregiverId: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  nowIso: string;
+}): Promise<CreateReplacementResult> {
+  const { clientId, shiftId, shift, shiftRef, backupCaregiverId, nowIso } = args;
+  const cgSnap = await db.collection("caregivers").doc(backupCaregiverId).get();
+  if (!cgSnap.exists) return { ok: false, code: "NOT_FOUND", message: "caregiver not found" };
+  const cg = cgSnap.data() || {};
+  const caregiverName = ((cg.name as string | undefined) ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
+  const effDate      = args.date ?? (shift.date as string);
+  const effStartTime = args.startTime ?? (shift.startTime as string);
+  const effEndTime   = args.endTime ?? (shift.endTime as string | undefined) ?? effStartTime;
+  const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${effDate}T12:00:00`).getDay()];
+  const bookingRef = db.collection("booking_requests").doc();
+  await bookingRef.set({
+    clientId,
+    clientName:    shift.clientName ?? "",
+    caregiverId:   backupCaregiverId,
+    caregiverName,
+    address:       shift.address ?? "",
+    rate:          (cg.hourlyRate as number | undefined) ?? shift.rate ?? null,
+    paymentMethod: shift.paymentMethod ?? "credit",
+    careNeeds:     [...new Set(((shift.careRecipients ?? []) as Array<{ careNeeds?: string[] }>).flatMap((r) => r.careNeeds || []))],
+    careRecipients: shift.careRecipients ?? [],
+    notes:         shift.notes ?? null,
+    emergencyContact: shift.emergencyContact ?? null,
+    schedule: {
+      days: [dayName],
+      startDate: effDate,
+      endDate: effDate,
+      ongoing: false,
+      dayShiftTimes: { [dayName]: [{ start: effStartTime, end: effEndTime }] },
+    },
+    isShiftReplacement: true,
+    replacementForShiftId: shiftId,
+    status: "pending",
+    isResend: false,
+    createdAt: nowIso,
+  });
+  await shiftRef.update({
+    replacementRequestId: bookingRef.id,
+    replacementCaregiverName: caregiverName,
+  });
+  return { ok: true, bookingRequestId: bookingRef.id, caregiverName, date: effDate, startTime: effStartTime, endTime: effEndTime };
+}
 
 export interface ReplacementCandidate {
   caregiverId: string;

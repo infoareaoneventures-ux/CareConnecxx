@@ -193,8 +193,10 @@ export type MatchRunResult = "matched" | "no_match" | "failed";
 
 /**
  * suppressConversationalSends: set by callers that are themselves about to
- * speak to the family in the same turn (the QA agent's find_replacement_caregivers
- * tool). With it on, matching still does all its work (interview requests,
+ * speak to the family in the same turn (originally the QA agent's
+ * find_replacement_caregivers tool, removed 2026-09-14 — the website has no such
+ * general "replacement" search; the flag stays for any caller with the same
+ * one-voice need). With it on, matching still does all its work (interview requests,
  * failure counters, admin alerts, commitments, pendingMatches) and still sends
  * the artifacts only it can send (intro line + photo gallery on a match), but
  * SKIPS the pure-status texts — the no-match update, the "Which ones would you
@@ -277,8 +279,8 @@ export async function runMatchingForClient(
     // of those callers was silently matching with an empty city/zip, which
     // starved the haversine path below and fell back to a proxy that either
     // over- or under-matched. Fill the gap once, here, for every caller —
-    // same fix already applied to find_replacement_caregivers /
-    // find_nearby_caregivers (functions/src/mcp/server.ts) — rather than
+    // same fix already applied to find_nearby_caregivers
+    // (functions/src/mcp/server.ts) — rather than
     // patching each call site. Never overwrites data intake already had.
     if (!intake.city && !intake.zipCode) {
       const liveUserId = ((session as any)?.userId ?? intake.userId) as string | undefined;

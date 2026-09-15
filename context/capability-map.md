@@ -19,7 +19,7 @@
 
 | Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
-| client | Search/match caregivers and request replacements | components/FindCaregivers.tsx | caregivers | `find_replacement_caregivers` | client | shipped |  |
+| client | Search/match caregivers (website Browse / Nearby Caregivers) | components/FindCaregivers.tsx | caregivers | `find_nearby_caregivers` | client | shipped | A cancelled visit's replacement goes through `get_callout_backups` / `select_callout_backup` instead (the per-shift Find Replacement modal). |
 | client | Book a caregiver (creates pending_caregiver_confirmation appointment) | components/client/booking/BookingFlow.tsx | appointments | `request_booking` | client | shipped |  |
 | client | Cancel an appointment (manage_booking action: cancel_pending_request / cancel_whole_booking) | components/client/ClientVisitsPage.tsx | shifts | `manage_booking` | client | shipped |  |
 | client | Update the senior's care plan | components/CarePlan.tsx | carePlans | `update_care_plan` | client | shipped |  |

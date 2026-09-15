@@ -68,20 +68,21 @@ describe("shadow/dry-run isolation (U11)", () => {
 
   it("classifies tools conservatively (mutating tools are not read-only)", () => {
     expect(isReadOnlyTool("get_billing_summary")).toBe(true);
-    // Double-send audit 2026-07-06: find_replacement_caregivers texts the
-    // family and writes interview_requests + session state — a shadow run was
-    // sending real SMS while it sat on the read-only allowlist. It is mutating.
-    expect(isReadOnlyTool("find_replacement_caregivers")).toBe(false);
+    // 2026-09-14: find_nearby_caregivers took over the removed
+    // find_replacement_caregivers' job of texting the family each caregiver's
+    // profile card and writing pendingMatches — it sends real SMS, so it is
+    // mutating and must be synthesized under shadow (the same double-send
+    // audit lesson from 2026-07-06).
+    expect(isReadOnlyTool("find_nearby_caregivers")).toBe(false);
+    expect(isReadOnlyTool("get_callout_backups")).toBe(false);
     expect(isReadOnlyTool("remove_family_member")).toBe(false);
     expect(isReadOnlyTool("cancel_job_post")).toBe(false);
     expect(isReadOnlyTool("manage_booking")).toBe(false);
   });
 
-  it("synthesizes find_replacement_caregivers under shadowMode — never texts the family", async () => {
-    const { runMatchingForClient } = await import("../../agents/matchingAgent");
-    const r = await handleToolCall("find_replacement_caregivers", { phone: "+1", chatId: "c", clientId: "u1" }, true) as any;
+  it("synthesizes find_nearby_caregivers under shadowMode — never texts the family", async () => {
+    const r = await handleToolCall("find_nearby_caregivers", { phone: "+1", chatId: "c", clientId: "u1" }, true) as any;
     expect(r._shadow).toBe(true);
-    expect(r.simulated).toBe("find_replacement_caregivers");
-    expect(runMatchingForClient).not.toHaveBeenCalled();
+    expect(r.simulated).toBe("find_nearby_caregivers");
   });
 });

@@ -27,6 +27,10 @@ export const STATE_MACHINE_FLAGS = [
   // Scripted booking flow (bookingFlow.ts, 2026-09-13)
   "bookingFlowStep",
   "bookingFlowData",
+  // Scripted shift-replacement flow (replacementFlow.ts, 2026-09-14) — the
+  // website's Find Replacement modal, step for step.
+  "replacementFlowStep",
+  "replacementFlowData",
   // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
   "interviewFlowStep",
   "interviewFlowData",
@@ -205,6 +209,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["pendingRebook",           "rebooking your visit"],
   ["jobPostingStep",          "posting your care job"],
   ["bookingFlowStep",         "sending your booking request"],
+  ["replacementFlowStep",     "finding a replacement for your visit"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["timesheetStep",           "reviewing the timesheet"],
@@ -342,7 +347,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["pendingRebook", "generic"],
   // Set by matchingAgent.ts alongside pendingMatchesSetAt; routeIntent.ts
   // treats the list as stale after 2h. Without this stamp strategy a web
-  // matching turn (find_replacement_caregivers) would wedge every subsequent
+  // matching turn (find_nearby_caregivers / get_callout_backups) would wedge every subsequent
   // web turn forever (pendingMatches carries no stateExpiresAt).
   ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
   ["pendingCancelConfirm", "confirm"],
@@ -363,6 +368,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["collectingCredential", { setAtField: "collectingCredentialSetAt", ttlMs: CREDENTIAL_FLOW_TTL_MS }],
   ["jobPostingStep", "generic"],
   ["bookingFlowStep", "generic"],
+  ["replacementFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
@@ -395,6 +401,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "stateExpiresAt",
   "jobPostingData",
   "bookingFlowData",
+  "replacementFlowData",
   "interviewFlowData",
   "awaitingTaskAck",
   "awaitingPreShiftUpdate",

@@ -11,7 +11,7 @@ import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
 import { normalizeCareNeeds, extractCareNeedDetails, type CanonicalCareCategory } from "../utils/careNeedCategories";
-import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
+import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import { formatDateForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
@@ -648,21 +648,24 @@ async function handleJpAskCaregiversNeeded(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
   const REASK = "How many caregivers do you need for this job? (Most families need just 1 — reply a number 1-4)";
-  if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, REASK)) {
-    const answer = await answerQuestionMidFlow(phone, text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, REASK);
-    return;
-  }
-  const raw = await parseWithClaude(
-    'Extract how many caregivers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number.',
-    text
-  );
-  const n = parseInt(raw, 10);
-  if (isNaN(n) || n < 1 || n > 4) {
-    await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
-    return;
+  let n = bareNumberPick(text, 4);
+  if (n === null) {
+    if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
+    if (await isQuestionOrOther(text, REASK)) {
+      const answer = await answerQuestionMidFlow(phone, text, session);
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, REASK);
+      return;
+    }
+    const raw = await parseWithClaude(
+      'Extract how many caregivers the family needs, as a number from 1 to 4. "just one"/"one"/"1" = 1. Reply with only the number.',
+      text
+    );
+    n = parseInt(raw, 10);
+    if (isNaN(n) || n < 1 || n > 4) {
+      await sendMessage(chatId, `${JP_DIDNT_CATCH} ${REASK}`);
+      return;
+    }
   }
   await mergeJobData(phone, { caregiversNeeded: n });
   await updateJobStep(phone, "jp_ask_location");
@@ -687,30 +690,32 @@ async function handleJpAskLocation(
   const REASK = `Which address is this for?\n\n${listText}\n\n` +
     (locations.length ? "Reply with a number, or a new street address + zip code." : "Reply with the street address + zip code.");
 
-  if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
-  if (await isQuestionOrOther(text, REASK)) {
-    const answer = await answerQuestionMidFlow(phone, text, session);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, REASK);
-    return;
-  }
-
-  const raw = await parseWithClaude(
-    `Known addresses:\n${listText}\n\n` +
-    "Match the family's reply to ONE of the numbered addresses above by number, OR extract a NEW street address and 5-digit zip code if they gave one not on the list. " +
-    'Return ONLY a JSON object: {"matchedIndex": number or null, "newStreet": string or null, "newZip": "5-digit zip or null"}. Never invent an address.',
-    text
-  );
-  let matchedIndex: number | null = null;
+  let matchedIndex: number | null = bareNumberPick(text, locations.length);
   let newStreet: string | null = null;
   let newZip: string | null = null;
-  const parsed = parseJsonLoose(raw, "handleJpAskLocation");
-  if (parsed) {
-    if (typeof parsed.matchedIndex === "number" && parsed.matchedIndex >= 1 && parsed.matchedIndex <= locations.length) {
-      matchedIndex = parsed.matchedIndex;
+  if (matchedIndex === null) {
+    if (await isBackOutRequest(text, REASK)) return handleJobPostingBackOut(phone, chatId, session);
+    if (await isQuestionOrOther(text, REASK)) {
+      const answer = await answerQuestionMidFlow(phone, text, session);
+      await sendMessage(chatId, answer);
+      await sendMessage(chatId, REASK);
+      return;
     }
-    if (typeof parsed.newStreet === "string" && parsed.newStreet.trim()) newStreet = parsed.newStreet.trim();
-    if (typeof parsed.newZip === "string" && /^\d{5}$/.test(parsed.newZip.trim())) newZip = parsed.newZip.trim();
+
+    const raw = await parseWithClaude(
+      `Known addresses:\n${listText}\n\n` +
+      "Match the family's reply to ONE of the numbered addresses above by number, OR extract a NEW street address and 5-digit zip code if they gave one not on the list. " +
+      'Return ONLY a JSON object: {"matchedIndex": number or null, "newStreet": string or null, "newZip": "5-digit zip or null"}. Never invent an address.',
+      text
+    );
+    const parsed = parseJsonLoose(raw, "handleJpAskLocation");
+    if (parsed) {
+      if (typeof parsed.matchedIndex === "number" && parsed.matchedIndex >= 1 && parsed.matchedIndex <= locations.length) {
+        matchedIndex = parsed.matchedIndex;
+      }
+      if (typeof parsed.newStreet === "string" && parsed.newStreet.trim()) newStreet = parsed.newStreet.trim();
+      if (typeof parsed.newZip === "string" && /^\d{5}$/.test(parsed.newZip.trim())) newZip = parsed.newZip.trim();
+    }
   }
 
   if (matchedIndex) {

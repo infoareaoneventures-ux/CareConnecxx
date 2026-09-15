@@ -76,6 +76,12 @@ vi.mock("../../observability/auditLog", () => ({
 vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
 vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+// Browse parity (2026-09-14): the tool now texts each shown caregiver's
+// profile card itself when the session has a live chat — mocked so the tests
+// can assert what was sent without touching Linq.
+const sendMessage = vi.fn(async (..._a: unknown[]) => ({ message_id: "m1" }));
+vi.mock("../../linq/client", () => ({ sendMessage: (...a: unknown[]) => sendMessage(...a) }));
+vi.mock("../../utils/knownNames", () => ({ addKnownNames: vi.fn().mockResolvedValue(undefined) }));
 
 // The real onboardingConversation.ts pulls in the whole SMS-sending/Zep/session
 // graph — far more than this handler needs (just loadLiveClientLocation), so
@@ -91,6 +97,7 @@ const CLIENT = "client_1";
 beforeEach(() => {
   hoisted.reset();
   hoisted.loadLiveClientLocation.mockReset();
+  sendMessage.mockClear();
 });
 
 function caregiver(id: string, overrides: Record<string, unknown> = {}) {
@@ -261,6 +268,38 @@ describe("find_nearby_caregivers", () => {
   // may reconsider that caregiver later, same as a plain rejection (which
   // already re-surfaces on pool exhaustion). Only a HIRE is a standing
   // relationship that should never be undone by pool exhaustion.
+  // 2026-09-14: took over the removed find_replacement_caregivers' job — the
+  // website's Nearby Caregivers widget shows real cards, so this tool texts
+  // one per shown caregiver and records pendingMatches (source "browse") so a
+  // later "meet Imran" / "send her profile again" resolves to a real id.
+  describe("profile-card gallery (Browse parity)", () => {
+    const PHONE = "+15550009999";
+
+    it("texts one profile card per shown caregiver and records pendingMatches when there is a live chat", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: "chat-1" });
+      hoisted.collState.set("publicCaregiverProfiles", [caregiver("cg1", { name: "Imran Ali", hourlyRate: 24 }), caregiver("cg2", { name: "Maria Santos", hourlyRate: 28 })]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, phone: PHONE, limit: 10 }) as any;
+      expect(r.sent).toBe(true);
+      expect(r.instruction).toMatch(/do NOT repeat/i);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(String(sendMessage.mock.calls[0][1])).toContain("Imran Ali — $24/hr");
+      expect(String(sendMessage.mock.calls[0][1])).toContain("/p/cg1");
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.pendingMatchesSource).toBe("browse");
+      expect(stored.pendingMatches.map((m: any) => m.id)).toEqual(["cg1", "cg2"]);
+    });
+
+    it("sends nothing and returns the plain preview when there is no chat to send to", async () => {
+      hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });
+      hoisted.collState.set("publicCaregiverProfiles", [caregiver("cg1")]);
+      const r = await handleToolCall("find_nearby_caregivers", { clientId: CLIENT, limit: 10 }) as any;
+      expect(r.available).toBe(true);
+      expect(r.sent).toBeUndefined();
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
+  });
+
   describe("already-decided exclusion (hire_decisions)", () => {
     it("excludes a caregiver the family already hired", async () => {
       hoisted.loadLiveClientLocation.mockResolvedValue({ lat: 37.34, lng: -121.89, city: "Santa Clara" });

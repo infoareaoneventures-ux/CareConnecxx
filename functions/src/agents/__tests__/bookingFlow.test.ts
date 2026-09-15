@@ -233,6 +233,50 @@ describe("startBookingFlow", () => {
       expect(stored.bookingFlowData.jobTitle).toBe("Senior care in San Jose");
     });
 
+    // 2026-09-14 (live): a bare "1" to the 2-option picker came back "didn't
+    // catch that" — the router model misread it. A bare in-range number is a
+    // strict-protocol reply; it must resolve with NO model call at all.
+    it("a bare number picks the interview directly, skipping every model call", async () => {
+      hoisted.docState.set("video_interviews/iv1", {
+        clientId: UID, caregiverId: CG_ID, status: "completed", applicationId: "app1",
+        scheduledTime: "2026-09-13T09:00:00.000Z",
+      });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: CG_ID, status: "completed",
+        scheduledTime: "2026-09-12T21:10:00.000Z",
+      });
+      hoisted.docState.set("job_applications/app1", { jobId: "job1" });
+      hoisted.docState.set("job_posts/job1", { title: "Senior care in San Jose", rate: "25" });
+
+      await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      messagesCreate.mockClear();
+      // No modelReplies queued — any model call here would fail the pick.
+      await handleBookingFlowStep(PHONE, CHAT, "1", session({ bookingFlowStep: "bk_ask_interview" }));
+
+      expect(messagesCreate).not.toHaveBeenCalled();
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+      expect(stored.bookingFlowData.interviewId).toBe("iv1");
+    });
+
+    it("an out-of-range bare number still falls through to the model path", async () => {
+      hoisted.docState.set("video_interviews/iv1", {
+        clientId: UID, caregiverId: CG_ID, status: "completed", scheduledTime: "2026-09-13T09:00:00.000Z",
+      });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: CG_ID, status: "completed", scheduledTime: "2026-09-12T21:10:00.000Z",
+      });
+      await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      messagesCreate.mockClear();
+      modelReplies("NO", "NO", "0");
+      await handleBookingFlowStep(PHONE, CHAT, "7", session({ bookingFlowStep: "bk_ask_interview" }));
+
+      expect(messagesCreate).toHaveBeenCalled();
+      const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+      expect(stored.bookingFlowStep).toBe("bk_ask_interview");
+      expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("didn't quite catch");
+    });
+
     it("auto-links with no ask at all when exactly one interview is eligible", async () => {
       hoisted.docState.set("video_interviews/iv1", {
         clientId: UID, caregiverId: CG_ID, status: "completed", applicationId: "app1",
@@ -599,6 +643,25 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     expect(stored.bookingFlowData.ongoing).toBe(false);
     expect(stored.bookingFlowData.scheduleEndDate).toBe("2026-12-01");
     expect(stored.bookingFlowStep).toBe("bk_ask_message");
+  });
+
+  it("a bare number picks the address directly with no model call", async () => {
+    const data = {
+      caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, days: ["Tuesday"], startDate: "2026-09-15",
+      dayTimes: { Tuesday: { start: "09:00", end: "17:00" } }, ongoing: true,
+      careLocationOptions: [
+        { street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" },
+        { street: "2 Oak Ave", city: "Springfield", state: "CA", zipCode: "90000", smokingHousehold: true },
+      ],
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_location", bookingFlowData: data });
+    // No modelReplies queued — a bare in-range number must never reach the model.
+    await handleBookingFlowStep(PHONE, CHAT, "2", session({ bookingFlowStep: "bk_ask_location", bookingFlowData: data }));
+
+    expect(messagesCreate).not.toHaveBeenCalled();
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
+    expect(stored.bookingFlowData.careLocation).toBe("2 Oak Ave, Springfield, CA, 90000");
   });
 
   it("an ambiguous address list is asked, and picking by number advances to the message ask, then confirm", async () => {

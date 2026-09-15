@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { isBareDateOrTimeAnswer } from "../bareDateTimeAnswer";
+import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../bareDateTimeAnswer";
+
+describe("isBareYesNoAnswer", () => {
+  it("matches the exact live-caught failure (2026-09-14): a bare 'yes' to a reschedule question", () => {
+    expect(isBareYesNoAnswer("yes")).toBe(true);
+    expect(isBareYesNoAnswer("Yes.")).toBe(true);
+    expect(isBareYesNoAnswer(" YES ")).toBe(true);
+  });
+
+  it("matches the canonical confirm/decline words approvalHandler treats as a real YES/NO", () => {
+    for (const w of ["y", "yeah", "yep", "ok", "okay", "sure", "go ahead", "do it", "no", "nope", "never mind", "cancel", "wait"]) {
+      expect(isBareYesNoAnswer(w), w).toBe(true);
+    }
+  });
+
+  it("does not match a real fact correction, even one that starts with yes/no", () => {
+    expect(isBareYesNoAnswer("actually mom is 82 not 78")).toBe(false);
+    expect(isBareYesNoAnswer("yes but actually she's 82")).toBe(false);
+    expect(isBareYesNoAnswer("no, her doctor is Dr. Chen")).toBe(false);
+    expect(isBareYesNoAnswer("")).toBe(false);
+  });
+});
 
 describe("isBareDateOrTimeAnswer", () => {
   it("matches the exact live-caught failures (2026-09-09)", () => {

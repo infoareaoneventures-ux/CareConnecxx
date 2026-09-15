@@ -60,10 +60,10 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
   {
     id: "client-find-caregiver",
     actor: "client",
-    action: "Search/match caregivers and request replacements",
+    action: "Search/match caregivers (website Browse / Nearby Caregivers)",
     webSurface: "components/FindCaregivers.tsx",
     collection: "caregivers",
-    tool: "find_replacement_caregivers",
+    tool: "find_nearby_caregivers",
     promptActor: "client",
     status: "shipped",
   },

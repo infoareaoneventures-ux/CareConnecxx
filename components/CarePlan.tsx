@@ -297,6 +297,46 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
 
 
 
+  // A recipient stays on the Care Plan until it is deleted HERE (deleteRecipient
+  // below, or Evia's remove tool — both archive into job_postings.deletedRecipients).
+  // The tabs used to come only from the job_postings roster, so anything else
+  // that dropped a roster entry (a field edited in the console, a bad write, a
+  // partial migration — live-caught 2026-09-15: two of three recipients vanished
+  // while their plans sat intact in carePlans.recipientPlans) silently hid the
+  // recipient. Now anyone with a plan who hasn't been deliberately deleted is
+  // shown too, and the effect below writes them back onto the roster.
+  const orphanedPlanRecipients = useMemo((): RecipientEntry[] => {
+    if (!wizardData || !wizardData.careRecipientFirstName) return [];
+    const rosterKeys = new Set<string>([getKey(wizardData.careRecipientFirstName || '', wizardData.careRecipientLastName || '')]);
+    (wizardData.additionalRecipients || []).forEach((r: any) => {
+      if ((r.firstName || '').trim()) rosterKeys.add(getKey(r.firstName.trim(), (r.lastName || '').trim()));
+    });
+    const deletedKeys = new Set<string>(
+      (wizardData.deletedRecipients || []).map((d: any) => getKey((d.firstName || '').trim(), (d.lastName || '').trim())),
+    );
+    const hasMyself = wizardData.relationship?.toLowerCase() === 'myself'
+      || (wizardData.additionalRecipients || []).some((r: any) => r.relationship?.toLowerCase() === 'myself');
+    const out: RecipientEntry[] = [];
+    Object.entries(recipientPlans).forEach(([key, plan]) => {
+      if (rosterKeys.has(key) || deletedKeys.has(key)) return;
+      const p = plan as any;
+      // The site never writes a name onto a plan (it derives names from the
+      // roster); Evia's writers sometimes do. Fall back to the key itself.
+      const storedName = typeof p?.name === 'string' ? p.name.trim() : '';
+      const [kFirst, ...kRest] = key.split('_');
+      const firstName = storedName ? storedName.split(' ')[0] : kFirst.charAt(0).toUpperCase() + kFirst.slice(1);
+      const lastFromKey = kRest.join(' ');
+      const lastName = storedName
+        ? storedName.split(' ').slice(1).join(' ')
+        : (lastFromKey === 'noname' ? '' : lastFromKey.replace(/\b\w/g, (c) => c.toUpperCase()));
+      if (!firstName) return;
+      let relationship = typeof p?.relationship === 'string' ? p.relationship : '';
+      if (relationship.toLowerCase() === 'myself' && hasMyself) relationship = '';
+      out.push({ firstName, lastName, name: [firstName, lastName].filter(Boolean).join(' '), relationship, age: typeof p?.age === 'string' ? p.age : '' });
+    });
+    return out;
+  }, [wizardData, recipientPlans]);
+
   const recipients = useMemo((): RecipientEntry[] => {
     if (!wizardData || !wizardData.careRecipientFirstName) return [];
     const list: RecipientEntry[] = [];
@@ -314,8 +354,30 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
       seenKeys.add(rKey);
       list.push({ firstName: rFirst, lastName: rLast, name: [rFirst, rLast].filter(Boolean).join(' '), relationship: r.relationship || '', age: r.age || '', photoURL: r.photoURL || '' });
     });
+    orphanedPlanRecipients.forEach((r) => {
+      const rKey = getKey(r.firstName, r.lastName);
+      if (seenKeys.has(rKey)) return;
+      seenKeys.add(rKey);
+      list.push(r);
+    });
     return list;
-  }, [wizardData]);
+  }, [wizardData, orphanedPlanRecipients]);
+
+  // Self-heal: write any orphaned-plan recipient back onto the roster (the
+  // same additive arrayUnion write saveNewRecipient makes), once per set, so
+  // every other reader of job_postings (bookings, matching) sees them again.
+  const healedKeysRef = useRef<string>('');
+  useEffect(() => {
+    if (isReadOnly || !currentPlanId || !db || orphanedPlanRecipients.length === 0) return;
+    const signature = orphanedPlanRecipients.map((r) => getKey(r.firstName, r.lastName)).sort().join('|');
+    if (healedKeysRef.current === signature) return;
+    healedKeysRef.current = signature;
+    const entries = orphanedPlanRecipients.map((r) => ({ firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age || '' }));
+    db.collection('job_postings').doc(currentPlanId)
+      .set({ additionalRecipients: firebase.firestore.FieldValue.arrayUnion(...entries) }, { merge: true })
+      .then(() => setWizardData((prev: any) => ({ ...(prev || {}), additionalRecipients: [...((prev?.additionalRecipients) || []), ...entries] })))
+      .catch(() => { healedKeysRef.current = ''; });
+  }, [orphanedPlanRecipients, isReadOnly, currentPlanId]);
 
   const wizardLocations = useMemo((): LocationEntry[] => {
     if (!wizardData) return [];

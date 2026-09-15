@@ -718,6 +718,27 @@ describe("client care records + payment mirror", () => {
     expect(hoisted.docState.get(`senior_profiles/${seniorIds[0]}`)?.name).toBe("Frank");
   });
 
+  // 2026-09-15: the recipient roster on job_postings/{uid} is only ever ADDED
+  // to — a re-run of intake finalization must never replace recipients the
+  // family added on the Care Plan page, and an existing primary stays primary.
+  it("persistClientCareRecords keeps an existing roster: primary sticky, site-added recipients preserved, SMS people folded in", async () => {
+    hoisted.docState.set(`job_postings/${CLIENT_UID}`, {
+      careRecipientFirstName: "Samira", careRecipientLastName: "M", relationship: "parent", careRecipientAge: "22",
+      additionalRecipients: [{ firstName: "Imran", lastName: "Mohammed", relationship: "brother", age: "" }],
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    await persistClientCareRecords(CLIENT_UID, PHONE, CLIENT_DATA);
+
+    const jp = hoisted.docState.get(`job_postings/${CLIENT_UID}`);
+    expect(jp?.careRecipientFirstName).toBe("Samira");
+    const names = (jp?.additionalRecipients ?? []).map((r: any) => r.firstName);
+    expect(names).toContain("Imran");
+    expect(names).toContain("Margaret"); // the SMS primary, folded in — not displacing Samira
+    expect(names).toContain("Frank");
+    expect(new Set(names).size).toBe(names.length); // no duplicates
+    expect(jp?.adultsCount).toBe(1 + names.length);
+  });
+
   it("does NOT mint an anonymous intake at intake-confirm when no uid resolved", async () => {
     await persistClientCareRecords(undefined, PHONE, CLIENT_DATA);
     const intakes = [...hoisted.docState.keys()].filter((p) => p.startsWith("clientIntakes/"));

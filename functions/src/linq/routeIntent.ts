@@ -1241,10 +1241,50 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── RESCHEDULE_REQUEST — move an existing appointment to a new date/time ──
+    // ── RESCHEDULE_REQUEST — move an existing visit to a new date/time ──────
+    // 2026-09-15 (live-caught): left to the free-form agent loop this asserted
+    // a visit on a day that had none, moved the WRONG visit, and the family's
+    // plain "9/17 10am to 3pm" reply got hijacked by the memory-correction
+    // detector. Now the website's Reschedule button as a scripted flow
+    // (rescheduleFlow.ts): the family's REAL scheduled visits are read fresh,
+    // their own words are parsed against that list, and every later reply is
+    // captured by routeClient's pre-intent dispatch. Falls back to the agent
+    // only when the flow could not start (it has already told the family why).
     if (intent === "RESCHEDULE_REQUEST" && session.userType !== "caregiver") {
-      // runQaAgent delivers its own reply via sendSplit(chatId); do NOT double-send
-      // through sendViaInteractionAgent (proactive-send path). Matches default QA path.
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const { startRescheduleFlow } = await import("../agents/rescheduleFlow");
+        await startRescheduleFlow(phone, chatId, session, { initialText: text });
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+      }
+      return;
+    }
+
+    // ── FIND_REPLACEMENT — cover a visit the caregiver cancelled ──────────────
+    // The website's Find Replacement button (replacementFlow.ts). Exactly one
+    // visit waiting on a replacement → start the flow on it directly, no agent
+    // turn in between (2026-09-15, live-caught: the agent ran a general
+    // caregiver search here instead). Zero or several → the agent, which has
+    // get_upcoming_appointments + start_replacement_flow to sort out which.
+    if (intent === "FIND_REPLACEMENT" && session.userType !== "caregiver" && session.userId) {
+      const needing = await db.collection("shifts")
+        .where("clientId", "==", session.userId)
+        .where("status", "in", ["needs_replacement"])
+        .where("date", ">=", businessTodayStr())
+        .orderBy("date", "asc")
+        .limit(5)
+        .get();
+      if (needing.docs.length === 1) {
+        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+        try {
+          const { startReplacementFlow } = await import("../agents/replacementFlow");
+          await startReplacementFlow(phone, chatId, session, { shiftId: needing.docs[0].id });
+        } finally {
+          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
+        }
+        return;
+      }
       await runQaAgent({
         text,
         phone,

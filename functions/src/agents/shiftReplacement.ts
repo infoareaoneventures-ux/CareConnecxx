@@ -51,6 +51,25 @@ export function describeVisitWindow(v: { date?: unknown; startTime?: unknown; en
   return `${formatDateWithWeekday(String(v.date ?? ""))}, ${start}${end}`;
 }
 
+// The site's Skip button on a Needs Replacement visit: the visit is simply
+// cancelled in place (no replacement), the rest of the booking untouched.
+// Same write as manage_booking action:"cancel_visit"; shifts.status →
+// cancelled fires onShiftStatusChanged, which notifies the caregiver.
+export async function skipReplacementShift(clientId: string, shiftId: string): Promise<
+  | { ok: true; date: string; startTime: string; endTime: string }
+  | { ok: false; code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT" }
+> {
+  const loaded = await loadReplacementShift(clientId, shiftId);
+  if (!loaded.ok) return { ok: false, code: loaded.code };
+  await loaded.ref.update({ status: "cancelled", cancelledBy: "client" });
+  return {
+    ok: true,
+    date: String(loaded.shift.date ?? ""),
+    startTime: String(loaded.shift.startTime ?? ""),
+    endTime: String(loaded.shift.endTime ?? loaded.shift.startTime ?? ""),
+  };
+}
+
 // Text the family one profile card per candidate (same tappable photo-preview
 // link every other gallery uses) and record the list on the session.
 // pendingMatchesSource:"replacement" marks it so a pick is a booking request

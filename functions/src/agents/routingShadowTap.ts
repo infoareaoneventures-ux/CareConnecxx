@@ -25,6 +25,7 @@ const INTENT_TO_FLOW: Partial<Record<Intent, string>> = {
   UPDATE_BIO:         "caregiver_profile",
   SWAP_REQUEST:       "swap",
   CLIENT_SWAP_REQUEST:"client_swap",
+  FIND_REPLACEMENT:   "replacement",
   APPROVE_TIMESHEET:  "timesheet_approval",    // U9 financial cluster
   REQUEST_REFUND:     "refund",
   CANCEL_SHIFT:       "cancel_shift",

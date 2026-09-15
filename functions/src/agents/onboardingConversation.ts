@@ -2381,6 +2381,47 @@ export async function persistClientCareRecords(
       if (!jpData.createdAt) {
         jpWrite.createdAt = admin.firestore.FieldValue.serverTimestamp();
       }
+      // The recipient roster is only ever ADDED to here, never replaced — same
+      // guarantee buildJobPost.ts and the website's own PostJobFlow give
+      // (2026-09-15: a wholesale additionalRecipients write could drop
+      // recipients the family had added on the Care Plan page). An existing
+      // primary is sticky; the SMS primary, if a different person, joins the
+      // additional list instead of displacing them.
+      const rosterKey = (first: unknown, last: unknown) =>
+        `${String(first ?? "").trim().toLowerCase()}_${(String(last ?? "").trim() || "noname").toLowerCase()}`.replace(/\s+/g, "_");
+      const existingAdditional = Array.isArray(jpData.additionalRecipients)
+        ? (jpData.additionalRecipients as Array<Record<string, unknown>>)
+        : [];
+      const incomingAdditional = Array.isArray(jpWrite.additionalRecipients)
+        ? (jpWrite.additionalRecipients as Array<Record<string, unknown>>)
+        : [];
+      const merged: Array<Record<string, unknown>> = [...existingAdditional];
+      const have = new Set<string>(existingAdditional.map((r) => rosterKey(r.firstName, r.lastName)));
+      if (jpData.careRecipientFirstName) {
+        have.add(rosterKey(jpData.careRecipientFirstName, jpData.careRecipientLastName));
+        // Primary already on file — keep it; fold the SMS primary in as an
+        // additional recipient when it's someone else.
+        const smsPrimaryKey = rosterKey(jpWrite.careRecipientFirstName, jpWrite.careRecipientLastName);
+        if (jpWrite.careRecipientFirstName && !have.has(smsPrimaryKey)) {
+          merged.push({
+            firstName: jpWrite.careRecipientFirstName, lastName: jpWrite.careRecipientLastName ?? "",
+            relationship: jpWrite.relationship ?? "",
+            ...(jpWrite.careRecipientAge !== undefined ? { age: jpWrite.careRecipientAge } : {}),
+          });
+          have.add(smsPrimaryKey);
+        }
+        delete jpWrite.careRecipientFirstName;
+        delete jpWrite.careRecipientLastName;
+        delete jpWrite.careRecipientAge;
+        delete jpWrite.relationship;
+        delete jpWrite.careRecipientPhotoURL;
+      }
+      for (const r of incomingAdditional) {
+        const k = rosterKey(r.firstName, r.lastName);
+        if (!have.has(k)) { merged.push(r); have.add(k); }
+      }
+      jpWrite.additionalRecipients = merged;
+      jpWrite.adultsCount = 1 + merged.length;
       await jpRef.set(jpWrite, { merge: true });
     } catch (err) {
       console.error("persistClientCareRecords: job_postings full write failed (non-fatal):", err);

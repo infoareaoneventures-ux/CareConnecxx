@@ -19,7 +19,8 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
-import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, weekdayForDate } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
+import { loadReschedulableShift, proposeShiftReschedule } from "../agents/shiftReschedule";
 import { normDay } from "../scheduled/shiftGenerator";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
@@ -273,6 +274,29 @@ export const MCP_TOOLS: McpTool[] = [
         shiftId: { type: "string", description: "The shift (visit) that needs a replacement — status 'needs_replacement'." },
       },
       required: ["shiftId"],
+    },
+  },
+  {
+    name: "start_reschedule_flow",
+    description:
+      "THE way to move an existing scheduled visit to a different day/time (the website's own Reschedule button on " +
+      "My Bookings > Active Bookings > UPCOMING SHIFTS): starts Evia's scripted flow, which reads the family's REAL " +
+      "upcoming scheduled visits fresh from the database (never from memory), asks which one if more than one could " +
+      "be meant, asks the new day + start/end time if not already given, checks it doesn't overlap another visit " +
+      "with the same caregiver that day (same check as the site), shows a recap, and only on the family's YES writes " +
+      "the proposal (reschedulePending*; the real time changes only when the caregiver accepts). Pass initialText = " +
+      "the family's own message so their visit choice and new time are read from what they actually said; pass shiftId " +
+      "only when you are certain which visit (a 'scheduled' one — never a 'needs_replacement' one). This tool ALREADY " +
+      "TEXTS THE FAMILY itself — send NOTHING else this turn. The flow then owns the conversation until it finishes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        initialText: { type: "string", description: "The family's own message asking for the move, verbatim." },
+        shiftId:     { type: "string", description: "Optional — the scheduled visit's id from get_upcoming_appointments, only when unambiguous." },
+        date:        { type: "string", description: "Optional YYYY-MM-DD the family asked to move it to." },
+        startTime:   { type: "string", description: "Optional HH:MM 24-hour new start." },
+        endTime:     { type: "string", description: "Optional HH:MM 24-hour new end." },
+      },
     },
   },
   {
@@ -3792,6 +3816,34 @@ async function executeToolCall(
         };
       }
 
+      case "start_reschedule_flow": {
+        const { clientId, phone, shiftId, date, startTime, endTime, initialText } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the reschedule flow in");
+        const { startRescheduleFlow } = await import("../agents/rescheduleFlow");
+        const result = await startRescheduleFlow(phone as string, chatId, sessionData as any, {
+          ...(typeof shiftId === "string" && shiftId ? { shiftId } : {}),
+          ...(typeof date === "string" && date ? { date } : {}),
+          ...(typeof startTime === "string" && startTime ? { startTime } : {}),
+          ...(typeof endTime === "string" && endTime ? { endTime } : {}),
+          ...(typeof initialText === "string" && initialText ? { initialText } : {}),
+        });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what was found (or not found) — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family the next step of the reschedule flow. Send NOTHING else this turn — not even an acknowledgment. The flow now owns the conversation until it finishes.",
+        };
+      }
+
       case "start_booking_flow": {
         const { clientId, caregiverId, interviewId, phone } = input as Record<string, unknown>;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
@@ -4599,24 +4651,24 @@ async function executeToolCall(
           if (!shiftId || !date || !startTime || !endTime) {
             return toolError("INVALID_INPUT", "shiftId, date, startTime, and endTime are required for propose_reschedule");
           }
-          const startMin = bookingTimeToMinutes(startTime);
-          const endMin   = bookingTimeToMinutes(endTime);
-          if (startMin === null || endMin === null || endMin <= startMin) {
-            return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
-          }
-          const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
-          if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
-          const shift = shiftSnap.data()!;
-          if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Visit does not belong to this client");
-          if (shift.status !== "scheduled") return toolError("INVALID_INPUT", `Only a scheduled visit can be rescheduled this way (status: ${shift.status})`);
-          await shiftSnap.ref.update({
-            reschedulePendingDate: date,
-            reschedulePendingStartTime: startTime,
-            reschedulePendingEndTime: endTime,
-            reschedulePendingAt: nowIso,
-            rescheduledBy: "client",
+          // Shared with rescheduleFlow.ts (agents/shiftReschedule.ts): same
+          // status gate, same own-visit double-booking check the site runs
+          // (fetchOwnShiftsForDate + rangeConflicts), same write.
+          const loaded = await loadReschedulableShift(clientId as string, shiftId as string);
+          if (!loaded.ok) return toolError(loaded.code, loaded.message);
+          const proposed = await proposeShiftReschedule({
+            clientId: clientId as string, shiftId: shiftId as string, shift: loaded.shift, shiftRef: loaded.ref,
+            date: date as string, startTime: startTime as string, endTime: endTime as string,
+            nowIso, source: "mcp:manage_booking",
           });
-          logAudit({ eventType: "shift_reschedule_proposed", userId: clientId as string, data: { source: "mcp:manage_booking", action, shiftId } }).catch(() => {});
+          if (!proposed.ok) {
+            if (proposed.code === "CONFLICT") {
+              return toolError("INVALID_INPUT",
+                `That overlaps another visit with the same caregiver at ${formatHHMMForDisplay(proposed.conflict.startTime)}` +
+                `${proposed.conflict.endTime ? `–${formatHHMMForDisplay(proposed.conflict.endTime)}` : ""} that day — ask the family for a different time`);
+            }
+            return toolError("INVALID_INPUT", proposed.message);
+          }
           return { success: true, action, shiftId, date, startTime, endTime };
         }
 

@@ -1210,6 +1210,38 @@ describe("runQaAgent re-remember and grounding behavior", () => {
     expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
   });
 
+  // 2026-09-15 (live-caught, twice): "skip the shift for tomorrow. no need for
+  // replacement" and "move it to 9/17 at 10am to 3pm" were both swallowed by
+  // this detector (no_match / completed) instead of reaching the agent that
+  // acts on live bookings. Two guards, tested separately.
+  it("skips detectAndStageFactChange entirely when the intent classifier already judged the turn a booking ACTION (2026-09-15)", async () => {
+    const reply = await runQaAgent({ ...baseParams, text: "move it to 9/17 at 10am to 3pm", intent: "RESCHEDULE_REQUEST" });
+
+    expect(reply).toBe(normalReply);
+    expect(qaHarness.detectAndStageFactChange).not.toHaveBeenCalled();
+    expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a no_match verdict WITHOUT a FACT_CORRECTION intent falls through to the agent instead of the no-match copy (2026-09-15)", async () => {
+    qaHarness.detectAndStageFactChange.mockResolvedValue({ kind: "no_match" });
+    (qaHarness.factChangeAckCopy as any).mockReturnValue("no-match");
+
+    const reply = await runQaAgent({ ...baseParams, text: "skip the shift for tomorrow. no need for replacement", intent: "QUESTION" });
+
+    expect(reply).toBe(normalReply);
+    expect(qaHarness.runAgentModelTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a no_match verdict WITH the classifier's FACT_CORRECTION intent still returns the deterministic no-match copy", async () => {
+    qaHarness.detectAndStageFactChange.mockResolvedValue({ kind: "no_match" });
+    (qaHarness.factChangeAckCopy as any).mockReturnValue("no-match");
+
+    const reply = await runQaAgent({ ...baseParams, text: "actually her doctor is Dr. Chen", intent: "FACT_CORRECTION" });
+
+    expect(reply).toBe("no-match");
+    expect(qaHarness.runAgentModelTurn).not.toHaveBeenCalled();
+  });
+
   it("does not classify an expired re-remember confirmation and continues the normal turn", async () => {
     const reply = await runQaAgent({
       ...baseParams,

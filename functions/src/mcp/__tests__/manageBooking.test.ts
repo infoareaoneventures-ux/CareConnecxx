@@ -224,12 +224,12 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
   it("propose_reschedule stores a pending proposal without touching the real date/time", async () => {
     hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00" });
     const r = await handleToolCall("manage_booking", {
-      clientId: CLIENT, action: "propose_reschedule", shiftId: "s1", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
+      clientId: CLIENT, action: "propose_reschedule", shiftId: "s1", date: "2099-09-08", startTime: "10:00", endTime: "13:00",
     }) as any;
     expect(r.success).toBe(true);
     const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
     expect(update).toMatchObject({
-      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
       rescheduledBy: "client",
     });
     // Real date/time untouched by this write.

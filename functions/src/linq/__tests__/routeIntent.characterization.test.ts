@@ -185,6 +185,10 @@ vi.mock("../../agents/bookingExecutor", () => ({
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
+const startRescheduleFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+vi.mock("../../agents/rescheduleFlow", () => ({ startRescheduleFlow: (...a: any[]) => (startRescheduleFlow as Function).apply(null, a) }));
+const startReplacementFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+vi.mock("../../agents/replacementFlow", () => ({ startReplacementFlow: (...a: any[]) => (startReplacementFlow as Function).apply(null, a) }));
 vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
 vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
 vi.mock("../../agents/earningsHandler", () => ({ handleEarningsView: vi.fn(async () => {}) }));
@@ -879,6 +883,51 @@ describe("HIRE_CAREGIVER defers to the agent when caregiver context exists (2026
 // assumed "cancel" could only ever mean a confirmed visit. With no confirmed
 // appointment to cancel, the turn now hands off to the full agent (which has
 // the real conversation context and cancel_interview) instead of dead-ending.
+// 2026-09-15 (live-caught): a client RESCHEDULE_REQUEST went to the free-form
+// agent, which asserted a visit on a day that had none, then moved the WRONG
+// visit. It now starts the scripted rescheduleFlow (the site's Reschedule
+// button) with the family's own words, and never touches the agent.
+describe("RESCHEDULE_REQUEST (client) starts the scripted reschedule flow (2026-09-15)", () => {
+  it("calls startRescheduleFlow with the family's message as initialText and does not run the agent", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "RESCHEDULE_REQUEST", degraded: false });
+
+    await routeIntentAndRespond(ctx("move Wednesday's visit to 9/17 10am to 3pm"));
+
+    expect(startRescheduleFlow).toHaveBeenCalledOnce();
+    expect(startRescheduleFlow.mock.calls[0][3]).toEqual({ initialText: "move Wednesday's visit to 9/17 10am to 3pm" });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+});
+
+// FIND_REPLACEMENT (2026-09-15): "who is available for replacement" used to
+// run a general caregiver search via the agent. With exactly one visit
+// waiting on a replacement, the scripted replacementFlow starts directly.
+describe("FIND_REPLACEMENT (client) routes to the scripted replacement flow", () => {
+  it("exactly one needs_replacement visit → startReplacementFlow on that shift, no agent turn", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "FIND_REPLACEMENT", degraded: false });
+    hoisted.docState.set("shifts/sh-tue", { clientId: CLIENT_ID, caregiverId: "cg1", status: "needs_replacement", date: "2099-01-01", startTime: "11:00", endTime: "13:00" });
+
+    await routeIntentAndRespond(ctx("who is available for replacement"));
+
+    expect(startReplacementFlow).toHaveBeenCalledOnce();
+    expect(startReplacementFlow.mock.calls[0][3]).toEqual({ shiftId: "sh-tue" });
+    expect(runQaAgent).not.toHaveBeenCalled();
+  });
+
+  it("no visit waiting on a replacement → the agent (which has the live data) takes the turn", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "FIND_REPLACEMENT", degraded: false });
+    runQaAgent.mockResolvedValue("None of your visits need a replacement right now.");
+
+    await routeIntentAndRespond(ctx("find a replacement"));
+
+    expect(startReplacementFlow).not.toHaveBeenCalled();
+    expect(runQaAgent).toHaveBeenCalledOnce();
+  });
+});
+
 describe("CANCEL_REQUEST with no confirmed appointment falls through to the agent (2026-09-09)", () => {
   it("hands off to runQaAgent instead of the hardcoded 'no visits to cancel' reply", async () => {
     seed();

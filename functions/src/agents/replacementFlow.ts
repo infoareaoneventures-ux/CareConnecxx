@@ -26,7 +26,7 @@ import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepH
 import { bookingTimeToMinutes } from "./bookingResolution";
 import {
   findReplacementCandidates, loadReplacementShift, sendReplacementCandidateCards,
-  createReplacementRequest, describeVisitWindow,
+  createReplacementRequest, describeVisitWindow, skipReplacementShift,
 } from "./shiftReplacement";
 
 const db = admin.firestore();
@@ -52,6 +52,9 @@ export interface ReplacementFlowData {
 
 const RP_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
 const BARE_NO = new Set(["NO", "N", "NOPE", "NAH"]);
+// The site's second button. Offered by name in the question, so a bare
+// "SKIP" is a protocol word here (like YES/NO), not intent parsing.
+const BARE_SKIP = new Set(["SKIP", "SKIP IT"]);
 
 // ── Model plumbing (same shape as bookingFlow.ts so tests drive it identically) ─
 
@@ -174,7 +177,14 @@ function candidateList(d: ReplacementFlowData): string {
 // pre-filled Date / Start / End.
 function PICK_QUESTION(d: ReplacementFlowData): string {
   return `Which one would you like to send the request to? Reply with a name or number.\n\n` +
-    `I'll keep the visit as is — ${describeVisitWindow({ date: d.visitDate, startTime: d.visitStart, endTime: d.visitEnd })} — unless you tell me a different day or time.`;
+    `I'll keep the visit as is — ${describeVisitWindow({ date: d.visitDate, startTime: d.visitStart, endTime: d.visitEnd })} — unless you tell me a different day or time. ` +
+    `Or reply SKIP to cancel this visit without a replacement.`;
+}
+
+// The site's Skip button, confirmed before it happens.
+function SKIP_QUESTION(d: ReplacementFlowData): string {
+  return `Skip the ${describeVisitWindow({ date: d.visitDate, startTime: d.visitStart, endTime: d.visitEnd })} visit? It'll be cancelled with no replacement — the rest of the booking stays as is.\n\n` +
+    `Reply YES to skip it, or NO to keep it as Needs Replacement.`;
 }
 
 function TIME_QUESTION(d: ReplacementFlowData): string {
@@ -205,14 +215,26 @@ export async function startReplacementFlow(
   }
   const shift = loaded.shift;
   const candidates = await findReplacementCandidates(clientId, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
+  const nowIso = new Date().toISOString();
   if (candidates.length === 0) {
+    // Nobody to offer — the site's only remaining button is Skip, so offer
+    // exactly that (as a real flow step, so the family's YES/NO lands here).
+    const empty: ReplacementFlowData = {
+      shiftId: args.shiftId, candidates: [],
+      visitDate: String(shift.date ?? ""), visitStart: String(shift.startTime ?? ""), visitEnd: String(shift.endTime ?? shift.startTime ?? ""),
+    };
+    await db.collection("agent_sessions").doc(phone).update({
+      replacementFlowStep: "rp_skip_confirm",
+      replacementFlowData: empty,
+      stateExpiresAt:      new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
     await sendMessage(chatId,
-      "I couldn't find anyone available to cover that visit right now. You can skip it (the visit is simply cancelled) — " +
-      "just say so — or I can keep an eye out and let you know the moment someone opens up.");
-    return { started: false, reason: "no_candidates" };
+      `I couldn't find anyone available to cover the ${describeVisitWindow({ date: empty.visitDate, startTime: empty.visitStart, endTime: empty.visitEnd })} visit right now. ` +
+      `Want me to skip it instead? It'll be cancelled with no replacement — the rest of the booking stays as is.\n\n` +
+      `Reply YES to skip it, or NO to leave it as Needs Replacement and I'll let you know if someone opens up.`);
+    return { started: true, reason: "no_candidates" };
   }
 
-  const nowIso = new Date().toISOString();
   await sendReplacementCandidateCards(phone, chatId, args.shiftId, candidates, nowIso);
 
   const data: ReplacementFlowData = {
@@ -241,6 +263,7 @@ export async function handleReplacementFlowStep(
     case "rp_pick":     return handleRpPick(phone, chatId, text, session);
     case "rp_ask_time": return handleRpAskTime(phone, chatId, text, session);
     case "rp_confirm":  return handleRpConfirm(phone, chatId, text, session);
+    case "rp_skip_confirm": return handleRpSkipConfirm(phone, chatId, text, session);
     default: {
       // Unrecognized/stale step — fail safe by re-asking the pick.
       const data = await getFlowData(phone);
@@ -284,6 +307,8 @@ async function handleRpPick(phone: string, chatId: string, text: string, session
     await mergeFlowData(phone, { caregiverId: c.id, caregiverName: c.name, caregiverRate: c.rate });
     return goToRecap(phone, chatId);
   }
+  // Bare SKIP — the site's Skip button, offered by name in the question.
+  if (BARE_SKIP.has(text.trim().toUpperCase().replace(/[.!?]+$/g, ""))) return goToSkipConfirm(phone, chatId);
 
   if (await isBackOutRequest(text, question)) return handleReplacementBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
@@ -297,11 +322,13 @@ async function handleRpPick(phone: string, chatId: string, text: string, session
     `The current visit is ${describeVisitWindow({ date: data.visitDate, startTime: data.visitStart, endTime: data.visitEnd })}. ` +
     "The family is picking ONE candidate and may also be asking to change the visit's day/time. Return ONLY a JSON object: " +
     '{"pickIndex": 1-based number or null, "pickName": the candidate name they used or null, ' +
+    '"skip": true ONLY if they want to skip/cancel this visit with no replacement at all, else false, ' +
     '"keepTime": true if they said to keep the current time, false if they asked for a different day/time, null if they said nothing about it, ' +
     '"newDate": "YYYY-MM-DD" or null, "newStart": "HH:MM" 24-hour or null, "newEnd": "HH:MM" 24-hour or null}. Never guess a pick.',
     text,
   );
   const parsed = parseJsonLoose(raw, "handleRpPick");
+  if (parsed?.skip === true) return goToSkipConfirm(phone, chatId);
   const chosen = parsed ? resolveCandidate(data, parsed.pickIndex, parsed.pickName) : undefined;
   if (!chosen) {
     await sendMessage(chatId, `${RP_DIDNT_CATCH} ${question}`);
@@ -373,10 +400,11 @@ async function handleRpConfirm(phone: string, chatId: string, text: string, sess
 
   const raw = await parseWithClaude(
     `Evia asked: "${recap}"\nCandidates, numbered:\n${candidateList(data)}\n\n` +
-    'Classify the family\'s reply. Return ONLY a JSON object: {"action": "confirm" | "cancel" | "change_caregiver" | "change_time" | "other", ' +
+    'Classify the family\'s reply. Return ONLY a JSON object: {"action": "confirm" | "cancel" | "change_caregiver" | "change_time" | "skip_visit" | "other", ' +
     '"pickIndex": 1-based number or null, "pickName": string or null, "newDate": "YYYY-MM-DD" or null, "newStart": "HH:MM" or null, "newEnd": "HH:MM" or null}. ' +
     '"confirm" = clearly wants it sent; "cancel" = doesn\'t want to send anything; "change_caregiver" = wants a different candidate ' +
-    '(fill pickIndex/pickName if they named one); "change_time" = wants a different day/time (fill the fields they stated); "other" = a question or something else.',
+    '(fill pickIndex/pickName if they named one); "change_time" = wants a different day/time (fill the fields they stated); ' +
+    '"skip_visit" = wants to skip/cancel the visit itself with no replacement; "other" = a question or something else.',
     text,
   );
   const parsed = parseJsonLoose(raw, "handleRpConfirm");
@@ -385,6 +413,8 @@ async function handleRpConfirm(phone: string, chatId: string, text: string, sess
       return commitReplacement(phone, chatId, session, data);
     case "cancel":
       return handleReplacementBackOut(phone, chatId, session);
+    case "skip_visit":
+      return goToSkipConfirm(phone, chatId);
     case "change_caregiver": {
       const chosen = resolveCandidate(data, parsed.pickIndex, parsed.pickName);
       if (chosen) {
@@ -410,6 +440,67 @@ async function handleRpConfirm(phone: string, chatId: string, text: string, sess
       await sendMessage(chatId, await answerQuestionMidFlow(text));
       await sendMessage(chatId, recap);
   }
+}
+
+// ── Step: the site's Skip button — YES cancels the visit in place ─────────────
+
+async function goToSkipConfirm(phone: string, chatId: string): Promise<void> {
+  await updateStep(phone, "rp_skip_confirm");
+  await sendMessage(chatId, SKIP_QUESTION(await getFlowData(phone)));
+}
+
+async function handleRpSkipConfirm(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const data = await getFlowData(phone);
+  const question = SKIP_QUESTION(data);
+  const bare = text.trim().toUpperCase().replace(/[.!?]+$/g, "");
+
+  if (TRIVIAL_CONFIRM_WORDS.has(bare)) return commitSkip(phone, chatId, session, data);
+  if (BARE_NO.has(bare)) return declineSkip(phone, chatId, session, data);
+
+  if (await isBackOutRequest(text, question)) return declineSkip(phone, chatId, session, data);
+  if (await isQuestionOrOther(text, question)) {
+    await sendMessage(chatId, await answerQuestionMidFlow(text));
+    await sendMessage(chatId, question);
+    return;
+  }
+  const raw = await parseWithClaude(
+    `Evia asked: "${question}"\n\nDoes the family want the visit skipped (cancelled, no replacement)? Reply YES if they clearly do, NO if they clearly don't, or UNCLEAR.`,
+    text,
+  );
+  const verdict = raw.toUpperCase();
+  if (verdict.startsWith("YES")) return commitSkip(phone, chatId, session, data);
+  if (verdict.startsWith("NO")) return declineSkip(phone, chatId, session, data);
+  await sendMessage(chatId, `${RP_DIDNT_CATCH} ${question}`);
+}
+
+// NO to skipping: back to the candidates if there are any, otherwise the
+// visit simply stays Needs Replacement (what the site shows too).
+async function declineSkip(phone: string, chatId: string, _session: AgentSession, data: ReplacementFlowData): Promise<void> {
+  if (data.candidates.length > 0) {
+    await updateStep(phone, "rp_pick");
+    await sendMessage(chatId, `Okay — the visit stays as Needs Replacement. ${PICK_QUESTION(data)}`);
+    return;
+  }
+  await clearFlow(phone);
+  await sendMessage(chatId, "Okay — I'll leave it as Needs Replacement and let you know if someone opens up. You can also use Find Replacement or Skip on your My Bookings page anytime.");
+}
+
+async function commitSkip(phone: string, chatId: string, session: AgentSession, data: ReplacementFlowData): Promise<void> {
+  const clientId = session.userId as string;
+  // Fresh load inside: the visit may have been covered or skipped on the site since.
+  const result = await skipReplacementShift(clientId, data.shiftId);
+  await clearFlow(phone);
+  if (!result.ok) {
+    await sendMessage(chatId, "That visit isn't waiting on a replacement anymore, so I didn't change anything — it's up to date on your My Bookings page.");
+    return;
+  }
+  logAudit({
+    eventType: "shift_cancelled", userId: clientId,
+    data: { source: "replacementFlow:skip", shiftId: data.shiftId },
+  }).catch(() => {});
+  await sendMessage(chatId,
+    `Done — I skipped the ${describeVisitWindow({ date: result.date, startTime: result.startTime, endTime: result.endTime })} visit. ` +
+    `It's cancelled with no replacement, and the rest of your booking is unchanged. You'll see it updated on your My Bookings page.`);
 }
 
 async function commitReplacement(phone: string, chatId: string, session: AgentSession, data: ReplacementFlowData): Promise<void> {

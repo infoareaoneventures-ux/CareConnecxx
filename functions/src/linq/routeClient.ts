@@ -7,6 +7,7 @@ import { describeWhoIsWho } from "../agents/careRecipients";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
 import { handleBookingFlowStep } from "../agents/bookingFlow";
 import { handleReplacementFlowStep } from "../agents/replacementFlow";
+import { handleRescheduleFlowStep } from "../agents/rescheduleFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
@@ -360,6 +361,28 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
       await handleReplacementFlowStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return "handled";
+  }
+
+  // ── Visit-reschedule flow — multi-step state machine (2026-09-15) ──────────
+  // Same protection as replacementFlowStep above. Mirrors the website's
+  // Reschedule button on an upcoming shift step for step (real visit list →
+  // pick → new day/time → own-visit conflict check → recap → YES →
+  // reschedulePending* write). Built after a live test where the free-form
+  // loop moved the WRONG visit and a plain "9/17 10am to 3pm" reply got
+  // hijacked by the memory-correction detector. See rescheduleFlow.ts.
+  if ((session as any).rescheduleFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["rescheduleFlowStep", "rescheduleFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your reschedule session timed out. Text me anytime to pick it back up!");
+      return "handled";
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleRescheduleFlowStep(phone, chatId, text, session);
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }

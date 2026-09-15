@@ -174,13 +174,75 @@ describe("startReplacementFlow", () => {
     expect(String(sendMessage.mock.calls[0][1])).toContain("isn't waiting on a replacement");
   });
 
-  it("tells the family plainly when nobody is available, and does not start", async () => {
+  it("when nobody is available, says so plainly and offers the site's only other button — Skip — as a real YES/NO step", async () => {
     seedNeedsReplacement();
     hoisted.docState.delete("booking_requests/br-old");
     const r = await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });
-    expect(r.started).toBe(false);
+    expect(r.started).toBe(true);
     expect(r.reason).toBe("no_candidates");
-    expect(String(sendMessage.mock.calls[0][1])).toContain("couldn't find anyone available");
+    const sent = String(sendMessage.mock.calls[0][1]);
+    expect(sent).toContain("couldn't find anyone available to cover the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit");
+    expect(sent).toContain("Reply YES to skip it");
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.replacementFlowStep).toBe("rp_skip_confirm");
+    expect(stored.replacementFlowData.candidates).toEqual([]);
+  });
+});
+
+// The site's Skip button next to Find Replacement (2026-09-15, live-caught:
+// "no skip" outside any flow drew "Okay, skipping that" with NO write at all).
+describe("rp_skip_confirm — the site's Skip button", () => {
+  it("a bare SKIP at the pick step asks for confirmation — nothing cancelled yet, no model call", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_pick", replacementFlowData: PICKED });
+    await handleReplacementFlowStep(PHONE, CHAT, "skip", session({ replacementFlowStep: "rp_pick" }));
+    expect(messagesCreate).not.toHaveBeenCalled();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBe("rp_skip_confirm");
+    expect(hoisted.docState.get("shifts/sh1").status).toBe("needs_replacement");
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Skip the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit?");
+    expect(sent).toContain("Reply YES to skip it");
+  });
+
+  it("'no need for a replacement, just skip it' at the pick step is read as skip by the model and asks for confirmation", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_pick", replacementFlowData: PICKED });
+    modelReplies("NO", "NO", JSON.stringify({ pickIndex: null, pickName: null, skip: true, keepTime: null, newDate: null, newStart: null, newEnd: null }));
+    await handleReplacementFlowStep(PHONE, CHAT, "no need for a replacement, just skip it", session({ replacementFlowStep: "rp_pick" }));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBe("rp_skip_confirm");
+    expect(hoisted.docState.get("shifts/sh1").status).toBe("needs_replacement");
+  });
+
+  it("YES cancels the visit in place exactly like the site's Skip (status cancelled, cancelledBy client) and clears the flow", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_skip_confirm", replacementFlowData: PICKED });
+    await handleReplacementFlowStep(PHONE, CHAT, "yes", session({ replacementFlowStep: "rp_skip_confirm" }));
+    expect(messagesCreate).not.toHaveBeenCalled();
+    expect(hoisted.docState.get("shifts/sh1")).toMatchObject({ status: "cancelled", cancelledBy: "client" });
+    expect(hoisted.sets.find((s) => s.path.startsWith("booking_requests/"))).toBeUndefined();
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.replacementFlowStep).toBeUndefined();
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Done — I skipped the Tuesday, September 15, 2026, 11:00 AM–1:00 PM visit");
+    expect(sent).toContain("rest of your booking is unchanged");
+  });
+
+  it("NO goes back to the candidates and leaves the visit as Needs Replacement", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_skip_confirm", replacementFlowData: PICKED });
+    await handleReplacementFlowStep(PHONE, CHAT, "no", session({ replacementFlowStep: "rp_skip_confirm" }));
+    expect(hoisted.docState.get("shifts/sh1").status).toBe("needs_replacement");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBe("rp_pick");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Which one would you like to send the request to?");
+  });
+
+  it("does not cancel if the visit was already covered or skipped on the site since", async () => {
+    seedNeedsReplacement();
+    hoisted.docState.set("shifts/sh1", { ...hoisted.docState.get("shifts/sh1"), status: "scheduled" });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, replacementFlowStep: "rp_skip_confirm", replacementFlowData: PICKED });
+    await handleReplacementFlowStep(PHONE, CHAT, "yes", session({ replacementFlowStep: "rp_skip_confirm" }));
+    expect(hoisted.docState.get("shifts/sh1").status).toBe("scheduled");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("isn't waiting on a replacement anymore");
   });
 });
 

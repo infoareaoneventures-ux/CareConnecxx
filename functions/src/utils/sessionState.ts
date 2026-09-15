@@ -31,6 +31,10 @@ export const STATE_MACHINE_FLAGS = [
   // website's Find Replacement modal, step for step.
   "replacementFlowStep",
   "replacementFlowData",
+  // Scripted visit-reschedule flow (rescheduleFlow.ts, 2026-09-15) — the
+  // website's Reschedule button on an upcoming shift, step for step.
+  "rescheduleFlowStep",
+  "rescheduleFlowData",
   // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
   "interviewFlowStep",
   "interviewFlowData",
@@ -210,6 +214,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["jobPostingStep",          "posting your care job"],
   ["bookingFlowStep",         "sending your booking request"],
   ["replacementFlowStep",     "finding a replacement for your visit"],
+  ["rescheduleFlowStep",      "moving your visit to a new day/time"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["timesheetStep",           "reviewing the timesheet"],
@@ -369,6 +374,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["jobPostingStep", "generic"],
   ["bookingFlowStep", "generic"],
   ["replacementFlowStep", "generic"],
+  ["rescheduleFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
@@ -402,6 +408,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "jobPostingData",
   "bookingFlowData",
   "replacementFlowData",
+  "rescheduleFlowData",
   "interviewFlowData",
   "awaitingTaskAck",
   "awaitingPreShiftUpdate",

@@ -86,6 +86,16 @@ import { recordCommitment, resolveIfMatchingQuestion, SNAG_ANSWER_COPY, CHECKING
 import { clearSystemDegradedIfSet, degradedFailureNotice } from "../observability/systemStatus";
 import { resolveLoopBudget, MAX_TOOL_CALLS_PER_TURN } from "./loopBudget";
 import type { Intent } from "./intentClassifier";
+
+// Intents that are, by the classifier's own verdict, an ACTION on a live
+// booking / visit / schedule / search — never a correction of a stored memory
+// fact. The fact-change detector is skipped for these (see the call site).
+const FACT_CHANGE_SKIP_INTENTS: ReadonlySet<Intent> = new Set<Intent>([
+  "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "SCHEDULE_REQUEST", "REBOOK_REQUEST",
+  "CANCEL_REQUEST", "CANCEL_SHIFT", "CANCEL_SCHEDULE", "PAUSE_SCHEDULE",
+  "FIND_CAREGIVER", "FIND_REPLACEMENT", "HIRE_CAREGIVER", "BOOKING_CONFIRM", "BOOKING_DECLINE",
+  "SWAP_REQUEST", "CLIENT_SWAP_REQUEST", "APPROVE_TIMESHEET",
+]);
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
 import { computeVoiceProfile, buildVoiceDirective } from "./voiceMirror";
@@ -766,6 +776,7 @@ export function buildClientSystemPrompt(
     `Never invent a city, neighborhood, address, or zip code. If you need a location, use what's in the cached context above. If it isn't there, ASK — never substitute a plausible-sounding city (e.g. don't say "Santa Clara" when the context shows "Gilroy", and don't pick a city out of thin air just because one is geographically nearby).`,
     `Never invent a person's name, a caregiver, or a relationship. If a name or relationship isn't in the sources above, say you don't have it and ASK — never guess a name or attach a made-up person to this family's care.`,
     `Never compute a weekday yourself from a date. The context above and tool results give each visit's weekday (dayOfWeek / "Wednesday, September 16, 2026") — repeat that exactly; if no weekday is given, state only the date.`,
+    `Never say a visit exists, doesn't exist, is on a certain day/time, or has a certain status from memory, earlier turns, or the cached snapshot — the family can change bookings on the website at any moment. Call get_upcoming_appointments in THIS turn first and answer only from that result, matching each visit by its id and its exact date. Never claim you cancelled, skipped, moved, or sent anything unless a tool in this turn returned success for it.`,
     `An empty or null tool result means none exist — say so plainly ("nothing on file"), never invent entries.`,
     `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
     ``,
@@ -778,8 +789,8 @@ export function buildClientSystemPrompt(
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · start_booking_flow — once the family is ready to book, call this INSTEAD of collecting rate/schedule/location yourself. caregiverId and interviewId are BOTH OPTIONAL: pass caregiverId when a specific caregiver was named; OMIT it entirely when they haven't ("let's send a booking") and this will show every completed-interview-ready option across all their caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after submit_interview_feedback) — otherwise leave it out. It runs Evia's own scripted flow (which interview if that's still ambiguous, rate, schedule, location if ambiguous, then a full recap matching the website's review modal, then the family's own YES/NO) and ALREADY TEXTS THE FAMILY ITSELF, in one combined message. Send NOTHING else this turn — not even a brief acknowledgment like "on it" or "starting that now" — a separate reply from you can arrive out of order against the flow's own message and read as confusing or backwards.`,
     `  · request_booking — low-level booking commit; prefer start_booking_flow instead. Only call this directly for a booking already fully resolved outside the scripted flow (e.g. a caregiver-initiated rebook). If this household cares for more than one person, always pass recipientFirstName so the visit is attributed to the right person.`,
-    `  · manage_booking — cancel, resend, reschedule, or manage a replacement for a booking/visit/amendment. action:"cancel_pending_request" withdraws a booking still awaiting the caregiver's YES/NO; "cancel_whole_booking" cancels an ENTIRE accepted booking (all remaining visits — tell them how many first); "cancel_visit" cancels a SINGLE visit, leaving the rest intact (also works on a "Needs Replacement" visit — the family deciding they don't need a replacement after all); "resend_booking" sends a declined/cancelled request to the same caregiver again; "cancel_pending_amendment" withdraws a schedule-change request still awaiting the caregiver's response; "withdraw_replacement_request" cancels a pending replacement request sent via select_callout_backup so a different candidate can be chosen; "propose_reschedule" moves ONE existing visit to a new day/time in place (needs date/startTime/endTime — the caregiver gets a YES/NO text, the real time doesn't change until they accept — use this instead of cancelling and re-requesting a visit); "accept_reschedule"/"clear_reschedule" confirm or decline a day/time the CAREGIVER proposed for one of the family's visits. Always confirm with the family first.`,
-    `  · RESCHEDULING A VISIT (non-negotiable): "move it", "reschedule it", "can we do a different day/time" → first get_upcoming_appointments (each visit's id is its shiftId), then manage_booking action:"propose_reschedule" with that shiftId + the new date/startTime/endTime — ask for the new day/time if they haven't given one. This is the website's own Reschedule button. NEVER run a caregiver search for a reschedule, and never hand this off — the tools above are the complete path.`,
+    `  · manage_booking — cancel, resend, reschedule, or manage a replacement for a booking/visit/amendment. action:"cancel_pending_request" withdraws a booking still awaiting the caregiver's YES/NO; "cancel_whole_booking" cancels an ENTIRE accepted booking (all remaining visits — tell them how many first); "cancel_visit" cancels a SINGLE visit, leaving the rest intact — this is also the website's Skip button on a "Needs Replacement" visit (the family deciding they don't need a replacement after all): read back the exact visit (weekday, date, time) and get their YES before calling, then pass THAT visit's id from this turn's get_upcoming_appointments result, and never say a visit was skipped or cancelled unless this tool returned success; "resend_booking" sends a declined/cancelled request to the same caregiver again; "cancel_pending_amendment" withdraws a schedule-change request still awaiting the caregiver's response; "withdraw_replacement_request" cancels a pending replacement request sent via select_callout_backup so a different candidate can be chosen; "propose_reschedule" is the low-level reschedule write — prefer start_reschedule_flow instead (it picks the right visit, checks conflicts, and confirms with the family); "accept_reschedule"/"clear_reschedule" confirm or decline a day/time the CAREGIVER proposed for one of the family's visits. Always confirm with the family first.`,
+    `  · start_reschedule_flow — RESCHEDULING A VISIT (non-negotiable): "move it", "reschedule it", "can we do a different day/time", a date/time given in reply to a reschedule offer → call start_reschedule_flow with initialText = the family's message. It reads the family's REAL scheduled visits fresh, asks which one only if that's genuinely unclear, asks the new day/time only if not given, runs the website's own overlap check, shows a recap, and writes the proposal only on their YES — and it ALREADY TEXTS THE FAMILY, so send NOTHING else this turn. This is the website's own Reschedule button. Do NOT call manage_booking propose_reschedule yourself, NEVER run a caregiver search for a reschedule, and never hand this off.`,
     `  · request_schedule_amendment — add a brand-new recurring day to an ongoing booking (or a genuinely new one-off visit, not an existing one). To move an EXISTING already-scheduled visit to a different day/time instead, use manage_booking's propose_reschedule — do not cancel_visit + request_schedule_amendment for that, it loses the original visit instead of just moving it. Confirm the date/time with the family, then call; the caregiver gets a YES/NO text.`,
     `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
     `  · start_replacement_flow — THE way to handle a visit that shows "Needs Replacement" (the caregiver cancelled it): first get_upcoming_appointments to find that visit's id (status "needs_replacement") if you don't have it, then call start_replacement_flow with that shiftId. It runs Evia's own scripted flow matching the website's Find Replacement modal step for step (texts each candidate's profile card, asks which one and whether to keep or change the visit's day/time, shows a recap, and only on the family's YES sends the replacement booking request) and ALREADY TEXTS THE FAMILY ITSELF — send NOTHING else this turn. Never start_interview_flow here: there is no interview step in a replacement.`,
@@ -2053,7 +2064,18 @@ export async function runQaAgent(params: {
     // bare/combined date-time answer like "9/12/26 at 11 AM" still misfired
     // here even after that fix shipped, since this call site never went
     // through the intent classifier at all. Same shape-based skip applies.
-    if (!unconfirmedIdentity && channel === "[USER]" && !isBareDateOrTimeAnswer(text) && !isBareYesNoAnswer(text)) {
+    // 2026-09-15 (live-caught, twice in one session): "skip the shift for
+    // tomorrow, no need for replacement" and "move it to 9/17 at 10am to 3pm"
+    // were both swallowed here — the detector judged them corrections, found
+    // no matching fact, and replied with the no-match copy instead of ever
+    // letting the agent act on a live booking. Two guards: (1) when the intent
+    // classifier already decided this turn is an ACTION on a booking/visit/
+    // schedule, it is never a memory correction — skip the detector entirely;
+    // (2) a no_match verdict only blocks the turn when the intent classifier
+    // independently agreed it was a FACT_CORRECTION — otherwise two models
+    // disagree and the agent (which can see the live data) gets the turn.
+    const actionIntentSkipsFactCheck = intent != null && FACT_CHANGE_SKIP_INTENTS.has(intent);
+    if (!unconfirmedIdentity && channel === "[USER]" && !actionIntentSkipsFactCheck && !isBareDateOrTimeAnswer(text) && !isBareYesNoAnswer(text)) {
       let factChange: import("../memory/learnedFacts").FactChangeOutcome;
       let lf: typeof import("../memory/learnedFacts") | null = null;
       try {
@@ -2067,7 +2089,11 @@ export async function runQaAgent(params: {
         metrics.factChangeKind = factChange.change;
       }
 
-      const ack = lf ? lf.factChangeAckCopy(factChange) : null;
+      const noMatchWithoutClassifierAgreement = factChange.kind === "no_match" && intent !== "FACT_CORRECTION";
+      if (noMatchWithoutClassifierAgreement) {
+        console.info("qaAgent: fact-change no_match without FACT_CORRECTION intent — falling through to the agent", { userId, intent: intent ?? null });
+      }
+      const ack = lf && !noMatchWithoutClassifierAgreement ? lf.factChangeAckCopy(factChange) : null;
       if (ack) {
         // Deterministic reply; the turn is intentionally NOT persisted as a
         // completed turn, so the correction/forget/ambiguous text can never be

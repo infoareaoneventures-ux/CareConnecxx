@@ -21,6 +21,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   start_booking_flow:           ["booking"],  // preferred entry point — see bookingFlow.ts
   start_replacement_flow:       ["booking"],  // Find Replacement modal, step for step — see replacementFlow.ts
+  start_reschedule_flow:        ["booking", "scheduling"],  // Reschedule button on an upcoming shift, step for step — see rescheduleFlow.ts
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
   get_callout_backups:          ["booking"],            // parity: real Find Replacement candidates (read)
@@ -253,6 +254,7 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   RESCHEDULE_REQUEST:    ["booking", "scheduling", "messaging"],
   SWAP_REQUEST:          ["booking", "scheduling", "messaging"],
   CLIENT_SWAP_REQUEST:   ["booking", "scheduling", "messaging"],
+  FIND_REPLACEMENT:      ["booking", "scheduling", "messaging"],
   CANCEL_SHIFT:          ["booking", "scheduling", "messaging"],
 
   // Job board

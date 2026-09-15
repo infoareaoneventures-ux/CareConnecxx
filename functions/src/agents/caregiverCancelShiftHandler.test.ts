@@ -325,6 +325,47 @@ describe("handleCaregiverCancelShift", () => {
     }));
   });
 
+  it("ask_reason — flags an imminent (< 24h) shifts cancellation as needs_replacement, site parity", async () => {
+    parseWithClaude
+      .mockResolvedValueOnce("NO")   // isQuestionOrOther
+      .mockResolvedValueOnce("illness"); // reason summary
+
+    // 2h from now, expressed as separate Pacific wall-clock date/time fields —
+    // same shape a real shifts doc stores (see CaregiverBookingsPage's
+    // handleCancelShift isUrgent check). Formatted in America/Los_Angeles
+    // (not getUTCHours) since the handler's urgency check parses these as
+    // Pacific wall-clock (parseScheduledTimeMs).
+    const soon = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const soonParts: Record<string, string> = {};
+    for (const p of new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    }).formatToParts(soon)) soonParts[p.type] = p.value;
+    const soonDate = `${soonParts.year}-${soonParts.month}-${soonParts.day}`;
+    const soonTime = `${soonParts.hour === "24" ? "00" : soonParts.hour}:${soonParts.minute}`;
+
+    docGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ careRecipients: [{ name: "Ana Rivera" }], clientName: "Rivera", date: soonDate, startTime: soonTime }),
+    });
+
+    const session = {
+      cancelStep:          "ask_reason",
+      cancelShiftId:       "shift-9",
+      cancelShiftColl:     "shifts",
+      cancelShiftDate:     soonDate,
+      cancelShiftClientId: "client-9",
+    };
+
+    await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I'm sick", session, CHAT);
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      status:             "needs_replacement",
+      cancelledBy:        "caregiver",
+      cancellationReason: "illness",
+    }));
+  });
+
   it("ask_reason — isQuestionOrOther answers and does NOT cancel", async () => {
     parseWithClaude
       .mockResolvedValueOnce("YES"); // isQuestionOrOther → question

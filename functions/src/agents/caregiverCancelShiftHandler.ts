@@ -3,7 +3,7 @@ import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
-import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -290,9 +290,21 @@ export async function handleCaregiverCancelShift(
     const apptData = apptSnap.data() ?? {};
     const seniorName = seniorNameFor(shiftColl, apptData);
 
-    // Mark the visit cancelled
+    // Site parity (CaregiverBookingsPage.tsx handleCancelShift): a shift
+    // starting within 24h needs an urgent replacement (needs_replacement —
+    // shows Find Replacement/Skip on the family's My Bookings page), while
+    // one further out is just cancelled — the family has time to rebook
+    // normally. This handler previously always wrote "cancelled" regardless
+    // of timing, so an SMS-cancelled imminent shift never got flagged urgent.
+    const startTime = (apptData.startTime ?? apptData.time) as string | undefined;
+    const isUrgent =
+      shiftColl === "shifts" && apptData.date && startTime
+        ? (parseScheduledTimeMs(`${apptData.date}T${startTime.slice(0, 5)}:00`) - Date.now()) / (1000 * 60 * 60) <= 24
+        : false;
+
+    // Mark the visit cancelled (or needs_replacement, if urgent)
     await db.collection(shiftColl).doc(shiftId).update({
-      status:              "cancelled",
+      status:              isUrgent ? "needs_replacement" : "cancelled",
       cancelledBy:         "caregiver",
       cancelledAt:         new Date().toISOString(),
       cancellationReason:  reason,

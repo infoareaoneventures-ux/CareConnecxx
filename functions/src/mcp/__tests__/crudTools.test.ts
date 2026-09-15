@@ -184,6 +184,45 @@ describe("missing CRUD tools", () => {
     });
   });
 
+  describe("get_pending_booking_requests", () => {
+    it("requires clientId or caregiverId", async () => {
+      const r = await handleToolCall("get_pending_booking_requests", {}) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
+    });
+
+    it("returns pending requests for a client, newest first", async () => {
+      hoisted.collState.set("booking_requests", [
+        {
+          id: "br1", clientId: "c1", caregiverId: "cg1", caregiverName: "Alice", clientName: "The Doe Family",
+          rate: 25, status: "pending", createdAt: "2026-09-01T09:00:00.000Z",
+          schedule: { days: ["Mon"], ongoing: true },
+        },
+        {
+          id: "br2", clientId: "c1", caregiverId: "cg2", caregiverName: "Bob", status: "pending",
+          createdAt: "2026-09-10T09:00:00.000Z", isShiftReplacement: true, replacementForShiftId: "s1",
+        },
+      ]);
+      const r = await handleToolCall("get_pending_booking_requests", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(2);
+      expect(r.requests.map((x: any) => x.bookingRequestId)).toEqual(["br2", "br1"]);
+      expect(r.requests[0].caregiverName).toBe("Bob");
+      expect(r.requests[0].isShiftReplacement).toBe(true);
+      expect(r.requests[1].hourlyRate).toBe(25);
+    });
+
+    it("returns pending requests for a caregiver", async () => {
+      hoisted.collState.set("booking_requests", [
+        { id: "br3", clientId: "c9", caregiverId: "cg1", clientName: "Rivera Family", status: "pending", createdAt: "2026-09-05T09:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_pending_booking_requests", { caregiverId: "cg1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(1);
+      expect(r.requests[0].clientName).toBe("Rivera Family");
+    });
+  });
+
   describe("get_caregiver_availability", () => {
     it("requires caregiverId", async () => {
       const r = await handleToolCall("get_caregiver_availability", {}) as any;

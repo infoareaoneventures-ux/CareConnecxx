@@ -651,30 +651,51 @@ describe("booking tools", () => {
   // the old tools queried `appointments`, a legacy model no current visit
   // (site or Evia) writes to anymore, so they never actually worked.
   describe("shift-replacement tools (get_callout_backups / select_callout_backup)", () => {
-    it("get_callout_backups lists a Care Team candidate for a needs_replacement shift", async () => {
+    const PHONE = "+15550001000";
+
+    // 2026-09-14 (Hamse's call): also sends each candidate's real profile
+    // card (same tappable photo-preview link the initial matching gallery
+    // sends) and writes pendingMatches, so a later "send me Maria's profile
+    // again" resolves via resend_caregiver_profile like any other caregiver
+    // search — this flow had neither before.
+    it("get_callout_backups texts a profile card per candidate and writes pendingMatches", async () => {
       hoisted.docState.set("shifts/sh1", {
         clientId: "c1", caregiverId: "cg1", status: "needs_replacement",
         careRecipients: [{ careNeeds: ["Meal Preparation"] }],
       });
+      hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: "chat-1" });
       hoisted.collState.set("booking_requests", [
         { id: "br1", clientId: "c1", caregiverId: "cg2", caregiverName: "Sam", caregiverPhotoURL: null, rate: 22, status: "accepted", updatedAt: { seconds: 100 } },
       ]);
-      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1", phone: PHONE }) as any;
       expect(r.success).toBe(true);
       expect(r.count).toBe(1);
       expect(r.caregivers[0]).toMatchObject({ caregiverId: "cg2", name: "Sam", source: "care_team" });
+      const sentMsg = sendMessage.mock.calls.find((c: any[]) => c[0] === "chat-1")?.[1] as string;
+      expect(sentMsg).toContain("Sam");
+      expect(sentMsg).toContain("Tap to view Sam's profile");
+      expect(hoisted.updates.find((u) => u.path === `agent_sessions/${PHONE}`)?.data.pendingMatches).toEqual([
+        { id: "cg2", name: "Sam", rate: 22 },
+      ]);
+    });
+
+    it("get_callout_backups requires phone", async () => {
+      hoisted.docState.set("shifts/sh1", { clientId: "c1", status: "needs_replacement" });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
     });
 
     it("get_callout_backups rejects a non-owner (IDOR)", async () => {
       hoisted.docState.set("shifts/sh1", { clientId: "OTHER", status: "needs_replacement" });
-      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1", phone: PHONE }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });
 
     it("get_callout_backups refuses a shift that isn't awaiting a replacement", async () => {
       hoisted.docState.set("shifts/sh1", { clientId: "c1", status: "scheduled" });
-      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1", phone: PHONE }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("INVALID_INPUT");
     });

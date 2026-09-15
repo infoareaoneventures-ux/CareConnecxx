@@ -176,11 +176,18 @@ describe("onShiftStatusChanged — SMS parity", () => {
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
   });
 
-  it("caregiver-cancelled does NOT text the client here — onShiftUpdated's replacement flow owns that message", async () => {
+  it("caregiver-cancelled (no urgency, > 24h out) texts the client a plain heads-up", async () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
-    const after  = { ...before, status: "cancelled", cancelledBy: "caregiver" };
+    const after  = { ...before, status: "cancelled", cancelledBy: "caregiver", caregiverName: "Alice" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
-    expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("cancelled") }));
+  });
+
+  it("needs_replacement (caregiver cancelled within 24h) texts the client pointing at the replacement flow", async () => {
+    const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
+    const after  = { ...before, status: "needs_replacement", caregiverName: "Alice" };
+    await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("replacement") }));
   });
 
   it("a bulk-cancelled shift (whole-booking cancel) sends no per-shift text — onBookingRequestWrite already sent one consolidated text", async () => {

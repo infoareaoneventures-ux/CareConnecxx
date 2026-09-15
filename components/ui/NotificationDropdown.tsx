@@ -18,6 +18,7 @@ const routeForNotification = (n: AppNotification, role: 'client' | 'caregiver'):
   if (role === 'client') {
     if (t === 'job_application') return '/client/posts';
     if (t.startsWith('interview') || t === 'hire_decision') return '/client/posts?tab=interviews';
+    if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/client/bookings';
     if (t.includes('payment') || t.includes('membership')) return '/client/payments';
     return '/client/dashboard';
   }

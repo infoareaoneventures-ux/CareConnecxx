@@ -1,25 +1,9 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import * as crypto from "crypto";
-import { sendToPhone, AgentSession } from "../linq/client";
+import { sendToPhone } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { scoreReplacements } from "../agents/replacementScorer";
 import { scheduleTrigger } from "./triggerEngine";
 import { parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
-import {
-  claimExternalSideEffectOperation,
-  completeExternalSideEffectOperation,
-  externalOperationDocId,
-  failExternalSideEffectOperation,
-} from "../operations/externalSideEffect";
-
-function hoursUntil(date: string, time: string): number {
-  // Stored date/time are Pacific wall-clock — a naive `new Date()` parse reads
-  // them as UTC on Cloud Functions, undercounting hours-until by ~7-8h (which
-  // misrouted 24-31h-out cancellations into the same-day emergency blast).
-  const apptMs = parseScheduledTimeMs(`${date}T${time.slice(0, 5)}:00`);
-  return (apptMs - Date.now()) / (1000 * 60 * 60);
-}
 
 const db = admin.firestore();
 
@@ -58,13 +42,6 @@ async function ensureChatRoom(
 async function getClientPhone(clientId: string): Promise<string | null> {
   const snap = await db.collection("users").doc(clientId).get();
   return (snap.data() as any)?.phone ?? null;
-}
-
-async function getSession(phone: string): Promise<AgentSession | null> {
-  const snap = await db.collection("agent_sessions").doc(phone).get();
-  if (!snap.exists) return null;
-  const s = snap.data() as AgentSession;
-  return (s.optedOut || s.optedIn === false) ? null : s;
 }
 
 async function getCaregiverPhone(caregiverId: string): Promise<string | null> {
@@ -115,33 +92,6 @@ export const onAppointmentUpdated = functions.firestore
 
       const phone = await getClientPhone(after.clientId);
       if (!phone) return;
-
-      // ── Caregiver cancellation → emergency replacement flow ───────────────
-      const caregiverCancellation =
-        (after.status === "cancelled" && after.cancelledBy === "caregiver") ||
-        ["caregiver_cancelled", "called_out", "caregiver_called_out"].includes(after.status);
-      if (caregiverCancellation) {
-        const transitionVersion = String(
-          after.cancellationTransitionVersion ??
-          (change.after as any).updateTime?.toMillis?.() ??
-          context.eventId,
-        );
-        const operationKey = `appointment-cancellation:${change.after.id}:v${transitionVersion}`;
-        const claim = await claimExternalSideEffectOperation({
-          operationKey,
-          operationType: "caregiver_cancellation",
-          targetId: change.after.id,
-        });
-        if (!claim) return;
-        try {
-          await handleCaregiverCancellation(change.after.id, after, phone, operationKey);
-          await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
-        } catch (error) {
-          await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
-          throw error;
-        }
-        return;
-      }
 
       // ── Arrival / in-progress ────────────────────────────────────────────
       if (after.status === "in-progress" && before.status !== "in-progress") {
@@ -240,182 +190,6 @@ export const onAppointmentUpdated = functions.firestore
       }
     } catch (err) {
       console.error("onAppointmentUpdated error:", err);
-      throw err;
-    }
-  });
-
-// ── Emergency replacement flow ────────────────────────────────────────────────
-
-async function handleCaregiverCancellation(
-  appointmentId: string,
-  appt: any,
-  phone: string,
-  operationKey: string,
-): Promise<void> {
-  await getSession(phone);
-
-  const hours = hoursUntil(appt.date ?? "", appt.time ?? "00:00");
-
-  // Future cancellation (> 24h out) — give family the choice
-  if (hours > 24) {
-    const taskRef = db.collection("agent_tasks").doc(externalOperationDocId(`${operationKey}:task`));
-    await taskRef.set({
-      type:          "replacement_or_skip",
-      appointmentId,
-      clientId:      appt.clientId,
-      clientPhone:   phone,
-      status:        "awaiting_replace_or_skip",
-      expiresAt:     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      createdAt:     new Date().toISOString(),
-    }, { merge: true });
-
-    const daysOut = Math.round(hours / 24);
-    const futureMsg =
-      `${appt.caregiverName ?? "Your caregiver"} cancelled the ${formatHHMMForDisplay(appt.time)} visit on ${formatDateForDisplay(appt.date)} ` +
-      `(${daysOut} day${daysOut !== 1 ? "s" : ""} away).\n\n` +
-      `Reply REPLACE and I'll find a replacement, or SKIP to cancel the visit.`;
-
-    await sendViaInteractionAgent(phone, {
-      content: futureMsg, urgency: "standard", sourceAgent: "emergency_replacement", canDrop: false,
-    }).catch(() => sendToPhone(phone, futureMsg));
-
-    await db.collection("agent_alerts_log").add({
-      type: "caregiver_cancelled_future", clientId: appt.clientId, phone,
-      appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),
-    });
-    return;
-  }
-
-  // Same-day / imminent (≤ 24h) — immediate replacement search
-  // Get top 3 replacement caregivers
-  const options = await scoreReplacements({
-    clientId:      appt.clientId,
-    appointmentId,
-    date:          appt.date,
-    time:          appt.time,
-    excludeId:     appt.caregiverId,
-  });
-
-  if (options.length === 0) {
-    const noMatchMsg =
-      `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${formatHHMMForDisplay(appt.time)} visit. ` +
-      `I wasn't able to find available replacements right now. ` +
-      `Please open the app or contact support to reschedule.`;
-    await sendViaInteractionAgent(phone, {
-      content: noMatchMsg, urgency: "immediate", sourceAgent: "emergency_replacement", canDrop: false,
-    }).catch(() => sendToPhone(phone, noMatchMsg));
-    return;
-  }
-
-  // Generate a confirmation token for the QuickConfirm page
-  const confirmToken = crypto.randomBytes(16).toString("base64url");
-
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
-  const taskRef = db.collection("agent_tasks").doc(externalOperationDocId(`${operationKey}:task`));
-  await taskRef.set({
-    type:          "replacement",
-    appointmentId,
-    clientId:      appt.clientId,
-    clientPhone:   phone,
-    options,
-    confirmToken,
-    status:        "awaiting_approval",
-    expiresAt,
-    createdAt:     new Date().toISOString(),
-  }, { merge: true });
-
-  // Schedule auto-book fallback at the 30-min expiry mark
-  await scheduleTrigger({
-    userId:      appt.clientId,
-    phone,
-    type:        "custom",
-    scheduledAt: expiresAt,
-    message:     `replacement_task:${taskRef.id}`,
-  }, {
-    bypassCalibration: true,
-    idempotencyKey: `${operationKey}:replacement-expiry`,
-  }).catch(err => console.error("[handleCaregiverCancellation] scheduleTrigger failed:", err));
-
-  const numberEmojis = ["1️⃣", "2️⃣", "3️⃣"];
-  const optionLines = options
-    .slice(0, 3)
-    .map((o: any, i: number) => {
-      const rebookedNote = o.previouslyBooked ? " · booked before" : "";
-      return `${numberEmojis[i]} ${o.name} · ${o.rating}⭐ · $${o.hourlyRate}/hr${rebookedNote}`;
-    })
-    .join("\n");
-
-  const cancelMsg =
-    `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${formatHHMMForDisplay(appt.time)} visit.\n\n` +
-    `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
-    `${optionLines}\n\n` +
-    `Reply 1, 2, or 3. Nothing is booked until you confirm.`;
-
-  await sendViaInteractionAgent(phone, {
-    content: cancelMsg, urgency: "immediate", sourceAgent: "emergency_replacement", canDrop: false,
-  }).catch(() => sendToPhone(phone, cancelMsg));
-
-  await db.collection("agent_alerts_log").add({
-    type: "caregiver_cancelled", clientId: appt.clientId, phone,
-    appointmentId, taskId: taskRef.id, sentAt: new Date().toISOString(),
-  });
-}
-
-// ── Caregiver cancellation for the newer booking_requests/shifts pipeline ────
-// (2026-08-30) A visit booked via the newer pipeline lives in `shifts`, not
-// `appointments` — onAppointmentUpdated above never fires for it at all, so a
-// caregiver cancelling one triggered no family alert and no replacement
-// search. This trigger reuses the exact same detection + handoff, scoped to
-// JUST the cancellation branch (arrival/confirmed/completed notifications for
-// shifts-based visits are a separate, not-yet-built follow-on).
-export const onShiftUpdated = functions.firestore
-  .document("shifts/{shiftId}")
-  .onUpdate(async (change, context) => {
-    try {
-      const before = change.before.data();
-      const after  = change.after.data();
-
-      if (!after.clientId) return;
-
-      const statusChanged = before.status !== after.status;
-      if (!statusChanged) return;
-
-      const caregiverCancellation =
-        (after.status === "cancelled" && after.cancelledBy === "caregiver") ||
-        ["caregiver_cancelled", "called_out", "caregiver_called_out"].includes(after.status);
-      if (!caregiverCancellation) return;
-
-      const phone = await getClientPhone(after.clientId);
-      if (!phone) return;
-
-      const transitionVersion = String(
-        after.cancellationTransitionVersion ??
-        (change.after as any).updateTime?.toMillis?.() ??
-        context.eventId,
-      );
-      const operationKey = `shift-cancellation:${change.after.id}:v${transitionVersion}`;
-      const claim = await claimExternalSideEffectOperation({
-        operationKey,
-        operationType: "caregiver_cancellation",
-        targetId: change.after.id,
-      });
-      if (!claim) return;
-      try {
-        // handleCaregiverCancellation reads appt.time — shifts store
-        // startTime instead, so normalize before handing off.
-        await handleCaregiverCancellation(
-          change.after.id,
-          { ...after, time: after.time ?? after.startTime },
-          phone,
-          operationKey,
-        );
-        await completeExternalSideEffectOperation(operationKey, claim.leaseOwner);
-      } catch (error) {
-        await failExternalSideEffectOperation(operationKey, claim.leaseOwner, error);
-        throw error;
-      }
-    } catch (err) {
-      console.error("onShiftUpdated error:", err);
       throw err;
     }
   });

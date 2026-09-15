@@ -383,7 +383,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_callout_backups",
-    description: "List backup caregiver candidates for a visit marked 'Needs Replacement' (the caregiver cancelled it). Read-only — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating. clientId is injected automatically — only the visit's owner may view its candidates.",
+    description: "Find and TEXT the family backup caregiver candidates for a visit marked 'Needs Replacement' (the caregiver cancelled it) — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers/find_replacement_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
       type: "object",
       properties: { shiftId: { type: "string", description: "The shift (visit) that needs a replacement." } },
@@ -2289,6 +2289,26 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_pending_booking_requests",
+    description:
+      "List booking requests still awaiting a response — matches the site's My Bookings > Requests tab exactly " +
+      "(booking_requests with status 'pending'), on either side. Pass clientId to see requests a family has sent " +
+      "that a caregiver hasn't accepted or declined yet, or caregiverId to see incoming requests a caregiver still " +
+      "needs to accept or decline. Includes shift-replacement requests (isShiftReplacement:true) the same way the " +
+      "site does. Use when someone asks 'did they respond yet?', 'what am I still waiting on?', 'what requests do " +
+      "I need to answer?', or anything else about this tab — get_upcoming_appointments and get_pending_tasks do " +
+      "NOT cover this (they query confirmed/scheduled visits and Evia's own internal task queue, never a pending " +
+      "booking_requests doc), so this is the only tool that can answer it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId) — requests THIS FAMILY sent" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId) — requests sent TO this caregiver" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "get_caregiver_availability",
     description:
       "Read a caregiver's current weekly availability before proposing changes — the day list, the weeklyAvailability time-window map, and preferred time of day. " +
@@ -2552,6 +2572,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_shifts",
   "get_caregiver_availability",
   "update_care_journal_entry",
+  // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
+  // own Requests tab (booking_requests where caregiverId + status:'pending').
+  "get_pending_booking_requests",
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
@@ -3002,6 +3025,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_senior_profile", "list_household_seniors", "get_pending_tasks",
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
+  "get_pending_booking_requests",
   // find_nearby_caregivers is a pure read: scores/ranks already-fetched
   // publicCaregiverProfiles docs and returns them — no writes, no SMS, no
   // side effects (unlike find_replacement_caregivers above).
@@ -4217,17 +4241,57 @@ async function executeToolCall(
       // agents/shiftReplacement.ts's header comment) rather than a stored
       // `backupCaregiverOptions` field, which the current pipeline never
       // populates.
+      // 2026-09-14 (Hamse's call): sends the SAME profile-card gallery
+      // format the initial matching flow sends (matchingAgent.ts's
+      // runMatchingForClient / resend_caregiver_profile) — a tappable link
+      // per candidate that auto-previews their name + photo, not just a
+      // plain text list. Also writes pendingMatches/shownCaregiverIds/
+      // knownNames the same way, so a later "send me Maria's profile again"
+      // or "book Sam" resolves through the exact same machinery every other
+      // caregiver-search path already uses — this flow was missing that
+      // entirely before, unlike find_nearby_caregivers/find_replacement_
+      // caregivers, which already send real profile cards.
       case "get_callout_backups": {
-        const { clientId, shiftId } = input;
+        const { clientId, shiftId, phone } = input;
         if (!clientId || !shiftId) return toolError("INVALID_INPUT", "shiftId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
         const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
         if (!shiftSnap.exists) return toolError("NOT_FOUND", "shift not found");
         const shift = shiftSnap.data()!;
         if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit does not belong to this client");
         if (shift.status !== "needs_replacement") return toolError("INVALID_INPUT", `This visit isn't awaiting a replacement (status: ${shift.status})`);
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const chatId = sessSnap.data()?.chatId as string | undefined;
+        if (!chatId) return toolError("NOT_FOUND", "No active conversation to send the candidates to");
         const { findReplacementCandidates } = await import("../agents/shiftReplacement");
         const candidates = await findReplacementCandidates(clientId as string, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
-        return { success: true, shiftId, caregivers: candidates, count: candidates.length };
+        if (candidates.length === 0) {
+          return { success: true, shiftId, caregivers: [], count: 0, instruction: "No candidates were found — tell the family plainly and ask if they'd like to search more broadly, or skip the replacement." };
+        }
+        const { sendMessage } = await import("../linq/client");
+        for (const c of candidates) {
+          try {
+            await sendMessage(chatId,
+              `${c.name}${c.hourlyRate ? ` — $${c.hourlyRate}/hr` : ""}${c.source === "care_team" ? " (on your Care Team)" : ""}\n` +
+              `Tap to view ${c.name.split(" ")[0]}'s profile: ${getAppUrl()}/p/${c.caregiverId}`
+            );
+            await new Promise<void>((r) => setTimeout(r, 400));
+          } catch (err) {
+            console.warn("[get_callout_backups] gallery send failed for candidate", { phone, id: c.caregiverId, err: (err as Error)?.message });
+          }
+        }
+        await db.collection("agent_sessions").doc(phone as string).update({
+          pendingMatches: candidates.map((c) => ({ id: c.caregiverId, name: c.name, rate: c.hourlyRate })),
+          pendingMatchesSetAt: nowIso,
+          shownCaregiverIds: admin.firestore.FieldValue.arrayUnion(...candidates.map((c) => c.caregiverId)),
+        });
+        const { addKnownNames } = await import("../utils/knownNames");
+        await addKnownNames(phone as string, candidates.map((c) => c.name));
+        logAudit({ eventType: "message_sent", userId: clientId as string, data: { source: "mcp:get_callout_backups", shiftId, count: candidates.length } }).catch(() => {});
+        return {
+          success: true, shiftId, caregivers: candidates, count: candidates.length,
+          instruction: "This tool already texted the family each candidate's profile card (tappable link with photo preview) — do not repeat their names/rates yourself. Just ask which one they'd like to send the request to, then call select_callout_backup with that caregiverId (from this result or pendingMatches, never guessed from a name).",
+        };
       }
 
       // Matches the site's own handleConfirmReplacement EXACTLY: creates a
@@ -8861,6 +8925,42 @@ async function executeToolCall(
         .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
         .slice(0, 20);
       return { success: true, shifts, count: shifts.length };
+    }
+
+    // ── get_pending_booking_requests ─────────────────────────────────────────
+    // Matches the site's My Bookings > Requests tab exactly: booking_requests
+    // where clientId (ClientVisitsPage.tsx) or caregiverId (CaregiverBookingsPage.tsx)
+    // and status === 'pending'. get_upcoming_appointments/get_pending_tasks do
+    // NOT cover this — they query appointments/shifts and Evia's own agent_tasks
+    // queue, never a pending booking_requests doc (confirmed gap, 2026-09-14).
+    if (name === "get_pending_booking_requests") {
+      const { clientId: pbrClientId, caregiverId: pbrCgId } = input as Record<string, unknown>;
+      if (!pbrClientId && !pbrCgId) return toolError("INVALID_INPUT", "Provide clientId or caregiverId");
+      const pbrField = pbrClientId ? "clientId" : "caregiverId";
+      const pbrValue = pbrClientId ?? pbrCgId;
+      const pbrSnap = await db.collection("booking_requests")
+        .where(pbrField, "==", pbrValue)
+        .where("status", "==", "pending")
+        .get();
+      const requests = pbrSnap.docs
+        .map((d): Record<string, unknown> => {
+          const r = d.data() as Record<string, unknown>;
+          return {
+            bookingRequestId:   d.id,
+            clientId:           r.clientId ?? null,
+            clientName:         r.clientName ?? null,
+            caregiverId:        r.caregiverId ?? null,
+            caregiverName:      r.caregiverName ?? null,
+            hourlyRate:         r.rate ?? r.hourlyRate ?? null,
+            schedule:           r.schedule ?? null,
+            isShiftReplacement: r.isShiftReplacement ?? false,
+            isResend:           r.isResend ?? false,
+            createdAt:          r.createdAt ?? null,
+          };
+        })
+        .sort((a, b) => String((b as any).createdAt?.toDate?.() ?? b.createdAt ?? "").localeCompare(String((a as any).createdAt?.toDate?.() ?? a.createdAt ?? "")))
+        .slice(0, 20);
+      return { success: true, requests, count: requests.length };
     }
 
     // ── get_caregiver_availability ──────────────────────────────────────────

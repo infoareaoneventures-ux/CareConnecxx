@@ -645,19 +645,38 @@ export const onShiftStatusChanged = functions.firestore
         });
         await notifyClientByText(after.clientId,
           `${after.caregiverName || 'Your caregiver'}'s visit is complete. A care journal entry will be posted shortly.`);
+      } else if (after.status === 'needs_replacement' && after.clientId) {
+        // Caregiver cancelled with < 24h notice (site rule: CaregiverBookingsPage's
+        // handleCancelShift / ClientVisitsPage's caregiver-side cancel both set
+        // needs_replacement instead of cancelled for an urgent shift) — this is
+        // what makes the Find Replacement / Skip buttons appear on the real My
+        // Bookings page. Family gets a text pointing at the same replacement
+        // flow (get_callout_backups/select_callout_backup) instead of silence.
+        const whenText = fmtDate || ' for an upcoming date';
+        await addNotification(after.clientId, {
+          type: 'shift_needs_replacement',
+          title: 'Visit Needs a Replacement',
+          body: `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText} — find a replacement or skip it in the app.`,
+          data: { shiftId: context.params.shiftId },
+        });
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}. Text me and I'll pull up replacement caregivers, or open the app to see options.`);
       } else if (after.status === 'cancelled' && !after.bulkCancelled) {
         // Cancelled — direction depends on who cancelled. (fmtDate is hoisted
         // above and already includes the " on <date>" prefix, or '' if no date.)
         const whenText = fmtDate || ' for an upcoming date';
 
         if (after.cancelledBy === 'caregiver' && after.clientId) {
-          // Caregiver cancelled → notify client
+          // Caregiver cancelled, but with enough notice (site rule: > 24h) that
+          // no replacement is needed — a plain heads-up, no call to action.
           await addNotification(after.clientId, {
             type: 'shift_cancelled',
             title: 'Shift Cancelled',
             body: `${after.caregiverName || 'Your caregiver'} cancelled the shift${whenText}.`,
             data: { shiftId: context.params.shiftId },
           });
+          await notifyClientByText(after.clientId,
+            `${after.caregiverName || 'Your caregiver'} cancelled the visit${whenText}.`);
         } else if (after.caregiverId) {
           // Client cancelled → notify caregiver
           await addNotification(after.caregiverId, {

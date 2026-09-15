@@ -39,7 +39,13 @@ const count = (src: string, needle: string) => src.split(needle).length - 1;
 const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   ["../sms.ts",                                10],
   ["../triggers/notificationTriggers.ts",       7],
-  ["../triggers/appointmentUpdated.ts",         8],
+  // Dropped from 8 to 4 (2026-09-14): the caregiver-cancellation emergency-
+  // replacement flow (handleCaregiverCancellation/onShiftUpdated) was removed
+  // entirely — it duplicated/conflicted with the real shifts-based
+  // needs_replacement flow (onShiftStatusChanged, mcp/server.ts's
+  // get_callout_backups/select_callout_backup) and had a dead-end REPLACE/SKIP
+  // reply path. Remaining calls are the booking-confirmed/arrival/reminder paths.
+  ["../triggers/appointmentUpdated.ts",         4],
   ["../agents/replacementAgent.ts",             3],
   ["../agents/latenessTracker.ts",              1],
   ["../scheduled/shiftTaskNudges.ts",           4],

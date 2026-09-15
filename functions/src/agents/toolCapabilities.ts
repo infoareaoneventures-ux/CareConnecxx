@@ -29,6 +29,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_caregiver_info:           ["booking"],
   get_upcoming_appointments:    ["booking", "scheduling"],
   get_caregiver_appointments:   ["booking", "scheduling"],
+  get_pending_booking_requests: ["booking", "scheduling"],
   start_interview_flow:         ["booking"],  // preferred entry point — see interviewFlow.ts
   schedule_interview:           ["booking"],
   resend_caregiver_profile:     ["booking"],

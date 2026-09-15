@@ -62,7 +62,10 @@ vi.mock("firebase-admin", () => {
     __esModule: true,
     default: { firestore: firestoreFn },
     firestore: Object.assign(firestoreFn, {
-      FieldValue: { delete: () => ({ __delete: true }) },
+      FieldValue: {
+        delete: () => ({ __delete: true }),
+        arrayUnion: (...v: any[]) => ({ __arrayUnion: v }),
+      },
     }),
   };
 });
@@ -116,6 +119,22 @@ describe("manage_booking", () => {
     expect(hoisted.updates.find(u => u.path === "booking_requests/br1")?.data.status).toBe("cancelled");
   });
 
+  // 2026-09-14 (live-caught, site-side): matches the same fix applied to
+  // ClientVisitsPage.tsx's handleCancelBooking — a shift already stuck in
+  // 'needs_replacement' must also get cancelled by a whole-booking cancel,
+  // or it never disappears from Active Bookings.
+  it("cancel_whole_booking also cancels a needs_replacement shift under the same booking", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "accepted", caregiverId: CAREGIVER });
+    hoisted.collState.set("shifts", [
+      { id: "s1", bookingRequestId: "br1", status: "scheduled" },
+      { id: "s2", bookingRequestId: "br1", status: "needs_replacement" },
+    ]);
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_whole_booking", bookingRequestId: "br1" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.shiftsCancelled).toBe(2);
+    expect(hoisted.updates.find(u => u.path === "shifts/s2")?.data).toMatchObject({ status: "cancelled", bulkCancelled: true });
+  });
+
   it("cancel_whole_booking rejects a booking belonging to a different client", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: "other_client", status: "accepted" });
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_whole_booking", bookingRequestId: "br1" }) as any;
@@ -134,6 +153,16 @@ describe("manage_booking", () => {
     hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "completed" });
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_visit", shiftId: "s1" }) as any;
     expect(r._toolError).toBe(true);
+  });
+
+  // 2026-09-14 (Hamse's call): matches the website's own Skip button on a
+  // "Needs Replacement" visit — the family deciding they don't need a
+  // replacement after all uses the same cancel-in-place write.
+  it("cancel_visit also cancels a visit stuck in needs_replacement (Skip)", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "needs_replacement" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_visit", shiftId: "s1" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ status: "cancelled", cancelledBy: "client" });
   });
 
   it("resend_booking flips a declined booking back to pending with isResend:true", async () => {
@@ -160,6 +189,161 @@ describe("manage_booking", () => {
   it("rejects an unknown action", async () => {
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "not_a_real_action" }) as any;
     expect(r._toolError).toBe(true);
+  });
+
+  // 2026-09-14 (Hamse's call): matches the website's own handleWithdrawReplacement.
+  it("withdraw_replacement_request cancels the replacement booking_requests doc", async () => {
+    hoisted.docState.set("booking_requests/br2", { clientId: CLIENT, status: "pending", isShiftReplacement: true, replacementForShiftId: "s1" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "withdraw_replacement_request", bookingRequestId: "br2" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "booking_requests/br2")?.data.status).toBe("cancelled");
+  });
+
+  it("withdraw_replacement_request refuses a booking that isn't a replacement request", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "pending" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "withdraw_replacement_request", bookingRequestId: "br1" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("withdraw_replacement_request rejects a request belonging to a different client", async () => {
+    hoisted.docState.set("booking_requests/br2", { clientId: "other_client", isShiftReplacement: true });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "withdraw_replacement_request", bookingRequestId: "br2" }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+  });
+});
+
+// 2026-09-14 (Hamse's call): matches the website's own in-place reschedule —
+// ClientVisitsPage.tsx's handleProposeReschedule/handleAcceptReschedule/
+// handleClearReschedule — a proposal lives in reschedulePendingDate/
+// StartTime/EndTime + rescheduledBy on the SAME shift doc; the real date/
+// startTime/endTime never move until the other party accepts.
+describe("manage_booking — propose/accept/clear_reschedule", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("propose_reschedule stores a pending proposal without touching the real date/time", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00" });
+    const r = await handleToolCall("manage_booking", {
+      clientId: CLIENT, action: "propose_reschedule", shiftId: "s1", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
+    }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update).toMatchObject({
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "client",
+    });
+    // Real date/time untouched by this write.
+    expect(update.date).toBeUndefined();
+    expect(update.startTime).toBeUndefined();
+  });
+
+  it("propose_reschedule rejects endTime before startTime", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled" });
+    const r = await handleToolCall("manage_booking", {
+      clientId: CLIENT, action: "propose_reschedule", shiftId: "s1", date: "2026-09-08", startTime: "13:00", endTime: "10:00",
+    }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("accept_reschedule moves the real date/time and clears the pending fields", async () => {
+    hoisted.docState.set("shifts/s1", {
+      clientId: CLIENT, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "caregiver",
+    });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "accept_reschedule", shiftId: "s1" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update).toMatchObject({ date: "2026-09-08", startTime: "10:00", endTime: "13:00" });
+    expect(update.reschedulePendingDate).toEqual({ __delete: true });
+    expect(update.rescheduledBy).toEqual({ __delete: true });
+  });
+
+  it("accept_reschedule refuses to accept your own proposal", async () => {
+    hoisted.docState.set("shifts/s1", {
+      clientId: CLIENT, status: "scheduled",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "client",
+    });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "accept_reschedule", shiftId: "s1" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("accept_reschedule refuses when there's no pending proposal", async () => {
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled" });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "accept_reschedule", shiftId: "s1" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("clear_reschedule clears the pending proposal and leaves the real date/time untouched", async () => {
+    hoisted.docState.set("shifts/s1", {
+      clientId: CLIENT, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "caregiver",
+    });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "clear_reschedule", shiftId: "s1" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update.reschedulePendingDate).toEqual({ __delete: true });
+    expect(update.date).toBeUndefined();
+  });
+});
+
+describe("manage_shift_reschedule (caregiver side)", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("propose stores a pending proposal scoped to this caregiver's shift", async () => {
+    hoisted.docState.set("shifts/s1", { caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00" });
+    const r = await handleToolCall("manage_shift_reschedule", {
+      caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
+    }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({
+      reschedulePendingDate: "2026-09-08", rescheduledBy: "caregiver",
+    });
+  });
+
+  it("rejects a shift belonging to a different caregiver", async () => {
+    hoisted.docState.set("shifts/s1", { caregiverId: "other_cg", status: "scheduled" });
+    const r = await handleToolCall("manage_shift_reschedule", {
+      caregiverId: CAREGIVER, shiftId: "s1", action: "propose", date: "2026-09-08", startTime: "10:00", endTime: "13:00",
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("accept moves the real date/time when the FAMILY proposed it", async () => {
+    hoisted.docState.set("shifts/s1", {
+      caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "client",
+    });
+    const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    expect(r.success).toBe(true);
+    expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ date: "2026-09-08", startTime: "10:00", endTime: "13:00" });
+  });
+
+  it("refuses to accept your own proposal", async () => {
+    hoisted.docState.set("shifts/s1", {
+      caregiverId: CAREGIVER, status: "scheduled",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "caregiver",
+    });
+    const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "accept" }) as any;
+    expect(r._toolError).toBe(true);
+  });
+
+  it("decline clears a pending proposal without moving the real date/time", async () => {
+    hoisted.docState.set("shifts/s1", {
+      caregiverId: CAREGIVER, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2026-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00",
+      rescheduledBy: "client",
+    });
+    const r = await handleToolCall("manage_shift_reschedule", { caregiverId: CAREGIVER, shiftId: "s1", action: "decline" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update.reschedulePendingDate).toEqual({ __delete: true });
+    expect(update.date).toBeUndefined();
   });
 });
 

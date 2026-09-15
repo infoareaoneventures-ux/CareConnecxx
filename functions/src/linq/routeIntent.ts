@@ -29,7 +29,7 @@ import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { handleJobResponse } from "../triggers/jobNotifications";
 import {
   searchZepMemory,
@@ -207,7 +207,7 @@ async function handleRecurringResume(phone: string, chatId: string, session: Age
   }
   await batch.commit();
 
-  const schedDesc = `${(sched.days as string[]).join("/")}s ${sched.startTime}–${sched.endTime}`;
+  const schedDesc = `${(sched.days as string[]).join("/")}s ${formatHHMMForDisplay(sched.startTime as string)}–${formatHHMMForDisplay(sched.endTime as string)}`;
   await sendMessage(chatId,
     `Resumed! ${sched.caregiverName as string} is booked every ${schedDesc} for the next 4 weeks.`
   );
@@ -421,8 +421,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
             const cancelNotifMsgA = await generateCaraMessage({
               audience: "caregiver",
-              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${appt.date}' — do not name the client unless given.`,
-              fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+              context: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.`,
+              fallback: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Sorry for the inconvenience.`,
               maxTokens: 80,
             });
             await sendMessage(cgSess.chatId, cancelNotifMsgA);
@@ -556,8 +556,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
             const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
             const cancelNotifMsgB = await generateCaraMessage({
               audience: "caregiver",
-              context: `The family has cancelled the visit on ${appt.date}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${appt.date}' — do not name the client unless given.`,
-              fallback: `The family has cancelled the visit on ${appt.date}. Sorry for the inconvenience.`,
+              context: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.`,
+              fallback: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Sorry for the inconvenience.`,
               maxTokens: 80,
             });
             await sendMessage(cgSess.chatId, cancelNotifMsgB);
@@ -1004,7 +1004,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         }
       } else {
         const totalCost = (appointments.length * schedule.durationHours * hourlyRate).toFixed(2);
-        const lines = appointments.map(a => `${a.date} · ${a.startTime}–${a.endTime}`).join("\n");
+        const lines = appointments.map(a => `${formatDateForDisplay(a.date)} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n");
         await sendMessage(chatId,
           `Here's your booking summary:\n\n${lines}\n${hire.caregiverName} · $${totalCost} total\n\nReply YES to confirm or NO to cancel.`
         );
@@ -1030,7 +1030,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
       await sendMessage(chatId,
-        `Got it — starting ${dateStr}.\n\nHow many days a week and what hours? (e.g. "3 days, Mon/Wed/Fri, 9am–1pm")`
+        `Got it — starting ${formatDateForDisplay(dateStr)}.\n\nHow many days a week and what hours? (e.g. "3 days, Mon/Wed/Fri, 9am–1pm")`
       );
       return;
     }
@@ -1074,7 +1074,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
       await sendMessage(chatId,
-        `Cancel ${appt.caregiverName}'s visit on ${appt.date} (${appt.startTime}–${appt.endTime})?\n\nReply YES to confirm or NO to keep it.`
+        `Cancel ${appt.caregiverName}'s visit on ${formatDateForDisplay(appt.date)} (${formatHHMMForDisplay(appt.startTime)}–${formatHHMMForDisplay(appt.endTime)})?\n\nReply YES to confirm or NO to keep it.`
       );
       return;
     }
@@ -1161,7 +1161,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         const cost = (rebook.durationHours * effectiveHourlyRate).toFixed(2);
         await sendMessage(chatId,
           `Here's your booking summary:\n\n` +
-          `${dateStr} · ${rebook.startTime}–${rebook.endTime}\n` +
+          `${formatDateForDisplay(dateStr)} · ${formatHHMMForDisplay(rebook.startTime)}–${formatHHMMForDisplay(rebook.endTime)}\n` +
           `${rebook.caregiverName} · $${cost}\n\n` +
           `Reply YES to confirm or NO to cancel.`
         );

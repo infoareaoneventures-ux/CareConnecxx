@@ -4,7 +4,7 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -86,7 +86,7 @@ export async function handleCaregiverSwapRequest(
       swapCandidates: JSON.stringify(shifts),
     });
 
-    const list = shifts.map(s => `${s.index}. ${s.date} at ${s.time} — ${s.clientName}`).join("\n");
+    const list = shifts.map(s => `${s.index}. ${formatDateForDisplay(s.date)} at ${formatHHMMForDisplay(s.time)} — ${s.clientName}`).join("\n");
     await sendMessage(chatId, `Which shift do you need covered?\n${list}\n\nReply with the number.`);
     return;
   }
@@ -119,8 +119,8 @@ export async function handleCaregiverSwapRequest(
     await sendMessage(chatId, await generateCaraMessage({
       audience: "caregiver",
       language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-      context: `The caregiver picked the shift on ${shift.date} at ${shift.time} with the ${shift.clientName} family to get covered. Warmly confirm you've got it, tell them you'll find available caregivers now and reach out, and you'll let them know when someone accepts. Mention the date/time and the ${shift.clientName} family.`,
-      fallback: `Got it — ${shift.date} at ${shift.time} with the ${shift.clientName} family. I'll find available caregivers now and reach out to them. I'll let you know when someone accepts.`,
+      context: `The caregiver picked the shift on ${formatDateForDisplay(shift.date)} at ${formatHHMMForDisplay(shift.time)} with the ${shift.clientName} family to get covered. Warmly confirm you've got it, tell them you'll find available caregivers now and reach out, and you'll let them know when someone accepts. Mention the date/time and the ${shift.clientName} family.`,
+      fallback: `Got it — ${formatDateForDisplay(shift.date)} at ${formatHHMMForDisplay(shift.time)} with the ${shift.clientName} family. I'll find available caregivers now and reach out to them. I'll let you know when someone accepts.`,
       maxTokens: 90,
     }));
 
@@ -212,7 +212,7 @@ async function broadcastSwapRequest(
   for (const candidate of candidates) {
     if (!candidate.chatId && !candidate.phone) continue;
     const targetChatId = candidate.chatId ?? candidate.phone;
-    const msg = `Hi ${candidate.name}, ${fromCaregiverName} is looking for coverage:\n📅 ${shift.date} at ${shift.time}\n👤 ${shift.clientName ?? "a family"}\n\nAre you available? Reply ACCEPT or DECLINE.`;
+    const msg = `Hi ${candidate.name}, ${fromCaregiverName} is looking for coverage:\n📅 ${formatDateForDisplay(shift.date)} at ${formatHHMMForDisplay(shift.time)}\n👤 ${shift.clientName ?? "a family"}\n\nAre you available? Reply ACCEPT or DECLINE.`;
     try {
       await sendMessage(targetChatId, msg);
       // Mark their session with the pending swap
@@ -283,15 +283,15 @@ export async function handleSwapAcceptance(
   await sendMessage(chatId, await generateCaraMessage({
     audience: "caregiver",
     language: "en",
-    context: `The caregiver just accepted coverage for the ${swap.date} shift — it's now theirs. Warmly confirm it's theirs, let them know the family will be notified, and thank them. Mention the ${swap.date} date.`,
-    fallback: `You've got it! The ${swap.date} shift is now yours. The family will be notified. Thank you!`,
+    context: `The caregiver just accepted coverage for the ${formatDateForDisplay(swap.date)} shift — it's now theirs. Warmly confirm it's theirs, let them know the family will be notified, and thank them. Mention the ${formatDateForDisplay(swap.date)} date.`,
+    fallback: `You've got it! The ${formatDateForDisplay(swap.date)} shift is now yours. The family will be notified. Thank you!`,
     maxTokens: 80,
   }));
 
   // Notify original caregiver
   const fromSnap = await db.collection("caregivers").doc(swap.fromCaregiverId).get();
   if (fromSnap.exists && fromSnap.data()?.chatId) {
-    await sendMessage(fromSnap.data()!.chatId, `Good news — ${caregiverName} has accepted coverage for your ${swap.date} shift. You're all set!`);
+    await sendMessage(fromSnap.data()!.chatId, `Good news — ${caregiverName} has accepted coverage for your ${formatDateForDisplay(swap.date)} shift. You're all set!`);
   }
 
   // Notify client
@@ -300,8 +300,8 @@ export async function handleSwapAcceptance(
     await sendMessage(clientSnap.data()!.chatId, await generateCaraMessage({
       audience: "family",
       language: "en",
-      context: `Letting the family know their caregiver for the ${swap.date} visit has changed — ${caregiverName} will be covering it now. Warmly reassure them and invite any questions. Mention the ${swap.date} date and that ${caregiverName} is covering.`,
-      fallback: `Heads up — your caregiver for ${swap.date} has changed. ${caregiverName} will be covering that visit. Let me know if you have any questions.`,
+      context: `Letting the family know their caregiver for the ${formatDateForDisplay(swap.date)} visit has changed — ${caregiverName} will be covering it now. Warmly reassure them and invite any questions. Mention the ${formatDateForDisplay(swap.date)} date and that ${caregiverName} is covering.`,
+      fallback: `Heads up — your caregiver for ${formatDateForDisplay(swap.date)} has changed. ${caregiverName} will be covering that visit. Let me know if you have any questions.`,
       maxTokens: 80,
     }));
   }

@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { writeUserNotification } from '../notifications/userNotification';
 import { sendToPhone } from '../linq/client';
 import { sendViaInteractionAgent } from '../agents/caraAgent';
+import { formatDateForDisplay, formatHHMMForDisplay } from '../utils/scheduledTime';
 
 const db = admin.firestore();
 
@@ -411,7 +412,7 @@ export const onBookingAmendmentWrite = functions.firestore
         // (mcp/server.ts) deliberately does not also send it, to avoid a
         // double text when a family requests this through Evia.
         await notifyCaregiverByText(after.caregiverId, isOneDay
-          ? `${after.clientName || 'A family'} would like to add a visit on ${after.startDate}. Reply here to accept or decline.`
+          ? `${after.clientName || 'A family'} would like to add a visit on ${formatDateForDisplay(after.startDate)}. Reply here to accept or decline.`
           : `${after.clientName || 'A family'} would like to add ${days} to your regular schedule. Reply here to accept or decline.`);
         return;
       }
@@ -494,7 +495,7 @@ export const onShiftStatusChanged = functions.firestore
     ) {
       const displayTime = new Date(after.reschedulePendingDate + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
-      }) + `, ${after.reschedulePendingStartTime}${after.reschedulePendingEndTime ? `–${after.reschedulePendingEndTime}` : ''}`;
+      }) + `, ${formatHHMMForDisplay(after.reschedulePendingStartTime)}${after.reschedulePendingEndTime ? `–${formatHHMMForDisplay(after.reschedulePendingEndTime)}` : ''}`;
       if (after.rescheduledBy === 'caregiver' && after.clientId) {
         await addNotification(after.clientId, {
           type: 'shift_rescheduled',
@@ -528,7 +529,7 @@ export const onShiftStatusChanged = functions.firestore
     ) {
       const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
-      }) + `, ${after.startTime}${after.endTime ? `–${after.endTime}` : ''}`;
+      }) + `, ${formatHHMMForDisplay(after.startTime)}${after.endTime ? `–${formatHHMMForDisplay(after.endTime)}` : ''}`;
       if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
         await addNotification(after.caregiverId, {
           type: 'shift_rescheduled',
@@ -564,7 +565,7 @@ export const onShiftStatusChanged = functions.firestore
     ) {
       const displayTime = new Date(after.date + 'T12:00:00').toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric',
-      }) + `, ${after.startTime}${after.endTime ? `–${after.endTime}` : ''}`;
+      }) + `, ${formatHHMMForDisplay(after.startTime)}${after.endTime ? `–${formatHHMMForDisplay(after.endTime)}` : ''}`;
       if (before.rescheduledBy === 'caregiver' && after.caregiverId) {
         await addNotification(after.caregiverId, {
           type: 'shift_rescheduled',

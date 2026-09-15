@@ -7,7 +7,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { getAppUrl } from "../config/appUrl";
-import { formatHHMMForDisplay } from "../utils/scheduledTime";
+import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { bookingTimeToMinutes } from "./bookingResolution";
 import { nextOccurrenceOnOrAfter } from "../scheduled/shiftGenerator";
 
@@ -250,7 +250,7 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
       const goalSet = await setActiveGoal(
         clientPhone,
         "booking",
-        `Rebook after conflict with ${task.caregiverName} on ${appt.date}`,
+        `Rebook after conflict with ${task.caregiverName} on ${formatDateForDisplay(appt.date)}`,
         { originalDate: appt.date, startTime: appt.startTime, endTime: appt.endTime, durationHours: appt.durationHours }
       ).then(() => true).catch((err) => {
         console.error("bookingExecutor: setActiveGoal failed", err);
@@ -266,8 +266,8 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
         const sessionData = sessionSnap.data()!;
         const conflictMsg = await generateCaraMessage({
           audience: "family",
-          context:  `${task.caregiverName} has a scheduling conflict and already has a visit at that time on ${appt.date}. Let the family know and tell them you're finding someone else for that date.`,
-          fallback: `${task.caregiverName} already has a visit at that time — finding someone else for ${appt.date}.`,
+          context:  `${task.caregiverName} has a scheduling conflict and already has a visit at that time on ${formatDateForDisplay(appt.date)}. Let the family know and tell them you're finding someone else for that date.`,
+          fallback: `${task.caregiverName} already has a visit at that time — finding someone else for ${formatDateForDisplay(appt.date)}.`,
           maxTokens: 80,
         });
         await sendMessage(sessionData.chatId, conflictMsg);
@@ -434,13 +434,17 @@ export async function executeBookings(taskId: string, clientPhone: string): Prom
   // rather than any specific dates, since the real dates are generated
   // ongoing by shiftGenerator.ts, not fixed up front.
   const offerLines = task.appointments.length > 0
-    ? task.appointments.map((a) => `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n")
+    ? task.appointments.map((a) => `${formatDateForDisplay(a.date)} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n")
     : Object.entries(task.schedule?.dayShiftTimes ?? {})
         .map(([day, blocks]) => `${day} · ${blocks.map((t) => `${formatHHMMForDisplay(t.start)}–${formatHHMMForDisplay(t.end)}`).join(", ")}`)
-        .join("\n") + (task.schedule?.startDate ? `\nStarting ${task.schedule.startDate}` : "");
+        .join("\n") + (task.schedule?.startDate ? `\nStarting ${formatDateForDisplay(task.schedule.startDate)}` : "");
+  const offerFirstApptDate = offerFirstAppt?.date ? formatDateForDisplay(offerFirstAppt.date) : "";
+  const offerScheduleStartDate = task.schedule?.startDate
+    ? formatDateForDisplay(task.schedule.startDate)
+    : offerFirstApptDate;
   const offerSummary = task.appointments.length > 0
-    ? `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstAppt?.date ?? ""} at ${formatHHMMForDisplay(offerFirstAppt?.startTime ?? "")}, $${offerVisitPay} per visit`
-    : `New booking ${offerClientLabel}: ${Object.keys(task.schedule?.dayShiftTimes ?? {}).join(", ")}, starting ${task.schedule?.startDate ?? offerFirstAppt?.date ?? ""}, $${offerVisitPay} per visit`;
+    ? `New booking ${offerClientLabel}: ${task.appointments.length} visit${task.appointments.length === 1 ? "" : "s"} starting ${offerFirstApptDate} at ${formatHHMMForDisplay(offerFirstAppt?.startTime ?? "")}, $${offerVisitPay} per visit`
+    : `New booking ${offerClientLabel}: ${Object.keys(task.schedule?.dayShiftTimes ?? {}).join(", ")}, starting ${offerScheduleStartDate}, $${offerVisitPay} per visit`;
 
   await createShiftOffer({
     kind:           "booking",
@@ -519,7 +523,7 @@ export async function finalizeAcceptedBooking(taskId: string, clientPhone: strin
   const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
   if (sessionSnap.exists) {
     const lines = task.appointments.map((a) =>
-      `${a.date} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)} · ${task.caregiverName}`
+      `${formatDateForDisplay(a.date)} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)} · ${task.caregiverName}`
     ).join("\n");
 
     const bookingConfirmOpener = await generateCaraMessage({

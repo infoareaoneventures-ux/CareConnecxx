@@ -68,9 +68,15 @@ vi.mock("../triggerEngine", () => ({ scheduleTrigger: (...a: unknown[]) => sched
 
 // Deterministic "2 hours from now" regardless of the real current date, so the
 // same-day/imminent replacement-search branch is always the one exercised.
-vi.mock("../../utils/scheduledTime", () => ({
-  parseScheduledTimeMs: () => Date.now() + 2 * 60 * 60 * 1000,
-}));
+// Real formatDateForDisplay/formatHHMMForDisplay are kept (via importOriginal)
+// since appointmentUpdated.ts now calls them for SMS copy.
+vi.mock("../../utils/scheduledTime", async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    parseScheduledTimeMs: () => Date.now() + 2 * 60 * 60 * 1000,
+  };
+});
 
 const claim = vi.fn().mockResolvedValue({ leaseOwner: "owner-1" });
 const complete = vi.fn().mockResolvedValue(undefined);

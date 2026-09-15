@@ -358,6 +358,7 @@ describe("characterization — duplicate ADD_FAMILY_MEMBER inbound", () => {
 // the natural-language BOOKING_CONFIRM branch and the strict-YES branch.
 describe("U7 — cancellation-notice briefings are grounded (R12)", () => {
   const APPT_DATE = "2026-07-20";
+  const APPT_DATE_DISPLAY = "July 20, 2026"; // formatDateForDisplay(APPT_DATE)
 
   function seedCancelConfirm() {
     seed({
@@ -384,7 +385,7 @@ describe("U7 — cancellation-notice briefings are grounded (R12)", () => {
     await routeIntentAndRespond(ctx("sounds good"));
 
     const context = caregiverBriefing();
-    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE}'`);
+    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE_DISPLAY}'`);
     expect(context).toContain("do not name the client unless given");
     // The appointment was actually cancelled (briefing is grounded in a real state change).
     expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
@@ -397,7 +398,7 @@ describe("U7 — cancellation-notice briefings are grounded (R12)", () => {
     await routeIntentAndRespond(ctx("YES"));
 
     const context = caregiverBriefing();
-    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE}'`);
+    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE_DISPLAY}'`);
     expect(context).toContain("do not name the client unless given");
     expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
   });

@@ -5,7 +5,7 @@ import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { createShiftOffer } from "./shiftOffer";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanQuestionOnly } from "./humanReply";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -80,7 +80,7 @@ export async function handleClientSwapRequest(
       clientSwapVisits: JSON.stringify(visits),
     });
 
-    const list = visits.map(v => `${v.index}. ${v.date} at ${v.time} with ${v.caregiverName}`).join("\n");
+    const list = visits.map(v => `${v.index}. ${formatDateForDisplay(v.date)} at ${formatHHMMForDisplay(v.time)} with ${v.caregiverName}`).join("\n");
     await sendMessage(chatId, `Which visit do you want to swap the caregiver for?\n${list}\n\nReply with the number.`);
     return;
   }
@@ -100,7 +100,7 @@ export async function handleClientSwapRequest(
     if (await isQuestionOrOther(text)) {
       const answer = await answerSwapQuestion(text);
       await sendMessage(chatId, answer);
-      const list = visits.map(v => `${v.index}. ${v.date} at ${v.time} with ${v.caregiverName}`).join("\n");
+      const list = visits.map(v => `${v.index}. ${formatDateForDisplay(v.date)} at ${formatHHMMForDisplay(v.time)} with ${v.caregiverName}`).join("\n");
       await sendMessage(chatId, `When you're ready, which visit do you want to swap?\n${list}\n\nReply with the number.`);
       return;
     }
@@ -148,8 +148,8 @@ export async function handleClientSwapRequest(
       await sendMessage(chatId, await generateCaraMessage({
         audience: "family",
         language: (session.preferredLanguage as string) === "es" ? "es" : "en",
-        context: `You searched but couldn't find an available replacement caregiver for the ${visit.date} visit. Gently let the family know, and offer to create a support ticket instead. Mention the ${visit.date} date.`,
-        fallback: `I wasn't able to find an available replacement caregiver for ${visit.date}. Would you like me to create a support ticket instead?`,
+        context: `You searched but couldn't find an available replacement caregiver for the ${formatDateForDisplay(visit.date)} visit. Gently let the family know, and offer to create a support ticket instead. Mention the ${formatDateForDisplay(visit.date)} date.`,
+        fallback: `I wasn't able to find an available replacement caregiver for ${formatDateForDisplay(visit.date)}. Would you like me to create a support ticket instead?`,
         maxTokens: 80,
       }));
       await db.collection("agent_sessions").doc(clientPhone).update({ clientSwapStep: admin.firestore.FieldValue.delete() });
@@ -165,7 +165,7 @@ export async function handleClientSwapRequest(
     });
 
     const list = options.map((o, i) => `${i + 1}. ${o.name}${o.rate ? ` — $${o.rate}/hr` : ""}`).join("\n");
-    await sendMessage(chatId, `Here are available caregivers for ${visit.date}:\n${list}\n\nWhich one would you like? Reply with the number, or say CANCEL to keep your current caregiver.`);
+    await sendMessage(chatId, `Here are available caregivers for ${formatDateForDisplay(visit.date)}:\n${list}\n\nWhich one would you like? Reply with the number, or say CANCEL to keep your current caregiver.`);
     return;
   }
 
@@ -224,14 +224,14 @@ export async function handleClientSwapRequest(
         previousCaregiverId:   apptSnap.data()?.caregiverId ?? null,
         previousCaregiverName: apptSnap.data()?.caregiverName ?? null,
       },
-      summary: `Cover a visit on ${swapDate}${apptTime ? ` at ${apptTime}` : ""} (client-requested caregiver swap)`,
+      summary: `Cover a visit on ${formatDateForDisplay(swapDate)}${apptTime ? ` at ${formatHHMMForDisplay(apptTime)}` : ""} (client-requested caregiver swap)`,
       offerMessage:
-        `Hi ${chosen.name} — a family would like you to cover a visit on ${swapDate}${apptTime ? ` at ${apptTime}` : ""}. ` +
+        `Hi ${chosen.name} — a family would like you to cover a visit on ${formatDateForDisplay(swapDate)}${apptTime ? ` at ${formatHHMMForDisplay(apptTime)}` : ""}. ` +
         `I'll send the care plan and directions if you take it.`,
     });
 
     await sendMessage(chatId,
-      `I've asked ${chosen.name} to confirm they can cover ${swapDate}. ` +
+      `I've asked ${chosen.name} to confirm they can cover ${formatDateForDisplay(swapDate)}. ` +
       `Your current caregiver stays assigned until ${chosen.name} accepts — I'll text you the moment they do.`
     );
   }

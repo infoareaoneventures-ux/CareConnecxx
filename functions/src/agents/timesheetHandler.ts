@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -93,15 +94,15 @@ export async function handleTimesheetApproval(
 
     const opener = await generateCaraMessage({
       audience:  "family",
-      context:   `${first.caregiverName} submitted hours for review for the visit on ${first.date}. Evia is presenting them to the family for approval. Write a brief 1-sentence intro.`,
-      fallback:   `${first.caregiverName} submitted their hours for ${first.date} — here are the details:`,
+      context:   `${first.caregiverName} submitted hours for review for the visit on ${formatDateForDisplay(first.date)}. Evia is presenting them to the family for approval. Write a brief 1-sentence intro.`,
+      fallback:   `${first.caregiverName} submitted their hours for ${formatDateForDisplay(first.date)} — here are the details:`,
       maxTokens: 60,
     });
-    const timeRange = first.clockIn && first.clockOut ? ` (${first.clockIn} – ${first.clockOut})` : "";
+    const timeRange = first.clockIn && first.clockOut ? ` (${formatHHMMForDisplay(first.clockIn)} – ${formatHHMMForDisplay(first.clockOut)})` : "";
     await sendMessage(
       `${opener}\n\n` +
       `Caregiver: ${first.caregiverName}\n` +
-      `Date: ${first.date}${timeRange}\n` +
+      `Date: ${formatDateForDisplay(first.date)}${timeRange}\n` +
       `Hours worked: ${first.hours}\n` +
       `Amount: ${first.amountOwed}\n\n` +
       `Reply APPROVE to confirm and release payment, or DISPUTE if something looks wrong.`
@@ -115,7 +116,7 @@ export async function handleTimesheetApproval(
       const ts = JSON.parse((session.pendingTimesheetDesc as string) ?? "{}") as PendingTimesheet;
       await sendMessage(
         `No problem — here are the hours again:\n\n` +
-        `Caregiver: ${ts.caregiverName}  |  Date: ${ts.date}  |  Hours: ${ts.hours}  |  Amount: ${ts.amountOwed}\n\n` +
+        `Caregiver: ${ts.caregiverName}  |  Date: ${formatDateForDisplay(ts.date)}  |  Hours: ${ts.hours}  |  Amount: ${ts.amountOwed}\n\n` +
         `Reply APPROVE to release payment or DISPUTE if something looks off.`
       );
       return;
@@ -148,7 +149,7 @@ export async function handleTimesheetApproval(
 
       const approveMsg = await generateCaraMessage({
         audience:  "family",
-        context:   `Family just approved ${tsData.caregiverName}'s timesheet for ${tsData.date} (${tsData.hours} hrs, ${tsData.amountOwed}). Write a brief warm confirmation and let them know payment will process tonight.`,
+        context:   `Family just approved ${tsData.caregiverName}'s timesheet for ${formatDateForDisplay(tsData.date)} (${tsData.hours} hrs, ${tsData.amountOwed}). Write a brief warm confirmation and let them know payment will process tonight.`,
         fallback:   `Approved! ${tsData.caregiverName}'s payment of ${tsData.amountOwed} will process tonight.`,
         maxTokens: 80,
       });
@@ -174,7 +175,7 @@ export async function handleTimesheetApproval(
 
       const disputeMsg = await generateCaraMessage({
         audience:  "family",
-        context:   `Family flagged a dispute on ${tsData.caregiverName}'s timesheet for ${tsData.date}. Acknowledge the dispute warmly and let them know a coordinator will follow up within 24 hours.`,
+        context:   `Family flagged a dispute on ${tsData.caregiverName}'s timesheet for ${formatDateForDisplay(tsData.date)}. Acknowledge the dispute warmly and let them know a coordinator will follow up within 24 hours.`,
         fallback:   `Got it — I've flagged ${tsData.caregiverName}'s timesheet for review. A coordinator will follow up within 24 hours.`,
         maxTokens: 80,
       });
@@ -217,11 +218,11 @@ export async function handleTimesheetApproval(
           pendingTimesheetSetAt: new Date().toISOString(),
         });
 
-        const timeRange2 = next.clockIn && next.clockOut ? ` (${next.clockIn} – ${next.clockOut})` : "";
+        const timeRange2 = next.clockIn && next.clockOut ? ` (${formatHHMMForDisplay(next.clockIn)} – ${formatHHMMForDisplay(next.clockOut)})` : "";
         await sendMessage(
           `You have one more to review:\n\n` +
           `Caregiver: ${next.caregiverName}\n` +
-          `Date: ${next.date}${timeRange2}\n` +
+          `Date: ${formatDateForDisplay(next.date)}${timeRange2}\n` +
           `Hours worked: ${next.hours}\n` +
           `Amount: ${next.amountOwed}\n\n` +
           `Reply APPROVE or DISPUTE.`

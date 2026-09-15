@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { businessNowMinutes } from "../utils/scheduledTime";
+import { businessNowMinutes, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -183,15 +183,15 @@ export const sendShiftTaskNudges = functions.pubsub
             audience: "caregiver",
             context: isMed
               ? `Write a friendly medication reminder to ${cgFirstName}. ` +
-                `It's almost time for ${seniorNameForNudge}'s ${task.description} at ${task.time}.` +
+                `It's almost time for ${seniorNameForNudge}'s ${task.description} at ${formatHHMMForDisplay(task.time)}.` +
                 `${medDetail ? " Medication: " + medDetail + "." : ""} ` +
                 `Ask them to let you know once it's been given. Keep it warm and brief.`
               : `Write a friendly care task reminder to ${cgFirstName}. ` +
-                `It's almost time for ${seniorNameForNudge}'s ${task.description} at ${task.time}. ` +
+                `It's almost time for ${seniorNameForNudge}'s ${task.description} at ${formatHHMMForDisplay(task.time)}. ` +
                 `Ask them to let you know when it's done. Keep it short and encouraging.`,
             fallback: isMed
-              ? `Hey ${cgFirstName}, almost time for ${seniorNameForNudge}'s ${task.description} at ${task.time}.${medDetail ? " (" + medDetail + ")" : ""} Let me know when it's done!`
-              : `Hey ${cgFirstName}, heads up — ${seniorNameForNudge}'s ${task.description} is coming up at ${task.time}. Give me a shout when it's done!`,
+              ? `Hey ${cgFirstName}, almost time for ${seniorNameForNudge}'s ${task.description} at ${formatHHMMForDisplay(task.time)}.${medDetail ? " (" + medDetail + ")" : ""} Let me know when it's done!`
+              : `Hey ${cgFirstName}, heads up — ${seniorNameForNudge}'s ${task.description} is coming up at ${formatHHMMForDisplay(task.time)}. Give me a shout when it's done!`,
           });
 
           await sendViaInteractionAgent(cgPhone, {

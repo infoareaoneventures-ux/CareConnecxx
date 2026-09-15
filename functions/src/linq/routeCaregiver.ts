@@ -16,7 +16,7 @@ import {
   resolveCaregiverReferralName,
 } from "../agents/caregiverReferral";
 import { answerHumanQuestionOnly } from "../agents/humanReply";
-import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "../utils/scheduledTime";
+import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import type { AwaitingInShiftUpdate } from "../scheduled/inShiftUpdatePolicy";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
@@ -426,7 +426,7 @@ async function handleShiftConfirmation(
     try {
       answer = await answerHumanQuestionOnly({
         audience: "caregiver",
-        situation: `caregiver was asked to confirm ${info.seniorName}'s shift on ${info.appointmentDate} at ${info.startTime}`,
+        situation: `caregiver was asked to confirm ${info.seniorName}'s shift on ${formatDateForDisplay(info.appointmentDate)} at ${formatHHMMForDisplay(info.startTime)}`,
         text,
         maxTokens: 180,
       });
@@ -441,7 +441,7 @@ async function handleShiftConfirmation(
       stateExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
     });
     await sendMessage(chatId,
-      `So — can you confirm you'll be at ${info.seniorName}'s shift on ${info.appointmentDate}? A quick yes or no is all I need.`
+      `So — can you confirm you'll be at ${info.seniorName}'s shift on ${formatDateForDisplay(info.appointmentDate)}? A quick yes or no is all I need.`
     );
   }
 }
@@ -505,7 +505,7 @@ async function sendArrivalCarePlanBriefing(
     return toMin(a.time) - toMin(b.time);
   });
 
-  const lines = sorted.map(t => `• ${t.time} — ${t.description}`);
+  const lines = sorted.map(t => `• ${formatHHMMForDisplay(t.time)} — ${t.description}`);
 
   if (medications.length > 0) {
     const medLine = medications
@@ -1665,7 +1665,7 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
           const familySnap = await db.collection("agent_sessions").doc(appt.clientId ?? appt.clientPhone).get();
           if (familySnap.exists) {
             await sendMessage(familySnap.data()!.chatId,
-              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${appt.date}. You're all set.`
+              `${appt.caregiverName ?? "Your caregiver"} confirmed the visit on ${formatDateForDisplay(appt.date)}. You're all set.`
             );
           }
           await sendMessage(chatId, "Confirmed! See you then. 👍");

@@ -64,6 +64,7 @@ interface Shift {
   recurringWeekly?: boolean;
   bookingRequestId?: string;
   schedule?: {
+    startDate?: string;
     ongoing?: boolean;
     endDate?: string;
     dayShiftTimes?: Record<string, Array<{ start: string; end: string }>>;
@@ -225,16 +226,63 @@ function fmtTime(t?: string): string {
 
 const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function weeklyScheduleSummary(shift: Shift): string {
-  const dst = shift.schedule?.dayShiftTimes;
-  if (!dst || Object.keys(dst).length === 0) return '';
-  return DAY_ORDER
-    .filter(d => dst[d]?.length)
-    .map(d => {
-      const times = dst[d].map(b => `${fmtTime(b.start)}–${fmtTime(b.end)}`).join(', ');
-      return `${d} ${times}`;
-    })
-    .join(' · ');
+// "HH:MM" (or "~HH:MM" for a next-day block) → minutes since midnight —
+// mirrors CaregiverBookingsPage.tsx's own parseMinutes exactly.
+function parseMinutes(t: string): number {
+  const nextDay = t.startsWith('~');
+  const raw = nextDay ? t.slice(1) : t;
+  const [h, m] = raw.split(':').map(Number);
+  return (nextDay ? 1440 : 0) + (h || 0) * 60 + (m || 0);
+}
+
+function calcShiftMins(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const diff = parseMinutes(end) - parseMinutes(start);
+  return diff > 0 ? diff : 0;
+}
+
+function fmtHours(mins: number): string {
+  if (mins === 0) return '';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+// Per-day time + duration, plus a weekly total — matches
+// CaregiverBookingsPage.tsx's own weekly-schedule block exactly (2026-09-14,
+// Hamse-confirmed: the client's cards showed only a flat "Mon 9am–5pm ·
+// Tue ..." string with no per-day or weekly duration, while the caregiver's
+// equivalent card already showed both — same booking, same data, just a
+// less detailed client-side render).
+function WeeklyScheduleBlock({ dayShiftTimes }: { dayShiftTimes?: Record<string, Array<{ start: string; end: string }>> }) {
+  if (!dayShiftTimes || Object.keys(dayShiftTimes).length === 0) return null;
+  const orderedDays = DAY_ORDER.filter(d => dayShiftTimes[d]?.some(b => b.start && b.end));
+  if (orderedDays.length === 0) return null;
+  const totalMins = orderedDays.reduce((sum, day) =>
+    sum + dayShiftTimes[day].filter(b => b.start && b.end).reduce((s, b) => s + calcShiftMins(b.start, b.end), 0), 0);
+  return (
+    <div className="flex items-start gap-2 text-sm text-slate-700">
+      <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+      <div className="space-y-0.5">
+        {orderedDays.map(day => {
+          const blocks = dayShiftTimes[day].filter(b => b.start && b.end);
+          const mins = blocks.reduce((s, b) => s + calcShiftMins(b.start, b.end), 0);
+          return (
+            <div key={day} className="flex items-center gap-2">
+              <span className="w-8 text-xs font-semibold text-slate-500">{day}</span>
+              <span className="text-xs text-slate-700">{blocks.map(b => `${fmtTime(b.start)}–${fmtTime(b.end)}`).join(', ')}</span>
+              {mins > 0 && <span className="text-[10px] text-primary-600 font-semibold ml-auto">{fmtHours(mins)}</span>}
+            </div>
+          );
+        })}
+        {totalMins > 0 && (
+          <div className="text-xs font-semibold text-slate-500 mt-1 pt-1 border-t border-slate-100">
+            {fmtHours(totalMins)} / week
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const statusColor = (s: Shift['status']) => {
@@ -269,18 +317,6 @@ interface PendingBookingCardProps {
 const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCancel, navigate: _navigate, onMessage }) => {
   const [cancelling, setCancelling] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-
-  const schedule = (() => {
-    const dst = booking.schedule?.dayShiftTimes;
-    if (!dst || Object.keys(dst).length === 0) return '';
-    return DAY_ORDER
-      .filter(d => dst[d]?.length)
-      .map(d => {
-        const times = dst[d].map((b: any) => `${fmtTime(b.start)}–${fmtTime(b.end)}`).join(', ');
-        return `${d} ${times}`;
-      })
-      .join(' · ');
-  })();
 
   const handleCancel = async () => {
     if (!window.confirm('Cancel this booking request?')) return;
@@ -328,12 +364,13 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
 
       {/* Booking details */}
       <div className="px-5 pb-4 space-y-2 border-t border-slate-50 pt-3">
-        {schedule && (
+        {booking.schedule?.startDate && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>{schedule}</span>
+            <span>Starts {fmtDate(booking.schedule.startDate)}</span>
           </div>
         )}
+        <WeeklyScheduleBlock dayShiftTimes={booking.schedule?.dayShiftTimes} />
         {booking.address && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
@@ -361,7 +398,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
       </div>
 
       {/* Expandable booking details */}
-      {(booking.careRecipients?.length > 0 || booking.emergencyContact) && (
+      {(booking.careRecipients?.length > 0 || booking.emergencyContact || booking.notes) && (
         <div className="border-t border-slate-100">
           <button
             onClick={() => setDetailsOpen(v => !v)}
@@ -479,6 +516,12 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
                     {booking.emergencyContact.relationship && <span className="text-red-500">· {booking.emergencyContact.relationship}</span>}
                     {booking.emergencyContact.phone && <span className="font-semibold">{booking.emergencyContact.phone}</span>}
                   </div>
+                </div>
+              )}
+              {booking.notes && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Notes</p>
+                  <p className="text-sm text-slate-600 bg-slate-50 rounded-xl px-3 py-2">{booking.notes}</p>
                 </div>
               )}
             </div>
@@ -796,7 +839,6 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
   const preview = showAll ? sorted : sorted.slice(0, 2);
   const ongoing = base.schedule?.ongoing ?? base.recurringWeekly ?? false;
   const endDate  = base.schedule?.endDate;
-  const schedule = weeklyScheduleSummary(base);
 
   const [cancellingShift, setCancellingShift] = useState<string | null>(null);
 
@@ -985,12 +1027,13 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
 
       {/* Shared booking details */}
       <div className="px-5 pb-4 space-y-2 border-t border-slate-50 pt-3">
-        {schedule && (
+        {base.schedule?.startDate && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>{schedule}</span>
+            <span>Starts {fmtDate(base.schedule.startDate)}</span>
           </div>
         )}
+        <WeeklyScheduleBlock dayShiftTimes={base.schedule?.dayShiftTimes} />
         {base.address && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
@@ -1759,7 +1802,13 @@ export const ClientVisitsPage: React.FC = () => {
     if (bookingRequestId) {
       const futureSnap = await db.collection('shifts')
         .where('bookingRequestId', '==', bookingRequestId)
-        .where('status', '==', 'scheduled')
+        // 2026-09-14 (live-caught): 'scheduled' alone left a shift the
+        // caregiver had already cancelled (status: 'needs_replacement')
+        // completely untouched by this action — since the Active Bookings
+        // list includes 'needs_replacement' shifts regardless of the
+        // parent booking's own status, the card never disappeared even
+        // though booking_requests was correctly marked cancelled below.
+        .where('status', 'in', ['scheduled', 'needs_replacement'])
         .where('clientId', '==', user?.uid)
         .get();
       // Mark shifts as bulkCancelled so onShiftCancelled skips individual notifications

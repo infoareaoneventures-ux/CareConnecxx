@@ -17,6 +17,7 @@ import * as admin from "firebase-admin";
 import { sendMessage, getOrCreateSession } from "../linq/client";
 import { classifyApproval } from "./approvalHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import type { BookingTask } from "./bookingExecutor";
 
 const db = admin.firestore();
@@ -330,15 +331,15 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
     await batch.commit();
 
     await sendMessage(caregiverChatId,
-      `You're set${p.date ? ` for ${p.date}` : ""}! I'll send the care plan and directions before the visit.`
+      `You're set${p.date ? ` for ${formatDateForDisplay(p.date)}` : ""}! I'll send the care plan and directions before the visit.`
     ).catch(() => {});
 
     const chatId = await clientChatId(offer.clientPhone);
     if (chatId) {
       const msg = await generateCaraMessage({
         audience: "family",
-        context:  `${offer.caregiverName} accepted the caregiver swap${p.date ? ` for the visit on ${p.date}` : ""}. Confirm the change is locked in.`,
-        fallback: `Done - ${offer.caregiverName} accepted and is now set${p.date ? ` for ${p.date}` : ""}.`,
+        context:  `${offer.caregiverName} accepted the caregiver swap${p.date ? ` for the visit on ${formatDateForDisplay(p.date)}` : ""}. Confirm the change is locked in.`,
+        fallback: `Done - ${offer.caregiverName} accepted and is now set${p.date ? ` for ${formatDateForDisplay(p.date)}` : ""}.`,
         maxTokens: 80,
       });
       await sendMessage(chatId, msg).catch(() => {});
@@ -371,15 +372,15 @@ async function onOfferAccepted(offerId: string, offer: ShiftOffer, caregiverChat
   await batch.commit();
 
   await sendMessage(caregiverChatId,
-    `Locked in — the visit is now ${p.newDate} at ${p.newStartTime}. Thanks for confirming!`
+    `Locked in — the visit is now ${formatDateForDisplay(p.newDate ?? "")} at ${formatHHMMForDisplay(p.newStartTime ?? "")}. Thanks for confirming!`
   ).catch(() => {});
 
   const chatId = await clientChatId(offer.clientPhone);
   if (chatId) {
     const msg = await generateCaraMessage({
       audience: "family",
-      context:  `${offer.caregiverName} confirmed the new time — the visit is now ${p.newDate} at ${p.newStartTime}. Confirm the reschedule is locked in.`,
-      fallback: `All set — ${offer.caregiverName} confirmed the new time. The visit is now ${p.newDate} at ${p.newStartTime}.`,
+      context:  `${offer.caregiverName} confirmed the new time — the visit is now ${formatDateForDisplay(p.newDate ?? "")} at ${formatHHMMForDisplay(p.newStartTime ?? "")}. Confirm the reschedule is locked in.`,
+      fallback: `All set — ${offer.caregiverName} confirmed the new time. The visit is now ${formatDateForDisplay(p.newDate ?? "")} at ${formatHHMMForDisplay(p.newStartTime ?? "")}.`,
       maxTokens: 80,
     });
     await sendMessage(chatId, msg).catch(() => {});
@@ -447,8 +448,8 @@ async function onOfferNotAccepted(
     const chatId = await clientChatId(offer.clientPhone);
     if (chatId) {
       const ctx = reason === "declined"
-        ? `${offer.caregiverName} can't cover the visit${p.date ? ` on ${p.date}` : ""}. The current caregiver is still assigned. Offer to show other available caregivers.`
-        : `${offer.caregiverName} didn't respond in time to the swap request${p.date ? ` for ${p.date}` : ""}. The current caregiver is still assigned. Offer to show other available caregivers.`;
+        ? `${offer.caregiverName} can't cover the visit${p.date ? ` on ${formatDateForDisplay(p.date)}` : ""}. The current caregiver is still assigned. Offer to show other available caregivers.`
+        : `${offer.caregiverName} didn't respond in time to the swap request${p.date ? ` for ${formatDateForDisplay(p.date)}` : ""}. The current caregiver is still assigned. Offer to show other available caregivers.`;
       const msg = await generateCaraMessage({
         audience: "family",
         context:  ctx,

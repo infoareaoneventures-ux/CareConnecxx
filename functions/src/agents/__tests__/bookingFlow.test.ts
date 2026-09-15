@@ -185,6 +185,31 @@ describe("startBookingFlow", () => {
       expect(lastMsg).toContain("2. Basra Yousuf (");
     });
 
+    // 2026-09-14 (live-caught): rendering scheduledTime with no timeZone
+    // option shows whatever zone Cloud Functions happens to run in (UTC) —
+    // a real 9:00 AM Pacific interview texted back as "4:00 PM", and a 9:10
+    // PM Pacific one both mislabeled AND shifted to the wrong calendar day
+    // ("Sep 13, 4:10 AM" instead of "Sep 12, 9:10 PM"). Pins the fix:
+    // Pacific time, matching every other interview-time display in the app.
+    it("renders each option in Pacific time, not the server's UTC clock", async () => {
+      hoisted.docState.set("video_interviews/iv1", {
+        clientId: UID, caregiverId: CG_ID, status: "completed",
+        scheduledTime: "2026-09-13T16:00:00.000Z", // 9:00 AM Pacific (PDT, UTC-7)
+      });
+      hoisted.docState.set("video_interviews/iv2", {
+        clientId: UID, caregiverId: CG_ID, status: "completed",
+        scheduledTime: "2026-09-13T04:10:00.000Z", // 9:10 PM Pacific the PRIOR day
+      });
+
+      await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+
+      const lastMsg = String(sendMessage.mock.calls.at(-1)![1]);
+      expect(lastMsg).toContain("Sep 13, 9:00 AM");
+      expect(lastMsg).toContain("Sep 12, 9:10 PM");
+      expect(lastMsg).not.toContain("4:00 PM");
+      expect(lastMsg).not.toContain("4:10 AM");
+    });
+
     it("picking one by number links its job post and advances to the rate question", async () => {
       hoisted.docState.set("video_interviews/iv1", {
         clientId: UID, caregiverId: CG_ID, status: "completed", applicationId: "app1",
@@ -627,9 +652,16 @@ describe("bk_confirm", () => {
     // Array-wrapped per day (2026-09-14, live-caught) — matches the site's
     // own shape; a bare {start,end} object silently generated zero real
     // shifts via shiftGenerator.ts's onBookingAccepted trigger.
+    // Keys normalized to the site's own 3-letter abbreviation (2026-09-14,
+    // live-caught same session) — data.days/dayTimes are kept as full
+    // weekday names internally (for a natural-reading SMS recap), but the
+    // site's dayShiftTimes convention (and both dashboards' summary-line
+    // rendering) keys by "Tue" not "Tuesday" — a full-name key rendered a
+    // blank weekly-schedule line on both the caregiver's and client's
+    // dashboards for every Evia-originated recurring booking.
     expect(call.schedule.dayShiftTimes).toEqual({
-      Tuesday: [{ start: "09:00", end: "17:00" }],
-      Thursday: [{ start: "09:00", end: "17:00" }],
+      Tue: [{ start: "09:00", end: "17:00" }],
+      Thu: [{ start: "09:00", end: "17:00" }],
     });
     expect(call.schedule.ongoing).toBe(true);
     expect(call.careLocation).toBe(CONFIRM_DATA.careLocation);

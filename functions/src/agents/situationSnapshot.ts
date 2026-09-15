@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -63,9 +63,9 @@ export function formatCaregiverSnapshot(s: CaregiverSnapshotInput): string {
   if (s.hasJobInvite)
     lines.push("- A job invite is awaiting your YES/NO.");
   if (s.nextVisit) {
-    const at = s.nextVisit.startTime ? ` at ${s.nextVisit.startTime}` : "";
+    const at = s.nextVisit.startTime ? ` at ${formatHHMMForDisplay(s.nextVisit.startTime)}` : "";
     const more = s.upcomingVisits > 1 ? ` (+${s.upcomingVisits - 1} more in the next 7 days)` : "";
-    lines.push(`- Next visit: ${s.nextVisit.date}${at}${more}.`);
+    lines.push(`- Next visit: ${formatDateForDisplay(s.nextVisit.date)}${at}${more}.`);
   }
   if (s.pendingApplications > 0)
     lines.push(`- ${s.pendingApplications} job application${s.pendingApplications === 1 ? "" : "s"} still pending a decision.`);

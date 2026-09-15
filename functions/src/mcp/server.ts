@@ -20,7 +20,8 @@ import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./too
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
-import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay } from "../utils/scheduledTime";
+import { normDay } from "../scheduled/shiftGenerator";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
 import { resolveShiftBillableAmount } from "../billing/shiftBillingAmounts";
@@ -382,35 +383,26 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_callout_backups",
-    description: "List the backup caregiver options for an appointment whose caregiver called out. Read-only. clientId is injected automatically — only the appointment's owner may view its backups.",
+    description: "List backup caregiver candidates for a visit marked 'Needs Replacement' (the caregiver cancelled it). Read-only — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating. clientId is injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
       type: "object",
-      properties: { appointmentId: { type: "string" } },
-      required: ["appointmentId"],
+      properties: { shiftId: { type: "string", description: "The shift (visit) that needs a replacement." } },
+      required: ["shiftId"],
     },
   },
   {
     name: "select_callout_backup",
-    description: "Assign a chosen backup caregiver to an appointment whose original caregiver called out. Reassigns the visit and notifies both parties. clientId is injected automatically — only the appointment's owner may select.",
+    description: "Send a new booking request to a chosen backup caregiver for a visit that needs replacement — matches the website's own flow exactly: this creates a real booking request (the candidate gets the normal accept/decline text) rather than reassigning the visit outright. Omit date/startTime/endTime to keep the same day/time as the original visit; pass them only if the family wants a different day/time for the replacement. clientId is injected automatically.",
     input_schema: {
       type: "object",
       properties: {
-        appointmentId:     { type: "string" },
-        backupCaregiverId: { type: "string", description: "id of the backup caregiver to assign (from get_callout_backups)" },
+        shiftId:           { type: "string", description: "The shift (visit) that needs a replacement." },
+        backupCaregiverId: { type: "string", description: "id of the backup caregiver to send the request to (from get_callout_backups)" },
+        date:              { type: "string", description: "YYYY-MM-DD. Optional — defaults to the original visit's own date." },
+        startTime:         { type: "string", description: "HH:MM 24-hour. Optional — defaults to the original visit's own start time." },
+        endTime:           { type: "string", description: "HH:MM 24-hour. Optional — defaults to the original visit's own end time." },
       },
-      required: ["appointmentId", "backupCaregiverId"],
-    },
-  },
-  {
-    name: "request_callout_refund",
-    description: "Request a refund for an appointment when the caregiver called out and no suitable backup is available. Cancels the visit and files a refund request for admin review. clientId is injected automatically — only the appointment's owner may request.",
-    input_schema: {
-      type: "object",
-      properties: {
-        appointmentId: { type: "string" },
-        reason:        { type: "string", description: "Optional reason for the refund" },
-      },
-      required: ["appointmentId"],
+      required: ["shiftId", "backupCaregiverId"],
     },
   },
   {
@@ -565,17 +557,34 @@ export const MCP_TOOLS: McpTool[] = [
         clientId: { type: "string", description: "The client's user ID (for ownership check)" },
         action: {
           type: "string",
-          enum: ["cancel_pending_request", "cancel_whole_booking", "cancel_visit", "cancel_pending_amendment", "resend_booking"],
+          enum: [
+            "cancel_pending_request", "cancel_whole_booking", "cancel_visit", "cancel_pending_amendment", "resend_booking",
+            "withdraw_replacement_request", "propose_reschedule", "accept_reschedule", "clear_reschedule",
+          ],
           description:
             "cancel_pending_request — withdraw a booking still awaiting the caregiver's YES/NO (needs bookingRequestId). " +
             "cancel_whole_booking — cancel an accepted booking, every still-scheduled visit under it (needs bookingRequestId). " +
-            "cancel_visit — cancel ONE scheduled visit, leaving the rest of the booking active (needs shiftId). " +
+            "cancel_visit — cancel ONE visit, leaving the rest of the booking active (needs shiftId). Also works on a " +
+            "'Needs Replacement' visit (the family deciding they don't need a replacement after all — matches the " +
+            "website's own Skip button). " +
             "cancel_pending_amendment — withdraw a schedule-change request still awaiting the caregiver's response (needs amendmentId). " +
-            "resend_booking — resend a previously declined/cancelled booking request to the same caregiver (needs bookingRequestId).",
+            "resend_booking — resend a previously declined/cancelled booking request to the same caregiver (needs bookingRequestId). " +
+            "withdraw_replacement_request — cancel a pending replacement booking request you sent to a backup caregiver, so a " +
+            "different one can be chosen instead (needs bookingRequestId — the id select_callout_backup returned). " +
+            "propose_reschedule — propose moving ONE existing scheduled visit to a new day/time, in place (needs shiftId, " +
+            "date, startTime, endTime) — the caregiver gets a text to confirm or counter; the visit's real time does NOT " +
+            "change until they accept. Use this instead of cancelling and re-requesting a visit. " +
+            "accept_reschedule — confirm a new day/time the CAREGIVER proposed for one of your visits (needs shiftId) — " +
+            "only valid when the pending proposal came from the caregiver, not from you. " +
+            "clear_reschedule — decline the caregiver's proposed new time (the original time stands), OR withdraw your " +
+            "own proposal before they've responded — either way just needs shiftId.",
         },
-        bookingRequestId: { type: "string", description: "The booking_requests document ID — required for cancel_pending_request, cancel_whole_booking, resend_booking" },
-        shiftId:          { type: "string", description: "The shifts document ID — required for cancel_visit" },
+        bookingRequestId: { type: "string", description: "The booking_requests document ID — required for cancel_pending_request, cancel_whole_booking, resend_booking, withdraw_replacement_request" },
+        shiftId:          { type: "string", description: "The shifts document ID — required for cancel_visit, propose_reschedule, accept_reschedule, clear_reschedule" },
         amendmentId:      { type: "string", description: "The booking_amendments document ID — required for cancel_pending_amendment" },
+        date:             { type: "string", description: "YYYY-MM-DD — required for propose_reschedule" },
+        startTime:        { type: "string", description: "HH:MM 24-hour — required for propose_reschedule" },
+        endTime:          { type: "string", description: "HH:MM 24-hour — required for propose_reschedule" },
       },
       required: ["clientId", "action"],
     },
@@ -611,6 +620,34 @@ export const MCP_TOOLS: McpTool[] = [
         decision:     { type: "string", enum: ["accept", "decline"] },
       },
       required: ["amendmentId", "caregiverId", "decision"],
+    },
+  },
+  {
+    name: "manage_shift_reschedule",
+    description:
+      "Caregiver-side counterpart to the family's own reschedule tool — proposes moving ONE existing scheduled visit " +
+      "to a new day/time in place (matches CaregiverBookingsPage.tsx's own Reschedule button exactly), or responds to a " +
+      "day/time the FAMILY already proposed for one of your visits. This is for changing an already-scheduled visit — " +
+      "not for cancelling a shift (use your normal cancel-a-shift flow) or adding a brand-new recurring day.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
+        shiftId:     { type: "string", description: "The shifts document ID" },
+        action: {
+          type: "string",
+          enum: ["propose", "accept", "decline"],
+          description:
+            "propose — suggest a new day/time for this visit (needs date, startTime, endTime); the family gets a text " +
+            "to confirm or counter, the visit's real time doesn't change until they accept. " +
+            "accept — confirm a new day/time the FAMILY proposed (only valid when they proposed it, not you). " +
+            "decline — reject the family's proposed time (original stands), or withdraw your own proposal before they respond.",
+        },
+        date:      { type: "string", description: "YYYY-MM-DD — required for action:'propose'" },
+        startTime: { type: "string", description: "HH:MM 24-hour — required for action:'propose'" },
+        endTime:   { type: "string", description: "HH:MM 24-hour — required for action:'propose'" },
+      },
+      required: ["caregiverId", "shiftId", "action"],
     },
   },
   {
@@ -3906,6 +3943,19 @@ async function executeToolCall(
           // directly on each day's value; a bare {start,end} object there
           // silently generated zero real shifts for every recurring booking
           // this tool ever created.
+          //
+          // Keys normalized via normDay (2026-09-14, live-caught, found right
+          // after the array-wrap fix above): the model calling this tool
+          // supplies dayShiftTimes keys in whatever casing/format it chose
+          // ("Monday" as easily as "Mon") — but the site's OWN convention
+          // (PostsPage.tsx's booking modal, both dashboards' summary-line
+          // rendering) keys it by the 3-letter abbreviation. A full-name key
+          // silently rendered a blank weekly-schedule summary on both
+          // dashboards, even though shiftGenerator.ts's own internal
+          // normDay() call still generated the real per-visit shifts
+          // correctly — masking the bug in practice. normDay is the exact
+          // same normalizer shiftGenerator.ts uses, imported here so this
+          // can never drift from that canonical mapping.
           const normalizedDst: Record<string, Array<{ start: string; end: string }>> = {};
           for (const d of days) {
             const startMin = bookingTimeToMinutes(dst[d].start);
@@ -3914,7 +3964,7 @@ async function executeToolCall(
               return toolError("INVALID_INPUT", `dayShiftTimes.${d}: start/end must be 'HH:MM' with end after start`);
             }
             weeklyHours += (endMin - startMin) / 60;
-            normalizedDst[d] = [{ start: dst[d].start as string, end: dst[d].end as string }];
+            normalizedDst[normDay(d)] = [{ start: dst[d].start as string, end: dst[d].end as string }];
           }
           estimatedTotal = Math.round(weeklyHours * hourlyRate * 100) / 100;
           schedule = {
@@ -4159,61 +4209,83 @@ async function executeToolCall(
         });
       }
 
+      // 2026-09-14 (Hamse's call): rebuilt against the REAL data model. The
+      // old implementation queried `appointments` — a legacy collection no
+      // current visit (site or Evia) is written to anymore; a "Needs
+      // Replacement" card lives on a `shifts` doc. Candidate search is a
+      // faithful port of the site's own ReplacementPickerModal (see
+      // agents/shiftReplacement.ts's header comment) rather than a stored
+      // `backupCaregiverOptions` field, which the current pipeline never
+      // populates.
       case "get_callout_backups": {
-        const { clientId, appointmentId } = input;
-        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
-        const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
-        const appt = apptSnap.data() || {};
-        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
-        const options = Array.isArray(appt.backupCaregiverOptions) ? appt.backupCaregiverOptions : [];
-        return { success: true, appointmentId, caregivers: options, count: options.length };
+        const { clientId, shiftId } = input;
+        if (!clientId || !shiftId) return toolError("INVALID_INPUT", "shiftId is required");
+        const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+        if (!shiftSnap.exists) return toolError("NOT_FOUND", "shift not found");
+        const shift = shiftSnap.data()!;
+        if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit does not belong to this client");
+        if (shift.status !== "needs_replacement") return toolError("INVALID_INPUT", `This visit isn't awaiting a replacement (status: ${shift.status})`);
+        const { findReplacementCandidates } = await import("../agents/shiftReplacement");
+        const candidates = await findReplacementCandidates(clientId as string, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
+        return { success: true, shiftId, caregivers: candidates, count: candidates.length };
       }
 
+      // Matches the site's own handleConfirmReplacement EXACTLY: creates a
+      // real NEW booking_requests doc (the candidate gets the normal
+      // accept/decline text, same as any fresh booking) rather than
+      // reassigning the visit outright — the original shift stays
+      // 'needs_replacement' until the candidate actually accepts. Only
+      // bookkeeping (replacementRequestId/replacementCaregiverName) is
+      // written onto the original shift here.
       case "select_callout_backup": {
-        const { clientId, appointmentId, backupCaregiverId } = input;
-        if (!clientId || !appointmentId || !backupCaregiverId) return toolError("INVALID_INPUT", "appointmentId and backupCaregiverId are required");
-        const apptRef = db.collection("appointments").doc(appointmentId as string);
-        const apptSnap = await apptRef.get();
-        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
-        const appt = apptSnap.data() || {};
-        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
+        const { clientId, shiftId, backupCaregiverId, date, startTime, endTime } = input;
+        if (!clientId || !shiftId || !backupCaregiverId) return toolError("INVALID_INPUT", "shiftId and backupCaregiverId are required");
+        const shiftRef = db.collection("shifts").doc(shiftId as string);
+        const shiftSnap = await shiftRef.get();
+        if (!shiftSnap.exists) return toolError("NOT_FOUND", "shift not found");
+        const shift = shiftSnap.data()!;
+        if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "This visit does not belong to this client");
+        if (shift.status !== "needs_replacement") return toolError("INVALID_INPUT", `This visit isn't awaiting a replacement (status: ${shift.status})`);
         const cgSnap = await db.collection("caregivers").doc(backupCaregiverId as string).get();
         if (!cgSnap.exists) return toolError("NOT_FOUND", "caregiver not found");
         const cg = cgSnap.data() || {};
         const caregiverName = (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "your caregiver";
-        await apptRef.update({
-          caregiverId:          backupCaregiverId,
+        const effDate      = (date as string | undefined) ?? (shift.date as string);
+        const effStartTime = (startTime as string | undefined) ?? (shift.startTime as string);
+        const effEndTime   = (endTime as string | undefined) ?? (shift.endTime as string | undefined) ?? effStartTime;
+        const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${effDate}T12:00:00`).getDay()];
+        const bookingRef = db.collection("booking_requests").doc();
+        await bookingRef.set({
+          clientId,
+          clientName:    shift.clientName ?? "",
+          caregiverId:   backupCaregiverId,
           caregiverName,
-          status:               "confirmed",
-          previousCaregiverId:  appt.caregiverId ?? null,
-          caregiverSwitchedAt:  nowIso,
-          needsBackup:          false,
-          backupCaregiverOptions: admin.firestore.FieldValue.delete(),
+          address:       shift.address ?? "",
+          rate:          (cg.hourlyRate as number | undefined) ?? shift.rate ?? null,
+          paymentMethod: shift.paymentMethod ?? "credit",
+          careNeeds:     [...new Set(((shift.careRecipients ?? []) as Array<{ careNeeds?: string[] }>).flatMap((r) => r.careNeeds || []))],
+          careRecipients: shift.careRecipients ?? [],
+          notes:         shift.notes ?? null,
+          emergencyContact: shift.emergencyContact ?? null,
+          schedule: {
+            days: [dayName],
+            startDate: effDate,
+            endDate: effDate,
+            ongoing: false,
+            dayShiftTimes: { [dayName]: [{ start: effStartTime, end: effEndTime }] },
+          },
+          isShiftReplacement: true,
+          replacementForShiftId: shiftId,
+          status: "pending",
+          isResend: false,
+          createdAt: nowIso,
         });
-        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", appointmentId, backupCaregiverId } }).catch(() => {});
-        return { success: true, appointmentId, caregiverId: backupCaregiverId, caregiverName, status: "confirmed" };
-      }
-
-      case "request_callout_refund": {
-        const { clientId, appointmentId, reason } = input;
-        if (!clientId || !appointmentId) return toolError("INVALID_INPUT", "appointmentId is required");
-        const apptRef = db.collection("appointments").doc(appointmentId as string);
-        const apptSnap = await apptRef.get();
-        if (!apptSnap.exists) return toolError("NOT_FOUND", "appointment not found");
-        const appt = apptSnap.data() || {};
-        if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "This appointment does not belong to this client");
-        const refundReason = (reason as string) || "Caregiver called out, no suitable backup available";
-        await apptRef.update({ status: "cancelled_refund_requested", refundRequestedAt: nowIso, refundReason, needsBackup: false });
-        const refundRef = await db.collection("refundRequests").add({
-          appointmentId, clientId, amount: appt.amount ?? 0, reason: refundReason, status: "requested", requestedAt: nowIso, createdAt: nowIso, source: "cara",
+        await shiftRef.update({
+          replacementRequestId: bookingRef.id,
+          replacementCaregiverName: caregiverName,
         });
-        await db.collection("admin_alerts").add({
-          type: "refund_request", title: "Refund request — caregiver callout (via Evia)",
-          clientId, appointmentId, refundRequestId: refundRef.id, createdAt: nowIso, resolved: false,
-        }).catch(() => {});
-        logAudit({ eventType: "callout_refund_requested", userId: clientId as string, data: { source: "mcp:request_callout_refund", appointmentId, refundRequestId: refundRef.id } }).catch(() => {});
-        return { success: true, refundRequestId: refundRef.id, status: "pending" };
+        logAudit({ eventType: "callout_backup_selected", userId: clientId as string, data: { source: "mcp:select_callout_backup", shiftId, backupCaregiverId, bookingRequestId: bookingRef.id } }).catch(() => {});
+        return { success: true, shiftId, bookingRequestId: bookingRef.id, caregiverId: backupCaregiverId, caregiverName, status: "pending" };
       }
 
       case "send_referral": {
@@ -4426,7 +4498,7 @@ async function executeToolCall(
       }
 
       case "manage_booking": {
-        const { clientId, action, bookingRequestId, shiftId, amendmentId } = input;
+        const { clientId, action, bookingRequestId, shiftId, amendmentId, date, startTime, endTime } = input;
         if (!clientId || !action) return toolError("INVALID_INPUT", "clientId and action are required");
 
         if (action === "cancel_pending_request") {
@@ -4462,8 +4534,14 @@ async function executeToolCall(
           const br = brSnap.data()!;
           if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Booking does not belong to this client");
           if (br.status === "cancelled") return { success: true, action, alreadyCancelled: true, bookingRequestId };
+          // 2026-09-14 (live-caught, site-side): 'scheduled' alone left a
+          // shift already stuck in 'needs_replacement' completely untouched
+          // by a whole-booking cancel — it never disappeared from Active
+          // Bookings even though the parent booking was correctly marked
+          // cancelled. Same fix applied to ClientVisitsPage.tsx's own
+          // handleCancelBooking.
           const shiftsSnap = await db.collection("shifts")
-            .where("bookingRequestId", "==", bookingRequestId).where("status", "==", "scheduled").get();
+            .where("bookingRequestId", "==", bookingRequestId).where("status", "in", ["scheduled", "needs_replacement"]).get();
           const batch = db.batch();
           shiftsSnap.docs.forEach((d) => batch.update(d.ref, { status: "cancelled", bulkCancelled: true }));
           await batch.commit();
@@ -4481,7 +4559,13 @@ async function executeToolCall(
           if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
           const shift = shiftSnap.data()!;
           if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Visit does not belong to this client");
-          if (shift.status !== "scheduled") return toolError("INVALID_INPUT", `Only a scheduled visit can be cancelled this way (status: ${shift.status})`);
+          // 'needs_replacement' allowed too (2026-09-14) — matches the
+          // website's own Skip button on a callout visit: the family
+          // deciding they don't need a replacement after all, same
+          // cancel-in-place write either way.
+          if (shift.status !== "scheduled" && shift.status !== "needs_replacement") {
+            return toolError("INVALID_INPUT", `Only a scheduled or needs-replacement visit can be cancelled this way (status: ${shift.status})`);
+          }
           // shifts.status → cancelled fires onShiftStatusChanged
           // (notificationTriggers.ts), which texts the caregiver — no manual
           // send here, or the caregiver would get the notice twice.
@@ -4522,6 +4606,109 @@ async function executeToolCall(
           await amSnap.ref.update({ status: "cancelled" });
           logAudit({ eventType: "amendment_cancelled", userId: clientId as string, data: { source: "mcp:manage_booking", action, amendmentId } }).catch(() => {});
           return { success: true, action, amendmentId };
+        }
+
+        // Cancels the REPLACEMENT booking request (not the original visit,
+        // which stays 'needs_replacement' so a different candidate can be
+        // chosen) — matches the website's own handleWithdrawReplacement.
+        if (action === "withdraw_replacement_request") {
+          if (!bookingRequestId) return toolError("INVALID_INPUT", "bookingRequestId is required for withdraw_replacement_request");
+          const brSnap = await db.collection("booking_requests").doc(bookingRequestId as string).get();
+          if (!brSnap.exists) return toolError("NOT_FOUND", "Replacement request not found");
+          const br = brSnap.data()!;
+          if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Replacement request does not belong to this client");
+          if (!br.isShiftReplacement) return toolError("INVALID_INPUT", "This booking request isn't a replacement request");
+          await brSnap.ref.update({ status: "cancelled" });
+          logAudit({ eventType: "callout_backup_withdrawn", userId: clientId as string, data: { source: "mcp:manage_booking", action, bookingRequestId } }).catch(() => {});
+          return { success: true, action, bookingRequestId };
+        }
+
+        // Proposes a new date/time for an EXISTING shift IN PLACE — matches
+        // the website's own reschedulePendingDate/StartTime/EndTime pattern
+        // exactly (ClientVisitsPage.tsx's handleProposeReschedule). The
+        // real date/startTime/endTime are untouched until the caregiver
+        // accepts; onShiftStatusChanged (notificationTriggers.ts) already
+        // watches for this exact field combination and texts the caregiver
+        // automatically — no manual send here.
+        if (action === "propose_reschedule") {
+          if (!shiftId || !date || !startTime || !endTime) {
+            return toolError("INVALID_INPUT", "shiftId, date, startTime, and endTime are required for propose_reschedule");
+          }
+          const startMin = bookingTimeToMinutes(startTime);
+          const endMin   = bookingTimeToMinutes(endTime);
+          if (startMin === null || endMin === null || endMin <= startMin) {
+            return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
+          }
+          const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+          if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
+          const shift = shiftSnap.data()!;
+          if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Visit does not belong to this client");
+          if (shift.status !== "scheduled") return toolError("INVALID_INPUT", `Only a scheduled visit can be rescheduled this way (status: ${shift.status})`);
+          await shiftSnap.ref.update({
+            reschedulePendingDate: date,
+            reschedulePendingStartTime: startTime,
+            reschedulePendingEndTime: endTime,
+            reschedulePendingAt: nowIso,
+            rescheduledBy: "client",
+          });
+          logAudit({ eventType: "shift_reschedule_proposed", userId: clientId as string, data: { source: "mcp:manage_booking", action, shiftId } }).catch(() => {});
+          return { success: true, action, shiftId, date, startTime, endTime };
+        }
+
+        // Confirms the CAREGIVER's proposed new time — the moment the real
+        // date/startTime/endTime actually change. Matches the website's own
+        // handleAcceptReschedule; onShiftStatusChanged detects the real
+        // date/time change alongside the pending fields clearing and texts
+        // the caregiver that their proposal was confirmed — no manual send.
+        if (action === "accept_reschedule") {
+          if (!shiftId) return toolError("INVALID_INPUT", "shiftId is required for accept_reschedule");
+          const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+          if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
+          const shift = shiftSnap.data()!;
+          if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Visit does not belong to this client");
+          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
+          if (shift.rescheduledBy !== "caregiver") return toolError("INVALID_INPUT", "This proposal is your own — nothing to accept (use clear_reschedule to withdraw it)");
+          await shiftSnap.ref.update({
+            date: shift.reschedulePendingDate,
+            startTime: shift.reschedulePendingStartTime,
+            endTime: shift.reschedulePendingEndTime,
+            reschedulePendingDate: admin.firestore.FieldValue.delete(),
+            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingAt: admin.firestore.FieldValue.delete(),
+            rescheduledBy: admin.firestore.FieldValue.delete(),
+            rescheduleHistory: admin.firestore.FieldValue.arrayUnion({
+              from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
+              to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
+              proposedBy: shift.rescheduledBy,
+              proposedAt: shift.reschedulePendingAt ?? null,
+              acceptedBy: "client",
+              acceptedAt: nowIso,
+            }),
+          });
+          logAudit({ eventType: "shift_reschedule_accepted", userId: clientId as string, data: { source: "mcp:manage_booking", action, shiftId } }).catch(() => {});
+          return { success: true, action, shiftId, date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime };
+        }
+
+        // Declines the caregiver's proposal, or withdraws your own — either
+        // way just clears the pending fields; the real, still-confirmed time
+        // is untouched. Matches the website's own handleClearReschedule.
+        if (action === "clear_reschedule") {
+          if (!shiftId) return toolError("INVALID_INPUT", "shiftId is required for clear_reschedule");
+          const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+          if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
+          const shift = shiftSnap.data()!;
+          if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Visit does not belong to this client");
+          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
+          await shiftSnap.ref.update({
+            reschedulePendingDate: admin.firestore.FieldValue.delete(),
+            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingAt: admin.firestore.FieldValue.delete(),
+            rescheduledBy: admin.firestore.FieldValue.delete(),
+          });
+          logAudit({ eventType: "shift_reschedule_cleared", userId: clientId as string, data: { source: "mcp:manage_booking", action, shiftId } }).catch(() => {});
+          return { success: true, action, shiftId };
         }
 
         return toolError("INVALID_INPUT", `Unknown action: ${action}`);
@@ -4635,6 +4822,80 @@ async function executeToolCall(
         await amSnap.ref.update({ status: "accepted", respondedAt: nowIso });
         logAudit({ eventType: "amendment_accepted", userId: caregiverId as string, data: { source: "mcp:respond_to_schedule_amendment", amendmentId, shiftsCreated: count } }).catch(() => {});
         return { success: true, decision: "accepted", amendmentId, shiftsCreated: count };
+      }
+
+      // Caregiver-side counterpart to manage_booking's propose/accept/
+      // clear_reschedule — same underlying shift-doc mechanism
+      // (reschedulePendingDate/StartTime/EndTime, rescheduledBy), just
+      // scoped by caregiverId instead of clientId. onShiftStatusChanged
+      // (notificationTriggers.ts) already watches this field combination
+      // and texts the family automatically — no manual send needed here.
+      case "manage_shift_reschedule": {
+        const { caregiverId, shiftId, action, date, startTime, endTime } = input;
+        if (!caregiverId || !shiftId || !action) return toolError("INVALID_INPUT", "caregiverId, shiftId, and action are required");
+        const shiftSnap = await db.collection("shifts").doc(shiftId as string).get();
+        if (!shiftSnap.exists) return toolError("NOT_FOUND", "Visit not found");
+        const shift = shiftSnap.data()!;
+        if (shift.caregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "Visit does not belong to this caregiver");
+
+        if (action === "propose") {
+          if (!date || !startTime || !endTime) return toolError("INVALID_INPUT", "date, startTime, and endTime are required for action:'propose'");
+          const startMin = bookingTimeToMinutes(startTime);
+          const endMin   = bookingTimeToMinutes(endTime);
+          if (startMin === null || endMin === null || endMin <= startMin) {
+            return toolError("INVALID_INPUT", "startTime/endTime must be 'HH:MM' with end after start");
+          }
+          if (shift.status !== "scheduled") return toolError("INVALID_INPUT", `Only a scheduled visit can be rescheduled this way (status: ${shift.status})`);
+          await shiftSnap.ref.update({
+            reschedulePendingDate: date,
+            reschedulePendingStartTime: startTime,
+            reschedulePendingEndTime: endTime,
+            reschedulePendingAt: nowIso,
+            rescheduledBy: "caregiver",
+          });
+          logAudit({ eventType: "shift_reschedule_proposed", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
+          return { success: true, action, shiftId, date, startTime, endTime };
+        }
+
+        if (action === "accept") {
+          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
+          if (shift.rescheduledBy !== "client") return toolError("INVALID_INPUT", "This proposal is your own — nothing to accept (use action:'decline' to withdraw it)");
+          await shiftSnap.ref.update({
+            date: shift.reschedulePendingDate,
+            startTime: shift.reschedulePendingStartTime,
+            endTime: shift.reschedulePendingEndTime,
+            reschedulePendingDate: admin.firestore.FieldValue.delete(),
+            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingAt: admin.firestore.FieldValue.delete(),
+            rescheduledBy: admin.firestore.FieldValue.delete(),
+            rescheduleHistory: admin.firestore.FieldValue.arrayUnion({
+              from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
+              to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
+              proposedBy: shift.rescheduledBy,
+              proposedAt: shift.reschedulePendingAt ?? null,
+              acceptedBy: "caregiver",
+              acceptedAt: nowIso,
+            }),
+          });
+          logAudit({ eventType: "shift_reschedule_accepted", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
+          return { success: true, action, shiftId, date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime };
+        }
+
+        if (action === "decline") {
+          if (!shift.reschedulePendingDate) return toolError("INVALID_INPUT", "There's no pending reschedule proposal on this visit");
+          await shiftSnap.ref.update({
+            reschedulePendingDate: admin.firestore.FieldValue.delete(),
+            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingAt: admin.firestore.FieldValue.delete(),
+            rescheduledBy: admin.firestore.FieldValue.delete(),
+          });
+          logAudit({ eventType: "shift_reschedule_cleared", userId: caregiverId as string, data: { source: "mcp:manage_shift_reschedule", shiftId } }).catch(() => {});
+          return { success: true, action, shiftId };
+        }
+
+        return toolError("INVALID_INPUT", `Unknown action: ${action}`);
       }
 
       case "send_caregiver_message": {
@@ -8045,7 +8306,7 @@ async function executeToolCall(
         tx.update(swapRef, { status: "accepted", toCaregiverId: caregiverId, toCaregiverName: caregiverName, acceptedAt: nowIso });
         tx.update(db.collection("appointments").doc(swap.appointmentId), { caregiverId, caregiverName, swapNote: `Swapped from ${swap.fromCaregiverName}` });
       });
-      return { success: true, message: `Shift on ${swap.date} transferred to ${caregiverName}.` };
+      return { success: true, message: `Shift on ${formatDateForDisplay(swap.date)} transferred to ${caregiverName}.` };
     }
 
     // ── cancel_shift_swap ───────────────────────────────────────────────────

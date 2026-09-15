@@ -153,8 +153,8 @@ describe("handleCaregiverCancelShift", () => {
     // Lists shifts message sent
     expect(sendMessage).toHaveBeenCalled();
     const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/1\..*2026-06-10/);
-    expect(out).toMatch(/2\..*2026-06-12/);
+    expect(out).toMatch(/1\..*June 10, 2026/);
+    expect(out).toMatch(/2\..*June 12, 2026/);
     // State advanced to confirm_shift with candidates stored
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       cancelStep:       "confirm_shift",
@@ -181,7 +181,7 @@ describe("handleCaregiverCancelShift", () => {
     });
     await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "I need to cancel a shift", {}, CHAT);
     const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/1\..*2026-06-15/);
+    expect(out).toMatch(/1\..*June 15, 2026/);
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       cancelStep:       "confirm_shift",
       cancelCandidates: expect.stringContaining("shift-9"),
@@ -202,7 +202,7 @@ describe("handleCaregiverCancelShift", () => {
     await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "cancel a shift", {}, CHAT);
     const out = sendMessage.mock.calls[0][1] as string;
     // The earlier shifts-pipeline visit (06-15) sorts before the appointments one (06-20).
-    expect(out).toMatch(/1\..*2026-06-15[\s\S]*2\..*2026-06-20/);
+    expect(out).toMatch(/1\..*June 15, 2026[\s\S]*2\..*June 20, 2026/);
   });
 
   it("confirm_shift — picks shift number and asks YES/NO", async () => {
@@ -219,7 +219,7 @@ describe("handleCaregiverCancelShift", () => {
     await handleCaregiverCancelShift(CG_ID, CG_NAME, PHONE, "1", session, CHAT);
     expect(sendMessage).toHaveBeenCalled();
     const out = sendMessage.mock.calls[0][1] as string;
-    expect(out).toMatch(/2026-06-10/);
+    expect(out).toMatch(/June 10, 2026/);
     expect(out).toMatch(/YES.*cancel.*NO.*keep/i);
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
       cancelShiftId:   "shift-1",

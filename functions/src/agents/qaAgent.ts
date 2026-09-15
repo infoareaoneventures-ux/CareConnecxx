@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { quickComplete, getOpenAIClient, openAiTokenLimitParam } from "../utils/openaiClient";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import * as admin from "firebase-admin";
 import { startTyping, sendMessage } from "../linq/client";
 import { buildClickableMessage } from "./caraAgent";
@@ -690,7 +690,7 @@ export function buildClientSystemPrompt(
     : "No recent journal entries.";
 
   const apptLine = nextAppt
-    ? `Next visit: ${nextAppt.date} ${nextAppt.startTime ? `at ${nextAppt.startTime}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
+    ? `Next visit: ${formatDateForDisplay(nextAppt.date)} ${nextAppt.startTime ? `at ${formatHHMMForDisplay(nextAppt.startTime)}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
     : "No upcoming visits currently scheduled.";
 
   const autoBook = permissions?.canBookAutomatically
@@ -777,10 +777,10 @@ export function buildClientSystemPrompt(
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · start_booking_flow — once the family is ready to book, call this INSTEAD of collecting rate/schedule/location yourself. caregiverId and interviewId are BOTH OPTIONAL: pass caregiverId when a specific caregiver was named; OMIT it entirely when they haven't ("let's send a booking") and this will show every completed-interview-ready option across all their caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after submit_interview_feedback) — otherwise leave it out. It runs Evia's own scripted flow (which interview if that's still ambiguous, rate, schedule, location if ambiguous, then a full recap matching the website's review modal, then the family's own YES/NO) and ALREADY TEXTS THE FAMILY ITSELF, in one combined message. Send NOTHING else this turn — not even a brief acknowledgment like "on it" or "starting that now" — a separate reply from you can arrive out of order against the flow's own message and read as confusing or backwards.`,
     `  · request_booking — low-level booking commit; prefer start_booking_flow instead. Only call this directly for a booking already fully resolved outside the scripted flow (e.g. a caregiver-initiated rebook). If this household cares for more than one person, always pass recipientFirstName so the visit is attributed to the right person.`,
-    `  · manage_booking — cancel or resend a booking/visit/amendment. action:"cancel_pending_request" withdraws a booking still awaiting the caregiver's YES/NO; "cancel_whole_booking" cancels an ENTIRE accepted booking (all remaining visits — tell them how many first); "cancel_visit" cancels a SINGLE scheduled visit, leaving the rest intact; "resend_booking" sends a declined/cancelled request to the same caregiver again; "cancel_pending_amendment" withdraws a schedule-change request still awaiting the caregiver's response. Always confirm with the family first.`,
-    `  · request_schedule_amendment — ask the caregiver to add or change a visit on an existing booking (a one-off time change, or a new recurring day). Confirm the date/time with the family, then call; the caregiver gets a YES/NO text.`,
+    `  · manage_booking — cancel, resend, reschedule, or manage a replacement for a booking/visit/amendment. action:"cancel_pending_request" withdraws a booking still awaiting the caregiver's YES/NO; "cancel_whole_booking" cancels an ENTIRE accepted booking (all remaining visits — tell them how many first); "cancel_visit" cancels a SINGLE visit, leaving the rest intact (also works on a "Needs Replacement" visit — the family deciding they don't need a replacement after all); "resend_booking" sends a declined/cancelled request to the same caregiver again; "cancel_pending_amendment" withdraws a schedule-change request still awaiting the caregiver's response; "withdraw_replacement_request" cancels a pending replacement request sent via select_callout_backup so a different candidate can be chosen; "propose_reschedule" moves ONE existing visit to a new day/time in place (needs date/startTime/endTime — the caregiver gets a YES/NO text, the real time doesn't change until they accept — use this instead of cancelling and re-requesting a visit); "accept_reschedule"/"clear_reschedule" confirm or decline a day/time the CAREGIVER proposed for one of the family's visits. Always confirm with the family first.`,
+    `  · request_schedule_amendment — add a brand-new recurring day to an ongoing booking (or a genuinely new one-off visit, not an existing one). To move an EXISTING already-scheduled visit to a different day/time instead, use manage_booking's propose_reschedule — do not cancel_visit + request_schedule_amendment for that, it loses the original visit instead of just moving it. Confirm the date/time with the family, then call; the caregiver gets a YES/NO text.`,
     `  · trigger_emergency_alert — ONLY for a genuine urgent safety situation (a fall, medical emergency). Confirm it's real first; for life-threatening events also tell them to call 911.`,
-    `  · get_callout_backups / select_callout_backup / request_callout_refund — when a caregiver calls out: show backup options, assign the family's choice, or file a refund if none work`,
+    `  · get_callout_backups / select_callout_backup — when a caregiver calls out (a visit shows "Needs Replacement"): get_callout_backups lists real candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches); select_callout_backup sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
     `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
@@ -943,7 +943,7 @@ export function buildCaregiverSystemPrompt(
   const rate = typeof caregiver?.hourlyRate === "number" ? (caregiver.hourlyRate as number) : null;
 
   const apptLine = todayAppt
-    ? `Today's visit: ${todayAppt.date} at ${todayAppt.startTime ?? "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
+    ? `Today's visit: ${formatDateForDisplay(todayAppt.date)} at ${todayAppt.startTime ? formatHHMMForDisplay(todayAppt.startTime) : "TBD"} for client ${todayAppt.clientId ?? ""}. Address: ${todayAppt.address ?? todayAppt.location ?? "check your schedule"}.`
     : "No visits scheduled for today.";
 
   const zepSection = zepContext ? `\n${zepContext}\n` : "";
@@ -1008,7 +1008,8 @@ export function buildCaregiverSystemPrompt(
     `- browse_job_board: see open jobs available to apply to`,
     `- get_my_applications: check the status of your submitted applications`,
     `- respond_to_booking_request: accept or decline a direct booking request a family sent you`,
-    `- respond_to_schedule_amendment: accept or decline a family's request to add or change a visit on an existing booking; accepting creates the real visit(s) on your schedule`,
+    `- respond_to_schedule_amendment: accept or decline a family's request to add a NEW recurring day (or a genuinely new one-off visit) on an existing booking; accepting creates the real visit(s) on your schedule`,
+    `- manage_shift_reschedule: move an EXISTING already-scheduled visit to a different day/time, or respond to a day/time the family already proposed for one of your visits. action:"propose" (needs date/startTime/endTime) suggests a new time — the family gets a text to confirm, the visit's real time doesn't change until they accept; "accept" confirms a time the FAMILY proposed; "decline" rejects their proposal (original stands) or withdraws your own before they respond. Not for cancelling a shift — use your normal cancel flow for that.`,
     `- respond_to_interview_request: accept or decline an interview; include proposedDate/Time to counter-offer`,
     `- list_interviews: see your scheduled interviews (date, time, status)`,
     `- cancel_interview: cancel an interview you can't make — the family is notified; to propose a new time use respond_to_interview_request instead`,

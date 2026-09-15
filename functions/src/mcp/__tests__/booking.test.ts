@@ -407,6 +407,31 @@ describe("booking tools", () => {
       expect(arg.schedule.ongoing).toBe(true);
     });
 
+    // 2026-09-14 (live-caught, same session, right after the array-wrap fix
+    // above): the model calling this tool can supply dayShiftTimes keys in
+    // any casing/format ("Monday" as easily as "Mon") — but the site's own
+    // convention (PostsPage.tsx's booking modal, both dashboards' summary-
+    // line rendering) keys it by the 3-letter abbreviation. A full-name key
+    // rendered a blank weekly-schedule summary line on both the caregiver's
+    // and client's dashboards, even though shiftGenerator.ts's own internal
+    // normDay() call still generated the real per-visit shifts correctly —
+    // masking the bug in practice.
+    it("normalizes full weekday-name dayShiftTimes keys to the site's own 3-letter abbreviation", async () => {
+      hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
+      const r = await handleToolCall("request_booking", {
+        clientId: "c1", phone: "+15555550100", caregiverId: "cg1",
+        careLocation: "123 Main St, Springfield",
+        agreedRate: 20,
+        recurring: true,
+        dayShiftTimes: { Monday: { start: "09:00", end: "17:00" }, Wednesday: { start: "09:00", end: "17:00" } },
+        ongoing: true,
+        _confirmedActionId: "test-confirm-recurring-2",
+      }) as any;
+      expect(r.success).toBe(true);
+      const arg = createBookingTask.mock.calls[0][0] as any;
+      expect(arg.schedule.dayShiftTimes).toEqual({ Mon: [{ start: "09:00", end: "17:00" }], Wed: [{ start: "09:00", end: "17:00" }] });
+    });
+
     it("a recurring booking with no dayShiftTimes and a linked job post's days hints them in the error instead of guessing", async () => {
       hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 20 });
       hoisted.docState.set("video_interviews/iv1", { clientId: "c1", caregiverId: "cg1", applicationId: "app1" });
@@ -622,35 +647,81 @@ describe("booking tools", () => {
     });
   });
 
-  describe("caregiver-callout tools", () => {
-    it("get_callout_backups returns stored options for the owner", async () => {
-      hoisted.docState.set("appointments/a9", { clientId: "c1", backupCaregiverOptions: [{ id: "cg2", name: "Sam" }] });
-      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+  // 2026-09-14 (Hamse's call): rebuilt against the real `shifts` collection —
+  // the old tools queried `appointments`, a legacy model no current visit
+  // (site or Evia) writes to anymore, so they never actually worked.
+  describe("shift-replacement tools (get_callout_backups / select_callout_backup)", () => {
+    it("get_callout_backups lists a Care Team candidate for a needs_replacement shift", async () => {
+      hoisted.docState.set("shifts/sh1", {
+        clientId: "c1", caregiverId: "cg1", status: "needs_replacement",
+        careRecipients: [{ careNeeds: ["Meal Preparation"] }],
+      });
+      hoisted.collState.set("booking_requests", [
+        { id: "br1", clientId: "c1", caregiverId: "cg2", caregiverName: "Sam", caregiverPhotoURL: null, rate: 22, status: "accepted", updatedAt: { seconds: 100 } },
+      ]);
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
       expect(r.success).toBe(true);
       expect(r.count).toBe(1);
+      expect(r.caregivers[0]).toMatchObject({ caregiverId: "cg2", name: "Sam", source: "care_team" });
     });
+
     it("get_callout_backups rejects a non-owner (IDOR)", async () => {
-      hoisted.docState.set("appointments/a9", { clientId: "OTHER", backupCaregiverOptions: [] });
-      const r = await handleToolCall("get_callout_backups", { clientId: "c1", appointmentId: "a9" }) as any;
+      hoisted.docState.set("shifts/sh1", { clientId: "OTHER", status: "needs_replacement" });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
       expect(r._toolError).toBe(true);
       expect(r.code).toBe("PERMISSION_DENIED");
     });
-    it("select_callout_backup reassigns the appointment to the chosen caregiver", async () => {
-      hoisted.docState.set("appointments/a9", { clientId: "c1", caregiverId: "cg1" });
-      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
-      const r = await handleToolCall("select_callout_backup", { clientId: "c1", appointmentId: "a9", backupCaregiverId: "cg2" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.caregiverId).toBe("cg2");
-      expect(hoisted.docState.get("appointments/a9").caregiverId).toBe("cg2");
-      expect(hoisted.docState.get("appointments/a9").status).toBe("confirmed");
+
+    it("get_callout_backups refuses a shift that isn't awaiting a replacement", async () => {
+      hoisted.docState.set("shifts/sh1", { clientId: "c1", status: "scheduled" });
+      const r = await handleToolCall("get_callout_backups", { clientId: "c1", shiftId: "sh1" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("INVALID_INPUT");
     });
-    it("request_callout_refund files a refund request for the owner", async () => {
-      hoisted.docState.set("appointments/a9", { clientId: "c1", amount: 120 });
-      const r = await handleToolCall("request_callout_refund", { clientId: "c1", appointmentId: "a9", reason: "no backup" }) as any;
+
+    // Matches the website's own handleConfirmReplacement EXACTLY: a real NEW
+    // booking_requests doc (the candidate gets the normal accept/decline
+    // text), NOT an outright reassignment of the original visit.
+    it("select_callout_backup sends a new booking request, defaulting to the original visit's own date/time", async () => {
+      hoisted.docState.set("shifts/sh1", {
+        clientId: "c1", caregiverId: "cg1", status: "needs_replacement",
+        date: "2026-09-15", startTime: "09:00", endTime: "13:00", address: "123 Main St", clientName: "The Family",
+      });
+      hoisted.docState.set("caregivers/cg2", { name: "Sam", hourlyRate: 24 });
+      const r = await handleToolCall("select_callout_backup", { clientId: "c1", shiftId: "sh1", backupCaregiverId: "cg2" }) as any;
       expect(r.success).toBe(true);
       expect(r.status).toBe("pending");
-      expect(hoisted.adds.some((a) => a.path === "refundRequests")).toBe(true);
-      expect(hoisted.docState.get("appointments/a9").status).toBe("cancelled_refund_requested");
+      const bookingSet = hoisted.sets.find((s) => s.path.startsWith("booking_requests/"));
+      expect(bookingSet?.data).toMatchObject({
+        clientId: "c1", caregiverId: "cg2", caregiverName: "Sam",
+        isShiftReplacement: true, replacementForShiftId: "sh1", status: "pending",
+        schedule: { startDate: "2026-09-15", endDate: "2026-09-15", ongoing: false },
+      });
+      const newBookingId = bookingSet!.path.split("/").pop();
+      expect(hoisted.updates.find((u) => u.path === "shifts/sh1")?.data).toMatchObject({
+        replacementRequestId: newBookingId,
+        replacementCaregiverName: "Sam",
+      });
+    });
+
+    it("select_callout_backup honors an explicit different date/time for the replacement", async () => {
+      hoisted.docState.set("shifts/sh1", {
+        clientId: "c1", status: "needs_replacement", date: "2026-09-15", startTime: "09:00", endTime: "13:00",
+      });
+      hoisted.docState.set("caregivers/cg2", { name: "Sam" });
+      const r = await handleToolCall("select_callout_backup", {
+        clientId: "c1", shiftId: "sh1", backupCaregiverId: "cg2", date: "2026-09-16", startTime: "10:00", endTime: "12:00",
+      }) as any;
+      expect(r.success).toBe(true);
+      const bookingSet = hoisted.sets.find((s) => s.path.startsWith("booking_requests/"));
+      expect(bookingSet?.data.schedule).toMatchObject({ startDate: "2026-09-16", endDate: "2026-09-16" });
+    });
+
+    it("select_callout_backup rejects a non-owner shift", async () => {
+      hoisted.docState.set("shifts/sh1", { clientId: "OTHER", status: "needs_replacement" });
+      const r = await handleToolCall("select_callout_backup", { clientId: "c1", shiftId: "sh1", backupCaregiverId: "cg2" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(r.code).toBe("PERMISSION_DENIED");
     });
   });
 

@@ -2,7 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { businessTomorrowStr } from "../utils/scheduledTime";
+import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -61,13 +61,13 @@ export const sendDayBeforeShiftReminders = functions.pubsub
             `Write a casual, warm evening text to ${cgFirstName} reminding them about their shift tomorrow.\n` +
             `Senior: ${seniorName}\n` +
             `Date: ${tomorrowDisplay}\n` +
-            `Start time: ${startTime || "time TBD"}\n` +
+            `Start time: ${startTime ? formatHHMMForDisplay(startTime) : "time TBD"}\n` +
             `Location: ${address || "client's home"}\n` +
             `Ask them to reply YES to confirm they'll be there or NO if something's come up. ` +
             `Sound like you're genuinely checking in — not sending an automated alert.`,
           fallback:
             `Hey ${cgFirstName}! Hope your evening's going well. Just checking in — you've got ` +
-            `${seniorName}'s visit ${startTime ? "at " + startTime : "tomorrow"}${address ? " at " + address : ""}` +
+            `${seniorName}'s visit ${startTime ? "at " + formatHHMMForDisplay(startTime) : "tomorrow"}${address ? " at " + address : ""}` +
             `. Still all good on your end? Reply YES to confirm or NO if something's come up.`,
         });
 

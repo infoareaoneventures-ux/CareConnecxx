@@ -4,6 +4,7 @@ import { sendToPhone } from "../linq/client";
 import { sendViaInteractionAgent } from "./caraAgent";
 import { scoreReplacements, ReplacementOption } from "./replacementScorer";
 import { scheduleTrigger } from "../triggers/triggerEngine";
+import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -48,7 +49,7 @@ export async function contactReplacementCandidate(
 
   const msg =
     `Hi ${caregiver.name.split(" ")[0]} — urgent opening today.\n\n` +
-    `${appt.date} at ${appt.time}\n` +
+    `${formatDateForDisplay(appt.date)} at ${formatHHMMForDisplay(appt.time)}\n` +
     (appt.address ? `${appt.address}\n` : "") +
     seniorLine +
     `~$${earnings} for the visit` +
@@ -172,7 +173,7 @@ export async function runEmergencyReplacement(params: {
     .join("\n");
 
   const cancelMsg =
-    `${appt.caregiverName ?? "Your caregiver"} had to cancel the ${appt.time} visit.\n\n` +
+    `${appt.caregiverName ?? "Your caregiver"} had to cancel the ${formatHHMMForDisplay(appt.time)} visit.\n\n` +
     `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
     `${optionLines}\n\n` +
     `Reply 1, 2, or 3. Nothing is booked until you confirm.`;

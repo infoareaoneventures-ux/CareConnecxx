@@ -43,13 +43,13 @@ describe("formatCaregiverSnapshot", () => {
 
   it("surfaces the next visit with time and a count of the rest this week", () => {
     const out = cg({ upcomingVisits: 3, nextVisit: { date: "2026-06-25", startTime: "9:00 AM" } });
-    expect(out).toContain("Next visit: 2026-06-25 at 9:00 AM");
+    expect(out).toContain("Next visit: June 25, 2026 at 9:00 AM");
     expect(out).toContain("(+2 more in the next 7 days)");
   });
 
   it("omits the '+N more' suffix when there's only one upcoming visit", () => {
     const out = cg({ upcomingVisits: 1, nextVisit: { date: "2026-06-25" } });
-    expect(out).toContain("Next visit: 2026-06-25.");
+    expect(out).toContain("Next visit: June 25, 2026.");
     expect(out).not.toContain("more in the next 7 days");
   });
 

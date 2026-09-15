@@ -160,6 +160,16 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   emergency_alert_raised:             { included: false },
   callout_backup_selected:            { included: false },
   callout_refund_requested:           { included: false },
+  // withdraw_replacement_request (client) uses the same event type regardless
+  // of which side calls it in principle, but is currently client-only —
+  // excluded for consistency with its callout_backup_* siblings above.
+  callout_backup_withdrawn:           { included: false },
+  // Logged with userId set to whichever side (client's manage_booking or the
+  // caregiver's manage_shift_reschedule) called it — same "can't resolve to
+  // a single family owner" reason amendment_declined/accepted are excluded.
+  shift_reschedule_proposed:          { included: false },
+  shift_reschedule_accepted:          { included: false },
+  shift_reschedule_cleared:           { included: false },
   referral_sent:                      { included: false },
   senior_profile_created:             { included: false },
   review_deleted:                     { included: false },

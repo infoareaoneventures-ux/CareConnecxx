@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { describeWhoIsWho } from "../agents/careRecipients";
-import { businessTomorrowStr } from "../utils/scheduledTime";
+import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -78,15 +78,15 @@ export const sendClientDayBeforeReminders = functions.pubsub
             `Caregiver: ${cgFirstName}\n` +
             `Senior: ${seniorName}\n` +
             `Date: ${tomorrowDisplay}\n` +
-            `Start time: ${startTime || "time TBD"}\n` +
+            `Start time: ${startTime ? formatHHMMForDisplay(startTime) : "time TBD"}\n` +
             `Tone: reassuring, not pushy. Mention they don't need to do anything — but they can reply ` +
             `CANCEL if something's come up, or just ask any question they have. Don't sound like an ` +
             `automated reminder.`,
           fallback: lang === "es"
-            ? `Solo un aviso — ${cgFirstName} pasará mañana${startTime ? " a las " + startTime : ""}` +
+            ? `Solo un aviso — ${cgFirstName} pasará mañana${startTime ? " a las " + formatHHMMForDisplay(startTime) : ""}` +
               ` para ${seniorName}. No necesitas hacer nada; responde CANCEL si algo cambió, ` +
               `o escríbeme si tienes preguntas.`
-            : `Just a heads up — ${cgFirstName} will be by tomorrow${startTime ? " at " + startTime : ""}` +
+            : `Just a heads up — ${cgFirstName} will be by tomorrow${startTime ? " at " + formatHHMMForDisplay(startTime) : ""}` +
               ` for ${seniorName}. You don't need to do anything; reply CANCEL if something's changed, ` +
               `or text me any questions.`,
         });

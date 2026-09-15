@@ -22,9 +22,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   start_booking_flow:           ["booking"],  // preferred entry point — see bookingFlow.ts
   request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
-  get_callout_backups:          ["booking"],            // parity: caregiver-callout backup options (read)
-  select_callout_backup:        ["booking"],            // parity: assign a callout backup
-  request_callout_refund:       ["booking", "billing"], // parity: callout refund request
+  get_callout_backups:          ["booking"],            // parity: real Find Replacement candidates (read)
+  select_callout_backup:        ["booking"],            // parity: sends a real replacement booking request
   find_replacement_caregivers:  ["booking"],
   find_nearby_caregivers:       ["booking"],
   get_caregiver_info:           ["booking"],
@@ -59,6 +58,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   manage_booking:                ["booking"],
   request_schedule_amendment:    ["booking", "scheduling"],
   respond_to_schedule_amendment: ["booking", "scheduling"],
+  manage_shift_reschedule:       ["booking", "scheduling"], // caregiver-side counterpart to manage_booking's propose/accept/clear_reschedule
 
   // ── scheduling ───────────────────────────────────────────────────────────
   get_recurring_schedule:        ["scheduling"],
@@ -343,6 +343,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // of mutation a family/caregiver would believe happened if we falsely
   // reported success.
   "manage_booking", "request_schedule_amendment", "respond_to_schedule_amendment",
+  "manage_shift_reschedule", "select_callout_backup",
 ]);
 
 /** True when a failed call to this tool must NOT be reported to the user as success. */

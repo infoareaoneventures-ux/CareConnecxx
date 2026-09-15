@@ -5,7 +5,7 @@ import { sendToPhone, AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { scoreReplacements } from "../agents/replacementScorer";
 import { scheduleTrigger } from "./triggerEngine";
-import { parseScheduledTimeMs } from "../utils/scheduledTime";
+import { parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import {
   claimExternalSideEffectOperation,
   completeExternalSideEffectOperation,
@@ -145,7 +145,7 @@ export const onAppointmentUpdated = functions.firestore
 
       // ── Arrival / in-progress ────────────────────────────────────────────
       if (after.status === "in-progress" && before.status !== "in-progress") {
-        const msg = `${after.caregiverName ?? "Your caregiver"} has arrived for your ${after.time} visit.`;
+        const msg = `${after.caregiverName ?? "Your caregiver"} has arrived for your ${formatHHMMForDisplay(after.time)} visit.`;
         await sendViaInteractionAgent(phone, {
           content: msg, urgency: "immediate", sourceAgent: "arrival_notification", canDrop: false,
         }).catch(() => sendToPhone(phone, msg));
@@ -172,7 +172,7 @@ export const onAppointmentUpdated = functions.firestore
         if (caregiverPhone) {
           const msg =
             `Booking confirmed.\n` +
-            `${after.date} at ${after.time}\n` +
+            `${formatDateForDisplay(after.date)} at ${formatHHMMForDisplay(after.time)}\n` +
             (after.clientName  ? `${after.clientName}\n`  : "") +
             (after.address     ? `${after.address}`       : "");
           await sendToPhone(caregiverPhone, msg);
@@ -196,7 +196,7 @@ export const onAppointmentUpdated = functions.firestore
                 type:        "appointment_reminder",
                 scheduledAt: new Date(remindMs).toISOString(),
                 message:
-                  `Just a heads up — ${cgName} is confirmed for your ${after.time} visit today. ` +
+                  `Just a heads up — ${cgName} is confirmed for your ${formatHHMMForDisplay(after.time)} visit today. ` +
                   `Reply CANCEL if plans change and I'll handle it.`,
               });
             }
@@ -271,7 +271,7 @@ async function handleCaregiverCancellation(
 
     const daysOut = Math.round(hours / 24);
     const futureMsg =
-      `${appt.caregiverName ?? "Your caregiver"} cancelled the ${appt.time} visit on ${appt.date} ` +
+      `${appt.caregiverName ?? "Your caregiver"} cancelled the ${formatHHMMForDisplay(appt.time)} visit on ${formatDateForDisplay(appt.date)} ` +
       `(${daysOut} day${daysOut !== 1 ? "s" : ""} away).\n\n` +
       `Reply REPLACE and I'll find a replacement, or SKIP to cancel the visit.`;
 
@@ -298,7 +298,7 @@ async function handleCaregiverCancellation(
 
   if (options.length === 0) {
     const noMatchMsg =
-      `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${appt.time} visit. ` +
+      `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${formatHHMMForDisplay(appt.time)} visit. ` +
       `I wasn't able to find available replacements right now. ` +
       `Please open the app or contact support to reschedule.`;
     await sendViaInteractionAgent(phone, {
@@ -346,7 +346,7 @@ async function handleCaregiverCancellation(
     .join("\n");
 
   const cancelMsg =
-    `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${appt.time} visit.\n\n` +
+    `${appt.caregiverName ?? "Your caregiver"} had to cancel today's ${formatHHMMForDisplay(appt.time)} visit.\n\n` +
     `I found ${options.length} available caregiver${options.length > 1 ? "s" : ""}:\n\n` +
     `${optionLines}\n\n` +
     `Reply 1, 2, or 3. Nothing is booked until you confirm.`;

@@ -114,7 +114,11 @@ export type AuditEventType =
   // but were never declared here — the transpile-only build masked it.
   | "emergency_alert_raised"
   | "callout_backup_selected"
+  | "callout_backup_withdrawn"
   | "callout_refund_requested"
+  | "shift_reschedule_proposed"
+  | "shift_reschedule_accepted"
+  | "shift_reschedule_cleared"
   | "referral_sent"
   | "senior_profile_created"
   | "review_deleted"

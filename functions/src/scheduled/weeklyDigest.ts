@@ -11,6 +11,7 @@ import { generateCaraMessage } from "../utils/caraMessage";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { parseWellness, describeWellness } from "../agents/careEvidence";
+import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -110,12 +111,12 @@ export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData
   const journalContext = buildJournalContext(journal);
 
   const apptContext = upcoming.map(a =>
-    `- ${a.date} at ${a.time ?? a.startTime} with ${a.caregiverName}`
+    `- ${formatDateForDisplay(a.date)} at ${formatHHMMForDisplay(a.time ?? a.startTime)} with ${a.caregiverName}`
   ).join("\n");
 
   const completedCount = pastAppts.length;
   const now = new Date();
-  const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
+  const dayName = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "America/Los_Angeles" });
 
   const factsLine = topFacts.length > 0
     ? `Care notes on file: ${topFacts.join("; ")}.`

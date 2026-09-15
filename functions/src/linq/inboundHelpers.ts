@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage, AgentSession } from "./client";
+import { formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -73,7 +74,7 @@ export async function handleRecurringConfirm(
     pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
   }).catch(() => {});
 
-  const schedDesc = `${pending.days.join("/")}s ${pending.startTime}–${pending.endTime}`;
+  const schedDesc = `${pending.days.join("/")}s ${formatHHMMForDisplay(pending.startTime)}–${formatHHMMForDisplay(pending.endTime)}`;
   await sendMessage(chatId,
     `Set up! ${pending.caregiverName} is booked every ${schedDesc}, ongoing — ` +
     `I'll keep you posted as each visit comes up.\n\n` +

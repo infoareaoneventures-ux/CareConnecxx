@@ -1,0 +1,78 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
+/**
+ * Source-scan regression guard (2026-09-14, Hamse's call — full proactive
+ * sweep), same style as agents/__tests__/whoIsWhoCoverage.test.ts's R11 audit.
+ *
+ * Rule: any date/time value that reaches SMS text (a sendMessage/sendToPhone
+ * call, a template literal that becomes SMS copy) or an LLM prompt that
+ * generates SMS text (generateCaraMessage context/fallback, a system-prompt
+ * builder) MUST go through the shared formatters in utils/scheduledTime.ts —
+ * formatDateForDisplay ("YYYY-MM-DD" → "September 15, 2026") and
+ * formatHHMMForDisplay ("HH:MM" 24h → "9:00 AM") — never interpolated raw,
+ * and never via a local reimplementation.
+ *
+ * Why this exists: a 2026-09-14 live-test session found this exact bug class
+ * independently in 20+ files across the backend (raw "2026-09-15"/"14:00"
+ * values reaching families and caregivers over SMS) despite two of the
+ * shared formatters already existing and being correct — the problem was
+ * never a missing formatter, it was call sites that forgot to use it. A
+ * per-file count assertion (not a full TS parser) catches the same class of
+ * regression the moment someone reintroduces a raw interpolation, the same
+ * way R11 already guards who-is-who grounding.
+ *
+ * These are pragmatic per-file MINIMUM count assertions: each listed file
+ * must call formatDateForDisplay/formatHHMMForDisplay at least as many times
+ * as it did when this guard was written. Dropping a formatted call back to a
+ * raw interpolation lowers the count and fails the corresponding assertion.
+ * Adding MORE formatted call sites later is fine — bump the count here too
+ * (or leave it; toBeGreaterThanOrEqual doesn't require the number be exact).
+ */
+
+const read = (rel: string) => readFileSync(resolve(__dirname, rel), "utf8");
+const count = (src: string, needle: string) => src.split(needle).length - 1;
+
+// file (relative to this __tests__ dir) → minimum combined call count of
+// formatDateForDisplay(...) + formatHHMMForDisplay(...).
+const MIN_FORMATTER_CALLS: Array<[string, number]> = [
+  ["../sms.ts",                                10],
+  ["../triggers/notificationTriggers.ts",       7],
+  ["../triggers/appointmentUpdated.ts",         8],
+  ["../agents/replacementAgent.ts",             3],
+  ["../agents/latenessTracker.ts",              1],
+  ["../scheduled/shiftTaskNudges.ts",           4],
+  ["../scheduled/weeklyDigest.ts",              2],
+  ["../scheduled/dayBeforeShiftReminder.ts",    2],
+  ["../scheduled/clientDayBeforeReminder.ts",   3],
+  ["../agents/clientSwapRequestHandler.ts",    13],
+  ["../agents/caregiverSwapHandler.ts",        15],
+  ["../agents/caregiverCancelShiftHandler.ts",  6],
+  ["../agents/timesheetHandler.ts",            11],
+  ["../agents/shiftOffer.ts",                  11],
+  ["../agents/bookingExecutor.ts",             17],
+  ["../agents/qaAgent.ts",                      4],
+  ["../agents/situationSnapshot.ts",            2],
+  ["../linq/routeIntent.ts",                   18],
+  ["../linq/routeCaregiver.ts",                 5],
+  ["../linq/inboundHelpers.ts",                 2],
+  ["../mcp/server.ts",                          1],
+];
+
+describe("time/date formatting coverage — every audited SMS/LLM-prompt site is formatted", () => {
+  it.each(MIN_FORMATTER_CALLS)("%s calls the shared formatters at least %i time(s)", (rel, minCalls) => {
+    const src = read(rel);
+    const calls = count(src, "formatDateForDisplay(") + count(src, "formatHHMMForDisplay(");
+    expect(calls, `${rel} must call formatDateForDisplay/formatHHMMForDisplay at least ${minCalls} time(s) — found ${calls}. If a raw date/time interpolation crept back in, wrap it in the shared formatter instead of removing this assertion.`)
+      .toBeGreaterThanOrEqual(minCalls);
+  });
+
+  it("bookingExecutor.ts, bookingFlow.ts, interviewFlow.ts, and bookingResolution.ts (fixed earlier the same session) still import the shared formatters", () => {
+    for (const rel of ["../agents/bookingExecutor.ts", "../agents/bookingFlow.ts", "../agents/interviewFlow.ts", "../agents/bookingResolution.ts"]) {
+      const src = read(rel);
+      expect(src, `${rel} must still import from utils/scheduledTime`)
+        .toMatch(/from ["']\.\.\/(utils\/scheduledTime|scheduled\/shiftGenerator)["']/);
+    }
+  });
+});

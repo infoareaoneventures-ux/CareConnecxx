@@ -33,6 +33,7 @@ import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
+import { normDay } from "../scheduled/shiftGenerator";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   bookingTimeToMinutes, resolveInterviewLinkage, resolveBookingCaregiverName,
@@ -1418,9 +1419,23 @@ async function handleBkConfirm(
     // real shifts docs at all for an Evia-originated booking, and the
     // client's own booking card (same array-length check) rendered a blank
     // schedule line.
+    //
+    // 2026-09-14 (live-caught, SAME session, found right after the above):
+    // data.days/data.dayTimes are keyed by FULL weekday names ("Monday") —
+    // asked for that way so the SMS recap reads naturally ("Monday,
+    // Wednesday") — but the site's OWN dayShiftTimes convention (PostsPage.
+    // tsx's booking modal, and both CaregiverBookingsPage.tsx's and
+    // ClientVisitsPage.tsx's summary-line rendering) keys it by the 3-letter
+    // abbreviation ("Mon"). Writing full names meant the weekly-schedule
+    // SUMMARY LINE silently rendered blank on both dashboards for every
+    // Evia-originated recurring booking — even though shiftGenerator.ts's
+    // own internal normDay() call still generated the real per-visit shift
+    // docs correctly, masking the bug in practice. normDay is the same
+    // normalizer shiftGenerator.ts itself uses, imported here so this can
+    // never drift from that canonical mapping.
     const schedule = {
       dayShiftTimes: Object.fromEntries(
-        Object.entries(data.dayTimes ?? {}).map(([day, t]) => [day, [t]])
+        Object.entries(data.dayTimes ?? {}).map(([day, t]) => [normDay(day), [t]])
       ),
       ongoing: data.ongoing === true,
       startDate: data.startDate ?? businessTodayStr(),

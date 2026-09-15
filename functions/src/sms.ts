@@ -9,6 +9,7 @@ import { sendToPhone, listPhoneNumbers, createOrUpdateContactCard, LinqService }
 import { checkRateLimit, RATE_LIMITS, getClientIdentifier } from "./rateLimit";
 import { getAppUrl } from "./config/appUrl";
 import { requireAdmin } from "./admin/requireAdmin";
+import { formatDateForDisplay, formatHHMMForDisplay } from "./utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -176,15 +177,22 @@ export async function sendSMSToUser(
 
 // ── Templates (unchanged) ─────────────────────────────────────────────────────
 
+// 2026-09-14 (Hamse's call, full sweep): every date/time param here is a raw
+// stored value ("2026-09-15" / "14:00") from the caller — these templates are
+// the SMS text itself, so formatting happens HERE once, rather than trusting
+// every caller to remember to pre-format (the exact way this bug slipped in
+// originally — some callers formatted, most didn't). formatDateForDisplay /
+// formatHHMMForDisplay are no-ops on an already-formatted string, so this is
+// safe even if a caller does pass a pre-formatted value.
 export const SMS_TEMPLATES = {
   bookingConfirmed: (caregiverName: string, date: string, time: string) =>
-    `Evia: Your booking with ${caregiverName} is confirmed for ${date} at ${time}. View details in the app.`,
+    `Evia: Your booking with ${caregiverName} is confirmed for ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. View details in the app.`,
 
   newBookingRequest: (clientName: string, date: string, time: string) =>
-    `Evia: New booking! ${clientName} booked you for ${date} at ${time}. Open app to confirm.`,
+    `Evia: New booking! ${clientName} booked you for ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. Open app to confirm.`,
 
   bookingCancelled: (name: string, date: string, reason?: string) =>
-    `Evia: ${name} cancelled the appointment on ${date}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
+    `Evia: ${name} cancelled the appointment on ${formatDateForDisplay(date)}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
 
   newMessage: (senderName: string) =>
     `Evia: New message from ${senderName}. Open the app to reply.`,
@@ -196,7 +204,7 @@ export const SMS_TEMPLATES = {
     `Evia: Reminder! Your interview with ${name} starts in ${minutesUntil} minutes. Open app to join.`,
 
   shiftReminder: (clientName: string, time: string) =>
-    `Evia: Reminder! Your shift with ${clientName} starts at ${time}. Don't forget to clock in!`,
+    `Evia: Reminder! Your shift with ${clientName} starts at ${formatHHMMForDisplay(time)}. Don't forget to clock in!`,
 
   paymentReceived: (amount: string) =>
     `Evia: Payment of ${amount} has been deposited to your account. View earnings in app.`,
@@ -216,7 +224,7 @@ export const SMS_TEMPLATES = {
     backupCount: number,
     backupNames: string
   ) =>
-    `Evia: ${caregiverName} cancelled your ${date} at ${time} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
+    `Evia: ${caregiverName} cancelled your ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)} appointment. ${backupCount} backup caregiver(s) available: ${backupNames}. Open app to select replacement or request refund.`,
 
   backupCaregiverAssigned: (
     clientName: string,
@@ -224,7 +232,7 @@ export const SMS_TEMPLATES = {
     time: string,
     address?: string
   ) =>
-    `Evia: You've been assigned to care for ${clientName} on ${date} at ${time}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
+    `Evia: You've been assigned to care for ${clientName} on ${formatDateForDisplay(date)} at ${formatHHMMForDisplay(time)}. Previous caregiver called out.${address ? ` Address: ${address}` : ""} Open app for details.`,
 };
 
 // ── Phone health check (Linq API) ────────────────────────────────────────────

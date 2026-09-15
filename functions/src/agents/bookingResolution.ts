@@ -8,6 +8,7 @@ import * as admin from "firebase-admin";
 import { resolveCaregiverName, coerceHourlyRate } from "../utils/caregiverRate";
 import { multiRecipientScopingEnabled } from "../config/featureFlags";
 import { resolveRecipientKey, recipientPlanKey } from "./careRecipients";
+import { parseScheduledTimeMs, formatInterviewTimeShort } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -130,12 +131,14 @@ export async function findSendBookingEligibleInterviews(
         .map((b) => b.interviewId as string)
     );
 
-    // Sort most-recent-first (ISO strings sort lexically in date order) so a
-    // mixed or multi-interview list reads in a sensible order.
+    // Sort most-recent-first by the actual parsed instant (2026-09-14 fix:
+    // lexically comparing raw scheduledTime strings breaks across the three
+    // formats that coexist in prod video_interviews docs — naive local,
+    // ISO+Z, tz-aware ISO — the same reason parseScheduledTimeMs exists).
     const docs = [...ivSnap.docs].sort((a, b) => {
-      const at = String(a.data()?.scheduledTime ?? "");
-      const bt = String(b.data()?.scheduledTime ?? "");
-      return bt.localeCompare(at);
+      const at = typeof a.data()?.scheduledTime === "string" ? parseScheduledTimeMs(a.data()!.scheduledTime as string) : NaN;
+      const bt = typeof b.data()?.scheduledTime === "string" ? parseScheduledTimeMs(b.data()!.scheduledTime as string) : NaN;
+      return (Number.isFinite(bt) ? bt : -Infinity) - (Number.isFinite(at) ? at : -Infinity);
     });
 
     const caregiverNameCache = new Map<string, string>();
@@ -161,10 +164,15 @@ export async function findSendBookingEligibleInterviews(
           jobTitle = jobSnap?.data()?.title as string | undefined;
         }
       }
-      const scheduledLabel = typeof iv.scheduledTime === "string" && !isNaN(Date.parse(iv.scheduledTime))
-        ? new Date(iv.scheduledTime).toLocaleString("en-US", {
-            weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-          })
+      // 2026-09-14 (live-caught): rendering the raw timestamp with no
+      // timeZone shows whatever zone Cloud Functions happens to run in
+      // (UTC) — a real "9:00 AM" interview texted back as "4:00 PM" (and
+      // for one that crossed midnight, the DATE was wrong too). Every other
+      // interview-time display in this codebase already goes through the
+      // business timezone for exactly this reason.
+      const scheduledMs = typeof iv.scheduledTime === "string" ? parseScheduledTimeMs(iv.scheduledTime) : NaN;
+      const scheduledLabel = Number.isFinite(scheduledMs)
+        ? formatInterviewTimeShort(scheduledMs)
         : "an earlier interview";
       results.push({
         id: doc.id,

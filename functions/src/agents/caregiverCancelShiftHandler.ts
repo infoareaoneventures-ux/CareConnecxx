@@ -3,7 +3,7 @@ import { sendMessage } from "../linq/client";
 import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -131,7 +131,7 @@ export async function handleCaregiverCancelShift(
       stateExpiresAt:   new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
 
-    const list = shifts.map(s => `${s.index}. ${s.date} at ${s.time} — ${s.clientName}`).join("\n");
+    const list = shifts.map(s => `${s.index}. ${formatDateForDisplay(s.date)} at ${formatHHMMForDisplay(s.time)} — ${s.clientName}`).join("\n");
     await sendMessage(chatId,
       `Which shift do you need to cancel?\n${list}\n\nReply with the number, or CANCEL to back out.`,
     );
@@ -178,7 +178,7 @@ export async function handleCaregiverCancelShift(
     // If we already have a chosen shift, this reply is the YES/NO confirmation
     const chosenId = session.cancelShiftId as string | undefined;
     if (chosenId) {
-      const list = candidates.map(s => `${s.index}. ${s.date} at ${s.time} — ${s.clientName}`).join("\n");
+      const list = candidates.map(s => `${s.index}. ${formatDateForDisplay(s.date)} at ${formatHHMMForDisplay(s.time)} — ${s.clientName}`).join("\n");
       const reAsk = `Cancel this shift? Reply YES to cancel, or NO to keep it.`;
       if (await isQuestionOrOther(text, reAsk)) {
         await sendMessage(chatId, await answerMidFlow(text, reAsk));
@@ -237,7 +237,7 @@ export async function handleCaregiverCancelShift(
       stateExpiresAt:      new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
     await sendMessage(chatId,
-      `You want to cancel: ${shift.date} at ${shift.time} with the ${shift.clientName} family.\n\n` +
+      `You want to cancel: ${formatDateForDisplay(shift.date)} at ${formatHHMMForDisplay(shift.time)} with the ${shift.clientName} family.\n\n` +
       `Cancel this shift? Reply YES to cancel, or NO to keep it.`,
     );
     return;

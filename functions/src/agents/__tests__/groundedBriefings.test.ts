@@ -89,7 +89,7 @@ describe("MVR classifier — soft declines are decline exemplars (R14)", () => {
 
 describe("routeIntent cancellation briefings — grounding clause backstop (R12)", () => {
   it("BOTH coded cancel-confirm sites carry the only-the-visit-on-date instruction", () => {
-    const clause = "Refer to it only as 'the visit on ${appt.date}' — do not name the client unless given.";
+    const clause = "Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.";
     expect(routeIntentSrc.split(clause).length - 1).toBe(2);
   });
 });

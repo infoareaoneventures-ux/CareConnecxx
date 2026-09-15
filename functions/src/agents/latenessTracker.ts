@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "./caraAgent";
+import { formatDateForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -104,7 +105,7 @@ export async function checkLatenessPattern(
     await sendViaInteractionAgent(clientPhone, {
       content:
         `Heads up — ${caregiverName} has been running late to visits a few times recently. ` +
-        `Wanted to let you know before the ${appt.date} visit. ` +
+        `Wanted to let you know before the ${formatDateForDisplay(appt.date)} visit. ` +
         `Reply REPLACE if you'd like a different caregiver.`,
       urgency:     "standard",
       sourceAgent: "lateness_tracker",

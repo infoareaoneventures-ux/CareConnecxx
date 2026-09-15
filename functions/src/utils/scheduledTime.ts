@@ -128,6 +128,25 @@ export function formatInterviewTime(ms: number, timeZone: string = DEFAULT_TZ): 
   });
 }
 
+// Same as formatInterviewTime, short form (no year, abbreviated weekday/
+// month) — for compact multi-line SMS displays like a numbered interview
+// pick list, where the long form reads too wide per line.
+// 2026-09-14 (live-caught): a version of this that called
+// `new Date(...).toLocaleString(...)` with NO timeZone rendered in whatever
+// zone Cloud Functions happens to run in (UTC) — a real interview shown as
+// "9:00 AM" on the site texted back as "4:00 PM" (a plain 7-hour Pacific
+// offset), and for one entry the DATE itself shifted to the next day too.
+// Every other interview-time display in this codebase already goes through
+// an explicit `timeZone: DEFAULT_TZ` for exactly this reason — this one
+// hadn't yet.
+export function formatInterviewTimeShort(ms: number, timeZone: string = DEFAULT_TZ): string {
+  return new Date(ms).toLocaleString("en-US", {
+    timeZone,
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
 // Stored appointment/shift times stay 24h "HH:MM" internally (matches the
 // site's own dayShiftTimes/appointments shape) — a family reading an SMS
 // shouldn't see "13:00" echoed back at them. Originally duplicated

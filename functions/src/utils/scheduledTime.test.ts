@@ -5,7 +5,20 @@ import {
   businessTomorrowStr,
   slotHourKey,
   apptSlotHourKey,
+  formatDateForDisplay,
 } from "./scheduledTime";
+
+describe("formatDateForDisplay (live-caught: raw ISO echoed back in a text message)", () => {
+  it("formats a YYYY-MM-DD value as a human-readable date", () => {
+    expect(formatDateForDisplay("2026-09-15")).toBe("September 15, 2026");
+  });
+
+  it("passes non-ISO values (ASAP, a parse-failure fallback) through unchanged", () => {
+    expect(formatDateForDisplay("ASAP")).toBe("ASAP");
+    expect(formatDateForDisplay("next Monday")).toBe("next Monday");
+    expect(formatDateForDisplay("TBD")).toBe("TBD");
+  });
+});
 
 describe("businessTomorrowStr", () => {
   it("is the Pacific calendar day after businessTodayStr, not UTC", () => {

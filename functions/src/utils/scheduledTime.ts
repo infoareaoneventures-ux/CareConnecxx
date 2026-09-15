@@ -143,3 +143,24 @@ export function formatHHMMForDisplay(time: string): string {
   const hour12 = parseInt(m[1], 10) % 12 || 12;
   return `${hour12}:${m[2]} ${period}`;
 }
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Same problem, date-shaped: a raw "YYYY-MM-DD" echoed straight back at the
+// family (2026-09-14, live-caught in interviewFlow.ts: "2026-09-14, got it!
+// What time on 2026-09-14 works?") reads like a database dump, not something
+// a person said or would want to reread. Display-only — the STORED value
+// stays YYYY-MM-DD (or a raw fallback like "ASAP") for consistency with the
+// rest of the system (job_posts.startDate, bookingFlowData.startDate, etc).
+// Parses the string directly rather than via `new Date(...)` to avoid any
+// timezone-shift risk on a date-only value with no instant to convert.
+// Consolidated 2026-09-14 from a near-identical copy in jobPostingFlow.ts —
+// same fix already applied once for time (see formatHHMMForDisplay above);
+// don't let a second flow-local copy of this drift back in.
+export function formatDateForDisplay(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return value; // "ASAP" or a raw fallback string — show as-is
+  const [, y, mo, d] = m;
+  const monthName = MONTH_NAMES[parseInt(mo, 10) - 1];
+  return monthName ? `${monthName} ${parseInt(d, 10)}, ${y}` : value;
+}

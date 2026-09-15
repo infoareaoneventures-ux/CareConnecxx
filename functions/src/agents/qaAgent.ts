@@ -10,7 +10,6 @@ import { lintMessage } from "../safety/linter";
 import { getPreferences, isInDND } from "../memory/preferences";
 import { getRelevantFacts } from "../memory/learnedFacts";
 import { isBareDateOrTimeAnswer } from "../utils/bareDateTimeAnswer";
-import { TRIVIAL_YES, TRIVIAL_NO } from "./approvalHandler";
 import { getZepContextResult, type ZepContextResult } from "../memory/zepClient";
 import { getMemoryContext } from "../memory/memoryFiles";
 import {
@@ -4256,82 +4255,44 @@ export async function runQuickReply(params: {
 }
 
 // Trivial-message eligibility check used by the webhook before runQaAgent.
-// Returns true when text qualifies for the runQuickReply fast path.
+// Returns true when text qualifies for the runQuickReply fast path (no tool
+// access — a hallucination risk for anything that isn't pure small talk).
 //
-// Conservative: only true for pure social pleasantries. Any hint of an
-// action verb, a request for data, or an entity reference falls through to
-// the full QA agent — which has tools to actually do things.
+// 2026-09-14 REDESIGN (Hamse's call, after a live incident): this used to be
+// a DENYLIST — assume trivial, then look for red flags (action verbs, topic
+// keywords, question shapes, proper nouns...) that disqualify it. Every
+// production incident on this function (2026-08-31 "What is the care
+// address", 2026-09-09 a bare "Yes.", 2026-09-13 "yes we did", 2026-09-14
+// "basra yousuf") was the SAME root cause: a denylist can only catch red
+// flags someone already thought of, so a new phrasing always finds the gap.
+// Patched four times, four different gaps found — proof the shape of the
+// bug, not just each instance, needed fixing.
 //
-// Action verbs include words like "connect", "book", "schedule", "call",
-// "hire", "find", "show", "tell" — these are all things Evia needs tools
-// to do, so the bypass would just produce a generic "I'll look into it"
-// reply (which is wrong; users want Evia to actually act).
-const ACTION_VERBS = /\b(connect|book|schedule|call|hire|find|show|tell|send|cancel|reschedule|rebook|reschedule|approve|deny|reject|accept|update|change|set up|setup|set\s+up|search|look|check|get|give|need|want|add|remove|delete|fix|help|pay|refill|reorder|order|forward|share)\b/i;
-const REQUEST_PATTERNS = /\b(yes\s+(let|please|do|go|sure|ok)|let'?s|can\s+you|could\s+you|would\s+you|please|i\s+(need|want|would)|tell\s+(me|him|her|them))\b/i;
-const CARE_ACTION_CONTEXT_TERMS = /\b(mom|dad|mother|father|maria|caregiver|client|senior|visit|appointment|shift|hours|invoice|payment|pay|payout|approve|approved|approval|dispute|book|booking|checkr|background|verified|verification|family|sister|brother|daughter|son|refer|referral|fell|fall|emergency|urgent|911|hospital|doctor|pharmacy|meds?|medication|refill|pain|chest|breathe)\b/i;
-// Found 2026-08-31: "What is the care address" and "I think you do" (a
-// follow-up pushback) both slipped through every check above — neither
-// contains a digit, an action verb, or a listed topic word — and got a
-// confidently wrong answer from the tool-less fast path, which can't see most
-// of what's actually on file. Topic-keyword lists can never be complete (the
-// very next feature added is one more word nobody thought to add), so instead
-// of listing topics, catch the SHAPE of a real question or a factual
-// pushback: those always need real data to answer correctly, whatever
-// they're about. Only genuine pleasantries should ever skip this.
-// "any" added 2026-08-31 (Payments/Timesheets audit): casual texting shorthand
-// like "Any pending timesheets" or "Any bookings" is functionally a question
-// ("do you have any...") but has no "?" and no other listed interrogative
-// word, so it was still slipping through as trivial.
-const QUESTION_FORM = /\?|^\s*(what|who|whom|whose|where|when|why|which|is|are|am|was|were|do|does|did|can|could|would|should|will|has|have|had|any)\b/i;
-// Common greeting-questions ("How's it going?", "How are you?") are rhetorical,
-// not real information requests — carve them back out so they stay trivial.
-const GREETING_QUESTION = /^\s*how(?:'?s| is| are| have)?\s+(it|everything|things|you|your\s+day)\b/i;
-// "wrong"/"incorrect"/"not right" added 2026-08-31: a correction doesn't
-// always start with "That's..." — "Wrong time" or "5:30 not correct" are
-// just as common in real texting and carry the same signal wherever they
-// land in the sentence, not just as a prefix.
-const PUSHBACK_FORM = /^\s*(i\s+think|i\s+believe|i'?m\s+(pretty\s+)?sure|that'?s\s+(not|wrong|incorrect)|you\s+(do|have|did)\b)|\b(wrong|incorrect|not\s+(correct|right))\b/i;
+// This is now an ALLOWLIST — assume NOT trivial (full agent, has tools),
+// only skip the agent for a small, explicit set of known-safe pure
+// pleasantries. A false negative here (something genuinely trivial routed
+// to the full agent anyway) just costs a slower, tool-capable reply — the
+// same asymmetry every fix above was already reaching for one gap at a
+// time. A false positive (something real treated as trivial) is the only
+// outcome that can ever fabricate a false claim, and this design makes that
+// class of bug structurally impossible: nothing reaches runQuickReply
+// unless it matches one of the patterns below, byte for byte in shape.
+const TRIVIAL_ALLOWLIST: RegExp[] = [
+  /^(hi+|hey+|hello+|hiya|yo|howdy|sup)[.!]*$/i,
+  /^good\s*(morning|afternoon|evening|night)[.!]*$/i,
+  /^(thanks?|thank\s*you|thx|ty|tysm)(\s+(so\s+much|a\s+lot|a\s+ton))?[.!]*$/i,
+  /^(ok(ay)?|sounds?|looks?|that)\s+(good|great|perfect|awesome|nice|cool)[.!]*$/i,
+  /^(great|perfect|awesome|nice|cool|fine|good)(\s+(thanks|thank\s*you))?[.!]*$/i,
+  /^(bye|goodbye|see\s+you(\s+(soon|later))?|talk\s+(soon|later)|take\s+care|you\s+too(\s+take\s+care)?)[.!]*$/i,
+  /^how'?s?\s+(it\s+going|everything|things|you|your\s+day)\??$/i,
+  /^how\s+(are|is)\s+(you|everything|things)\??$/i,
+  /^what'?s\s+up\??$/i,
+];
 
 export function isTrivialQuickReply(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 30) return false;
   // Any digit or @ → likely contains entity data; use full QA agent
   if (/[\d@]/.test(t)) return false;
-  // 2026-09-09 live incident: a bare "Yes." confirming a pending irreversible
-  // action (cancel_interview) passed every check below — no digit, no
-  // question mark, no action verb, no listed topic word — and landed here,
-  // which has no tool access and no idea what it's confirming. It fabricated
-  // a false "Done, I canceled that" reply instead of ever calling the tool.
-  // TRIVIAL_YES/TRIVIAL_NO (approvalHandler.ts) is the exact word list that
-  // decides a REAL confirmation reply — reusing it here (instead of a second,
-  // driftable list) keeps both checks in lockstep. A bare yes/no is almost
-  // always answering something Evia just asked, never idle chat, so it must
-  // always reach the full agent — which can see any pending confirmation —
-  // regardless of how short or punctuation-free it looks.
-  const bareYesNo = t.toUpperCase().replace(/[.!?]+$/g, "");
-  if (TRIVIAL_YES.has(bareYesNo) || TRIVIAL_NO.has(bareYesNo)) return false;
-  // 2026-09-13 live incident: "yes we did" (confirming a proactive nudge —
-  // "did the interview happen? I can mark it complete") isn't a BARE yes/no
-  // so it slipped past the check above, landed on this no-tools path, and
-  // fabricated "Perfect, I've marked Basra's interview complete" without
-  // ever calling complete_interview. Same root cause as the bare-"Yes."
-  // incident above, just one word longer — a short reply that STARTS with
-  // an affirmation/negation is answering something Evia just asked, whatever
-  // trails it, and must always reach the full agent.
-  if (/^(?:yes|yeah|yep|yup|no|nope|nah)\b/i.test(t)) return false;
-  // A real question or a pushback/contradiction always needs real data to
-  // answer correctly — never assume the fast path's narrow view is enough,
-  // regardless of what topic it happens to be about.
-  if ((QUESTION_FORM.test(t) && !GREETING_QUESTION.test(t)) || PUSHBACK_FORM.test(t)) return false;
-  // Action verb or request pattern → user wants something done; use full QA agent
-  if (ACTION_VERBS.test(t) || REQUEST_PATTERNS.test(t)) return false;
-  if (CARE_ACTION_CONTEXT_TERMS.test(t)) return false;
-  // Proper noun in the middle (after the first word) suggests names/places.
-  // First word can be capitalized (sentence start); subsequent ones flag it.
-  const words = t.split(/\s+/);
-  for (let i = 1; i < words.length; i++) {
-    const w = words[i].replace(/[.,!?]/g, "");
-    if (w.length > 1 && /^[A-Z][a-z]+$/.test(w)) return false;
-  }
-  return true;
+  return TRIVIAL_ALLOWLIST.some((re) => re.test(t));
 }

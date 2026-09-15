@@ -55,7 +55,7 @@ vi.mock("../utils/claudeClient", () => ({
 
 const { sendMessage, messagesCreate } = hoisted;
 
-import { handleJobPostingStep, JP_MIDFLOW_FALLBACK, CLASSIFICATION_GUARD_CLAUSE, formatDateForDisplay } from "./jobPostingFlow";
+import { handleJobPostingStep, JP_MIDFLOW_FALLBACK, CLASSIFICATION_GUARD_CLAUSE } from "./jobPostingFlow";
 import { ANTI_INVENTION_CLAUSE } from "../utils/caraMessage";
 
 const PHONE = "+15555550100";
@@ -234,18 +234,6 @@ describe("jobPostingFlow — output guard (U2, R2)", () => {
   });
 });
 
-describe("formatDateForDisplay (live-caught: raw ISO echoed back in a text message)", () => {
-  it("formats a YYYY-MM-DD value as a human-readable date", () => {
-    expect(formatDateForDisplay("2026-09-15")).toBe("September 15, 2026");
-  });
-
-  it("passes non-ISO values (ASAP, a parse-failure fallback) through unchanged", () => {
-    expect(formatDateForDisplay("ASAP")).toBe("ASAP");
-    expect(formatDateForDisplay("next Monday")).toBe("next Monday");
-    expect(formatDateForDisplay("TBD")).toBe("TBD");
-  });
-});
-
 // 2026-09-08 (live-caught): the model refused outright instead of returning
 // __parse_error__ or a real date value — "I need a message with a start date
 // to extract. Your message doesn't contain one." — and that whole sentence
@@ -350,6 +338,25 @@ describe("handleJpAskCareNeeds — normalizes fine-grained terms into canonical 
 
     const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeeds);
     expect(call?.[0].jobPostingData.jobCareNeeds).toEqual(["Personal Care", "Medication Reminders"]);
+  });
+
+  // 2026-09-14 (live-caught): saying "bathing" correctly selected the
+  // "Personal Care" category but left no sub-task recorded at all — unlike
+  // doing the same thing on the website, which also selects the "Bathing"
+  // chip nested under the category (CarePlan.tsx's careNeeds +
+  // careNeedDetails). Matched against the family's own raw message, not the
+  // model's already-category-mapped output, which has lost the specific word.
+  it("also records the specific sub-task named within the category, not just the category itself", async () => {
+    modelReplies("NO", '["bathing", "medication reminders"]');
+
+    await handleJobPostingStep(PHONE, CHAT, "she needs help bathing and remembering her meds", {
+      ...SESSION,
+      jobPostingStep: "jp_ask_care_needs",
+      jobPostingData: { jobFrequency: "occasional" },
+    });
+
+    const call = hoisted.updateMock.mock.calls.find(([arg]) => arg?.jobPostingData?.jobCareNeedDetails);
+    expect(call?.[0].jobPostingData.jobCareNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
   });
 
   it("re-asks instead of storing an empty result when nothing normalizes", async () => {

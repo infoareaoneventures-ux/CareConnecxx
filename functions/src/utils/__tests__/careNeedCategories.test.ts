@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CANONICAL_CARE_CATEGORIES, toCanonicalCareCategory, normalizeCareNeeds } from "../careNeedCategories";
+import { CANONICAL_CARE_CATEGORIES, toCanonicalCareCategory, normalizeCareNeeds, extractCareNeedDetails } from "../careNeedCategories";
 
 // 2026-09-11: Evia's SMS job-posting flow was storing fine-grained terms
 // ("bathing", "medication reminders") straight into careNeeds instead of the
@@ -69,5 +69,44 @@ describe("normalizeCareNeeds", () => {
   it("returns an empty array for an empty or fully-unrecognized input", () => {
     expect(normalizeCareNeeds([])).toEqual([]);
     expect(normalizeCareNeeds(["gibberish"])).toEqual([]);
+  });
+});
+
+// 2026-09-14 (live-caught): normalizeCareNeeds collapsing "bathing" onto
+// "Personal Care" is correct for caregiver matching, but the website ALSO
+// tracks which specific sub-task within that category was named
+// (careNeedDetails, CarePlan.tsx) and shows it as its own chip nested under
+// the category — a family saying "bathing" on the site selects BOTH the
+// category and the "Bathing" sub-task chip. Evia was only ever writing the
+// category, losing the sub-task entirely.
+describe("extractCareNeedDetails", () => {
+  it("matches a raw single-word term to its specific sub-task within the category", () => {
+    expect(extractCareNeedDetails(["bathing"], ["Personal Care"])).toEqual({
+      "Personal Care": ["Bathing"],
+    });
+  });
+
+  it("matches a sub-task mentioned inside a longer natural-language message", () => {
+    expect(extractCareNeedDetails(["she needs help bathing every morning"], ["Personal Care"]))
+      .toEqual({ "Personal Care": ["Bathing"] });
+  });
+
+  it("matches multiple sub-tasks within the same category from one message", () => {
+    expect(extractCareNeedDetails(["bathing and dressing help"], ["Personal Care"]))
+      .toEqual({ "Personal Care": ["Bathing", "Dressing Assistance"] });
+  });
+
+  it("omits a category entirely when no specific sub-task was named", () => {
+    expect(extractCareNeedDetails(["personal care"], ["Personal Care"])).toEqual({});
+  });
+
+  it("omits a category with no sub-task catalog at all (e.g. Companionship)", () => {
+    expect(extractCareNeedDetails(["companionship"], ["Companionship"])).toEqual({});
+  });
+
+  it("only checks categories actually passed in, even if the text mentions others", () => {
+    expect(extractCareNeedDetails(["bathing and meds"], ["Personal Care"])).toEqual({
+      "Personal Care": ["Bathing"],
+    });
   });
 });

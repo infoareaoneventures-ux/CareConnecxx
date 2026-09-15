@@ -10,8 +10,9 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { describeSharedProfile } from "./profileBriefing";
 import { deriveCareLevel } from "./clientJobPostingContract";
 import { lookupZipPlace } from "../utils/geocode";
-import { normalizeCareNeeds } from "../utils/careNeedCategories";
+import { normalizeCareNeeds, extractCareNeedDetails, type CanonicalCareCategory } from "../utils/careNeedCategories";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
+import { formatDateForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -871,22 +872,6 @@ async function handleJpAskFrequency(
   );
 }
 
-const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-// Display-only formatting for an echoed-back date — the STORED jobStartDate
-// value stays YYYY-MM-DD (or "ASAP"/raw text) for consistency with the rest
-// of the system (job_posts.startDate, etc.); a family reading a text message
-// shouldn't see the raw ISO string ("2026-09-15") echoed back at them.
-// Parses the string directly rather than via `new Date(...)` to avoid any
-// timezone-shift risk on a date-only value.
-export function formatDateForDisplay(value: string): string {
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return value; // "ASAP" or a raw fallback string — show as-is
-  const [, y, mo, d] = m;
-  const monthName = MONTH_NAMES[parseInt(mo, 10) - 1];
-  return monthName ? `${monthName} ${parseInt(d, 10)}, ${y}` : value;
-}
-
 async function handleJpAskStart(
   phone: string, chatId: string, text: string, session: AgentSession
 ): Promise<void> {
@@ -1030,7 +1015,7 @@ async function handleJpAskCareNeeds(
     'Return a JSON array of matching standard values, or an empty array. Only return the JSON array.',
     text
   );
-  let careNeeds: string[] = [];
+  let careNeeds: CanonicalCareCategory[] = [];
   const parsedNeeds = parseJsonLoose(raw, "handleJpAskCareNeeds");
   if (Array.isArray(parsedNeeds) && parsedNeeds.length > 0) {
     // The LLM is asked for standard category names but sometimes returns the
@@ -1049,7 +1034,16 @@ async function handleJpAskCareNeeds(
   // jobCareLevel derived, never asked — see the JP_STEP_ORDER comment at the
   // top of the file for why.
   const jobCareLevel = deriveCareLevel([], careNeeds);
-  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel });
+  // 2026-09-14 (live-caught): normalizeCareNeeds correctly collapses "bathing"
+  // onto its parent category ("Personal Care") for caregiver matching — but
+  // that's not the whole website model. The Care Plan page ALSO tracks which
+  // specific sub-task within that category was named (careNeedDetails,
+  // CarePlan.tsx) and shows it as its own chip nested under the category.
+  // Matched against the family's own raw message (not the LLM's
+  // already-category-mapped output above, which has lost the specific word
+  // by this point) so a fine-grained mention isn't silently dropped.
+  const jobCareNeedDetails = extractCareNeedDetails([text], careNeeds);
+  await mergeJobData(phone, { jobCareNeeds: careNeeds, jobCareLevel, jobCareNeedDetails });
   await updateJobStep(phone, "jp_ask_rate");
   await sendMessage(chatId,
     `${needsLabel} — noted! What hourly rate are you offering? (e.g. "$20", "18 an hour", "flexible")`

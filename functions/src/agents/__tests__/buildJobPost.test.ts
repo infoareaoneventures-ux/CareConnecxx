@@ -95,6 +95,23 @@ describe("buildAndSaveJobPost — carePlans notes parity with the website wizard
     expect(plan.recipientPlans[key].notes).toBe(BASE_JOB_DATA.jobDescription);
   });
 
+  // 2026-09-14 (live-caught): recipientPlans only ever carried the parent
+  // category (careNeeds) — the website's own two-level model (CarePlan.tsx's
+  // careNeeds + careNeedDetails) also tracks which specific sub-task chip
+  // within that category was named, and this was never being written at all.
+  it("writes jobCareNeedDetails through into recipientPlans.{key}.careNeedDetails", async () => {
+    await buildAndSaveJobPost({
+      uid: "client1b",
+      phone: "+15550001112",
+      onboardingData: BASE_ONBOARDING,
+      jobData: { ...BASE_JOB_DATA, jobCareNeedDetails: { "Personal Care": ["Bathing"] } },
+    });
+
+    const plan = hoisted.docState.get("carePlans/client1b");
+    const key = Object.keys(plan.recipientPlans)[0];
+    expect(plan.recipientPlans[key].careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+  });
+
   it("writes an empty string (not undefined) when no description was collected, matching the website's own unconditional write", async () => {
     await buildAndSaveJobPost({
       uid: "client2",

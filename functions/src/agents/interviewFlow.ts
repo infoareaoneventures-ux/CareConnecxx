@@ -30,7 +30,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
-import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
   resolveCaregiverForInterview, requestVideoInterview, VideoInterviewRequestError,
@@ -359,12 +359,14 @@ async function handleIvAskDate(
   }
   await mergeFlowData(phone, { date });
   await updateStep(phone, "iv_ask_time");
-  await sendMessage(chatId, `${date} — got it! ${TIME_QUESTION(date)}`);
+  await sendMessage(chatId, `${formatDateForDisplay(date)} — got it! ${TIME_QUESTION(date)}`);
 }
 
 // ── Step: time ────────────────────────────────────────────────────────────────
 
-const TIME_QUESTION = (date: string) => `What time on ${date} works?`;
+// `date` stays raw "YYYY-MM-DD" internally (parsing/comparisons need it) —
+// only formatted for display, here at render time.
+const TIME_QUESTION = (date: string) => `What time on ${formatDateForDisplay(date)} works?`;
 
 async function handleIvAskTime(
   phone: string, chatId: string, text: string, session: AgentSession,
@@ -438,12 +440,13 @@ export function buildInterviewRecap(data: InterviewFlowData): string {
   const jobLine = data.jobTitle ?? "No specific post";
   const notesLine = data.notes ? `"${data.notes}"` : "None";
   const timeLabel = data.time ? formatTimeForDisplay(data.time) : data.time;
+  const dateLabel = data.date ? formatDateForDisplay(data.date) : data.date;
   return [
     `Here's the interview request:`,
     ``,
     `Caregiver: ${data.caregiverName}`,
     `Related job post: ${jobLine}`,
-    `Date & time: ${data.date} at ${timeLabel}`,
+    `Date & time: ${dateLabel} at ${timeLabel}`,
     `Notes: ${notesLine}`,
     ``,
     `Reply YES to send it, or tell me what to change.`,

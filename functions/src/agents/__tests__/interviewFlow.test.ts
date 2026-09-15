@@ -237,7 +237,7 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
     expect(recap).toContain("Caregiver: Basra Yousuf");
     expect(recap).toContain("Related job post: Senior care in San Jose");
-    expect(recap).toContain("Date & time: 2026-09-20 at 2:00 PM");
+    expect(recap).toContain("Date & time: September 20, 2026 at 2:00 PM");
     expect(recap).toContain("Notes: None");
   });
 
@@ -305,7 +305,7 @@ describe("iv_confirm — edits", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.interviewFlowData.date).toBe("2026-09-22");
     expect(stored.interviewFlowStep).toBe("iv_confirm");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("2026-09-22");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("September 22, 2026");
   });
 
   it("edit_notes with no stated text asks the follow-up question instead of the recap", async () => {

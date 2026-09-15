@@ -436,6 +436,28 @@ describe("isTrivialQuickReply", () => {
   ])("never treats a yes/no-PREFIXED reply as trivial either %p", (input) => {
     expect(isTrivialQuickReply(input)).toBe(false);
   });
+
+  // 2026-09-14 live incident: a bare, all-lowercase name answering "Which
+  // caregiver is this booking for?" passed every check above (the
+  // proper-noun check only catches a capitalized word) and landed on the
+  // no-tool fast path, which fabricated an entire fictitious booking
+  // conversation with nothing real behind it.
+  it.each([
+    "basra yousuf", "Basra Yousuf", "maria santos", "samira",
+  ])("never treats a bare name reply as trivial, capitalized or not %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(false);
+  });
+
+  // Genuine multi-word small talk must still take the fast path — each of
+  // these matches one of the explicit allowlist patterns byte-for-byte in
+  // shape (greeting, gratitude, acknowledgment, farewell, or a rhetorical
+  // greeting-question), not just "contains a familiar word somewhere."
+  it.each([
+    "How's it going", "thanks so much", "sounds good", "ok great",
+    "sounds great", "you too take care", "see you soon",
+  ])("still allows genuine multi-word small talk on the fast path %p", (input) => {
+    expect(isTrivialQuickReply(input)).toBe(true);
+  });
 });
 
 describe("WARMTH_REFLECTION_OPENERS", () => {

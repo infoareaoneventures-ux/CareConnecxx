@@ -989,7 +989,7 @@ describe("buildBookingRecap", () => {
       expect(idx).toBeGreaterThan(lastIndex);
       lastIndex = idx;
     }
-    expect(recap).toContain("Tuesday 9:00 AM–5:00 PM, Thursday 10:00 AM–2:00 PM, starting 2026-09-15");
+    expect(recap).toContain("Tuesday 9:00 AM–5:00 PM, Thursday 10:00 AM–2:00 PM, starting September 15, 2026");
     expect(recap).toContain("Samira M (parent, Age 22): Meal Preparation, Personal Care");
     expect(recap).toContain("Notes: likes to go shopping");
     expect(recap).toContain("Lifestyle: prefers quiet");

@@ -31,7 +31,7 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
-import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS } from "./stepHandler";
 import {
@@ -644,7 +644,7 @@ async function handleBkAskStartDate(
   }
   await mergeFlowData(phone, { startDate });
   await updateStep(phone, "bk_ask_times");
-  await sendMessage(chatId, `Starting ${startDate} — got it! ${TIMES_QUESTION(data.days ?? [])}`);
+  await sendMessage(chatId, `Starting ${formatDateForDisplay(startDate)} — got it! ${TIMES_QUESTION(data.days ?? [])}`);
 }
 
 // ── Step: times (every day needs its own start/end) ─────────────────────────
@@ -1043,13 +1043,13 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
 }
 
 export function buildBookingRecap(data: BookingFlowData): string {
-  const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${data.scheduleEndDate})` : "";
+  const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${formatDateForDisplay(data.scheduleEndDate)})` : "";
   const scheduleLine =
     `${(data.days ?? []).map((d) => {
       const t = data.dayTimes?.[d];
       return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
     }).join(", ")}` +
-    `${data.startDate ? `, starting ${data.startDate}` : ""} ${spanLine}`;
+    `${data.startDate ? `, starting ${formatDateForDisplay(data.startDate)}` : ""} ${spanLine}`;
 
   const recipientLines: string[] = [];
   if (data.careRecipients?.length) {

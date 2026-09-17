@@ -144,16 +144,6 @@ export function isHighRisk(toolName: string, toolInput: Record<string, unknown>)
 // real resolved name before committing catches this even when the model's
 // own reasoning slips, the same way cancel_interview's enforced confirmation
 // already catches a forgotten/skipped confirmation.
-// "HH:MM" → minutes since midnight, or null if malformed. Deliberately a
-// local duplicate of mcp/server.ts's bookingTimeToMinutes (not imported —
-// server.ts imports FROM this file, so importing back would be circular);
-// this is a trivial, pure one-liner, safe to keep in sync by inspection.
-function previewHHMMToMinutes(t: unknown): number | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t ?? "").trim());
-  if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
 async function resolveCaregiverNameForPreview(caregiverId: unknown): Promise<string> {
   if (typeof caregiverId !== "string" || !caregiverId) return "an unspecified caregiver";
   try {
@@ -175,72 +165,6 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
       const name = await resolveCaregiverNameForPreview(toolInput.caregiverId);
       const when = [toolInput.preferredDate, toolInput.preferredTime].filter(Boolean).join(" at ");
       return `Schedule an interview with ${name}${when ? ` for ${when}` : ""}`;
-    }
-    case "request_booking": {
-      // Full recap, matching the website's own "Review and edit before
-      // sending" modal — the family should see everything before a real,
-      // caregiver-facing booking commits.
-      const name = await resolveCaregiverNameForPreview(toolInput.caregiverId);
-      const rate = toolInput.agreedRate ? `$${toolInput.agreedRate}/hr` : undefined;
-      // Total cost — computed HERE, fresh, from the SAME schedule/rate this
-      // pending action actually carries (2026-09-13). Deliberately NOT
-      // carried over from anything discussed earlier in conversation: if
-      // the family changes the days/times while finalizing, a stated-earlier
-      // number goes stale immediately — this recomputes from whatever is
-      // actually about to be booked, so it can never drift from what commits.
-      const hourlyRateNum = Number(toolInput.agreedRate);
-      const hasRate = Number.isFinite(hourlyRateNum) && hourlyRateNum > 0;
-      let totalLine: string | undefined;
-      let scheduleLine: string;
-      if (toolInput.recurring) {
-        const dst = (toolInput.dayShiftTimes ?? {}) as Record<string, { start?: string; end?: string }>;
-        const days = Object.entries(dst)
-          .map(([d, t]) => `${d} ${t.start ?? "?"}-${t.end ?? "?"}`)
-          .join(", ");
-        const span = toolInput.ongoing ? "ongoing" : `through ${toolInput.endDate ?? "?"}`;
-        scheduleLine = `${days} (${span})`;
-        if (hasRate) {
-          const weeklyHours = Object.values(dst).reduce((sum, t) => {
-            const mins = previewHHMMToMinutes(t.end) !== null && previewHHMMToMinutes(t.start) !== null
-              ? previewHHMMToMinutes(t.end)! - previewHHMMToMinutes(t.start)!
-              : 0;
-            return sum + Math.max(0, mins) / 60;
-          }, 0);
-          if (weeklyHours > 0) totalLine = `≈ $${Math.round(weeklyHours * hourlyRateNum * 100) / 100}/week`;
-        }
-      } else {
-        const dateList = Array.isArray(toolInput.dates) ? (toolInput.dates as string[]) : [String(toolInput.dates ?? "")].filter(Boolean);
-        scheduleLine = `${dateList.join(", ")}, ${toolInput.startTime ?? "?"}-${toolInput.endTime ?? "?"}`;
-        if (hasRate && dateList.length) {
-          const startMin = previewHHMMToMinutes(toolInput.startTime);
-          const endMin   = previewHHMMToMinutes(toolInput.endTime);
-          if (startMin !== null && endMin !== null && endMin > startMin) {
-            const durationHours = (endMin - startMin) / 60;
-            totalLine = `≈ $${Math.round(durationHours * hourlyRateNum * dateList.length * 100) / 100} total`;
-          }
-        }
-      }
-      const recipients = Array.isArray(toolInput.recipientFirstNames) && toolInput.recipientFirstNames.length
-        ? (toolInput.recipientFirstNames as string[]).join(" & ")
-        : (toolInput.recipientFirstName ? String(toolInput.recipientFirstName) : undefined);
-      const careNeeds = Array.isArray(toolInput.careNeeds) && toolInput.careNeeds.length
-        ? `care needs: ${(toolInput.careNeeds as string[]).join(", ")}` : undefined;
-      const lifestyle = Array.isArray(toolInput.lifestylePreferences) && toolInput.lifestylePreferences.length
-        ? (toolInput.lifestylePreferences as string[]).join(", ") : undefined;
-      const ec = toolInput.emergencyContact as { name?: string; phone?: string } | undefined;
-      const emergencyContact = ec?.phone ? `emergency contact: ${ec.name ?? "on file"} (${ec.phone})` : undefined;
-      const parts = [
-        `Book ${name}`,
-        rate,
-        scheduleLine,
-        totalLine,
-        toolInput.careLocation ? `at ${toolInput.careLocation}${lifestyle ? ` (${lifestyle})` : ""}` : undefined,
-        recipients ? `for ${recipients}` : undefined,
-        careNeeds,
-        emergencyContact,
-        toolInput.message ? `note: "${toolInput.message}"` : undefined,
-      ].filter(Boolean);
-      return parts.join(" — ");
     }
     case "remove_family_member":
       return `Remove family member ${String(toolInput.memberPhone ?? toolInput.memberId ?? "?")}`;

@@ -82,8 +82,9 @@ vi.mock("../../memory/preferences", () => ({
   getPreferences: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
 
 import { handleToolCall } from "../server";

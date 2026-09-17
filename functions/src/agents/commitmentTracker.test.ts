@@ -153,8 +153,8 @@ vi.mock("firebase-admin", () => ({
 }));
 
 // Dynamic imports inside the tracker — intercepted by vi.mock as well.
-const runMatchingForClient = vi.fn();
-vi.mock("./matchingAgent", () => ({ runMatchingForClient: (...a: unknown[]) => (runMatchingForClient as Function).apply(null, a) }));
+const presentCaregiverSearch = vi.fn();
+vi.mock("./caregiverSearch", () => ({ presentCaregiverSearch: (...a: unknown[]) => (presentCaregiverSearch as Function).apply(null, a) }));
 
 const runQaAgent = vi.fn();
 const sendSplit  = vi.fn(async () => {});
@@ -197,7 +197,7 @@ const baseQaCommitment = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   hoisted.reset();
-  runMatchingForClient.mockReset();
+  presentCaregiverSearch.mockReset();
   runQaAgent.mockReset();
   sendSplit.mockClear();
   sendViaInteractionAgent.mockClear();
@@ -351,18 +351,18 @@ describe("sweepOverdueCommitments — matching", () => {
 
     await sweepOverdueCommitments();
 
-    expect(runMatchingForClient).not.toHaveBeenCalled();
+    expect(presentCaregiverSearch).not.toHaveBeenCalled();
     expect(hoisted.commitments().get(`${PHONE}_matching`)!.status).toBe("fulfilled");
   });
 
   it("re-runs matching and marks fulfilled when the pass delivers", async () => {
     hoisted.seedCommitment(`${PHONE}_matching`, matchingCommitment());
     hoisted.seedSession(PHONE, {});
-    runMatchingForClient.mockResolvedValue("matched");
+    presentCaregiverSearch.mockResolvedValue({ status: "shown", total: 2, shown: [], offset: 0, hasMore: false });
 
     await sweepOverdueCommitments();
 
-    expect(runMatchingForClient).toHaveBeenCalledOnce();
+    expect(presentCaregiverSearch).toHaveBeenCalledOnce();
     const doc = hoisted.commitments().get(`${PHONE}_matching`)!;
     expect(doc.status).toBe("fulfilled");
     expect(doc.resolution).toBe("matches_sent");
@@ -371,7 +371,7 @@ describe("sweepOverdueCommitments — matching", () => {
   it("leaves a failed re-run open for the next sweep, which escalates", async () => {
     hoisted.seedCommitment(`${PHONE}_matching`, matchingCommitment());
     hoisted.seedSession(PHONE, {});
-    runMatchingForClient.mockResolvedValue("failed");
+    presentCaregiverSearch.mockRejectedValue(new Error("search threw"));
 
     await sweepOverdueCommitments();
     let doc = hoisted.commitments().get(`${PHONE}_matching`)!;

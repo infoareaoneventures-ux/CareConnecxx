@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
-import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
+import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -27,9 +27,8 @@ export const sendDayBeforeShiftReminders = functions.pubsub
     // NOTE: no `.where("dayBeforeConfirmSent","!=",true)` — Firestore `!=` excludes
     // docs missing the field (appointments are created without it), so it would
     // skip every never-reminded shift. Filter already-sent in code.
-    const docs = await queryVisitsMerged({
+    const docs = await queryVisits({
       dateOp: "==", dateValue: tomorrowStr,
-      apptStatuses: ["confirmed", "pending_caregiver_confirmation"],
       shiftStatuses: ["scheduled"],
     });
 

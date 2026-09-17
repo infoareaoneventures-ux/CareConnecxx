@@ -136,8 +136,9 @@ vi.mock("../../memory/preferences", () => ({
   getPreferences: vi.fn().mockResolvedValue({ dndEnabled: false }),
 }));
 
-vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue("no_match"),
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
 
 vi.mock("../../agents/familyGroupManager", () => ({
@@ -150,9 +151,6 @@ vi.mock("../../triggers/userTriggerManager", () => ({
   deleteUserTrigger: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../../scheduled/recurringScheduler", () => ({
-  generateRecurringDates: vi.fn().mockReturnValue([{ date: "2026-07-01" }, { date: "2026-07-08" }]),
-}));
 
 vi.mock("../../agents/feedbackAggregator", () => ({
   onFeedbackSubmitted: vi.fn().mockResolvedValue(undefined),
@@ -246,7 +244,7 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_upcoming_appointments happy path", async () => {
-    hoisted.collState.set("appointments", [{ id: "a1", date: "2026-06-01", status: "confirmed" }]);
+    hoisted.collState.set("shifts", [{ id: "s1", clientId: "c1", date: "2026-06-01", status: "scheduled" }]);
     const r = await handleToolCall("get_upcoming_appointments", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
   });
@@ -399,25 +397,25 @@ describe("MCP tool smoke coverage", () => {
     expect(((await handleToolCall("get_checkr_report", { caregiverId: "cg1" })) as any)._toolError).toBe(true);
   });
 
-  it("get_recurring_schedule returns empty when no accepted booking has a schedule", async () => {
-    hoisted.collState.set("booking_requests", []);
-    const r = await handleToolCall("get_recurring_schedule", { clientId: "c1" }) as any;
+  it("get_active_bookings returns an empty tab when the client has no active shifts", async () => {
+    hoisted.collState.set("shifts", []);
+    const r = await handleToolCall("get_active_bookings", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
-    expect(r.schedules).toEqual([]);
+    expect(r.bookings).toEqual([]);
   });
 
-  it("get_recurring_schedule reads the real booking_requests schedule (site parity)", async () => {
-    hoisted.collState.set("booking_requests", [
-      { id: "br1", clientId: "c1", caregiverId: "cg1", caregiverName: "Sam", status: "accepted",
-        schedule: { dayShiftTimes: { Mon: { start: "09:00", end: "17:00" } }, ongoing: true } },
-      // A one-off accepted booking has no schedule.dayShiftTimes — excluded,
-      // matching Schedule.tsx's own filter.
-      { id: "br2", clientId: "c1", caregiverId: "cg2", caregiverName: "Alex", status: "accepted" },
+  it("get_active_bookings groups active shifts per booking like the Active Bookings tab", async () => {
+    hoisted.collState.set("shifts", [
+      { id: "s1", clientId: "c1", bookingRequestId: "br1", caregiverId: "cg1", caregiverName: "Sam", status: "scheduled", date: "2099-09-22", startTime: "14:00", endTime: "15:00",
+        schedule: { ongoing: true, startDate: "2099-09-16", dayShiftTimes: { Tue: [{ start: "14:00", end: "15:00" }] } }, rate: 5, paymentMethod: "credit" },
+      { id: "s2", clientId: "c1", bookingRequestId: "br1", caregiverId: "cg1", caregiverName: "Sam", status: "scheduled", date: "2099-09-29", startTime: "14:00", endTime: "15:00",
+        schedule: { ongoing: true, startDate: "2099-09-16", dayShiftTimes: { Tue: [{ start: "14:00", end: "15:00" }] } }, rate: 5, paymentMethod: "credit" },
     ]);
-    const r = await handleToolCall("get_recurring_schedule", { clientId: "c1" }) as any;
+    const r = await handleToolCall("get_active_bookings", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
-    expect(r.schedules).toHaveLength(1);
-    expect(r.schedules[0]).toMatchObject({ bookingRequestId: "br1", caregiverName: "Sam", ongoing: true });
+    expect(r.bookings).toHaveLength(1);
+    expect(r.bookings[0]).toMatchObject({ bookingRequestId: "br1", caregiverName: "Sam", ongoing: true, weeklyHours: "1h", paymentLabel: "Card" });
+    expect(r.bookings[0].upcomingShifts.map((x: any) => x.id)).toEqual(["s1", "s2"]);
   });
 
   it("get_family_group happy path", async () => {

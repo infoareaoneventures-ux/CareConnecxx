@@ -1,10 +1,8 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { generateCaraMessage } from "../utils/caraMessage";
-import { describeWhoIsWho } from "../agents/careRecipients";
 import { businessTomorrowStr, formatHHMMForDisplay } from "../utils/scheduledTime";
-import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
+import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -34,9 +32,8 @@ export const sendClientDayBeforeReminders = functions.pubsub
     // NOTE: no `.where("clientDayBeforeReminderSent","!=",true)` — Firestore `!=`
     // excludes docs missing the field (appointments are created without it), so
     // it would skip every never-reminded appointment. Filter already-sent in code.
-    const docs = await queryVisitsMerged({
+    const docs = await queryVisits({
       dateOp: "==", dateValue: tomorrowStr,
-      apptStatuses: ["confirmed"],
       shiftStatuses: ["scheduled"],
     });
 
@@ -63,33 +60,17 @@ export const sendClientDayBeforeReminders = functions.pubsub
         const seniorName    = visitSeniorName(appt);
         const startTime     = (appt.startTime ?? appt.time ?? "") as string;
         const lang          = (sessionSnap.data() as any)?.preferredLanguage === "es" ? "es" : "en";
-        // R11: ground who's who — the visit is for the care recipient, not the reader.
-        const whoIsWho = describeWhoIsWho({
-          ...((sessionSnap.data() as any)?.onboardingData ?? {}),
-          seniorName: (sessionSnap.data() as any)?.onboardingData?.seniorName ?? seniorName,
-        });
-
-        const message = await generateCaraMessage({
-          audience: "family",
-          language: lang,
-          context:
-            (whoIsWho ? whoIsWho + " " : "") +
-            `Write a short, warm evening heads-up to a family member that their care visit is tomorrow.\n` +
-            `Caregiver: ${cgFirstName}\n` +
-            `Senior: ${seniorName}\n` +
-            `Date: ${tomorrowDisplay}\n` +
-            `Start time: ${startTime ? formatHHMMForDisplay(startTime) : "time TBD"}\n` +
-            `Tone: reassuring, not pushy. Mention they don't need to do anything — but they can reply ` +
-            `CANCEL if something's come up, or just ask any question they have. Don't sound like an ` +
-            `automated reminder.`,
-          fallback: lang === "es"
-            ? `Solo un aviso — ${cgFirstName} pasará mañana${startTime ? " a las " + formatHHMMForDisplay(startTime) : ""}` +
-              ` para ${seniorName}. No necesitas hacer nada; responde CANCEL si algo cambió, ` +
-              `o escríbeme si tienes preguntas.`
-            : `Just a heads up — ${cgFirstName} will be by tomorrow${startTime ? " at " + formatHHMMForDisplay(startTime) : ""}` +
-              ` for ${seniorName}. You don't need to do anything; reply CANCEL if something's changed, ` +
-              `or text me any questions.`,
-        });
+        // Plain factual text, no model rewrite (2026-09-17, live-caught: the
+        // model turned a 12:00 AM visit into "at noon"). No "reply CANCEL"
+        // either — that invited a legacy appointments-based cancel path that
+        // never touched the real visit; a family who wants to cancel just
+        // texts Evia and gets the site's own cancel flow.
+        const startLabel = startTime ? formatHHMMForDisplay(startTime) : "";
+        const message = lang === "es"
+          ? `Solo un aviso — ${cgFirstName} tiene la visita de ${seniorName} mañana, ${tomorrowDisplay}${startLabel ? ` a las ${startLabel}` : ""}. ` +
+            `No necesitas hacer nada; escríbeme si algo cambia.`
+          : `Just a heads up — ${cgFirstName} is scheduled for ${seniorName}'s visit tomorrow, ${tomorrowDisplay}${startLabel ? ` at ${startLabel}` : ""}. ` +
+            `Nothing you need to do — text me if anything changes.`;
 
         await sendViaInteractionAgent(clientPhone, {
           content:     message,
@@ -99,22 +80,6 @@ export const sendClientDayBeforeReminders = functions.pubsub
         });
 
         await doc.ref.update({ clientDayBeforeReminderSent: true });
-        await sessionSnap.ref.update({
-          pendingClientShiftConfirm: {
-            appointmentId:      apptId,
-            appointmentDate:    tomorrowStr,
-            appointmentDisplay: tomorrowDisplay,
-            caregiverId,
-            caregiverName:      cgName,
-            seniorName,
-            startTime,
-            sentAt:             new Date().toISOString(),
-          },
-          // 16h window — caregiver-side reminder uses the same window. Family
-          // has until ~noon next day to cancel before the shift starts (most
-          // shifts are morning).
-          stateExpiresAt: new Date(Date.now() + 16 * 60 * 60 * 1000).toISOString(),
-        });
       } catch (err) {
         console.error(`[sendClientDayBeforeReminders] Error for appointment ${apptId}:`, err);
       }

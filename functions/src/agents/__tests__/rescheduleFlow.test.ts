@@ -66,7 +66,7 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("firebase-admin", () => {
   const firestoreFn = Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: () => ({ __delete: true }), arrayUnion: (...v: any[]) => ({ __arrayUnion: v }) },
+    FieldValue: { delete: () => ({ __delete: true }), arrayUnion: (...v: any[]) => ({ __arrayUnion: v }), serverTimestamp: () => ({ __serverTimestamp: true }) },
   });
   const stub = { apps: [{}], initializeApp: () => ({}), firestore: firestoreFn };
   return { __esModule: true, default: stub, ...stub };

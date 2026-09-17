@@ -185,8 +185,16 @@ const END_QUESTION = "Is this ongoing, or should it end on a certain date?";
 function NOTES_QUESTION(d: VisitRequestFlowData): string {
   return `Any notes for ${d.caregiverName ?? "the caregiver"}? Reply NO to skip.`;
 }
+// "Tuesday 2:00 PM–3:00 PM (1h)" — the modal shows each day's hours next to it.
+function describeDayLine(d: VisitRequestFlowData, a: string): string {
+  const blocks = d.dayTimes?.[a] ?? [];
+  const hours = blocks.reduce((sum, b) => { const r = blockToRange(b); return sum + (r ? (r.e - r.s) / 60 : 0); }, 0);
+  const hoursLabel = hours > 0 ? ` (${hours % 1 === 0 ? hours : hours.toFixed(2)}h)` : "";
+  return `${ABBR_TO_FULL[a]} ${blocks.map(describeBlock).join(" & ")}${hoursLabel}`;
+}
+
 export function buildVisitRequestRecap(d: VisitRequestFlowData): string {
-  const lines = (d.days ?? []).map((a) => `${ABBR_TO_FULL[a]} ${(d.dayTimes?.[a] ?? []).map(describeBlock).join(" & ")}`);
+  const lines = (d.days ?? []).map((a) => describeDayLine(d, a));
   const span = d.ongoing ? "ongoing" : d.endDate ? `through ${formatDateWithWeekday(d.endDate)}` : "";
   return [
     "Here's your visit request:",
@@ -517,17 +525,21 @@ async function handleAskNotes(phone: string, chatId: string, text: string, sessi
   if (BARE_NO.has(bare)) return goToRecap(phone, chatId);
   const question = NOTES_QUESTION(data);
   if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
-  const raw = await parseWithClaude(
-    'The family was asked for an optional note to the caregiver. Return ONLY a JSON object: {"skip": true if they declined to add one, ' +
-    '"note": the note text to pass along verbatim (lightly cleaned), or null}.',
-    text,
-  );
-  const parsed = parseJsonLoose(raw, "handleAskNotes");
-  if (parsed?.skip !== true && typeof parsed?.note === "string" && parsed.note.trim()) {
-    await mergeFlowData(phone, { notes: parsed.note.trim() });
-  } else if (parsed?.skip !== true) {
-    await mergeFlowData(phone, { notes: text.trim() });
+  // The modal's Notes box stores whatever the family types, verbatim. Over
+  // SMS the only thing to detect is a plain decline ("no thanks", "nothing")
+  // — and even then only for a short reply. 2026-09-17 (live-caught): "this
+  // adding a shift" was judged a skip and the note was lost; anything with
+  // real words in it is the note.
+  const words = text.trim().split(/\s+/).length;
+  if (words <= 4) {
+    const verdict = await parseWithClaude(
+      'The family was asked for an optional note to their caregiver. Reply DECLINE only if this short message is purely declining to add one ' +
+      '("no thanks", "nothing", "no notes", "skip it", "none"). Reply NOTE if it contains anything they might want passed along. Only reply DECLINE or NOTE.',
+      text,
+    );
+    if (verdict.toUpperCase().startsWith("DECLINE")) return goToRecap(phone, chatId);
   }
+  await mergeFlowData(phone, { notes: text.trim() });
   return goToRecap(phone, chatId);
 }
 
@@ -610,7 +622,7 @@ async function commit(phone: string, chatId: string, session: AgentSession, data
   });
   void amendmentId;
   await clearFlow(phone);
-  const lines = data.days.map((a) => `${ABBR_TO_FULL[a]} ${(data.dayTimes?.[a] ?? []).map(describeBlock).join(" & ")}`).join("; ");
+  const lines = data.days.map((a) => describeDayLine(data, a)).join("; ");
   await sendMessage(chatId,
     `Sent — I asked ${data.caregiverName} to add ${lines}${data.startDate ? ` starting ${formatDateWithWeekday(data.startDate)}` : ""}. ` +
     `Nothing is added to the calendar until they accept; I'll text you as soon as they respond. It shows under Requests on your My Bookings page too.`);

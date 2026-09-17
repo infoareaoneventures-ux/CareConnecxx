@@ -20,7 +20,7 @@ import {
   evaluateWeeklyFamilyBudget,
   type WeeklyBudgetTally,
 } from "./proactiveBudget";
-import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
+import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -38,9 +38,8 @@ export const sendNextDayFamilyFeedback = functions.pubsub
     const nowIso = new Date().toISOString();
     const yesterdayStr = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const docs = await queryVisitsMerged({
+    const docs = await queryVisits({
       dateOp: "==", dateValue: yesterdayStr,
-      apptStatuses: ["completed"],
       shiftStatuses: ["completed"],
       limit: 500,
     });

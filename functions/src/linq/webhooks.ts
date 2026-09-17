@@ -9,8 +9,6 @@ import { applyProviderReceipt, applyProviderEdit } from "./providerMessageIndex"
 import { routeCaregiverMessage } from "./routeCaregiver";
 import { routeClientStateMachines } from "./routeClient";
 import { routeIntentAndRespond } from "./routeIntent";
-import { handleRecurringConfirm } from "./inboundHelpers";
-import { handleTaskApproval } from "../agents/taskApprovalHandler";
 import { getAllPending } from "../agents/pendingActions";
 import { handlePendingApprovals } from "../agents/approvalHandler";
 import { optOutPhoneNumber, optInPhoneNumber, setupCaraContactCard } from "../sms";
@@ -1692,9 +1690,7 @@ const handleInboundInner = traceable(
         (session as any).clientSwapStep        ? "client_swap"      :
         (session as any).healthcareFlowStep    ? "healthcare"       :
         (session as any).collectingCredential  ? "credential"       :
-        (session as any).hireMode              ? "hire"             :
         (session as any).pendingMatches        ? "matches"          :
-        (session as any).pendingTaskConfirm    ? "booking_confirm"  :
         null;
 
       const lang = languageFromSession(session as unknown as Record<string, unknown>);
@@ -3248,7 +3244,6 @@ async function handlePhoneNumberStatusUpdated(event: unknown): Promise<void> {
 // Negative emojis (👎 ✖️) → NO / decline pending task
 
 const POSITIVE_REACTIONS = new Set(["thumbsup", "love", "ha", "emphasize", "like", "heart", "👍", "❤️", "😍", "🎉", "✅", "👏", "💙", "🙌"]);
-const NEGATIVE_REACTIONS = new Set(["thumbsdown", "dislike", "👎", "✖️", "❌"]);
 
 async function handleReactionAdded(event: any): Promise<void> {
   const phone    = event.data?.sender_handle?.handle as string | undefined;
@@ -3273,65 +3268,12 @@ async function handleReactionAdded(event: any): Promise<void> {
   if (session.optedOut) return;
 
   const isYes = POSITIVE_REACTIONS.has(reaction);
-  const isNo  = NEGATIVE_REACTIONS.has(reaction);
-  if (!isYes && !isNo) return;
-
-  // Check for a pending agent_task awaiting approval
-  const taskSnap = await db
-    .collection("agent_tasks")
-    .where("clientPhone", "==", phone)
-    .where("status",      "==", "awaiting_approval")
-    .orderBy("createdAt", "desc")
-    .limit(1)
-    .get();
-
-  if (!taskSnap.empty && isYes) {
-    const taskDoc = taskSnap.docs[0];
-    if (taskDoc.data().type === "booking_confirmation") {
-      const { executeBookings } = await import("../agents/bookingExecutor");
-      await executeBookings(taskDoc.id, phone).catch(err =>
-        console.error("handleReactionAdded: executeBookings failed:", err)
-      );
-    } else if (taskDoc.data().type !== "replacement_confirmation") {
-      // Generic approval for other task types. replacement_confirmation is
-      // the removed emergency-replacement picker (2026-09-16) — a stale one
-      // must never book anyone from a thumbs-up.
-      await handleTaskApproval(taskDoc, "1", session, chatId);
-    }
-    return;
-  }
-
-  if (!taskSnap.empty && isNo) {
-    const taskDoc = taskSnap.docs[0];
-    await taskDoc.ref.update({ status: "declined_by_reaction", declinedAt: now });
-    await sendViaInteractionAgent(phone, {
-      content:     "Got it — I'll leave it for now. Let me know if you'd like a different option.",
-      urgency:     "immediate",
-      sourceAgent: "reaction_handler",
-      canDrop:     false,
-    }).catch(() => {});
-    return;
-  }
-
-  // No pending task — check if there's a pending recurring schedule confirmation in session
-  if (isYes && (session as any).awaitingRecurringConfirmation) {
-    const setAt = (session as any).pendingRecurringConfirmationSetAt as string | undefined;
-    if (setAt && Date.now() - new Date(setAt).getTime() > 2 * 60 * 60 * 1000) {
-      // Confirmation window expired — clear state
-      await db.collection("agent_sessions").doc(phone).update({
-        awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
-        pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-      }).catch(() => {});
-      return;
-    }
-    await handleRecurringConfirm(phone, chatId, session);
-    return;
-  }
+  if (!isYes) return;
 
   // Praise loop: a positive tapback with nothing pending, landing shortly after
   // an in-shift update, is the family loving the update — relay it to the
   // caregiver (one-shot per update; see inShiftPraise.ts).
-  if (isYes) {
+  {
     const { maybeRelayPraiseFromReaction } = await import("./inShiftPraise");
     await maybeRelayPraiseFromReaction(phone, session as unknown as Record<string, unknown>, reaction);
   }

@@ -11,7 +11,6 @@ import { gateOptionalSend } from "../scheduled/engineGate";
 const db = admin.firestore();
 
 const SYSTEM_DIRECTIVE_PREFIXES = [
-  "retry_extend_schedule:",
   "health_escalation:",
   "qa_retry:",
   "caregiver_checkin:",
@@ -212,7 +211,7 @@ const REPLY_EXEMPT_TYPES = new Set([
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
   "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
   "health_escalation:", "issue_escalation:", "issue_escalation_final:",
-  "issue_followup:", "retry_extend_schedule:",
+  "issue_followup:",
 ];
 export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
   if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
@@ -508,14 +507,7 @@ export const runTriggerEngine = functions.pubsub
       if (!claimed) continue;
 
       try {
-        // Retry recurring schedule extension after 1h
-        if (trigger.message.startsWith("retry_extend_schedule:")) {
-          const scheduleId = trigger.message.slice("retry_extend_schedule:".length);
-          const { extendRecurringScheduleById } = await import("../scheduled/recurringScheduler");
-          await extendRecurringScheduleById(scheduleId).catch(err =>
-            console.error(`retry_extend_schedule failed for ${scheduleId}:`, err)
-          );
-        } else if (trigger.message.startsWith("health_escalation:")) {
+        if (trigger.message.startsWith("health_escalation:")) {
           const [, seniorId, alertDocId] = trigger.message.split(":");
           if (seniorId && alertDocId) {
             await escalateHealthAlert(seniorId, alertDocId, trigger.phone).catch(err =>

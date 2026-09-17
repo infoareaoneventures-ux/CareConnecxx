@@ -1116,7 +1116,7 @@ async function processInShiftUpdate(params: {
 export function otherStateFlagsActive(session: Record<string, unknown>, except: string): boolean {
   const FLAGS = [
     "awaitingCareNotes", "awaitingTaskAck", "awaitingLateMinutes", "awaitingIssueDescription",
-    "awaitingInShiftUpdate", "pendingShiftConfirmation", "pendingClientShiftConfirm", "pendingCaregiverReferral",
+    "awaitingInShiftUpdate", "pendingShiftConfirmation", "pendingCaregiverReferral",
   ];
   return FLAGS.some(f => f !== except && !!(session as any)[f]);
 }
@@ -1701,22 +1701,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         // fall through to normal routing
       } else {
         await handleShiftConfirmation(phone, chatId, text, session);
-        return "handled";
-      }
-    }
-
-    // Day-before CLIENT shift confirmation reply (CONFIRM / CANCEL / question)
-    if ((session as any).pendingClientShiftConfirm) {
-      const csExpiry = (session as any).stateExpiresAt as string | undefined;
-      if (csExpiry && new Date(csExpiry) < new Date()) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingClientShiftConfirm: admin.firestore.FieldValue.delete(),
-          stateExpiresAt:            admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-        // fall through to normal routing
-      } else {
-        const { handleClientShiftConfirm } = await import("../agents/clientShiftConfirmHandler");
-        await handleClientShiftConfirm(phone, chatId, text, session as unknown as Record<string, unknown>);
         return "handled";
       }
     }

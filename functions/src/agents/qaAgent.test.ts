@@ -1564,6 +1564,18 @@ describe("runQaAgent U4a wiring (source scan)", () => {
   const path = require("path") as typeof import("path");
   const src = fs.readFileSync(path.join(__dirname, "qaAgent.ts"), "utf8");
 
+  // 2026-09-17 (live-caught): start_visit_request_flow already texted the
+  // family and the model still appended "I've started that add-a-shift
+  // request…". Every self-sending flow start must be in the suppression set.
+  it("suppresses the model's trailing reply after EVERY self-sending flow start, not just booking/interview", () => {
+    for (const tool of ["start_booking_flow", "start_interview_flow", "start_replacement_flow", "start_reschedule_flow", "start_resend_booking_flow", "start_visit_request_flow", "start_cancel_flow"]) {
+      expect(src).toContain('"' + tool + '"');
+    }
+    expect(src).toContain("SELF_SENDING_FLOW_STARTS.has(block.name)");
+    // …and the grounding/handoff gate never grades the discarded draft.
+    expect(src).toContain("if (reply.trim() && !selfSendingFlowStartedThisTurn && shouldHandOffToHuman({");
+  });
+
   it("uses the typed detectAndStageFactChange + deterministic ack copy — the boolean corrector is gone", () => {
     expect(src).toContain("detectAndStageFactChange({ userId, text, phone })");
     expect(src).toContain("factChangeAckCopy(factChange)");

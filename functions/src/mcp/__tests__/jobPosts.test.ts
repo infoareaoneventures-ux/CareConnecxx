@@ -107,7 +107,10 @@ vi.mock("../../observability/auditLog", () => ({
 }));
 vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
-vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 
 const trySend = vi.fn().mockResolvedValue({ sent: true });
 vi.mock("../../utils/toolNotify", () => ({
@@ -156,6 +159,28 @@ describe("edit_job_post", () => {
     expect(postingsSet?.data.selectedDays).toEqual(["Mon", "Wed"]);
     expect(postingsSet?.data.description).toBeUndefined();
     expect(postingsSet?.data.daysOfWeek).toBeUndefined();
+  });
+
+  // 2026-09-16: the site's EditJobPostModal payload, field for field, with its rules.
+  it("accepts every field the site's edit modal writes, with its rules (flexible → rate 0, ongoing → endDate '')", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open", rate: 25, careTypes: ["Companionship"] });
+    const r = await handleToolCall("edit_job_post", {
+      jobId: JOB_ID, clientId: CLIENT, rateFlexible: true, jobFrequency: "part-time", ongoing: true, endDate: "2099-12-31",
+      careTypes: ["Personal Care", "Companionship"], petsInHome: true, smokingHousehold: false, caregiversNeeded: 2, recipientsCount: 1,
+    }) as any;
+    expect(r.success).toBe(true);
+    const upd = hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`)?.data;
+    expect(upd).toMatchObject({
+      rateFlexible: true, rate: 0, jobFrequency: "part-time", ongoing: true, endDate: "",
+      careTypes: ["Personal Care", "Companionship"], petsInHome: true, smokingHousehold: false, caregiversNeeded: 2, recipientsCount: 1,
+    });
+  });
+
+  it("refuses to empty the care types, like the modal", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open", careTypes: ["Companionship"] });
+    const r = await handleToolCall("edit_job_post", { jobId: JOB_ID, clientId: CLIENT, careTypes: [] }) as any;
+    expect(r._toolError).toBe(true);
+    expect(hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`)).toBeUndefined();
   });
 
   it("refuses to edit a job post that isn't open", async () => {
@@ -245,6 +270,75 @@ describe("list_client_jobs", () => {
     expect(r.success).toBe(true);
     expect(r.jobs[0]).toMatchObject({ daysOfWeek: ["Mon"], timeOfDay: ["morning"] });
     expect(r.jobs[0].schedule).toBeUndefined();
+  });
+
+  // 2026-09-16: everything the Posts-tab card shows, incl. "X of Y hired".
+  it("returns the card's fields — type, dates, location, care types, recipients, caregivers needed, hired count", async () => {
+    hoisted.collState.set("job_posts", [{
+      id: JOB_ID, clientId: CLIENT, status: "open", title: "Senior care in San Jose", jobFrequency: "part-time", rate: 23,
+      startDate: "2026-09-15", city: "San Jose", zipCode: "95130", daysOfWeek: ["Monday", "Tuesday"], timeOfDay: ["morning"],
+      careTypes: ["Personal Care"], recipientsCount: 1, caregiversNeeded: 1,
+    }]);
+    hoisted.collState.set("booking_requests", [{ id: "br1", jobId: JOB_ID, clientId: CLIENT, status: "accepted" }]);
+    hoisted.collState.set("job_applications", [{ id: "a1", jobId: JOB_ID, clientId: CLIENT, status: "pending" }]);
+    const r = await handleToolCall("list_client_jobs", { clientId: CLIENT, status: "open" }) as any;
+    expect(r.jobs[0]).toMatchObject({
+      title: "Senior care in San Jose", jobFrequency: "part-time", rate: 23, rateFlexible: false, startDate: "2026-09-15", startDayOfWeek: "Tuesday",
+      location: "San Jose, 95130", careTypes: ["Personal Care"], recipientsCount: 1, caregiversNeeded: 1, hiredCount: 1, pendingApplicantCount: 1, ongoing: true,
+    });
+  });
+
+  it("status 'closed' is the site's Closed pill — anything not open", async () => {
+    hoisted.collState.set("job_posts", [
+      { id: "j-open", clientId: CLIENT, status: "open", title: "Open one" },
+      { id: "j-cancelled", clientId: CLIENT, status: "cancelled", title: "Cancelled one" },
+      { id: "j-filled", clientId: CLIENT, status: "filled", title: "Filled one" },
+    ]);
+    const r = await handleToolCall("list_client_jobs", { clientId: CLIENT, status: "closed" }) as any;
+    expect(r.jobs.map((j: any) => j.id).sort()).toEqual(["j-cancelled", "j-filled"]);
+  });
+});
+
+// 2026-09-16: the View Applicants panel — pending only, with its lock labels.
+describe("list_job_applicants — the panel's pending list and lock labels", () => {
+  beforeEach(() => hoisted.reset());
+
+  it("lists pending applicants only by default, labelled Hired / Booking Sent / Interviewed / Interview Sent like the panel", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
+    hoisted.collState.set("job_applications", [
+      { id: "a-hired", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-hired", caregiverName: "Hired One", status: "pending" },
+      { id: "a-sent", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-sent", caregiverName: "Sent One", status: "pending" },
+      { id: "a-done", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-done", caregiverName: "Done One", status: "pending" },
+      { id: "a-ivreq", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-ivreq", caregiverName: "Requested One", status: "pending" },
+      { id: "a-free", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-free", caregiverName: "Free One", status: "pending" },
+      { id: "a-rej", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-rej", caregiverName: "Rejected One", status: "rejected" },
+    ]);
+    hoisted.collState.set("booking_requests", [
+      { id: "br-h", clientId: CLIENT, caregiverId: "cg-hired", jobId: JOB_ID, status: "accepted", createdAt: "2026-09-01T00:00:00.000Z" },
+      { id: "br-s", clientId: CLIENT, caregiverId: "cg-sent", jobId: JOB_ID, status: "pending", createdAt: "2026-09-01T00:00:00.000Z" },
+    ]);
+    hoisted.collState.set("video_interviews", [
+      { id: "iv-d", clientId: CLIENT, caregiverId: "cg-done", jobId: JOB_ID, status: "completed" },
+      { id: "iv-r", clientId: CLIENT, caregiverId: "cg-ivreq", status: "requested" },
+    ]);
+    const r = await handleToolCall("list_job_applicants", { jobId: JOB_ID, clientId: CLIENT }) as any;
+    expect(r.success).toBe(true);
+    const byId = Object.fromEntries(r.applicants.map((a: any) => [a.applicationId, a]));
+    expect(Object.keys(byId).sort()).toEqual(["a-done", "a-free", "a-hired", "a-ivreq", "a-sent"]);
+    expect(byId["a-hired"]).toMatchObject({ locked: true, label: "Hired" });
+    expect(byId["a-sent"]).toMatchObject({ locked: true, label: "Booking Sent" });
+    expect(byId["a-done"]).toMatchObject({ locked: true, label: "Interviewed" });
+    expect(byId["a-ivreq"]).toMatchObject({ locked: true, label: "Interview Sent" });
+    expect(byId["a-free"]).toMatchObject({ locked: false, label: null });
+  });
+
+  it("includeDecided:true also returns rejected applications", async () => {
+    hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
+    hoisted.collState.set("job_applications", [
+      { id: "a-rej", jobId: JOB_ID, clientId: CLIENT, caregiverId: "cg-rej", status: "rejected" },
+    ]);
+    const r = await handleToolCall("list_job_applicants", { jobId: JOB_ID, clientId: CLIENT, includeDecided: true }) as any;
+    expect(r.applicants.map((a: any) => a.applicationId)).toEqual(["a-rej"]);
   });
 });
 
@@ -349,5 +443,18 @@ describe("respond_to_job_application", () => {
     const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "reject", _confirmedActionId: "test" }) as any;
     expect(r.success).toBe(true);
     expect(hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`)).toBeUndefined();
+  });
+
+  // 2026-09-16: the site's Decline button writes rejected + declinedAt and
+  // sends the caregiver nothing — Evia now does exactly that.
+  it("on reject: writes the site's fields (rejected + declinedAt) and does not message the caregiver", async () => {
+    hoisted.docState.set("pending_actions/test", { toolName: "respond_to_job_application", status: "awaiting", expiresAt: "2999-01-01T00:00:00.000Z" });
+    hoisted.docState.set("job_applications/app_1", { clientId: CLIENT, jobId: JOB_ID, caregiverId: "cg1", status: "pending" });
+    hoisted.collState.set("agent_sessions", [{ id: "+15550001111", userId: "cg1", chatId: "chat-cg" }]);
+    const r = await handleToolCall("respond_to_job_application", { applicationId: "app_1", clientId: CLIENT, decision: "reject", _confirmedActionId: "test" }) as any;
+    expect(r.success).toBe(true);
+    expect(r.notification).toBeUndefined();
+    const upd = hoisted.updates.find(u => u.path === "job_applications/app_1")?.data;
+    expect(upd).toEqual({ status: "rejected", declinedAt: { __serverTimestamp: true } });
   });
 });

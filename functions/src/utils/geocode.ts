@@ -78,3 +78,25 @@ export async function geocodeCityOrZip(
 ): Promise<{ lat: number; lng: number } | null> {
   return (await geocodeZip(zipCode ?? "")) ?? (await geocodeCity(city ?? "", state));
 }
+
+// The website's utils/geocode.ts geocodeToLatLng, server-side: Nominatim on
+// the full street address, so a care location saved through Evia carries the
+// same lat/lng a location saved on the Care Plan page would (2026-09-17).
+export async function geocodeStreetAddress(
+  street?: string, city?: string, state?: string, zipCode?: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const query = [street, city, state, zipCode].filter(Boolean).join(", ");
+  if (!query) return null;
+  try {
+    const resp = await axios.get("https://nominatim.openstreetmap.org/search", {
+      params: { q: query, format: "json", limit: 1, countrycodes: "us" },
+      headers: { "Accept-Language": "en", "User-Agent": "Evia/1.0 (eviacares.com)" },
+      timeout: 6000,
+    });
+    const data = resp.data;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  } catch {
+    return null;
+  }
+}

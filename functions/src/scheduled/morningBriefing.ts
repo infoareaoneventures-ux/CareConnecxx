@@ -12,7 +12,7 @@ import { describeWhoIsWho } from "../agents/careRecipients";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { gateOptionalSend } from "./engineGate";
-import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
+import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -91,9 +91,8 @@ export const sendMorningBriefings = functions.pubsub
     const today = businessTodayStr();
 
     // Find all confirmed visits for today (either pipeline)
-    const docs = await queryVisitsMerged({
+    const docs = await queryVisits({
       dateOp: "==", dateValue: today,
-      apptStatuses: ["confirmed", "pending_caregiver_confirmation"],
       shiftStatuses: ["scheduled"],
     });
 
@@ -235,9 +234,8 @@ export async function checkCaregiverWorkloads(): Promise<void> {
   const weekStartStr = weekStart.toISOString().slice(0, 10);
 
   // Get all caregivers with confirmed/completed visits this week (either pipeline)
-  const visitDocs = await queryVisitsMerged({
+  const visitDocs = await queryVisits({
     dateOp: ">=", dateValue: weekStartStr, dateUpperBound: today,
-    apptStatuses: ["confirmed", "completed", "in-progress"],
     shiftStatuses: ["scheduled", "completed", "in-progress"],
   });
 

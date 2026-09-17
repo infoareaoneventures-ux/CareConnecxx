@@ -31,7 +31,7 @@ async function load90Days(seniorId: string, userId: string) {
   // appointments uses `isoDate` (full ISO string); shifts (2026-08-30 pipeline)
   // has no such field, only a plain `date` (YYYY-MM-DD) — both are compared
   // against the same date-only cutoff, so the two queries stay separate rather
-  // than going through queryVisitsMerged (which assumes one shared field name).
+  // than going through queryVisits (which assumes one shared field name).
   const [journalSnap, apptSnap, shiftSnap, seniorSnap] = await Promise.all([
     db.collection("care_journal")
       .where("seniorId", "==", seniorId)

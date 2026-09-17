@@ -116,7 +116,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Booking-pipeline redesign (2026-08-30): Evia's request_booking/manage_booking now write real booking_requests docs directly (bookingExecutor.ts, shiftOffer.ts, mcp/server.ts), matching the website's own shape (PostsPage.tsx handleSendBooking) instead of the old parallel appointments-only pipeline.",
+    notes: "Booking-pipeline redesign (2026-08-30, unified 2026-09-17): Evia's scripted booking flow writes the SAME booking_requests doc the website's Send Booking button does (agents/bookingSend.ts mirrors PostsPage.tsx handleSendBooking); manage_booking / cancelFlow write the site's cancel shapes. No agent_tasks staging, no shift offers.",
   },
   shift_offers: {
     path: "shift_offers",
@@ -222,7 +222,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: true,
     notes:
-      "Booking/replacement task records written server-side across matchingAgent, bookingExecutor, shiftOffer, triggers, etc. Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
+      "Task records written server-side (matchingAgent caregiver_interest, triggers, etc.; the booking_confirmation type was retired 2026-09-17). Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
   },
   agent_tasks_active: {
     path: "agent_tasks_active",

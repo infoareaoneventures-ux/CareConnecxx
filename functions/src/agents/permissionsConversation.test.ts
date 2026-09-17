@@ -29,7 +29,10 @@ const sendMessage = vi.fn(async (..._a: any[]) => ({ message_id: "m" }));
 vi.mock("../linq/client", () => ({ sendMessage: (...a: any[]) => sendMessage(...a) }));
 vi.mock("../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: { fallback: string }) => fallback) }));
 vi.mock("../config/appUrl", () => ({ getAppUrl: () => "https://app.test", appLink: (path: string) => `https://app.test${path}` }));
-vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
+vi.mock("./caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 const notifyNewCaregiverOfJobs = vi.fn(async (..._a: any[]) => {});
 vi.mock("../triggers/caregiverJobMatch", () => ({ notifyNewCaregiverOfJobs: (...a: any[]) => notifyNewCaregiverOfJobs(...a) }));
 

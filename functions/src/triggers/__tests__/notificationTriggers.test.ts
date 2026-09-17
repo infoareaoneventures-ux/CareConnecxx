@@ -351,14 +351,13 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       expect(sendViaInteractionAgent).not.toHaveBeenCalled();
     });
 
-    it("does NOT fire on a plain accept with no reschedule proposal involved", async () => {
-      const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", scheduledTime: "2026-09-10T17:00:00.000Z" };
+    it("a plain accept texts the FAMILY that the caregiver accepted (2026-09-17: every client-facing bell has a text) and never the caregiver", async () => {
+      const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
       const after  = { ...before, status: "accepted" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
-      // The existing "accepted → notify client" branch only ever writes an
-      // in-app notification (no text) — so no text firing at all confirms
-      // the new reschedule branch didn't misfire here.
-      expect(sendViaInteractionAgent).not.toHaveBeenCalled();
+      expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice accepted your interview request") }));
+      expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
+      // The reschedule branch must not misfire on a plain accept.
       expect(sendToPhone).not.toHaveBeenCalled();
     });
   });

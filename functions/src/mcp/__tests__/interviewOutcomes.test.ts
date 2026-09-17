@@ -54,7 +54,10 @@ vi.mock("firebase-admin", () => ({
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
-vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn().mockResolvedValue(undefined) }));
 
 import { handleToolCall } from "../server";
@@ -128,8 +131,8 @@ describe("submit_interview_feedback", () => {
   // 2026-09-13: "strong" no longer creates a hire_requests doc (that
   // collection was removed entirely — it never led to a real booking, and
   // its dormant Firestore trigger would have bypassed booking_requests/
-  // request_booking if ever activated). Only hire_decisions (a record, not
-  // a booking) is written; the actual booking is request_booking, matching
+  // the booking flow if ever activated). Only hire_decisions (a record, not
+  // a booking) is written; the actual booking is start_booking_flow, matching
   // the site's single pipeline. The caregiver is also NOT messaged at this
   // stage (confirmed against the site: its own "strong fit" step has no
   // caregiver-facing side effect at all — the caregiver only hears

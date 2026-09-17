@@ -11,7 +11,7 @@ import {
   LADDER_INTERVAL_MIN,
   type AwaitingInShiftUpdate,
 } from "./inShiftUpdatePolicy";
-import { queryVisitsMerged, visitSeniorName } from "../utils/visitQuery";
+import { queryVisits, visitSeniorName } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -133,8 +133,7 @@ export const sendInShiftUpdates = functions.pubsub
     const nowMs = Date.now();
     const nowMinutes = businessNowMinutes();
 
-    const docs = await queryVisitsMerged({
-      apptStatuses: ["in-progress"],
+    const docs = await queryVisits({
       shiftStatuses: ["in-progress"],
     });
 
@@ -162,7 +161,7 @@ export const sendInShiftUpdates = functions.pubsub
         const session = sessionSnap.exists ? (sessionSnap.data() as any) : null;
         if (session && (
           session.awaitingCareNotes || session.awaitingLateMinutes || session.awaitingIssueDescription ||
-          session.awaitingTaskAck || session.pendingShiftConfirmation || session.pendingClientShiftConfirm ||
+          session.awaitingTaskAck || session.pendingShiftConfirmation ||
           session.pendingCaregiverReferral
         )) {
           continue;
@@ -212,7 +211,7 @@ export const sendInShiftUpdates = functions.pubsub
           const hasOtherFlag = !!(session && (
             session.awaitingCareNotes || session.awaitingTaskAck || session.awaitingLateMinutes ||
             session.awaitingIssueDescription || session.pendingShiftConfirmation ||
-            session.pendingClientShiftConfirm || session.pendingCaregiverReferral
+            session.pendingCaregiverReferral
           ));
           await db.collection("agent_sessions").doc(cgPhone).update({
             awaitingInShiftUpdate: admin.firestore.FieldValue.delete(),

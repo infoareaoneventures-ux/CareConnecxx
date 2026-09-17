@@ -2143,7 +2143,10 @@ export const CaregiverBookingsPage: React.FC = () => {
             lifestylePreferences: booking.lifestylePreferences || [],
             rate: booking.rate ?? null,
             paymentMethod: booking.paymentMethod || null,
-            notes: booking.notes || '',
+            // The family's note on THIS request travels onto the visits it
+            // creates (falling back to the booking's general note) — it used
+            // to vanish the moment the request was accepted (2026-09-17).
+            notes: amendment.notes || booking.notes || '',
             careRecipients: booking.careRecipients || [],
             emergencyContact: booking.emergencyContact || null,
             schedule: { ...(booking.schedule || {}), dayShiftTimes: mergedDST },

@@ -36,7 +36,10 @@ vi.mock("firebase-admin", () => ({
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined), logHealthDataAccessed: vi.fn().mockResolvedValue(undefined), logBookingCreated: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
-vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 
 import { handleToolCall, isReadOnlyTool } from "../server";
 

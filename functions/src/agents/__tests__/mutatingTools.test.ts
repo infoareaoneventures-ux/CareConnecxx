@@ -8,7 +8,7 @@ import { isHighStakesMutation, HIGH_STAKES_MUTATIONS } from "../toolCapabilities
 describe("isHighStakesMutation (U3)", () => {
   it("flags the destructive/committing actions a false success would harm", () => {
     for (const tool of [
-      "request_booking",
+      "cancel_job_post",
       "request_instant_payout",
       "set_subscription_status",
       "remove_family_member",

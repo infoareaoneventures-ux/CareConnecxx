@@ -7,6 +7,7 @@ import { handleBookingFlowStep } from "../agents/bookingFlow";
 import { handleReplacementFlowStep } from "../agents/replacementFlow";
 import { handleRescheduleFlowStep } from "../agents/rescheduleFlow";
 import { handleVisitRequestFlowStep } from "../agents/visitRequestFlow";
+import { handleCancelFlowStep } from "../agents/cancelFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
@@ -252,6 +253,25 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
       await handleRescheduleFlowStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return "handled";
+  }
+
+  // ── Cancel flow — multi-step state machine (2026-09-17) ────────────────────
+  // The My Bookings page's cancel buttons step for step (what can be
+  // cancelled → which one → the site's confirm wording → YES → the site's
+  // write). See cancelFlow.ts.
+  if ((session as any).cancelFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["cancelFlowStep", "cancelFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your cancel request timed out — nothing was cancelled. Text me anytime to pick it back up!");
+      return "handled";
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleCancelFlowStep(phone, chatId, text, session);
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }

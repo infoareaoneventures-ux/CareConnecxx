@@ -7,19 +7,6 @@ const anyObjectOutput = z.object({}).passthrough();
 const stringValue = z.string().min(1);
 
 const writeActionConfigs = {
-  request_booking: {
-    role: "client",
-    inputSchema: z.object({
-      clientId: stringValue,
-      caregiverId: stringValue,
-      phone: stringValue,
-    }).passthrough(),
-    auditType: "booking_request_created",
-    targetCollection: "agent_tasks",
-    idempotencyKey: (input: Record<string, unknown>) =>
-      `request_booking:${input.clientId}:${input.caregiverId}:${stableInput(input.dates)}:${input.startTime}:${input.endTime}`,
-    failClosed: true,
-  },
   trigger_emergency_alert: {
     role: "client",
     inputSchema: z.object({ clientId: stringValue }).passthrough(),
@@ -301,13 +288,4 @@ function targetDocIdFromResult(output: unknown): string | undefined {
     if (typeof value === "string" && value) return value;
   }
   return undefined;
-}
-
-function stableInput(value: unknown): string {
-  if (value == null) return "";
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }

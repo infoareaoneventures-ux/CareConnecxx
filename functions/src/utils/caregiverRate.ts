@@ -25,7 +25,7 @@ export type CaregiverRateResult =
 // source of truth every booking-creating call site must use. Extracted
 // 2026-09-13 from mcp/server.ts's request_booking path (R9, 2026-07-17) after
 // finding two OTHER booking call sites (routeIntent.ts's rebook flow,
-// taskApprovalHandler.ts) still carrying the exact hardcoded-$20-fallback
+// the since-retired taskApprovalHandler.ts) still carrying the exact hardcoded-$20-fallback
 // pattern R9 was written to kill — they just never got updated to the fix
 // applied here. When NO hourlyRate is on file this returns a structured
 // failure instead of ever guessing a number: a fabricated rate here becomes

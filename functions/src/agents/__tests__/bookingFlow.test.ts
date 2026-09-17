@@ -83,12 +83,8 @@ const messagesCreate = vi.fn();
 vi.mock("../../utils/claudeClient", () => ({
   getSharedClient: () => ({ messages: { create: (...a: unknown[]) => messagesCreate(...a) } }),
 }));
-const createBookingTask = vi.fn(async (_params: any) => "task-1");
-const executeBookings   = vi.fn(async (_taskId: string, _phone: string) => {});
-vi.mock("../bookingExecutor", () => ({
-  createBookingTask: (params: unknown) => createBookingTask(params),
-  executeBookings:   (taskId: string, phone: string) => executeBookings(taskId, phone),
-}));
+const sendBookingRequest = vi.fn(async (_input: any, _opts: any): Promise<any> => ({ ok: true, bookingRequestId: "br-new" }));
+vi.mock("../bookingSend", () => ({ sendBookingRequest: (input: unknown, opts: unknown) => sendBookingRequest(input, opts) }));
 
 import { startBookingFlow, startResendBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
 
@@ -125,10 +121,8 @@ beforeEach(() => {
   hoisted.reset();
   sendMessage.mockClear();
   messagesCreate.mockReset();
-  createBookingTask.mockClear();
-  createBookingTask.mockResolvedValue("task-1");
-  executeBookings.mockClear();
-  executeBookings.mockResolvedValue(undefined);
+  sendBookingRequest.mockClear();
+  sendBookingRequest.mockResolvedValue({ ok: true, bookingRequestId: "br-new" });
   seedCaregiver();
 });
 
@@ -792,8 +786,7 @@ describe("resend — startResendBookingFlow / bk_ask_resend / commit", () => {
     };
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
     await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
-    expect(createBookingTask).not.toHaveBeenCalled();
-    expect(executeBookings).not.toHaveBeenCalled();
+    expect(sendBookingRequest).not.toHaveBeenCalled();
     const doc = hoisted.docState.get("booking_requests/br-cancelled");
     expect(doc).toMatchObject({
       status: "pending", isResend: true, rate: 33, notes: "please come in through the side door",
@@ -828,45 +821,37 @@ describe("bk_confirm", () => {
     careLocation: "1 Elm St, Springfield, CA, 90000",
   };
 
-  it("YES commits via createBookingTask, then actually executes it — not just stages it", async () => {
+  it("YES sends it the way the site's Send Booking button does — one site-shaped booking_requests write, no agent task, no shift offer", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     modelReplies(JSON.stringify({ action: "confirm" }));
 
     await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
-    expect(createBookingTask).toHaveBeenCalledTimes(1);
-    const call = createBookingTask.mock.calls[0][0];
-    expect(call.caregiverId).toBe(CG_ID);
-    expect(call.hourlyRate).toBe(26);
-    // Array-wrapped per day (2026-09-14, live-caught) — matches the site's
-    // own shape; a bare {start,end} object silently generated zero real
-    // shifts via shiftGenerator.ts's onBookingAccepted trigger.
-    // Keys normalized to the site's own 3-letter abbreviation (2026-09-14,
-    // live-caught same session) — data.days/dayTimes are kept as full
-    // weekday names internally (for a natural-reading SMS recap), but the
-    // site's dayShiftTimes convention (and both dashboards' summary-line
-    // rendering) keys by "Tue" not "Tuesday" — a full-name key rendered a
-    // blank weekly-schedule line on both the caregiver's and client's
-    // dashboards for every Evia-originated recurring booking.
-    expect(call.schedule.dayShiftTimes).toEqual({
-      Tue: [{ start: "09:00", end: "17:00" }],
-      Thu: [{ start: "09:00", end: "17:00" }],
+    expect(sendBookingRequest).toHaveBeenCalledTimes(1);
+    const [input, opts] = sendBookingRequest.mock.calls[0];
+    expect(opts).toEqual({ source: "bookingFlow" });
+    expect(input).toMatchObject({
+      clientId: UID, caregiverId: CG_ID, caregiverName: "Basra Yousuf",
+      rate: 26, address: CONFIRM_DATA.careLocation, notes: null, jobId: null, interviewId: null,
+      careNeeds: [], careRecipients: [], lifestylePreferences: [], emergencyContact: null,
+      // Array-wrapped per day, keyed by the site's own 3-letter abbreviation
+      // (2026-09-14, live-caught twice) — a bare {start,end} object or a
+      // full weekday-name key rendered blank schedules on both dashboards.
+      schedule: {
+        days: ["Tue", "Thu"], startDate: "2026-09-15", endDate: null, ongoing: true,
+        dayShiftTimes: { Tue: [{ start: "09:00", end: "17:00" }], Thu: [{ start: "09:00", end: "17:00" }] },
+      },
     });
-    expect(call.schedule.ongoing).toBe(true);
-    expect(call.careLocation).toBe(CONFIRM_DATA.careLocation);
-
-    // 2026-09-13 (live-caught): createBookingTask alone only stages an
-    // agent_tasks doc — the real booking_requests write, the caregiver's
-    // shift offer, and the family's "request sent" confirmation all happen
-    // inside executeBookings. Evia was telling the family "Sent to Basra
-    // Yousuf" without this ever running, while the site still showed "Send
-    // Booking" available and the caregiver was never notified.
-    expect(executeBookings).toHaveBeenCalledTimes(1);
-    expect(executeBookings).toHaveBeenCalledWith("task-1", PHONE);
 
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBeUndefined();
     expect(stored.bookingFlowData).toBeUndefined();
+
+    // Honest wording: the caregiver hasn't accepted — same as the site's own
+    // pending state. The caregiver's notification is onBookingRequestWrite's.
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Sent — Basra Yousuf has your booking request");
+    expect(sent).toContain("Nothing is booked until they accept");
   });
 
   // 2026-09-14 (live-caught, twice in one session): a bare "yes" against this
@@ -878,48 +863,57 @@ describe("bk_confirm", () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     // No modelReplies queued at all — if the code tried to call the model
     // for isBackOutRequest or the classify prompt, messagesCreate would
-    // reject/resolve empty and createBookingTask would never fire.
+    // reject/resolve empty and sendBookingRequest would never fire.
 
     await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
     expect(messagesCreate).not.toHaveBeenCalled();
-    expect(createBookingTask).toHaveBeenCalledTimes(1);
-    expect(executeBookings).toHaveBeenCalledTimes(1);
+    expect(sendBookingRequest).toHaveBeenCalledTimes(1);
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBeUndefined();
   });
 
-  it("never sends its own success message — executeBookings owns the family-facing confirmation", async () => {
+  it("the site's duplicate guard (request already pending) is reported honestly — nothing sent, flow cleared", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
-    modelReplies(JSON.stringify({ action: "confirm" }));
+    sendBookingRequest.mockResolvedValueOnce({ ok: false, reason: "already_pending", bookingRequestId: "br-x" });
 
-    await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+    await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
-    // executeBookings is mocked to a no-op here, so if bookingFlow.ts sent
-    // its own "Sent to..." message this call would be the giveaway — a
-    // second, redundant confirmation on top of whatever executeBookings
-    // itself sends in production.
-    expect(sendMessage).not.toHaveBeenCalled();
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("already have a booking request pending with Basra Yousuf");
+    expect(sent).not.toContain("Sent —");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBeUndefined();
   });
 
-  it("an execution failure still reaches the family as an honest apology, not a false success", async () => {
+  it("a caregiver whose background check is still in review gets nothing sent, and the family is told so", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    sendBookingRequest.mockResolvedValueOnce({ ok: false, reason: "caregiver_not_bookable", daysInReview: 3 });
+
+    await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("background check is still in progress (3 days in review)");
+    expect(sent).toContain("nothing was sent");
+  });
+
+  it("a write failure still reaches the family as an honest apology, not a false success", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     modelReplies(JSON.stringify({ action: "confirm" }));
-    executeBookings.mockRejectedValueOnce(new Error("booking_requests write failed"));
+    sendBookingRequest.mockRejectedValueOnce(new Error("booking_requests write failed"));
 
     await handleBookingFlowStep(PHONE, CHAT, "yes send it", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
     expect(String(sendMessage.mock.calls.at(-1)![1])).toMatch(/problem|wrong|sorry/i);
-    expect(String(sendMessage.mock.calls.at(-1)![1])).not.toContain("Sent to");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).not.toContain("Sent —");
   });
 
-  it("NO cancels without ever calling createBookingTask", async () => {
+  it("NO cancels without ever sending the booking", async () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
     modelReplies(JSON.stringify({ action: "cancel" }));
 
     await handleBookingFlowStep(PHONE, CHAT, "actually never mind", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
-    expect(createBookingTask).not.toHaveBeenCalled();
+    expect(sendBookingRequest).not.toHaveBeenCalled();
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBeUndefined();
   });
@@ -943,7 +937,7 @@ describe("bk_confirm", () => {
 
     await handleBookingFlowStep(PHONE, CHAT, "actually make it $30/hr", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
 
-    expect(createBookingTask).not.toHaveBeenCalled();
+    expect(sendBookingRequest).not.toHaveBeenCalled();
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowData.hourlyRate).toBe(30);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
@@ -959,6 +953,34 @@ describe("bk_confirm", () => {
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_ask_rate");
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("agreed hourly rate");
+  });
+
+  // 2026-09-17 (live-caught on a resend): after "change the rate" → "4", the
+  // flow marched on to days/times/… instead of showing the updated recap.
+  it("after a rate edit from the recap, the new rate lands back on the recap — not the days question", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA });
+    modelReplies(JSON.stringify({ action: "edit_rate", newRate: null }));
+    await handleBookingFlowStep(PHONE, CHAT, "can we change the rate", session({ bookingFlowStep: "bk_confirm", bookingFlowData: CONFIRM_DATA }));
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_rate");
+    expect(stored.bookingFlowData.editingFromConfirm).toBe(true);
+
+    modelReplies("NO", "4"); // question check, then the rate (the back-out check runs through the unmocked OpenAI path here)
+    await handleBookingFlowStep(PHONE, CHAT, "4", session({ bookingFlowStep: "bk_ask_rate" }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.hourlyRate).toBe(4);
+    expect(stored.bookingFlowData.editingFromConfirm).toBe(false);
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Agreed rate: $4/hr");
+    expect(sent).not.toContain("What days of the week");
+  });
+
+  it("a normal first pass through the rate question still moves on to the days question", async () => {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_rate", bookingFlowData: { caregiverId: CG_ID, caregiverName: "Basra Yousuf" } });
+    modelReplies("NO", "26");
+    await handleBookingFlowStep(PHONE, CHAT, "26", session({ bookingFlowStep: "bk_ask_rate" }));
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBe("bk_ask_days");
   });
 
   it("an edit_schedule request sends the flow back to the days question", async () => {

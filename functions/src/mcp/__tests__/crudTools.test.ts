@@ -84,8 +84,9 @@ vi.mock("../../memory/preferences", () => ({
   getPreferences: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
 
 vi.mock("../../utils/toolNotify", () => ({
@@ -184,6 +185,36 @@ describe("missing CRUD tools", () => {
     });
   });
 
+  // The Interviews tab's Resend rows as a read (2026-09-17, live-caught: the
+  // agent inferred "nothing to resend" from unrelated tools).
+  describe("get_resendable_booking_requests", () => {
+    it("requires clientId", async () => {
+      const r = await handleToolCall("get_resendable_booking_requests", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("returns the latest declined/cancelled request per caregiver+job, labelled like the site's rows", async () => {
+      hoisted.collState.set("booking_requests", [
+        { id: "br-c", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", interviewId: "iv-a", status: "cancelled", createdAt: "2026-09-10T00:00:00.000Z" },
+        { id: "br-p", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", jobId: "job-1", status: "pending", createdAt: "2026-09-11T00:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_resendable_booking_requests", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(1);
+      expect(r.requests[0]).toMatchObject({ bookingRequestId: "br-c", caregiverName: "Basra Yousuf", statusLabel: "Visit cancelled" });
+      expect(r.instruction).toContain("start_resend_booking_flow");
+    });
+
+    it("says plainly when nothing is resendable", async () => {
+      hoisted.collState.set("booking_requests", [
+        { id: "br-p", clientId: "c1", caregiverId: "cg1", jobId: "job-1", status: "pending", createdAt: "2026-09-11T00:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_resendable_booking_requests", { clientId: "c1" }) as any;
+      expect(r.count).toBe(0);
+      expect(r.instruction).toContain("Nothing is resendable");
+    });
+  });
+
   describe("get_pending_booking_requests", () => {
     it("requires clientId or caregiverId", async () => {
       const r = await handleToolCall("get_pending_booking_requests", {}) as any;
@@ -277,6 +308,28 @@ describe("missing CRUD tools", () => {
       const d = await handleToolCall("get_calendar", { clientId: "c1" }) as any;
       const from = new Date(`${d.fromDate}T12:00:00Z`), to = new Date(`${d.toDate}T12:00:00Z`);
       expect(Math.round((to.getTime() - from.getTime()) / 86400000)).toBe(6);
+    });
+
+    it("each visit and interview carries the page's click-through popover fields and buttons", async () => {
+      hoisted.collState.set("shifts", [
+        { id: "s1", clientId: "c1", caregiverName: "Basra Yousuf", status: "scheduled", date: "2099-01-05", startTime: "20:00", endTime: "21:30", address: "4746 campbell ave", notes: "bring keys",
+          careRecipients: [{ name: "Samira M" }], careNeeds: ["Meal Preparation", "Personal Care"], tasksCompleted: [] },
+        { id: "s2", clientId: "c1", caregiverName: "Basra Yousuf", status: "completed", date: "2099-01-06", startTime: "11:00", endTime: "13:00", startedAt: "2099-01-06T19:02:00.000Z", completedAt: "2099-01-06T21:00:00.000Z", completionNotes: "all good", careNeeds: ["Meal Preparation"], tasksCompleted: ["Meal Preparation"] },
+        { id: "s3", clientId: "c1", caregiverName: "Basra Yousuf", status: "cancelled", date: "2099-01-07", startTime: "11:00", endTime: "13:00" },
+      ]);
+      hoisted.collState.set("video_interviews", [
+        { id: "iv1", clientId: "c1", caregiverName: "Basra Yousuf", status: "requested", scheduledTime: "2099-01-04T17:00:00.000Z", callUrl: "https://meet.google.com/abc-defg-hij", jobId: "job1" },
+        { id: "iv2", clientId: "c1", caregiverName: "Basra Yousuf", status: "completed", scheduledTime: "2099-01-05T17:00:00.000Z", interviewType: "phone" },
+      ]);
+      hoisted.docState.set("job_posts/job1", { title: "Senior care in San Jose", city: "San Jose", state: "CA" });
+      const r = await handleToolCall("get_calendar", { clientId: "c1", fromDate: "2099-01-03", toDate: "2099-01-09" }) as any;
+      const byId = Object.fromEntries(r.visits.map((v: any) => [v.id, v]));
+      expect(byId.s1).toMatchObject({ address: "4746 campbell ave", notes: "bring keys", careRecipients: ["Samira M"], careNeeds: ["Meal Preparation", "Personal Care"], tasksCompleted: [], actions: ["message", "cancel"] });
+      expect(byId.s2).toMatchObject({ startedAt: "2099-01-06T19:02:00.000Z", completionNotes: "all good", actions: ["message"] });
+      expect(byId.s3.actions).toEqual([]);
+      const iv = Object.fromEntries(r.interviews.map((i: any) => [i.id, i]));
+      expect(iv.iv1).toMatchObject({ statusLabel: "Pending", typeLabel: "Video Call", jobTitle: "Senior care in San Jose", jobLocation: "San Jose, CA", callUrl: "https://meet.google.com/abc-defg-hij", actions: ["join_video_call", "message", "cancel"] });
+      expect(iv.iv2).toMatchObject({ statusLabel: "Completed", typeLabel: "Phone Call", callUrl: null, actions: ["message"] });
     });
 
     it("refuses a backwards range", async () => {

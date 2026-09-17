@@ -133,7 +133,6 @@ export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDig
 export { sendMonthlyHealthTrends, triggerHealthTrendsNow } from './scheduled/healthTrends';
 
 // Linq proactive — no-visit check-in (daily 9am ET)
-export { runNoVisitCheck } from './scheduled/noVisitCheck';
 
 // Sprint 4 — proactive reflection (hourly, drafts only, admin-review-first)
 export { runProactiveReflection, triggerProactiveReflectionNow } from './scheduled/proactiveReflection';
@@ -176,7 +175,6 @@ export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
 export { memoryOperationWorker } from './scheduled/memoryOperationWorker';
 export { wowMomentsDaily } from './scheduled/wowMomentsJob';
 export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
-export { extendRecurringSchedules } from './scheduled/recurringScheduler';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 export { sendInShiftUpdates } from './scheduled/inShiftUpdate';

@@ -7,8 +7,8 @@ import {
 /**
  * Booking-path eligibility contract.
  *
- * bookingExecutor.ts itself is owned by another workstream; these tests pin
- * the isCaregiverBookable semantics that every booking path must enforce:
+ * These tests pin the isCaregiverBookable semantics that every booking path
+ * (bookingSend.ts, replacements, swaps, matching) must enforce:
  * a caregiver may only be booked when onboarding is complete AND verification
  * is approved.
  */

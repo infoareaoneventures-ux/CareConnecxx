@@ -64,7 +64,11 @@ export async function listReschedulableVisits(clientId: string, limit = 10): Pro
     .limit(limit * 2)
     .get();
   return snap.docs
-    .filter((d) => d.data().status === "scheduled" && !isShiftOverdue(d.data()))
+    // The page shows the Reschedule button only when it's the family's turn:
+    // status scheduled, not Overdue, and no proposal of their OWN still out
+    // (rescheduledBy === 'client'). A caregiver's proposal still qualifies
+    // ("propose a different time").
+    .filter((d) => d.data().status === "scheduled" && !isShiftOverdue(d.data()) && !(d.data().reschedulePendingDate && d.data().rescheduledBy === "client"))
     .map((d) => {
       const s = d.data();
       return {
@@ -103,6 +107,12 @@ export async function loadReschedulableShift(clientId: string, shiftId: string):
   }
   if (isShiftOverdue(shift)) {
     return { ok: false, code: "INVALID_INPUT", message: "This visit has already passed (it shows as Overdue) and can't be rescheduled" };
+  }
+  if (shift.reschedulePendingDate && shift.rescheduledBy === "client") {
+    return {
+      ok: false, code: "INVALID_INPUT",
+      message: `You already proposed moving this visit and it's waiting on ${String(shift.caregiverName ?? "your caregiver")} to confirm — withdraw that proposal first if you want a different time`,
+    };
   }
   return { ok: true, shift, ref };
 }
@@ -204,10 +214,97 @@ export async function proposeShiftReschedule(args: {
     reschedulePendingEndTime: args.endTime,
     reschedulePendingAt: args.nowIso,
     rescheduledBy: "client",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   logAudit({ eventType: "shift_reschedule_proposed", userId: args.clientId, data: { source: args.source, shiftId: args.shiftId } }).catch(() => {});
   return {
     ok: true, shiftId: args.shiftId, date: args.date, startTime: args.startTime, endTime: args.endTime,
     caregiverName: String(args.shift.caregiverName ?? "your caregiver"),
   };
+}
+
+// ── The page's status pill (utils/shiftUtils.ts shiftDisplayStatus) ─────────
+export function shiftDisplayStatus(v: { status?: unknown; date?: unknown; startTime?: unknown; endTime?: unknown }): string {
+  if (v.status !== "scheduled") return String(v.status ?? "");
+  return isShiftOverdue(v) ? "overdue" : "scheduled";
+}
+
+// ── Accept / decline / withdraw a pending proposal ───────────────────────────
+// The page's handleAcceptReschedule / handleClearReschedule, same shift doc
+// throughout. Accept is the moment the real date/startTime/endTime change;
+// it first checks the family's OWN other visits with this caregiver on the
+// new date (fetchOwnShiftsForDate + rangeConflicts) exactly as the page does.
+// onShiftStatusChanged (notificationTriggers.ts) texts the caregiver on both.
+
+export type RescheduleDecisionResult =
+  | { ok: true; shiftId: string; caregiverName: string; date?: string; startTime?: string; endTime?: string }
+  | { ok: false; code: "CONFLICT"; conflict: OwnShiftConflict }
+  | { ok: false; code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT"; message: string };
+
+async function loadOwnShift(clientId: string, shiftId: string) {
+  const ref = db.collection("shifts").doc(shiftId);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false as const, code: "NOT_FOUND" as const, message: "Visit not found" };
+  const shift = snap.data()!;
+  if (shift.clientId !== clientId) return { ok: false as const, code: "PERMISSION_DENIED" as const, message: "Visit does not belong to this client" };
+  if (!shift.reschedulePendingDate) return { ok: false as const, code: "INVALID_INPUT" as const, message: "There's no pending reschedule proposal on this visit" };
+  return { ok: true as const, shift, ref };
+}
+
+export async function acceptRescheduleProposal(clientId: string, shiftId: string, nowIso: string, source: string): Promise<RescheduleDecisionResult> {
+  const loaded = await loadOwnShift(clientId, shiftId);
+  if (!loaded.ok) return loaded;
+  const { shift, ref } = loaded;
+  if (shift.rescheduledBy !== "caregiver") {
+    return { ok: false, code: "INVALID_INPUT", message: "This proposal is your own — nothing to accept (withdraw it instead)" };
+  }
+  const pendingStart = String(shift.reschedulePendingStartTime ?? "");
+  const pendingEnd = String(shift.reschedulePendingEndTime ?? pendingStart);
+  const conflict = await findOwnShiftConflict({
+    clientId, caregiverId: String(shift.caregiverId ?? ""),
+    date: String(shift.reschedulePendingDate), startTime: pendingStart, endTime: pendingEnd,
+    excludeShiftId: shiftId,
+  });
+  if (conflict) return { ok: false, code: "CONFLICT", conflict };
+  await ref.update({
+    date: shift.reschedulePendingDate,
+    startTime: shift.reschedulePendingStartTime,
+    endTime: shift.reschedulePendingEndTime,
+    reschedulePendingDate: admin.firestore.FieldValue.delete(),
+    reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+    reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+    reschedulePendingAt: admin.firestore.FieldValue.delete(),
+    rescheduledBy: admin.firestore.FieldValue.delete(),
+    rescheduleHistory: admin.firestore.FieldValue.arrayUnion({
+      from: { date: shift.date, startTime: shift.startTime, endTime: shift.endTime ?? null },
+      to:   { date: shift.reschedulePendingDate, startTime: shift.reschedulePendingStartTime, endTime: shift.reschedulePendingEndTime ?? null },
+      proposedBy: shift.rescheduledBy,
+      proposedAt: shift.reschedulePendingAt ?? null,
+      acceptedBy: "client",
+      acceptedAt: nowIso,
+    }),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  logAudit({ eventType: "shift_reschedule_accepted", userId: clientId, data: { source, shiftId } }).catch(() => {});
+  return {
+    ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your caregiver"),
+    date: String(shift.reschedulePendingDate), startTime: pendingStart, endTime: String(shift.reschedulePendingEndTime ?? ""),
+  };
+}
+
+/** Decline the caregiver's proposal, or withdraw your own — clears the pending fields only. */
+export async function clearRescheduleProposal(clientId: string, shiftId: string, source: string): Promise<RescheduleDecisionResult> {
+  const loaded = await loadOwnShift(clientId, shiftId);
+  if (!loaded.ok) return loaded;
+  const { shift, ref } = loaded;
+  await ref.update({
+    reschedulePendingDate: admin.firestore.FieldValue.delete(),
+    reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+    reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+    reschedulePendingAt: admin.firestore.FieldValue.delete(),
+    rescheduledBy: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  logAudit({ eventType: "shift_reschedule_cleared", userId: clientId, data: { source, shiftId } }).catch(() => {});
+  return { ok: true, shiftId, caregiverName: String(shift.caregiverName ?? "your caregiver") };
 }

@@ -62,8 +62,10 @@ vi.mock("../observability/consentAudit", () => ({
 }));
 vi.mock("../utils/outboundLedger", () => ({ claimOutboundSend: vi.fn(async () => true) }));
 vi.mock("../utils/openaiClient", () => ({ quickComplete: vi.fn(async () => "SEND") }));
-vi.mock("./matchingAgent", () => ({ runMatchingForClient: vi.fn(async () => {}) }));
-vi.mock("./bookingExecutor", () => ({ executeBookings: vi.fn(async () => {}) }));
+vi.mock("./caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 vi.mock("./intentClassifier", () => ({ classifyIntent: vi.fn(async () => "QUESTION") }));
 
 import { sendViaInteractionAgent } from "./caraAgent";

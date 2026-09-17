@@ -68,8 +68,8 @@ const messagesCreate = vi.fn();
 vi.mock("../../utils/claudeClient", () => ({
   getSharedClient: () => ({ messages: { create: (...a: unknown[]) => messagesCreate(...a) } }),
 }));
-const createBookingTask = vi.fn(async (_params: any) => "task-1");
-vi.mock("../bookingExecutor", () => ({ createBookingTask: (params: unknown) => createBookingTask(params) }));
+const sendBookingRequest = vi.fn(async (_input: any, _opts: any): Promise<any> => ({ ok: true, bookingRequestId: "br-new" }));
+vi.mock("../bookingSend", () => ({ sendBookingRequest: (input: unknown, opts: unknown) => sendBookingRequest(input, opts) }));
 
 // isBackOutRequest (stepHandler.ts) routes through utils/parseWithClaude ->
 // utils/openaiClient's quickComplete — a DIFFERENT path than this flow's own
@@ -98,8 +98,8 @@ beforeEach(() => {
   messagesCreate.mockReset();
   quickCompleteMock.mockReset();
   quickCompleteMock.mockResolvedValue("NO");
-  createBookingTask.mockClear();
-  createBookingTask.mockResolvedValue("task-1");
+  sendBookingRequest.mockClear();
+  sendBookingRequest.mockResolvedValue({ ok: true, bookingRequestId: "br-new" });
   seedCaregiver();
 });
 
@@ -117,7 +117,7 @@ describe("bookingFlow — back-off at every step (2026-09-13)", () => {
       const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
       expect(stored.bookingFlowStep).toBeUndefined();
       expect(stored.bookingFlowData).toBeUndefined();
-      expect(createBookingTask).not.toHaveBeenCalled();
+      expect(sendBookingRequest).not.toHaveBeenCalled();
       expect(messagesCreate).not.toHaveBeenCalled();
       expect(String(sendMessage.mock.calls.at(-1)![1])).toMatch(/haven'?t sent anything/i);
     });

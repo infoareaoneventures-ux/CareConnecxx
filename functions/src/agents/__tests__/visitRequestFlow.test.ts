@@ -228,10 +228,38 @@ describe("vr_ask_start / vr_ask_end / vr_ask_notes", () => {
     const recap = lastSent();
     expect(recap).toContain("Caregiver: Basra Yousuf");
     expect(recap).toContain("Booking: Senior care in San Jose");
-    expect(recap).toContain("Days & times: Thursday 9:00 AM–1:00 PM");
+    expect(recap).toContain("Days & times: Thursday 9:00 AM–1:00 PM (4h)");
     expect(recap).toContain("Starting: Tuesday, September 22, 2026 (ongoing)");
     expect(recap).toContain("Notes: None");
     expect(recap).toContain("Reply YES to send it");
+  });
+});
+
+describe("vr_ask_notes — the modal's free-text Notes box", () => {
+  function atNotes() {
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, visitRequestFlowStep: "vr_ask_notes", visitRequestFlowData: { ...READY, notes: undefined } });
+  }
+  // 2026-09-17 (live-caught): "this adding a shift" was dropped as a skip.
+  it("a real sentence is stored verbatim as the note — only the back-out check runs, no skip/keep judgement", async () => {
+    seed(); atNotes();
+    modelReplies("NO"); // isBackOutRequest
+    await handleVisitRequestFlowStep(PHONE, CHAT, "this is adding a shift", session({ visitRequestFlowStep: "vr_ask_notes" }));
+    expect(messagesCreate).toHaveBeenCalledTimes(1);
+    expect(sess().visitRequestFlowData.notes).toBe("this is adding a shift");
+    expect(lastSent()).toContain('Notes: "this is adding a shift"');
+  });
+
+  it("a short reply is only a skip when the model says it is purely a decline", async () => {
+    seed(); atNotes();
+    modelReplies("NO", "DECLINE"); // back-out check, then the decline judgement
+    await handleVisitRequestFlowStep(PHONE, CHAT, "nothing thanks", session({ visitRequestFlowStep: "vr_ask_notes" }));
+    expect(sess().visitRequestFlowData.notes).toBeUndefined();
+    expect(lastSent()).toContain("Notes: None");
+
+    atNotes();
+    modelReplies("NO", "NOTE");
+    await handleVisitRequestFlowStep(PHONE, CHAT, "side door", session({ visitRequestFlowStep: "vr_ask_notes" }));
+    expect(sess().visitRequestFlowData.notes).toBe("side door");
   });
 });
 
@@ -251,7 +279,7 @@ describe("vr_confirm", () => {
     });
     expect(sess().visitRequestFlowStep).toBeUndefined();
     const sent = lastSent();
-    expect(sent).toContain("Sent — I asked Basra Yousuf to add Thursday 9:00 AM–1:00 PM starting Tuesday, September 22, 2026");
+    expect(sent).toContain("Sent — I asked Basra Yousuf to add Thursday 9:00 AM–1:00 PM (4h) starting Tuesday, September 22, 2026");
     expect(sent).toContain("Nothing is added to the calendar until they accept");
   });
 

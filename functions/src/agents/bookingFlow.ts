@@ -20,11 +20,18 @@
 // site) — only Rate & Payment, Schedule, and (when ambiguous) Care Location
 // are asked, in that order, then the final recap lists every section.
 //
-// Deliberately requires a real starting schedule (days/times) — unlike the
-// site, which can send with schedule totally unset ("Ongoing"), Evia's
-// caregiver-notification path (bookingExecutor.ts's executeBookings) crashes
-// on an empty appointments array. Fully-open bookings are a known,
-// out-of-scope gap for a later pass.
+// Deliberately requires a real starting schedule (days/times) — the site can
+// send with schedule totally unset ("Ongoing"), but over SMS a booking with
+// no days/times has nothing for the family to confirm. Fully-open bookings
+// are a known, out-of-scope gap for a later pass.
+//
+// 2026-09-17: the YES commit is the website's own Send Booking write
+// (bookingSend.ts) — one booking_requests doc in the site's shape, plus the
+// same hire_decisions / job_applications side effects. The former Evia-only
+// pipeline (agent_tasks staging → executeBookings → caregiver YES/NO shift
+// offer → writeConfirmedShifts) is gone; the caregiver accepts on the site
+// and shiftGenerator.ts's onBookingAccepted creates the shifts, exactly as
+// for a web-sent request.
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
@@ -115,6 +122,12 @@ export interface BookingFlowData {
   // The commit then UPDATES that same doc back to pending (the site's
   // handleSendBooking isResend branch) instead of creating a new one.
   resendBookingRequestId?: string;
+  // Set when the family leaves bk_confirm to change ONE thing (rate,
+  // schedule, location). The step that would normally move forward returns
+  // to the recap instead — the site's Edit button edits a section in place;
+  // it never restarts the whole questionnaire (2026-09-17, live-caught:
+  // "change the rate" on a resend walked back through days/times/…).
+  editingFromConfirm?: boolean;
   // Populated while bookingFlowStep === "bk_ask_resend" and 2+ requests
   // could be resent (each Resend row on the site is one of these).
   resendOptions?: ResendOption[];
@@ -849,7 +862,19 @@ async function handleBkAskRate(
   await advanceToDays(phone, chatId, updated);
 }
 
+// After a single-field edit from bk_confirm, land back on the recap.
+async function returnToRecapIfEditing(phone: string, chatId: string, clientId: string | undefined): Promise<boolean> {
+  const current = await getFlowData(phone);
+  if (!current.editingFromConfirm) return false;
+  await mergeFlowData(phone, { editingFromConfirm: false });
+  const data = await refreshDerivedRecipientFields(phone, clientId);
+  await updateStep(phone, "bk_confirm");
+  await sendMessage(chatId, buildBookingRecap(data));
+  return true;
+}
+
 async function advanceToDays(phone: string, chatId: string, data: BookingFlowData): Promise<void> {
+  if (await returnToRecapIfEditing(phone, chatId, undefined)) return;
   // ALWAYS asked, even when a job post already lists days — matches the
   // site's own behavior of never treating anything as already-agreed
   // without the family seeing and confirming it (same principle as the rate
@@ -993,7 +1018,7 @@ const ONGOING_QUESTION =
 async function advanceFromTimes(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const data = await getFlowData(phone);
   if (data.jobPostEndDate) {
-    // Matches request_booking's own existing fallback — a job post with a
+    // Matches the retired request_booking tool's fallback — a job post with a
     // real end date on file is used silently, never re-asked.
     await mergeFlowData(phone, { ongoing: false, scheduleEndDate: data.jobPostEndDate });
     return advanceToLocation(phone, chatId, session);
@@ -1038,6 +1063,8 @@ async function handleBkAskOngoing(
 
 async function advanceToLocation(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const clientId = session.userId as string | undefined;
+  // A schedule edit from the recap ends here (after ongoing/end) — back to the recap.
+  if (await returnToRecapIfEditing(phone, chatId, clientId)) return;
   const locRes = clientId ? await resolveCareLocation(clientId, undefined) : { ok: false as const, ambiguous: false as const, reason: "" };
   if (locRes.ok) {
     await mergeFlowData(phone, { careLocation: locRes.location });
@@ -1296,6 +1323,9 @@ async function refreshDerivedRecipientFields(phone: string, clientId: string | u
 
 async function advanceToConfirm(phone: string, chatId: string, session: AgentSession): Promise<void> {
   const clientId = session.userId as string | undefined;
+  // A location edit from the recap ends here — back to the recap, no second
+  // "any message for the caregiver?" question.
+  if (await returnToRecapIfEditing(phone, chatId, clientId)) return;
   const data = await refreshDerivedRecipientFields(phone, clientId);
   // Proactively ask about a note ONCE, right before the recap (matches the
   // site's modal position, right above Send) — optional either way, "no"/
@@ -1479,6 +1509,7 @@ async function handleBkConfirm(
       await sendMessage(chatId, buildBookingRecap(updated));
       return;
     }
+    await mergeFlowData(phone, { editingFromConfirm: true });
     await updateStep(phone, "bk_ask_rate");
     await sendMessage(chatId, RATE_QUESTION(data.jobPostRate));
     return;
@@ -1489,6 +1520,7 @@ async function handleBkConfirm(
     // Schedule section at once) — the next real answer at each step simply
     // overwrites days/times/ongoing/scheduleEndDate the same way it does
     // during initial collection, so nothing needs clearing here.
+    await mergeFlowData(phone, { editingFromConfirm: true });
     await updateStep(phone, "bk_ask_days");
     await sendMessage(chatId, "No problem — let's redo the schedule.");
     await sendMessage(chatId, DAYS_QUESTION(data.jobPostDays));
@@ -1496,6 +1528,7 @@ async function handleBkConfirm(
   }
 
   if (action === "edit_location") {
+    await mergeFlowData(phone, { editingFromConfirm: true });
     await promptLocationEdit(phone, chatId, session);
     return;
   }
@@ -1681,113 +1714,84 @@ async function handleBkConfirm(
     return;
   }
 
-  // YES — commit. Calls createBookingTask directly (mirrors
-  // jobPostingFlow.ts's buildAndSaveJobPost pattern) — no MCP tool, no
-  // pending-action gate: this flow owns its own confirm step already.
+  // YES — commit. The website's own Send Booking write (bookingSend.ts's
+  // sendBookingRequest — the exact booking_requests / hire_decisions /
+  // job_applications side effects of PostsPage.tsx's handleSendBooking). No
+  // MCP tool, no pending-action gate, no agent_tasks staging: this flow owns
+  // its own confirm step, and everything after the write is the site's own
+  // machinery (onBookingRequestWrite notifies the caregiver, they accept on
+  // their My Bookings page, onBookingAccepted generates the shifts).
   const clientId = session.userId as string | undefined;
-  const phoneForTask = (session as any).phone as string | undefined ?? phone;
   if (!clientId) {
     await sendMessage(chatId, "I couldn't find your account to send this booking. Please try again.");
     return;
   }
   // Resend: the site's isResend branch updates the SAME booking_requests
-  // doc — no new task, no new doc (2026-09-16).
+  // doc — no new doc (2026-09-16).
   if (data.resendBookingRequestId) return commitResend(phone, chatId, session, data);
   try {
-    const { createBookingTask, executeBookings } = await import("./bookingExecutor");
-    // 2026-09-14: unified to match the site's own schedule shape exactly —
-    // always days + startDate + ongoing/endDate, never a separate raw
-    // appointments-dates path. onBookingAccepted (shiftGenerator.ts, the
-    // SAME trigger the site's own bookings rely on) correctly generates
-    // exactly one shift for a single-day, non-ongoing schedule (startDate
-    // === endDate), so a genuine one-time visit needs nothing special here.
-    const appointments: never[] = [];
-    // 2026-09-14 (live-caught): the site's own dayShiftTimes shape is an
-    // ARRAY of blocks per day (it supports more than one time block on the
-    // same day) — writing a bare {start,end} object per day instead meant
-    // shiftGenerator.ts's onBookingAccepted trigger (which calls
-    // .filter()/.forEach() on each day's value) silently never generated any
-    // real shifts docs at all for an Evia-originated booking, and the
-    // client's own booking card (same array-length check) rendered a blank
-    // schedule line.
-    //
-    // 2026-09-14 (live-caught, SAME session, found right after the above):
-    // data.days/data.dayTimes are keyed by FULL weekday names ("Monday") —
-    // asked for that way so the SMS recap reads naturally ("Monday,
-    // Wednesday") — but the site's OWN dayShiftTimes convention (PostsPage.
-    // tsx's booking modal, and both CaregiverBookingsPage.tsx's and
-    // ClientVisitsPage.tsx's summary-line rendering) keys it by the 3-letter
-    // abbreviation ("Mon"). Writing full names meant the weekly-schedule
-    // SUMMARY LINE silently rendered blank on both dashboards for every
-    // Evia-originated recurring booking — even though shiftGenerator.ts's
-    // own internal normDay() call still generated the real per-visit shift
-    // docs correctly, masking the bug in practice. normDay is the same
-    // normalizer shiftGenerator.ts itself uses, imported here so this can
-    // never drift from that canonical mapping.
-    const schedule = {
-      dayShiftTimes: Object.fromEntries(
-        Object.entries(data.dayTimes ?? {}).map(([day, t]) => [normDay(day), [t]])
-      ),
-      ongoing: data.ongoing === true,
-      startDate: data.startDate ?? businessTodayStr(),
-      ...(data.ongoing !== true && data.scheduleEndDate ? { endDate: data.scheduleEndDate } : {}),
-    };
-    // No appointments array to sum — totalCostOverride supplies the
-    // per-cycle estimate instead (matches request_booking's own
-    // estimatedTotal computation). Summed per-day since each day can have
-    // its own start/end.
-    const totalCostOverride = Math.round(Object.values(data.dayTimes ?? {}).reduce((sum, t) => {
-      const s = bookingTimeToMinutes(t.start);
-      const e = bookingTimeToMinutes(t.end);
-      return sum + ((s !== null && e !== null) ? (e - s) / 60 : 0);
-    }, 0) * data.hourlyRate! * 100) / 100;
-
-    const taskId = await createBookingTask({
-      clientPhone:   phoneForTask,
+    const { sendBookingRequest } = await import("./bookingSend");
+    // Site shape: dayShiftTimes is an ARRAY of blocks per day, keyed by the
+    // 3-letter abbreviation ("Tue") — normDay is shiftGenerator.ts's own
+    // normalizer, so this can never drift from what generates the shifts.
+    const dayShiftTimes = Object.fromEntries(
+      Object.entries(data.dayTimes ?? {}).map(([day, t]) => [normDay(day), [t]])
+    );
+    const scheduleDays = Object.keys(dayShiftTimes).sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b));
+    const result = await sendBookingRequest({
       clientId,
-      caregiverId:   data.caregiverId,
-      caregiverName: data.caregiverName,
-      appointments,
-      hourlyRate:    data.hourlyRate!,
-      schedule,
-      totalCostOverride,
-      careLocation:  data.careLocation!,
-      ...(data.careRecipients ? { careRecipients: data.careRecipients } : {}),
-      ...(data.topLevelCareNeeds ? { careNeeds: data.topLevelCareNeeds } : {}),
-      ...(data.lifestylePreferences ? { lifestylePreferences: data.lifestylePreferences } : {}),
-      ...(data.emergencyContact ? { emergencyContact: data.emergencyContact } : {}),
-      ...(data.message ? { message: data.message } : {}),
-      ...(data.recipientName ? { recipientName: data.recipientName } : {}),
-      ...(data.recipientKey ? { recipientKey: data.recipientKey } : {}),
-      ...(data.jobId ? { jobId: data.jobId } : {}),
-      ...(data.jobTitle ? { jobTitle: data.jobTitle } : {}),
-      ...(data.interviewId ? { interviewId: data.interviewId } : {}),
+      caregiverId:          data.caregiverId,
+      caregiverName:        data.caregiverName,
+      jobId:                data.jobId ?? null,
+      jobTitle:             data.jobTitle ?? "",
+      interviewId:          data.interviewId ?? null,
       ...(data.applicationId ? { applicationId: data.applicationId } : {}),
-    });
+      address:              data.careLocation ?? "",
+      rate:                 data.hourlyRate ?? null,
+      careNeeds:            data.topLevelCareNeeds ?? [],
+      careRecipients:       data.careRecipients ?? [],
+      lifestylePreferences: data.lifestylePreferences ?? [],
+      emergencyContact:     data.emergencyContact ?? null,
+      schedule: {
+        days:          scheduleDays,
+        startDate:     data.startDate ?? businessTodayStr(),
+        endDate:       data.ongoing ? null : (data.scheduleEndDate ?? null),
+        ongoing:       data.ongoing === true,
+        dayShiftTimes,
+      },
+      notes: data.message ?? null,
+    }, { source: "bookingFlow" });
 
     await clearFlow(phone);
 
-    if (!taskId) {
-      // createBookingTask returns "" when it blocks the booking (e.g. bgcheck
-      // pending) and has already messaged the family — nothing more to send.
+    if (!result.ok) {
+      if (result.reason === "caregiver_not_bookable") {
+        const reviewDaysLabel = result.daysInReview > 0
+          ? `${result.daysInReview} day${result.daysInReview !== 1 ? "s" : ""} in review`
+          : "just submitted";
+        await sendMessage(chatId,
+          `${data.caregiverName}'s background check is still in progress (${reviewDaysLabel}), so I couldn't send this yet — ` +
+          `nothing was sent. I'll let you know the moment it clears.`);
+        return;
+      }
+      if (result.reason === "already_pending") {
+        await sendMessage(chatId,
+          `You already have a booking request pending with ${data.caregiverName}, so I didn't send a second one. ` +
+          `It's on your My Bookings > Requests tab.`);
+        return;
+      }
+      await sendMessage(chatId,
+        `You already have an active booking with ${data.caregiverName}, so I didn't send a second one. ` +
+        `Your visits are on your My Bookings page.`);
       return;
     }
 
-    // 2026-09-13 (live-caught): createBookingTask only STAGES an agent_tasks
-    // doc (status: "awaiting_approval") — it never touches booking_requests,
-    // the collection the site's own UI and the caregiver's shift-offer flow
-    // actually read from. Evia told the family "Sent to Basra Yousuf" while
-    // the site still showed "Send Booking" available and the caregiver was
-    // never notified at all. executeBookings is the second step every other
-    // caller of createBookingTask already goes through (taskApprovalHandler,
-    // routeIntent's approval paths) — it does the real booking_requests
-    // write, accepts the caregiver's application, and sends the caregiver's
-    // shift offer. It also sends its OWN "request sent, awaiting their
-    // confirmation" message to the family, so this flow must NOT also send
-    // one — that would be a second, redundant confirmation.
-    await executeBookings(taskId, phoneForTask);
+    await import("../utils/knownNames").then((m) => m.addKnownNames(phone, [data.caregiverName])).catch(() => {});
+    await sendMessage(chatId,
+      `Sent — ${data.caregiverName} has your booking request. Nothing is booked until they accept; ` +
+      `I'll text you as soon as they respond. It's on your My Bookings > Requests tab too.`);
   } catch (err) {
-    console.error("[bookingFlow] createBookingTask error:", err);
+    console.error("[bookingFlow] sendBookingRequest error:", err);
     await sendMessage(chatId, await generateCaraMessage({
       audience: "family",
       language: (session as any)?.preferredLanguage === "es" ? "es" : "en",

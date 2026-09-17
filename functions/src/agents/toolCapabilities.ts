@@ -20,12 +20,13 @@ export type Capability =
 export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── booking ──────────────────────────────────────────────────────────────
   start_booking_flow:           ["booking"],  // preferred entry point — see bookingFlow.ts
-  start_resend_booking_flow:    ["booking"],  // the site's Resend row, pre-filled review-and-edit — see bookingFlow.ts (2026-09-16)
+  start_resend_booking_flow:    ["booking"],
+  get_resendable_booking_requests: ["booking"],  // the Interviews tab's Resend rows (2026-09-17)  // the site's Resend row, pre-filled review-and-edit — see bookingFlow.ts (2026-09-16)
   start_replacement_flow:       ["booking"],  // Find Replacement modal, step for step — see replacementFlow.ts
   start_reschedule_flow:        ["booking", "scheduling"],  // Reschedule button on an upcoming shift, step for step — see rescheduleFlow.ts
-  start_visit_request_flow:     ["booking", "scheduling"],  // Calendar "+ Request Visit" modal, step for step — see visitRequestFlow.ts
+  start_visit_request_flow:     ["booking", "scheduling"],
+  start_cancel_flow:            ["booking", "scheduling"],  // My Bookings cancel buttons, step for step — see cancelFlow.ts  // Calendar "+ Request Visit" modal, step for step — see visitRequestFlow.ts
   get_calendar:                 ["booking", "scheduling"],  // Calendar page reads (visits + interviews in a date range)
-  request_booking:              ["booking"],
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup
   get_callout_backups:          ["booking"],            // parity: real Find Replacement candidates (read)
   select_callout_backup:        ["booking"],            // parity: sends a real replacement booking request
@@ -44,7 +45,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   submit_review:                ["booking"],
   save_caregiver_favorite:      ["booking"],
   unsave_caregiver_favorite:    ["booking"],
-  list_saved_caregivers:        ["booking"],
   apply_to_job:                 ["booking"],
   respond_to_job_application:   ["booking"],
   list_client_jobs:             ["booking"],
@@ -68,7 +68,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   manage_shift_reschedule:       ["booking", "scheduling"], // caregiver-side counterpart to manage_booking's propose/accept/clear_reschedule
 
   // ── scheduling ───────────────────────────────────────────────────────────
-  get_recurring_schedule:        ["scheduling"],
+  get_active_bookings:           ["booking", "scheduling"],
   schedule_followup:             ["scheduling"],
   update_caregiver_availability: ["scheduling"],
   get_caregiver_availability:    ["scheduling"],
@@ -315,7 +315,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 // (memory notes Evia already echoes back) are intentionally excluded.
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
-  "request_booking",
   "initiate_client_swap",
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",

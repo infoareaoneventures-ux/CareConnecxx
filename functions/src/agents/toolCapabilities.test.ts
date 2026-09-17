@@ -58,14 +58,14 @@ describe("selectToolsForIntent", () => {
       const filtered = names(selectToolsForIntent(MCP_TOOLS, intent));
       expect(filtered.has("perform_web_action")).toBe(false);
       expect(filtered.has("search_healthcare_provider")).toBe(false);
-      expect(filtered.has("request_booking")).toBe(true);
+      expect(filtered.has("start_booking_flow")).toBe(true);
     }
   });
 
   it("filters down to booking-relevant tools for FIND_CAREGIVER", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "FIND_CAREGIVER"));
     expect(filtered.has("find_nearby_caregivers")).toBe(true);
-    expect(filtered.has("request_booking")).toBe(true);
+    expect(filtered.has("start_booking_flow")).toBe(true);
     expect(filtered.has("get_caregiver_info")).toBe(true);
     // Billing tools should NOT be included
     expect(filtered.has("get_invoice_history")).toBe(false);
@@ -80,7 +80,7 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("get_invoice_details")).toBe(true);
     expect(filtered.has("get_billing_summary")).toBe(true);
     // Booking tools NOT included
-    expect(filtered.has("request_booking")).toBe(false);
+    expect(filtered.has("start_booking_flow")).toBe(false);
     expect(filtered.has("schedule_interview")).toBe(false);
   });
 
@@ -112,7 +112,7 @@ describe("selectToolsForIntent", () => {
 
   it("includes booking + messaging for HIRE_CAREGIVER (compound flow)", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "HIRE_CAREGIVER"));
-    expect(filtered.has("request_booking")).toBe(true);
+    expect(filtered.has("start_booking_flow")).toBe(true);
     expect(filtered.has("send_caregiver_message")).toBe(true);
     expect(filtered.has("get_caregiver_info")).toBe(true);
   });
@@ -123,7 +123,7 @@ describe("selectToolsForIntent", () => {
     // The memory_search bucket now holds only memory-file tools.
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "CREDENTIAL_MANAGEMENT"));
     expect(filtered.has("read_memory_file")).toBe(true);
-    expect(filtered.has("request_booking")).toBe(false);
+    expect(filtered.has("start_booking_flow")).toBe(false);
     expect(filtered.has("get_invoice_history")).toBe(false);
   });
 
@@ -133,7 +133,7 @@ describe("selectToolsForIntent", () => {
     // removed entirely 2026-09-05 — no site equivalent.
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "SCHEDULE_REQUEST"));
     expect(filtered.has("schedule_followup")).toBe(true);
-    expect(filtered.has("request_booking")).toBe(false);
+    expect(filtered.has("start_booking_flow")).toBe(false);
     expect(filtered.has("get_invoice_history")).toBe(false);
   });
 

@@ -110,6 +110,8 @@ export function describeSignalRate(r: SignalRollup, minKnown = MIN_KNOWN_FOR_RAT
 // context, not the next visit. Callers that surface active visits already load
 // them separately (qaAgent.getActiveVisit).
 export const NEXT_APPOINTMENT_STATUSES: readonly string[] = [
+  "scheduled",   // shifts — the site's collection (2026-09-17)
+  "in-progress",
   "confirmed",
   "pending",
   "pending_caregiver_confirmation",

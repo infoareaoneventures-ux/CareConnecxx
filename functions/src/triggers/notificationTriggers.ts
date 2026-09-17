@@ -217,6 +217,10 @@ export const onVideoInterviewWrite = functions.firestore
           body: `${after.caregiverName} accepted your interview request.`,
           data: { interviewId: context.params.interviewId },
         });
+        // 2026-09-17: the family hears about every event over Evia too — this
+        // was the one client-facing bell with no text behind it.
+        await notifyClientByText(after.clientId,
+          `${after.caregiverName || 'Your caregiver'} accepted your interview request — it's on your Care Requests > Interviews tab.`);
       }
 
       // Declined — direction depends on who declined
@@ -336,10 +340,10 @@ export const onBookingRequestWrite = functions.firestore
           body: `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request.`,
           data: { bookingId: context.params.bookingId },
         });
-        // Evia-negotiated bookings (agentTaskId set) already get a richer
-        // YES/NO shift-offer text from createShiftOffer — sending this generic
-        // one too would double-text. Only a pure website-created booking (no
-        // agentTaskId) has nothing else telling the caregiver by phone.
+        // agentTaskId only exists on legacy docs from the retired Evia-only
+        // booking pipeline (removed 2026-09-17), which texted the caregiver its
+        // own YES/NO offer. Every booking created now — website or Evia — is a
+        // plain booking_requests doc and gets this one text.
         if (!after.agentTaskId) {
           await notifyCaregiverByText(after.caregiverId,
             `${after.clientName || 'A client'} ${isResend ? 'resent their' : 'sent you a'} booking request. Check the app to respond.`);

@@ -10,7 +10,7 @@ import {
   TERMINAL_MEMORY_SYNC_STATUS,
 } from "../memory/memoryOperations";
 import { cleanupStaleExecutionAgents } from "../agents/executionAgent";
-import { queryVisitsMerged } from "../utils/visitQuery";
+import { queryVisits } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -227,9 +227,8 @@ export async function analyzeBookingPatterns(): Promise<void> {
     .slice(0, 10);
 
   // Get all clients with completed visits in the last 30 days (either pipeline)
-  const apptDocs = await queryVisitsMerged({
+  const apptDocs = await queryVisits({
     dateOp: ">=", dateValue: thirtyDaysAgo,
-    apptStatuses: ["completed"],
     shiftStatuses: ["completed"],
   });
 
@@ -248,9 +247,8 @@ export async function analyzeBookingPatterns(): Promise<void> {
 
   // Also get cancelled visits in the same window (either pipeline — shifts
   // use a single "cancelled" status with cancelledBy distinguishing who)
-  const cancelDocs = await queryVisitsMerged({
+  const cancelDocs = await queryVisits({
     dateOp: ">=", dateValue: thirtyDaysAgo,
-    apptStatuses: ["cancelled_by_client", "cancelled"],
     shiftStatuses: ["cancelled"],
   });
 

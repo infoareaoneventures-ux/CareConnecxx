@@ -1253,6 +1253,12 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                       <Clock className="w-3 h-3" />
                       {fmtTime(s.startTime)}{s.endTime ? ` – ${fmtTime(s.endTime)}` : ''}
                     </p>
+                    {/* A visit's own note (e.g. the note on the schedule-change request
+                        that created it) — shown only when it differs from the booking's
+                        general note above, so regular visits don't repeat it. */}
+                    {s.notes && s.notes !== base.notes && (
+                      <p className="text-xs text-slate-400 italic mt-0.5">{s.notes}</p>
+                    )}
                   </div>
                 </div>
                 <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border shrink-0 ${shiftStatusBadgeClass(ds)}`}>

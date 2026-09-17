@@ -9,27 +9,27 @@ import {
 
 describe("readFlag (validated session access)", () => {
   it("returns the value when present and no validator is given", () => {
-    expect(readFlag({ hireMode: true }, "hireMode")).toBe(true);
+    expect(readFlag({ awaitingLateMinutes: true }, "awaitingLateMinutes")).toBe(true);
   });
 
   it("returns null for an absent flag (instead of undefined to destructure)", () => {
-    expect(readFlag({}, "pendingCancelConfirm")).toBeNull();
-    expect(readFlag(undefined, "pendingCancelConfirm")).toBeNull();
-    expect(readFlag(null, "pendingCancelConfirm")).toBeNull();
+    expect(readFlag({}, "awaitingCareNotes")).toBeNull();
+    expect(readFlag(undefined, "awaitingCareNotes")).toBeNull();
+    expect(readFlag(null, "awaitingCareNotes")).toBeNull();
   });
 
   it("returns null when the value fails the shape guard (the crash this prevents)", () => {
     const hasApptId = (v: unknown) => !!v && typeof v === "object" && typeof (v as any).appointmentId === "string";
     // Malformed flag — present but missing appointmentId. The router used to
     // destructure this into undefined and call db.doc(undefined).
-    expect(readFlag({ pendingCancelConfirm: {} }, "pendingCancelConfirm", hasApptId)).toBeNull();
-    expect(readFlag({ pendingCancelConfirm: { foo: 1 } }, "pendingCancelConfirm", hasApptId)).toBeNull();
+    expect(readFlag({ awaitingCareNotes: {} }, "awaitingCareNotes", hasApptId)).toBeNull();
+    expect(readFlag({ awaitingCareNotes: { foo: 1 } }, "awaitingCareNotes", hasApptId)).toBeNull();
   });
 
   it("returns the typed value when it passes the shape guard", () => {
     const hasApptId = (v: unknown) => !!v && typeof v === "object" && typeof (v as any).appointmentId === "string";
     const ok = { appointmentId: "a1" };
-    expect(readFlag({ pendingCancelConfirm: ok }, "pendingCancelConfirm", hasApptId)).toEqual(ok);
+    expect(readFlag({ awaitingCareNotes: ok }, "awaitingCareNotes", hasApptId)).toEqual(ok);
   });
 });
 
@@ -62,9 +62,9 @@ describe("setFlags / clearFlags (batched writes)", () => {
 
   it("setFlags writes all given flags in one update", async () => {
     const { update, db } = mockDb();
-    await setFlags("+1", db, { hireMode: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
+    await setFlags("+1", db, { awaitingCareNotes: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
     expect(update).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledWith({ hireMode: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
+    expect(update).toHaveBeenCalledWith({ awaitingCareNotes: true, stateExpiresAt: "2026-06-21T13:00:00Z" });
   });
 
   it("clearFlags deletes only the named subset in one update", async () => {
@@ -82,39 +82,11 @@ describe("setFlags / clearFlags (batched writes)", () => {
 
 const NOW = Date.parse("2026-06-22T12:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
-const fresh = iso(NOW - 60 * 1000);                       // 1 min old
 const stale = iso(NOW - CONFIRM_FLAG_TTL_MS - 60 * 1000); // just past the TTL
 
 describe("staleConfirmFlags (U2)", () => {
   it("returns nothing when no confirm flags are set", () => {
     expect(staleConfirmFlags({}, NOW)).toEqual([]);
-  });
-
-  it("keeps a fresh flag (set within the TTL)", () => {
-    const session = { pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: fresh };
-    expect(staleConfirmFlags(session, NOW)).toEqual([]);
-  });
-
-  it("expires a flag older than the TTL", () => {
-    const session = { pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: stale };
-    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingCancelConfirm"]);
-  });
-
-  it("expires a flag with no age stamp (the never-expires case)", () => {
-    const session = { pendingCancelConfirm: { appointmentId: "a1" } };
-    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingCancelConfirm"]);
-  });
-
-  it("resolves only the stale flag when a stale and a fresh flag collide", () => {
-    // Stale cancel confirm should NOT intercept a YES meant for the fresh
-    // recurring confirmation — it must be swept first.
-    const session = {
-      pendingCancelConfirm: { appointmentId: "a1" },
-      pendingCancelConfirmSetAt: stale,
-      awaitingRecurringConfirmation: true,
-      awaitingRecurringConfirmationSetAt: fresh,
-    };
-    expect(staleConfirmFlags(session, NOW)).toEqual(["pendingCancelConfirm"]);
   });
 
   it("expires each high-stakes flag independently when all are stale", () => {
@@ -126,11 +98,6 @@ describe("staleConfirmFlags (U2)", () => {
     expect(staleConfirmFlags(session, NOW).sort()).toEqual([...HIGH_STAKES_CONFIRM_FLAGS].sort());
   });
 
-  it("treats the TTL boundary as not-yet-stale", () => {
-    // Exactly at the cutoff (setAt === cutoff) is not strictly less-than, so fresh.
-    const session = { pendingCancelConfirm: true, pendingCancelConfirmSetAt: iso(NOW - CONFIRM_FLAG_TTL_MS) };
-    expect(staleConfirmFlags(session, NOW)).toEqual([]);
-  });
 });
 
 // U2 — web-turn guard against fresh in-flight SMS flows (deny-by-default,
@@ -141,11 +108,6 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
     expect(hasActiveSmsFlow({}, NOW)).toBe(false);
     expect(hasActiveSmsFlow(null, NOW)).toBe(false);
     expect(hasActiveSmsFlow(undefined, NOW)).toBe(false);
-  });
-
-  it("confirm flag: fresh defers, stale does not", () => {
-    expect(hasActiveSmsFlow({ pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: fresh }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ pendingCancelConfirm: { appointmentId: "a1" }, pendingCancelConfirmSetAt: stale }, NOW)).toBe(false);
   });
 
   it("pendingInstantPayoutConfirm (value-stamped): 5-min-old ISO value defers, 15-min-old does not (10-min SMS parity)", () => {
@@ -218,9 +180,9 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
   });
 
   it("generic stamp-less flow: future stateExpiresAt defers, past does not, absent defers (deny-by-default)", () => {
-    expect(hasActiveSmsFlow({ hireMode: true, stateExpiresAt: iso(NOW + 60 * 1000) }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ hireMode: true, stateExpiresAt: iso(NOW - 60 * 1000) }, NOW)).toBe(false);
-    expect(hasActiveSmsFlow({ hireMode: true }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ awaitingCareNotes: true, stateExpiresAt: iso(NOW + 60 * 1000) }, NOW)).toBe(true);
+    expect(hasActiveSmsFlow({ awaitingCareNotes: true, stateExpiresAt: iso(NOW - 60 * 1000) }, NOW)).toBe(false);
+    expect(hasActiveSmsFlow({ awaitingCareNotes: true }, NOW)).toBe(true);
   });
 
   it("passive ack flags never defer a web turn", () => {

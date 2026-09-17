@@ -20,7 +20,7 @@
 | Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | client | Search/match caregivers (website Browse / Nearby Caregivers) | components/FindCaregivers.tsx | caregivers | `find_nearby_caregivers` | client | shipped | A cancelled visit's replacement goes through `get_callout_backups` / `select_callout_backup` instead (the per-shift Find Replacement modal). |
-| client | Book a caregiver (creates pending_caregiver_confirmation appointment) | components/client/booking/BookingFlow.tsx | appointments | `request_booking` | client | shipped |  |
+| client | Send a booking request to an interviewed caregiver (the site's Send Booking Request modal — one booking_requests doc, status pending) | components/client/PostsPage.tsx | booking_requests | `start_booking_flow` | client | shipped | Scripted flow (bookingFlow.ts) → bookingSend.ts performs the site's exact handleSendBooking write; no agent_tasks / shift offer (2026-09-17) |
 | client | Cancel an appointment (manage_booking action: cancel_pending_request / cancel_whole_booking) | components/client/ClientVisitsPage.tsx | shifts | `manage_booking` | client | shipped |  |
 | client | Update the senior's care plan | components/CarePlan.tsx | carePlans | `update_care_plan` | client | shipped |  |
 | client | Record per-recipient day-to-day care tasks by category (care-plan interview / Step3CareNeeds parity) | components/client/postJob/Step3CareNeeds.tsx | carePlans | `save_care_task_detail` | client | shipped | Added 2026-07-15 with the post-payment care-plan interview; writes recipientPlans.{key}.careNeedDetails in the exact shape CarePlan.tsx renders. |

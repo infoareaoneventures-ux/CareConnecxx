@@ -570,7 +570,7 @@ async function handleIvConfirm(
   }
 
   // YES — commit. Calls requestVideoInterview directly (mirrors bookingFlow.
-  // ts's createBookingTask pattern) — no MCP tool, no pending-action gate:
+  // ts's direct-write pattern) — no MCP tool, no pending-action gate:
   // this flow owns its own confirm step already.
   const clientId = session.userId as string | undefined;
   if (!clientId || !data.date || !data.time) {

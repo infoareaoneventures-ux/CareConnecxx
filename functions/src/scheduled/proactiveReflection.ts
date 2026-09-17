@@ -157,7 +157,7 @@ async function loadFamilySnapshot(userId: string, seniorId: string): Promise<Fam
 
   // appointments uses `isoDate` (full ISO string); shifts (2026-08-30 pipeline)
   // has no such field, only a plain `date` (YYYY-MM-DD) — queried separately
-  // at day granularity and merged, since queryVisitsMerged assumes one shared
+  // at day granularity and merged, since queryVisits assumes one shared
   // field name across both collections.
   const todayStr = now.toISOString().slice(0, 10);
   const [journalSnap, pastApptSnap, pastShiftSnap, upcomingApptSnap, upcomingShiftSnap, billing, seniorSnap, userSnap] = await Promise.all([

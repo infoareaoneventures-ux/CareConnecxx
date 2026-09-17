@@ -151,7 +151,7 @@ export function formatInterviewTimeShort(ms: number, timeZone: string = DEFAULT_
 // site's own dayShiftTimes/appointments shape) — a family reading an SMS
 // shouldn't see "13:00" echoed back at them. Originally duplicated
 // separately in bookingFlow.ts and interviewFlow.ts's own recaps; a THIRD
-// spot (bookingExecutor.ts's finalizeAcceptedBooking confirmation) leaked
+// spot (the since-retired bookingExecutor.ts confirmation text) leaked
 // the same raw 24h time (2026-09-13, live-caught), so this is now the one
 // shared home — every caller should import from here instead of adding a
 // fourth copy.

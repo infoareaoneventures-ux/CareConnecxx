@@ -1,15 +1,7 @@
 import * as admin from "firebase-admin";
 
 export const STATE_MACHINE_FLAGS = [
-  "hireMode",
-  "hireModeDate",
-  "pendingRebook",
   "pendingMatches",
-  "pendingCancelConfirm",
-  "pendingCancelConfirmSetAt",
-  "awaitingRecurringConfirmation",
-  "awaitingRecurringConfirmationSetAt",
-  "pendingRecurringSchedule",
   "awaitingCareNotes",
   "awaitingLateMinutes",
   "awaitingIssueDescription",
@@ -35,6 +27,10 @@ export const STATE_MACHINE_FLAGS = [
   // website's Reschedule button on an upcoming shift, step for step.
   "rescheduleFlowStep",
   "rescheduleFlowData",
+  // Scripted cancel flow (cancelFlow.ts, 2026-09-17) — the My Bookings page's
+  // cancel buttons, step for step. Replaced the legacy pending-cancel confirm flag.
+  "cancelFlowStep",
+  "cancelFlowData",
   // Scripted Request Visit flow (visitRequestFlow.ts, 2026-09-16) — the
   // website's Calendar "+ Request Visit" modal, step for step.
   "visitRequestFlowStep",
@@ -46,8 +42,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingTaskAck",
   // Day-before shift confirmation from caregiver
   "pendingShiftConfirmation",
-  // Day-before shift confirmation from CLIENT (family)
-  "pendingClientShiftConfirm",
   // Caregiver shift swap flow
   "swapStep",
   "swapStepSetAt",
@@ -106,17 +100,16 @@ export const STATE_MACHINE_FLAGS = [
 
 export type StateFlag = typeof STATE_MACHINE_FLAGS[number];
 // ── High-stakes confirmation freshness ───────────────────────────────────────
-// pendingCancelConfirm / awaitingRecurringConfirmation are checked in a fixed
-// order by the YES/NO router. A stale flag can intercept
+// A high-stakes confirm flag is one the YES/NO router acts on. A stale flag can intercept
 // a YES meant for a newer question, and the global stateExpiresAt sweep only
 // fires when a stateExpiresAt is present — a flag set without one never expires.
 // Each set-site now stamps a `<flag>SetAt`; the router clears any flag older
 // than this TTL (or present with no stamp — the never-expires case) before
 // acting. Kept pure here so the staleness rule is unit-testable in isolation.
-export const HIGH_STAKES_CONFIRM_FLAGS = [
-  "pendingCancelConfirm",
-  "awaitingRecurringConfirmation",
-] as const;
+// 2026-09-17: empty — the last member (awaitingRecurringConfirmation, the
+// Evia-only "make it weekly?" follow-up after a booking) went with the retired
+// agent-task booking pipeline. The sweep stays so a future flag registers here.
+export const HIGH_STAKES_CONFIRM_FLAGS: ReadonlyArray<StateFlag> = [];
 
 export const CONFIRM_FLAG_TTL_MS = 60 * 60 * 1000;
 
@@ -211,12 +204,11 @@ export function isFlowStale(
 // awaitingTaskAck, pendingBgCheckAck, …) are deliberately absent: they have
 // their own reminder flows or are too low-stakes to re-ping.
 export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
-  ["hireMode",                "booking care"],
-  ["pendingRebook",           "rebooking your visit"],
   ["jobPostingStep",          "posting your care job"],
   ["bookingFlowStep",         "sending your booking request"],
   ["replacementFlowStep",     "finding a replacement for your visit"],
   ["rescheduleFlowStep",      "moving your visit to a new day/time"],
+  ["cancelFlowStep",          "cancelling that visit or request"],
   ["visitRequestFlowStep",    "requesting an extra visit"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
@@ -263,7 +255,7 @@ export async function clearAllStateFlags(
 // ── Validated flag access (U8) ───────────────────────────────────────────────
 // The routing spine reads session flags through `(session as any).flag` and
 // destructures the result without a shape guard — so a malformed flag
-// (`pendingCancelConfirm` present but missing `appointmentId`) crashes or
+// (a confirm flag present but missing its id) crashes or
 // silently produces `undefined.doc(undefined)`. These helpers give the routers
 // ONE validated, typed door to the session, replacing the unguarded casts.
 
@@ -351,16 +343,11 @@ export const INSTANT_PAYOUT_CONFIRM_TTL_MS = 10 * 60 * 1000;
  *                   AND passed; ABSENT stateExpiresAt ⇒ active (deny-by-default).
  */
 export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
-  ["hireMode", "generic"],
-  ["pendingRebook", "generic"],
   // Set by matchingAgent.ts alongside pendingMatchesSetAt; routeIntent.ts
   // treats the list as stale after 2h. Without this stamp strategy a web
   // matching turn (find_nearby_caregivers / get_callout_backups) would wedge every subsequent
   // web turn forever (pendingMatches carries no stateExpiresAt).
   ["pendingMatches", { setAtField: "pendingMatchesSetAt", ttlMs: PENDING_MATCHES_TTL_MS }],
-  ["pendingCancelConfirm", "confirm"],
-  ["awaitingRecurringConfirmation", "confirm"],
-  ["pendingRecurringSchedule", "generic"],
   ["awaitingCareNotes", "generic"],
   ["awaitingLateMinutes", "generic"],
   ["awaitingIssueDescription", "generic"],
@@ -378,6 +365,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["bookingFlowStep", "generic"],
   ["replacementFlowStep", "generic"],
   ["rescheduleFlowStep", "generic"],
+  ["cancelFlowStep", "generic"],
   ["visitRequestFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
@@ -404,20 +392,17 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
  * pre-shift check-in). These are never treated as an active flow by the guard.
  */
 export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
-  "hireModeDate",
-  "pendingCancelConfirmSetAt",
-  "awaitingRecurringConfirmationSetAt",
   "collectingCredentialSetAt",
   "stateExpiresAt",
   "jobPostingData",
   "bookingFlowData",
   "replacementFlowData",
   "rescheduleFlowData",
+  "cancelFlowData",
   "visitRequestFlowData",
   "interviewFlowData",
   "awaitingTaskAck",
   "pendingShiftConfirmation",
-  "pendingClientShiftConfirm",
   "swapStepSetAt",
   "swapCandidates",
   "swapShiftId",

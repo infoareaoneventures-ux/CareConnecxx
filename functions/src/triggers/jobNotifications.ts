@@ -485,13 +485,10 @@ async function notifyFamilyIfAllDeclined(jobId: string): Promise<void> {
   const sessionSnap = await db.collection("agent_sessions").doc(familyPhone).get();
   if (sessionSnap.exists) {
     const sessionData = sessionSnap.data() ?? {};
-    const { runMatchingForClient } = await import("../agents/matchingAgent");
-    await runMatchingForClient(
-      familyPhone,
-      (sessionData as any).chatId ?? "",
-      sessionData,
-      sessionData
-    ).catch(err => console.error("[notifyFamilyIfAllDeclined] re-match failed:", err));
+    const { presentCaregiverSearch } = await import("../agents/caregiverSearch");
+    await presentCaregiverSearch({
+      phone: familyPhone, chatId: (sessionData as any).chatId ?? "", clientId, source: "jobNotifications:allDeclined",
+    }).catch(err => console.error("[notifyFamilyIfAllDeclined] re-match failed:", err));
   }
 }
 

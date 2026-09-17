@@ -10,7 +10,7 @@ const SRC = path.resolve(__dirname, "..");
 
 const RANKING_MODULES = [
   "aiMatching.ts",
-  "agents/matchingAgent.ts",
+  "agents/caregiverSearch.ts",
   "ai/matchJob.ts",
 ];
 

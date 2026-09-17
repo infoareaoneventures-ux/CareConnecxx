@@ -130,11 +130,11 @@ vi.mock("../../mcp/server", () => ({
   handleToolCall: (...a: any[]) => (handleToolCall as Function).apply(null, a),
 }));
 
-// U4 — executeBookings failure path re-runs matching; stub it so the test
+// Matching is re-run from several router branches; stub it so the test
 // only asserts on the recovery copy + alert, not the matching internals.
-const runMatchingForClient = vi.fn(async () => {});
-vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: (...a: any[]) => (runMatchingForClient as Function).apply(null, a),
+const presentCaregiverSearch = vi.fn(async (..._a: any[]) => ({ status: "shown", total: 1, shown: [], offset: 0, hasMore: false }));
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: (...a: any[]) => (presentCaregiverSearch as Function).apply(null, a),
 }));
 
 const quickComplete = vi.fn(async () => "");
@@ -171,23 +171,24 @@ vi.mock("../../memory/learnedFacts", () => ({
   classifyReRememberReply: vi.fn(async () => "other"),
   confirmReRemember: vi.fn(async () => ({ ok: false, reason: "not_found" })),
 }));
-vi.mock("../../agents/taskApprovalHandler", () => ({
-  handleTaskApproval: vi.fn(async () => {}), finalizeTaskApproval: vi.fn(async () => {}),
-}));
 vi.mock("../../agents/permissionsConversation", () => ({
   updatePermissionFromText: vi.fn(async () => true), getPermissions: vi.fn(async () => ({ canBookAutomatically: false })),
-}));
-const executeBookings = vi.fn(async () => {});
-const createBookingTask = vi.fn(async (..._a: any[]) => "task-1");
-vi.mock("../../agents/bookingExecutor", () => ({
-  executeBookings: (...a: any[]) => (executeBookings as Function).apply(null, a),
-  createBookingTask: (...a: any[]) => (createBookingTask as Function).apply(null, a),
 }));
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../agents/jobPostingFlow", () => ({ startJobPostingFlow: vi.fn(async () => {}) }));
 const startRescheduleFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
 vi.mock("../../agents/rescheduleFlow", () => ({ startRescheduleFlow: (...a: any[]) => (startRescheduleFlow as Function).apply(null, a) }));
 const startReplacementFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+const findResendableBookingRequests = vi.fn(async (..._a: any[]): Promise<any[]> => []);
+const startResendBookingFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+const startBookingFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+const startCancelFlow = vi.fn(async (..._a: any[]) => ({ started: true }));
+vi.mock("../../agents/cancelFlow", () => ({ startCancelFlow: (...a: any[]) => (startCancelFlow as Function).apply(null, a) }));
+vi.mock("../../agents/bookingFlow", () => ({
+  findResendableBookingRequests: (...a: any[]) => (findResendableBookingRequests as Function).apply(null, a),
+  startResendBookingFlow: (...a: any[]) => (startResendBookingFlow as Function).apply(null, a),
+  startBookingFlow: (...a: any[]) => (startBookingFlow as Function).apply(null, a),
+}));
 vi.mock("../../agents/replacementFlow", () => ({ startReplacementFlow: (...a: any[]) => (startReplacementFlow as Function).apply(null, a) }));
 vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
 vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
@@ -206,10 +207,8 @@ vi.mock("../../memory/zepClient", () => ({
   addUserMessageToZep: vi.fn(async () => {}), addAssistantMessageToZep: vi.fn(async () => {}),
   searchZepMemory: vi.fn(async () => ""), getZepUserId: (p: string) => `zep-${p}`,
 }));
-vi.mock("../inboundHelpers", () => ({ handleRecurringConfirm: vi.fn(async () => {}) }));
 
 import { routeIntentAndRespond } from "../routeIntent";
-import { generateCaraMessage } from "../../utils/caraMessage";
 
 const PHONE = "+15553334444";
 const CLIENT_ID = "client-1";
@@ -237,23 +236,12 @@ beforeEach(() => {
   handleToolCall.mockResolvedValue({ success: true });
   quickComplete.mockResolvedValue("");
   sendMessage.mockResolvedValue({ message_id: "m1" });
-  executeBookings.mockReset().mockResolvedValue(undefined);
-  createBookingTask.mockReset().mockResolvedValue("task-1");
-  runMatchingForClient.mockReset().mockResolvedValue(undefined);
+  presentCaregiverSearch.mockReset().mockResolvedValue({ status: "shown", total: 1, shown: [], offset: 0, hasMore: false });
   runQaAgent.mockResolvedValue("");
   runQuickReply.mockResolvedValue("");
   isTrivialQuickReply.mockReturnValue(false);
   persistCompletedTurn.mockResolvedValue({ ok: true, operationId: "op-1", sourceTurnKeyHash: "hash-1", deduplicated: false });
 });
-
-function seedAwaitingBookingTask() {
-  hoisted.docState.set("agent_tasks/task-1", {
-    clientPhone: PHONE,
-    status: "awaiting_approval",
-    type: "booking_confirmation",
-    createdAt: new Date().toISOString(),
-  });
-}
 
 // ── R14: family-add incomplete input asks exactly ONE missing question ────────
 describe("characterization — ADD_FAMILY_MEMBER coded flow", () => {
@@ -355,181 +343,33 @@ describe("characterization — duplicate ADD_FAMILY_MEMBER inbound", () => {
   });
 });
 
-// ── U7 (hallucination hardening 2026-07-17, R12): the caregiver cancellation
-// notice briefings are grounded — the LLM is told to refer to the cancelled
-// visit ONLY as "the visit on {date}" and never to name the client (whose name
-// the briefing does not supply). Both coded cancel-confirm sites are pinned:
-// the natural-language BOOKING_CONFIRM branch and the strict-YES branch.
-describe("U7 — cancellation-notice briefings are grounded (R12)", () => {
-  const APPT_DATE = "2026-07-20";
-  const APPT_DATE_DISPLAY = "July 20, 2026"; // formatDateForDisplay(APPT_DATE)
-
-  function seedCancelConfirm() {
-    seed({
-      pendingCancelConfirm: { appointmentId: "a1" },
-      pendingCancelConfirmSetAt: new Date().toISOString(), // fresh — survives the stale sweep
-    });
-    hoisted.docState.set("appointments/a1", {
-      clientId: CLIENT_ID, caregiverId: "cg1", date: APPT_DATE, status: "confirmed",
-    });
-    hoisted.docState.set("caregivers/cg1", { phone: "+15550001111" });
-  }
-
-  function caregiverBriefing() {
-    const call = vi.mocked(generateCaraMessage).mock.calls
-      .find((c: any[]) => (c[0] as any)?.audience === "caregiver");
-    expect(call, "expected a caregiver-audience generateCaraMessage briefing").toBeTruthy();
-    return String((call![0] as any).context);
-  }
-
-  it("natural-language confirm (BOOKING_CONFIRM): briefing says 'the visit on {date}' only, never the client's name", async () => {
-    seedCancelConfirm();
-    classifyIntentDetailed.mockResolvedValue({ intent: "BOOKING_CONFIRM", degraded: false });
-
-    await routeIntentAndRespond(ctx("sounds good"));
-
-    const context = caregiverBriefing();
-    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE_DISPLAY}'`);
-    expect(context).toContain("do not name the client unless given");
-    // The appointment was actually cancelled (briefing is grounded in a real state change).
-    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
-  });
-
-  it("strict YES: briefing says 'the visit on {date}' only, never the client's name", async () => {
-    seedCancelConfirm();
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-
-    await routeIntentAndRespond(ctx("YES"));
-
-    const context = caregiverBriefing();
-    expect(context).toContain(`Refer to it only as 'the visit on ${APPT_DATE_DISPLAY}'`);
-    expect(context).toContain("do not name the client unless given");
-    expect(hoisted.docState.get("appointments/a1").status).toBe("cancelled_by_client");
-  });
-});
-
-// ── U4: executeBookings failure no longer sends a stalled-promise fallback ────
-// Locks in the plan's R6/R7 fix for the YES-confirm booking-execution error
-// path (routeIntent.ts ~line 620): the old copy ("I'll get back to you
-// shortly") promised unscheduled future work. The new copy must (a) admit the
-// hiccup, (b) not promise anything the turn doesn't actually schedule, and
-// (c) the turn must write a `route_intent_fallback` admin alert alongside the
-// pre-existing `booking_execution_failed` alert.
-describe("characterization — executeBookings failure fallback (U4)", () => {
-  it("YES-confirm booking execution error sends non-promising recovery copy and writes an admin alert", async () => {
+// ── REBOOK_REQUEST (2026-09-17): the legacy appointments-based rebook path
+// is gone. "Resend the booking" / "book her again" now goes where the site's
+// own buttons go — Resend (a declined/cancelled request) first, else Re-book
+// via the booking flow.
+describe("REBOOK_REQUEST routes to the site's Resend / Re-book", () => {
+  it("with a resendable request → startResendBookingFlow, never the agent", async () => {
     seed();
-    seedAwaitingBookingTask();
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    executeBookings.mockRejectedValue(new Error("stripe timeout"));
-
-    await routeIntentAndRespond(ctx("YES"));
-
-    // executeBookings was attempted, then matching was re-run in the same turn.
-    expect(executeBookings).toHaveBeenCalledWith("task-1", PHONE);
-    expect(runMatchingForClient).toHaveBeenCalledOnce();
-
-    // The reply never promises unscheduled future work.
-    expect(sendMessage).toHaveBeenCalledOnce();
-    const sentText = String(sendMessage.mock.calls[0][1]);
-    expect(sentText.toLowerCase()).not.toContain("get back to you");
-    expect(sentText.toLowerCase()).not.toContain("i'll get back to you shortly");
-
-    // Both the legacy booking_execution_failed alert and the new typed
-    // route_intent_fallback alert are written.
-    const alertDocs = Array.from((hoisted.docState as Map<string, any>).entries())
-      .filter(([path]) => path.startsWith("admin_alerts/"))
-      .map(([, data]) => data);
-    expect(alertDocs.some((d) => d.type === "booking_execution_failed")).toBe(true);
-    const fallbackAlert = alertDocs.find((d) => d.type === "route_intent_fallback");
-    expect(fallbackAlert).toMatchObject({
-      type: "route_intent_fallback",
-      handler: "booking_confirm_yes",
-      phone: PHONE,
-      severity: "medium",
-      resolved: false,
-    });
-    expect(fallbackAlert.error).toContain("stripe timeout");
-  });
-});
-
-// ── Rebook rate parity (2026-09-13): confirmed the website's own rebook
-// entry point (PostsPage.tsx's `?rebook=` flow) reuses the RATE OF THE PRIOR
-// ARRANGEMENT being rebooked — never the caregiver's browsing-listed rate,
-// and never a hardcoded number. These pin that same behavior in the coded
-// SMS rebook flow (routeIntent.ts's REBOOK_REQUEST + pendingRebook branches).
-describe("characterization — rebook reuses the prior arrangement's rate (2026-09-13)", () => {
-  it("REBOOK_REQUEST carries the prior confirmed appointment's own hourlyRate onto pendingRebook", async () => {
-    seed();
-    hoisted.docState.set("appointments/a1", {
-      clientId: CLIENT_ID, status: "confirmed", date: "2026-08-01",
-      caregiverId: "cg1", caregiverName: "Maria",
-      startTime: "09:00", endTime: "13:00", durationHours: 4,
-      hourlyRate: 27.5, // the ACTUAL rate this arrangement was booked at
-    });
     classifyIntentDetailed.mockResolvedValue({ intent: "REBOOK_REQUEST", degraded: false });
+    findResendableBookingRequests.mockResolvedValueOnce([{ id: "br-cancelled", caregiverId: "cg1", caregiverName: "Basra", statusLabel: "Visit cancelled" }]);
 
-    await routeIntentAndRespond(ctx("book Maria again"));
+    await routeIntentAndRespond(ctx("can you resend the booking"));
 
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session.pendingRebook).toMatchObject({ caregiverId: "cg1", hourlyRate: 27.5 });
+    expect(startResendBookingFlow).toHaveBeenCalledOnce();
+    expect(startBookingFlow).not.toHaveBeenCalled();
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("confirming a rebook books at the prior arrangement's rate, NOT the caregiver's current listed rate", async () => {
-    seed({
-      pendingRebook: {
-        caregiverId: "cg1", caregiverName: "Maria",
-        startTime: "09:00", endTime: "13:00", durationHours: 4,
-        hourlyRate: 27.5, // carried forward from the arrangement being rebooked
-      },
-    });
-    // Deliberately different from the carried-forward rate — proves it's
-    // never consulted when the prior arrangement's own rate is known.
-    hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 999 });
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    quickComplete.mockResolvedValue("2026-08-08");
+  it("with nothing to resend → the booking flow (the site's Re-book / Send Booking)", async () => {
+    seed();
+    classifyIntentDetailed.mockResolvedValue({ intent: "REBOOK_REQUEST", degraded: false });
+    findResendableBookingRequests.mockResolvedValueOnce([]);
 
-    await routeIntentAndRespond(ctx("next Saturday"));
+    await routeIntentAndRespond(ctx("book Basra again"));
 
-    expect(createBookingTask).toHaveBeenCalledOnce();
-    const arg = createBookingTask.mock.calls[0][0] as any;
-    expect(arg.hourlyRate).toBe(27.5);
-  });
-
-  it("a legacy pendingRebook with no carried-forward rate falls back to the caregiver's on-file rate rather than hardcoding 20", async () => {
-    seed({
-      pendingRebook: {
-        caregiverId: "cg1", caregiverName: "Maria",
-        startTime: "09:00", endTime: "13:00", durationHours: 4,
-        // no hourlyRate — simulates a session written before this fix
-      },
-    });
-    hoisted.docState.set("caregivers/cg1", { name: "Maria", hourlyRate: 32 });
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    quickComplete.mockResolvedValue("2026-08-08");
-
-    await routeIntentAndRespond(ctx("next Saturday"));
-
-    expect(createBookingTask).toHaveBeenCalledOnce();
-    const arg = createBookingTask.mock.calls[0][0] as any;
-    expect(arg.hourlyRate).toBe(32);
-  });
-
-  it("refuses (never books at a hardcoded 20) when neither a carried-forward rate nor a caregiver rate exists", async () => {
-    seed({
-      pendingRebook: {
-        caregiverId: "cg1", caregiverName: "Maria",
-        startTime: "09:00", endTime: "13:00", durationHours: 4,
-      },
-    });
-    hoisted.docState.set("caregivers/cg1", { name: "Maria" }); // no hourlyRate at all
-    classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    quickComplete.mockResolvedValue("2026-08-08");
-
-    await routeIntentAndRespond(ctx("next Saturday"));
-
-    expect(createBookingTask).not.toHaveBeenCalled();
-    const sentText = String(sendMessage.mock.calls[0]?.[1] ?? "");
-    expect(sentText).not.toContain("20");
+    expect(startResendBookingFlow).not.toHaveBeenCalled();
+    expect(startBookingFlow).toHaveBeenCalledOnce();
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 });
 
@@ -710,8 +550,8 @@ describe("U3b source scan — one owner for completed-turn memory", () => {
       "linq/webhooks.ts": { userZep: 1, assistantZep: 0, extractFacts: 0 },
       // The retry worker — the ONE dispatcher for completed-turn memory.
       "scheduled/memoryOperationWorker.ts": { userZep: 1, assistantZep: 1, extractFacts: 1 },
-      // Legacy agent-payload memory channel (pre-existing, not the default tail).
-      "agents/caraAgent.ts": { userZep: 0, assistantZep: 0, extractFacts: 1 },
+      // (caraAgent.ts's legacy agent-payload memory channel went with the unused
+      // interaction/execution agent pair, 2026-09-17.)
     });
   });
 
@@ -801,7 +641,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
     await routeIntentAndRespond(ctx("Can you send me their profiles"));
 
     expect(runQaAgent).toHaveBeenCalled();
-    expect(runMatchingForClient).not.toHaveBeenCalled();
+    expect(presentCaregiverSearch).not.toHaveBeenCalled();
   });
 
   it("no pendingMatches at all: FIND_CAREGIVER still runs the deterministic search (unchanged for a genuinely new search)", async () => {
@@ -810,7 +650,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
 
     await routeIntentAndRespond(ctx("How many caregivers in my area"));
 
-    expect(runMatchingForClient).toHaveBeenCalledOnce();
+    expect(presentCaregiverSearch).toHaveBeenCalledOnce();
     expect(runQaAgent).not.toHaveBeenCalled();
   });
 
@@ -821,7 +661,7 @@ describe("FIND_CAREGIVER defers to the agent when pendingMatches is fresh (2026-
 
     await routeIntentAndRespond(ctx("Any caregivers near me?"));
 
-    expect(runMatchingForClient).toHaveBeenCalledOnce();
+    expect(presentCaregiverSearch).toHaveBeenCalledOnce();
   });
 });
 
@@ -928,40 +768,29 @@ describe("FIND_REPLACEMENT (client) routes to the scripted replacement flow", ()
   });
 });
 
-describe("CANCEL_REQUEST with no confirmed appointment falls through to the agent (2026-09-09)", () => {
-  it("hands off to runQaAgent instead of the hardcoded 'no visits to cancel' reply", async () => {
+// 2026-09-17: the legacy appointments-based cancel path (a pending-cancel confirm flag
+// + YES/NO router branches) is gone. "cancel" — classified or the bare keyword —
+// starts the scripted cancelFlow, which reads what the My Bookings page can
+// cancel right now and makes the site's own write on YES.
+describe("CANCEL_REQUEST starts the scripted cancel flow", () => {
+  it("a classified cancel request → startCancelFlow with the family's words, never the agent", async () => {
     seed();
     classifyIntentDetailed.mockResolvedValue({ intent: "CANCEL_REQUEST", degraded: false });
-    runQaAgent.mockResolvedValue("I've cancelled your interview with Basra — she'll be notified.");
 
-    await routeIntentAndRespond(ctx("Can you cancel that interview"));
+    await routeIntentAndRespond(ctx("can you cancel Thursday's visit"));
 
-    expect(runQaAgent).toHaveBeenCalledOnce();
-    expect(runQaAgent).toHaveBeenCalledWith(expect.objectContaining({ text: "Can you cancel that interview" }));
+    expect(startCancelFlow).toHaveBeenCalledOnce();
+    expect(startCancelFlow.mock.calls[0][3]).toEqual({ initialText: "can you cancel Thursday's visit" });
+    expect(runQaAgent).not.toHaveBeenCalled();
   });
 
-  it("still hands off to the agent for the bare 'cancel' keyword too, not just the classified intent", async () => {
+  it("the bare CANCEL keyword goes to the same flow", async () => {
     seed();
     classifyIntentDetailed.mockResolvedValue({ intent: "QUESTION", degraded: false });
-    runQaAgent.mockResolvedValue("What would you like to cancel — a visit or an interview?");
 
     await routeIntentAndRespond(ctx("cancel"));
 
-    expect(runQaAgent).toHaveBeenCalledOnce();
-  });
-
-  it("a REAL confirmed appointment still goes through the visit-cancellation confirm flow, unaffected", async () => {
-    seed();
-    classifyIntentDetailed.mockResolvedValue({ intent: "CANCEL_REQUEST", degraded: false });
-    hoisted.docState.set("appointments/a1", {
-      clientId: CLIENT_ID, caregiverId: "cg1", caregiverName: "Basra", date: "2026-09-20",
-      startTime: "9:00 AM", endTime: "1:00 PM", status: "confirmed",
-    });
-
-    await routeIntentAndRespond(ctx("Can you cancel it"));
-
+    expect(startCancelFlow).toHaveBeenCalledOnce();
     expect(runQaAgent).not.toHaveBeenCalled();
-    const session = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(session.pendingCancelConfirm).toEqual({ appointmentId: "a1" });
   });
 });

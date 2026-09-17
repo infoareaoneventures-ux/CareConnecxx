@@ -76,7 +76,7 @@ export const sendFirstVisitActivation = functions.pubsub
 
         // "Ever booked anything" — no status filter (even a cancelled visit
         // means they've engaged with booking before), so this checks
-        // existence directly rather than going through queryVisitsMerged
+        // existence directly rather than going through queryVisits
         // (which requires a status list).
         const [apptSnap, shiftSnap] = await Promise.all([
           db.collection("appointments").where("clientId", "==", clientId).limit(1).get(),

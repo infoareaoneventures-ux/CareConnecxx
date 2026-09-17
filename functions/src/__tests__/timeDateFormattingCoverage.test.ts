@@ -50,18 +50,29 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   ["../scheduled/shiftTaskNudges.ts",           4],
   ["../scheduled/weeklyDigest.ts",              2],
   ["../scheduled/dayBeforeShiftReminder.ts",    2],
-  ["../scheduled/clientDayBeforeReminder.ts",   3],
+  // 2 (2026-09-17): the reminder is now one deterministic sentence per language,
+  // each formatting the start time once — no model rewrite of the time anymore.
+  ["../scheduled/clientDayBeforeReminder.ts",   1],
   ["../agents/clientSwapRequestHandler.ts",    13],
   ["../agents/caregiverSwapHandler.ts",        15],
   ["../agents/caregiverCancelShiftHandler.ts",  6],
   ["../agents/timesheetHandler.ts",            11],
   ["../agents/shiftOffer.ts",                  11],
-  ["../agents/bookingExecutor.ts",             17],
   ["../agents/qaAgent.ts",                      4],
   ["../agents/situationSnapshot.ts",            2],
-  ["../linq/routeIntent.ts",                   18],
+  // Dropped from 18 (2026-09-17): the legacy appointments-based REBOOK_REQUEST /
+  // pendingRebook path (which formatted the prior visit's date/times in its
+  // own copy) was removed — a resend/rebook now goes through the booking
+  // flow, whose recap formats through the same helpers in bookingFlow.ts.
+  // Dropped from 15 to 6 (2026-09-17): the legacy CANCEL_REQUEST /
+  // pendingCancelConfirm path (which formatted the appointment's date/time
+  // into its own briefing + confirm texts) was removed — cancel now goes
+  // through cancelFlow.ts, which formats via bookingCancel.ts's option labels.
+  // routeIntent.ts row removed 2026-09-17: its last formatted SMS sites (the
+  // agent-task booking approval texts, hireMode summary, and the legacy
+  // recurring-schedule handlers) all went with the retired Evia-only paths —
+  // every date/time the router still sends is rendered by a scripted flow.
   ["../linq/routeCaregiver.ts",                 5],
-  ["../linq/inboundHelpers.ts",                 2],
   ["../mcp/server.ts",                          1],
 ];
 
@@ -75,8 +86,8 @@ describe("time/date formatting coverage — every audited SMS/LLM-prompt site is
       .toBeGreaterThanOrEqual(minCalls);
   });
 
-  it("bookingExecutor.ts, bookingFlow.ts, interviewFlow.ts, and bookingResolution.ts (fixed earlier the same session) still import the shared formatters", () => {
-    for (const rel of ["../agents/bookingExecutor.ts", "../agents/bookingFlow.ts", "../agents/interviewFlow.ts", "../agents/bookingResolution.ts"]) {
+  it("bookingFlow.ts, interviewFlow.ts, and bookingResolution.ts (fixed earlier the same session) still import the shared formatters", () => {
+    for (const rel of ["../agents/bookingFlow.ts", "../agents/interviewFlow.ts", "../agents/bookingResolution.ts"]) {
       const src = read(rel);
       expect(src, `${rel} must still import from utils/scheduledTime`)
         .toMatch(/from ["']\.\.\/(utils\/scheduledTime|scheduled\/shiftGenerator)["']/);

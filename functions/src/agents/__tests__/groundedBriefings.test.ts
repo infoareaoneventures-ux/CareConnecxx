@@ -24,7 +24,6 @@ import { resolve } from "path";
  */
 
 const onboardingSrc = readFileSync(resolve(__dirname, "../onboardingConversation.ts"), "utf8");
-const routeIntentSrc = readFileSync(resolve(__dirname, "../../linq/routeIntent.ts"), "utf8");
 
 function sliceBetween(src: string, startMarker: string, endMarker: string): string {
   const start = src.indexOf(startMarker);
@@ -84,12 +83,5 @@ describe("MVR classifier — soft declines are decline exemplars (R14)", () => {
     expect(mvr).toContain('→ question.');
     expect(mvr).toContain('verdict === "question"');
     expect(mvr).toContain('verdict === "unclear"');
-  });
-});
-
-describe("routeIntent cancellation briefings — grounding clause backstop (R12)", () => {
-  it("BOTH coded cancel-confirm sites carry the only-the-visit-on-date instruction", () => {
-    const clause = "Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.";
-    expect(routeIntentSrc.split(clause).length - 1).toBe(2);
   });
 });

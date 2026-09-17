@@ -74,7 +74,10 @@ vi.mock("firebase-admin", () => {
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../memory/memoryFiles", () => ({ readMemoryFile: vi.fn().mockResolvedValue(""), writeMemoryFile: vi.fn().mockResolvedValue(undefined), MemoryFile: {} }));
 vi.mock("../../memory/preferences", () => ({ getPreferences: vi.fn().mockResolvedValue(null) }));
-vi.mock("../../agents/matchingAgent", () => ({ runMatchingForClient: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
+}));
 vi.mock("../../linq/client", () => ({ sendToPhone: vi.fn().mockResolvedValue("sent") }));
 
 import { handleToolCall } from "../server";
@@ -236,7 +239,8 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
     for (const k of ["reschedulePendingDate", "reschedulePendingStartTime", "reschedulePendingEndTime", "rescheduledBy"]) {
       expect(update[k]).toEqual({ __delete: true });
     }
-    expect(update.updatedAt).toEqual({ __serverTimestamp: true });
+    // handleCancelShift writes no updatedAt (only Skip does) — same fields, nothing extra.
+    expect(update.updatedAt).toBeUndefined();
   });
 
   it("propose_reschedule rejects endTime before startTime", async () => {

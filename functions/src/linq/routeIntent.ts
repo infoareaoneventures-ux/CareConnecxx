@@ -1,13 +1,7 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
-import { readFlag } from "../utils/sessionState";
 import { classifyIntentDetailed, isCaregiverSearchMisroutedAsProviderSearch } from "../agents/intentClassifier";
-import { canonicalApptFields } from "../utils/appointmentDoc";
-import { BILLING_AUTHORITY_VERSION } from "../billing/createValidatedShiftHours";
 
-/** Shape guard for pendingCancelConfirm — must carry a usable appointmentId. */
-const hasAppointmentId = (v: unknown): boolean =>
-  !!v && typeof v === "object" && typeof (v as { appointmentId?: unknown }).appointmentId === "string";
 import { buildHelpSmsReply, type DiscoveryRole } from "../agents/capabilityDiscovery";
 import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agents/operationalContext";
 import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../utils/sessionState";
@@ -15,10 +9,7 @@ import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
-import { handleTaskApproval } from "../agents/taskApprovalHandler";
-import { updatePermissionFromText, getPermissions } from "../agents/permissionsConversation";
-import { executeBookings, createBookingTask } from "../agents/bookingExecutor";
-import { resolveCaregiverRate as resolveCaregiverRateShared, coerceHourlyRate } from "../utils/caregiverRate";
+import { updatePermissionFromText } from "../agents/permissionsConversation";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
@@ -29,14 +20,13 @@ import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { businessTodayStr, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr } from "../utils/scheduledTime";
 import { handleJobResponse } from "../triggers/jobNotifications";
 import {
   searchZepMemory,
   getZepUserId,
 } from "../memory/zepClient";
 import { quickComplete } from "../utils/openaiClient";
-import { handleRecurringConfirm } from "./inboundHelpers";
 import { buildNonMedicalDeflection } from "../agents/medicalBoundary";
 
 const db = admin.firestore();
@@ -74,143 +64,6 @@ async function extractFamilyMember(text: string): Promise<{ name: string | null;
     const phoneLike = /^[+(]?[\d\s().+-]{8,}$/.test(trimmed) && trimmed.replace(/\D/g, "").length >= 10;
     return { name: null, phone: phoneLike ? normalizeE164(text) : null };
   }
-}
-
-// ── Recurring schedule: PAUSE / CANCEL / RESUME ───────────────────────────────
-
-async function handleRecurringPause(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
-  if (!scheduleId) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The family asked about their recurring schedule, but there isn't an active one on file. Gently let them know, and offer to check their upcoming visits instead.",
-      fallback: "I don't see an active recurring schedule. Want me to check upcoming visits instead?",
-      maxTokens: 70,
-    }));
-    return;
-  }
-  await db.collection("recurring_schedules").doc(scheduleId).update({
-    status:       "paused",
-    pausedAt:     new Date().toISOString(),
-    pausedReason: "client_request",
-  });
-  await sendMessage(chatId,
-    "Recurring schedule paused. Future visits won't be booked automatically.\n\n" +
-    "Text RESUME SCHEDULE whenever you're ready to start again."
-  );
-}
-
-async function handleRecurringCancel(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
-  if (!scheduleId) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The family asked about their recurring schedule, but there isn't an active one on file. Gently let them know, and offer to check their upcoming visits instead.",
-      fallback: "I don't see an active recurring schedule. Want me to check upcoming visits instead?",
-      maxTokens: 70,
-    }));
-    return;
-  }
-
-  // Business-timezone today — UTC ("PT tomorrow" in the evening) left
-  // tomorrow's visit confirmed when cancelling a recurring schedule at night.
-  const today = businessTodayStr();
-
-  // Cancel all future unconfirmed visits from this schedule
-  const futureSnap = await db.collection("appointments")
-    .where("recurringScheduleId", "==", scheduleId)
-    .where("date", ">", today)
-    .where("status", "in", ["confirmed"])
-    .get();
-
-  const batch = db.batch();
-  batch.update(
-    db.collection("recurring_schedules").doc(scheduleId),
-    { status: "cancelled", cancelledAt: new Date().toISOString() }
-  );
-  for (const doc of futureSnap.docs) {
-    batch.update(doc.ref, { status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
-  }
-  await batch.commit();
-
-  await db.collection("agent_sessions").doc(phone).update({
-    activeRecurringScheduleId: admin.firestore.FieldValue.delete(),
-  }).catch(() => {});
-
-  await sendMessage(chatId,
-    `Recurring schedule cancelled. ${futureSnap.size > 0 ? `${futureSnap.size} upcoming visit${futureSnap.size !== 1 ? "s" : ""} have been removed.` : ""}\n\n` +
-    `You can still book individual visits anytime.`.trim()
-  );
-}
-
-async function handleRecurringResume(phone: string, chatId: string, session: AgentSession): Promise<void> {
-  const scheduleId = (session as any).activeRecurringScheduleId as string | undefined;
-  if (!scheduleId) {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The family asked to resume a paused recurring schedule, but there isn't a paused one on file. Gently let them know, and offer to check their upcoming visits instead.",
-      fallback: "I don't see a paused schedule. Want me to check upcoming visits instead?",
-      maxTokens: 70,
-    }));
-    return;
-  }
-  const schedSnap = await db.collection("recurring_schedules").doc(scheduleId).get();
-  if (!schedSnap.exists || schedSnap.data()?.status !== "paused") {
-    await sendMessage(chatId, await generateCaraMessage({
-      audience: "family",
-      language: session.preferredLanguage === "es" ? "es" : "en",
-      context: "The family asked to resume their recurring schedule, but it isn't actually paused right now. Gently let them know it's already active.",
-      fallback: "That schedule isn't currently paused.",
-      maxTokens: 60,
-    }));
-    return;
-  }
-  const sched = schedSnap.data()!;
-  const today = businessTodayStr();
-  const now   = new Date().toISOString();
-
-  const { generateRecurringDates } = await import("../scheduled/recurringScheduler");
-  const dates = generateRecurringDates(today, sched.days as string[], 4);
-
-  const batch = db.batch();
-  batch.update(schedSnap.ref, {
-    status:          "active",
-    pausedAt:        admin.firestore.FieldValue.delete(),
-    pausedReason:    admin.firestore.FieldValue.delete(),
-    lastExtendedAt:  now,
-    weeksBookedAhead: 4,
-  });
-  for (const { date } of dates) {
-    const apptRef = db.collection("appointments").doc();
-    batch.set(apptRef, {
-      clientId:            sched.clientId,
-      caregiverId:         sched.caregiverId,
-      caregiverName:       sched.caregiverName,
-      seniorName:          sched.seniorName || null,
-      ...(sched.recipientKey ? { recipientKey: sched.recipientKey } : {}),
-      date,
-      startTime:           sched.startTime,
-      endTime:             sched.endTime,
-      durationHours:       sched.durationHours,
-      hourlyRate:          sched.hourlyRate,
-      ...canonicalApptFields({ startTime: sched.startTime as string, durationHours: sched.durationHours as number | undefined, hourlyRate: sched.hourlyRate as number | undefined }),
-      status:              "confirmed",
-      billingAuthority:    BILLING_AUTHORITY_VERSION,
-      recurringScheduleId: scheduleId,
-      humanApproved:       true,
-      createdByAgent:      true,
-      createdAt:           now,
-    });
-  }
-  await batch.commit();
-
-  const schedDesc = `${(sched.days as string[]).join("/")}s ${formatHHMMForDisplay(sched.startTime as string)}–${formatHHMMForDisplay(sched.endTime as string)}`;
-  await sendMessage(chatId,
-    `Resumed! ${sched.caregiverName as string} is booked every ${schedDesc} for the next 4 weeks.`
-  );
 }
 
 export interface IntentRouteContext {
@@ -308,24 +161,6 @@ async function handleAddFamilyMemberIntent(
 export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<void> {
   const { phone, chatId, text, norm, session } = ctx;
 
-  // ── Pending rematching after interview cancelled due to availability change ──
-  if ((session as any).pendingRematch && (norm === "YES" || norm === "Y")) {
-    await db.collection("agent_sessions").doc(phone).update({ pendingRematch: admin.firestore.FieldValue.delete(), stateExpiresAt: admin.firestore.FieldValue.delete() });
-    const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-    const { runMatchingForClient: rmfcPendingRematch } = await import("../agents/matchingAgent");
-    await rmfcPendingRematch(phone, chatId, sd, sd);
-    return;
-  }
-
-  // ── Check for pending task (booking / emergency replacement) ───────────────
-  const taskSnap = await db
-    .collection("agent_tasks")
-    .where("clientPhone", "==", phone)
-    .where("status",      "==", "awaiting_approval")
-    .orderBy("createdAt", "desc").limit(1).get();
-
-  const pendingTask = taskSnap.empty ? null : taskSnap.docs[0];
-
   if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {/* non-critical */});
 
     if ((session as any).pendingAddFamilyMember) {
@@ -335,7 +170,7 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
 
     // intentDegraded = the classifier errored/timed out and "QUESTION" is a
     // guess — when set, skip the quick-reply bypass and take the full QA path.
-    const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, !!pendingTask);
+    const { intent, degraded: intentDegraded } = await classifyIntentDetailed(text, false);
 
     // ── /help: capability discovery ──────────────────────────────────────────
     // Static, side-effect-free reply listing what Evia can do for this role.
@@ -375,22 +210,15 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       }).catch(() => {});
     }
 
-    // ── Emergency replacement: 1/2/3 ─────────────────────────────────────────
-    if (intent === "TASK_REPLY" && pendingTask && ["1", "2", "3"].includes(text.trim())) {
-      await handleTaskApproval(pendingTask, text.trim(), session, chatId);
-      return;
-    }
-
     // ── Stale high-stakes confirmation sweep ─────────────────────────────────
-    // pendingCancelConfirm / awaitingRecurringConfirmation are checked in a
-    // fixed order by the YES/NO branches below, so a stale flag
+    // Any HIGH_STAKES_CONFIRM_FLAGS entry is checked by a YES/NO branch, so a
+    // stale flag
     // (set long ago, never resolved) can intercept a YES meant for a newer
     // question. The global stateExpiresAt sweep in webhooks.ts only fires when a
     // stateExpiresAt is present — flags set without one never expire. Clear any
     // confirm flag older than its TTL here (and any flag with no age stamp, the
     // dangerous never-expires case), in DB and on the in-memory session, so the
-    // branches below only ever act on a fresh confirmation. Mirrors the
-    // pendingTaskConfirm staleness pattern further down.
+    // branches only ever act on a fresh confirmation.
     {
       const stale = staleConfirmFlags(session as unknown as Record<string, unknown>);
       if (stale.length > 0) {
@@ -401,94 +229,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           (session as any)[flag] = undefined;
         }
         await db.collection("agent_sessions").doc(phone).update(expired).catch(() => {});
-      }
-    }
-
-    // ── BOOKING_CONFIRM — natural language YES ("sure", "sounds good", etc.) ──
-    if (intent === "BOOKING_CONFIRM") {
-      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
-      const cancelConfirm303 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
-      if (cancelConfirm303) {
-        const { appointmentId } = cancelConfirm303;
-        const apptRef  = db.collection("appointments").doc(appointmentId);
-        const apptSnap = await apptRef.get();
-        if (apptSnap.exists) {
-          const appt = apptSnap.data()!;
-          await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
-          const cgSnap  = await db.collection("caregivers").doc(appt.caregiverId).get();
-          const cgPhone = cgSnap.data()?.phone as string | undefined;
-          if (cgPhone) {
-            const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-            const cancelNotifMsgA = await generateCaraMessage({
-              audience: "caregiver",
-              context: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.`,
-              fallback: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Sorry for the inconvenience.`,
-              maxTokens: 80,
-            });
-            await sendMessage(cgSess.chatId, cancelNotifMsgA);
-          }
-        }
-        await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-        const cancelConfirmMsgA = await generateCaraMessage({
-          audience: "family",
-          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
-          fallback: "Cancelled. Want me to find a replacement for that day?",
-          maxTokens: 60,
-        });
-        await sendMessage(chatId, cancelConfirmMsgA);
-        return;
-      }
-      if ((session as any).awaitingRecurringConfirmation) {
-        await handleRecurringConfirm(phone, chatId, session);
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        try {
-          await executeBookings(pendingTask.id, phone);
-        } catch (err) {
-          console.error("executeBookings failed (BOOKING_CONFIRM):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await db.collection("admin_alerts").add({
-            type: "route_intent_fallback", handler: "booking_confirm_nl", phone,
-            error: String(err).slice(0, 300), severity: "medium",
-            createdAt: new Date().toISOString(), resolved: false,
-          }).catch(() => {});
-          await sendMessage(chatId, await generateCaraMessage({
-            audience: "family",
-            language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
-            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
-            maxTokens: 80,
-          }));
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc } = await import("../agents/matchingAgent");
-          await rmfc(phone, chatId, sd, sd).catch(() => {});
-        }
-        return;
-      }
-    }
-
-    // ── BOOKING_DECLINE — natural language NO ("never mind", "don't book", etc.) ──
-    if (intent === "BOOKING_DECLINE") {
-      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
-      if ((session as any).pendingCancelConfirm) {
-        await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-        await sendMessage(chatId, "Got it — visit is still on! Let me know if you need anything.");
-        return;
-      }
-      if ((session as any).awaitingRecurringConfirmation) {
-        await db.collection("agent_sessions").doc(phone).update({
-          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
-          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId, "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime.");
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        await pendingTask.ref.update({ status: "declined" });
-        await db.collection("agent_sessions").doc(phone).update({ pendingCancelConfirm: admin.firestore.FieldValue.delete() });
-        await sendMessage(chatId, "No problem — booking cancelled. Want me to look at different dates or a different caregiver?");
-        return;
       }
     }
 
@@ -536,135 +276,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         });
         await sendMessage(chatId, noJobMsg);
       }
-      return;
-    }
-
-    // ── YES — booking, recurring setup, or interview confirmation ───────────────
-    if (norm === "YES" || norm === "Y") {
-      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
-      const cancelConfirm470 = readFlag<{ appointmentId: string }>(session, "pendingCancelConfirm", hasAppointmentId);
-      if (cancelConfirm470) {
-        const { appointmentId } = cancelConfirm470;
-        const apptRef = db.collection("appointments").doc(appointmentId);
-        const apptSnap = await apptRef.get();
-        if (apptSnap.exists) {
-          const appt = apptSnap.data()!;
-          await apptRef.update({ status: "cancelled_by_client", cancelledAt: new Date().toISOString() });
-          const cgSnap = await db.collection("caregivers").doc(appt.caregiverId).get();
-          const cgPhone = cgSnap.data()?.phone as string | undefined;
-          if (cgPhone) {
-            const cgSess = await (await import("./client")).getOrCreateSession(cgPhone);
-            const cancelNotifMsgB = await generateCaraMessage({
-              audience: "caregiver",
-              context: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Notify the caregiver and apologize for the inconvenience. Refer to it only as 'the visit on ${formatDateForDisplay(appt.date)}' — do not name the client unless given.`,
-              fallback: `The family has cancelled the visit on ${formatDateForDisplay(appt.date)}. Sorry for the inconvenience.`,
-              maxTokens: 80,
-            });
-            await sendMessage(cgSess.chatId, cancelNotifMsgB);
-          }
-        }
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCancelConfirm: admin.firestore.FieldValue.delete(),
-        });
-        const cancelConfirmMsgB = await generateCaraMessage({
-          audience: "family",
-          context: "Visit has been cancelled. Evia is confirming and offering to find a replacement for that day.",
-          fallback: "Cancelled. Want me to find a replacement for that day?",
-          maxTokens: 60,
-        });
-        await sendMessage(chatId, cancelConfirmMsgB);
-        return;
-      }
-      // YES to recurring schedule setup
-      if ((session as any).awaitingRecurringConfirmation) {
-        await handleRecurringConfirm(phone, chatId, session);
-        return;
-      }
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        try {
-          await executeBookings(pendingTask.id, phone);
-        } catch (err) {
-          console.error("executeBookings failed (YES):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await db.collection("admin_alerts").add({
-            type: "route_intent_fallback", handler: "booking_confirm_yes", phone,
-            error: String(err).slice(0, 300), severity: "medium",
-            createdAt: new Date().toISOString(), resolved: false,
-          }).catch(() => {});
-          await sendMessage(chatId, await generateCaraMessage({
-            audience: "family",
-            language: session.preferredLanguage === "es" ? "es" : "en",
-            context: "That booking didn't lock in. Tell the family plainly, and say you're pulling up other openings for that same visit right now and will text as soon as you have one. Sound human and calm, not like an error message.",
-            fallback: "That booking didn't go through on my end. I'm pulling up other openings for that visit right now and I'll text you as soon as I have one.",
-            maxTokens: 80,
-          }));
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc4 } = await import("../agents/matchingAgent");
-          await rmfc4(phone, chatId, sd, sd).catch(() => {});
-        }
-        return;
-      }
-    }
-
-    // ── NO — recurring setup declined, booking declined, or interview time rejected ──
-    if (norm === "NO" || norm === "N") {
-      // Cancel confirm is time-sensitive — check before recurring to avoid stale flag collision
-      // NO to cancel confirmation — abort the cancellation
-      if ((session as any).pendingCancelConfirm) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCancelConfirm: admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId, "Got it — visit is still on! Let me know if you need anything.");
-        return;
-      }
-      // NO to recurring schedule setup
-      if ((session as any).awaitingRecurringConfirmation) {
-        await db.collection("agent_sessions").doc(phone).update({
-          awaitingRecurringConfirmation: admin.firestore.FieldValue.delete(),
-          pendingRecurringSchedule:      admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId,
-          "No problem — I'll keep each visit booked individually. You can set up a recurring schedule anytime."
-        );
-        return;
-      }
-      // NO to booking summary
-      if (pendingTask && pendingTask.data().type === "booking_confirmation") {
-        await pendingTask.ref.update({ status: "declined" });
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingCancelConfirm: admin.firestore.FieldValue.delete(),
-        });
-        await sendMessage(chatId,
-          "No problem — booking cancelled. Want me to look at different dates or a different caregiver?"
-        );
-        return;
-      }
-    }
-
-    // ── CONFIRM / SKIP — finalizes a pending task selection made by 1/2/3 ──────
-    // Drop stale pendingTaskConfirm (>1h old) so an old caregiver-selection
-    // doesn't get finalized weeks later by an unrelated CONFIRM/SKIP keyword.
-    if ((session as any).pendingTaskConfirm) {
-      const setAt = (session as any).pendingTaskConfirmSetAt as string | undefined;
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      if (setAt && setAt < oneHourAgo) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingTaskConfirm:      admin.firestore.FieldValue.delete(),
-          pendingTaskConfirmSetAt: admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-        (session as any).pendingTaskConfirm = undefined;
-      }
-    }
-    if (norm === "CONFIRM" && (session as any).pendingTaskConfirm) {
-      const { finalizeTaskApproval } = await import("../agents/taskApprovalHandler");
-      await finalizeTaskApproval(phone, chatId, session as unknown as Record<string, unknown>);
-      return;
-    }
-    if (norm === "SKIP" && (session as any).pendingTaskConfirm) {
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingTaskConfirm: admin.firestore.FieldValue.delete(),
-      });
-      await sendMessage(chatId, "No problem — want me to find a different caregiver?");
       return;
     }
 
@@ -724,44 +335,25 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
           .catch(() => undefined);
         const refilter = await detectMatchRefilter(text, lastAssistantMessage).catch(() => null);
         if (refilter) {
-          const baseIntake = ((session as any).onboardingData ?? {}) as Record<string, unknown>;
-          const mergedIntake: Record<string, unknown> = { ...baseIntake };
-
-          // Merge refilter overrides into intake
-          if (refilter.skills?.length) {
-            const existing = (baseIntake.careNeeds as string[] | undefined) ?? [];
-            mergedIntake.careNeeds = Array.from(new Set([...existing, ...refilter.skills]));
-          }
-          if (refilter.languages?.length) {
-            mergedIntake.languagePreference = refilter.languages[0];
-          }
-          if (refilter.genderPreference) {
-            mergedIntake.genderPreference = refilter.genderPreference;
-          }
-          if (refilter.rate) {
-            mergedIntake.rateDirection = refilter.rate.direction;
-          }
-          if (refilter.availability) {
-            mergedIntake.availabilityOverride = refilter.availability;
-          }
-          if (refilter.distance) {
-            mergedIntake.distanceDirection = refilter.distance.direction;
-          }
-          if (refilter.experienceYears?.min) {
-            mergedIntake.minExperienceYears = refilter.experienceYears.min;
-          }
+          // Map the spoken change onto the Find Caregivers page's own filter
+          // panel (utils/matchRefilterDetector.ts → agents/caregiverSearch.ts).
+          const prior = ((session as any).lastCaregiverSearchFilters ?? {}) as Record<string, unknown>;
+          const nextFilters: Record<string, unknown> = { ...prior };
+          if (refilter.skills?.length) nextFilters.specialties = Array.from(new Set([...(Array.isArray(prior.specialties) ? prior.specialties as string[] : []), ...refilter.skills]));
+          if (refilter.languages?.length) nextFilters.languages = Array.from(new Set([...(Array.isArray(prior.languages) ? prior.languages as string[] : []), ...refilter.languages]));
+          if (refilter.rate) nextFilters.sortBy = refilter.rate.direction === "lower" ? "price-low" : "price-high";
+          if (refilter.distance) nextFilters.maxDistanceMiles = refilter.distance.direction === "wider" ? Math.max(Number(prior.maxDistanceMiles) || 25, 25) * 2 : 10;
+          if (refilter.experienceYears?.min) nextFilters.minExperienceYears = refilter.experienceYears.min;
 
           await db.collection("agent_sessions").doc(phone).update({
             pendingMatches:      admin.firestore.FieldValue.delete(),
             pendingMatchesSetAt: admin.firestore.FieldValue.delete(),
             lastRefilterSummary: refilter.summary,
+            lastCaregiverSearchFilters: nextFilters,
           }).catch(() => {});
 
-          await sendMessage(chatId, `Searching for ${refilter.summary} — coming up.`);
-
-          // Fire matching with merged intake; runs async with its own send.
-          const { runMatchingForClient } = await import("../agents/matchingAgent");
-          await runMatchingForClient(phone, chatId, mergedIntake, session as unknown as Record<string, unknown>);
+          const { presentCaregiverSearch } = await import("../agents/caregiverSearch");
+          await presentCaregiverSearch({ phone, chatId, clientId: session.userId as string | undefined, filters: nextFilters, source: "routeIntent:refilter" });
           return;
         }
       }
@@ -787,25 +379,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         (session as any).pendingMatches = undefined;
       }
       // Otherwise fall through to normal intent routing.
-    }
-
-    // ── Recurring schedule: RESUME keyword ───────────────────────────────────
-    if (norm === "RESUME SCHEDULE" || norm === "RESUME") {
-      if ((session as any).activeRecurringScheduleId) {
-        await handleRecurringResume(phone, chatId, session);
-        return;
-      }
-    }
-
-    // ── Recurring schedule: PAUSE / CANCEL via intent ─────────────────────────
-    if (intent === "PAUSE_SCHEDULE") {
-      await handleRecurringPause(phone, chatId, session);
-      return;
-    }
-
-    if (intent === "CANCEL_SCHEDULE") {
-      await handleRecurringCancel(phone, chatId, session);
-      return;
     }
 
     // ── Permission update ─────────────────────────────────────────────────────
@@ -918,300 +491,46 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       }
       return;
     }
-    // ── hireMode step B — schedule reply ─────────────────────────────────────
-    if ((session as any).hireMode && (session as any).hireModeDate) {
-      const hire      = (session as any).hireMode      as { caregiverName: string; caregiverId: string };
-      const dateStr   = (session as any).hireModeDate  as string;
-      const parsedScheduleRaw = await quickComplete(
-        "Extract a weekly care schedule from this message. " +
-          "Reply with only a JSON object: { \"days\": [\"Monday\",\"Wednesday\",\"Friday\"], " +
-          "\"startTime\": \"9:00 AM\", \"endTime\": \"1:00 PM\", \"durationHours\": 4 }. " +
-          "days must be full day names. durationHours is a number.",
-        text,
-        { maxTokens: 120 },
-      ).catch(() => "null");
-      let schedule: { days: string[]; startTime: string; endTime: string; durationHours: number } | null = null;
+    // ── CANCEL — a visit, a whole booking, or a pending request ─────────────
+    // 2026-09-17: replaced the legacy path, which looked in the retired
+    // `appointments` collection and parked a pendingCancelConfirm flag for
+    // the YES/NO router to turn into an appointments write nothing on the
+    // site reads. The scripted cancelFlow reads what the My Bookings page
+    // can actually cancel right now (visits, whole bookings, pending booking/
+    // replacement/schedule-change requests), asks which, confirms with the
+    // site's own dialog wording, and makes the site's own write.
+    if ((intent === "CANCEL_REQUEST" || norm === "CANCEL") && session.userType !== "caregiver") {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
       try {
-        schedule = JSON.parse(parsedScheduleRaw || "null");
-      } catch { /* */ }
-
-      if (!schedule || !schedule.days?.length) {
-        await sendMessage(chatId, "I didn't catch that — could you try again? (e.g. '3 days, Mon/Wed/Fri, 9am–1pm')");
-        return;
-      }
-
-      // Fetch actual hourly rate from caregiver doc
-      const cgDoc = await db.collection("caregivers").doc(hire.caregiverId).get();
-      const hourlyRate = (cgDoc.data()?.hourlyRate ?? 20) as number;
-
-      // Build one appointment per day starting from the hire date's week
-      const startDate = new Date(dateStr + "T12:00:00Z");
-      const dayIndexMap: Record<string, number> = {
-        Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6,
-      };
-      const appointments: Array<{ date: string; startTime: string; endTime: string; durationHours: number }> = [];
-      for (const day of schedule.days) {
-        const target = dayIndexMap[day] ?? -1;
-        if (target < 0) continue;
-        const d = new Date(startDate);
-        const diff = (target - d.getUTCDay() + 7) % 7;
-        d.setUTCDate(d.getUTCDate() + diff);
-        appointments.push({
-          date:          d.toISOString().slice(0, 10),
-          startTime:     schedule.startTime,
-          endTime:       schedule.endTime,
-          durationHours: schedule.durationHours,
-        });
-      }
-
-      const clientId = session.userId ?? phone;
-      const taskId   = await createBookingTask({
-        clientPhone:   phone,
-        clientId,
-        caregiverId:   hire.caregiverId,
-        caregiverName: hire.caregiverName,
-        appointments,
-        hourlyRate,
-      });
-
-      await db.collection("agent_sessions").doc(phone).update({
-        hireMode:     admin.firestore.FieldValue.delete(),
-        hireModeDate: admin.firestore.FieldValue.delete(),
-      });
-
-      const perms = await getPermissions(session.userId ?? phone).catch(() => null);
-      if (perms?.canBookAutomatically) {
-        try {
-          await executeBookings(taskId, phone);
-        } catch (err) {
-          console.error("executeBookings failed (hireMode):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await db.collection("admin_alerts").add({
-            type: "route_intent_fallback", handler: "hire_mode_auto_book", phone,
-            error: String(err).slice(0, 300), severity: "medium",
-            createdAt: new Date().toISOString(), resolved: false,
-          }).catch(() => {});
-          await sendMessage(chatId, await generateCaraMessage({
-            audience: "family",
-            language: session.preferredLanguage === "es" ? "es" : "en",
-            context: `Booking ${hire.caregiverName} for that schedule didn't lock in. Tell the family plainly, and say you're checking ${hire.caregiverName}'s other openings (or a similar caregiver) right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
-            fallback: `Booking ${hire.caregiverName} for that schedule didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
-            maxTokens: 80,
-          }));
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc2 } = await import("../agents/matchingAgent");
-          await rmfc2(phone, chatId, sd, sd).catch(() => {});
-        }
-      } else {
-        const totalCost = (appointments.length * schedule.durationHours * hourlyRate).toFixed(2);
-        const lines = appointments.map(a => `${formatDateForDisplay(a.date)} · ${formatHHMMForDisplay(a.startTime)}–${formatHHMMForDisplay(a.endTime)}`).join("\n");
-        await sendMessage(chatId,
-          `Here's your booking summary:\n\n${lines}\n${hire.caregiverName} · $${totalCost} total\n\nReply YES to confirm or NO to cancel.`
-        );
+        const { startCancelFlow } = await import("../agents/cancelFlow");
+        await startCancelFlow(phone, chatId, session, { initialText: text });
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
       return;
     }
 
-    // ── hireMode step A — date reply ──────────────────────────────────────────
-    if ((session as any).hireMode && !(session as any).hireModeDate) {
-      const parsedDateRaw = await quickComplete(
-        `Today is ${businessTodayStr()}. ` +
-          "The user is choosing a start date for care. Reply with only a YYYY-MM-DD date string, nothing else.",
-        text,
-        { maxTokens: 20 },
-      ).catch(() => "");
-      const dateStr = parsedDateRaw.trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        await sendMessage(chatId, "I didn't catch that date — could you try again? (e.g. \"next Monday\" or \"May 19\")");
-        return;
+    // ── REBOOK_REQUEST — "resend the booking" / "book Basra again" ───────────
+    // 2026-09-17 (live-caught): the legacy path queried the retired
+    // `appointments` collection, found nothing, and told a family with a real
+    // cancelled request "we don't have a record of a previous caregiver". The
+    // site has two buttons for this, both on Care Requests > Interviews:
+    // Resend (a declined/cancelled request → the SAME request goes back to
+    // pending) and Re-book (an accepted booking whose visits are all done → a
+    // fresh booking from the completed interview). Same order here: a
+    // resendable request wins, else the booking flow (whose interview
+    // eligibility already treats a finished booking as re-bookable).
+    if (intent === "REBOOK_REQUEST" && session.userType !== "caregiver") {
+      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
+      try {
+        const { findResendableBookingRequests, startResendBookingFlow, startBookingFlow } = await import("../agents/bookingFlow");
+        const rebookClientId = session.userId as string | undefined;
+        const resendable = rebookClientId ? await findResendableBookingRequests(rebookClientId) : [];
+        if (resendable.length > 0) await startResendBookingFlow(phone, chatId, session, {});
+        else await startBookingFlow(phone, chatId, session, {});
+      } finally {
+        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
       }
-      await db.collection("agent_sessions").doc(phone).update({
-        hireModeDate: dateStr,
-        stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
-      await sendMessage(chatId,
-        `Got it — starting ${formatDateForDisplay(dateStr)}.\n\nHow many days a week and what hours? (e.g. "3 days, Mon/Wed/Fri, 9am–1pm")`
-      );
-      return;
-    }
-
-
-    // ── CANCEL intent — cancel a visit, NOT an opt-out ────────────────────────
-    if (intent === "CANCEL_REQUEST" || norm === "CANCEL") {
-      const clientId = session.userId ?? phone;
-      const upcoming = await db.collection("appointments")
-        .where("clientId", "==", clientId)
-        .where("status",   "==", "confirmed")
-        .orderBy("date",   "asc").limit(1).get();
-      if (upcoming.empty) {
-        // 2026-09-09 (live-caught): this used to hardcode "no visits to
-        // cancel" and end the turn unconditionally — including right after
-        // Evia herself had just told the family about a pending INTERVIEW
-        // waiting on the caregiver, so "cancel it" / "cancel that interview"
-        // got a context-blind dead-end instead of ever reaching
-        // cancel_interview. No confirmed appointment to cancel doesn't mean
-        // there's nothing to cancel — hand off to the full agent, which has
-        // the real conversation context and both cancellation tools, instead
-        // of assuming "cancel" can only ever mean a visit.
-        const qaReply = await runQaAgent({
-          text, phone, chatId,
-          userId:      session.userId   ?? "",
-          seniorId:    session.seniorId ?? session.userId ?? "",
-          userType:    session.userType ?? "client",
-          caregiverId: session.caregiverId,
-          zepThreadId: (session as unknown as Record<string, unknown>).zepThreadId as string | undefined,
-          session:     session as unknown as Record<string, unknown>,
-          intent,
-          ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
-        });
-        await persistDefaultQaTurn(ctx, qaReply ?? "");
-        return;
-      }
-      const appt = upcoming.docs[0].data();
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingCancelConfirm: { appointmentId: upcoming.docs[0].id },
-        pendingCancelConfirmSetAt: new Date().toISOString(),
-        stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
-      await sendMessage(chatId,
-        `Cancel ${appt.caregiverName}'s visit on ${formatDateForDisplay(appt.date)} (${formatHHMMForDisplay(appt.startTime)}–${formatHHMMForDisplay(appt.endTime)})?\n\nReply YES to confirm or NO to keep it.`
-      );
-      return;
-    }
-
-    // ── Pending rebook — waiting for client to supply a date ─────────────────
-    if ((session as any).pendingRebook) {
-      const rebook = (session as any).pendingRebook as {
-        caregiverId: string; caregiverName: string;
-        startTime: string; endTime: string; durationHours: number;
-        hourlyRate?: number;
-      };
-      const parsedDateRaw = await quickComplete(
-        `Today is ${businessTodayStr()}. ` +
-          "The user is choosing a date for a care visit. Reply with only a YYYY-MM-DD date string, nothing else.",
-        text,
-        { maxTokens: 20 },
-      ).catch(() => "");
-      const dateStr = parsedDateRaw.trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        await sendMessage(chatId, "I didn't catch that date — could you try again? (e.g. \"May 19\" or \"next Monday\")");
-        return;
-      }
-      const clientId = session.userId ?? phone;
-      // 2026-09-13: this used to hardcode hourlyRate: 20 regardless of the
-      // caregiver's actual rate — a fabricated rate here becomes a
-      // fabricated charge the caregiver is asked to accept. A rebook is
-      // "same arrangement, new date" (matches the website's own `?rebook=`
-      // flow, which reuses the prior booking doc's own rate) — so the rate
-      // of THAT arrangement (carried onto pendingRebook above) takes
-      // precedence; caregivers.hourlyRate (browsing/display data, confirmed
-      // never used by the site as a booking default) is only a last-resort
-      // fallback for an old arrangement that somehow never recorded a rate,
-      // and refusing (never guessing) is the final fallback either way.
-      let effectiveHourlyRate = rebook.hourlyRate;
-      if (effectiveHourlyRate === undefined) {
-        const rebookRate = await resolveCaregiverRateShared(rebook.caregiverId);
-        if (!rebookRate.ok) {
-          // rebookRate.message is written as an agent-facing tool-error
-          // instruction, not customer copy — never text that verbatim.
-          await sendMessage(chatId,
-            `I wasn't able to confirm ${rebook.caregiverName}'s current rate, so I couldn't rebook this yet — ` +
-            `I'll get that sorted and follow up.`);
-          await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
-          return;
-        }
-        effectiveHourlyRate = rebookRate.hourlyRate;
-      }
-      const taskId   = await createBookingTask({
-        clientPhone:   phone,
-        clientId,
-        caregiverId:   rebook.caregiverId,
-        caregiverName: rebook.caregiverName,
-        appointments:  [{ date: dateStr, startTime: rebook.startTime, endTime: rebook.endTime, durationHours: rebook.durationHours }],
-        hourlyRate:    effectiveHourlyRate,
-      });
-      await db.collection("agent_sessions").doc(phone).update({ pendingRebook: admin.firestore.FieldValue.delete() });
-      const perms = await getPermissions(session.userId ?? phone).catch(() => null);
-      if (perms?.canBookAutomatically) {
-        try {
-          await executeBookings(taskId, phone);
-        } catch (err) {
-          console.error("executeBookings failed (rebook):", err);
-          await db.collection("admin_alerts").add({ type: "booking_execution_failed", phone, error: String(err), createdAt: new Date().toISOString(), resolved: false });
-          await db.collection("admin_alerts").add({
-            type: "route_intent_fallback", handler: "rebook_auto_book", phone,
-            error: String(err).slice(0, 300), severity: "medium",
-            createdAt: new Date().toISOString(), resolved: false,
-          }).catch(() => {});
-          await sendMessage(chatId, await generateCaraMessage({
-            audience: "family",
-            language: session.preferredLanguage === "es" ? "es" : "en",
-            context: `Rebooking ${rebook.caregiverName} for ${dateStr} didn't lock in. Tell the family plainly, and say you're checking other openings for that visit right now and will text as soon as you have one. Sound human and calm, not like an error message.`,
-            fallback: `Rebooking ${rebook.caregiverName} for that date didn't go through on my end. I'm checking other openings right now and I'll text you as soon as I have one.`,
-            maxTokens: 80,
-          }));
-          const sd = (await db.collection("agent_sessions").doc(phone).get()).data() ?? {};
-          const { runMatchingForClient: rmfc3 } = await import("../agents/matchingAgent");
-          await rmfc3(phone, chatId, sd, sd).catch(() => {});
-        }
-      } else {
-        // 2026-09-13: this also hardcoded * 20 — the same bug as the
-        // createBookingTask call above, just in the summary text shown when
-        // auto-booking isn't permitted. Must use the same resolved rate.
-        const cost = (rebook.durationHours * effectiveHourlyRate).toFixed(2);
-        await sendMessage(chatId,
-          `Here's your booking summary:\n\n` +
-          `${formatDateForDisplay(dateStr)} · ${formatHHMMForDisplay(rebook.startTime)}–${formatHHMMForDisplay(rebook.endTime)}\n` +
-          `${rebook.caregiverName} · $${cost}\n\n` +
-          `Reply YES to confirm or NO to cancel.`
-        );
-      }
-      return;
-    }
-
-    // ── Rebook request ────────────────────────────────────────────────────────
-    if (intent === "REBOOK_REQUEST") {
-      const clientId = session.userId ?? phone;
-      const lastApptSnap = await db.collection("appointments")
-        .where("clientId", "==", clientId)
-        .where("status",   "==", "confirmed")
-        .orderBy("date",   "desc").limit(1).get();
-
-      if (lastApptSnap.empty) {
-        await sendMessage(chatId, await generateCaraMessage({
-          audience: "family",
-          language: session.preferredLanguage === "es" ? "es" : "en",
-          context: "The family asked to rebook a past caregiver, but there are no past bookings to rebook from. Gently let them know, and offer to search for a caregiver.",
-          fallback: "I don't have any past bookings to rebook from. Want me to search for a caregiver? Just let me know!",
-          maxTokens: 70,
-        }));
-        return;
-      }
-
-      const last          = lastApptSnap.docs[0].data();
-      const caregiverId   = last.caregiverId   as string;
-      const caregiverName = last.caregiverName as string;
-      const startTime     = last.startTime     as string;
-      const endTime       = last.endTime       as string;
-      const durationHours = (last.durationHours ?? 4) as number;
-      // The rate of THIS arrangement — matches the website's own rebook flow
-      // (PostsPage.tsx's `?rebook=` entry reuses `prevBookingData.rate` from
-      // the prior booking doc, never the caregiver's browsing-listed rate).
-      // A rebook is "same arrangement, new date," so its rate is whatever
-      // was actually agreed for this arrangement, not a fresh lookup.
-      const priorHourlyRate = coerceHourlyRate(last.hourlyRate);
-
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingRebook: {
-          caregiverId, caregiverName, startTime, endTime, durationHours,
-          ...(priorHourlyRate !== null ? { hourlyRate: priorHourlyRate } : {}),
-        },
-        stateExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
-      await sendMessage(chatId,
-        `Got it — same schedule with ${caregiverName} (${startTime}–${endTime})?\n\n` +
-        `What date should the visit be?`
-      );
       return;
     }
 
@@ -1600,8 +919,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       const shownCaregiverIds  = sessionData.shownCaregiverIds as Array<string> | undefined;
       const hasShownCaregivers = !!shownCaregiverIds && shownCaregiverIds.length > 0;
       if (!pendingMatchesFresh && !hasShownCaregivers) {
-        const { runMatchingForClient } = await import("../agents/matchingAgent");
-        await runMatchingForClient(phone, chatId, sessionData, sessionData);
+        // The website's Find Caregivers page, texted as cards (agents/caregiverSearch.ts).
+        const { presentCaregiverSearch } = await import("../agents/caregiverSearch");
+        await presentCaregiverSearch({ phone, chatId, clientId: session.userId as string | undefined, source: "routeIntent:FIND_CAREGIVER" });
         return;
       }
       // Fresh pendingMatches, or a caregiver already shown this session —

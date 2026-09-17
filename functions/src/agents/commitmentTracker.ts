@@ -313,14 +313,14 @@ async function attemptMatchingFulfillment(
   c: PendingCommitment,
   session: Record<string, unknown>
 ): Promise<void> {
-  const { runMatchingForClient } = await import("./matchingAgent");
-  const result = await runMatchingForClient(c.phone, c.chatId, session, session)
+  const { presentCaregiverSearch } = await import("./caregiverSearch");
+  const result = await presentCaregiverSearch({ phone: c.phone, chatId: c.chatId, clientId: c.userId, source: "commitmentTracker" })
     .catch((err: unknown) => {
       console.error("[commitmentTracker] matching re-attempt threw:", err);
-      return "failed" as const;
+      return null;
     });
-  if (result === "failed") return; // stays open; escalated on the next sweep
-  await markFulfilled(ref, result === "matched" ? "matches_sent" : "no_match_handled");
+  if (!result || result.status === "no_client") return; // stays open; escalated on the next sweep
+  await markFulfilled(ref, result.status === "shown" ? "matches_sent" : "no_match_handled");
 }
 
 // Re-attempt a promised-but-failed onboarding link send. sendOnboardingLink is

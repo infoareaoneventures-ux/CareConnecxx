@@ -76,8 +76,9 @@ vi.mock("../../memory/preferences", () => ({
   getPreferences: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("../../agents/matchingAgent", () => ({
-  runMatchingForClient: vi.fn().mockResolvedValue(undefined),
+vi.mock("../../agents/caregiverSearch", () => ({
+  presentCaregiverSearch: vi.fn(async () => ({ status: "shown", total: 0, shown: [], offset: 0, hasMore: false })),
+  searchCaregivers: vi.fn(async () => ({ total: 0, caregivers: [], hasLocation: false, filters: {} })),
 }));
 
 import { handleToolCall } from "../server";
@@ -150,23 +151,4 @@ describe("discovery tools", () => {
     });
   });
 
-  describe("list_saved_caregivers", () => {
-    it("returns empty list when no favorites", async () => {
-      hoisted.docState.set("users/c1", { savedCaregiverIds: [] });
-      const r = await handleToolCall("list_saved_caregivers", { clientId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.count).toBe(0);
-    });
-
-    it("hydrates favorites from caregivers collection", async () => {
-      hoisted.docState.set("users/c1", { savedCaregiverIds: ["cg1", "cg2"] });
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", hourlyRate: 25, averageRating: 4.8, specialties: ["dementia"] });
-      hoisted.docState.set("caregivers/cg2", { name: "Bob",   hourlyRate: 28, averageRating: 4.5, specialties: ["mobility"] });
-      const r = await handleToolCall("list_saved_caregivers", { clientId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.count).toBe(2);
-      expect(r.caregivers[0].name).toBe("Alice");
-      expect(r.caregivers[1].rating).toBe(4.5);
-    });
-  });
 });

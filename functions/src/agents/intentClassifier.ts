@@ -135,7 +135,7 @@ export async function classifyIntentDetailed(
         "HIRE_CAREGIVER = wanting to hire or proceed with a specific caregiver after an interview (e.g. 'hire Maria', 'let's go with James', 'I want to book Sarah', 'she was great, let's hire her').\n" +
         "CAREGIVER_DECLINE_JOB = a caregiver declining or passing on a job offer (e.g. 'I can\\'t take that', 'I\\'m not available', 'pass on that one', 'not interested', 'I\\'m unavailable that day', 'can\\'t do it').\n" +
         "PERMISSION_UPDATE = asking to stop/start/change a setting (e.g. 'stop weekly summaries').\n" +
-        "REBOOK_REQUEST = asking to rebook a caregiver (e.g. 'book Maria again next week').\n" +
+        "REBOOK_REQUEST = asking to rebook or RESEND a booking with a caregiver they already have a request or booking with (e.g. 'book Maria again next week', 'can you resend the booking', 'send the booking to Basra again', 'rebook her').\n" +
         "CANCEL_REQUEST = asking to cancel an upcoming visit (e.g. 'cancel Wednesday', 'cancel tomorrow\\'s visit').\n" +
         "MEMORY_QUERY = asking what Evia knows or remembers (e.g. 'what do you know about mom', 'what have you remembered', 'what\\'s in my file').\n" +
         "ADD_FAMILY_MEMBER = asking to add a family member to care updates (e.g. 'add my sister', 'include my brother John', 'add +1234567890 to updates').\n" +

@@ -33,11 +33,9 @@ const HELPER_PREFIX = "whoIsWho ? whoIsWho + ";
 // sites wired via describeWhoIsWho.
 const HELPER_WIRED: Array<[string, number]> = [
   ["../../scheduled/firstVisitActivation.ts",   1],
-  ["../../scheduled/noVisitCheck.ts",           1],
   ["../../scheduled/familySilenceCheckin.ts",   1],
   ["../../scheduled/familySatisfactionCheckin.ts", 1],
   ["../../scheduled/nextDayFamilyFeedback.ts",  1],
-  ["../../scheduled/clientDayBeforeReminder.ts", 1],
   ["../../scheduled/upcomingVisitReminder.ts",  1],
   ["../../scheduled/morningBriefing.ts",        2], // primary briefing + generateCaraMessage fallback
   ["../../linq/webhooks.ts",                    1], // awaiting-supply hold reply

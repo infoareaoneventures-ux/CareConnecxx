@@ -16,7 +16,7 @@ export function timesheetAutoApprovalEnabled(): boolean {
 
 // Multi-recipient household scoping (2026-07-16). Default ON — this is a KILL
 // switch, not a launch gate: off ("false") reverts update_care_plan /
-// request_booking / create_care_journal_entry to their pre-wave account-level
+// the booking flow / create_care_journal_entry to their pre-wave account-level
 // writes without a redeploy. Reads are fail-soft and unconditional (absent
 // recipientMedical / recipient fields = account-level data is the answer), so
 // flipping this off never hides data.

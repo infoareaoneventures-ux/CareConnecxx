@@ -211,18 +211,12 @@ function remainingPermissionDefaults(
 // Shared by the normal autobook completion, the question-detour bailout, and
 // the stale-permissions sweep.
 async function kickOffClientMatching(phone: string, chatId: string): Promise<void> {
-  const { runMatchingForClient } = await import("./matchingAgent");
-  const intakeSnap = await db.collection("clientIntakes")
-    .where("phone", "==", phone)
-    .orderBy("createdAt", "desc")
-    .limit(1)
-    .get();
-  if (!intakeSnap.empty) {
-    const intake = intakeSnap.docs[0].data();
-    runMatchingForClient(phone, chatId, intake).catch((err) =>
-      console.error("runMatchingForClient error:", err)
-    );
-  }
+  // The website's Find Caregivers page, texted as cards — the same search
+  // the client dashboard lands on after onboarding (agents/caregiverSearch.ts).
+  const { presentCaregiverSearch } = await import("./caregiverSearch");
+  presentCaregiverSearch({ phone, chatId, source: "permissionsConversation" }).catch((err) =>
+    console.error("presentCaregiverSearch error:", err)
+  );
 }
 
 // Complete the permissions flow with safe defaults for everything unanswered

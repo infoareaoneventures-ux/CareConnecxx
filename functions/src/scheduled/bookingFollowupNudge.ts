@@ -9,10 +9,10 @@ const db = admin.firestore();
 // A "strong" fit decision only records that the family wants to hire — it
 // does NOT create a real booking (see submit_interview_feedback's own
 // description). If the conversation stalls before the family ever gives a
-// schedule/rate and request_booking actually gets called, nothing ever
+// schedule/rate and the booking flow actually sends the request, nothing ever
 // followed up — the interview would just sit at fitLevel:'strong' forever
 // with no real booking behind it. Discovered 2026-09-13 while building
-// request_booking's full site-parity fields.
+// the booking flow's full site-parity fields.
 export const NUDGE_DELAY_MS = 60 * 60 * 1000; // 1h after the 'strong' decision
 export const RENUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // same ~48h cadence as the other two nudges
 
@@ -43,7 +43,7 @@ export function shouldNudgeBookingFollowup(p: {
  *
  * Read-only except the send + a per-interview nudge counter/timestamp; the
  * nudge does NOT create the booking itself — a reply routes through Evia's
- * normal turn handling, which already has request_booking.
+ * normal turn handling, which already has start_booking_flow.
  */
 export const sendBookingFollowupNudges = functions.pubsub
   .schedule("*/15 * * * *")
@@ -66,8 +66,8 @@ export const sendBookingFollowupNudges = functions.pubsub
           : null;
 
         // Has a real booking already been initiated for this interview?
-        // (booking_requests.interviewId is stamped by request_booking's
-        // job/interview linkage — see mcp/server.ts.)
+        // (booking_requests.interviewId is stamped by the booking flow's
+        // interview linkage — see bookingSend.ts / bookingResolution.ts.)
         const brSnap = await db.collection("booking_requests")
           .where("interviewId", "==", doc.id)
           .limit(1)

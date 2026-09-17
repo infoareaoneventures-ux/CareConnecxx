@@ -1647,8 +1647,6 @@ async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<vo
   const customerId = typeof pm.customer === "string" ? pm.customer : pm.customer?.id;
   if (!customerId) return;
 
-  const db = admin.firestore();
-
   // Make the attached card the customer's default invoice payment method when
   // none is set yet. This is the linchpin of off-session shift charging:
   // processShiftPayment (shiftHours.ts) reads
@@ -1675,44 +1673,7 @@ async function handlePaymentMethodAttached(pm: Stripe.PaymentMethod): Promise<vo
     console.error(`[handlePaymentMethodAttached] failed to set default payment method for ${customerId}:`, err);
   }
 
-  // Find booking tasks awaiting payment setup for this customer
-  const taskSnap = await db.collection("agent_tasks")
-    .where("stripeCustomerId", "==", customerId)
-    .where("status",           "==", "pending_payment_setup")
-    .get();
-
-  if (taskSnap.empty) return;
-
-  for (const taskDoc of taskSnap.docs) {
-    const task = taskDoc.data();
-    const clientPhone: string | undefined = task.clientPhone;
-    if (!clientPhone) continue;
-
-    try {
-      // The appointments were already created and the family already heard
-      // "all booked" when the caregiver accepted — only the card was missing.
-      // Re-running executeBookings/finalizeAcceptedBooking would DUPLICATE the
-      // booking and the confirmation (executeBookings recreates appointments and
-      // re-offers the shift; finalizeAcceptedBooking re-sends "all booked").
-      // Also, executeBookings only proceeds on status "awaiting_approval", so the
-      // old reset-to-"approved" was a silent no-op. Just finalize the task and
-      // tell the family payment is active. Moving the status out of
-      // pending_payment_setup also makes a webhook redelivery a no-op.
-      await taskDoc.ref.update({
-        status:                  "payment_complete",
-        paymentSetupCompletedAt: new Date().toISOString(),
-      });
-      const sessionSnap = await db.collection("agent_sessions").doc(clientPhone).get();
-      if (sessionSnap.exists) {
-        const { sendMessage } = await import("./linq/client");
-        await sendMessage(
-          sessionSnap.data()!.chatId,
-          "Your card's on file — you're all set. I'll charge automatically after each visit.",
-        ).catch(() => {});
-      }
-      console.log(`[handlePaymentMethodAttached] finalized booking task ${taskDoc.id} for customer ${customerId}`);
-    } catch (err) {
-      console.error(`[handlePaymentMethodAttached] finalize failed for task ${taskDoc.id}:`, err);
-    }
-  }
+  // 2026-09-17: the follow-up that used to finalize an agent_tasks booking in
+  // "pending_payment_setup" is gone with the Evia-only booking pipeline — the
+  // site never nudged a card on booking acceptance; billing runs off shifts.
 }

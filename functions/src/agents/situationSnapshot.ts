@@ -115,13 +115,13 @@ export async function buildCaregiverSnapshot(
         .where("caregiverId", "==", caregiverId)
         .orderBy("appliedAt", "desc")
         .limit(10).get().catch(() => null),
-      // Upcoming schedule — mirrors get_caregiver_appointments (mcp/server.ts),
-      // so the (caregiverId, date, status) index is already provisioned.
-      db.collection("appointments")
+      // Upcoming schedule — the site's `shifts` (My Bookings), same
+      // (caregiverId, date, status) shape the shift tools query.
+      db.collection("shifts")
         .where("caregiverId", "==", caregiverId)
         .where("date", ">=", today)
         .where("date", "<=", weekAhead)
-        .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+        .where("status", "in", ["scheduled", "in-progress"])
         .orderBy("date", "asc")
         .limit(6).get().catch(() => null),
     ]);
@@ -168,12 +168,11 @@ export async function buildClientSnapshot(userId: string): Promise<string> {
         .where("status", "==", "pending_client_review")
         .orderBy("submittedAt", "desc")
         .limit(5).get().catch(() => null),
-      // Upcoming visits — mirrors getNextAppointment's (clientId, status, date)
-      // index, just a higher limit, so it removes the get_upcoming_appointments
-      // round-trip for "how many visits do I have coming up".
-      db.collection("appointments")
+      // Upcoming visits — the site's `shifts` (My Bookings > UPCOMING
+      // SHIFTS), same read as get_upcoming_appointments with a higher limit.
+      db.collection("shifts")
         .where("clientId", "==", userId)
-        .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
+        .where("status", "in", ["scheduled", "in-progress", "needs_replacement"])
         .where("date", ">=", today)
         .orderBy("date", "asc")
         .limit(10).get().catch(() => null),

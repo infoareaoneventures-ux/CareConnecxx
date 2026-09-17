@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { gateOptionalSend } from "./engineGate";
-import { queryVisitsMerged } from "../utils/visitQuery";
+import { queryVisits } from "../utils/visitQuery";
 
 const db = admin.firestore();
 
@@ -39,10 +39,9 @@ export const checkCaregiverInactivity = functions.pubsub
       try {
         // ── 14-day inactivity check ───────────────────────────────────────────
 
-        const recent14Docs = await queryVisitsMerged({
+        const recent14Docs = await queryVisits({
           dateOp: ">=", dateValue: fourteenDaysAgo,
           extraWhere: [["caregiverId", "==", cgId]],
-          apptStatuses: ["completed", "in-progress"],
           shiftStatuses: ["completed", "in-progress"],
           limit: 1,
         });
@@ -104,65 +103,11 @@ export const checkCaregiverInactivity = functions.pubsub
             }
           }
 
-          // ── Warn families with active recurring schedules for this caregiver ─
-          const recurringSnap = await db.collection("recurring_schedules")
-            .where("caregiverId", "==", cgId)
-            .where("status", "==", "active")
-            .get();
-
-          if (!recurringSnap.empty) {
-            for (const schedDoc of recurringSnap.docs) {
-              const sched = schedDoc.data();
-              const clientPhone   = sched.clientPhone as string | undefined;
-              const lastWarnedAt  = sched.inactivityWarnedAt as string | undefined;
-              if (clientPhone && (!lastWarnedAt || lastWarnedAt < sevenDaysAgo)) {
-                // U8 engine gate (KTD15): family-warn half of this source — a distinct
-                // intent from the caregiver nudge, so it carries its own dedupe suffix.
-                // A lost pass re-enters next daily run (inactivityWarnedAt stays unset).
-                const famDay = new Date(now).toISOString().slice(0, 10);
-                const famGate = await gateOptionalSend({
-                  phone: clientPhone,
-                  candidate: {
-                    source: "caregiverInactivityCheck",
-                    category: "re_engagement",
-                    urgency: 1,
-                    evidenceCount: 1,
-                    dedupeKey: `cginact-fam:${cgId}:${clientPhone}:${famDay}`,
-                  },
-                });
-                if (!famGate.allowed) {
-                  console.info("caregiverInactivityCheck.policy", { phone: clientPhone, disposition: famGate.disposition, reason: famGate.reason });
-                  continue;
-                }
-                const familyInactivityMsg = await generateCaraMessage({
-                  audience: "family",
-                  context:
-                    `The family's regular caregiver (${caregiverName}) hasn't had any recent visits. ` +
-                    "Gently let the family know and ask if they'd like help finding a backup caregiver for their upcoming scheduled visits. " +
-                    "Keep the tone reassuring, not alarming.",
-                  fallback: `Your regular caregiver ${caregiverName} hasn't had any recent visits. Want me to find a backup for your upcoming scheduled visits?`,
-                  maxTokens: 80,
-                });
-
-                await sendViaInteractionAgent(clientPhone, {
-                  content:     familyInactivityMsg,
-                  urgency:     "standard",
-                  sourceAgent: "inactivity_check",
-                  canDrop:     true,
-                }).catch((err: unknown) =>
-                  console.error(`[caregiverInactivityCheck] Failed to warn family ${clientPhone}:`, err)
-                );
-                await schedDoc.ref.update({ inactivityWarnedAt: new Date().toISOString() });
-              }
-            }
-          }
-
           // ── 30-day inactivity check ─────────────────────────────────────────
 
-          const recent30Docs = await queryVisitsMerged({
+          const recent30Docs = await queryVisits({
             dateOp: ">=", dateValue: thirtyDaysAgo,
             extraWhere: [["caregiverId", "==", cgId]],
-            apptStatuses: ["completed", "in-progress"],
             shiftStatuses: ["completed", "in-progress"],
             limit: 1,
           });

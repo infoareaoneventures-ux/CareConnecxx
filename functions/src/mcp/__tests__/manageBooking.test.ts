@@ -65,6 +65,7 @@ vi.mock("firebase-admin", () => {
       FieldValue: {
         delete: () => ({ __delete: true }),
         arrayUnion: (...v: any[]) => ({ __arrayUnion: v }),
+        serverTimestamp: () => ({ __serverTimestamp: true }),
       },
     }),
   };
@@ -165,20 +166,6 @@ describe("manage_booking", () => {
     expect(hoisted.updates.find(u => u.path === "shifts/s1")?.data).toMatchObject({ status: "cancelled", cancelledBy: "client" });
   });
 
-  it("resend_booking flips a declined booking back to pending with isResend:true", async () => {
-    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "declined", caregiverId: CAREGIVER });
-    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "resend_booking", bookingRequestId: "br1" }) as any;
-    expect(r.success).toBe(true);
-    const update = hoisted.updates.find(u => u.path === "booking_requests/br1");
-    expect(update?.data).toMatchObject({ status: "pending", isResend: true });
-  });
-
-  it("resend_booking refuses a booking that's still pending", async () => {
-    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "pending" });
-    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "resend_booking", bookingRequestId: "br1" }) as any;
-    expect(r._toolError).toBe(true);
-  });
-
   it("cancel_pending_amendment cancels a pending booking_amendments doc", async () => {
     hoisted.docState.set("booking_amendments/am1", { clientId: CLIENT, status: "pending" });
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_amendment", amendmentId: "am1" }) as any;
@@ -222,7 +209,7 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
   beforeEach(() => hoisted.reset());
 
   it("propose_reschedule stores a pending proposal without touching the real date/time", async () => {
-    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled", date: "2026-09-01", startTime: "09:00", endTime: "12:00" });
+    hoisted.docState.set("shifts/s1", { clientId: CLIENT, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00" });
     const r = await handleToolCall("manage_booking", {
       clientId: CLIENT, action: "propose_reschedule", shiftId: "s1", date: "2099-09-08", startTime: "10:00", endTime: "13:00",
     }) as any;
@@ -235,6 +222,21 @@ describe("manage_booking — propose/accept/clear_reschedule", () => {
     // Real date/time untouched by this write.
     expect(update.date).toBeUndefined();
     expect(update.startTime).toBeUndefined();
+  });
+
+  it("cancel_visit clears any pending reschedule proposal, exactly like the site's handleCancelShift (2026-09-16)", async () => {
+    hoisted.docState.set("shifts/s1", {
+      clientId: CLIENT, status: "scheduled", date: "2099-09-01", startTime: "09:00", endTime: "12:00",
+      reschedulePendingDate: "2099-09-08", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "13:00", rescheduledBy: "caregiver",
+    });
+    const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_visit", shiftId: "s1" }) as any;
+    expect(r.success).toBe(true);
+    const update = hoisted.updates.find(u => u.path === "shifts/s1")?.data;
+    expect(update).toMatchObject({ status: "cancelled", cancelledBy: "client" });
+    for (const k of ["reschedulePendingDate", "reschedulePendingStartTime", "reschedulePendingEndTime", "rescheduledBy"]) {
+      expect(update[k]).toEqual({ __delete: true });
+    }
+    expect(update.updatedAt).toEqual({ __serverTimestamp: true });
   });
 
   it("propose_reschedule rejects endTime before startTime", async () => {
@@ -365,6 +367,44 @@ describe("request_schedule_amendment", () => {
       startDate: "2026-09-07", endDate: "2026-09-07", ongoing: false,
     });
     expect(Object.keys(set?.data.newDays)).toHaveLength(1);
+  });
+
+  // 2026-09-16: the modal's full shape — several days, several blocks — and
+  // its checks (overlap with the booking's own schedule / this family's
+  // shifts, or a time the caregiver is booked elsewhere).
+  it("accepts the modal's newDays shape with several days and blocks, ongoing by default", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", schedule: { dayShiftTimes: { Tue: [{ start: "11:00", end: "13:00" }] } } });
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, startDate: "2099-01-05",
+      newDays: { Thu: [{ start: "09:00", end: "11:00" }, { start: "14:00", end: "16:00" }], saturday: [{ start: "10:00", end: "12:00" }] },
+      notes: "side door",
+    }) as any;
+    expect(r.success).toBe(true);
+    const set = hoisted.sets.find(s => s.path.startsWith("booking_amendments/"));
+    expect(set?.data).toMatchObject({
+      type: "add_recurring_days", status: "pending", ongoing: true, endDate: null, startDate: "2099-01-05", notes: "side door",
+      newDays: { Thu: [{ start: "09:00", end: "11:00" }, { start: "14:00", end: "16:00" }], Sat: [{ start: "10:00", end: "12:00" }] },
+    });
+  });
+
+  it("refuses a block that overlaps a visit the family already has with that caregiver (the modal's overlappingDays)", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", schedule: { dayShiftTimes: { Tue: [{ start: "11:00", end: "13:00" }] } } });
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, newDays: { Tue: [{ start: "12:00", end: "14:00" }] },
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(String(r.message)).toContain("overlaps a visit the family already has with Alice (11:00 AM–1:00 PM)");
+    expect(hoisted.sets.find(s => s.path.startsWith("booking_amendments/"))).toBeUndefined();
+  });
+
+  it("refuses a time the caregiver is booked elsewhere (the modal's greyed-out slots)", async () => {
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice", schedule: {} });
+    hoisted.docState.set(`caregiver_booked_slots/${CAREGIVER}`, { slots: { Fri: [{ s: 9 * 60, e: 12 * 60 }] } });
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, newDays: { Fri: [{ start: "10:00", end: "11:00" }] },
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(String(r.message)).toContain("Alice is already booked Friday 9:00 AM–12:00 PM");
   });
 
   it("rejects a booking belonging to a different client", async () => {

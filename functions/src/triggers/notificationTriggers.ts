@@ -349,6 +349,24 @@ export const onBookingRequestWrite = functions.firestore
 
       if (statusBefore === statusAfter) return;
 
+      // Resent (declined/cancelled → pending again, isResend) → notify the
+      // caregiver. 2026-09-16: the site's own Resend button (PostsPage.tsx)
+      // updates the existing doc, so it never hit the "new doc" branch above
+      // — the caregiver was never told. Same wording as a resent new doc.
+      if (statusAfter === 'pending' && after.isResend === true && after.caregiverId) {
+        await addNotification(after.caregiverId, {
+          type: 'booking_request',
+          title: 'Booking Request Resent',
+          body: `${after.clientName || 'A client'} resent their booking request.`,
+          data: { bookingId: context.params.bookingId },
+        });
+        if (!after.agentTaskId) {
+          await notifyCaregiverByText(after.caregiverId,
+            `${after.clientName || 'A client'} resent their booking request. Check the app to respond.`);
+        }
+        return;
+      }
+
       // Accepted → text client. An Evia-negotiated booking (agentTaskId set)
       // is accepted through shiftOffer.ts, which already texts the family
       // "Great news — X accepted!" itself — only a website-button accept has

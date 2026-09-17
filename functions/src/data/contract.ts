@@ -222,7 +222,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: true,
     notes:
-      "Booking/replacement task records written server-side across matchingAgent, replacementAgent, bookingExecutor, shiftOffer, triggers, etc. Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
+      "Booking/replacement task records written server-side across matchingAgent, bookingExecutor, shiftOffer, triggers, etc. Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
   },
   agent_tasks_active: {
     path: "agent_tasks_active",
@@ -230,7 +230,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: false,
     notes:
-      "Server-only single-active-task index keyed by clientPhone (replacementAgent/triggerEngine/qaAgent). No web reader — used only by backend routing to know if a replacement search is in-flight. No rules block required (default-deny is correct).",
+      "Server-only single-active-task index keyed by clientPhone (matchingAgent/caraAgent writers, qaAgent reader; the emergency-replacement writer was removed 2026-09-16). No web reader — used only by backend routing to know if a matching search is in-flight. No rules block required (default-deny is correct).",
   },
   agent_approvals: {
     path: "agent_approvals",

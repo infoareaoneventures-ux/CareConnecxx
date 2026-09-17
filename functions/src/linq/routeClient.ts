@@ -2,18 +2,16 @@ import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
 import { isStateExpired, clearFlags, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
 import { quickComplete } from "../utils/openaiClient";
-import { generateCaraMessage } from "../utils/caraMessage";
-import { describeWhoIsWho } from "../agents/careRecipients";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
 import { handleBookingFlowStep } from "../agents/bookingFlow";
 import { handleReplacementFlowStep } from "../agents/replacementFlow";
 import { handleRescheduleFlowStep } from "../agents/rescheduleFlow";
+import { handleVisitRequestFlowStep } from "../agents/visitRequestFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
 import { handleRefundRequest } from "../agents/refundHandler";
 import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
-import { answerHumanQuestionOnly } from "../agents/humanReply";
 
 const db = admin.firestore();
 
@@ -27,125 +25,6 @@ export interface ClientRouteContext {
 
 // ── Pre-shift family task check-in handler ───────────────────────────────────
 
-async function handlePreShiftUpdate(
-  phone:   string,
-  chatId:  string,
-  text:    string,
-  session: AgentSession
-): Promise<void> {
-  const info = (session as any).awaitingPreShiftUpdate as {
-    appointmentId: string;
-    caregiverName: string;
-    seniorName:    string;
-  };
-
-  // R11 (hallucination hardening 2026-07-17): the reader is the account
-  // holder; the visit is for the care recipient — ground who's who in the
-  // family-facing confirmations below.
-  const whoIsWho = describeWhoIsWho({
-    ...(((session as any).onboardingData ?? {}) as Record<string, unknown>),
-    seniorName: (session as any).onboardingData?.seniorName ?? info.seniorName,
-  });
-
-
-  // isQuestionOrOther check — CLAUDE.md requirement
-  const questionRaw = await quickComplete(
-    "Is this message a question unrelated to adding care tasks, or is it about something completely different? " +
-      "Reply only YES or NO.",
-    text,
-    { maxTokens: 5 },
-  ).catch(() => "");
-
-  const isQuestion = questionRaw.trim().toUpperCase().startsWith("Y");
-
-  if (isQuestion) {
-    // Generate the answer inline so we control message ordering. The previous
-    // implementation sent the raw user text to sendViaInteractionAgent (which
-    // generates a reply asynchronously) and immediately followed with the
-    // re-ask, so the re-ask could arrive before the answer.
-    let answer = "";
-    try {
-      answer = await answerHumanQuestionOnly({
-        audience: "family",
-        situation: `family was asked if they want to add tasks for today's visit with ${info.caregiverName ?? "the caregiver"} for ${info.seniorName}`,
-        text,
-        maxTokens: 180,
-      });
-    } catch {
-      answer = "I do not want to guess on that.";
-    }
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId,
-      `So — did you want to add any tasks for ${info.seniorName}'s visit today?`
-    );
-    return;
-  }
-
-  // Parse action: decline or new tasks
-  const parseRaw = await quickComplete(
-    "The family was asked if they want to add tasks to today's care visit. " +
-      "Extract their response. Reply JSON only: " +
-      '{"action":"decline"|"addTasks","tasks":["task description 1","task description 2"]}. ' +
-      '"decline" means they said no, nothing to add, or the plan is fine. ' +
-      '"addTasks" means they listed one or more things they want done.',
-    text,
-    { maxTokens: 200 },
-  ).catch(() => "{}");
-
-  let action = "decline";
-  let tasks: string[] = [];
-  try {
-    const parsed = JSON.parse(parseRaw || "{}");
-    action = (parsed.action ?? "decline") as string;
-    tasks  = Array.isArray(parsed.tasks) ? (parsed.tasks as string[]).filter(Boolean) : [];
-  } catch { /* default to decline */ }
-
-  // Clear state regardless of action
-  await db.collection("agent_sessions").doc(phone).update({
-    awaitingPreShiftUpdate: admin.firestore.FieldValue.delete(),
-    stateExpiresAt:         admin.firestore.FieldValue.delete(),
-  });
-
-  if (action === "addTasks" && tasks.length > 0) {
-    // Store on the appointment as dayOfVisitTasks
-    await db.collection("appointments").doc(info.appointmentId).update({
-      dayOfVisitTasks: admin.firestore.FieldValue.arrayUnion(...tasks),
-    });
-
-    const cgFirstName = info.caregiverName.split(" ")[0] || info.caregiverName;
-    const taskList    = tasks.map(t => `• ${t}`).join("\n");
-    const addMsg = await generateCaraMessage({
-      audience: "family",
-      context:
-        (whoIsWho ? whoIsWho + " " : "") +
-        `The family just added ${tasks.length} task${tasks.length > 1 ? "s" : ""} to ` +
-        `${info.seniorName}'s care visit today: ${tasks.join(", ")}. ` +
-        `${cgFirstName} will be notified when they check in. ` +
-        `Write a warm 2-sentence confirmation back to the family. ` +
-        `List what was added and reassure them ${cgFirstName} will have it.`,
-      fallback:
-        `Got it — I've added ${tasks.length === 1 ? "that" : "those"} to today's plan:\n\n` +
-        `${taskList}\n\n` +
-        `${cgFirstName} will see ${tasks.length === 1 ? "it" : "them"} when they check in.`,
-    });
-    await sendMessage(chatId, addMsg);
-  } else {
-    const declineMsg = await generateCaraMessage({
-      audience: "family",
-      context:
-        (whoIsWho ? whoIsWho + " " : "") +
-        `The family said no additional tasks for ${info.seniorName}'s care visit today — ` +
-        `the regular care plan is all set. Write a brief, warm 1-sentence confirmation back to them.`,
-      fallback: `Perfect — the regular care plan is all set for today's visit!`,
-      maxTokens: 60,
-    });
-    await sendMessage(chatId, declineMsg);
-  }
-}
-
-// Extract a contact's name + phone from free-form prose. Deciding which token
-// is the name is intent parsing → use the LLM, not a regex split. Phone-format
-// detection (digits) is still fine for validation.
 export async function extractContactNameAndPhone(
   text: string,
 ): Promise<{ name: string | null; phone: string | null }> {
@@ -179,16 +58,6 @@ export async function extractContactNameAndPhone(
 // userType internally. Preserve those internal conditions exactly.
 export async function routeClientStateMachines(ctx: ClientRouteContext): Promise<"handled" | "fallthrough"> {
   const { phone, chatId, text, norm, session } = ctx;
-
-  // ── Pre-shift family task check-in reply ────────────────────────────────────
-  if ((session as any).awaitingPreShiftUpdate) {
-    if (isStateExpired(session)) {
-      await clearFlags(phone, db, ["awaitingPreShiftUpdate", "stateExpiresAt"]).catch(() => {});
-    } else {
-      await handlePreShiftUpdate(phone, chatId, text, session);
-      return "handled";
-    }
-  }
 
   // ── Emergency contact capture — family replies with EC name + phone ──────────
   if ((session as any).awaitingEmergencyContactUpdate) {
@@ -383,6 +252,26 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
       await handleRescheduleFlowStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return "handled";
+  }
+
+  // ── Request Visit flow — multi-step state machine (2026-09-16) ─────────────
+  // The website's Calendar "+ Request Visit" modal, step for step (caregiver →
+  // booking → days → per-day times with the modal's availability checks →
+  // start → ongoing/end → note → recap → YES → booking_amendments). See
+  // visitRequestFlow.ts.
+  if ((session as any).visitRequestFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["visitRequestFlowStep", "visitRequestFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your visit request timed out. Text me anytime to pick it back up!");
+      return "handled";
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleVisitRequestFlowStep(phone, chatId, text, session);
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }

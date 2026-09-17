@@ -60,7 +60,7 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock("firebase-admin", () => {
   const firestoreFn = Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { delete: () => ({ __delete: true }) },
+    FieldValue: { delete: () => ({ __delete: true }), serverTimestamp: () => ({ __serverTimestamp: true }) },
   });
   const stub = { apps: [{}], initializeApp: () => ({}), firestore: firestoreFn };
   return { __esModule: true, default: stub, ...stub };
@@ -70,6 +70,7 @@ const sendMessage = vi.fn(async (..._a: unknown[]) => ({ message_id: "m1" }));
 vi.mock("../../linq/client", () => ({ sendMessage: (...a: unknown[]) => sendMessage(...a) }));
 const generateCaraMessageMock = vi.fn(async (opts: any) => opts.fallback ?? "msg");
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: (...a: unknown[]) => (generateCaraMessageMock as any)(...a) }));
+vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../safety/outputGuard", () => ({
   guardModelOutput: () => ({ ok: true }),
   ANTI_INVENTION_CLAUSE: "ANTI_INVENTION",
@@ -89,7 +90,7 @@ vi.mock("../bookingExecutor", () => ({
   executeBookings:   (taskId: string, phone: string) => executeBookings(taskId, phone),
 }));
 
-import { startBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
+import { startBookingFlow, startResendBookingFlow, handleBookingFlowStep, buildBookingRecap } from "../bookingFlow";
 
 const PHONE = "+15551234567";
 const CHAT  = "chat-1";
@@ -161,6 +162,29 @@ describe("startBookingFlow", () => {
   // site's other "Send Booking" rows for the same caregiver stayed active —
   // risking an accidental duplicate. Matches the site's own per-row "Send
   // Booking" — see findSendBookingEligibleInterviews.
+  // The site's Re-book (PostsPage.tsx): an accepted booking blocks a new one
+  // only while it still has a 'scheduled' shift; once every visit is done
+  // the row shows Re-book and the interview is eligible again (2026-09-16).
+  describe("Re-book eligibility (site parity)", () => {
+    it("an accepted booking with a scheduled shift still blocks the interview", async () => {
+      seedOneEligibleInterview("iv-done");
+      hoisted.docState.set("booking_requests/br-acc", { clientId: UID, caregiverId: CG_ID, interviewId: "iv-done", status: "accepted" });
+      hoisted.docState.set("shifts/sh-1", { clientId: UID, caregiverId: CG_ID, bookingRequestId: "br-acc", status: "scheduled", date: "2099-01-05" });
+      const r = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      expect(r.started).toBe(false);
+      expect(r.reason).toBe("no_eligible_interview");
+    });
+
+    it("an accepted booking whose visits are all done frees the interview for a Re-book", async () => {
+      seedOneEligibleInterview("iv-done");
+      hoisted.docState.set("booking_requests/br-acc", { clientId: UID, caregiverId: CG_ID, interviewId: "iv-done", status: "accepted" });
+      hoisted.docState.set("shifts/sh-1", { clientId: UID, caregiverId: CG_ID, bookingRequestId: "br-acc", status: "completed", date: "2026-09-01" });
+      const r = await startBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+      expect(r.started).toBe(true);
+      expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBe("bk_ask_rate");
+    });
+  });
+
   describe("interview disambiguation when no interviewId is given", () => {
     it("asks which interview when 2+ are eligible (completed, not declined, not already booked)", async () => {
       hoisted.docState.set("video_interviews/iv1", {
@@ -690,6 +714,108 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
     expect(stored.bookingFlowStep).toBe("bk_confirm");
     expect(stored.bookingFlowData.message).toBe("she has a spare key");
+  });
+});
+
+// The site's "Resend" row (Care Requests > Interviews): same modal, pre-filled
+// from the cancelled/declined request, submit updates the SAME doc (2026-09-16).
+describe("resend — startResendBookingFlow / bk_ask_resend / commit", () => {
+  const CANCELLED = {
+    clientId: UID, clientName: "The Family", caregiverId: CG_ID, caregiverName: "Basra Yousuf", status: "cancelled",
+    interviewId: "iv-a", jobId: "job-1", jobTitle: "Senior care in San Jose", address: "4746 Campbell Ave, San Jose, CA 95130",
+    rate: 31, paymentMethod: "credit", careNeeds: ["Companionship"], notes: "this is for my family",
+    careRecipients: [{ name: "Samira", relationship: "mother", careNeeds: ["Companionship"] }],
+    schedule: { days: ["Tue", "Wed"], startDate: "2026-09-15", endDate: null, ongoing: true,
+      dayShiftTimes: { Tue: [{ start: "11:00", end: "13:00" }], Wed: [{ start: "11:00", end: "13:00" }] } },
+    createdAt: "2026-09-10T09:00:00.000Z", agentTaskId: "task-old",
+  };
+
+  it("one resendable request → pre-filled recap at bk_confirm, nothing written yet", async () => {
+    hoisted.docState.set("booking_requests/br-cancelled", CANCELLED);
+    hoisted.docState.set("video_interviews/iv-a", { clientId: UID, caregiverId: CG_ID, status: "completed", scheduledTime: "2026-09-13T16:00:00.000Z" });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {});
+    const r = await startResendBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+    expect(r.started).toBe(true);
+    const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData).toMatchObject({
+      resendBookingRequestId: "br-cancelled", caregiverName: "Basra Yousuf", hourlyRate: 31, ongoing: true,
+      days: ["Tuesday", "Wednesday"], dayTimes: { Tuesday: { start: "11:00", end: "13:00" } },
+      careLocation: "4746 Campbell Ave, San Jose, CA 95130", message: "this is for my family",
+    });
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Let's resend your booking request to Basra Yousuf");
+    expect(sent).toContain("Agreed rate: $31/hr");
+    expect(sent).toContain("Tuesday 11:00 AM–1:00 PM");
+    expect(hoisted.docState.get("booking_requests/br-cancelled").status).toBe("cancelled");
+    expect(messagesCreate).not.toHaveBeenCalled();
+  });
+
+  it("a newer pending request for the same caregiver+job hides the Resend, like the site", async () => {
+    hoisted.docState.set("booking_requests/br-cancelled", CANCELLED);
+    hoisted.docState.set("booking_requests/br-newer", { ...CANCELLED, status: "pending", createdAt: "2026-09-12T09:00:00.000Z", agentTaskId: undefined });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {});
+    const r = await startResendBookingFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+    expect(r.started).toBe(false);
+    expect(r.reason).toBe("no_resendable");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("don't see a cancelled or declined booking request");
+  });
+
+  it("two resendable requests → a numbered pick, and a bare number opens that one's recap", async () => {
+    hoisted.docState.set("booking_requests/br-a", { ...CANCELLED, interviewId: "iv-a", jobId: undefined, createdAt: "2026-09-10T09:00:00.000Z" });
+    hoisted.docState.set("booking_requests/br-b", { ...CANCELLED, status: "declined", interviewId: "iv-b", jobId: undefined, rate: 22, createdAt: "2026-09-11T09:00:00.000Z" });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, {});
+    const r = await startResendBookingFlow(PHONE, CHAT, session(), {});
+    expect(r.started).toBe(true);
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_resend");
+    const list = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(list).toContain("Which booking request would you like to resend?");
+    expect(list).toContain("1. Basra Yousuf — Senior care in San Jose — Caregiver declined");
+    expect(list).toContain("2. Basra Yousuf — Senior care in San Jose — Visit cancelled");
+
+    await handleBookingFlowStep(PHONE, CHAT, "2", session({ bookingFlowStep: "bk_ask_resend" }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(stored.bookingFlowData.resendBookingRequestId).toBe("br-a");
+    expect(messagesCreate).not.toHaveBeenCalled();
+  });
+
+  it("YES updates the SAME booking_requests doc back to pending with the site's shape — no new task, no new doc", async () => {
+    hoisted.docState.set("booking_requests/br-cancelled", CANCELLED);
+    const data = {
+      caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 33, interviewId: "iv-a", jobId: "job-1", jobTitle: "Senior care in San Jose",
+      days: ["Tuesday", "Wednesday"], dayTimes: { Tuesday: { start: "10:00", end: "15:00" }, Wednesday: { start: "11:00", end: "13:00" } },
+      startDate: "2026-09-22", ongoing: true, careLocation: "4746 Campbell Ave, San Jose, CA 95130",
+      careRecipients: CANCELLED.careRecipients, topLevelCareNeeds: ["Companionship"], message: "please come in through the side door",
+      resendBookingRequestId: "br-cancelled",
+    };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+    expect(createBookingTask).not.toHaveBeenCalled();
+    expect(executeBookings).not.toHaveBeenCalled();
+    const doc = hoisted.docState.get("booking_requests/br-cancelled");
+    expect(doc).toMatchObject({
+      status: "pending", isResend: true, rate: 33, notes: "please come in through the side door",
+      schedule: { days: ["Tue", "Wed"], startDate: "2026-09-22", endDate: null, ongoing: true,
+        dayShiftTimes: { Tue: [{ start: "10:00", end: "15:00" }], Wed: [{ start: "11:00", end: "13:00" }] } },
+      updatedAt: { __serverTimestamp: true },
+    });
+    expect(doc.agentTaskId).toBeUndefined();
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBeUndefined();
+    const sent = String(sendMessage.mock.calls.at(-1)![1]);
+    expect(sent).toContain("Resent — Basra Yousuf has your booking request again");
+    expect(sent).toContain("Nothing is booked until they accept");
+  });
+
+  it("does not resend if the request went back to pending on the site since the recap", async () => {
+    hoisted.docState.set("booking_requests/br-cancelled", { ...CANCELLED, status: "pending" });
+    const data = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 31, days: ["Tuesday"], dayTimes: { Tuesday: { start: "11:00", end: "13:00" } }, ongoing: true, careLocation: "x", resendBookingRequestId: "br-cancelled" };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_confirm", bookingFlowData: data });
+    await handleBookingFlowStep(PHONE, CHAT, "yes", session({ bookingFlowStep: "bk_confirm", bookingFlowData: data }));
+    expect(hoisted.docState.get("booking_requests/br-cancelled").isResend).toBeUndefined();
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("already pending with Basra Yousuf");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).bookingFlowStep).toBeUndefined();
   });
 });
 

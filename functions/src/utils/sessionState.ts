@@ -35,13 +35,15 @@ export const STATE_MACHINE_FLAGS = [
   // website's Reschedule button on an upcoming shift, step for step.
   "rescheduleFlowStep",
   "rescheduleFlowData",
+  // Scripted Request Visit flow (visitRequestFlow.ts, 2026-09-16) — the
+  // website's Calendar "+ Request Visit" modal, step for step.
+  "visitRequestFlowStep",
+  "visitRequestFlowData",
   // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
   "interviewFlowStep",
   "interviewFlowData",
   // Mid-shift task acknowledgment flow
   "awaitingTaskAck",
-  // Pre-shift family task check-in
-  "awaitingPreShiftUpdate",
   // Day-before shift confirmation from caregiver
   "pendingShiftConfirmation",
   // Day-before shift confirmation from CLIENT (family)
@@ -215,6 +217,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["bookingFlowStep",         "sending your booking request"],
   ["replacementFlowStep",     "finding a replacement for your visit"],
   ["rescheduleFlowStep",      "moving your visit to a new day/time"],
+  ["visitRequestFlowStep",    "requesting an extra visit"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["timesheetStep",           "reviewing the timesheet"],
@@ -375,6 +378,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["bookingFlowStep", "generic"],
   ["replacementFlowStep", "generic"],
   ["rescheduleFlowStep", "generic"],
+  ["visitRequestFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
@@ -409,9 +413,9 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "bookingFlowData",
   "replacementFlowData",
   "rescheduleFlowData",
+  "visitRequestFlowData",
   "interviewFlowData",
   "awaitingTaskAck",
-  "awaitingPreShiftUpdate",
   "pendingShiftConfirmation",
   "pendingClientShiftConfirm",
   "swapStepSetAt",

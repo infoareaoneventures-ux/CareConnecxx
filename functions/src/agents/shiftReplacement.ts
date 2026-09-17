@@ -61,7 +61,7 @@ export async function skipReplacementShift(clientId: string, shiftId: string): P
 > {
   const loaded = await loadReplacementShift(clientId, shiftId);
   if (!loaded.ok) return { ok: false, code: loaded.code };
-  await loaded.ref.update({ status: "cancelled", cancelledBy: "client" });
+  await loaded.ref.update({ status: "cancelled", cancelledBy: "client", updatedAt: admin.firestore.FieldValue.serverTimestamp() });
   return {
     ok: true,
     date: String(loaded.shift.date ?? ""),

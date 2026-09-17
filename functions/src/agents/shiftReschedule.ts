@@ -12,11 +12,30 @@
 // all — the site refuses a proposal that overlaps another visit with the
 // same caregiver that day. Both are fixed here.
 import * as admin from "firebase-admin";
-import { businessTodayStr } from "../utils/scheduledTime";
+import { businessTodayStr, businessNowMinutes } from "../utils/scheduledTime";
 import { bookingTimeToMinutes } from "./bookingResolution";
 import { logAudit } from "../observability/auditLog";
 
 const db = admin.firestore();
+
+// The site's shiftDisplayStatus() (utils/shiftUtils.ts): a 'scheduled' visit
+// whose date has passed, or whose end time has passed today, shows as
+// Overdue — and the site hides its Reschedule button ("that's a no-show/
+// dispute situation, not something to just move"). Same rule here, in the
+// business timezone. Midnight-crossing visits (end < start) end next day.
+export function isShiftOverdue(
+  v: { status?: unknown; date?: unknown; startTime?: unknown; endTime?: unknown },
+  todayStr: string = businessTodayStr(),
+  nowMinutes: number = businessNowMinutes(),
+): boolean {
+  if (v.status !== "scheduled") return false;
+  const date = String(v.date ?? "");
+  if (!date) return false;
+  const startMin = bookingTimeToMinutes(v.startTime ?? "00:00") ?? 0;
+  const endMin = bookingTimeToMinutes(v.endTime ?? "23:59") ?? 23 * 60 + 59;
+  const effectiveEnd = endMin < startMin ? endMin + 1440 : endMin;
+  return date < todayStr || (date === todayStr && effectiveEnd <= nowMinutes);
+}
 
 export interface ReschedulableVisit {
   id: string;
@@ -45,7 +64,7 @@ export async function listReschedulableVisits(clientId: string, limit = 10): Pro
     .limit(limit * 2)
     .get();
   return snap.docs
-    .filter((d) => d.data().status === "scheduled")
+    .filter((d) => d.data().status === "scheduled" && !isShiftOverdue(d.data()))
     .map((d) => {
       const s = d.data();
       return {
@@ -81,6 +100,9 @@ export async function loadReschedulableShift(clientId: string, shiftId: string):
   if (shift.clientId !== clientId) return { ok: false, code: "PERMISSION_DENIED", message: "Visit does not belong to this client" };
   if (shift.status !== "scheduled") {
     return { ok: false, code: "INVALID_INPUT", message: `Only a scheduled visit can be rescheduled this way (status: ${shift.status})` };
+  }
+  if (isShiftOverdue(shift)) {
+    return { ok: false, code: "INVALID_INPUT", message: "This visit has already passed (it shows as Overdue) and can't be rescheduled" };
   }
   return { ok: true, shift, ref };
 }

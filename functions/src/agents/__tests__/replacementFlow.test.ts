@@ -78,6 +78,7 @@ vi.mock("firebase-admin", () => {
     FieldValue: {
       delete: () => ({ __delete: true }),
       arrayUnion: (...v: any[]) => ({ __arrayUnion: v }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
   });
   const stub = { apps: [{}], initializeApp: () => ({}), firestore: firestoreFn };

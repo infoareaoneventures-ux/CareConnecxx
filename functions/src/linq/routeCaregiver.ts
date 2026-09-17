@@ -334,90 +334,53 @@ async function handleShiftConfirmation(
       audience: "caregiver",
       context:
         `${cgFirstName} just let you know they can't make ${info.seniorName}'s shift on ${displayDate}. ` +
-        `Write a brief, understanding response — acknowledge the situation without judgment, ` +
-        `let them know the family will be notified and you'll take care of it from here. ` +
+        `Write a brief, understanding response — acknowledge the situation without judgment and ` +
+        `let them know the family will be notified. Do NOT promise to find coverage or a replacement. ` +
         `Be warm, not cold.`,
       fallback:
-        `Understood, ${cgFirstName} — I'll let the family know and start working on coverage for ${displayDate}. ` +
+        `Understood, ${cgFirstName} — I'll let the family know about ${displayDate}. ` +
         `I appreciate you letting me know ahead of time.`,
     });
     await sendMessage(chatId, cancelMsg);
 
-    // Alert family with urgency
-    const clientPhone = await getClientPhoneByClientId(info.clientId);
-    if (clientPhone) {
-      const alertMsg = await generateCaraMessage({
-        audience: "family",
-        context:
-          // R11: who-is-who attribution — care belongs to the recipient, not the reader.
-          `The reader is the family member coordinating care; the care recipient is ${info.seniorName}. ` +
-          `Unfortunately ${cgFirstName} just let us know they can't make ${info.seniorName}'s visit ` +
-          `on ${displayDate}${info.startTime ? " at " + info.startTime : ""}. ` +
-          `Write an urgent but calm message to the family alerting them. ` +
-          `Let them know we're already working on finding a replacement. ` +
-          `Tell them to reply HELP if they need immediate support. ` +
-          `Be direct but not alarming — this is being handled.`,
-        fallback:
-          `Heads up — ${cgFirstName} won't be able to make ${info.seniorName}'s visit on ${displayDate}. ` +
-          `I'm already working on finding coverage. Reply HELP if you need anything in the meantime.`,
+    // 2026-09-16: replaced the legacy "I'm already working on finding
+    // coverage" alert + runEmergencyReplacement (an Evia-only process the
+    // site never had). A caregiver who can't make it does on the website
+    // what its Cancel button does: within 24h of start the visit becomes
+    // needs_replacement (the family sees Find Replacement / Skip), further
+    // out it's simply cancelled. onShiftStatusChanged (notificationTriggers.ts)
+    // then texts + notifies the family — no manual family send here.
+    if (visitSnap.exists && visitSnap.ref.parent.id === "shifts") {
+      const shift = visitSnap.data() ?? {};
+      const shiftStart = String(shift.startTime ?? "");
+      const isUrgent = shift.date && shiftStart
+        ? (parseScheduledTimeMs(`${shift.date}T${shiftStart.slice(0, 5)}:00`) - Date.now()) / (1000 * 60 * 60) <= 24
+        : false;
+      await visitSnap.ref.update({
+        status:             isUrgent ? "needs_replacement" : "cancelled",
+        cancelledBy:        "caregiver",
+        cancelledAt:        new Date().toISOString(),
+        cancellationReason: "Declined the day-before confirmation",
       });
-      await sendViaInteractionAgent(clientPhone, {
-        content:     alertMsg,
-        urgency:     "immediate",
-        sourceAgent: "shift_confirm_family_update",
-        canDrop:     false,
-      });
-    }
-
-    // Trigger replacement agent (fire-and-forget). runEmergencyReplacement requires
-    // { appointmentId, clientId, clientPhone, appt } — we must load the appointment to
-    // build `appt` (caregiverId/time/date) and pass the family's phone. A failure here
-    // is safety-critical (the family was just told coverage is being found), so we alert
-    // admins on any error instead of silently swallowing it.
-    if (clientPhone) {
-      (async () => {
-        try {
-          const appt = {
-            ...(visitSnap.data() || {}),
-            caregiverName: info.caregiverName,
-            date:          info.appointmentDate,
-            time:          info.startTime,
-          };
-          const { runEmergencyReplacement } = await import("../agents/replacementAgent");
-          if (typeof runEmergencyReplacement === "function") {
-            await runEmergencyReplacement({
-              appointmentId: info.appointmentId,
-              clientId:      info.clientId,
-              clientPhone,
-              appt,
-            });
-          }
-        } catch (err) {
-          console.error("[handleShiftConfirmation] emergency replacement failed:", err);
-          await db.collection("admin_alerts").add({
-            type:          "emergency_replacement_failed",
-            severity:      "critical",
-            appointmentId: info.appointmentId,
-            clientId:      info.clientId,
-            clientPhone,
-            seniorName:    info.seniorName,
-            error:         String((err as any)?.message ?? err),
-            createdAt:     new Date().toISOString(),
-          }).catch(() => {});
-        }
-      })();
-    } else {
-      console.error("[handleShiftConfirmation] no clientPhone for appointment", info.appointmentId, "— cannot run replacement");
-      await db.collection("admin_alerts").add({
-        type:          "emergency_replacement_no_client_phone",
-        severity:      "critical",
-        appointmentId: info.appointmentId,
-        clientId:      info.clientId,
-        seniorName:    info.seniorName,
-        createdAt:     new Date().toISOString(),
+      logAudit({
+        eventType: "shift_cancelled", userId: session.caregiverId ?? phone,
+        data: { source: "dayBeforeConfirmation", shiftId: visitSnap.id, isUrgent },
       }).catch(() => {});
+    } else {
+      // Legacy appointments doc — nothing on the site cancels these anymore.
+      // Tell the family plainly, with no promise of automatic coverage.
+      const clientPhone = await getClientPhoneByClientId(info.clientId);
+      if (clientPhone) {
+        await sendViaInteractionAgent(clientPhone, {
+          content:
+            `Heads up — ${cgFirstName} let me know they can't make ${info.seniorName}'s visit on ${displayDate}` +
+            `${info.startTime ? " at " + info.startTime : ""}. You can find a new caregiver from your My Bookings page, or text me and I'll help.`,
+          urgency:     "immediate",
+          sourceAgent: "shift_confirm_family_update",
+          canDrop:     false,
+        });
+      }
     }
-
   } else {
     // QUESTION or unclear — answer the question, then re-ask the confirmation.
     // Generate the answer inline so we control message ordering (otherwise the
@@ -1725,45 +1688,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
       if (session.service === "iMessage") await startTyping(chatId).catch(() => {/* non-critical */});
       try { await KEYWORDS[norm](); } finally { if (session.service === "iMessage") await stopTyping(chatId).catch(() => {}); }
       return "handled";
-    }
-
-    // YES / NO to replacement candidate request
-    if (norm === "YES" || norm === "NO") {
-      const candidateSnap = await db.collection("replacement_candidates")
-        .where("phone",  "==", phone)
-        .where("status", "==", "contacted")
-        .orderBy("contactedAt", "desc")
-        .limit(1)
-        .get();
-
-      if (!candidateSnap.empty) {
-        const candidate = candidateSnap.docs[0].data();
-        const taskSnap  = await db.collection("agent_tasks").doc(candidate.taskId).get();
-        const task      = taskSnap.data();
-
-        if (task && task.status === "awaiting_approval") {
-          if (norm === "YES") {
-            await candidateSnap.docs[0].ref.update({ status: "available", respondedAt: new Date().toISOString() });
-            const jobConfirmMsg = await generateCaraMessage({
-              audience: "caregiver",
-              context: "Caregiver indicated availability for a job. Evia will confirm with the family and follow up shortly.",
-              fallback: "Got it — we'll confirm with the family and follow up shortly.",
-              maxTokens: 60,
-            });
-            await sendMessage(chatId, jobConfirmMsg);
-          } else {
-            await candidateSnap.docs[0].ref.update({ status: "declined", respondedAt: new Date().toISOString() });
-            const jobDeclineMsg = await generateCaraMessage({
-              audience: "caregiver",
-              context: "Caregiver declined a job offer. Evia is acknowledging gracefully.",
-              fallback: "No worries — thanks for letting us know!",
-              maxTokens: 60,
-            });
-            await sendMessage(chatId, jobDeclineMsg);
-          }
-          return "handled";
-        }
-      }
     }
 
     // Day-before shift confirmation reply

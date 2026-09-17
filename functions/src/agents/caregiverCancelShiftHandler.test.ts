@@ -75,12 +75,11 @@ const hoisted = vi.hoisted(() => {
   // `fallback` on empty/error output — that fallback is the contract the
   // graceful paths rely on, so the mock mirrors it instead of a constant.
   const generateCaraMessage     = vi.fn(async (...a: any[]) => a[0]?.fallback ?? "ack");
-  const runEmergencyReplacement = vi.fn().mockResolvedValue(undefined);
 
   return {
     updateMock, addMock, docGetMock, appointmentsQueryGetMock, shiftsQueryGetMock, sessionsGetMock,
     sendMessage, sendViaInteractionAgent, parseWithClaude, quickComplete,
-    generateCaraMessage, runEmergencyReplacement, collectionMock,
+    generateCaraMessage, collectionMock,
   };
 });
 
@@ -112,10 +111,6 @@ vi.mock("./caraAgent", () => ({
   sendViaInteractionAgent: (...args: unknown[]) => hoisted.sendViaInteractionAgent(...args),
 }));
 
-vi.mock("./replacementAgent", () => ({
-  runEmergencyReplacement: (...args: unknown[]) => hoisted.runEmergencyReplacement(...args),
-}));
-
 const {
   updateMock, sendMessage, sendViaInteractionAgent, parseWithClaude,
   appointmentsQueryGetMock, docGetMock,
@@ -135,7 +130,6 @@ describe("handleCaregiverCancelShift", () => {
     sendViaInteractionAgent.mockClear();
     parseWithClaude.mockReset();
     hoisted.quickComplete.mockReset();
-    hoisted.runEmergencyReplacement.mockClear();
     hoisted.sessionsGetMock.mockResolvedValue({ empty: true, docs: [] });
     hoisted.shiftsQueryGetMock.mockResolvedValue({ empty: true, docs: [] });
     docGetMock.mockResolvedValue({ exists: true, data: () => ({}) });
@@ -291,7 +285,6 @@ describe("handleCaregiverCancelShift", () => {
     expect(sendMessage).toHaveBeenCalled();
     // The Firestore appointment trigger is the sole family alert/replacement owner.
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
-    expect(hoisted.runEmergencyReplacement).not.toHaveBeenCalled();
   });
 
   it("ask_reason — cancels a shifts-pipeline visit by updating shifts, not appointments", async () => {
@@ -385,7 +378,6 @@ describe("handleCaregiverCancelShift", () => {
     // No family alert
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
     // No replacement
-    expect(hoisted.runEmergencyReplacement).not.toHaveBeenCalled();
     // But the question was answered
     const out = sendMessage.mock.calls[0][1] as string;
     expect(out).toMatch(/Refunds/);

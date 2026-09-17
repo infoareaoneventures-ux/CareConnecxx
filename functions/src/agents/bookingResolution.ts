@@ -124,11 +124,26 @@ export async function findSendBookingEligibleInterviews(
     const bookingsSnap = await db.collection("booking_requests")
       .where("clientId", "==", clientId)
       .get();
+    // 2026-09-16 (site parity — PostsPage.tsx's Re-book): an ACCEPTED booking
+    // only blocks a new one while it still has at least one 'scheduled'
+    // shift (the site's activeBookingIds listener). Once every visit is
+    // done, the row shows "Re-book" and a fresh booking is allowed again.
+    const scheduledShiftsSnap = await db.collection("shifts")
+      .where("clientId", "==", clientId)
+      .where("status", "==", "scheduled")
+      .get();
+    const bookingIdsWithScheduledShifts = new Set(
+      scheduledShiftsSnap.docs.map((d) => d.data().bookingRequestId as string | undefined).filter(Boolean) as string[]
+    );
     const activelyBookedInterviewIds = new Set(
       bookingsSnap.docs
-        .map((d) => d.data())
-        .filter((b) => b.interviewId && (b.status === "pending" || b.status === "accepted"))
-        .map((b) => b.interviewId as string)
+        .filter((d) => {
+          const b = d.data();
+          if (!b.interviewId) return false;
+          if (b.status === "pending") return true;
+          return b.status === "accepted" && bookingIdsWithScheduledShifts.has(d.id);
+        })
+        .map((d) => d.data().interviewId as string)
     );
 
     // Sort most-recent-first by the actual parsed instant (2026-09-14 fix:

@@ -20,7 +20,8 @@ import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
-import { loadReschedulableShift, proposeShiftReschedule } from "../agents/shiftReschedule";
+import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue } from "../agents/shiftReschedule";
+import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
 import { normDay } from "../scheduled/shiftGenerator";
 import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
@@ -277,6 +278,44 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "start_visit_request_flow",
+    description:
+      "Add an extra visit (a new day, or new days, and times) to a booking the caregiver has already accepted — the " +
+      "website's Calendar '+ Request Visit' button, step for step. Starts Evia's scripted flow: which caregiver (only " +
+      "those with an active booking), which booking if they have more than one, the day(s), the time(s) per day " +
+      "(refusing anything that overlaps an existing visit with that caregiver or a time they're booked elsewhere, and " +
+      "flagging times outside their usual availability), start date, ongoing or end date, an optional note, then a " +
+      "recap; only on YES does it write the booking_amendments request the caregiver must accept. Pass initialText = " +
+      "the family's own message so a day/time they already said is used. This tool ALREADY TEXTS THE FAMILY — send " +
+      "NOTHING else this turn. Do NOT call request_schedule_amendment yourself for a family's ask.",
+    input_schema: {
+      type: "object",
+      properties: {
+        initialText: { type: "string", description: "The family's own message asking for the visit, verbatim." },
+        caregiverId: { type: "string", description: "Optional — the caregiver the family named." },
+      },
+    },
+  },
+  {
+    name: "get_calendar",
+    description:
+      "The family's My Calendar page for a date range — every visit (shifts) in the range with its display status " +
+      "(scheduled, in-progress, overdue, completed, cancelled — 'overdue' is a scheduled visit whose time has passed with " +
+      "no check-in, exactly as the site shows it) plus every interview in the range. Use for 'what's on my calendar this " +
+      "week / next week / in October', 'how many visits in September', 'what happened last week'. Defaults to today " +
+      "through the next 6 days; max 62 days. get_upcoming_appointments only returns the next few visits — use this for " +
+      "anything date-ranged.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" },
+        fromDate: { type: "string", description: "YYYY-MM-DD (default today)" },
+        toDate:   { type: "string", description: "YYYY-MM-DD (default fromDate + 6 days)" },
+      },
+      required: ["clientId"],
+    },
+  },
+  {
     name: "start_reschedule_flow",
     description:
       "THE way to move an existing scheduled visit to a different day/time (the website's own Reschedule button on " +
@@ -296,6 +335,24 @@ export const MCP_TOOLS: McpTool[] = [
         date:        { type: "string", description: "Optional YYYY-MM-DD the family asked to move it to." },
         startTime:   { type: "string", description: "Optional HH:MM 24-hour new start." },
         endTime:     { type: "string", description: "Optional HH:MM 24-hour new end." },
+      },
+    },
+  },
+  {
+    name: "start_resend_booking_flow",
+    description:
+      "Resend a booking request the caregiver declined or the family cancelled — the website's own 'Resend' row on " +
+      "Care Requests > Interviews ('Visit cancelled' / 'Caregiver declined' + Resend). Starts Evia's scripted booking " +
+      "flow PRE-FILLED from that request (same as the site's 'Resend Booking Request' modal): the family sees the full " +
+      "recap, can change rate/schedule/location/recipients/note, and on YES the SAME booking_requests doc goes back to " +
+      "'pending' (isResend: true). Pass caregiverId when the family named one; omit it to consider every resendable " +
+      "request. If more than one could be resent, the flow asks which with a numbered list. This tool ALREADY TEXTS THE " +
+      "FAMILY — send NOTHING else this turn. Never use request_booking or start_booking_flow for a resend.",
+    input_schema: {
+      type: "object",
+      properties: {
+        caregiverId:      { type: "string", description: "Optional — the caregiver the family named." },
+        bookingRequestId: { type: "string", description: "Optional — only when you already know the exact declined/cancelled booking_requests id." },
       },
     },
   },
@@ -589,7 +646,7 @@ export const MCP_TOOLS: McpTool[] = [
         action: {
           type: "string",
           enum: [
-            "cancel_pending_request", "cancel_whole_booking", "cancel_visit", "cancel_pending_amendment", "resend_booking",
+            "cancel_pending_request", "cancel_whole_booking", "cancel_visit", "cancel_pending_amendment",
             "withdraw_replacement_request", "propose_reschedule", "accept_reschedule", "clear_reschedule",
           ],
           description:
@@ -599,7 +656,6 @@ export const MCP_TOOLS: McpTool[] = [
             "'Needs Replacement' visit (the family deciding they don't need a replacement after all — matches the " +
             "website's own Skip button). " +
             "cancel_pending_amendment — withdraw a schedule-change request still awaiting the caregiver's response (needs amendmentId). " +
-            "resend_booking — resend a previously declined/cancelled booking request to the same caregiver (needs bookingRequestId). " +
             "withdraw_replacement_request — cancel a pending replacement booking request you sent to a backup caregiver, so a " +
             "different one can be chosen instead (needs bookingRequestId — the id select_callout_backup returned). " +
             "propose_reschedule — propose moving ONE existing scheduled visit to a new day/time, in place (needs shiftId, " +
@@ -610,7 +666,7 @@ export const MCP_TOOLS: McpTool[] = [
             "clear_reschedule — decline the caregiver's proposed new time (the original time stands), OR withdraw your " +
             "own proposal before they've responded — either way just needs shiftId.",
         },
-        bookingRequestId: { type: "string", description: "The booking_requests document ID — required for cancel_pending_request, cancel_whole_booking, resend_booking, withdraw_replacement_request" },
+        bookingRequestId: { type: "string", description: "The booking_requests document ID — required for cancel_pending_request, cancel_whole_booking, withdraw_replacement_request" },
         shiftId:          { type: "string", description: "The shifts document ID — required for cancel_visit, propose_reschedule, accept_reschedule, clear_reschedule" },
         amendmentId:      { type: "string", description: "The booking_amendments document ID — required for cancel_pending_amendment" },
         date:             { type: "string", description: "YYYY-MM-DD — required for propose_reschedule" },
@@ -623,21 +679,27 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "request_schedule_amendment",
     description:
-      "Request a schedule change on an existing booking — either a one-off time change for a single visit (cancel the old " +
-      "one first with cancel_visit, then call this for the replacement) or adding a new recurring day to an ongoing booking. " +
-      "The caregiver must accept before the new visit(s) are added. Confirm before calling.",
+      "LOW-LEVEL write behind the website's Calendar '+ Request Visit' modal — prefer start_visit_request_flow for a " +
+      "family's ask (it picks the caregiver/booking, checks availability, and confirms). Adds day(s)/time(s) to an " +
+      "ACCEPTED booking as a booking_amendments request the caregiver must accept. Either pass newDays (the modal's " +
+      "full shape: 3-letter day → list of {start,end} blocks) with startDate and ongoing/endDate, or the older single " +
+      "date + startTime + endTime. Refuses a block that overlaps an existing visit with that caregiver or a time they're " +
+      "booked elsewhere (the same checks the modal enforces).",
     input_schema: {
       type: "object",
       properties: {
-        bookingRequestId: { type: "string", description: "The booking_requests document ID this amendment applies to" },
+        bookingRequestId: { type: "string", description: "The ACCEPTED booking_requests document ID this amendment applies to" },
         clientId:         { type: "string", description: "The client's user ID" },
-        date:             { type: "string", description: "YYYY-MM-DD — the single date for a one-off time change" },
-        startTime:        { type: "string", description: "e.g. '14:00'" },
-        endTime:          { type: "string", description: "e.g. '16:00'" },
+        newDays:          { type: "object", description: "{ \"Tue\": [{ \"start\": \"09:00\", \"end\": \"13:00\" }], ... } — the modal's own shape" },
+        startDate:        { type: "string", description: "YYYY-MM-DD first date the new day(s) apply (default today)" },
+        endDate:          { type: "string", description: "YYYY-MM-DD last date, when not ongoing" },
+        date:             { type: "string", description: "Legacy single-day form: YYYY-MM-DD" },
+        startTime:        { type: "string", description: "Legacy single-day form: HH:MM" },
+        endTime:          { type: "string", description: "Legacy single-day form: HH:MM" },
         notes:            { type: "string", description: "Optional note to the caregiver" },
-        ongoing:          { type: "boolean", description: "true to add this as a standing recurring day, false (default) for a single one-off visit" },
+        ongoing:          { type: "boolean", description: "true for a standing recurring day (default when newDays is given), false for a one-off" },
       },
-      required: ["bookingRequestId", "clientId", "date", "startTime", "endTime"],
+      required: ["bookingRequestId", "clientId"],
     },
   },
   {
@@ -2320,6 +2382,42 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_pending_schedule_amendments",
+    description:
+      "List schedule-change requests still awaiting the caregiver's answer — the OTHER kind of card on the site's " +
+      "My Bookings > Requests tab (booking_amendments with status 'pending': a new recurring day or one-off visit " +
+      "the family asked to add to an accepted booking via request_schedule_amendment). Pass clientId for a family's " +
+      "own pending changes, or caregiverId for changes a caregiver still needs to accept/decline. Each result " +
+      "carries its amendmentId for manage_booking action:'cancel_pending_amendment'. get_pending_booking_requests " +
+      "does NOT include these.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_past_visits",
+    description:
+      "List past visits — the site's My Bookings > Past Bookings tab exactly: this client's (or caregiver's) shifts " +
+      "with status 'completed' or 'cancelled', newest first, with caregiver, date (and weekday), times, who cancelled, " +
+      "and for completed visits the actual start/end stamps and paid flag. Use for 'when was the last visit', 'did " +
+      "Tuesday's visit happen', 'which visits got cancelled', 'how many visits has Basra done'. " +
+      "get_upcoming_appointments only covers scheduled/in-progress/needs_replacement visits, never these.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:    { type: "string", description: "The client's Firestore document ID (provide this OR caregiverId)" },
+        caregiverId: { type: "string", description: "The caregiver's Firestore document ID (provide this OR clientId)" },
+        limit:       { type: "number", description: "Max visits to return (default 20, max 50)" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "get_pending_booking_requests",
     description:
       "List booking requests still awaiting a response — matches the site's My Bookings > Requests tab exactly " +
@@ -2606,6 +2704,9 @@ const CAREGIVER_TOOL_NAMES = new Set([
   // Requests-tab Q&A parity (2026-09-14) — matches CaregiverBookingsPage's
   // own Requests tab (booking_requests where caregiverId + status:'pending').
   "get_pending_booking_requests",
+  // Requests/Past Bookings parity (2026-09-16): pending schedule changes and
+  // completed/cancelled visits, both sides.
+  "get_pending_schedule_amendments", "get_past_visits",
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
@@ -3057,6 +3158,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "suggest_upcoming_care", "get_care_team", "cara_knows",
   "get_upcoming_appointments", "get_caregiver_appointments", "get_caregiver_info",
   "get_pending_booking_requests",
+  "get_pending_schedule_amendments", "get_past_visits", "get_calendar",
   // find_nearby_caregivers is NOT here (2026-09-14): it took over the removed
   // find_replacement_caregivers' job of texting the family each caregiver's
   // profile card and writing pendingMatches, so it sends real SMS and must be
@@ -3816,6 +3918,69 @@ async function executeToolCall(
         };
       }
 
+      case "start_visit_request_flow": {
+        const { clientId, phone, caregiverId, initialText } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the visit request in");
+        const { startVisitRequestFlow } = await import("../agents/visitRequestFlow");
+        const result = await startVisitRequestFlow(phone as string, chatId, sessionData as any, {
+          ...(typeof caregiverId === "string" && caregiverId ? { caregiverId } : {}),
+          ...(typeof initialText === "string" && initialText ? { initialText } : {}),
+        });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what was found (or not found) — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family the next step of the visit request. Send NOTHING else this turn — not even an acknowledgment. The flow now owns the conversation until it finishes.",
+        };
+      }
+
+      case "get_calendar": {
+        const { clientId: calClientId, fromDate: rawFrom, toDate: rawTo } = input as Record<string, unknown>;
+        if (!calClientId) return toolError("INVALID_INPUT", "clientId is required");
+        const isDate = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+        const from = isDate(rawFrom) ? rawFrom : businessTodayStr();
+        const addDays = (d: string, n: number) => { const x = new Date(`${d}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+        let to = isDate(rawTo) ? rawTo : addDays(from, 6);
+        if (to < from) return toolError("INVALID_INPUT", "toDate must be on or after fromDate");
+        if (to > addDays(from, 62)) to = addDays(from, 62);
+        const [shiftSnap, ivSnap] = await Promise.all([
+          db.collection("shifts").where("clientId", "==", calClientId).where("date", ">=", from).where("date", "<=", to).orderBy("date", "asc").limit(400).get(),
+          db.collection("video_interviews").where("clientId", "==", calClientId).get(),
+        ]);
+        const visits = shiftSnap.docs.map((d): Record<string, unknown> => {
+          const s = d.data();
+          return {
+            id: d.id, date: s.date ?? null, dayOfWeek: weekdayForDate(String(s.date ?? "")),
+            startTime: s.startTime ?? null, endTime: s.endTime ?? null,
+            status: s.status ?? null,
+            displayStatus: isShiftOverdue(s) ? "overdue" : (s.status ?? null),
+            caregiverId: s.caregiverId ?? null, caregiverName: s.caregiverName ?? null,
+            bookingRequestId: s.bookingRequestId ?? null,
+            ...(s.reschedulePendingDate ? { reschedulePendingDate: s.reschedulePendingDate, reschedulePendingStartTime: s.reschedulePendingStartTime ?? null, reschedulePendingEndTime: s.reschedulePendingEndTime ?? null, rescheduledBy: s.rescheduledBy ?? null } : {}),
+          };
+        }).sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`));
+        const CAL_IV_STATUSES = new Set(["requested", "accepted", "scheduled", "confirmed", "in-progress", "completed"]);
+        const interviews = ivSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Record<string, unknown>))
+          .filter((iv) => CAL_IV_STATUSES.has(String(iv.status ?? "")))
+          .map((iv) => {
+            const ms = typeof iv.scheduledTime === "string" ? parseScheduledTimeMs(iv.scheduledTime) : NaN;
+            const dateStr = Number.isFinite(ms) ? businessTodayStr(undefined, new Date(ms)) : null;
+            return { id: iv.id, caregiverId: iv.caregiverId ?? null, caregiverName: iv.caregiverName ?? null, status: iv.status ?? null, date: dateStr, dayOfWeek: dateStr ? weekdayForDate(dateStr) : null, scheduledTime: iv.scheduledTime ?? null, scheduledTimeLocal: Number.isFinite(ms) ? formatInterviewTime(ms) : null, callUrl: iv.callUrl ?? null, notes: iv.notes ?? null };
+          })
+          .filter((iv) => iv.date && iv.date >= from && iv.date <= to)
+          .sort((a, b) => String(a.scheduledTime).localeCompare(String(b.scheduledTime)));
+        return { success: true, fromDate: from, toDate: to, visits, interviews, visitCount: visits.length, interviewCount: interviews.length };
+      }
+
       case "start_reschedule_flow": {
         const { clientId, phone, shiftId, date, startTime, endTime, initialText } = input as Record<string, unknown>;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
@@ -3841,6 +4006,31 @@ async function executeToolCall(
         return {
           success: true,
           instruction: "This tool already texted the family the next step of the reschedule flow. Send NOTHING else this turn — not even an acknowledgment. The flow now owns the conversation until it finishes.",
+        };
+      }
+
+      case "start_resend_booking_flow": {
+        const { clientId, phone, caregiverId, bookingRequestId } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the resend in");
+        const { startResendBookingFlow } = await import("../agents/bookingFlow");
+        const result = await startResendBookingFlow(phone as string, chatId, sessionData as any, {
+          ...(typeof caregiverId === "string" && caregiverId ? { caregiverId } : {}),
+          ...(typeof bookingRequestId === "string" && bookingRequestId ? { bookingRequestId } : {}),
+        });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what was found (or not found) — do not repeat or add anything else this turn.",
+          };
+        }
+        return {
+          success: true,
+          instruction: "This tool already texted the family the pre-filled recap (or the pick list). Send NOTHING else this turn — not even an acknowledgment. The booking flow now owns the conversation until it finishes.",
         };
       }
 
@@ -4558,7 +4748,7 @@ async function executeToolCall(
           // cancelled. Same fix applied to ClientVisitsPage.tsx's own
           // handleCancelBooking.
           const shiftsSnap = await db.collection("shifts")
-            .where("bookingRequestId", "==", bookingRequestId).where("status", "in", ["scheduled", "needs_replacement"]).get();
+            .where("bookingRequestId", "==", bookingRequestId).where("status", "in", ["scheduled", "needs_replacement"]).where("clientId", "==", clientId).get();
           const batch = db.batch();
           shiftsSnap.docs.forEach((d) => batch.update(d.ref, { status: "cancelled", bulkCancelled: true }));
           await batch.commit();
@@ -4586,31 +4776,19 @@ async function executeToolCall(
           // shifts.status → cancelled fires onShiftStatusChanged
           // (notificationTriggers.ts), which texts the caregiver — no manual
           // send here, or the caregiver would get the notice twice.
-          await shiftSnap.ref.update({ status: "cancelled", cancelledBy: "client" });
+          // Same fields the site's handleCancelShift writes: a cancelled visit
+          // has nothing left to reschedule, so any pending proposal is cleared too.
+          await shiftSnap.ref.update({
+            status: "cancelled",
+            cancelledBy: "client",
+            reschedulePendingDate: admin.firestore.FieldValue.delete(),
+            reschedulePendingStartTime: admin.firestore.FieldValue.delete(),
+            reschedulePendingEndTime: admin.firestore.FieldValue.delete(),
+            rescheduledBy: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
           logAudit({ eventType: "shift_cancelled", userId: clientId as string, data: { source: "mcp:manage_booking", action, shiftId } }).catch(() => {});
           return { success: true, action, shiftId, date: shift.date };
-        }
-
-        if (action === "resend_booking") {
-          if (!bookingRequestId) return toolError("INVALID_INPUT", "bookingRequestId is required for resend_booking");
-          const brSnap = await db.collection("booking_requests").doc(bookingRequestId as string).get();
-          if (!brSnap.exists) return toolError("NOT_FOUND", "Booking request not found");
-          const br = brSnap.data()!;
-          if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Booking request does not belong to this client");
-          if (!["declined", "cancelled"].includes(br.status as string)) {
-            return toolError("INVALID_INPUT", `Only a declined or cancelled request can be resent (status: ${br.status})`);
-          }
-          await brSnap.ref.update({ status: "pending", isResend: true });
-          let notification: { sent: boolean; reason?: string; error?: string } = { sent: false, reason: "no_caregiver_phone" };
-          if (br.caregiverId) {
-            const cgPhone = await resolveCaregiverPhone(br.caregiverId as string);
-            if (cgPhone) {
-              const { trySend } = await import("../utils/toolNotify");
-              notification = await trySend(cgPhone, "A family would like to send you a booking request again — reply here to accept or decline.", "mcp:manage_booking");
-            }
-          }
-          logAudit({ eventType: "booking_resent", userId: clientId as string, data: { source: "mcp:manage_booking", action, bookingRequestId } }).catch(() => {});
-          return { success: true, action, bookingRequestId, notification };
         }
 
         if (action === "cancel_pending_amendment") {
@@ -4732,40 +4910,70 @@ async function executeToolCall(
       }
 
       case "request_schedule_amendment": {
-        const { bookingRequestId, clientId, date, startTime, endTime, notes, ongoing } = input;
-        if (!bookingRequestId || !clientId || !date || !startTime || !endTime) {
-          return toolError("INVALID_INPUT", "bookingRequestId, clientId, date, startTime, and endTime are required");
-        }
+        const { bookingRequestId, clientId, date, startTime, endTime, notes, ongoing, newDays: rawNewDays, startDate: rawStart, endDate: rawEnd } = input as Record<string, unknown>;
+        if (!bookingRequestId || !clientId) return toolError("INVALID_INPUT", "bookingRequestId and clientId are required");
         const brSnap = await db.collection("booking_requests").doc(bookingRequestId as string).get();
         if (!brSnap.exists) return toolError("NOT_FOUND", "Booking not found");
         const br = brSnap.data()!;
         if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Booking does not belong to this client");
-        // Matches the site's own shape exactly (Schedule.tsx's "+Request Visit"
-        // modal) — scoped to a single date/day for a one-off time change
-        // (ongoing:false, startDate===endDate), or a real recurring day when
-        // ongoing:true.
-        const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00`).getDay()];
-        const amRef = db.collection("booking_amendments").doc();
-        await amRef.set({
-          bookingRequestId,
-          clientId,
-          clientName: br.clientName ?? "",
-          caregiverId: br.caregiverId,
-          caregiverName: br.caregiverName ?? "",
-          status: "pending",
-          type: "add_recurring_days",
-          newDays: { [dayName]: [{ start: startTime, end: endTime }] },
-          notes: notes ?? "",
-          startDate: date,
-          endDate: ongoing ? null : date,
-          ongoing: Boolean(ongoing),
-          createdAt: nowIso,
+        if (!br.caregiverId) return toolError("INVALID_INPUT", "Booking has no caregiver");
+
+        // The modal's shape (newDays) or the legacy single-day form.
+        const newDays: Record<string, VisitTimeBlock[]> = {};
+        if (rawNewDays && typeof rawNewDays === "object") {
+          for (const [k, v] of Object.entries(rawNewDays as Record<string, unknown>)) {
+            const abbr = normDayAbbr(k);
+            if (!abbr || !Array.isArray(v)) continue;
+            const blocks = (v as Array<{ start?: unknown; end?: unknown }>).map((b) => ({ start: String(b?.start ?? ""), end: String(b?.end ?? "") }));
+            if (blocks.some((b) => !blockToRange(b))) return toolError("INVALID_INPUT", `Each block needs HH:MM start/end with end after start (${abbr})`);
+            if (blocks.length) newDays[abbr] = blocks;
+          }
+        } else if (date && startTime && endTime) {
+          const block = { start: String(startTime), end: String(endTime) };
+          if (!blockToRange(block)) return toolError("INVALID_INPUT", "startTime/endTime must be HH:MM with end after start");
+          const abbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00Z`).getUTCDay()];
+          newDays[abbr] = [block];
+        }
+        if (!Object.keys(newDays).length) return toolError("INVALID_INPUT", "Provide newDays, or date + startTime + endTime");
+        const startDateStr = typeof rawStart === "string" && rawStart ? rawStart : (typeof date === "string" && date ? date : businessTodayStr());
+        const isOngoing = rawNewDays ? ongoing !== false : Boolean(ongoing);
+        const endDateStr = isOngoing ? null : (typeof rawEnd === "string" && rawEnd ? rawEnd : (typeof date === "string" ? date : null));
+
+        // The modal's checks: overlap with the booking's own schedule / this
+        // family's shifts with the caregiver, or a time the caregiver is
+        // booked elsewhere — both refused, as the modal refuses them.
+        const avail = await loadCaregiverAvailability(clientId as string, br.caregiverId as string);
+        const schedule: Record<string, VisitTimeBlock[]> = {};
+        for (const [k, v] of Object.entries((br.schedule?.dayShiftTimes ?? {}) as Record<string, unknown>)) {
+          const abbr = normDayAbbr(k);
+          if (!abbr) continue;
+          const blocks = (Array.isArray(v) ? v : [v]) as Array<{ start?: string; end?: string }>;
+          schedule[abbr] = blocks.filter((b) => b?.start && b?.end).map((b) => ({ start: String(b.start), end: String(b.end) }));
+        }
+        const bookingForCheck = { bookingId: brSnap.id, jobTitle: String(br.jobTitle ?? ""), address: String(br.address ?? ""), schedule };
+        const warnings: string[] = [];
+        for (const [abbr, blocks] of Object.entries(newDays)) {
+          for (const block of blocks) {
+            const c = checkVisitBlock(abbr as any, block, bookingForCheck, avail);
+            if (c.overlap) return toolError("INVALID_INPUT", `${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} overlaps a visit the family already has with ${br.caregiverName ?? "this caregiver"} (${describeBlock(c.overlap)}) — ask for a different time`);
+            if (c.busy) return toolError("INVALID_INPUT", `${br.caregiverName ?? "The caregiver"} is already booked ${VISIT_DAY_FULL[abbr]} ${describeRange(c.busy)} — ask for a different time`);
+            if (c.outsidePreferred) warnings.push(`${VISIT_DAY_FULL[abbr]} ${describeBlock(block)} is outside the caregiver's usual availability`);
+          }
+        }
+
+        const { amendmentId } = await createScheduleAmendment({
+          clientId: clientId as string,
+          bookingRequestId: bookingRequestId as string,
+          caregiverId: br.caregiverId as string,
+          caregiverName: String(br.caregiverName ?? ""),
+          newDays,
+          notes: typeof notes === "string" ? notes : "",
+          startDate: startDateStr,
+          endDate: endDateStr,
+          ongoing: isOngoing,
+          source: "mcp:request_schedule_amendment",
         });
-        // onBookingAmendmentWrite (notificationTriggers.ts) is the single
-        // source of truth for texting the caregiver about this — it fires on
-        // the .set() above regardless of caller, so no manual send here.
-        logAudit({ eventType: "amendment_requested", userId: clientId as string, data: { source: "mcp:request_schedule_amendment", amendmentId: amRef.id } }).catch(() => {});
-        return { success: true, amendmentId: amRef.id };
+        return { success: true, amendmentId, ...(warnings.length ? { warnings } : {}) };
       }
 
       case "respond_to_schedule_amendment": {
@@ -6293,7 +6501,13 @@ async function executeToolCall(
       if (!["accepted", "confirmed"].includes(iv.status as string)) {
         return toolError("INVALID_INPUT", `Cannot complete an interview that hasn't been confirmed yet (status: ${iv.status})`);
       }
-      await ivSnap.ref.update({ status: "completed", completedAt: nowIso });
+      // Terminal status — clear any leftover reschedule proposal, exactly as
+      // the site's handleMarkInterviewComplete does (2026-09-16).
+      await ivSnap.ref.update({
+        status: "completed", completedAt: nowIso,
+        reschedulePendingTime: admin.firestore.FieldValue.delete(),
+        rescheduledBy:         admin.firestore.FieldValue.delete(),
+      });
       logAudit({ eventType: "interview_completed", userId: clientId as string, data: { source: "mcp:complete_interview", interviewId } }).catch(() => {});
       return { success: true, interviewId, caregiverName: iv.caregiverName ?? null };
     }
@@ -8916,6 +9130,83 @@ async function executeToolCall(
       return { success: true, requests, count: requests.length };
     }
 
+    // ── get_pending_schedule_amendments ──────────────────────────────────────
+    // The Requests tab's second card type (ClientVisitsPage.tsx pendingAmendments):
+    // booking_amendments where clientId (or caregiverId) and status === 'pending'.
+    if (name === "get_pending_schedule_amendments") {
+      const { clientId: psaClientId, caregiverId: psaCgId } = input as Record<string, unknown>;
+      if (!psaClientId && !psaCgId) return toolError("INVALID_INPUT", "Provide clientId or caregiverId");
+      const psaSnap = await db.collection("booking_amendments")
+        .where(psaClientId ? "clientId" : "caregiverId", "==", psaClientId ?? psaCgId)
+        .where("status", "==", "pending")
+        .get();
+      const amendments = psaSnap.docs
+        .map((d): Record<string, unknown> => {
+          const a = d.data() as Record<string, unknown>;
+          const newDays = (a.newDays ?? {}) as Record<string, Array<{ start?: string; end?: string }>>;
+          return {
+            amendmentId:      d.id,
+            bookingRequestId: a.bookingRequestId ?? null,
+            clientId:         a.clientId ?? null,
+            clientName:       a.clientName ?? null,
+            caregiverId:      a.caregiverId ?? null,
+            caregiverName:    a.caregiverName ?? null,
+            type:             a.type ?? null,
+            days:             Object.entries(newDays).map(([day, slots]) => ({ day, times: (slots ?? []).map((s) => `${s.start ?? ""}–${s.end ?? ""}`) })),
+            startDate:        a.startDate ?? null,
+            startDayOfWeek:   weekdayForDate(String(a.startDate ?? "")),
+            endDate:          a.endDate ?? null,
+            ongoing:          Boolean(a.ongoing),
+            notes:            a.notes ?? "",
+            createdAt:        a.createdAt ?? null,
+          };
+        })
+        .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
+        .slice(0, 20);
+      return { success: true, amendments, count: amendments.length };
+    }
+
+    // ── get_past_visits ──────────────────────────────────────────────────────
+    // The Past Bookings tab (ClientVisitsPage.tsx pastShifts): shifts with
+    // status completed/cancelled, newest first. Uses the existing
+    // (clientId|caregiverId, date DESC) index and filters status in memory.
+    if (name === "get_past_visits") {
+      const { clientId: pvClientId, caregiverId: pvCgId, limit: pvLimitRaw } = input as Record<string, unknown>;
+      if (!pvClientId && !pvCgId) return toolError("INVALID_INPUT", "Provide clientId or caregiverId");
+      const pvLimit = Math.min(Math.max(Number(pvLimitRaw) || 20, 1), 50);
+      const pvSnap = await db.collection("shifts")
+        .where(pvClientId ? "clientId" : "caregiverId", "==", pvClientId ?? pvCgId)
+        .where("date", "<=", businessTodayStr())
+        .orderBy("date", "desc")
+        .limit(pvLimit * 3)
+        .get();
+      const visits = pvSnap.docs
+        .filter((d) => d.data().status === "completed" || d.data().status === "cancelled")
+        .map((d): Record<string, unknown> => {
+          const s = d.data() as Record<string, unknown>;
+          return {
+            id:               d.id,
+            bookingRequestId: s.bookingRequestId ?? null,
+            date:             s.date ?? null,
+            dayOfWeek:        weekdayForDate(String(s.date ?? "")),
+            startTime:        s.startTime ?? null,
+            endTime:          s.endTime ?? null,
+            status:           s.status,
+            clientId:         s.clientId ?? null,
+            clientName:       s.clientName ?? null,
+            caregiverId:      s.caregiverId ?? null,
+            caregiverName:    s.caregiverName ?? null,
+            cancelledBy:      s.cancelledBy ?? null,
+            startedAt:        s.startedAt ?? null,
+            completedAt:      s.completedAt ?? null,
+            paid:             s.paid ?? null,
+          };
+        })
+        .sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`))
+        .slice(0, pvLimit);
+      return { success: true, visits, count: visits.length, hasMore: pvSnap.docs.length > visits.length };
+    }
+
     // ── get_caregiver_availability ──────────────────────────────────────────
     if (name === "get_caregiver_availability") {
       const { caregiverId: gaCgId } = input as Record<string, unknown>;
@@ -9070,6 +9361,9 @@ async function executeToolCall(
             interviewType: iv.interviewType ?? "video",
             status:        iv.status ?? "scheduled",
             callUrl:       iv.callUrl ?? null,
+            // The note shown under the row on the site ("2pm", "interview test for 6pm").
+            notes:         iv.notes ?? null,
+            jobTitle:      iv.jobTitle ?? null,
             proposedTime:  iv.proposedTime ?? null,
             applicationId: iv.applicationId ?? null,
             // A pending reschedule proposal (reschedule_interview) — awaiting
@@ -9093,6 +9387,8 @@ async function executeToolCall(
             interviewType: "video",
             status:        iv.status ?? "scheduled",
             callUrl:       iv.callUrl ?? null,
+            notes:         iv.notes ?? null,
+            jobTitle:      null,
             proposedTime:  null,
             applicationId: null,
           };
@@ -9166,6 +9462,10 @@ async function executeToolCall(
         cancelledAt:  nowIso,
         cancelledBy,
         cancelReason: ciReason ?? null,
+        // Terminal status — clear any leftover reschedule proposal, exactly
+        // as the site's handleCancelInterview does (2026-09-16).
+        reschedulePendingTime: admin.firestore.FieldValue.delete(),
+        rescheduledBy:         admin.firestore.FieldValue.delete(),
         // Tells onVideoInterviewWrite (notificationTriggers.ts) not to also
         // text the counterpart — this tool already does it below, and the
         // legacy `interviews` collection has no trigger of its own to rely on
@@ -9251,7 +9551,12 @@ async function executeToolCall(
           : null;
       if (!proposedBy) return toolError("PERMISSION_DENIED", "Interview does not belong to this user");
 
-      if (iv.status !== "requested" && iv.status !== "accepted") {
+      // The site's Reschedule / Propose new time shows on every pending or
+      // accepted interview; stored statuses for those read as requested/
+      // scheduled/pending and accepted/confirmed (PostsPage.tsx normalizes
+      // them at ingestion). 2026-09-16: "scheduled" and "confirmed" used to
+      // be refused here, so a site-created interview couldn't be moved.
+      if (!["requested", "scheduled", "pending", "accepted", "confirmed"].includes(iv.status as string)) {
         return toolError("INVALID_INPUT", `Cannot reschedule a ${iv.status} interview`);
       }
 

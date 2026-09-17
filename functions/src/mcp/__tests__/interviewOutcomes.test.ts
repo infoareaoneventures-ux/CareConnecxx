@@ -47,7 +47,7 @@ vi.mock("firebase-admin", () => ({
   __esModule: true,
   default: { firestore: () => ({ collection: hoisted.collectionMock }) },
   firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
-    FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }) },
+    FieldValue: { serverTimestamp: () => ({ __serverTimestamp: true }), delete: () => ({ __delete: true }) },
   }),
 }));
 
@@ -66,13 +66,15 @@ const IV_ID = "iv_1";
 describe("complete_interview", () => {
   beforeEach(() => hoisted.reset());
 
-  it("marks a confirmed interview completed", async () => {
-    hoisted.docState.set(`video_interviews/${IV_ID}`, { clientId: CLIENT, caregiverId: "cg1", status: "confirmed" });
+  it("marks a confirmed interview completed and clears any leftover reschedule proposal, like the site", async () => {
+    hoisted.docState.set(`video_interviews/${IV_ID}`, { clientId: CLIENT, caregiverId: "cg1", status: "confirmed", reschedulePendingTime: "2026-09-20T16:00:00.000Z", rescheduledBy: "caregiver" });
     const r = await handleToolCall("complete_interview", { interviewId: IV_ID, clientId: CLIENT }) as any;
     expect(r.success).toBe(true);
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.status).toBe("completed");
     expect(update?.data.completedAt).toBeTruthy();
+    expect(update?.data.reschedulePendingTime).toEqual({ __delete: true });
+    expect(update?.data.rescheduledBy).toEqual({ __delete: true });
   });
 
   it("is a no-op if already completed", async () => {

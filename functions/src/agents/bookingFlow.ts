@@ -31,7 +31,8 @@ import { sendMessage, AgentSession } from "../linq/client";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
-import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay } from "../utils/scheduledTime";
+import { businessTodayStr, formatHHMMForDisplay as formatTimeForDisplay, formatDateForDisplay, parseScheduledTimeMs, formatInterviewTimeShort } from "../utils/scheduledTime";
+import { logAudit } from "../observability/auditLog";
 import { normalizeCareNeeds } from "../utils/careNeedCategories";
 import { normDay } from "../scheduled/shiftGenerator";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
@@ -109,6 +110,25 @@ export interface BookingFlowData {
   // in the recap and set via an edit at bk_confirm, same as the site never
   // forcing it.
   message?: string;
+  // Resend (2026-09-16): set when this flow was opened from the site's
+  // "Resend" row — the cancelled/declined booking_requests doc being resent.
+  // The commit then UPDATES that same doc back to pending (the site's
+  // handleSendBooking isResend branch) instead of creating a new one.
+  resendBookingRequestId?: string;
+  // Populated while bookingFlowStep === "bk_ask_resend" and 2+ requests
+  // could be resent (each Resend row on the site is one of these).
+  resendOptions?: ResendOption[];
+}
+
+export interface ResendOption {
+  id: string;
+  caregiverId: string;
+  caregiverName: string;
+  jobTitle?: string;
+  // "Visit cancelled" / "Caregiver declined" — the site's own row label.
+  statusLabel: string;
+  // The interview the request followed ("Sun, Sep 13 9:00 AM"), when known.
+  whenLabel?: string;
 }
 
 const BK_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
@@ -363,6 +383,264 @@ async function resolveRecipientsAndAdvance(
   await sendMessage(chatId, `${openingLine(data.caregiverName, data.jobTitle)}\n\n${RATE_QUESTION(data.jobPostRate)}`);
 }
 
+// ── Resend (the site's "Resend" row on Care Requests > Interviews) ──────────
+// PostsPage.tsx: a row whose latest booking_requests doc for that caregiver+
+// job/interview is 'declined' or 'cancelled' shows "Visit cancelled" /
+// "Caregiver declined" + Resend. Clicking it opens the SAME booking modal,
+// pre-filled from that request, titled "Resend Booking Request"; submit
+// updates the SAME doc (status back to 'pending', isResend: true). This is
+// that, over SMS: pre-filled recap → the family edits anything they like →
+// YES → the same update. Replaces manage_booking's old blind status flip.
+
+const DAY_ABBR_TO_FULL: Record<string, string> = {
+  Sun: "Sunday", Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday",
+};
+const DAY_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function stampMs(v: unknown): number {
+  if (!v) return 0;
+  if (typeof v === "string") { const ms = Date.parse(v); return Number.isFinite(ms) ? ms : 0; }
+  const anyV = v as { toMillis?: () => number; seconds?: number };
+  if (typeof anyV.toMillis === "function") return anyV.toMillis();
+  if (typeof anyV.seconds === "number") return anyV.seconds * 1000;
+  return 0;
+}
+
+// The site's own Resend eligibility: group this client's requests the way
+// PostsPage keys them (caregiverId + jobId-or-interviewId) and keep the
+// LATEST per key only when it is declined/cancelled — a newer pending or
+// accepted request for the same pairing hides the Resend button.
+export async function findResendableBookingRequests(clientId: string, caregiverId?: string): Promise<ResendOption[]> {
+  const snap = await db.collection("booking_requests").where("clientId", "==", clientId).get();
+  const latestByKey = new Map<string, { id: string; data: Record<string, unknown>; ms: number }>();
+  for (const d of snap.docs) {
+    const r = d.data() as Record<string, unknown>;
+    if (caregiverId && r.caregiverId !== caregiverId) continue;
+    const key = `${r.caregiverId ?? ""}_${r.jobId ?? r.interviewId ?? d.id}`;
+    const ms = Math.max(stampMs(r.updatedAt), stampMs(r.createdAt));
+    const cur = latestByKey.get(key);
+    if (!cur || ms > cur.ms) latestByKey.set(key, { id: d.id, data: r, ms });
+  }
+  const out: ResendOption[] = [];
+  for (const { id, data, ms } of [...latestByKey.values()].sort((a, b) => b.ms - a.ms)) {
+    if (data.status !== "declined" && data.status !== "cancelled") continue;
+    let whenLabel: string | undefined;
+    if (typeof data.interviewId === "string" && data.interviewId) {
+      const iv = (await db.collection("video_interviews").doc(data.interviewId).get().catch(() => null))?.data();
+      const at = typeof iv?.scheduledTime === "string" ? parseScheduledTimeMs(iv.scheduledTime) : NaN;
+      if (Number.isFinite(at)) whenLabel = formatInterviewTimeShort(at);
+    }
+    out.push({
+      id,
+      caregiverId: String(data.caregiverId ?? ""),
+      caregiverName: String(data.caregiverName ?? "your caregiver"),
+      ...(data.jobTitle ? { jobTitle: String(data.jobTitle) } : {}),
+      statusLabel: data.status === "cancelled" ? "Visit cancelled" : "Caregiver declined",
+      ...(whenLabel ? { whenLabel } : {}),
+    });
+    void ms;
+  }
+  return out;
+}
+
+function RESEND_PICK_QUESTION(options: ResendOption[]): string {
+  const lines = options.map((o, i) =>
+    `${i + 1}. ${o.caregiverName}${o.jobTitle ? ` — ${o.jobTitle}` : ""}${o.whenLabel ? ` (${o.whenLabel})` : ""} — ${o.statusLabel}`
+  );
+  return `Which booking request would you like to resend?\n\n${lines.join("\n")}\n\nReply with a number.`;
+}
+
+// Pre-fill the flow from the existing request exactly as the site pre-fills
+// its modal, then go straight to the recap (the modal opens on the review).
+async function seedResendAndRecap(
+  phone: string, chatId: string, clientId: string, bookingRequestId: string,
+): Promise<{ started: boolean; reason?: string }> {
+  const snap = await db.collection("booking_requests").doc(bookingRequestId).get();
+  const r = snap.data() as Record<string, unknown> | undefined;
+  if (!r || r.clientId !== clientId) {
+    await sendMessage(chatId, "I couldn't find that booking request to resend. Check your Care Requests page and try again.");
+    return { started: false, reason: "not_found" };
+  }
+  if (r.status !== "declined" && r.status !== "cancelled") {
+    await sendMessage(chatId, r.status === "pending"
+      ? "That booking request is already pending with the caregiver — nothing to resend."
+      : "That booking request isn't cancelled or declined, so there's nothing to resend.");
+    return { started: false, reason: "not_resendable" };
+  }
+  const schedule = (r.schedule ?? {}) as Record<string, unknown>;
+  const dst = (schedule.dayShiftTimes ?? {}) as Record<string, Array<{ start?: string; end?: string }> | { start?: string; end?: string }>;
+  const dayTimes: Record<string, { start: string; end: string }> = {};
+  for (const [abbr, blocks] of Object.entries(dst)) {
+    const first = Array.isArray(blocks) ? blocks[0] : blocks;
+    const full = DAY_ABBR_TO_FULL[normDay(abbr)] ?? abbr;
+    if (first?.start && first?.end) dayTimes[full] = { start: String(first.start), end: String(first.end) };
+  }
+  const days = Object.keys(dayTimes).length
+    ? Object.keys(dayTimes)
+    : (Array.isArray(schedule.days) ? (schedule.days as string[]).map((d) => DAY_ABBR_TO_FULL[normDay(d)] ?? d) : []);
+  const ec = r.emergencyContact as { name?: string; phone?: string; relationship?: string } | null | undefined;
+  const data: BookingFlowData = {
+    caregiverId:   String(r.caregiverId ?? ""),
+    caregiverName: String(r.caregiverName ?? "your caregiver"),
+    ...(r.interviewId ? { interviewId: String(r.interviewId) } : {}),
+    ...(r.jobId ? { jobId: String(r.jobId) } : {}),
+    ...(r.jobTitle ? { jobTitle: String(r.jobTitle) } : {}),
+    ...(typeof r.rate === "number" ? { hourlyRate: r.rate } : {}),
+    days,
+    dayTimes,
+    ...(typeof schedule.startDate === "string" ? { startDate: schedule.startDate } : {}),
+    ongoing: schedule.ongoing === true,
+    ...(typeof schedule.endDate === "string" ? { scheduleEndDate: schedule.endDate } : {}),
+    ...(typeof r.address === "string" && r.address ? { careLocation: r.address } : {}),
+    ...(Array.isArray(r.careRecipients) ? { careRecipients: r.careRecipients as Array<Record<string, unknown>> } : {}),
+    ...(Array.isArray(r.careNeeds) ? { topLevelCareNeeds: r.careNeeds as string[] } : {}),
+    ...(Array.isArray(r.lifestylePreferences) ? { lifestylePreferences: r.lifestylePreferences as string[] } : {}),
+    ...(ec?.phone ? { emergencyContact: { name: ec.name ?? "", phone: ec.phone, ...(ec.relationship ? { relationship: ec.relationship } : {}) } } : {}),
+    ...(typeof r.seniorName === "string" && r.seniorName ? { recipientName: r.seniorName } : {}),
+    ...(typeof r.recipientKey === "string" && r.recipientKey ? { recipientKey: r.recipientKey } : {}),
+    ...(typeof r.notes === "string" && r.notes.trim() ? { message: r.notes.trim() } : {}),
+    resendBookingRequestId: bookingRequestId,
+  };
+  await db.collection("agent_sessions").doc(phone).update({
+    bookingFlowStep: "bk_confirm",
+    bookingFlowData: data,
+    stateExpiresAt:  new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  });
+  await sendMessage(chatId,
+    `Let's resend your booking request to ${data.caregiverName} — here's what was in it. You can change anything before it goes.\n\n` +
+    buildBookingRecap(data));
+  return { started: true };
+}
+
+export async function startResendBookingFlow(
+  phone: string, chatId: string, session: AgentSession,
+  args: { caregiverId?: string; bookingRequestId?: string } = {},
+): Promise<{ started: boolean; reason?: string }> {
+  const clientId = session.userId as string | undefined;
+  if (!clientId) {
+    await sendMessage(chatId, "I couldn't find your account to look up that booking. Please try again.");
+    return { started: false, reason: "no_client_id" };
+  }
+  if (args.bookingRequestId) return seedResendAndRecap(phone, chatId, clientId, args.bookingRequestId);
+
+  const options = await findResendableBookingRequests(clientId, args.caregiverId);
+  if (options.length === 0) {
+    let who = "";
+    if (args.caregiverId) {
+      const nameRes = await resolveBookingCaregiverName(args.caregiverId);
+      if (nameRes.ok) who = ` to ${nameRes.caregiverName}`;
+    }
+    await sendMessage(chatId,
+      `I don't see a cancelled or declined booking request${who} to resend — Resend only appears on those. ` +
+      `If you'd like, I can send a fresh booking request instead.`);
+    return { started: false, reason: "no_resendable" };
+  }
+  if (options.length === 1) return seedResendAndRecap(phone, chatId, clientId, options[0].id);
+
+  await db.collection("agent_sessions").doc(phone).update({
+    bookingFlowStep: "bk_ask_resend",
+    bookingFlowData: { caregiverId: "", caregiverName: "", resendOptions: options } as BookingFlowData,
+    stateExpiresAt:  new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  });
+  await sendMessage(chatId, RESEND_PICK_QUESTION(options));
+  return { started: true };
+}
+
+async function handleBkAskResend(
+  phone: string, chatId: string, text: string, session: AgentSession,
+): Promise<void> {
+  const data = await getFlowData(phone);
+  const options = data.resendOptions ?? [];
+  const question = RESEND_PICK_QUESTION(options);
+  let idx = bareNumberPick(text, options.length);
+  if (idx === null) {
+    if (await isBackOutRequest(text, question)) return handleBookingBackOut(phone, chatId, session);
+    if (await isQuestionOrOther(text, question)) {
+      await sendMessage(chatId, await answerQuestionMidFlow(text));
+      await sendMessage(chatId, question);
+      return;
+    }
+    const raw = await parseWithClaude(
+      `The family is picking which of ${options.length} booking requests to resend. Return ONLY the number ` +
+      "(1-based) they picked, or \"0\" if the message doesn't clearly pick one. Never guess.",
+      text
+    );
+    idx = parseInt(raw.trim(), 10);
+    if (isNaN(idx) || idx < 1 || idx > options.length) {
+      await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
+      return;
+    }
+  }
+  const clientId = session.userId as string | undefined;
+  if (!clientId) return handleBookingBackOut(phone, chatId, session);
+  await seedResendAndRecap(phone, chatId, clientId, options[idx - 1].id);
+}
+
+// The site's handleSendBooking isResend branch: the SAME doc, the full
+// bookingData rebuilt from the (possibly edited) review, status back to
+// 'pending', isResend: true. No hire_decisions / job_applications side
+// effects — the site only does those on a fresh send.
+async function commitResend(phone: string, chatId: string, session: AgentSession, data: BookingFlowData): Promise<void> {
+  const clientId = session.userId as string;
+  const ref = db.collection("booking_requests").doc(data.resendBookingRequestId!);
+  const snap = await ref.get();
+  const existing = snap.data() as Record<string, unknown> | undefined;
+  if (!existing || existing.clientId !== clientId) {
+    await clearFlow(phone);
+    await sendMessage(chatId, "I couldn't find that booking request anymore, so nothing was resent. Check your Care Requests page.");
+    return;
+  }
+  // Fresh check: the family may have resent it (or the caregiver accepted
+  // another request for the same pairing) on the site since the recap.
+  if (existing.status !== "declined" && existing.status !== "cancelled") {
+    await clearFlow(phone);
+    await sendMessage(chatId, existing.status === "pending"
+      ? `That request is already pending with ${data.caregiverName} — nothing to resend. It's on your My Bookings > Requests tab.`
+      : "That booking request isn't cancelled or declined anymore, so I didn't resend it — it's up to date on your Care Requests page.");
+    return;
+  }
+  const dayShiftTimes = Object.fromEntries(
+    Object.entries(data.dayTimes ?? {}).map(([day, t]) => [normDay(day), [t]])
+  );
+  const scheduleDays = Object.keys(dayShiftTimes).sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b));
+  await ref.update({
+    caregiverId:          data.caregiverId,
+    caregiverName:        data.caregiverName,
+    jobId:                data.jobId ?? null,
+    jobTitle:             data.jobTitle ?? (existing.jobTitle ?? ""),
+    address:              data.careLocation ?? (existing.address ?? ""),
+    rate:                 data.hourlyRate ?? null,
+    paymentMethod:        "credit",
+    careNeeds:            data.topLevelCareNeeds ?? (existing.careNeeds ?? []),
+    careRecipients:       data.careRecipients ?? (existing.careRecipients ?? []),
+    lifestylePreferences: data.lifestylePreferences ?? (existing.lifestylePreferences ?? []),
+    emergencyContact:     data.emergencyContact ?? null,
+    schedule: {
+      days:          scheduleDays,
+      startDate:     data.startDate ?? null,
+      endDate:       data.ongoing ? null : (data.scheduleEndDate ?? null),
+      ongoing:       data.ongoing === true,
+      dayShiftTimes,
+    },
+    notes:                data.message ?? null,
+    interviewId:          data.interviewId ?? (existing.interviewId ?? null),
+    status:               "pending",
+    isResend:             true,
+    // A site-originated request has no agentTaskId; drop a stale one so the
+    // caregiver gets the site's own "resent" text from onBookingRequestWrite.
+    agentTaskId:          admin.firestore.FieldValue.delete(),
+    updatedAt:            admin.firestore.FieldValue.serverTimestamp(),
+  });
+  logAudit({
+    eventType: "booking_resent", userId: clientId,
+    data: { source: "bookingFlow:resend", bookingRequestId: data.resendBookingRequestId },
+  }).catch(() => {});
+  await clearFlow(phone);
+  await sendMessage(chatId,
+    `Resent — ${data.caregiverName} has your booking request again. Nothing is booked until they accept; ` +
+    `I'll text you as soon as they respond. It's back on your My Bookings > Requests tab too.`);
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function startBookingFlow(
@@ -518,6 +796,7 @@ export async function handleBookingFlowStep(
   const step = (session as any).bookingFlowStep as string ?? "";
   switch (step) {
     case "bk_ask_interview": return handleBkAskInterview(phone, chatId, text, session);
+    case "bk_ask_resend":    return handleBkAskResend(phone, chatId, text, session);
     case "bk_ask_rate":     return handleBkAskRate(phone, chatId, text, session);
     case "bk_ask_days":     return handleBkAskDays(phone, chatId, text, session);
     case "bk_ask_start_date": return handleBkAskStartDate(phone, chatId, text, session);
@@ -1411,6 +1690,9 @@ async function handleBkConfirm(
     await sendMessage(chatId, "I couldn't find your account to send this booking. Please try again.");
     return;
   }
+  // Resend: the site's isResend branch updates the SAME booking_requests
+  // doc — no new task, no new doc (2026-09-16).
+  if (data.resendBookingRequestId) return commitResend(phone, chatId, session, data);
   try {
     const { createBookingTask, executeBookings } = await import("./bookingExecutor");
     // 2026-09-14: unified to match the site's own schedule shape exactly —

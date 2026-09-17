@@ -5,7 +5,6 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { sendToPhone } from "../linq/client";
-import { decideArrivalCapture } from "./noShowPolicy";
 import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
 import { gateOptionalSend } from "../scheduled/engineGate";
 
@@ -14,7 +13,6 @@ const db = admin.firestore();
 const SYSTEM_DIRECTIVE_PREFIXES = [
   "retry_extend_schedule:",
   "health_escalation:",
-  "replacement_task:",
   "qa_retry:",
   "caregiver_checkin:",
   "caregiver_checkin_escalation:",
@@ -214,7 +212,7 @@ const REPLY_EXEMPT_TYPES = new Set([
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
   "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
   "health_escalation:", "issue_escalation:", "issue_escalation_final:",
-  "issue_followup:", "replacement_task:", "retry_extend_schedule:",
+  "issue_followup:", "retry_extend_schedule:",
 ];
 export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
   if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
@@ -524,13 +522,6 @@ export const runTriggerEngine = functions.pubsub
               console.error("health escalation failed:", err)
             );
           }
-        } else if (trigger.message.startsWith("replacement_task:")) {
-          const taskId   = trigger.message.slice("replacement_task:".length);
-          const taskSnap = await db.collection("agent_tasks").doc(taskId).get();
-          const task     = taskSnap.data();
-          if (task && task.status === "awaiting_approval") {
-            await autoBookBestReplacement(taskId, task);
-          }
         } else if (trigger.message.startsWith("qa_retry:")) {
           const raw = trigger.message.slice("qa_retry:".length);
           try {
@@ -641,124 +632,13 @@ export const runTriggerEngine = functions.pubsub
       }
     }
 
-    // ── Arrival capture + no-show detection ───────────────────────────────────
-    // Window is bounded on BOTH ends: visits that started between 3h and 8min
-    // ago. Do NOT filter on `noShowChecked == null` — Firestore `==null` matches
-    // only docs where the field is explicitly null (appointments are created
-    // WITHOUT it), so that filter returned zero rows and no-show detection never
-    // fired. We instead skip already-checked docs in code. The lower bound +
-    // ascending order keep the scan bounded so already-checked visits can't fill
-    // the limit and starve fresh ones (the old unbounded `limit(10)` would).
-    //
-    // A caregiver who arrived on time but forgot to text ARRIVED must NOT be
-    // treated as a no-show — that falsely tells the family their caregiver
-    // cancelled. So we first send an arrival-capture ping and only escalate to
-    // emergency replacement if that ping goes unanswered (see noShowPolicy).
-    // Derive the started-8min-to-3h-ago window from the stored `date` +
-    // `startTime`/`time` wall-clock fields — the old range query on
-    // `startDateTime` matched NOTHING because no writer ever sets that field
-    // on appointments (this no-show sweep was silently dead).
-    const nowNoShowMs   = Date.now();
-    const eightMinAgoMs   = nowNoShowMs - 8 * 60 * 1000;
-    const threeHoursAgoMs = nowNoShowMs - 3 * 60 * 60 * 1000;
-    const { apptStartMs, businessTodayStr } = await import("../utils/scheduledTime");
-
-    const { queryVisitsMerged } = await import("../utils/visitQuery");
-    const noShowDocs = await queryVisitsMerged({
-      dateOp: "==", dateValue: businessTodayStr(),
-      apptStatuses: ["confirmed"],
-      shiftStatuses: ["scheduled"],
-      limit: 200,
-    });
-
-    for (const apptDoc of noShowDocs) {
-      const appt = apptDoc.data();
-      if (appt.noShowChecked) continue; // replacement already run
-      if (appt.arrivedAt) continue;     // caregiver checked in, not a no-show
-
-      try {
-        const startMs = apptStartMs(appt.date, appt.startTime ?? appt.time);
-        if (!Number.isFinite(startMs)) continue;
-        if (startMs > eightMinAgoMs || startMs < threeHoursAgoMs) continue; // outside the window
-
-        const arrivalPingSentAtMs = appt.arrivalPingSentAt
-          ? Date.parse(appt.arrivalPingSentAt as string) : null;
-
-        // Resolve the caregiver's phone + last inbound (engagement signal).
-        let cgPhone: string | undefined;
-        let lastInboundAtMs: number | null = null;
-        if (appt.caregiverId) {
-          const cgSnap = await db.collection("caregivers").doc(appt.caregiverId as string).get();
-          cgPhone = cgSnap.data()?.phone as string | undefined;
-          if (cgPhone) {
-            const cgSession = await db.collection("agent_sessions").doc(cgPhone).get();
-            const li = cgSession.data()?.lastInboundAt as string | undefined;
-            lastInboundAtMs = li ? Date.parse(li) : null;
-          }
-        }
-
-        const decision = decideArrivalCapture({
-          startMs,
-          arrived: false,
-          arrivalPingSentAtMs,
-          lastInboundAtMs,
-          canPing: !!cgPhone,
-          nowMs: Date.now(),
-        });
-
-        if (decision.action === "ping" && cgPhone) {
-          const seniorName = (appt.clientName ?? appt.seniorName ?? "your client") as string;
-          const pinged = await sendViaInteractionAgent(cgPhone, {
-            content:     `Hi — are you with ${seniorName}? Text ARRIVED so I can let the family know you're there.`,
-            urgency:     "immediate",
-            sourceAgent: "arrival_capture",
-            canDrop:     false,
-          });
-          if (pinged) {
-            await apptDoc.ref.update({ arrivalPingSentAt: now });
-          } else {
-            // Undeliverable ping (no session doc / opted out): stamping it would
-            // start a 15-min clock on a message that never existed — the exact
-            // false "caregiver cancelled" this flow exists to prevent. Fall back
-            // to the plain timeout an unreachable caregiver gets.
-            const fallback = decideArrivalCapture({
-              startMs, arrived: false, arrivalPingSentAtMs: null,
-              lastInboundAtMs, canPing: false, nowMs: Date.now(),
-            });
-            if (fallback.action === "replace") {
-              await apptDoc.ref.update({ noShowChecked: now });
-              const clientSnap2 = await db.collection("users").doc(appt.clientId).get();
-              const clientPhone2 = (clientSnap2.data() as any)?.phone as string | undefined;
-              if (clientPhone2) {
-                const { runEmergencyReplacement } = await import("../agents/replacementAgent");
-                await runEmergencyReplacement({
-                  appointmentId: apptDoc.id,
-                  clientId:      appt.clientId,
-                  clientPhone:   clientPhone2,
-                  appt,
-                });
-              }
-            }
-          }
-        } else if (decision.action === "replace") {
-          await apptDoc.ref.update({ noShowChecked: now });
-          const clientSnap = await db.collection("users").doc(appt.clientId).get();
-          const phone = (clientSnap.data() as any)?.phone as string | undefined;
-          if (!phone) continue;
-
-          const { runEmergencyReplacement } = await import("../agents/replacementAgent");
-          await runEmergencyReplacement({
-            appointmentId: apptDoc.id,
-            clientId:      appt.clientId,
-            clientPhone:   phone,
-            appt,
-          });
-        }
-        // "wait"/"skip": do nothing this pass.
-      } catch (err) {
-        console.error("triggerEngine no-show handling error for", apptDoc.id, err);
-      }
-    }
+    // No-show handling (2026-09-16): REMOVED. A visit whose caregiver never
+    // checks in shows as Overdue on the website and nothing else happens
+    // there — no automatic "your caregiver had to cancel" text, no candidate
+    // blast, no auto-book. The old sweep here (arrival ping → emergency
+    // replacement) told a family their caregiver cancelled when they had
+    // not, and texted three other caregivers an "urgent opening". Evia now
+    // does exactly what the site does: nothing, until a person acts.
 
     // Check for ignored triggers and pause after 3 consecutive ignores
     await checkIgnoredTriggers().catch((err) =>
@@ -891,81 +771,6 @@ async function evaluateUserTriggers(): Promise<void> {
       console.error(`[evaluateUserTriggers] Failed for trigger ${doc.id}:`, err);
     }
   }
-}
-
-// ── Auto-book best replacement when the 30-min family response window expires ──
-
-async function autoBookBestReplacement(taskId: string, task: any): Promise<void> {
-  const options: any[] = task.options ?? [];
-  const option = options[0];
-
-  if (!option) {
-    // No candidates were found at the time — notify family
-    const { handleNoReplacementsFound } = await import("../agents/replacementAgent");
-    const apptSnap = await db.collection("appointments").doc(task.appointmentId).get();
-    const appt     = apptSnap.data() ?? {};
-    await handleNoReplacementsFound(
-      task.appointmentId, task.clientId, task.clientPhone,
-      { caregiverName: appt.caregiverName ?? "Your caregiver", date: appt.date ?? "", time: appt.time ?? "" }
-    );
-    await db.collection("agent_tasks").doc(taskId).update({ status: "no_options_available" });
-    return;
-  }
-
-  // Update appointment with replacement caregiver
-  await db.collection("appointments").doc(task.appointmentId).update({
-    caregiverId:   option.caregiverId,
-    caregiverName: option.name,
-    status:        "confirmed",
-    autoBooked:    true,
-    bookedAt:      new Date().toISOString(),
-  });
-
-  // Mark task complete
-  await db.collection("agent_tasks").doc(taskId).update({
-    status:       "auto_booked",
-    bookedAt:     new Date().toISOString(),
-    bookedOption: option,
-  });
-
-  // Notify family
-  const apptSnap = await db.collection("appointments").doc(task.appointmentId).get();
-  const appt     = apptSnap.data() ?? {};
-  await sendViaInteractionAgent(task.clientPhone, {
-    content:
-      `You didn't respond, so I went ahead and booked ${option.name} ` +
-      `for your ${appt.time ?? ""} visit today — they're confirmed. ` +
-      `Reply CANCEL if you need to change this.`,
-    urgency:     "immediate",
-    sourceAgent: "emergency_replacement",
-    canDrop:     false,
-  });
-
-  // Clear the active task roster entry — replacement is resolved
-  await db.collection("agent_tasks_active").doc(task.clientPhone).delete().catch(() => {});
-
-  // Post-crisis emotional anchoring
-  await new Promise(r => setTimeout(r, 3000));
-  await sendViaInteractionAgent(task.clientPhone, {
-    content:     `Last-minute coverage is one of the hardest parts of care. That's exactly what I'm here for. 💙`,
-    urgency:     "standard",
-    sourceAgent: "emergency_replacement",
-    canDrop:     true,
-  });
-
-  // Notify the replacement caregiver
-  const cgSnap  = await db.collection("caregivers").doc(option.caregiverId).get();
-  const cgPhone = cgSnap.data()?.phone as string | undefined;
-  if (cgPhone) {
-    await sendToPhone(cgPhone,
-      `You've been assigned to cover a visit today.\n\n` +
-      `${appt.date ?? ""} at ${appt.time ?? ""}\n` +
-      (appt.clientName ? `${appt.clientName}\n` : "") +
-      (appt.address    ? `${appt.address}`       : "")
-    );
-  }
-
-  console.log(`[autoBookBestReplacement] Auto-booked ${option.caregiverId} for task ${taskId}`);
 }
 
 // ── Clear expired session state machine flags ─────────────────────────────────

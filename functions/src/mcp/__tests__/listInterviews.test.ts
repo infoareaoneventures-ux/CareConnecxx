@@ -73,6 +73,15 @@ describe("list_interviews", () => {
     expect(r.interviews[0].scheduledTimeLocal).toBe("Monday, September 7 at 5:00 PM");
   });
 
+  it("returns the row's note, the same one the site shows under the interview (2026-09-16)", async () => {
+    hoisted.collState.set("video_interviews", [
+      { id: "iv_1", data: { clientId: CLIENT, caregiverId: "cg1", scheduledTime: "2026-09-13T21:00:00.000Z", status: "accepted", notes: "2pm", jobTitle: "Senior care in San Jose" } },
+    ]);
+    const r = await handleToolCall("list_interviews", { clientId: CLIENT }) as any;
+    expect(r.interviews[0].notes).toBe("2pm");
+    expect(r.interviews[0].jobTitle).toBe("Senior care in San Jose");
+  });
+
   it("returns null (not a crash) for a missing or unparseable scheduledTime", async () => {
     hoisted.collState.set("video_interviews", [
       { id: "iv_1", data: { clientId: CLIENT, caregiverId: "cg1", status: "requested" } },

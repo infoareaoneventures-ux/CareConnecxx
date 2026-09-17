@@ -83,7 +83,8 @@ vi.mock("../../utils/knownNames", () => ({ addKnownNames: vi.fn().mockResolvedVa
 // Pin "today" so date >= today filtering and past-date validation are stable.
 vi.mock("../../utils/scheduledTime", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../utils/scheduledTime")>();
-  return { ...real, businessTodayStr: () => "2026-09-15" };
+  // 2026-09-15, 11:30 AM Pacific — so a 9/15 visit ending by 11:30 is Overdue.
+  return { ...real, businessTodayStr: () => "2026-09-15", businessNowMinutes: () => 11 * 60 + 30 };
 });
 const messagesCreate = vi.fn();
 vi.mock("../../utils/claudeClient", () => ({
@@ -98,6 +99,7 @@ vi.mock("../../utils/parseWithClaude", () => ({
 }));
 
 import { startRescheduleFlow, handleRescheduleFlowStep } from "../rescheduleFlow";
+import { isShiftOverdue } from "../shiftReschedule";
 
 const PHONE = "+15551234567";
 const CHAT  = "chat-1";
@@ -135,7 +137,34 @@ beforeEach(() => {
   messagesCreate.mockReset();
 });
 
+// The site hides Reschedule on an Overdue visit (scheduled, but its end time
+// has passed) — utils/shiftUtils.ts shiftDisplayStatus. Same rule server-side.
+describe("isShiftOverdue — the site's Overdue rule", () => {
+  const TODAY = "2026-09-15", NOW = 11 * 60 + 30;
+  it("a past-day scheduled visit is overdue", () => {
+    expect(isShiftOverdue({ status: "scheduled", date: "2026-09-14", startTime: "11:00", endTime: "13:00" }, TODAY, NOW)).toBe(true);
+  });
+  it("today's visit is overdue only once its end time has passed", () => {
+    expect(isShiftOverdue({ status: "scheduled", date: TODAY, startTime: "08:00", endTime: "10:00" }, TODAY, NOW)).toBe(true);
+    expect(isShiftOverdue({ status: "scheduled", date: TODAY, startTime: "11:00", endTime: "13:00" }, TODAY, NOW)).toBe(false);
+  });
+  it("a midnight-crossing visit is not falsely overdue", () => {
+    expect(isShiftOverdue({ status: "scheduled", date: TODAY, startTime: "23:00", endTime: "01:00" }, TODAY, NOW)).toBe(false);
+  });
+  it("only 'scheduled' visits can be overdue", () => {
+    expect(isShiftOverdue({ status: "needs_replacement", date: "2026-09-01", startTime: "11:00", endTime: "13:00" }, TODAY, NOW)).toBe(false);
+  });
+});
+
 describe("startRescheduleFlow", () => {
+  it("leaves an Overdue visit off the list, like the site hides its Reschedule button", async () => {
+    seedBookings();
+    hoisted.docState.set("shifts/sh-overdue", { clientId: UID, caregiverId: "cg-basra", caregiverName: "Basra Yousuf", status: "scheduled", date: "2026-09-15", startTime: "08:00", endTime: "10:00" });
+    await startRescheduleFlow(PHONE, CHAT, session());
+    expect(sess().rescheduleFlowData.visits.map((v: any) => v.id)).toEqual(["sh-wed", "sh-wed2"]);
+    expect(lastSent()).not.toContain("8:00 AM");
+  });
+
   it("lists ONLY real scheduled visits (never the needs_replacement or past ones) and asks which to move", async () => {
     seedBookings();
     const r = await startRescheduleFlow(PHONE, CHAT, session());
@@ -284,6 +313,15 @@ describe("rs_confirm", () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, rescheduleFlowStep: "rs_confirm", rescheduleFlowData: PROPOSED });
     await handleRescheduleFlowStep(PHONE, CHAT, "YES", session({ rescheduleFlowStep: "rs_confirm" }));
     expect(hoisted.docState.get("shifts/sh-wed").reschedulePendingDate).toBe("2026-09-17");
+  });
+
+  it("does not write if the visit became Overdue since the recap", async () => {
+    seedBookings();
+    hoisted.docState.set("shifts/sh-wed", { ...hoisted.docState.get("shifts/sh-wed"), date: "2026-09-14" });
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID, rescheduleFlowStep: "rs_confirm", rescheduleFlowData: PROPOSED });
+    await handleRescheduleFlowStep(PHONE, CHAT, "yes", session({ rescheduleFlowStep: "rs_confirm" }));
+    expect(hoisted.docState.get("shifts/sh-wed").reschedulePendingDate).toBeUndefined();
+    expect(sess().rescheduleFlowStep).toBeUndefined();
   });
 
   it("does not write if the visit stopped being scheduled since the recap (changed on the site)", async () => {

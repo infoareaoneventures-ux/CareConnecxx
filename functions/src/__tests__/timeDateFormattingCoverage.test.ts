@@ -46,7 +46,6 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   // get_callout_backups/select_callout_backup) and had a dead-end REPLACE/SKIP
   // reply path. Remaining calls are the booking-confirmed/arrival/reminder paths.
   ["../triggers/appointmentUpdated.ts",         4],
-  ["../agents/replacementAgent.ts",             3],
   ["../agents/latenessTracker.ts",              1],
   ["../scheduled/shiftTaskNudges.ts",           4],
   ["../scheduled/weeklyDigest.ts",              2],

@@ -223,6 +223,88 @@ describe("missing CRUD tools", () => {
     });
   });
 
+  // Requests tab, second card type (2026-09-16).
+  describe("get_pending_schedule_amendments", () => {
+    it("requires clientId or caregiverId", async () => {
+      const r = await handleToolCall("get_pending_schedule_amendments", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("returns a family's pending schedule changes with the site's fields, newest first", async () => {
+      hoisted.collState.set("booking_amendments", [
+        { id: "am1", clientId: "c1", caregiverName: "Basra Yousuf", bookingRequestId: "br1", status: "pending", type: "add_recurring_days",
+          newDays: { Thu: [{ start: "10:00", end: "15:00" }] }, startDate: "2026-09-17", endDate: "2026-09-17", ongoing: false, notes: "one time", createdAt: "2026-09-15T09:00:00.000Z" },
+        { id: "am2", clientId: "c1", caregiverName: "Basra Yousuf", bookingRequestId: "br1", status: "pending", type: "add_recurring_days",
+          newDays: { Fri: [{ start: "09:00", end: "11:00" }] }, startDate: "2026-09-18", endDate: null, ongoing: true, notes: "", createdAt: "2026-09-16T09:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_pending_schedule_amendments", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.count).toBe(2);
+      expect(r.amendments.map((a: any) => a.amendmentId)).toEqual(["am2", "am1"]);
+      expect(r.amendments[1]).toMatchObject({ startDate: "2026-09-17", startDayOfWeek: "Thursday", ongoing: false, days: [{ day: "Thu", times: ["10:00–15:00"] }] });
+    });
+  });
+
+  // Past Bookings tab (2026-09-16).
+  // My Calendar page (2026-09-16): visits in a date range with the site's
+  // display status (overdue = scheduled, time passed) plus interviews.
+  describe("get_calendar", () => {
+    it("returns visits with display status and interviews inside the range, and defaults the range to a week", async () => {
+      hoisted.collState.set("shifts", [
+        { id: "s1", clientId: "c1", caregiverName: "Basra Yousuf", status: "scheduled", date: "2000-01-03", startTime: "11:00", endTime: "13:00" },
+        { id: "s2", clientId: "c1", caregiverName: "Basra Yousuf", status: "scheduled", date: "2099-01-05", startTime: "11:00", endTime: "13:00" },
+        { id: "s3", clientId: "c1", caregiverName: "Basra Yousuf", status: "cancelled", date: "2099-01-06", startTime: "11:00", endTime: "13:00", cancelledBy: "client" },
+      ]);
+      hoisted.collState.set("video_interviews", [
+        { id: "iv1", clientId: "c1", caregiverName: "Basra Yousuf", status: "accepted", scheduledTime: "2099-01-04T17:00:00.000Z" },
+        { id: "iv2", clientId: "c1", caregiverName: "Basra Yousuf", status: "cancelled", scheduledTime: "2099-01-04T18:00:00.000Z" },
+        { id: "iv3", clientId: "c1", caregiverName: "Basra Yousuf", status: "accepted", scheduledTime: "2099-03-04T17:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_calendar", { clientId: "c1", fromDate: "2099-01-03", toDate: "2099-01-09" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.fromDate).toBe("2099-01-03");
+      expect(r.toDate).toBe("2099-01-09");
+      // The where() mock is a no-op, so all seeded shifts come back — the
+      // display-status mapping is what's under test here.
+      const byId = Object.fromEntries(r.visits.map((v: any) => [v.id, v]));
+      expect(byId.s1.displayStatus).toBe("overdue");
+      expect(byId.s2.displayStatus).toBe("scheduled");
+      expect(byId.s2.dayOfWeek).toBe("Monday");
+      expect(byId.s3.displayStatus).toBe("cancelled");
+      expect(r.interviews.map((i: any) => i.id)).toEqual(["iv1"]);
+      expect(r.interviews[0].date).toBe("2099-01-04");
+
+      const d = await handleToolCall("get_calendar", { clientId: "c1" }) as any;
+      const from = new Date(`${d.fromDate}T12:00:00Z`), to = new Date(`${d.toDate}T12:00:00Z`);
+      expect(Math.round((to.getTime() - from.getTime()) / 86400000)).toBe(6);
+    });
+
+    it("refuses a backwards range", async () => {
+      const r = await handleToolCall("get_calendar", { clientId: "c1", fromDate: "2099-01-09", toDate: "2099-01-03" }) as any;
+      expect(r._toolError).toBe(true);
+    });
+  });
+
+  describe("get_past_visits", () => {
+    it("requires clientId or caregiverId", async () => {
+      const r = await handleToolCall("get_past_visits", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("returns only completed/cancelled visits, newest first, with weekday and who cancelled", async () => {
+      hoisted.collState.set("shifts", [
+        { id: "s1", clientId: "c1", caregiverName: "Basra Yousuf", status: "completed", date: "2026-09-09", startTime: "11:00", endTime: "13:00", startedAt: "2026-09-09T18:02:00.000Z", completedAt: "2026-09-09T20:00:00.000Z", paid: true },
+        { id: "s2", clientId: "c1", caregiverName: "Basra Yousuf", status: "cancelled", date: "2026-09-15", startTime: "11:00", endTime: "13:00", cancelledBy: "client" },
+        { id: "s3", clientId: "c1", caregiverName: "Basra Yousuf", status: "scheduled", date: "2026-09-16", startTime: "11:00", endTime: "13:00" },
+      ]);
+      const r = await handleToolCall("get_past_visits", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.visits.map((v: any) => v.id)).toEqual(["s2", "s1"]);
+      expect(r.visits[0]).toMatchObject({ status: "cancelled", cancelledBy: "client", dayOfWeek: "Tuesday" });
+      expect(r.visits[1]).toMatchObject({ status: "completed", paid: true, dayOfWeek: "Wednesday" });
+    });
+  });
+
   describe("get_caregiver_availability", () => {
     it("requires caregiverId", async () => {
       const r = await handleToolCall("get_caregiver_availability", {}) as any;

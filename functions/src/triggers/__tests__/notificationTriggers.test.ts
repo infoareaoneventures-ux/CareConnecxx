@@ -134,6 +134,15 @@ describe("onBookingRequestWrite — SMS parity", () => {
     expect(sendViaInteractionAgent).not.toHaveBeenCalled();
   });
 
+  // 2026-09-16: the site's Resend updates the existing doc (cancelled/declined
+  // → pending, isResend) — the caregiver was never told before this branch.
+  it("a resent request (cancelled → pending, isResend) texts the caregiver", async () => {
+    const before = { status: "cancelled", clientId: CLIENT, caregiverId: CAREGIVER, clientName: "A Family" };
+    const after  = { ...before, status: "pending", isResend: true };
+    await (onBookingRequestWrite as any)(change(before, "br1", after), { params: { bookingId: "br1" } });
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("resent their booking request") }));
+  });
+
   it("a declined pure website booking DOES text the client", async () => {
     const before = { status: "pending", clientId: CLIENT, caregiverId: CAREGIVER, caregiverName: "Alice" };
     const after  = { ...before, status: "declined" };

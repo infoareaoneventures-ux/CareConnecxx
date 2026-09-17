@@ -69,10 +69,10 @@ describe("setFlags / clearFlags (batched writes)", () => {
 
   it("clearFlags deletes only the named subset in one update", async () => {
     const { update, db } = mockDb();
-    await clearFlags("+1", db, ["awaitingPreShiftUpdate", "stateExpiresAt"]);
+    await clearFlags("+1", db, ["awaitingTaskAck", "stateExpiresAt"]);
     expect(update).toHaveBeenCalledTimes(1);
     const arg = update.mock.calls[0][0];
-    expect(Object.keys(arg).sort()).toEqual(["awaitingPreShiftUpdate", "stateExpiresAt"]);
+    expect(Object.keys(arg).sort()).toEqual(["awaitingTaskAck", "stateExpiresAt"]);
   });
 });
 

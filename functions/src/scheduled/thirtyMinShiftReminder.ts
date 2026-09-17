@@ -100,7 +100,7 @@ function parseAppointmentTimeMs(dateStr: string, timeStr: string): number | null
 
   if (h === null || m === null) return null;
   // Interpret naive date+time as business-timezone (Pacific) wall-clock, not UTC
-  // (see clientThirtyMinReminder for the rationale). DST-correct.
+  // (the family-side twin of this reminder was removed 2026-09-16 — it claimed the caregiver was "on the way" from the clock alone). DST-correct.
   const ms = parseScheduledTimeMs(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`);
   return Number.isNaN(ms) ? null : ms;
 }

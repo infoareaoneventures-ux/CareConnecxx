@@ -37,13 +37,10 @@ const HELPER_WIRED: Array<[string, number]> = [
   ["../../scheduled/familySilenceCheckin.ts",   1],
   ["../../scheduled/familySatisfactionCheckin.ts", 1],
   ["../../scheduled/nextDayFamilyFeedback.ts",  1],
-  ["../../scheduled/preShiftFamilyCheckin.ts",  1],
   ["../../scheduled/clientDayBeforeReminder.ts", 1],
-  ["../../scheduled/clientThirtyMinReminder.ts", 1],
   ["../../scheduled/upcomingVisitReminder.ts",  1],
   ["../../scheduled/morningBriefing.ts",        2], // primary briefing + generateCaraMessage fallback
   ["../../linq/webhooks.ts",                    1], // awaiting-supply hold reply
-  ["../../linq/routeClient.ts",                 2], // pre-shift add-tasks + decline confirmations
   ["../../triggers/jobApplicationTriggers.ts",  1],
   // jobPostingFlow.ts deliberately dropped 2026-09-08: unlike every other file
   // here, a job post's recipient is CHOSEN mid-conversation and can differ
@@ -64,7 +61,7 @@ const HELPER_WIRED: Array<[string, number]> = [
 // explicit inline attribution line instead (bereavement keeps it minimal and
 // past-tense — grief-sensitive copy).
 const INLINE_WIRED: Array<[string, string, number]> = [
-  ["../../linq/routeCaregiver.ts", "the care recipient is ${", 2], // family confirm + cancel alert
+  ["../../linq/routeCaregiver.ts", "the care recipient is ${", 1], // family confirm (the cancel alert went with the removed emergency-replacement path, 2026-09-16)
   ["../issueEscalator.ts",         "the care recipient is ${", 2], // issue notice + next-day follow-up
   ["../bereavement.ts",            "the care recipient was ${", 3], // condolence + keepsake promise/delivery
 ];

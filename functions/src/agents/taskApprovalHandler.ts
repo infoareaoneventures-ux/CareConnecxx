@@ -41,6 +41,19 @@ export async function handleTaskApproval(
   const task    = taskDoc.data();
   const options = task.options ?? [];
 
+  // 2026-09-16: the legacy emergency-replacement picker (replacementAgent.ts)
+  // was removed — the website has no automatic no-show replacement. A stale
+  // replacement_confirmation task must never book anyone; expire it and point
+  // the family at the real Find Replacement flow.
+  if (task.type === "replacement_confirmation") {
+    await taskDoc.ref.update({ status: "expired" }).catch(() => {});
+    if (session.phone) await db.collection("agent_tasks_active").doc(session.phone).delete().catch(() => {});
+    await sendMessage(chatId,
+      "That replacement list is no longer active, so I haven't booked anyone. If a visit still needs a replacement it shows on your " +
+      "My Bookings page with Find Replacement / Skip — or just tell me and I'll pull up your options.");
+    return;
+  }
+
   // If the family asked a question instead of picking, answer it and re-ask.
   if (await isQuestionOrOther(choice)) {
     const optionsSummary = options

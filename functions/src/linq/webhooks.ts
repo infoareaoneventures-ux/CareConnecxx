@@ -2990,7 +2990,7 @@ const handleInboundInner = traceable(
   }
 
   // ── Client-side pre-intent state machines (extracted to routeClient.ts) ──────
-  // Covers: awaitingPreShiftUpdate, awaitingEmergencyContactUpdate,
+  // Covers: awaitingEmergencyContactUpdate,
   // pendingShiftApproval, pendingDisputeDetail, collectingCredential,
   // jobPostingStep, bookingFlowStep, healthcareFlowStep, refundStep,
   // timesheetStep, availabilityStep, clientSwapStep. Deliberately NOT wrapped
@@ -3292,8 +3292,10 @@ async function handleReactionAdded(event: any): Promise<void> {
       await executeBookings(taskDoc.id, phone).catch(err =>
         console.error("handleReactionAdded: executeBookings failed:", err)
       );
-    } else {
-      // Generic approval for other task types (e.g. replacement selection)
+    } else if (taskDoc.data().type !== "replacement_confirmation") {
+      // Generic approval for other task types. replacement_confirmation is
+      // the removed emergency-replacement picker (2026-09-16) — a stale one
+      // must never book anyone from a thumbs-up.
       await handleTaskApproval(taskDoc, "1", session, chatId);
     }
     return;

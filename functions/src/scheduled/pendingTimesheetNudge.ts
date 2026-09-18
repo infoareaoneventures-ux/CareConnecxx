@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { businessTodayStr, formatDateWithWeekday } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -23,6 +24,18 @@ export function toMillis(v: unknown): number | null {
     if (typeof anyV._seconds === "number") return anyV._seconds * 1000;
   }
   return null;
+}
+
+// The two Needs Review statuses that wait on the FAMILY (the other four wait
+// on the caregiver or on Evia's team).
+export const WAITING_ON_FAMILY = ["pending_client_review", "caregiver_counter_proposed"] as const;
+
+/** When this timesheet started waiting on the family: the counter's time for a counter, else the submission. */
+export function waitingSinceMs(r: Record<string, unknown>): number | null {
+  if (r.status === "caregiver_counter_proposed") {
+    return toMillis(r.counterProposedAt) ?? toMillis(r.counteredAt) ?? toMillis(r.updatedAt) ?? toMillis(r.submittedAt);
+  }
+  return toMillis(r.submittedAt);
 }
 
 /**
@@ -58,14 +71,14 @@ export const sendPendingTimesheetNudges = functions.pubsub
     const nowMs = Date.now();
 
     // Single-field equality → auto-indexed. Group + sort in memory to avoid a
-    // composite index, mirroring staleApplicantNudge.
-    const snap = await db.collection("shiftHours")
-      .where("status", "==", "pending_client_review")
-      .limit(500)
-      .get();
+    // composite index, mirroring staleApplicantNudge. 2026-09-18: a caregiver's
+    // COUNTER waiting on the family holds their pay just the same — both
+    // waiting-on-family statuses of the Timesheets page's Needs Review tab.
+    const [pendingSnap, counterSnap] = await Promise.all(WAITING_ON_FAMILY.map((st) =>
+      db.collection("shiftHours").where("status", "==", st).limit(500).get()));
 
     const byClient = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
-    for (const d of snap.docs) {
+    for (const d of [...pendingSnap.docs, ...counterSnap.docs]) {
       const clientId = d.data().clientId as string | undefined;
       if (!clientId) continue;
       const arr = byClient.get(clientId);
@@ -76,7 +89,7 @@ export const sendPendingTimesheetNudges = functions.pubsub
     for (const [clientId, docs] of byClient) {
       try {
         const submittedTimes = docs
-          .map((d) => toMillis(d.data().submittedAt))
+          .map((d) => waitingSinceMs(d.data()))
           .filter((n): n is number => n !== null);
         const oldestSubmittedMs = submittedTimes.length ? Math.min(...submittedTimes) : null;
 
@@ -102,17 +115,30 @@ export const sendPendingTimesheetNudges = functions.pubsub
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
 
         // Name the oldest timesheet's caregiver + its amount, for a concrete nudge.
-        docs.sort((a, b) => (toMillis(a.data().submittedAt) ?? 0) - (toMillis(b.data().submittedAt) ?? 0));
+        docs.sort((a, b) => (waitingSinceMs(a.data()) ?? 0) - (waitingSinceMs(b.data()) ?? 0));
         const oldest = docs[0].data();
         const cgSnap = oldest.caregiverId
           ? await db.collection("caregivers").doc(oldest.caregiverId as string).get().catch(() => null)
           : null;
         const cgName = ((cgSnap?.data()?.name ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
-        const amount = typeof oldest.amountCents === "number" ? `$${(oldest.amountCents / 100).toFixed(2)}` : null;
-        const dateLabel = (oldest.date as string) ?? "a recent visit";
+        const isCounter = oldest.status === "caregiver_counter_proposed";
+        const cents = isCounter && typeof oldest.counterGrossPay === "number" ? Math.round(oldest.counterGrossPay * 100)
+          : typeof oldest.amountCents === "number" ? oldest.amountCents
+          : typeof oldest.grossPay === "number" ? Math.round(oldest.grossPay * 100) : null;
+        const amount = cents !== null ? `${(cents / 100).toFixed(2)}` : null;
+        const startMs = toMillis(oldest.finalStartTime ?? oldest.submittedStartTime);
+        const dateLabel = (oldest.date as string | undefined)
+          ?? (startMs !== null ? formatDateWithWeekday(businessTodayStr(undefined, new Date(startMs))) : "a recent visit");
         const count = docs.length;
 
-        const message = await generateCaraMessage({
+        const message = isCounter && count === 1
+          ? await generateCaraMessage({
+            audience: "family",
+            context: `${cgName} sent a counter on their hours from ${dateLabel}${amount ? ` (${amount})` : ""} and it is waiting for the family's answer — ${cgName} isn't paid until they accept it or escalate it to Evia's team. Gently nudge them; they can reply ACCEPT or ESCALATE, or ask to see it. One or two warm sentences.`,
+            fallback: `${cgName}'s counter on their hours${amount ? ` (${amount})` : ""} is waiting for your answer — reply ACCEPT to accept it or ESCALATE to send it to our team, or ask me to pull it up.`,
+            maxTokens: 100,
+          })
+          : await generateCaraMessage({
           audience: "family",
           context: count === 1
             ? `${cgName}'s hours from ${dateLabel}${amount ? ` (${amount})` : ""} are waiting for the family's approval — and ${cgName} isn't paid until they approve. Gently nudge them to take a look; offer to pull it up. One or two warm sentences, no pressure or guilt.`

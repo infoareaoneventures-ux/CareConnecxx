@@ -7,6 +7,7 @@ import { handleBookingFlowStep } from "../agents/bookingFlow";
 import { handleReplacementFlowStep } from "../agents/replacementFlow";
 import { handleRescheduleFlowStep } from "../agents/rescheduleFlow";
 import { handleVisitRequestFlowStep } from "../agents/visitRequestFlow";
+import { handleCorrectionFlowStep } from "../agents/correctionFlow";
 import { handleCancelFlowStep } from "../agents/cancelFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
@@ -244,6 +245,21 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
   // booking → days → per-day times with the modal's availability checks →
   // start → ongoing/end → note → recap → YES → booking_amendments). See
   // visitRequestFlow.ts.
+  if ((session as any).correctionFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["correctionFlowStep", "correctionFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your timesheet correction timed out — the hours are still waiting for your review. Text me anytime to pick it back up!");
+      return "handled";
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleCorrectionFlowStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return "handled";
+  }
+
   if ((session as any).visitRequestFlowStep) {
     if (isStateExpired(session)) {
       await clearFlags(phone, db, ["visitRequestFlowStep", "visitRequestFlowData", "stateExpiresAt"]);

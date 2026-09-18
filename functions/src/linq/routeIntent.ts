@@ -946,9 +946,22 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     const pendingDuringFactCheck = intent === "FACT_CORRECTION"
       ? await getLatestPending(phone).catch(() => null)
       : null;
+    // 2026-09-18: a FOURTH shape — a timesheet is waiting in the family's
+    // Needs Review tab and they text a corrected clock-in/out ("can you
+    // change the clock in time to 10:03"). That is a correction to the
+    // timesheet (review_shift_hours), never a stored fact — skip this branch
+    // while one awaits them and let the agent propose the correction.
+    let timesheetAwaitingDuringFactCheck = false;
+    if (intent === "FACT_CORRECTION" && session.userType !== "caregiver" && session.userId) {
+      try {
+        const { hasTimesheetAwaitingClient } = await import("../agents/timesheetsPage");
+        timesheetAwaitingDuringFactCheck = await hasTimesheetAwaitingClient(String(session.userId));
+      } catch { timesheetAwaitingDuringFactCheck = false; }
+    }
     if (
       intent === "FACT_CORRECTION" &&
       !pendingDuringFactCheck &&
+      !timesheetAwaitingDuringFactCheck &&
       !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
       !isBareDateOrTimeAnswer(text) &&
       !isBareYesNoAnswer(text)

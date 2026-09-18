@@ -12,6 +12,10 @@ import { geocodeToLatLng } from '../utils/geocode';
 import firebase from '../lib/firebase';
 import { ClientNavigation } from './client/ClientNavigation';
 
+// Only a real link renders as an avatar — a stray word saved in the photo field (a prod
+// account had photoURL === 'skipped') must fall back to the initials, not a broken <img>.
+const isPhotoUrl = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//i.test(v);
+
 const CARE_TYPES = [
   'Mobility Assistance', 'Dementia / Memory Care', 'Medication Reminders',
   'Personal Care', 'Companionship', 'Transportation',
@@ -236,7 +240,7 @@ export const CarePlan: React.FC<CarePlanProps> = ({ onNavigate, onShowToast, tar
     db.collection('users').doc(currentUser.uid).get()
       .then(snap => {
         const d = snap.data() as any;
-        const url = d?.photoURL || d?.photo || d?.profilePhoto || null;
+        const url = [d?.photoURL, d?.photo, d?.profilePhoto].find(isPhotoUrl) ?? null;
         if (url) setProfilePhotoURL(url);
       }).catch(() => {});
   }, [currentUser?.uid]);

@@ -34,6 +34,10 @@ export const STATE_MACHINE_FLAGS = [
   // website's Calendar "+ Request Visit" modal, step for step.
   "visitRequestFlowStep",
   "visitRequestFlowData",
+  // Scripted timesheet-correction flow (correctionFlow.ts, 2026-09-18) — the
+  // Timesheets "Review submitted hours" modal, step for step.
+  "correctionFlowStep",
+  "correctionFlowData",
   // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
   "interviewFlowStep",
   "interviewFlowData",
@@ -190,6 +194,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["rescheduleFlowStep",      "moving your visit to a new day/time"],
   ["cancelFlowStep",          "cancelling that visit or request"],
   ["visitRequestFlowStep",    "requesting an extra visit"],
+  ["correctionFlowStep",      "correcting a caregiver's timesheet"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["awaitingIssueDescription", "the issue you started telling me about"],
@@ -342,6 +347,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["rescheduleFlowStep", "generic"],
   ["cancelFlowStep", "generic"],
   ["visitRequestFlowStep", "generic"],
+  ["correctionFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
@@ -372,6 +378,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "rescheduleFlowData",
   "cancelFlowData",
   "visitRequestFlowData",
+  "correctionFlowData",
   "interviewFlowData",
   "awaitingTaskAck",
   "pendingShiftConfirmation",

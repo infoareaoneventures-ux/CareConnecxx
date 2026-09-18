@@ -106,6 +106,13 @@ vi.mock("../../accountRecovery", () => ({
   requestEmailChangeForAccount: (...a: unknown[]) => requestEmailChangeForAccount(...a),
 }));
 
+// The profile photo goes through the site's own upload path (agents/profilePhoto.ts,
+// tested on its own) — here it is a boundary mock.
+const setClientProfilePhoto = vi.fn(async (_uid: string, _src: string) => ({ photoURL: "https://firebasestorage.googleapis.com/v0/b/x/o/profile_photos%2Fu1%2Fprofile?alt=media&token=t" }));
+vi.mock("../../agents/profilePhoto", () => ({
+  setClientProfilePhoto: (...a: unknown[]) => setClientProfilePhoto(...(a as [string, string])),
+}));
+
 import { handleToolCall } from "../server";
 
 describe("profile tools", () => {
@@ -113,6 +120,7 @@ describe("profile tools", () => {
     hoisted.reset();
     requestPhoneChangeForAccount.mockClear();
     requestEmailChangeForAccount.mockClear();
+    setClientProfilePhoto.mockClear();
   });
 
   describe("update_caregiver_profile", () => {
@@ -199,12 +207,33 @@ describe("profile tools", () => {
       expect(userSet?.data.displayName).toBe("Robert Smith");
     });
 
-    it("writes photoURL (not photoUrl) matching the site's photo field", async () => {
+    it("profile photo goes through the site's upload path (storage → users.photoURL / senior_profiles.imageUrl / Auth), never a raw URL write", async () => {
       const r = await handleToolCall("update_user_profile", { userId: "u1", photoUrl: "https://example.com/p.jpg" }) as any;
       expect(r.success).toBe(true);
+      expect(setClientProfilePhoto).toHaveBeenCalledWith("u1", "https://example.com/p.jpg");
+      expect(r.updated).toContain("photoURL");
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.photoURL).toBe("https://example.com/p.jpg");
       expect(userSet?.data.photoUrl).toBeUndefined();
+    });
+
+    it("a typed word is never a photo — 'skipped' is rejected and nothing is written", async () => {
+      const r = await handleToolCall("update_user_profile", { userId: "u1", photoUrl: "skipped" }) as any;
+      expect(r._toolError).toBe(true);
+      expect(hoisted.sets.find(s => s.path === "users/u1")).toBeUndefined();
+      expect(setClientProfilePhoto).not.toHaveBeenCalled();
+    });
+
+    it("photoFromMessage:true uses the photo the family just attached; with none it points to Account Settings", async () => {
+      hoisted.docState.set("agent_sessions/+15550001111", { lastSharedMedia: { kind: "image", url: "https://media.example/a.jpg" } });
+      const ok = await handleToolCall("update_user_profile", { userId: "u1", phone: "+15550001111", photoFromMessage: true }) as any;
+      expect(ok.success).toBe(true);
+      expect(setClientProfilePhoto).toHaveBeenCalledWith("u1", "https://media.example/a.jpg");
+      hoisted.docState.delete("agent_sessions/+15550001111");
+      setClientProfilePhoto.mockClear();
+      const miss = await handleToolCall("update_user_profile", { userId: "u1", phone: "+15550001111", photoFromMessage: true }) as any;
+      expect(miss._toolError).toBe(true);
+      expect(JSON.stringify(miss)).toMatch(/\/client\/account/);
+      expect(setClientProfilePhoto).not.toHaveBeenCalled();
     });
 
     it("requestPhoneChange:true starts the email-gated flow instead of writing phone directly", async () => {

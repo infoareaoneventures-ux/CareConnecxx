@@ -76,7 +76,7 @@ interface ShiftHoursRow {
   basePay?: number;
   grossPay?: number;
   submittedAt: string;
-  autoApproveAt: string;
+  autoApproveAt: string | null;
   status: ShiftHoursStatus;
   loggedManually?: boolean;
 }
@@ -359,7 +359,9 @@ const ShiftRow: React.FC<{
               {row.status === 'pending_client_review' && (
                 <div className="flex items-center justify-between px-3 py-2">
                   <span className="text-slate-500">Auto-approves</span>
-                  <span className="text-slate-500">{fmtDate(row.autoApproveAt)}</span>
+                  {row.autoApproveAt
+                    ? <span className="text-slate-500">{fmtDate(row.autoApproveAt)}</span>
+                    : <span className="text-amber-700 font-medium text-right">No — needs your approval (hours fall outside the scheduled visit or need a look)</span>}
                 </div>
               )}
             </div>

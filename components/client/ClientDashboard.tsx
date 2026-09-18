@@ -22,6 +22,7 @@ import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
+import { VisitProgressPanel } from './VisitProgressPanel';
 
 
 interface ClientDashboardProps {
@@ -892,6 +893,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           <span className="truncate">{shift.address}</span>
                         </div>
                       )}
+                      {/* Live progress while the caregiver is there — same panel as My Bookings */}
+                      {isInProgress && (
+                        <div className="mt-3">
+                          <VisitProgressPanel shift={shift} live />
+                        </div>
+                      )}
                     </div>
                   );
                 };
@@ -1293,7 +1300,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                         const statusCfg = STATUS_MAP[shift.status] ?? { label: shift.status, color: 'text-slate-600', bg: 'bg-slate-100 border border-slate-200' };
                         const msLeft = shift.autoApproveAt ? new Date(shift.autoApproveAt).getTime() - Date.now() : 0;
                         const hoursLeft = Math.max(0, Math.round(msLeft / 3_600_000));
-                        const showAutoApprove = shift.status === 'pending_client_review' && hoursLeft <= 24;
+                        const showAutoApprove = shift.status === 'pending_client_review' && !!shift.autoApproveAt && hoursLeft <= 24;
+                        const needsExplicitApproval = shift.status === 'pending_client_review' && !shift.autoApproveAt;
                         return (
                           <div key={shift.id} className="border border-slate-200 rounded-xl p-3">
                             {/* Row 1: avatar + caregiver name + date */}
@@ -1330,6 +1338,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                               <div className="flex items-center gap-1.5 text-[10px] text-amber-600">
                                 <Clock className="w-3 h-3 flex-shrink-0" />
                                 <span>Auto-approves in {hoursLeft}h</span>
+                              </div>
+                            )}
+                            {needsExplicitApproval && (
+                              <div className="flex items-center gap-1.5 text-[10px] text-amber-600">
+                                <Clock className="w-3 h-3 flex-shrink-0" />
+                                <span>Needs your approval — won't auto-approve</span>
                               </div>
                             )}
                           </div>

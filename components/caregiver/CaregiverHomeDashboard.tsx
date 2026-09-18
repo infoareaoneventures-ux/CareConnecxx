@@ -768,7 +768,18 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                   const det: Record<string, string[]> = r.careNeedDetails || {};
                   if (needs.length === 0) return null;
                   return (
-                    <div key={ri} className="space-y-1.5">
+                    <div key={ri} className="border-l-2 border-primary-200 pl-3 space-y-1.5">
+                      {/* Same per-recipient header as the Bookings page — the keys are
+                          per recipient (ri_cat), so the list must say whose tasks these are */}
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-100 flex items-center justify-center shrink-0">
+                          {r.photoURL
+                            ? <img src={r.photoURL} alt={r.name} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                            : <span className="text-primary-700 font-bold text-[10px]">{String(r.name || '').split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase()}</span>
+                          }
+                        </div>
+                        <p className="text-xs font-semibold text-slate-600">{r.name}</p>
+                      </div>
                       {needs.map(need => {
                         const subtasks: string[] = det[need] || [];
                         if (subtasks.length > 0) {

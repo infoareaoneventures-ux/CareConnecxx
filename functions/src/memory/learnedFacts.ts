@@ -149,6 +149,12 @@ async function runFactExtractionModel(
       "Categories: medical (diagnoses, meds, allergies), preference (likes/dislikes, habits), " +
       "routine (schedule, recurring activities), family (relationships, names). " +
       "Only extract facts that are clearly stated and would be useful in future conversations. " +
+      "NEVER store the transaction in front of you — bookings, visits, shifts, appointments, interviews, " +
+      "timesheets, hours, clock-in/out times, payments, cancellations, reschedules, requests, replies to a " +
+      "numbered list, or any date/time being arranged right now ('move it to 9/17 at 10am', 'the clock-in was " +
+      "10:05', 'cancel Wednesday', 'set up an interview with Basra', 'decline Imran'). Those live in the " +
+      "care records, not in memory. A caregiver's name alone is not a fact either. 'routine' means the care " +
+      "recipient's own recurring day ('mom naps after lunch', 'dad walks every morning'), not a scheduled visit. " +
       "Reply with ONLY a raw JSON array (no markdown, no prose): " +
       "[{\"fact\": \"...\", \"category\": \"medical|preference|routine|family\"}]. " +
       "Return [] if nothing worth storing.",
@@ -737,7 +743,11 @@ export async function detectAndStageFactChange(
         "every message — plain questions, status checks, and requests are NEVER corrections, even if they sound " +
         "like a pushback or challenge a previous answer. Reply null for things like 'Is my account approved', " +
         "'Do I have a shift coming up', 'Are you sure', 'What is my name', 'Can you check my membership' — none of " +
-        "these assert a corrected fact or ask to forget one, they're just questions.\n" +
+        "these assert a corrected fact or ask to forget one, they're just questions. Also null for any change to " +
+        "a live transaction — a booking, visit, shift, appointment, interview, timesheet, clock-in/out, hours, " +
+        "payment, reschedule or cancellation ('change the clock in time to 10:05', 'move it to 9/17', 'make it " +
+        "Basra not Imran' for a pending request): those are corrections to a care record, never to stored memory, " +
+        "even when a listed fact happens to mention a similar date, time or name.\n" +
         "Also reply null when the user is clarifying what THEY THEMSELVES just asked or meant in the current " +
         "conversation — which thing they're referring to, or a misunderstanding about their own question — rather " +
         "than asserting a new true value for a fact about the care recipient/caregiver/care situation. 'I meant " +

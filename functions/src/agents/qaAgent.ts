@@ -36,7 +36,6 @@ import { runAgentModelTurn } from "./agentModelTurn";
 import { raiseProviderFailureAlert } from "../observability/providerFailureAlert";
 import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
-import { selectToolPack, TOOL_PACKS_CAPABILITY } from "./toolPackSelector";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } from "./clientJobPostingContract";
 import { describeWhoIsWho } from "./careRecipients";
@@ -210,16 +209,29 @@ async function getCaregiverProfile(caregiverId: string) {
 async function getCaregiverTodayAppointment(caregiverId: string) {
   // Business-timezone today — from 5pm PT the UTC date returned TOMORROW's
   // appointment as "today" and missed tonight's shift.
+  // 2026-09-18 (live-caught): the old shape — caregiverId + date + status IN
+  // + orderBy(startTime) — needed a composite index that was never declared,
+  // so EVERY caregiver greeting died with "I hit a snag" (FAILED_PRECONDITION
+  // on the very first read of the turn). One caregiver has a handful of
+  // visits a day at most: read them on the existing (caregiverId, date) index
+  // and pick in memory. And never let this lookup kill the turn — it only
+  // adds context to the prompt.
   const today = businessTodayStr();
-  const snap = await db
-    .collection("shifts")
-    .where("caregiverId", "==", caregiverId)
-    .where("date", "==", today)
-    .where("status", "in", ["scheduled", "in-progress"])
-    .orderBy("startTime", "asc")
-    .limit(1)
-    .get();
-  return snap.empty ? null : snap.docs[0].data();
+  try {
+    const snap = await db
+      .collection("shifts")
+      .where("caregiverId", "==", caregiverId)
+      .where("date", "==", today)
+      .get();
+    const live = snap.docs
+      .map((d) => d.data())
+      .filter((s) => s.status === "scheduled" || s.status === "in-progress")
+      .sort((a, b) => String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")));
+    return live[0] ?? null;
+  } catch (err) {
+    console.warn("getCaregiverTodayAppointment failed (non-fatal, no today-shift context)", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 // ── Conversation memory ───────────────────────────────────────────────────────
@@ -812,6 +824,7 @@ export function buildClientSystemPrompt(
     `  · add_family_member — add someone new to the care group. They'll get a welcome text and start receiving care updates.`,
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
+    `  · start_correction_flow — FIXING A TIMESHEET (non-negotiable): the moment the family says a submitted clock-in/out, hours or pay is wrong ("can you change the clock in time", "she left at 10:30", "the hours are off"), call this with initialText = their message. It is the Timesheets "Review submitted hours" modal step for step — it asks the proposed clock-in and clock-out, an optional reason, recaps the proposed total, and only on YES sends the correction (caregiver has 24h to accept or counter). When a COUNTER is waiting it offers exactly the modal's two choices, ACCEPT or ESCALATE. Never collect the times yourself, never call review_shift_hours with propose_correction for a family's ask — this tool already texts them; send nothing else that turn.`,
     `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the caregiver then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
     `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. MANDATORY for cancel: tell family when it ends and ask for explicit confirmation before calling. Reactivate needs no confirmation.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
@@ -853,7 +866,7 @@ export function buildClientSystemPrompt(
     `  · send_onboarding_link — generate AND send a tappable onboarding/signup link directly to the chat. Use for ANY request to (re)send a subscription/payment, identity verification, profile photo, document, background-check, or payout link. Pick linkType: client_payment, client_identity, caregiver_membership, caregiver_photo, caregiver_documents, caregiver_background_check, caregiver_payouts. The tool sends the link itself — after it succeeds, just briefly confirm (e.g. "Sent! Tap the link to verify your identity — takes about 30 seconds."). Do NOT open a support ticket for these.`,
     `  · get_invoice_details — pull the itemized breakdown for a specific invoice. Use when they ask "what was I charged for on June 3?".`,
     `  · get_family_group — list everyone in the care group with their role and phone.`,
-    `  · update_user_profile — update the family's own name, address, or photo. Read back the proposed change before calling. To change their PHONE number, pass requestPhoneChange:true instead of a new number — it emails a secure link to the address on file, and the new number is entered and verified there, never over SMS. Tell the family to check their email — never ask them for the new number yourself.`,
+    `  · update_user_profile — update the family's own name, address, or profile photo. Read back the proposed change before calling. Profile photo: when the family texts a picture for their own profile, call it with photoFromMessage:true and their phone — it saves the attached photo exactly the way the site's Account Settings upload does. Never pass a typed word (like "skip") as photoUrl; if no picture came through, the tool returns the Account Settings link — offer that so they can upload it there. To change their PHONE number, pass requestPhoneChange:true instead of a new number — it emails a secure link to the address on file, and the new number is entered and verified there, never over SMS. Tell the family to check their email — never ask them for the new number yourself.`,
     `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
     `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
     `  · delete_account — permanently delete the family's own account. MANDATORY: confirm explicitly first (read back that this is irreversible and cancels any active membership).`,
@@ -2080,7 +2093,22 @@ export async function runQaAgent(params: {
     // independently agreed it was a FACT_CORRECTION — otherwise two models
     // disagree and the agent (which can see the live data) gets the turn.
     const actionIntentSkipsFactCheck = intent != null && FACT_CHANGE_SKIP_INTENTS.has(intent);
-    if (!unconfirmedIdentity && channel === "[USER]" && !actionIntentSkipsFactCheck && !isBareDateOrTimeAnswer(text) && !isBareYesNoAnswer(text)) {
+    // 2026-09-18 (live-caught): "can you change the clock in time to 10:03" —
+    // sent right after a timesheet approval notice — was staged as a MEMORY
+    // correction ("I've updated that… cleaning up the old version") instead of
+    // reaching the agent's review_shift_hours. While the Timesheets page has
+    // something in Needs Review for this family, a correction is a correction
+    // to that timesheet: skip the detector and let the agent act on the live
+    // record (it can still stage a real fact correction through its tools).
+    let timesheetAwaitingSkipsFactCheck = false;
+    if (!unconfirmedIdentity && channel === "[USER]" && !actionIntentSkipsFactCheck && !onboardingMode) {
+      try {
+        const { hasTimesheetAwaitingClient } = await import("./timesheetsPage");
+        timesheetAwaitingSkipsFactCheck = await hasTimesheetAwaitingClient(userId);
+      } catch { timesheetAwaitingSkipsFactCheck = false; }
+      if (timesheetAwaitingSkipsFactCheck) console.info("qaAgent: timesheet awaiting the family — fact-change detector skipped", { userId });
+    }
+    if (!unconfirmedIdentity && channel === "[USER]" && !actionIntentSkipsFactCheck && !timesheetAwaitingSkipsFactCheck && !isBareDateOrTimeAnswer(text) && !isBareYesNoAnswer(text)) {
       let factChange: import("../memory/learnedFacts").FactChangeOutcome;
       let lf: typeof import("../memory/learnedFacts") | null = null;
       try {
@@ -2713,31 +2741,14 @@ export async function runQaAgent(params: {
     let activeTools = (onboardingMode || userType === "caregiver")
       ? baseTools
       : selectToolsForIntent(baseTools, intent ?? null);
-    // U6 (plan 2026-07-18-001, R28-R29): on BROAD client turns, the foreground
-    // objective's intent narrows the surface the legacy filter leaves at full
-    // catalog. Fail-open: selector null or rollout off → legacy list unchanged.
-    if (!onboardingMode && userType !== "caregiver" && activeTools.length === baseTools.length) {
-      try {
-        const packRollout = await getRolloutDecision(TOOL_PACKS_CAPABILITY, phone);
-        if (packRollout.enabled) {
-          const goalType = ((session as any)?.activeGoal as { type?: string } | undefined)?.type;
-          const pack = selectToolPack(activeTools, {
-            intent: intent ?? null,
-            foregroundIntent: goalType ? `legacy.${goalType}` : null,
-          });
-          if (pack) {
-            console.info("toolPacks.applied", {
-              packName: pack.packName,
-              packSize: pack.tools.length,
-              baseSize: baseTools.length,
-            });
-            activeTools = pack.tools;
-          }
-        }
-      } catch (err) {
-        console.warn("toolPacks selection failed (non-fatal, legacy surface kept)", err instanceof Error ? err.message : err);
-      }
-    }
+    // 2026-09-18 (live-caught): the "tool pack" narrowing that used to sit here
+    // (U6, toolPackSelector.ts) filtered BROAD client turns down to the stale
+    // session.activeGoal's capabilities — a family whose last goal was
+    // "matching" texted a timesheet clock-in correction and the agent had no
+    // review_shift_hours to call (billing was filtered out), so it could only
+    // report "1 timesheet waiting". Evia must be able to do anything the site
+    // can at any moment, so the surface is never narrowed by a past goal.
+    // Specific-intent narrowing (selectToolsForIntent) stays.
     if (activeTools.length !== baseTools.length) {
       console.info("qaAgent: tool surface filtered", {
         userId, intent, before: baseTools.length, after: activeTools.length,
@@ -2795,6 +2806,7 @@ export async function runQaAgent(params: {
     const SELF_SENDING_FLOW_STARTS = new Set([
       "start_booking_flow", "start_interview_flow", "start_replacement_flow",
       "start_reschedule_flow", "start_resend_booking_flow", "start_visit_request_flow", "start_cancel_flow",
+      "start_correction_flow",
     ]);
     // Budget guard: cap wall-clock at ~60s so users never wait 3+ min while the
     // tool loop iterates. Each Claude call gets a tight timeout; we exit early

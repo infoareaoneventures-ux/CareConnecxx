@@ -13,6 +13,10 @@ const FIND_CARE_ROUTES = ['/client/find-caregivers', '/client/browse-caregivers'
 import { authService, dbService } from '../../services/api';
 import { db } from '../../lib/firebase';
 
+// Only a real link renders as an avatar — a stray word saved in the photo field (a prod
+// account had photoURL === 'skipped') must fall back to the initials, not a broken <img>.
+const isPhotoUrl = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//i.test(v);
+
 const MY_CARE_ROUTES = [
   '/client/care-plan',
   '/client/my-care-team',
@@ -43,14 +47,14 @@ export const ClientNavigation: React.FC = () => {
     const user = authService.getCurrentUser();
     setCurrentUser(user);
     // Immediate fallback: Firebase Auth photoURL (set by AccountSettings upload)
-    if ((user as any)?.photoURL) setProfilePhotoUrl((user as any).photoURL);
+    if (isPhotoUrl((user as any)?.photoURL)) setProfilePhotoUrl((user as any).photoURL);
     if (user?.uid) {
       // Also check users doc and senior_profiles for photo
       Promise.all([
         db?.collection('users').doc(user.uid).get().catch(() => null),
         dbService.getSeniorProfile(user.uid).catch(() => null),
       ]).then(([userDoc, profile]) => {
-        const url = userDoc?.data()?.photoURL || profile?.imageUrl || (user as any)?.photoURL;
+        const url = [userDoc?.data()?.photoURL, profile?.imageUrl, (user as any)?.photoURL].find(isPhotoUrl);
         if (url) setProfilePhotoUrl(url);
       }).catch(() => {});
     }

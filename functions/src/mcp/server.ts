@@ -280,6 +280,26 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "start_correction_flow",
+    description:
+      "Correct a caregiver's submitted timesheet hours — the website's Timesheets 'Review submitted hours' modal, step for " +
+      "step. Starts Evia's scripted flow: which timesheet (only if more than one is waiting), the proposed clock-in (KEEP = as " +
+      "submitted), the proposed clock-out, an optional reason, a recap with the proposed total and pay, then YES sends the " +
+      "SAME propose_correction write the modal makes (the caregiver has 24h to accept or counter; silence auto-accepts). If the " +
+      "caregiver already sent a COUNTER, the flow offers exactly the modal's two buttons: ACCEPT or ESCALATE. Use this the " +
+      "moment a family says any clock-in/out, hours or pay on a submitted timesheet is wrong ('change the clock in time', " +
+      "'she left at 10:30 not 10:38', 'the hours are off') — pass initialText = their message so times they already gave are " +
+      "used. This tool ALREADY TEXTS THE FAMILY — send NOTHING else this turn. review_shift_hours stays for a plain approve.",
+    input_schema: {
+      type: "object",
+      properties: {
+        initialText:   { type: "string", description: "The family's own message about the timesheet, verbatim." },
+        appointmentId: { type: "string", description: "Optional — the shiftHours id if the family named a specific timesheet." },
+      },
+      required: [],
+    },
+  },
+  {
     name: "start_visit_request_flow",
     description:
       "Add an extra visit (a new day, or new days, and times) to a booking the caregiver has already accepted — the " +
@@ -2163,7 +2183,9 @@ export const MCP_TOOLS: McpTool[] = [
         city:      { type: "string", description: "New city (optional)" },
         state:     { type: "string", description: "New state (optional)" },
         zip:       { type: "string", description: "New ZIP code (optional)" },
-        photoUrl:  { type: "string", description: "New profile photo URL (optional)" },
+        photoUrl:  { type: "string", description: "New profile photo URL (optional) — must be a real https link to an image. Never pass a typed word like 'skip' here; if the family declines a photo, leave it out." },
+        photoFromMessage: { type: "boolean", description: "Set true to use the photo the family just attached in this conversation as their profile photo (pass phone too). Leave photoUrl out in that case." },
+        phone:     { type: "string", description: "The family's phone (session id) — needed with photoFromMessage" },
       },
       required: ["userId"],
     },
@@ -3739,6 +3761,27 @@ async function executeToolCall(
         return { success: true, instruction: "This tool already texted the family the next step. Send NOTHING else this turn — not even an acknowledgment. The flow now owns the conversation until it finishes." };
       }
 
+      case "start_correction_flow": {
+        const { clientId, phone, appointmentId, initialText } = input as Record<string, unknown>;
+        if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+        if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+        const sessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+        const sessionData = sessSnap.data();
+        const chatId = sessionData?.chatId as string | undefined;
+        if (!chatId || !sessionData) return toolError("NOT_FOUND", "No active conversation to start the correction in");
+        const { startCorrectionFlow } = await import("../agents/correctionFlow");
+        const result = await startCorrectionFlow(phone as string, chatId, sessionData as any, {
+          ...(typeof appointmentId === "string" && appointmentId ? { appointmentId } : {}),
+          ...(typeof initialText === "string" && initialText ? { initialText } : {}),
+        });
+        if (!result.started) {
+          return {
+            success: false, reason: result.reason ?? "failed_to_start",
+            instruction: "The family has already been told what was found (or not found) — do not repeat or add anything else this turn.",
+          };
+        }
+        return { success: true, instruction: "This tool already texted the family the first step of the correction — do not send anything else this turn." };
+      }
       case "start_visit_request_flow": {
         const { clientId, phone, caregiverId, initialText } = input as Record<string, unknown>;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
@@ -7467,6 +7510,17 @@ async function executeToolCall(
       // Canonicalize enum-ish values the model may save in free-form casing
       // ("Full time" → "full_time"); otherwise the raw string is copied onto the
       // caregiver doc where matching expects occasional|part_time|full_time.
+      // The recipient photo is a picture the family attached — the inbound media
+      // handler stores it and fills this field itself. A typed reply is never a
+      // photo (a prod account ended up with photoURL "skipped" → broken avatar).
+      if (fieldName === "careRecipientPhotoURL" && !/^https?:\/\//i.test(String(fieldValue ?? "").trim())) {
+        return {
+          ok: true,
+          saved: false,
+          invalidValue: true,
+          guidance: `careRecipientPhotoURL only takes the link of a photo the family actually attached — it is filled automatically when a picture comes in. "${String(fieldValue)}" is a typed reply, not a photo: save nothing for it. The photo is optional, so if they'd rather skip it just move on; they can text a picture any time or add one later from Account Settings.`,
+        };
+      }
       const normalizedValue = normalizeOnboardingFieldValue(fieldName, fieldValue);
       if (fieldName === "jobType" && typeof normalizedValue === "string" && !CAREGIVER_JOB_TYPES.has(normalizedValue)) {
         console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
@@ -7737,7 +7791,7 @@ async function executeToolCall(
 
     // ── update_user_profile ─────────────────────────────────────────────────
     if (name === "update_user_profile") {
-      const { userId, firstName, lastName, requestPhoneChange, address, city, state, zip, photoUrl } = input as Record<string, unknown>;
+      const { userId, firstName, lastName, requestPhoneChange, address, city, state, zip, photoUrl, photoFromMessage, phone } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
 
       // requestPhoneChange is a request flag, not a field write — login here
@@ -7800,11 +7854,33 @@ async function executeToolCall(
         patch.location = `${finalCity}, ${finalState} ${finalZip}`.trim();
         patch.careLocation = { address: finalStreet, zip: finalZip, city: finalCity, state: finalState };
       }
-      if (photoUrl  != null) patch.photoURL = photoUrl;
-      if (Object.keys(patch).length === 1) {
+      // Profile photo — the same three writes as AccountSettings.tsx handlePhotoUpload
+      // (storage profile_photos/{uid}/profile → users.photoURL, senior_profiles/{uid}.imageUrl,
+      // Auth photoURL), done by agents/profilePhoto.ts. Over text the "file" is the photo
+      // the family attached; a typed word is never a photo (a prod account had "skipped").
+      let photoSource = typeof photoUrl === "string" && /^https?:\/\//i.test(photoUrl.trim()) ? photoUrl.trim() : "";
+      if (photoUrl != null && photoUrl !== "" && !photoSource) {
+        return toolError("INVALID_INPUT", "photoUrl must be a real https link to an image. A typed reply like 'skip' is not a photo — save nothing for the photo in that case.");
+      }
+      if (!photoSource && photoFromMessage === true) {
+        if (typeof phone === "string" && phone) {
+          const sess = (await db.collection("agent_sessions").doc(phone).get()).data();
+          const last = sess?.lastSharedMedia as { url?: string; kind?: string } | undefined;
+          if (last?.kind === "image" && last.url) photoSource = last.url;
+        }
+        if (!photoSource) {
+          return toolError("INVALID_INPUT", `No photo attached. Ask the family to attach the photo here in the conversation — or, if photos don't come through on their phone, send them Account Settings to upload it: ${getAppUrl()}/client/account`);
+        }
+      }
+      if (Object.keys(patch).length === 1 && !photoSource) {
         return toolError("INVALID_INPUT", "No fields to update");
       }
       await db.collection("users").doc(userId as string).set(patch, { merge: true });
+      if (photoSource) {
+        const { setClientProfilePhoto } = await import("../agents/profilePhoto");
+        const saved = await setClientProfilePhoto(userId as string, photoSource);
+        patch.photoURL = saved.photoURL;
+      }
       // If address fields touched and this is a single-senior household, mirror
       // to the senior profile too — the Senior type only has `zipCode` and a
       // composite `location` string, no separate street/city/state fields.

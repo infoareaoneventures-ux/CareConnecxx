@@ -785,6 +785,12 @@ const PendingShiftRow: React.FC<{
                 <span className="font-medium text-slate-700">{autoAt}</span>
               </div>
             )}
+            {!autoAt && row.status === 'pending_client_review' && (
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-400">Auto-approves</span>
+                <span className="font-medium text-amber-700">No — needs the family's approval</span>
+              </div>
+            )}
           </div>
 
           {row.correctionHistory && row.correctionHistory.some(e => e.action !== 'submitted') && (

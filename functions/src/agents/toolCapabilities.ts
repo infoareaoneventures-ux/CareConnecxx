@@ -25,6 +25,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   start_replacement_flow:       ["booking"],  // Find Replacement modal, step for step — see replacementFlow.ts
   start_reschedule_flow:        ["booking", "scheduling"],  // Reschedule button on an upcoming shift, step for step — see rescheduleFlow.ts
   start_visit_request_flow:     ["booking", "scheduling"],
+  start_correction_flow:        ["billing"],  // Timesheets "Review submitted hours" modal, step for step — see correctionFlow.ts
   start_cancel_flow:            ["booking", "scheduling"],  // My Bookings cancel buttons, step for step — see cancelFlow.ts  // Calendar "+ Request Visit" modal, step for step — see visitRequestFlow.ts
   get_calendar:                 ["booking", "scheduling"],  // Calendar page reads (visits + interviews in a date range)
   get_caregiver_booking_rate:   ["booking"],  // U9b: read-only rate lookup

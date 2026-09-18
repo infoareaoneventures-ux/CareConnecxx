@@ -12,6 +12,10 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { usePhoneReauth } from '../../hooks/usePhoneReauth';
 import { submitAccountAction } from '../../services/accountActionQueue';
 
+// Only a real link renders as an avatar — a stray word saved in the photo field (a prod
+// account had photoURL === 'skipped') must fall back to the initials, not a broken <img>.
+const isPhotoUrl = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//i.test(v);
+
 const DELETE_RECAPTCHA_CONTAINER = 'account-settings-delete-recaptcha';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -157,7 +161,7 @@ export const AccountSettings: React.FC = () => {
 
         // Phone saved by signup
         if (d.phone) setPersonalInfo(prev => ({ ...prev, phone: d.phone }));
-        if (d.photoURL || d.photo || d.profilePhoto) setPhotoURL(d.photoURL || d.photo || d.profilePhoto);
+        { const savedPhoto = [d.photoURL, d.photo, d.profilePhoto].find(isPhotoUrl); if (savedPhoto) setPhotoURL(savedPhoto); }
 
         // Address — prefer flat fields saved by signup, fall back to old careLocation object
         const flat = d.street || d.zipCode || d.city || d.state;

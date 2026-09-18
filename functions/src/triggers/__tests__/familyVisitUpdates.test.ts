@@ -58,11 +58,18 @@ describe("diffVisitProgress + buildFamilyUpdateText — one grouped text per bur
       ["task", "Medication Reminders"], ["task", "bathing"], ["note", "Samira ate half her breakfast"],
     ]);
     const text = buildFamilyUpdateText(shift.caregiverName, items);
-    expect(text).toBe('Basra checked off Medication Reminders for Samira; bathing for Imran.\nNote 7:06 PM: "Samira ate half her breakfast"');
+    expect(text).toBe('Basra checked off Medication Reminders for Samira; bathing for Imran.\nNote from Basra: "Samira ate half her breakfast"');
   });
 
   it("nothing new → nothing to send", () => {
     expect(diffVisitProgress(shift, shift)).toEqual([]);
+  });
+
+  it("an uncheck is a change too — told as 'unchecked' so the trail matches the record", () => {
+    const after = { ...shift, tasksCompleted: ["0_Medication Reminders", "1_bathing"] };
+    const items = diffVisitProgress(shift, after);
+    expect(items.map((i) => [i.kind, i.text, i.recipient])).toEqual([["undo", "Personal Care", "Samira M"]]);
+    expect(buildFamilyUpdateText(shift.caregiverName, items)).toBe("Basra unchecked Personal Care for Samira — not done after all.");
   });
 });
 
@@ -77,16 +84,55 @@ describe("recordVisitProgress — the 2-minute window", () => {
     expect(hoisted.updates[0].data.familyUpdateLastTextAt).toBeTruthy();
   });
 
-  it("queues instead of texting when a text went out seconds ago", async () => {
+  it("queues task check-offs instead of texting when a text went out seconds ago", async () => {
     const send = vi.fn(async () => undefined);
     const ref = hoisted.makeDoc("shifts/s1");
     const recent = { ...shift, familyUpdateLastTextAt: new Date().toISOString() };
-    const before = { ...recent, tasksCompleted: ["0_Personal Care", "0_Medication Reminders"], notesLog: [] };
+    const before = { ...recent, tasksCompleted: ["0_Personal Care", "0_Medication Reminders"] };
     const handled = await recordVisitProgress(ref, before, recent, send);
     expect(handled).toBe(true);
     expect(send).not.toHaveBeenCalled();
-    expect(hoisted.updates[0].data.familyUpdateQueue.__arrayUnion.map((i: any) => i.text)).toEqual(["bathing", "Samira ate half her breakfast"]);
+    expect(hoisted.updates[0].data.familyUpdateQueue.map((i: any) => i.text)).toEqual(["bathing"]);
     expect(hoisted.updates[0].data.familyUpdateQueuedAt).toBeTruthy();
+  });
+
+  it("a note goes out at once, even inside the window, and carries the queued check-offs with it", async () => {
+    const send = vi.fn(async () => undefined);
+    const ref = hoisted.makeDoc("shifts/s1");
+    const recent = {
+      ...shift,
+      familyUpdateLastTextAt: new Date().toISOString(),
+      familyUpdateQueue: [{ kind: "task", text: "Meal Preparation", at: "2026-09-17T22:10:00.000Z", recipient: "Imran" }],
+      familyUpdateQueuedAt: "2026-09-17T22:10:00.000Z",
+    };
+    const before = { ...recent, notesLog: [] };
+    expect(await recordVisitProgress(ref, before, recent, send)).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    const text = String((send.mock.calls[0] as unknown as [string, string])[1]);
+    expect(text).toContain("Samira ate half her breakfast");
+    expect(text).toContain("Meal Preparation");
+    expect(hoisted.updates[0].data.familyUpdateQueue).toEqual({ __delete: true });
+    expect(hoisted.updates[0].data.familyUpdateLastTextAt).toBeTruthy();
+  });
+
+  it("an uncheck inside the window cancels the queued check-off — the family never hears about the stray tap", async () => {
+    const send = vi.fn(async () => undefined);
+    const ref = hoisted.makeDoc("shifts/s1");
+    const queuedCheck = { kind: "task", text: "Personal Care", at: "2026-09-17T22:10:00.000Z", recipient: "Samira M" };
+    const recent = { ...shift, tasksCompleted: ["0_Medication Reminders", "1_bathing"], familyUpdateLastTextAt: new Date().toISOString(), familyUpdateQueue: [queuedCheck], familyUpdateQueuedAt: "2026-09-17T22:10:00.000Z" };
+    const before = { ...recent, tasksCompleted: ["0_Personal Care", "0_Medication Reminders", "1_bathing"] };
+    expect(await recordVisitProgress(ref, before, recent, send)).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(hoisted.updates[0].data.familyUpdateQueue).toEqual({ __delete: true });
+    expect(hoisted.updates[0].data.familyUpdateQueuedAt).toEqual({ __delete: true });
+  });
+
+  it("an uncheck after the family was already told is told too", async () => {
+    const send = vi.fn(async () => undefined);
+    const ref = hoisted.makeDoc("shifts/s1");
+    const after = { ...shift, tasksCompleted: ["0_Medication Reminders", "1_bathing"] }; // no recent text → goes at once
+    expect(await recordVisitProgress(ref, shift, after, send)).toBe(true);
+    expect(send).toHaveBeenCalledWith("c1", "Basra unchecked Personal Care for Samira — not done after all.");
   });
 
   it("ignores writes with no task or note change (e.g. the queue write itself)", async () => {
@@ -105,8 +151,11 @@ describe("buildVisitCompletionText — the Past Booking card in words", () => {
     expect(t).toContain("Samira M: Personal Care, Medication Reminders ✓ · Breakfast (Meal Preparation) not done");
     expect(t).toContain("Imran Mohammed: bathing ✓ · Mobility Assistance not done");
     expect(t).toContain("3 of 5 tasks checked off.");
-    expect(t).toContain("Visit notes:\n7:06 PM — Samira ate half her breakfast");
-    expect(t).toContain("Notes: just ended the shift for testing purpose");
+    // Sections separated by blank lines; the log bulleted without clock times;
+    // the closing note under the Past Bookings card's "Caregiver note" label.
+    expect(t).toContain("3 of 5 tasks checked off.\n\nVisit notes\n· Samira ate half her breakfast\n\nCaregiver note\njust ended the shift for testing purpose\n\nBasra will submit");
+    expect(t).not.toContain("7:06 PM — ");
+    expect(t).toMatch(/is complete \(7:05 PM–7:06 PM, 0:00:46\)\.\n\nSamira M:/);
     expect(t).toContain("Basra will submit the hours next; you'll get them here to review.");
     expect(t).not.toContain("care journal");
   });

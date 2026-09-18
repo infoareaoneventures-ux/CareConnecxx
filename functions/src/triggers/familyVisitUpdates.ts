@@ -2,7 +2,14 @@
 // as it happens (standing rule, 2026-09-17):
 //   · while a visit is in progress, tasks the caregiver checks off and notes
 //     they add to the visit log are texted in ONE grouped message per burst
-//     (a 2-minute window), never one text per tap;
+//     (a 2-minute window), never one text per tap. A NOTE is a message the
+//     caregiver wrote for the family, so it goes out at once — with whatever
+//     task check-offs are waiting — instead of sitting in the window;
+//   · unchecking is allowed (mis-taps happen). An uncheck inside the window
+//     just cancels the check-off still waiting to go out — the family never
+//     hears about a stray tap. Once they HAVE been told, the uncheck is told
+//     too ("Basra unchecked Personal Care for Samira"), so the text trail
+//     always matches the record (founder decision, 2026-09-18);
 //   · at completion, the Past Booking card in words — tasks done / not done per
 //     recipient, the visit log, the closing note, and what happens next.
 // The shift record is the only source: shifts.tasksCompleted (the caregiver
@@ -16,7 +23,7 @@ const db = admin.firestore();
 export const FAMILY_UPDATE_WINDOW_MS = 2 * 60 * 1000;
 
 export interface VisitNoteEntry { at: string; text: string; by?: string }
-export interface FamilyUpdateItem { kind: "task" | "note"; text: string; at: string; recipient?: string | null }
+export interface FamilyUpdateItem { kind: "task" | "undo" | "note"; text: string; at: string; recipient?: string | null }
 
 type Recipient = { name?: string; careNeeds?: string[]; careNeedDetails?: Record<string, string[]> };
 
@@ -62,6 +69,12 @@ export function diffVisitProgress(before: Record<string, unknown> | undefined, a
   const items: FamilyUpdateItem[] = nextTasks
     .filter((k) => !prevTasks.has(k))
     .map((k) => { const { recipient, label } = taskLabel(k, after); return { kind: "task" as const, text: label, at: now, recipient }; });
+  const nextSet = new Set(nextTasks);
+  for (const k of prevTasks) {
+    if (nextSet.has(k)) continue;
+    const { recipient, label } = taskLabel(k, after);
+    items.push({ kind: "undo", text: label, at: now, recipient });
+  }
   const prevNotes = new Set(((Array.isArray(before?.notesLog) ? before!.notesLog : []) as VisitNoteEntry[]).map((n) => `${n.at}|${n.text}`));
   const nextNotes = (Array.isArray(after.notesLog) ? after.notesLog : []) as VisitNoteEntry[];
   for (const n of nextNotes) {
@@ -83,9 +96,17 @@ export function buildFamilyUpdateText(caregiverName: unknown, items: FamilyUpdat
     const groups = [...byRecipient.entries()].map(([r, labels]) => `${joinList(labels)}${r ? ` for ${firstName(r, r)}` : ""}`);
     parts.push(`${cg} checked off ${groups.join("; ")}.`);
   }
+  const undos = items.filter((i) => i.kind === "undo");
+  if (undos.length) {
+    const byRecipient = new Map<string | null, string[]>();
+    for (const t of undos) { const k = t.recipient ?? null; if (!byRecipient.has(k)) byRecipient.set(k, []); byRecipient.get(k)!.push(t.text); }
+    const groups = [...byRecipient.entries()].map(([r, labels]) => `${joinList(labels)}${r ? ` for ${firstName(r, r)}` : ""}`);
+    parts.push(`${cg} unchecked ${groups.join("; ")} — not done after all.`);
+  }
   for (const n of items.filter((i) => i.kind === "note")) {
-    const ms = toMs(n.at);
-    parts.push(`Note${Number.isFinite(ms) ? ` ${formatClockTime(ms)}` : ""}: "${n.text}"`);
+    // No clock time here: the note goes out the moment it is written, so the
+    // text's own timestamp is the time. The completion recap keeps the times.
+    parts.push(`Note from ${cg}: "${n.text}"`);
   }
   return parts.join("\n");
 }
@@ -100,7 +121,13 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
     ? ` (${formatClockTime(startMs)}–${formatClockTime(endMs)}, ${fmtDuration((endMs - startMs) / 3_600_000)})`
     : "";
   const dateLabel = shift.date ? ` on ${formatDateWithWeekday(String(shift.date))}` : "";
-  const lines: string[] = [`${cgFull}'s visit${dateLabel} is complete${when}.`];
+  // Four sections separated by a blank line (founder, 2026-09-18): header,
+  // tasks, the two note blocks under the Past Bookings card's own labels
+  // ("Visit notes" = the running log, "Caregiver note" = the closing note),
+  // then what happens next. The log is bulleted without clock times — the
+  // family got each line as it was written; the site keeps the times.
+  const header = `${cgFull}'s visit${dateLabel} is complete${when}.`;
+  const lines: string[] = [];
 
   const done = new Set((Array.isArray(shift.tasksCompleted) ? shift.tasksCompleted : []) as string[]);
   const recipients = (Array.isArray(shift.careRecipients) ? shift.careRecipients : []) as Recipient[];
@@ -128,15 +155,15 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
     if (needs.length) lines.push(`Tasks: ${doneLabels.length ? `${doneLabels.join(", ")} ✓` : "nothing checked off"}${notDone.length ? ` · ${notDone.join(", ")} not done` : ""}`);
   }
   if (totalT) lines.push(`${doneT} of ${totalT} tasks checked off.`);
+  const sections: string[] = [header];
+  if (lines.length) sections.push(lines.join("\n"));
 
-  const log = (Array.isArray(shift.notesLog) ? shift.notesLog : []) as VisitNoteEntry[];
-  if (log.length) {
-    lines.push("Visit notes:");
-    for (const n of log) { const ms = toMs(n.at); lines.push(`${Number.isFinite(ms) ? `${formatClockTime(ms)} — ` : ""}${String(n.text ?? "").trim()}`); }
-  }
-  if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) lines.push(`Notes: ${shift.completionNotes.trim()}`);
-  lines.push(`${cg} will submit the hours next; you'll get them here to review.`);
-  return lines.join("\n");
+  const log = ((Array.isArray(shift.notesLog) ? shift.notesLog : []) as VisitNoteEntry[])
+    .map((n) => String(n.text ?? "").trim()).filter(Boolean);
+  if (log.length) sections.push(["Visit notes", ...log.map((t) => `· ${t}`)].join("\n"));
+  if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) sections.push(`Caregiver note\n${shift.completionNotes.trim()}`);
+  sections.push(`${cg} will submit the hours next; you'll get them here to review.`);
+  return sections.join("\n\n");
 }
 
 export function fmtDuration(hours: number): string {
@@ -168,8 +195,27 @@ export async function recordVisitProgress(
   const nowMs = Date.now();
   const lastMs = toMs(after.familyUpdateLastTextAt);
   const queued = (Array.isArray(after.familyUpdateQueue) ? after.familyUpdateQueue : []) as FamilyUpdateItem[];
-  if (!Number.isFinite(lastMs) || nowMs - lastMs >= FAMILY_UPDATE_WINDOW_MS) {
-    await send(clientId, buildFamilyUpdateText(after.caregiverName, [...queued, ...items]));
+  // Reconcile with what is still waiting: an uncheck cancels the queued
+  // check-off of the same task (and a re-check cancels a queued uncheck) —
+  // the family never hears about a tap that was undone before the text left.
+  const queue = [...queued];
+  const fresh: FamilyUpdateItem[] = [];
+  for (const it of items) {
+    const opposite = it.kind === "undo" ? "task" : it.kind === "task" ? "undo" : null;
+    const idx = opposite ? queue.findIndex((q) => q.kind === opposite && q.text === it.text && (q.recipient ?? null) === (it.recipient ?? null)) : -1;
+    if (idx >= 0) queue.splice(idx, 1); else fresh.push(it);
+  }
+  const outgoing = [...queue, ...fresh];
+  if (!outgoing.length) {
+    await ref.update({
+      familyUpdateQueue: admin.firestore.FieldValue.delete(),
+      familyUpdateQueuedAt: admin.firestore.FieldValue.delete(),
+    });
+    return true;
+  }
+  const hasNote = fresh.some((i) => i.kind === "note");
+  if (hasNote || !Number.isFinite(lastMs) || nowMs - lastMs >= FAMILY_UPDATE_WINDOW_MS) {
+    await send(clientId, buildFamilyUpdateText(after.caregiverName, outgoing));
     await ref.update({
       familyUpdateLastTextAt: new Date(nowMs).toISOString(),
       familyUpdateQueue: admin.firestore.FieldValue.delete(),
@@ -178,7 +224,7 @@ export async function recordVisitProgress(
     return true;
   }
   await ref.update({
-    familyUpdateQueue: admin.firestore.FieldValue.arrayUnion(...items),
+    familyUpdateQueue: outgoing,
     ...(after.familyUpdateQueuedAt ? {} : { familyUpdateQueuedAt: new Date(nowMs).toISOString() }),
   });
   return true;

@@ -460,7 +460,7 @@ export interface RecipientPhotoDeps {
   storeImage: (path: string, buffer: Buffer, contentType: string) => Promise<string>;
 }
 
-const defaultPhotoDeps: RecipientPhotoDeps = {
+export const defaultPhotoDeps: RecipientPhotoDeps = {
   fetchImage: async (url) => {
     const { downloadMedia } = await import("../utils/mediaIntake");
     return downloadMedia({ kind: "image", url });

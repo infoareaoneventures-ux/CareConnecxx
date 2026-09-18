@@ -3886,7 +3886,7 @@ async function handleInboundClientRecipientPhoto(
   } catch (err) {
     console.error("handleInboundClientRecipientPhoto failed", { phone, err: (err as Error)?.message });
     await sendMessage(chatId,
-      "I had trouble opening that photo — no worries, we can skip it and add one later."
+      `I had trouble opening that photo — no worries, it's optional. You can text it again any time, or add it from Account Settings here: ${APP_URL}/client/account`
     );
   }
 }

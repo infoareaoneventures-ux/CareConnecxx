@@ -10,6 +10,20 @@ import { businessTodayStr, formatInterviewTime } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
+// True while the Timesheets page's "Needs Review" tab has something for this
+// family (a submission or a caregiver counter). While it does, a free-text
+// message about a clock-in/out or hours is a correction to THAT timesheet,
+// never a stored memory fact — the fact-change detector must stand aside
+// (live-caught 2026-09-18: "can you change the clock in time to…" was
+// acknowledged as a memory update). Two equality queries, no new index.
+export async function hasTimesheetAwaitingClient(clientId: string): Promise<boolean> {
+  if (!clientId) return false;
+  const statuses = ["pending_client_review", "caregiver_counter_proposed"];
+  const snaps = await Promise.all(statuses.map((st) =>
+    db.collection("shiftHours").where("clientId", "==", clientId).where("status", "==", st).limit(1).get()));
+  return snaps.some((snap) => !snap.empty);
+}
+
 export type TimesheetsTab = "needs_review" | "history";
 
 export const NEEDS_REVIEW_STATUSES = [

@@ -55,10 +55,6 @@ export interface PendingAction {
 const ALWAYS_CONFIRM = new Set<string>([
   "remove_family_member",
   "cancel_job_post",
-  // U9: financial commit via the agent loop — a refund moves money and must be
-  // family-confirmed. (The cascade refundHandler has its own confirm step and does
-  // not route through this gate.)
-  "create_refund_request",
   // U7: destructive CRUD — deleting a review or hiding a care-journal entry is
   // family-visible and not casually reversible, so require explicit confirmation.
   "delete_review",
@@ -184,13 +180,6 @@ export async function buildActionPreview(toolName: string, toolInput: Record<str
       return `${String(toolInput.decision ?? "respond to")} application ${String(toolInput.applicationId ?? "")}`.trim();
     case "update_care_plan":
       return `${String(toolInput.action ?? "set")} care plan ${String(toolInput.field ?? "?")}`;
-    case "create_refund_request": {
-      // U9: surface the amount + target so the family approves the specific refund.
-      const amt = toolInput.amount != null ? `$${toolInput.amount}` : "a refund";
-      const forWhat = toolInput.invoiceId ? ` for invoice ${toolInput.invoiceId}`
-        : toolInput.visitId ? ` for visit ${toolInput.visitId}` : "";
-      return `Request ${amt}${forWhat}`;
-    }
     case "review_shift_hours": {
       // U9: name the hours/amount/caregiver so an approval isn't a blind "approve".
       const decision = String(toolInput.action ?? toolInput.decision ?? "review");

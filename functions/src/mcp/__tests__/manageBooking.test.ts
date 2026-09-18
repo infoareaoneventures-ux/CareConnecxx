@@ -88,16 +88,14 @@ const CAREGIVER = "cg_1";
 describe("manage_booking", () => {
   beforeEach(() => hoisted.reset());
 
-  it("cancel_pending_request cancels a pending booking_requests doc and its negotiation", async () => {
+  it("cancel_pending_request = the Requests tab's Cancel: the booking_requests doc alone goes to cancelled (no Evia-side queue to retire)", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, status: "pending", agentTaskId: "task1" });
     hoisted.docState.set("agent_tasks/task1", { status: "awaiting_caregiver" });
-    hoisted.collState.set("shift_offers", [{ id: "off1", agentTaskId: "task1", status: "pending", caregiverPhone: "+15551234567" }]);
 
     const r = await handleToolCall("manage_booking", { clientId: CLIENT, action: "cancel_pending_request", bookingRequestId: "br1" }) as any;
     expect(r.success).toBe(true);
     expect(hoisted.updates.find(u => u.path === "booking_requests/br1")?.data.status).toBe("cancelled");
-    expect(hoisted.updates.find(u => u.path === "agent_tasks/task1")?.data.status).toBe("cancelled_by_client");
-    expect(hoisted.updates.find(u => u.path === "shift_offers/off1")?.data.status).toBe("cancelled");
+    expect(hoisted.updates.find(u => u.path === "agent_tasks/task1")).toBeUndefined();
   });
 
   it("cancel_pending_request refuses a booking that already has a caregiver's YES", async () => {
@@ -354,7 +352,17 @@ describe("manage_shift_reschedule (caregiver side)", () => {
 });
 
 describe("request_schedule_amendment", () => {
-  beforeEach(() => hoisted.reset());
+  beforeEach(() => { hoisted.reset(); hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "active" }); });
+
+  it("is gated like the Calendar's + Request Visit button", async () => {
+    hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "canceled" });
+    hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, clientName: "A Family", caregiverId: CAREGIVER, caregiverName: "Alice" });
+    const r = await handleToolCall("request_schedule_amendment", {
+      bookingRequestId: "br1", clientId: CLIENT, date: "2026-09-07", startTime: "14:00", endTime: "16:00",
+    }) as any;
+    expect(r.code).toBe("MEMBERSHIP_REQUIRED");
+    expect(hoisted.docState.get(`users/${CLIENT}`)?.paywallContext).toEqual({ caregiverName: "Alice", action: "booking" });
+  });
 
   it("writes a booking_amendments doc matching the site's add_recurring_days shape", async () => {
     hoisted.docState.set("booking_requests/br1", { clientId: CLIENT, clientName: "A Family", caregiverId: CAREGIVER, caregiverName: "Alice" });

@@ -98,6 +98,7 @@ function session(step: string, overrides: Record<string, unknown> = {}): any {
 
 beforeEach(() => {
   hoisted.reset();
+  hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "active" });
   hoisted.docState.set(`agent_sessions/${PHONE}`, { jobPostingStep: "jp_ask_frequency", jobPostingData: {} });
   sendMessage.mockClear();
   messagesCreate.mockReset();

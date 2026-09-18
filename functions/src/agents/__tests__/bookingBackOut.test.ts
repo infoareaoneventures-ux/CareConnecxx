@@ -94,6 +94,7 @@ function seedCaregiver() {
 
 beforeEach(() => {
   hoisted.reset();
+  hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "active" });
   sendMessage.mockClear();
   messagesCreate.mockReset();
   quickCompleteMock.mockReset();

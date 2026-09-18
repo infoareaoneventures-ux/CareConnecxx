@@ -1250,37 +1250,38 @@ export const getSubscriptionDetails = functions.https.onCall(async (data, contex
  * live, every call — no webhook/trigger needed, this is purely a read for
  * whoever is looking at the Payments page right now (Hamse, 2026-08-23).
  */
+// The Payment Method tab's "Card on file" check (Payments.tsx → v1-getPaymentMethodStatus),
+// shared with Evia's get_payment_update_link so both read the same thing.
+export async function getPaymentMethodStatusFor(userId: string): Promise<{ hasCard: boolean; brand?: string | null; last4?: string | null }> {
+  const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
+  const customerId = customerDoc.data()?.stripeCustomerId as string | undefined;
+  if (!customerId) return { hasCard: false };
+
+  const customer = await stripe.customers.retrieve(customerId, {
+    expand: ['invoice_settings.default_payment_method'],
+  });
+  if (customer.deleted) return { hasCard: false };
+
+  let pm = customer.invoice_settings?.default_payment_method as Stripe.PaymentMethod | string | null | undefined;
+  if (!pm || typeof pm === 'string') {
+    const methods = await stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 });
+    pm = methods.data[0];
+  }
+  if (!pm || typeof pm === 'string') return { hasCard: false };
+
+  return {
+    hasCard: true,
+    brand: pm.card?.brand ?? null,
+    last4: pm.card?.last4 ?? null,
+  };
+}
+
 export const getPaymentMethodStatus = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
-  const userId = context.auth.uid;
-
   try {
-    const customerDoc = await admin.firestore().collection('customers').doc(userId).get();
-    const customerId = customerDoc.data()?.stripeCustomerId as string | undefined;
-    if (!customerId) return { hasCard: false };
-
-    const customer = await stripe.customers.retrieve(customerId, {
-      expand: ['invoice_settings.default_payment_method'],
-    });
-    if (customer.deleted) return { hasCard: false };
-
-    let pm = customer.invoice_settings?.default_payment_method as Stripe.PaymentMethod | string | null | undefined;
-    if (!pm || typeof pm === 'string') {
-      // No default set on the customer — fall back to whether ANY card is
-      // attached at all (e.g. attached during checkout but never explicitly
-      // set as default).
-      const methods = await stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 });
-      pm = methods.data[0];
-    }
-    if (!pm || typeof pm === 'string') return { hasCard: false };
-
-    return {
-      hasCard: true,
-      brand: pm.card?.brand ?? null,
-      last4: pm.card?.last4 ?? null,
-    };
+    return await getPaymentMethodStatusFor(context.auth.uid);
   } catch (error) {
     console.error('Error getting payment method status:', error);
     throw new functions.https.HttpsError('internal', 'Failed to get payment method status');

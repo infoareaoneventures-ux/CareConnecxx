@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
+import { applyMembershipLapse } from '../billing/membershipLapse';
 
 const db = admin.firestore();
 
@@ -309,6 +310,8 @@ export const generateRollingShifts = functions.pubsub
     // ── END ONE-TIME CLEANUP ──
 
     let totalCreated = 0;
+    // One users read per family per run, shared across their bookings (membership lapse check).
+    const membershipCache = new Map<string, Record<string, unknown> | null>();
 
     for (const bookingDoc of bookingsSnap.docs) {
       try {
@@ -318,6 +321,11 @@ export const generateRollingShifts = functions.pubsub
           booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
 
         if (endDate && today > endDate) continue;
+        // Family membership lapse (2026-09-17, freeze at the lapse): visits already on the
+        // calendar always happen; from the first daily run that sees the membership inactive
+        // no new visits are added until they reactivate (billing/membershipLapse.ts).
+        const lapse = await applyMembershipLapse(bookingDoc.ref, booking, today, membershipCache);
+        if (lapse === 'frozen') continue;
 
         const latestShiftSnap = await db.collection('shifts')
           .where('bookingRequestId', '==', bookingId)

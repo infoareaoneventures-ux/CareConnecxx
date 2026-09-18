@@ -27,6 +27,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
+import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput } from "../safety/outputGuard";
@@ -188,6 +189,8 @@ export async function startInterviewFlow(
     await sendMessage(chatId, "I couldn't find your account to start this interview request. Please try again.");
     return { started: false, reason: "no_client_id" };
   }
+  // FindCaregivers.tsx / PostsPage.tsx / ClientCaregiverProfile.tsx: Request Interview runs gate('interview', name).
+  if (await enforceClientGate(phone, chatId, clientId, "interview")) return { started: false, reason: "gated" };
 
   let resolved;
   try {
@@ -577,6 +580,8 @@ async function handleIvConfirm(
     await sendMessage(chatId, "I couldn't find enough details to send this interview request. Please try again.");
     return;
   }
+  // ScheduleInterviewModal.tsx: the modal's submit runs gate('interview', caregiver.name) — re-checked at send time.
+  if (await enforceClientGate(phone, chatId, clientId, "interview", data.caregiverName)) return;
   try {
     const startMs = parseScheduledTimeMs(`${data.date}T${data.time}:00`);
     if (Number.isNaN(startMs)) throw new VideoInterviewRequestError("invalid-argument", "Could not resolve the date/time");

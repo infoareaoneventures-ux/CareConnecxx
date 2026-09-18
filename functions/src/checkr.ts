@@ -618,37 +618,6 @@ export const checkrWebhook = functions.runWith({}).https.onRequest(async (req, r
           console.error("advanceOnboardingStep(background_check) error:", err);
         }
 
-        // Notify families who expressed interest while bg check was pending
-        try {
-          const cgSnap = await db.collection("caregivers").doc(caregiverUid).get();
-          const cgName = cgSnap.data()?.name ?? "Your caregiver";
-
-          const interestSnap = await db.collection("agent_tasks")
-            .where("type",        "==", "caregiver_interest")
-            .where("caregiverId", "==", caregiverUid)
-            .where("status",      "==", "pending_bg_clear")
-            .get();
-
-          for (const taskDoc of interestSnap.docs) {
-            const task = taskDoc.data();
-            try {
-              const { sendViaInteractionAgent } = await import("./agents/caraAgent");
-              await sendViaInteractionAgent(task.clientPhone, {
-                content:
-                  `Good news! ${cgName}'s background check just cleared. ` +
-                  `You can now book them — just say the word and I'll take care of it.`,
-                urgency:     "standard",
-                sourceAgent: "bg_check_clear",
-                canDrop:     true,
-              });
-              await taskDoc.ref.update({ status: "notified", notifiedAt: new Date().toISOString() });
-            } catch (notifyErr) {
-              console.error("bg clear family notify error:", notifyErr);
-            }
-          }
-        } catch (err) {
-          console.error("caregiver_interest notify error:", err);
-        }
       } else if (status === "consider") {
         notificationPayload = {
           title: "Background check needs review",

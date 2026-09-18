@@ -11,12 +11,9 @@ import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgen
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { updatePermissionFromText } from "../agents/permissionsConversation";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
-import { handleRefundRequest } from "../agents/refundHandler";
-import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 import { handleCaregiverSwapRequest } from "../agents/caregiverSwapHandler";
-import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -708,34 +705,24 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── CLIENT_SWAP_REQUEST — client wants a different caregiver for a visit ──
-    if (intent === "CLIENT_SWAP_REQUEST" && session.userType !== "caregiver") {
-      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-      try {
-        await handleClientSwapRequest(
-          session.userId ?? phone,
-          phone,
-          text,
-          // Session has no clientSwapStep yet — handler defaults to "identify_appointment"
-          session as unknown as Record<string, unknown>,
-          chatId
-        );
-      } finally {
-        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-      }
-      return;
-    }
-
     // ── UPDATE_PAYMENT_METHOD — generate Stripe billing portal link ───────────
     if (intent === "UPDATE_PAYMENT_METHOD" && session.userType !== "caregiver") {
       const clientId = session.userId ?? phone;
       try {
         const { handleToolCall } = await import("../mcp/server");
-        const result = await handleToolCall("get_payment_update_link", { clientId }) as { success?: boolean; url?: string };
+        const result = await handleToolCall("get_payment_update_link", { clientId }) as {
+          success?: boolean; url?: string; action?: string; cardOnFile?: { brand?: string | null; last4?: string | null } | null;
+        };
         if (result?.success && result?.url) {
-          await sendMessage(chatId,
-            `Here's a secure link to update your payment method:\n\n${result.url}\n\n` +
-            `This link expires in 5 minutes. Once updated, your next scheduled payment will use the new method.`
+          // The Payment Method tab's two buttons: "Add a card" (no billing account yet →
+          // the membership page) or "Manage payment method" (Stripe Billing Portal).
+          const onFile = result.cardOnFile?.last4
+            ? ` (currently ${result.cardOnFile.brand ?? "card"} ending ${result.cardOnFile.last4})`
+            : "";
+          await sendMessage(chatId, result.action === "add_card"
+            ? `You don't have a card on file yet. Add one here — it's the same page as the website's "Add a card" button:\n\n${result.url}`
+            : `Here's a secure link to manage your card${onFile}:\n\n${result.url}\n\n` +
+              `This link expires in 5 minutes. Once updated, your next payment will use the new card.`
           );
         } else {
           await sendMessage(chatId,
@@ -751,21 +738,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── REQUEST_REFUND — start the refund self-service state machine ─────────
-    if (intent === "REQUEST_REFUND" && session.userType !== "caregiver") {
-      const refundClientId = (session.userId ?? phone) as string;
-      // Initialise the state machine by calling with step = "identify_visit"
-      await handleRefundRequest(
-        refundClientId,
-        phone,
-        text,
-        session as unknown as Record<string, unknown>,
-        (msg: string) => sendMessage(chatId, msg)
-      );
-      return;
-    }
-
-    // ── VIEW_INVOICE / VIEW_CARE_PLAN_HISTORY — routed to QA agent ───────────
     if (
       (intent === "VIEW_INVOICE" && session.userType !== "caregiver") ||
       (intent === "VIEW_CARE_PLAN_HISTORY" && session.userType !== "caregiver")
@@ -788,24 +760,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       return;
     }
 
-    // ── APPROVE_TIMESHEET — client approves shift hours via dedicated handler ─
-    if (intent === "APPROVE_TIMESHEET" && session.userType !== "caregiver") {
-      if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-      try {
-        await handleTimesheetApproval(
-          (session.userId ?? phone) as string,
-          phone,
-          text,
-          { ...session as unknown as Record<string, unknown>, timesheetStep: "start" },
-          (msg: string) => sendMessage(chatId, msg)
-        );
-      } finally {
-        if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-      }
-      return;
-    }
-
-    // ── VIEW_EARNINGS — caregiver views their pay summary ────────────────────
     if (intent === "VIEW_EARNINGS" && session.userType === "caregiver") {
       if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
       try {

@@ -35,6 +35,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
+import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -534,6 +535,8 @@ export async function startResendBookingFlow(
     await sendMessage(chatId, "I couldn't find your account to look up that booking. Please try again.");
     return { started: false, reason: "no_client_id" };
   }
+  // PostsPage.tsx: the Resend button runs gate('booking', caregiverName).
+  if (await enforceClientGate(phone, chatId, clientId, "booking")) return { started: false, reason: "gated" };
   if (args.bookingRequestId) return seedResendAndRecap(phone, chatId, clientId, args.bookingRequestId);
 
   const options = await findResendableBookingRequests(clientId, args.caregiverId);
@@ -665,6 +668,8 @@ export async function startBookingFlow(
     await sendMessage(chatId, "I couldn't find your account to start this booking. Please try again.");
     return { started: false, reason: "no_client_id" };
   }
+  // PostsPage.tsx / MyCareTeam.tsx: every Send Booking / Re-book button runs gate('booking', ...).
+  if (await enforceClientGate(phone, chatId, clientId, "booking")) return { started: false, reason: "gated" };
 
   // Case A: the caller already resolved a specific interview (e.g. right
   // after a "strong" submit_interview_feedback result) — trust it directly,
@@ -1726,6 +1731,8 @@ async function handleBkConfirm(
     await sendMessage(chatId, "I couldn't find your account to send this booking. Please try again.");
     return;
   }
+  // PostsPage.tsx handleSendBooking runs inside gate('booking', caregiverName) — re-checked at send time.
+  if (await enforceClientGate(phone, chatId, clientId, "booking", data.caregiverName)) return;
   // Resend: the site's isResend branch updates the SAME booking_requests
   // doc — no new doc (2026-09-16).
   if (data.resendBookingRequestId) return commitResend(phone, chatId, session, data);

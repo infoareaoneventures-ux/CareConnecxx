@@ -9,7 +9,7 @@
 // interpreted as wall-clock time in the client's timezone instead
 // (America/Los_Angeles fallback — the service area is Santa Clara County).
 
-const DEFAULT_TZ = "America/Los_Angeles";
+export const DEFAULT_TZ = "America/Los_Angeles";
 
 export function parseScheduledTimeMs(value: string, timeZone: string = DEFAULT_TZ): number {
   if (!value) return NaN;
@@ -204,4 +204,10 @@ export function weekdayForDate(value: string): string | null {
 export function formatDateWithWeekday(value: string): string {
   const weekday = weekdayForDate(value);
   return weekday ? `${weekday}, ${formatDateForDisplay(value)}` : formatDateForDisplay(value);
+}
+
+// Time of day only ("7:05 PM") in the business zone — the Timesheets card's
+// clock in / clock out cells.
+export function formatClockTime(ms: number, timeZone: string = DEFAULT_TZ): string {
+  return new Date(ms).toLocaleTimeString("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
 }

@@ -65,10 +65,7 @@ vi.mock("../client", () => ({
 vi.mock("../../utils/openaiClient", () => ({ quickComplete: vi.fn(async () => "") }));
 vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async ({ fallback }: any) => fallback ?? "msg") }));
 vi.mock("../../agents/jobPostingFlow", () => ({ handleJobPostingStep: vi.fn(async () => {}) }));
-vi.mock("../../agents/refundHandler", () => ({ handleRefundRequest: vi.fn(async () => {}) }));
-vi.mock("../../agents/timesheetHandler", () => ({ handleTimesheetApproval: vi.fn(async () => {}) }));
 vi.mock("../../agents/availabilityHandler", () => ({ handleAvailabilityUpdate: vi.fn(async () => {}) }));
-vi.mock("../../agents/clientSwapRequestHandler", () => ({ handleClientSwapRequest: vi.fn(async () => {}) }));
 // Dynamically-imported modules in the APPROVE/DISPUTE branch:
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 vi.mock("../../shiftHours", () => ({ approveShiftHoursForClient: (...a: any[]) => (hoisted.approveShiftHoursForClient as Function).apply(null, a) }));
@@ -104,14 +101,13 @@ describe("U11 — routeClientStateMachines shift-hours approval", () => {
     expect(hoisted.sendMessage).toHaveBeenCalledWith("chat1", expect.stringContaining("Approved"));
   });
 
-  it("DISPUTE files an admin alert and arms the dispute-detail follow-up", async () => {
+  it("DISPUTE points the family at the modal's only option — propose corrected start/end — and files no admin alert (2026-09-17)", async () => {
     const outcome = await routeClientStateMachines(ctx("DISPUTE"));
     expect(outcome).toBe("handled");
-    const alert = hoisted.adds.find(a => a.path === "admin_alerts");
-    expect(alert?.data).toMatchObject({ type: "shift_hours_disputed", appointmentId: "appt1", resolved: false });
-    // It must NOT pay the caregiver.
+    expect(hoisted.adds.find(a => a.path === "admin_alerts")).toBeUndefined();
     expect(hoisted.approveShiftHoursForClient).not.toHaveBeenCalled();
-    expect(hoisted.logAgentAction).toHaveBeenCalledWith(expect.objectContaining({ actionType: "shift_hours_disputed" }));
+    expect(hoisted.sendMessage).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/clock-in and clock-out/));
+    expect(hoisted.updates.some(u => u.path === `agent_sessions/${PHONE}` && "pendingShiftApproval" in u.data)).toBe(true);
   });
 
   it("blocks a secondary member from approving/disputing payment", async () => {

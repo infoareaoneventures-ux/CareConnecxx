@@ -110,16 +110,15 @@ describe("safety tools", () => {
         expect(r._toolError).toBe(true);
       });
 
-      it("arrayUnions target + creates admin_alert", async () => {
+      it("arrayUnions target + records the blocked profile like the Inbox menu (no admin alert — the site writes none)", async () => {
         // _confirmedActionId bypasses the runtime HITL gate (see pendingActions.ts).
         const r = await handleToolCall("set_block_status", { userId: "u1", targetUserId: "u2", action: "block", reason: "spam", _confirmedActionId: "test" }) as any;
         expect(r.success).toBe(true);
         expect(r.blocked).toBe(true);
         const userSet = hoisted.sets.find(s => s.path === "users/u1");
         expect(userSet?.data.blockedUsers).toEqual({ __arrayUnion: ["u2"] });
-        const alert = hoisted.adds.find(a => a.path === "admin_alerts");
-        expect(alert?.data.type).toBe("user_blocked");
-        expect(alert?.data.severity).toBe("medium");
+        expect(userSet?.data.blockedUserProfiles?.u2).toEqual({ name: "", photo: "" });
+        expect(hoisted.adds.find(a => a.path === "admin_alerts")).toBeUndefined();
       });
     });
 
@@ -174,7 +173,7 @@ describe("safety tools", () => {
         expect(r._toolError).toBe(true);
       });
 
-      it("creates a report doc + admin_alert, tells user 24h follow-up", async () => {
+      it("creates the site's report doc (no admin alert — the site writes none), tells user 24h follow-up", async () => {
         const r = await handleToolCall("set_block_status", {
           userId: "u1", targetUserId: "u2", action: "report",
           category: "harassment", description: "Sent abusive messages",
@@ -192,8 +191,7 @@ describe("safety tools", () => {
         expect(report?.data.reason).toBe("Harassment");
         expect(report?.data.details).toBe("Sent abusive messages");
         expect(report?.data.status).toBeUndefined();
-        const alert = hoisted.adds.find(a => a.path === "admin_alerts");
-        expect(alert?.data.type).toBe("user_reported");
+        expect(hoisted.adds.find(a => a.path === "admin_alerts")).toBeUndefined();
       });
 
       it("truncates extremely long descriptions to 2000 chars", async () => {

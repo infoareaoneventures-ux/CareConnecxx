@@ -185,7 +185,7 @@ describe("onShiftStatusChanged — SMS parity", () => {
     const before = { status: "scheduled", clientId: CLIENT, caregiverId: CAREGIVER };
     const after  = { ...before, status: "in-progress", caregiverName: "Alice" };
     await (onShiftStatusChanged as any)(change(before, "s1", after), { params: { shiftId: "s1" }, eventId: "e1" });
-    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("arrived") }));
+    expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("started the visit") }));
   });
 
   it("completed texts the client", async () => {

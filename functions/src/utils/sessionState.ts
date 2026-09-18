@@ -9,7 +9,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingJobResponse",
   "awaitingAvailabilityConfirmation",
   "pendingShiftApproval",
-  "pendingDisputeDetail",
   "pendingAddFamilyMember",
   "collectingCredential",
   "collectingCredentialSetAt",
@@ -52,31 +51,12 @@ export const STATE_MACHINE_FLAGS = [
   // Swap acceptance (for caregivers contacted about covering a shift)
   "pendingSwapRequestId",
   "pendingSwapFromName",
-  // Client caregiver swap flow
-  "clientSwapStep",
-  "clientSwapStepSetAt",
-  "clientSwapVisits",
-  "clientSwapAppointmentId",
-  "clientSwapDate",
-  "clientSwapOptions",
   // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
   "healthcareFlowStep",
   "healthcareFlowData",
-  // Timesheet approval flow
-  "timesheetStep",
-  "pendingTimesheetId",
-  "pendingTimesheetDesc",
-  "pendingTimesheetQueue",
   // Availability update flow
   "availabilityStep",
   "pendingAvailability",
-  // Refund flow
-  "refundStep",
-  "refundStepSetAt",
-  "refundCandidates",
-  "refundAppointmentId",
-  "refundVisitDescription",
-  "refundReason",
   // Caregiver-initiated shift cancellation flow
   "cancelStep",
   "cancelCandidates",
@@ -212,13 +192,9 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["visitRequestFlowStep",    "requesting an extra visit"],
   ["interviewFlowStep",       "setting up your interview request"],
   ["healthcareFlowStep",      "that healthcare request"],
-  ["timesheetStep",           "reviewing the timesheet"],
-  ["pendingDisputeDetail",    "the hours you flagged"],
   ["awaitingIssueDescription", "the issue you started telling me about"],
-  ["refundStep",              "your refund request"],
   ["cancelStep",              "cancelling that shift"],
   ["swapStep",                "finding coverage for your shift"],
-  ["clientSwapStep",          "changing your caregiver"],
   ["availabilityStep",        "updating your availability"],
   ["profileUpdateStep",       "updating your profile"],
   ["collectingCredential",    "your credential upload"],
@@ -356,7 +332,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["awaitingAvailabilityConfirmation", "invite"],
   // Set by approvalNoticeDispatcher.ts alongside pendingShiftApprovalSetAt.
   ["pendingShiftApproval", { setAtField: "pendingShiftApprovalSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
-  ["pendingDisputeDetail", "generic"],
   ["pendingAddFamilyMember", "generic"],
   // SMS router parity: credentialCollector.ts clears this flow after
   // CREDENTIAL_FLOW_TTL_MS (30 min), not the 24h multi-step TTL.
@@ -372,11 +347,8 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
   // pendingSwapRequestIdSetAt); routeCaregiver.ts clears on the same stamp.
   ["pendingSwapRequestId", { setAtField: "pendingSwapSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
-  ["clientSwapStep", "stampedStep"],
   ["healthcareFlowStep", "generic"],
-  ["timesheetStep", "generic"],
   ["availabilityStep", "generic"],
-  ["refundStep", "stampedStep"],
   ["cancelStep", "generic"],
   ["profileUpdateStep", "generic"],
   // instantPayoutHandler.ts writes the ISO timestamp AS the flag value;
@@ -409,21 +381,8 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "swapShiftDate",
   "swapClientId",
   "pendingSwapFromName",
-  "clientSwapStepSetAt",
-  "clientSwapVisits",
-  "clientSwapAppointmentId",
-  "clientSwapDate",
-  "clientSwapOptions",
   "healthcareFlowData",
-  "pendingTimesheetId",
-  "pendingTimesheetDesc",
-  "pendingTimesheetQueue",
   "pendingAvailability",
-  "refundStepSetAt",
-  "refundCandidates",
-  "refundAppointmentId",
-  "refundVisitDescription",
-  "refundReason",
   "cancelCandidates",
   "cancelShiftId",
   "cancelShiftDate",

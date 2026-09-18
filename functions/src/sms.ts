@@ -194,8 +194,12 @@ export const SMS_TEMPLATES = {
   bookingCancelled: (name: string, date: string, reason?: string) =>
     `Evia: ${name} cancelled the appointment on ${formatDateForDisplay(date)}.${reason ? ` Reason: ${reason}` : ""} Open app for details.`,
 
-  newMessage: (senderName: string) =>
-    `Evia: New message from ${senderName}. Open the app to reply.`,
+  // The message itself rides along (Inbox parity, 2026-09-17); the recipient can
+  // reply right here and Evia posts it back into the same thread.
+  newMessage: (senderName: string, text?: string) =>
+    text
+      ? `Evia: New message from ${senderName}: "${text.slice(0, 1000)}" — reply here and I'll pass it along.`
+      : `Evia: New message from ${senderName}. Open the app to reply.`,
 
   interviewScheduled: (name: string, dateTime: string) =>
     `Evia: Video interview with ${name} scheduled for ${dateTime}. Open app to join when ready.`,

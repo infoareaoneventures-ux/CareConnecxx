@@ -218,15 +218,6 @@ export async function cancelPendingRequest(clientId: string, bookingRequestId: s
   if (br.clientId !== clientId) return { ok: false, code: "PERMISSION_DENIED", message: "Booking request does not belong to this client" };
   if (br.status !== "pending") return { ok: false, code: "INVALID_INPUT", message: `Only a pending request can be cancelled this way (status: ${br.status})` };
   await brRef.update({ status: "cancelled" });
-  // An Evia-negotiated request also has a live YES/NO offer doc — retire it so
-  // the caregiver can't accept a request the family just withdrew. The
-  // booking_requests write above already notifies them (onBookingRequestWrite).
-  if (br.agentTaskId) {
-    await db.collection("agent_tasks").doc(String(br.agentTaskId)).update({ status: "cancelled_by_client" }).catch(() => {});
-    const offerSnap = await db.collection("shift_offers")
-      .where("agentTaskId", "==", br.agentTaskId).where("status", "==", "pending").limit(1).get().catch(() => null);
-    if (offerSnap && !offerSnap.empty) await offerSnap.docs[0].ref.update({ status: "cancelled" }).catch(() => {});
-  }
   logAudit({ eventType: "booking_request_cancelled", userId: clientId, data: { source, bookingRequestId } }).catch(() => {});
   return { ok: true, kind: br.isShiftReplacement ? "replacement_request" : "pending_request", id: bookingRequestId, detail: String(br.caregiverName ?? "the caregiver") };
 }

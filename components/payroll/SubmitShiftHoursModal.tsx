@@ -74,6 +74,10 @@ function defaultStartEnd(shift: CompletedShift): { startIso: string; endIso: str
 // scheduled HH:MM strings, not byte-identical TZ handling, but this is only
 // ever advisory copy; the server is the actual authority either way.
 const SCHEDULE_GRACE_MS = 15 * 60 * 1000;
+// Mirrors functions/src/billing/config.ts EXPLICIT_APPROVAL_THRESHOLD_CENTS (50_000):
+// a gross total over this never auto-approves — the server flags it
+// requiresExplicitApproval, so the note below must say so too (2026-09-17).
+const EXPLICIT_APPROVAL_THRESHOLD_DOLLARS = 500;
 
 function parseHHMM(time: string): { h: number; m: number } | null {
   const m = time.trim().toUpperCase().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
@@ -141,7 +145,15 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
     if (!isFinite(s) || !isFinite(e)) return false;
     return s < scheduledWindow.start - SCHEDULE_GRACE_MS || e > scheduledWindow.end + SCHEDULE_GRACE_MS;
   }, [scheduledWindow, startIso, endIso]);
-  const needsExplicitApproval = hasLineItems || isOutsideScheduledWindow;
+  // Same threshold rule as the server (shiftBillingPolicy): gross total over $500
+  // waits for the client even with no extra charges and on-time hours.
+  const isOverThreshold = grandTotal != null && grandTotal > EXPLICIT_APPROVAL_THRESHOLD_DOLLARS;
+  const needsExplicitApproval = hasLineItems || isOutsideScheduledWindow || isOverThreshold;
+  const explicitApprovalReason = hasLineItems
+    ? 'submissions with extra charges'
+    : isOutsideScheduledWindow
+      ? "hours that don't match the scheduled time"
+      : `totals over ${EXPLICIT_APPROVAL_THRESHOLD_DOLLARS}`;
 
   // ── line item helpers ──
 
@@ -357,7 +369,7 @@ export const SubmitShiftHoursModal: React.FC<Props> = ({ shift, onClose, onSubmi
             {isOffline
               ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client will approve your hours for the record; payment is made directly.`
               : needsExplicitApproval
-                ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. The client needs to review and approve this manually — there's no automatic approval for ${hasLineItems ? 'submissions with extra charges' : "hours that don't match the scheduled time"}.`
+                ? `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. The client needs to review and approve this manually — there's no automatic approval for ${explicitApprovalReason}.`
                 : `Payment method: ${paymentMethodLabel(shift.paymentMethod)}. Client has 24 hours to approve or propose a correction. After that, hours auto-approve and Stripe processes payment.`}
           </p>
         </div>

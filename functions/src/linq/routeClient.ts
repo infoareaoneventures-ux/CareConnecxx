@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { sendMessage, startTyping, stopTyping, AgentSession } from "./client";
-import { isStateExpired, clearFlags, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
+import { isStateExpired, clearFlags } from "../utils/sessionState";
 import { quickComplete } from "../utils/openaiClient";
 import { handleJobPostingStep } from "../agents/jobPostingFlow";
 import { handleBookingFlowStep } from "../agents/bookingFlow";
@@ -9,10 +9,7 @@ import { handleRescheduleFlowStep } from "../agents/rescheduleFlow";
 import { handleVisitRequestFlowStep } from "../agents/visitRequestFlow";
 import { handleCancelFlowStep } from "../agents/cancelFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
-import { handleRefundRequest } from "../agents/refundHandler";
-import { handleTimesheetApproval } from "../agents/timesheetHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
-import { handleClientSwapRequest } from "../agents/clientSwapRequestHandler";
 
 const db = admin.firestore();
 
@@ -123,54 +120,18 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
       }).catch(() => {});
       await sendMessage(chatId, `Approved. ${caregiverName as string} will be paid $${amount as string}.`);
     } else {
-      // Create admin alert and set a pending state to capture the follow-up detail
-      const alertRef = await db.collection("admin_alerts").add({
-        type:          "shift_hours_disputed",
-        appointmentId,
-        caregiverName,
-        amount,
-        clientPhone:   phone,
-        createdAt:     new Date().toISOString(),
-        resolved:      false,
-        detail:        null,
-      });
-      await db.collection("agent_sessions").doc(phone).update({
-        pendingShiftApproval:    admin.firestore.FieldValue.delete(),
-        pendingDisputeDetail:    { alertId: alertRef.id, caregiverName },
-      });
-      const { logAgentAction } = await import("../observability/actionLedger");
-      logAgentAction({
-        actionType: "shift_hours_disputed",
-        status: "executed",
-        userId: session.userId ?? phone,
-        phone,
-        role: "client",
-        targetCollection: "admin_alerts",
-        targetDocId: alertRef.id,
-        metadata: { appointmentId, amount, caregiverName, source: "cara_sms" },
-      }).catch(() => {});
+      // The Timesheets modal has no "dispute" from Needs Review — the family
+      // proposes a corrected start/end (propose_correction) and the caregiver
+      // accepts or counters. Point them there; review_shift_hours makes that
+      // same write. (The old admin_alerts "dispute" + free-text detail was an
+      // Evia-only path — removed 2026-09-17.)
+      await db.collection("agent_sessions").doc(phone).update({ pendingShiftApproval: admin.firestore.FieldValue.delete() });
       await sendMessage(chatId,
-        `Got it - I flagged the hours for admin review.\n\n` +
-        `What looks wrong with the hours?`
+        `No problem — tell me the correct clock-in and clock-out times for ${caregiverName as string}'s visit and I'll send that correction to them to accept (they have 24 hours before it auto-accepts).`
       );
       return "handled";
     }
     await db.collection("agent_sessions").doc(phone).update({ pendingShiftApproval: admin.firestore.FieldValue.delete() });
-    return "handled";
-  }
-
-  // ── Shift hours dispute detail — follow-up message after DISPUTE ────────────
-  if ((session as any).pendingDisputeDetail) {
-    const { alertId, caregiverName: cgName } = (session as any).pendingDisputeDetail as {
-      alertId: string; caregiverName: string;
-    };
-    await db.collection("admin_alerts").doc(alertId).update({ detail: text });
-    await db.collection("agent_sessions").doc(phone).update({
-      pendingDisputeDetail: admin.firestore.FieldValue.delete(),
-    });
-    await sendMessage(chatId,
-      `Thanks - I added your note to the dispute for ${cgName}. Admin has the hour review now.`
-    );
     return "handled";
   }
 
@@ -325,66 +286,6 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
   // (modifyScheduleFlow.ts) was removed 2026-09-13 for the same reason —
   // modifyScheduleStep can no longer be set either.
 
-  // ── Refund self-service flow (multi-step state machine) ───────────────────
-  // 24h freshness gate — an abandoned refund flow had NO expiry and would
-  // consume unrelated texts days later. Missing stamp (legacy) = stale.
-  if (isFlowStale(session as unknown as Record<string, unknown>, "refundStep", "refundStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
-    await clearFlags(phone, db, [
-      "refundStep", "refundStepSetAt", "refundCandidates", "refundAppointmentId", "refundVisitDescription", "refundReason",
-    ]).catch(() => {});
-    (session as any).refundStep = undefined;
-    // fall through to normal routing
-  }
-  if ((session as any).refundStep) {
-    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-    try {
-      const refundClientId = ((session as any).userId ?? phone) as string;
-      await handleRefundRequest(
-        refundClientId,
-        phone,
-        text,
-        session as unknown as Record<string, unknown>,
-        (msg: string) => sendMessage(chatId, msg)
-      );
-    } finally {
-      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-    }
-    return "handled";
-  }
-
-  // ── Timesheet approval flow (multi-step state machine) ───────────────────
-  // Drop stale timesheet state (>7 days) so old APPROVE/DISPUTE prompts don't
-  // hijack unrelated future replies.
-  if ((session as any).timesheetStep) {
-    const setAt = (session as any).pendingTimesheetSetAt as string | undefined;
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    if (setAt && setAt < sevenDaysAgo) {
-      await db.collection("agent_sessions").doc(phone).update({
-        timesheetStep:         admin.firestore.FieldValue.delete(),
-        pendingTimesheetId:    admin.firestore.FieldValue.delete(),
-        pendingTimesheetDesc:  admin.firestore.FieldValue.delete(),
-        pendingTimesheetQueue: admin.firestore.FieldValue.delete(),
-        pendingTimesheetSetAt: admin.firestore.FieldValue.delete(),
-      }).catch(() => {});
-      (session as any).timesheetStep = undefined;
-    }
-  }
-  if ((session as any).timesheetStep) {
-    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-    try {
-      await handleTimesheetApproval(
-        (session.userId ?? phone) as string,
-        phone,
-        text,
-        session as unknown as Record<string, unknown>,
-        (msg: string) => sendMessage(chatId, msg)
-      );
-    } finally {
-      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-    }
-    return "handled";
-  }
-
   // ── Availability update flow (multi-step state machine) ──────────────────
   if ((session as any).availabilityStep) {
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
@@ -395,31 +296,6 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
         text,
         session as unknown as Record<string, unknown>,
         (msg: string) => sendMessage(chatId, msg)
-      );
-    } finally {
-      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
-    }
-    return "handled";
-  }
-
-  // ── Client caregiver swap flow — multi-step state machine ───────────────
-  // 24h freshness gate — same reasoning as refundStep above.
-  if (isFlowStale(session as unknown as Record<string, unknown>, "clientSwapStep", "clientSwapStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
-    await clearFlags(phone, db, [
-      "clientSwapStep", "clientSwapStepSetAt", "clientSwapVisits", "clientSwapAppointmentId", "clientSwapDate", "clientSwapOptions",
-    ]).catch(() => {});
-    (session as any).clientSwapStep = undefined;
-    // fall through to normal routing
-  }
-  if ((session as any).clientSwapStep) {
-    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
-    try {
-      await handleClientSwapRequest(
-        session.userId ?? phone,
-        phone,
-        text,
-        session as unknown as Record<string, unknown>,
-        chatId
       );
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});

@@ -126,6 +126,7 @@ vi.mock("../videoInterviewRequest", () => ({
 
 const resolveCommitmentMock = vi.fn(async (..._args: any[]) => {});
 vi.mock("../commitmentTracker", () => ({ resolveCommitment: (...a: any[]) => resolveCommitmentMock(...a) }));
+vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
 
 import { startInterviewFlow, handleInterviewFlowStep, buildInterviewRecap } from "../interviewFlow";
 
@@ -150,6 +151,7 @@ function seedOpenJobs(jobs: Array<{ id: string; title?: string; summary?: string
 
 beforeEach(() => {
   hoisted.reset();
+  hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "active" });
   sendMessage.mockClear();
   messagesCreate.mockReset();
   quickCompleteMock.mockReset();
@@ -161,6 +163,14 @@ beforeEach(() => {
 });
 
 describe("startInterviewFlow", () => {
+  it("is gated like the site's Request Interview button: a lapsed membership gets the plan text and no flow starts", async () => {
+    hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified" });
+    const res = await startInterviewFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
+    expect(res).toEqual({ started: false, reason: "gated" });
+    expect(sendMessage.mock.calls.map((c: any[]) => (typeof c[1] === "string" ? c[1] : JSON.stringify(c[1]))).join(" ")).toMatch(/Select a plan/);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.interviewFlowStep).toBeUndefined();
+  });
+
   it("skips straight to the date question when the client has no open job posts", async () => {
     const res = await startInterviewFlow(PHONE, CHAT, session(), { caregiverId: CG_ID });
     expect(res.started).toBe(true);

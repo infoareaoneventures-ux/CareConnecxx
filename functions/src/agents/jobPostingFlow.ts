@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
+import { enforceClientGate } from "./clientAccessGate";
 import { buildAndSaveJobPost, jobLiveMessage } from "./buildJobPost";
 import { defaultJobTitle } from "./jobPostContract";
 import { isConvergenceFlipped, caraOutputGuardEnabled } from "../config/featureFlags";
@@ -458,6 +459,9 @@ export async function startJobPostingFlow(
   chatId:  string,
   session: AgentSession
 ): Promise<void> {
+  // PostsPage.tsx / ClientDashboard.tsx: "New Request" runs gate('booking') before the wizard opens.
+  const gateClientId = session.userId as string | undefined;
+  if (gateClientId && await enforceClientGate(phone, chatId, gateClientId, "booking")) return;
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   await db.collection("agent_sessions").doc(phone).update({
     jobPostingStep: "jp_ask_frequency",

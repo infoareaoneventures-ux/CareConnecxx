@@ -74,6 +74,7 @@ vi.mock("../../utils/caraMessage", () => ({ generateCaraMessage: vi.fn(async (op
 vi.mock("../../safety/outputGuard", () => ({ guardModelOutput: () => ({ ok: true }), ANTI_INVENTION_CLAUSE: "ANTI_INVENTION" }));
 vi.mock("../../config/featureFlags", () => ({ caraOutputGuardEnabled: () => true }));
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
 vi.mock("../../utils/scheduledTime", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../utils/scheduledTime")>();
   return { ...real, businessTodayStr: () => "2026-09-15", businessNowMinutes: () => 8 * 60 };
@@ -117,7 +118,7 @@ function seed() {
     thursday: [{ start: "09:00", end: "17:00" }], friday: [{ start: "09:00", end: "17:00" }],
   } });
   hoisted.docState.set("caregiver_booked_slots/cg-basra", { slots: { Thu: [{ s: 14 * 60, e: 16 * 60 }], Tue: [{ s: 11 * 60, e: 13 * 60 }], Wed: [{ s: 11 * 60, e: 13 * 60 }] } });
-  hoisted.docState.set("users/client-uid", { firstName: "Hamse", lastName: "M" });
+  hoisted.docState.set("users/client-uid", { firstName: "Hamse", lastName: "M", identityCheckStatus: "verified", membershipStatus: "active" });
   hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID });
 }
 
@@ -125,9 +126,17 @@ const CAREGIVERS = [{ id: "cg-basra", name: "Basra Yousuf", bookings: [{ booking
 const PICKED = { caregivers: CAREGIVERS, caregiverId: "cg-basra", caregiverName: "Basra Yousuf", bookingId: "br-basra", jobTitle: "Senior care in San Jose" };
 const READY = { ...PICKED, days: ["Thu"], dayTimes: { Thu: [{ start: "09:00", end: "13:00" }] }, startDate: "2026-09-22", ongoing: true, notes: "please use the side door" };
 
-beforeEach(() => { hoisted.reset(); sendMessage.mockClear(); messagesCreate.mockReset(); });
+beforeEach(() => { hoisted.reset(); hoisted.docState.set("users/client-uid", { identityCheckStatus: "verified", membershipStatus: "active" }); sendMessage.mockClear(); messagesCreate.mockReset(); });
 
 describe("startVisitRequestFlow", () => {
+  it("is gated like the Calendar's + Request Visit button: a lapsed membership gets the plan text and no flow starts", async () => {
+    hoisted.docState.set("users/client-uid", { identityCheckStatus: "verified", membershipStatus: "past_due" });
+    const r = await startVisitRequestFlow(PHONE, CHAT, session(), {});
+    expect(r).toEqual({ started: false, reason: "gated" });
+    expect(sendMessage.mock.calls.map((c: any[]) => (typeof c[1] === "string" ? c[1] : JSON.stringify(c[1]))).join(" ")).toMatch(/Select a plan/);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.visitRequestFlowStep).toBeUndefined();
+  });
+
   it("one caregiver, one booking, and the family's words carry the day + time → straight to the start-date question", async () => {
     seed();
     modelReplies(JSON.stringify({ days: ["Thu"], dayTimes: { Thu: [{ start: "09:00", end: "13:00" }] }, allDays: null }));

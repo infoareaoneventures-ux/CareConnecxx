@@ -14,6 +14,8 @@ vi.mock("firebase-functions/v1", () => {
   return { https: { HttpsError, onCall: (f: any) => f }, firestore: { document: () => ({ onWrite: (f: any) => f, onUpdate: (f: any) => f }) }, pubsub: { schedule: () => ({ onRun: (f: any) => f }) }, config: () => ({}) };
 });
 
+vi.mock("./sms", () => ({ sendSMSToUser: vi.fn(async () => ({ success: true })) }));
+
 import { sanitizeShiftLineItems } from "./shiftHours";
 
 describe("sanitizeShiftLineItems — clamp/whitelist for charged amounts", () => {

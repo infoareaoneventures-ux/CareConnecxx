@@ -178,6 +178,8 @@ export { experimentScorecardWeekly } from './scheduled/experimentScorecard';
 export { upcomingVisitReminder } from './scheduled/upcomingVisitReminder';
 export { sendShiftTaskNudges } from './scheduled/shiftTaskNudges';
 export { sendInShiftUpdates } from './scheduled/inShiftUpdate';
+// Grouped family texts for tasks checked off / visit notes during a visit (minute sweep).
+export { flushFamilyVisitUpdates } from './scheduled/flushFamilyVisitUpdates';
 export { sendDayBeforeShiftReminders } from './scheduled/dayBeforeShiftReminder';
 export { sendClientDayBeforeReminders } from './scheduled/clientDayBeforeReminder';
 export { sendLocationRequestNudges } from './scheduled/locationRequestNudge';
@@ -221,8 +223,6 @@ export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 // Dispute resolution (Firestore trigger + hourly SLA check)
 export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution';
 
-// Refund auto-processing (executes Stripe refund when status → "approved")
-export { onRefundRequestWrite, reviewRefundRequest } from './triggers/refundProcessor';
 
 // CARE PLAN HISTORY trigger (saves version on every care plan write)
 export * from './triggers/carePlanHistory';

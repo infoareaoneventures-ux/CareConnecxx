@@ -86,6 +86,9 @@ export interface ActiveBooking {
   upcomingShifts:    ActiveBookingShift[];
   /** Card-level buttons: Message, Cancel Booking. */
   actions:           Array<"message" | "cancel_booking">;
+  /** The family's membership lapsed: no new visits are generated until it's reactivated (already-scheduled ones still happen). */
+  schedulePaused:    boolean;
+  schedulePausedNote: string | null;
 }
 
 type ShiftDoc = FirebaseFirestore.DocumentData & { id: string };
@@ -151,9 +154,17 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
     groups.get(key)!.push(s);
   }
 
+  // The booking docs, for the membership-pause flag the generator writes.
+  const bookingIds = [...groups.keys()].filter((k) => list0HasBooking(groups.get(k)!));
+  const bookingDocs = await Promise.all(bookingIds.map((id) => db.collection("booking_requests").doc(id).get().catch(() => null)));
+  const bookingById = new Map<string, Record<string, unknown>>();
+  bookingIds.forEach((id, i) => { const d = bookingDocs[i]; if (d && d.exists) bookingById.set(id, d.data() as Record<string, unknown>); });
+
   const out: ActiveBooking[] = [];
-  for (const [, list] of groups) {
+  for (const [key, list] of groups) {
     const base = list[0];
+    const bookingDoc = bookingById.get(key);
+    const schedulePaused = !!bookingDoc?.schedulePausedAt;
     const sorted = [...list].sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || String(a.startTime ?? "").localeCompare(String(b.startTime ?? "")));
     const schedule = (base.schedule ?? {}) as Record<string, unknown>;
     const dst = (schedule.dayShiftTimes ?? {}) as Record<string, Array<{ start?: string; end?: string }>>;
@@ -186,7 +197,13 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
       emergencyContact:  (base.emergencyContact as Record<string, unknown> | undefined) ?? null,
       upcomingShifts:    sorted.map((s) => shiftRow(s, base)),
       actions:           ["message", "cancel_booking"],
+      schedulePaused,
+      schedulePausedNote: schedulePaused ? "Schedule paused — the family's membership is inactive. Visits already on the calendar still happen; reactivating the membership resumes new visits." : null,
     });
   }
   return out;
+}
+
+function list0HasBooking(list: ShiftDoc[]): boolean {
+  return typeof list[0]?.bookingRequestId === "string" && !!list[0].bookingRequestId;
 }

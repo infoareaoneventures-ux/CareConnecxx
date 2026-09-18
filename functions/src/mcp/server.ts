@@ -18,7 +18,6 @@ import { getPreferences } from "../memory/preferences";
 import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingActionById, isConfirmedActionValid } from "../agents/pendingActions";
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
-import { isCaregiverBookable } from "../utils/caregiverEligibility";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
 import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
 import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue, shiftDisplayStatus, acceptRescheduleProposal, clearRescheduleProposal } from "../agents/shiftReschedule";
@@ -31,9 +30,7 @@ import {
 } from "../agents/carePlanPage";
 import { cancelVisit, cancelWholeBooking, cancelPendingRequest, cancelPendingAmendment, withdrawReplacementRequest } from "../agents/bookingCancel";
 import { createScheduleAmendment, loadCaregiverAvailability, checkVisitBlock, normDayAbbr, blockToRange, describeBlock, describeRange, ABBR_TO_FULL as VISIT_DAY_FULL, type TimeBlock as VisitTimeBlock } from "../agents/visitRequest";
-import { isSeededCaregiver } from "../agents/actions/getCaregiverPreviewAction";
 import { bookedWindowMillis, createValidatedShiftHours, ValidatedShiftHoursError } from "../billing/createValidatedShiftHours";
-import { resolveShiftBillableAmount } from "../billing/shiftBillingAmounts";
 import { resetShiftPaymentForRetry } from "../billing/shiftPaymentRetry";
 import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 
@@ -679,9 +676,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "send_caregiver_message",
     description:
-      "Send a message to a caregiver on behalf of the family. Use when the family asks you to relay something to the caregiver. " +
-      "Delivers by text AND posts into the same chat thread the family sees in their website Inbox, so a caregiver's reply " +
-      "(sent via send_client_message) shows up there too, not just in this SMS conversation. " +
+      "The website Inbox's composer: posts the family's message into their shared thread with that caregiver (the same " +
+      "chatRooms write the page makes). The caregiver is then notified exactly like a website message — in-app and by text " +
+      "with the message itself — so do NOT also text them yourself. Same paywall as the page (identity, then membership). " +
       "Tell the family what you're sending before you call this tool.",
     input_schema: {
       type: "object",
@@ -829,6 +826,23 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "set_recipient_photo",
+    description:
+      "The Care Plan page's recipient photo (the avatar on each recipient tab — click → pick a file). Over text the file is the " +
+      "photo the family just attached: call this right after a message like 'this is Samira' with a picture, or when the family " +
+      "sends a photo of a care recipient. With one recipient on file the name is optional; with several and no name, ask which " +
+      "recipient it is before calling. Saves to the same storage folder and roster field the page uses.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId:           { type: "string", description: "Injected automatically — the owning family account." },
+        recipientFirstName: { type: "string", description: "Which care recipient the photo is of (optional when there is only one)." },
+        photoUrl:           { type: "string", description: "The saved photo URL from the '[The user sent a photo … saved at …]' line; defaults to the most recent photo the family sent." },
+      },
+      required: ["clientId"],
+    },
+  },
+  {
     name: "delete_review",
     description: "Delete a review the family previously left for a caregiver. Permanent — confirm before calling.",
     input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, reviewId: { type: "string", description: "The review document id." } }, required: ["clientId", "reviewId"] },
@@ -966,9 +980,13 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_pending_tasks",
     description:
-      "Check for items that need the family's attention — pending booking approvals, " +
-      "hire decisions after interviews, and unreviewed job applications. " +
-      "Call this proactively when the family says hello or asks 'anything going on?'",
+      "Everything the website shows the family as pending, in one read — the exact items and conditions of its pages: " +
+      "booking requests and visit requests still awaiting the caregiver (My Bookings > Requests), visits marked Needs Replacement " +
+      "(Find Replacement / Skip) and reschedule proposals (a caregiver's proposal is waiting on the family; the family's own is waiting " +
+      "on the caregiver), interview requests and interview reschedule proposals (Care Requests > Interviews), the Care Plan review " +
+      "banner, and timesheets to review. Each item says waitingOn: 'you' (the family) or 'caregiver', and which page it lives on. " +
+      "Call this when the family says hello or asks 'anything going on / anything I need to do?'. Nothing else is ever pending — " +
+      "if it isn't here, don't say something is waiting.",
     input_schema: {
       type: "object",
       properties: {
@@ -1403,6 +1421,7 @@ export const MCP_TOOLS: McpTool[] = [
         proposedStartTime: { type: "string", description: "Corrected start time (required for propose_correction), e.g. '2:00 PM'" },
         proposedEndTime:   { type: "string", description: "Corrected end time (required for propose_correction), e.g. '5:00 PM'" },
         proposalReason:    { type: "string", description: "Why the correction is being proposed (optional)" },
+        lineItems:         { type: "array", description: "Corrected additional charges for propose_correction (the modal lets the family remove a charge); omit to keep the submitted ones", items: { type: "object" } },
       },
       required: ["clientId", "appointmentId", "action"],
     },
@@ -1669,46 +1688,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_invoice_history",
-    description:
-      "Get a client's past shift invoices — caregiver name, date, hours worked, amount, and payment status.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId: { type: "string", description: "The client's user ID" },
-        limit:    { type: "number", description: "Number of invoices to return (default 5, max 20)" },
-      },
-      required: ["clientId"],
-    },
-  },
-  {
-    name: "get_invoice_details",
-    description:
-      "Get a detailed itemized breakdown of a client's invoice — each visit with date, caregiver, hours, rate, and amount. Use when client asks to see their bill.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId:  { type: "string", description: "The client's user ID" },
-        invoiceId: { type: "string", description: "Specific invoice ID (optional — omit for most recent)" },
-      },
-      required: ["clientId"],
-    },
-  },
-  {
-    name: "create_refund_request",
-    description:
-      "Submit a refund request for a completed visit. Creates a pending refund for admin review. Only call after client has confirmed which visit and agreed to submit.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId:      { type: "string", description: "The client's user ID" },
-        appointmentId: { type: "string", description: "The appointment document ID to refund" },
-        reason:        { type: "string", description: "Reason for refund (optional)" },
-      },
-      required: ["clientId", "appointmentId"],
-    },
-  },
-  {
     name: "edit_job_post",
     description:
       "Edit an existing OPEN job post — the website's Edit post modal (Care Requests > Posts > ... > Edit post), same " +
@@ -1772,14 +1751,20 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_recent_messages",
     description:
-      "Get the most recent inbox messages between the user and their caregiver(s) or client(s). " +
-      "Use when the user asks what was said, wants to catch up on messages, or references a prior conversation.",
+      "The website's Inbox page, exactly. Without counterpartId: the thread list — every conversation (newest first) minus " +
+      "blocked or deleted ones, grouped like the page into My Care Team (caregivers on an accepted booking), Other Caregivers " +
+      "and Support, each with the last message (or 'Start a conversation'), its time and unread count; 'query' is the page's " +
+      "search box (name or last message). With counterpartId: that conversation's messages oldest → newest (hiding anything " +
+      "before the family deleted it), and it marks the thread read exactly like opening it on the page. Use for 'what did " +
+      "Basra say', 'any new messages', 'catch me up'.",
     input_schema: {
       type: "object",
       properties: {
         userId:       { type: "string", description: "The current user's ID (client or caregiver)" },
         counterpartId:{ type: "string", description: "Specific caregiver or client ID to filter (optional)" },
-        limit:        { type: "number", description: "Messages per thread to return (default 5, max 20)" },
+        limit:        { type: "number", description: "Messages to return for one conversation (default 20, max 50)" },
+        query:        { type: "string", description: "The Inbox search box — filters the thread list by contact name or last message" },
+        role:         { type: "string", enum: ["client", "caregiver"], description: "Whose inbox this is (default client)" },
       },
       required: ["userId"],
     },
@@ -1932,11 +1917,19 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_pending_timesheets",
     description:
-      "List shift-hour submissions awaiting client approval. Returns caregiver name, date, hours, and amount owed.",
+      "The website's Timesheets page, exactly. tab 'needs_review' (default) = the Needs Review pill: the caregiver's submitted hours " +
+      "waiting on the family (Review & Approve), counters waiting on the family (Review & Respond), failed payments (Retry payment), " +
+      "plus the ones waiting on someone else (correction sent, under review) — grouped by caregiver like the page. tab 'history' = " +
+      "the History pill: approved / auto-approved / paid, with an optional from/to date range and the report totals (shifts, hours, pay). " +
+      "Each row is the card: caregiver, date, clock in/out, hours (h:mm:ss), rate, base pay, additional charges, total, status label " +
+      "and hint, correction timeline, and its button. Use for 'anything to approve', 'what did I pay Basra', 'my payment history'.",
     input_schema: {
       type: "object",
       properties: {
         clientId: { type: "string", description: "The client's user ID" },
+        tab:      { type: "string", enum: ["needs_review", "history"], description: "Which pill (default needs_review)" },
+        from:     { type: "string", description: "History report start date, YYYY-MM-DD (optional)" },
+        to:       { type: "string", description: "History report end date, YYYY-MM-DD (optional)" },
       },
       required: ["clientId"],
     },
@@ -1958,8 +1951,9 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_payment_update_link",
     description:
-      "Generate a Stripe Billing Portal link for the client to securely update their payment method. " +
-      "Send this link to the client. Do NOT ask for card details directly.",
+      "The website's Timesheets > Payment Method tab: whether a card is on file (brand + last 4) and the same button the page shows — " +
+      "'Add a card' (a membership-page link when the family has no billing account yet) or 'Manage payment method' (a Stripe Billing " +
+      "Portal link that returns to the Timesheets page). Send the link; never ask for card details in chat.",
     input_schema: {
       type: "object",
       properties: {
@@ -2154,18 +2148,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId", "swapRequestId"],
     },
   },
-  {
-    name: "initiate_client_swap",
-    description: "Find available replacement caregivers for a specific visit date. Call when a client wants to swap their caregiver for a specific date.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId:      { type: "string", description: "The client's user ID" },
-        appointmentId: { type: "string", description: "The appointment to swap caregiver for" },
-      },
-      required: ["clientId", "appointmentId"],
-    },
-  },
   // ── Account & profile ─────────────────────────────────────────────────────
   {
     name: "update_user_profile",
@@ -2318,19 +2300,6 @@ export const MCP_TOOLS: McpTool[] = [
         includeResolved: { type: "boolean", description: "Include resolved/closed tickets (default false)" },
       },
       required: ["userId"],
-    },
-  },
-  {
-    name: "get_refund_requests",
-    description:
-      "List the refund requests a client has submitted and their review status. " +
-      "Use when the family asks 'what happened with my refund?' or 'is my refund approved yet?'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        clientId: { type: "string", description: "The client's Firestore document ID" },
-      },
-      required: ["clientId"],
     },
   },
   {
@@ -2935,24 +2904,31 @@ function toolError(code: ToolErrorCode, message: string) {
 // exactly — identity verification first, then an active membership — for the
 // SAME three action types the site gates: message, booking, interview. General
 // browsing/Q&A was never gated on the site either, so this is deliberately NOT
-// called from read-only or conversational paths, only these three action tools.
+// called from read-only or conversational paths. The rule itself lives in
+// agents/clientAccessGate.ts (shared with the scripted flows). When the
+// family's conversation can be found, the block is texted the way the site
+// shows its modal (the modal's copy + its CTA link) and the tool result tells
+// the agent to add nothing.
 async function checkClientAccessGate(
   clientId: string | undefined,
   action: "message" | "booking" | "interview",
+  opts: { phone?: unknown; caregiverName?: string } = {},
 ): Promise<ReturnType<typeof toolError> | null> {
   if (!clientId) return toolError("PERMISSION_DENIED", "Cannot verify who this is for — clientId is required.");
-  const clientSnap = await db.collection("users").doc(clientId).get();
-  const clientData = clientSnap.data() ?? {};
-  if (clientData.identityCheckStatus !== "verified") {
-    return toolError("IDENTITY_REQUIRED", `This family needs to complete identity verification before ${action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview"} — send them the identity verification link.`);
+  const { checkClientAccess, textClientGateBlock, findClientSession } = await import("../agents/clientAccessGate");
+  const res = await checkClientAccess(clientId, action, opts.caregiverName);
+  if (res.ok) return null;
+  const doing = action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview";
+  const code: ToolErrorCode = res.block === "identity" ? "IDENTITY_REQUIRED" : "MEMBERSHIP_REQUIRED";
+  const need = res.block === "identity" ? "needs to complete identity verification" : "needs an active membership";
+  const conv = await findClientSession(clientId, opts.phone).catch(() => null);
+  if (conv) {
+    await textClientGateBlock(conv.phone, conv.chatId, res.block, action, opts.caregiverName);
+    return toolError(code, `This family ${need} before ${doing}. Evia has ALREADY texted them the ${res.block === "identity" ? "identity check" : "plan selection"} link — send NOTHING else this turn.`);
   }
-  const membershipActive = clientData.subscriptionActive === true
-    || clientData.membershipStatus === "active"
-    || clientData.membershipStatus === "trialing";
-  if (!membershipActive) {
-    return toolError("MEMBERSHIP_REQUIRED", `This family's membership isn't active — they need an active membership before ${action === "message" ? "messaging a caregiver" : action === "booking" ? "booking a caregiver" : "scheduling an interview"}. Offer to send the membership payment link.`);
-  }
-  return null;
+  return toolError(code, res.block === "identity"
+    ? `This family needs to complete identity verification before ${doing} — send them the identity verification link.`
+    : `This family's membership isn't active — they need an active membership before ${doing}. Offer to send the membership payment link.`);
 }
 
 // Ownership gate for senior PHI reads. The owning client is recorded on
@@ -3819,6 +3795,7 @@ async function executeToolCall(
             careNeeds: Array.isArray(s.careNeeds) ? s.careNeeds : [],
             tasksCompleted: Array.isArray(s.tasksCompleted) ? s.tasksCompleted : [],
             startedAt: s.startedAt ?? null, completedAt: s.completedAt ?? null, completionNotes: s.completionNotes ?? null,
+            notesLog: Array.isArray(s.notesLog) ? s.notesLog : [],
             actions,
             ...(s.reschedulePendingDate ? { reschedulePendingDate: s.reschedulePendingDate, reschedulePendingStartTime: s.reschedulePendingStartTime ?? null, reschedulePendingEndTime: s.reschedulePendingEndTime ?? null, rescheduledBy: s.rescheduledBy ?? null } : {}),
           };
@@ -4375,6 +4352,10 @@ async function executeToolCall(
         if (br.clientId !== clientId) return toolError("PERMISSION_DENIED", "Booking does not belong to this client");
         if (!br.caregiverId) return toolError("INVALID_INPUT", "Booking has no caregiver");
 
+        // Schedule.tsx: "+ Request Visit" and the modal's submit both run gate('booking', caregiverName).
+        const amendGateError = await checkClientAccessGate(clientId as string, "booking", { phone: (input as Record<string, unknown>).phone, caregiverName: (br.caregiverName as string | undefined) ?? undefined });
+        if (amendGateError) return amendGateError;
+
         // The modal's shape (newDays) or the legacy single-day form.
         const newDays: Record<string, VisitTimeBlock[]> = {};
         if (rawNewDays && typeof rawNewDays === "object") {
@@ -4585,7 +4566,7 @@ async function executeToolCall(
       case "send_caregiver_message": {
         const { caregiverId, message, clientId } = input;
         if (!caregiverId || !message) return toolError("INVALID_INPUT", "caregiverId and message are required");
-        const gateError = await checkClientAccessGate(clientId as string | undefined, "message");
+        const gateError = await checkClientAccessGate(clientId as string | undefined, "message", { phone: (input as Record<string, unknown>).phone });
         if (gateError) return gateError;
         const cgSnap = await db.collection("caregivers").doc(caregiverId as string).get();
         if (!cgSnap.exists) return toolError("NOT_FOUND", "Caregiver not found");
@@ -4594,35 +4575,28 @@ async function executeToolCall(
         if (cgSnap.data()?.profileVisibility === "hidden") {
           return toolError("NOT_FOUND", "Caregiver not found");
         }
-        const cgPhone = await resolveCaregiverPhone(caregiverId as string);
-        if (!cgPhone) return toolError("NOT_FOUND", "Caregiver phone not on file");
         const caregiverName = (cgSnap.data()?.name as string | undefined) ?? "";
-        const { trySend } = await import("../utils/toolNotify");
-        const notification = await trySend(cgPhone, `Message from family: ${message as string}`, "mcp:send_caregiver_message");
-        // Also land the message in the same persisted chatRooms thread the
-        // website's Inbox reads from (FindCaregivers.tsx's openChat) — the SMS
-        // alone left no visible, two-way thread for the family to see replies
-        // in. Fail-soft: a thread-write hiccup must never block the SMS relay,
-        // which is the guaranteed-delivery path. Requires clientId, which is
-        // optional on this tool's input — skip silently if it's absent.
-        if (clientId) {
-          try {
-            const clientSnap = await db.collection("users").doc(clientId as string).get();
-            const clientName = (clientSnap.data()?.name as string | undefined)
-              ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
-            const { relayIntoSharedChatThread } = await import("../utils/chatThread");
-            await relayIntoSharedChatThread({
-              clientId: clientId as string, clientName,
-              caregiverId: caregiverId as string, caregiverName,
-              senderId: clientId as string, senderName: clientName,
-              text: message as string,
-            });
-          } catch (err) {
-            console.error("send_caregiver_message: chatRooms thread write failed (SMS still sent):", err);
-          }
-        }
-        logAudit({ eventType: "health_data_accessed", userId: clientId as string ?? "", data: { source: "mcp:send_caregiver_message", caregiverId, notificationSent: notification.sent } }).catch(() => {});
-        return { success: true, sent: notification.sent, caregiverName, notification };
+        // The Inbox composer (InboxView.tsx handleSend → chatService.sendMessage):
+        // one message doc + the room update, nothing else. The caregiver is
+        // notified by the SAME trigger a website-typed message fires
+        // (onMessageSent: in-app bell + the message texted to them) — this tool
+        // no longer sends its own SMS (2026-09-17, Inbox parity).
+        const clientSnap = await db.collection("users").doc(clientId as string).get();
+        const clientName = (clientSnap.data()?.name as string | undefined)
+          ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
+        const { relayIntoSharedChatThread } = await import("../utils/chatThread");
+        await relayIntoSharedChatThread({
+          clientId: clientId as string, clientName,
+          caregiverId: caregiverId as string, caregiverName,
+          senderId: clientId as string, senderName: clientName,
+          text: message as string,
+        });
+        logAudit({ eventType: "health_data_accessed", userId: clientId as string, data: { source: "mcp:send_caregiver_message", caregiverId } }).catch(() => {});
+        return {
+          success: true, sent: true, caregiverName,
+          notification: { sent: true, via: "inbox" },
+          instruction: "The message is in the shared Inbox thread and the caregiver is being notified exactly like a website message. Tell the family it's sent — nothing else.",
+        };
       }
 
       case "request_location": {
@@ -4833,37 +4807,58 @@ async function executeToolCall(
       }
 
       case "get_pending_tasks": {
-        if (!input.clientId) return toolError("INVALID_INPUT", "clientId is required");
-        logAudit({ eventType: "health_data_accessed", userId: input.clientId as string, data: { source: "mcp:get_pending_tasks" } }).catch(() => {});
-        // Note: an earlier version also queried `interviews` for status
-        // "awaiting_hire_decision" — that status is written nowhere (the
-        // awaiting-decision state lives in agent_sessions.pendingInterviewOutcome),
-        // so the branch always returned empty and was removed.
-        const taskSnap = await db.collection("agent_tasks")
-          .where("clientId", "==", input.clientId)
-          .where("status",   "in", ["awaiting_approval", "pending"])
-          .limit(5)
-          .get();
-        // Oldest first with age surfaced — a 3-day-old approval should lead
-        // the reply, not sit wherever Firestore returned it.
-        const withAge = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
-          const data = d.data();
-          const createdMs = typeof data.createdAt === "string" ? Date.parse(data.createdAt) : NaN;
-          const ageHours = Number.isFinite(createdMs)
-            ? Math.max(0, Math.floor((Date.now() - createdMs) / 3_600_000))
-            : null;
-          return { id: d.id, ...data, ageHours };
-        };
-        const byOldest = (a: { ageHours: number | null }, b: { ageHours: number | null }) =>
-          (b.ageHours ?? -1) - (a.ageHours ?? -1);
-        const tasks = taskSnap.docs.map(withAge).sort(byOldest);
-        const total = tasks.length;
+        // The site has no "tasks" list — what a family sees waiting on them is
+        // spread across My Bookings (the Requests tab; the Review / Find
+        // Replacement / Skip buttons), Care Requests > Interviews (Accept new
+        // time), Care Plan (the review banner) and Payments (timesheets to
+        // review). This is exactly that set, read from the same collections with
+        // the same conditions — never an Evia-only queue. (It used to read
+        // agent_tasks, the retired booking/replacement pipeline: live-caught
+        // 2026-09-17 surfacing a "replacement choice" the site never showed.)
+        const ptClientId = input.clientId as string | undefined;
+        if (!ptClientId) return toolError("INVALID_INPUT", "clientId is required");
+        logAudit({ eventType: "health_data_accessed", userId: ptClientId, data: { source: "mcp:get_pending_tasks" } }).catch(() => {});
+        const [ptBrSnap, ptAmSnap, ptShiftSnap, ptIvRows, ptCpSnap, ptTsSnap] = await Promise.all([
+          db.collection("booking_requests").where("clientId", "==", ptClientId).where("status", "==", "pending").get(),
+          db.collection("booking_amendments").where("clientId", "==", ptClientId).where("status", "==", "pending").get(),
+          db.collection("shifts").where("clientId", "==", ptClientId).where("status", "in", ["scheduled", "needs_replacement"]).get(),
+          listClientInterviews(ptClientId).catch(() => [] as Awaited<ReturnType<typeof listClientInterviews>>),
+          db.collection("carePlans").doc(ptClientId).get(),
+          db.collection("shiftHours").where("clientId", "==", ptClientId).where("status", "==", "pending_client_review").get(),
+        ]);
+        const ptItems: Array<Record<string, unknown>> = [];
+        ptBrSnap.docs.forEach((d) => {
+          const r = d.data();
+          ptItems.push({ kind: "booking_request_pending", waitingOn: "caregiver", page: "My Bookings > Requests", bookingRequestId: d.id, caregiverName: r.caregiverName ?? null, isResend: r.isResend === true, createdAt: r.createdAt ?? null });
+        });
+        ptAmSnap.docs.forEach((d) => {
+          const a = d.data();
+          ptItems.push({ kind: "visit_request_pending", waitingOn: "caregiver", page: "My Bookings > Requests", amendmentId: d.id, bookingRequestId: a.bookingRequestId ?? null, caregiverName: a.caregiverName ?? null, startDate: a.startDate ?? null, createdAt: a.createdAt ?? null });
+        });
+        ptShiftSnap.docs.forEach((d) => {
+          const sh = d.data();
+          const base = { shiftId: d.id, date: sh.date ?? null, dayOfWeek: weekdayForDate(String(sh.date ?? "")), startTime: sh.startTime ?? null, endTime: sh.endTime ?? null, caregiverName: sh.caregiverName ?? null };
+          if (sh.status === "needs_replacement") {
+            // ClientVisitsPage: Find Replacement always; Skip only while no replacement request is out.
+            ptItems.push({ kind: "visit_needs_replacement", waitingOn: "you", page: "My Bookings > Active Bookings", actions: sh.replacementRequestId ? ["find_replacement"] : ["find_replacement", "skip"], replacementRequestId: sh.replacementRequestId ?? null, ...base });
+          } else if (sh.reschedulePendingDate && sh.rescheduledBy) {
+            // ClientVisitsPage: a caregiver proposal shows Review (accept/decline); the family's own proposal waits on the caregiver.
+            ptItems.push({ kind: "visit_reschedule_proposal", waitingOn: sh.rescheduledBy === "caregiver" ? "you" : "caregiver", page: "My Bookings > Active Bookings", proposedDate: sh.reschedulePendingDate, proposedDayOfWeek: weekdayForDate(String(sh.reschedulePendingDate)), proposedStartTime: sh.reschedulePendingStartTime ?? null, proposedEndTime: sh.reschedulePendingEndTime ?? null, ...base });
+          }
+        });
+        ptIvRows.forEach((iv) => {
+          if (iv.rescheduleWaitingOn) ptItems.push({ kind: "interview_reschedule_proposal", waitingOn: iv.rescheduleWaitingOn, page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, proposedTimeLocal: iv.reschedulePendingTimeLocal, actions: iv.actions });
+          else if (iv.displayStatus === "pending") ptItems.push({ kind: "interview_request_pending", waitingOn: "caregiver", page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, scheduledTimeLocal: iv.scheduledTimeLocal });
+        });
+        if (ptCpSnap.exists && !ptCpSnap.data()?.carePlanReviewedAt) ptItems.push({ kind: "care_plan_review", waitingOn: "you", page: "Care Plan", actions: ["looks_good"] });
+        if (!ptTsSnap.empty) ptItems.push({ kind: "timesheets_to_review", waitingOn: "you", page: "Payments > Timesheets", count: ptTsSnap.size });
+        const waitingOnYou = ptItems.filter((i) => i.waitingOn === "you").length;
         return {
           success: true,
-          total,
-          tasks,
-          interviews: [], // kept for response-shape compatibility (see note above)
-          summary: total === 0 ? "Nothing pending" : `${total} item(s) need your attention`,
+          total: ptItems.length,
+          waitingOnYou,
+          items: ptItems,
+          summary: ptItems.length === 0 ? "Nothing pending" : `${waitingOnYou} item(s) waiting on the family, ${ptItems.length - waitingOnYou} waiting on a caregiver`,
         };
       }
 
@@ -5469,6 +5464,28 @@ async function executeToolCall(
       return { success: true, removed: r.removed };
     }
 
+    if (name === "set_recipient_photo") {
+      // The Care Plan page's recipient avatar (CarePlan.tsx handleRecipientPhotoUpload):
+      // same storage folder, same roster field. Over text the "file" is the photo the
+      // family attached, which the inbound media handler already stored.
+      const { clientId, recipientFirstName, photoUrl, phone } = input as Record<string, unknown>;
+      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
+      let sourceUrl = typeof photoUrl === "string" && photoUrl ? photoUrl : "";
+      if (!sourceUrl && typeof phone === "string" && phone) {
+        const sess = (await db.collection("agent_sessions").doc(phone).get()).data();
+        const last = sess?.lastSharedMedia as { url?: string; kind?: string } | undefined;
+        if (last?.kind === "image" && last.url) sourceUrl = last.url;
+      }
+      if (!sourceUrl) {
+        return toolError("INVALID_INPUT", `No photo to save. Ask the family to attach the photo here in the conversation — or, if photos don't come through on their phone, send them the Care Plan page to upload it: ${getAppUrl()}/client/care-plan`);
+      }
+      const { setRecipientPhoto } = await import("../agents/carePlanPage");
+      const r = await setRecipientPhoto(clientId as string, { firstName: typeof recipientFirstName === "string" ? recipientFirstName : undefined, sourceUrl });
+      if (!r.ok) return toolError(r.code, r.message + (r.options?.length ? ` Options: ${r.options.join(", ")}.` : ""));
+      logAudit({ eventType: "senior_profile_updated", userId: clientId as string, data: { source: "mcp:set_recipient_photo", recipient: r.recipient.firstName } }).catch(() => {});
+      return { success: true, recipient: r.recipient.name, photoURL: r.photoURL, instruction: "Tell the family the photo is saved on the Care Plan for that recipient — one short line." };
+    }
+
     if (name === "delete_review") {
       const { clientId, reviewId } = input as Record<string, unknown>;
       if (!clientId || !reviewId) return toolError("INVALID_INPUT", "clientId and reviewId are required");
@@ -5557,6 +5574,11 @@ async function executeToolCall(
         clientId, title, notes, careTypes, careNeedDetails, frequency, days, timeOfDay, hourlyRate, streetAddress,
         zipCode, startDate, endDate, careLevel, minHoursPerWeek, caregiversNeeded, careRecipients,
       } = input as Record<string, unknown>;
+      // The page's "New Request" button runs gate('booking') (PostsPage.tsx / ClientDashboard.tsx).
+      if (clientId) {
+        const jpGateError = await checkClientAccessGate(clientId as string, "booking", { phone: (input as Record<string, unknown>).phone });
+        if (jpGateError) return jpGateError;
+      }
       // 2026-09-07: title/notes brought up to full parity with the website's
       // required 'Job title' (10-80 chars) and 'Details' (50-2500 chars)
       // fields — this tool previously had no way to collect either at all, so
@@ -5714,7 +5736,7 @@ async function executeToolCall(
         if (!preferredDate || !preferredTime) {
           return toolError("INVALID_INPUT", "preferredDate and preferredTime are required to accept an applicant — accepting means requesting an interview with them, the only path the website has from applied to hired");
         }
-        const gateError = await checkClientAccessGate(clientId as string, "interview");
+        const gateError = await checkClientAccessGate(clientId as string, "interview", { phone: (input as Record<string, unknown>).phone });
         if (gateError) return gateError;
         return createVideoInterviewRequestForTool({
           clientId: clientId as string, caregiverId: app.caregiverId as string,
@@ -5939,152 +5961,38 @@ async function executeToolCall(
 
     if (name === "review_shift_hours") {
       return runActionNativeMcpWrite(name, input, async () => {
-      const { clientId, appointmentId, action, proposedStartTime, proposedEndTime, proposalReason } = input as Record<string, unknown>;
+      // The Timesheets review modal, exactly: the SAME server function the
+      // website's v1-reviewShiftHours callable runs (billing/reviewShiftHours.ts
+      // reviewShiftHoursAs) — approve / propose_correction / accept_counter /
+      // escalate with its guards, writes and notifications. Nothing Evia-only.
+      const { clientId, appointmentId, action, proposedStartTime, proposedEndTime, proposalReason, lineItems } = input as Record<string, unknown>;
       if (!clientId || !appointmentId || !action) return toolError("INVALID_INPUT", "clientId, appointmentId, and action are required");
       if (!["approve", "propose_correction", "accept_counter", "escalate"].includes(action as string)) {
         return toolError("INVALID_INPUT", "action must be approve, propose_correction, accept_counter, or escalate");
       }
-      const shiftSnap = await db.collection("shiftHours").doc(appointmentId as string).get();
-      if (!shiftSnap.exists) return toolError("NOT_FOUND", "Shift hours submission not found");
-      const shift = shiftSnap.data()!;
-      if (shift.clientId !== clientId) return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
-      // Mirrors reviewShiftHours' exact per-action status gate (functions/src/shiftHours.ts).
-      if ((action === "approve" || action === "propose_correction") && shift.status !== "pending_client_review") {
-        return toolError("INVALID_INPUT", `Shift hours already reviewed (status: ${shift.status})`);
+      if (action === "propose_correction" && (!proposedStartTime || !proposedEndTime)) {
+        return toolError("INVALID_INPUT", "proposedStartTime and proposedEndTime are both required to propose a correction");
       }
-      if ((action === "accept_counter" || action === "escalate") && shift.status !== "caregiver_counter_proposed") {
-        return toolError("INVALID_INPUT", `No counter-proposal to respond to (status: ${shift.status})`);
-      }
-
+      const { reviewShiftHoursAs } = await import("../billing/reviewShiftHours");
       try {
-        if (action === "approve") {
-          const startTime = String(shift.submittedStartTime ?? "");
-          const endTime = String(shift.submittedEndTime ?? "");
-          const billable = resolveShiftBillableAmount({
-            startTime, endTime,
-            bookedRateDollars: Number(shift.payRate),
-            lineItems: shift.lineItems,
-          });
-          await shiftSnap.ref.update({
-            status: "approved",
-            finalStartTime: startTime,
-            finalEndTime: endTime,
-            finalTotalHours: billable.totalHours,
-            lineItems: billable.lineItems,
-            lineItemsTotal: billable.lineItemsTotal,
-            basePay: billable.basePay,
-            grossPay: billable.grossPay,
-            amountCents: billable.grossPayCents,
-            requiresExplicitApproval: billable.requiresExplicitApproval,
-            resolvedAt: nowIso,
-            resolvedBy: "client",
-            updatedAt: nowIso,
-            correctionHistory: admin.firestore.FieldValue.arrayUnion({
-              by: "client", action: "accepted", at: nowIso,
-              startTime, endTime, hours: billable.totalHours,
-              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
-              basePay: billable.basePay, grossPay: billable.grossPay,
-            }),
-          });
-        } else if (action === "propose_correction") {
-          if (!proposedStartTime || !proposedEndTime) {
-            return toolError("INVALID_INPUT", "proposedStartTime and proposedEndTime are both required to propose a correction");
-          }
-          const billable = resolveShiftBillableAmount({
-            startTime: String(proposedStartTime), endTime: String(proposedEndTime),
-            bookedRateDollars: Number(shift.payRate),
-            lineItems: shift.lineItems,
-          });
-          const correctionRespondByAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          await shiftSnap.ref.update({
-            status: "correction_proposed",
-            proposedStartTime: String(proposedStartTime),
-            proposedEndTime: String(proposedEndTime),
-            proposedTotalHours: billable.totalHours,
-            proposedLineItems: billable.lineItems,
-            proposedLineItemsTotal: billable.lineItemsTotal,
-            proposedGrossPay: billable.grossPay,
-            requiresExplicitApproval: billable.requiresExplicitApproval,
-            proposalReason: proposalReason ?? null,
-            proposedAt: nowIso,
-            correctionRespondByAt,
-            updatedAt: nowIso,
-            correctionHistory: admin.firestore.FieldValue.arrayUnion({
-              by: "client", action: "proposed_correction", at: nowIso,
-              startTime: String(proposedStartTime), endTime: String(proposedEndTime),
-              hours: billable.totalHours, basePay: billable.basePay,
-              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
-              grossPay: billable.grossPay, note: proposalReason ?? null,
-            }),
-          });
-          const cgSessSnap4 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
-          if (!cgSessSnap4.empty) {
-            const { sendToPhone } = await import("../linq/client");
-            await sendToPhone(cgSessSnap4.docs[0].id, `The family proposed a correction to your shift hours: ${proposedStartTime}–${proposedEndTime} (${billable.totalHours}h). Respond within 24h or it auto-accepts.`).catch(() => {});
-          }
-        } else if (action === "accept_counter") {
-          if (!shift.counterStartTime || !shift.counterEndTime) {
-            return toolError("INVALID_INPUT", "Counter-proposal data is missing on this shift");
-          }
-          const billable = resolveShiftBillableAmount({
-            startTime: String(shift.counterStartTime), endTime: String(shift.counterEndTime),
-            bookedRateDollars: Number(shift.payRate),
-            lineItems: shift.counterLineItems,
-          });
-          await shiftSnap.ref.update({
-            status: "approved",
-            finalStartTime: shift.counterStartTime,
-            finalEndTime: shift.counterEndTime,
-            finalTotalHours: billable.totalHours,
-            lineItems: billable.lineItems,
-            lineItemsTotal: billable.lineItemsTotal,
-            basePay: billable.basePay,
-            grossPay: billable.grossPay,
-            amountCents: billable.grossPayCents,
-            requiresExplicitApproval: billable.requiresExplicitApproval,
-            resolvedAt: nowIso,
-            resolvedBy: "client",
-            updatedAt: nowIso,
-            correctionHistory: admin.firestore.FieldValue.arrayUnion({
-              by: "client", action: "accepted", at: nowIso,
-              startTime: shift.counterStartTime, endTime: shift.counterEndTime, hours: billable.totalHours,
-              lineItems: billable.lineItems, lineItemsTotal: billable.lineItemsTotal,
-              basePay: billable.basePay, grossPay: billable.grossPay,
-            }),
-          });
-          const cgSessSnap5 = await db.collection("agent_sessions").where("userId", "==", shift.caregiverId).limit(1).get();
-          if (!cgSessSnap5.empty) {
-            const { sendToPhone } = await import("../linq/client");
-            await sendToPhone(cgSessSnap5.docs[0].id, `The family accepted your counter-proposal (${billable.totalHours}h). Payment will be processed shortly.`).catch(() => {});
-          }
-        } else {
-          // escalate
-          await shiftSnap.ref.update({
-            status: "disputed_admin_review",
-            resolvedBy: null,
-            updatedAt: nowIso,
-            correctionHistory: admin.firestore.FieldValue.arrayUnion({ by: "client", action: "escalated", at: nowIso }),
-          });
-          const { notifyAdmins } = await import("../shiftHours");
-          await notifyAdmins(
-            "shift_hours_admin_review",
-            "Shift hours dispute needs mediation",
-            `${shift.clientName ?? "A client"} escalated a dispute with ${shift.caregiverName ?? "a caregiver"} for appointment ${appointmentId}.`,
-            { appointmentId },
-          ).catch(() => {});
-        }
-      } catch (error) {
-        if (error instanceof Error) {
-          return toolError("INVALID_INPUT", error.message);
-        }
-        throw error;
+        await reviewShiftHoursAs(clientId as string, {
+          appointmentId: appointmentId as string, action: action as string,
+          proposedStartTime: proposedStartTime as string | undefined, proposedEndTime: proposedEndTime as string | undefined,
+          proposalReason: proposalReason as string | undefined, lineItems,
+        });
+      } catch (err) {
+        const code = (err as { code?: string }).code ?? "";
+        const msg = err instanceof Error ? err.message : String(err);
+        if (code === "not-found") return toolError("NOT_FOUND", "Shift hours submission not found");
+        if (code === "permission-denied") return toolError("PERMISSION_DENIED", "Shift hours do not belong to this client");
+        if (code === "failed-precondition" || code === "invalid-argument") return toolError("INVALID_INPUT", msg);
+        throw err;
       }
       logAudit({ eventType: "shift_hours_reviewed", userId: clientId as string, data: { source: "mcp:review_shift_hours", appointmentId, action } }).catch(() => {});
       return { success: true, action, appointmentId };
       });
     }
 
-    // ── withdraw_job_application (U2) ───────────────────────────────────────────
     if (name === "withdraw_job_application") {
       const { caregiverId, applicationId, reason } = input as Record<string, unknown>;
       if (!caregiverId || !applicationId) return toolError("INVALID_INPUT", "caregiverId and applicationId are required");
@@ -6390,7 +6298,7 @@ async function executeToolCall(
       if (!clientId || !caregiverId || !preferredDate || !preferredTime) return toolError("INVALID_INPUT", "clientId, caregiverId, preferredDate, and preferredTime are required");
       // Mirrors the website's own paywall for the same 'interview' action
       // (hooks/useAccessGates.tsx) — was entirely ungated here before.
-      const gateError = await checkClientAccessGate(clientId as string, "interview");
+      const gateError = await checkClientAccessGate(clientId as string, "interview", { phone: (input as Record<string, unknown>).phone });
       if (gateError) return gateError;
 
       return createVideoInterviewRequestForTool({
@@ -6544,43 +6452,6 @@ async function executeToolCall(
     }
 
     // ── get_invoice_history ─────────────────────────────────────────────────
-    if (name === "get_invoice_history") {
-      const { clientId } = input as Record<string, unknown>;
-      if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const limit10 = Math.min((input.limit as number) ?? 5, 20);
-      const invSnap = await db.collection("shiftHours")
-        .where("clientId", "==", clientId)
-        // auto_approved (24h no-response auto-approve) is how most real shifts
-        // resolve — omitting it left the client's own history mostly empty.
-        .where("status", "in", ["approved", "auto_approved", "paid"])
-        .orderBy("submittedAt", "desc")
-        .limit(limit10)
-        .get();
-      const invoices = await Promise.all(
-        invSnap.docs.map(async (d) => {
-          const sh = d.data();
-          const cgSnap = await db.collection("caregivers").doc(sh.caregiverId as string).get().catch(() => null);
-          const cg = cgSnap?.data() ?? {};
-          // Real shiftHours fields — see get_pending_timesheets' comment above;
-          // same bug (date/durationHours never written), plus approvedAt was
-          // reading reviewedAt, but reviewShiftHours (shiftHours.ts) writes
-          // resolvedAt, not reviewedAt.
-          const startTime = sh.finalStartTime ?? sh.submittedStartTime;
-          return {
-            invoiceId:     d.id,
-            date:          startTime ? new Date(startTime as string).toISOString().slice(0, 10) : null,
-            caregiverName: (cg.name ?? `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim()) || "Caregiver",
-            hours:         sh.finalTotalHours ?? sh.submittedTotalHours ?? null,
-            amount:        `$${((sh.amountCents as number ?? 0) / 100).toFixed(2)}`,
-            status:        sh.status,
-            approvedAt:    sh.resolvedAt ?? null,
-          };
-        })
-      );
-      return { success: true, invoices, total: invoices.length };
-    }
-
-    // ── edit_job_post ───────────────────────────────────────────────────────
     if (name === "edit_job_post") {
       const {
         jobId, clientId, rate, rateFlexible, description, jobFrequency, startDate, endDate, ongoing,
@@ -6702,29 +6573,21 @@ async function executeToolCall(
       }
 
       const clientSnap = await db.collection("users").doc(resolvedClientId).get();
-      const clientPhone = clientSnap.data()?.phone as string | undefined;
-      if (!clientPhone) return toolError("NOT_FOUND", "Client phone number not found");
       const cgName = cgGateData.name ?? "Your caregiver";
-      const { trySend } = await import("../utils/toolNotify");
-      const notification = await trySend(clientPhone, `${cgName}: ${message}`, "mcp:send_client_message");
-      // Also land the message in the same persisted chatRooms thread the
-      // website's Inbox reads from — see send_caregiver_message for the other
-      // direction. Fail-soft: never block the SMS relay on a thread-write hiccup.
-      try {
-        const clientName = (clientSnap.data()?.name as string | undefined)
-          ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
-        const { relayIntoSharedChatThread } = await import("../utils/chatThread");
-        await relayIntoSharedChatThread({
-          clientId: resolvedClientId, clientName,
-          caregiverId: caregiverId as string, caregiverName: cgName as string,
-          senderId: caregiverId as string, senderName: cgName as string,
-          text: message as string,
-        });
-      } catch (err) {
-        console.error("send_client_message: chatRooms thread write failed (SMS still sent):", err);
-      }
-      logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length, notificationSent: notification.sent } }).catch(() => {});
-      return { success: true, sent: notification.sent, sentTo: resolvedClientId, notification };
+      // The Inbox composer, caregiver side — the thread write only; onMessageSent
+      // notifies the family (in-app + the message texted to them), same as a
+      // message typed on the website.
+      const clientName = (clientSnap.data()?.name as string | undefined)
+        ?? (clientSnap.data()?.firstName as string | undefined) ?? "";
+      const { relayIntoSharedChatThread } = await import("../utils/chatThread");
+      await relayIntoSharedChatThread({
+        clientId: resolvedClientId, clientName,
+        caregiverId: caregiverId as string, caregiverName: cgName as string,
+        senderId: caregiverId as string, senderName: cgName as string,
+        text: message as string,
+      });
+      logAudit({ eventType: "caregiver_sent_message", userId: caregiverId as string, data: { source: "mcp:send_client_message", resolvedClientId, messageLength: (message as string).length } }).catch(() => {});
+      return { success: true, sent: true, sentTo: resolvedClientId, notification: { sent: true, via: "inbox" } };
     }
 
     // ── get_payout_history ──────────────────────────────────────────────────
@@ -6756,56 +6619,23 @@ async function executeToolCall(
       }
     }
 
-    // ── get_recent_messages ─────────────────────────────────────────────────
+    // ── get_recent_messages — the website's Inbox page ───────────────────
     if (name === "get_recent_messages") {
-      const { userId, counterpartId } = input as Record<string, unknown>;
+      const { userId, counterpartId, query: inboxQuery, role } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
-      const msgLimit = Math.min((input.limit as number) ?? 5, 20);
-      // Real caregiver<->client conversations live in chatRooms/{roomId}
-      // (roomId = sorted [uid1,uid2].join('_'), see utils/chatThread.ts), the
-      // same collection send_caregiver_message/send_client_message write to.
-      // This tool previously read `threads`, which is only the Evia-assistant
-      // chat-widget mirror (participants always [uid,'cara']), and ordered by
-      // a field ('updatedAt') no chatRooms/threads doc has ever had — so it
-      // always returned empty, regardless of counterpartId.
-      const { chatRoomIdFor } = await import("../utils/chatThread");
-      let roomRows: Array<{ id: string; data: () => FirebaseFirestore.DocumentData | undefined }>;
+      const msgLimit = Math.min((input.limit as number) ?? 20, 50);
+      const { listInboxRooms, readInboxThread } = await import("../agents/inboxPage");
       if (counterpartId) {
-        const roomId = chatRoomIdFor(userId as string, counterpartId as string);
-        const roomSnap = await db.collection("chatRooms").doc(roomId).get();
-        roomRows = roomSnap.exists ? [{ id: roomId, data: () => roomSnap.data() }] : [];
-      } else {
-        const roomsSnap = await db.collection("chatRooms")
-          .where("participants", "array-contains", userId)
-          .orderBy("lastMessageTimestamp", "desc")
-          .limit(5)
-          .get();
-        roomRows = roomsSnap.docs.map((d) => ({ id: d.id, data: () => d.data() }));
+        // Opening one conversation: its messages (after this user's cutoff), marked read like the page does.
+        const thread = await readInboxThread(userId as string, counterpartId as string, msgLimit);
+        if (!thread) return { success: true, thread: null, message: "No conversation with that person yet — the Inbox row shows 'Start a conversation' until the first message." };
+        return { success: true, thread };
       }
-      const results = await Promise.all(
-        roomRows
-          .filter((r) => !((r.data()?.deletedAt as Record<string, unknown> | undefined)?.[userId as string]))
-          .map(async (r) => {
-            const room = r.data() ?? {};
-            const participants = (room.participants as string[]) ?? [];
-            const participantNames = (room.participantNames as string[]) ?? [];
-            const otherIdx = participants.findIndex((p) => p !== userId);
-            const otherUserId = otherIdx >= 0 ? participants[otherIdx] : undefined;
-            const otherName = (otherIdx >= 0 ? participantNames[otherIdx] : "") || "Unknown";
-            const msgsSnap = await db.collection("chatRooms").doc(r.id).collection("messages")
-              .orderBy("timestamp", "desc").limit(msgLimit).get();
-            const messages = msgsSnap.docs.reverse().map((m) => {
-              const msg = m.data();
-              return {
-                from:      msg.senderId === userId ? "you" : otherName,
-                text:      (msg.text as string ?? "").slice(0, 200),
-                timestamp: msg.timestamp,
-              };
-            });
-            return { threadId: r.id, with: otherName, withId: otherUserId, messages };
-          })
-      );
-      return { success: true, threads: results, total: results.length };
+      const inbox = await listInboxRooms(userId as string, {
+        role: role === "caregiver" ? "caregiver" : "client",
+        ...(typeof inboxQuery === "string" && inboxQuery.trim() ? { query: inboxQuery } : {}),
+      });
+      return { success: true, ...inbox };
     }
 
     // ── list_client_jobs ────────────────────────────────────────────────────
@@ -7452,36 +7282,18 @@ async function executeToolCall(
 
     // ── get_pending_timesheets ──────────────────────────────────────────────
     if (name === "get_pending_timesheets") {
-      const { clientId } = input as Record<string, unknown>;
+      // The website's Timesheets page (Payments.tsx), exactly — see agents/timesheetsPage.ts.
+      const { clientId, tab, from, to } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-      const tsSnap = await db.collection("shiftHours").where("clientId", "==", clientId).where("status", "==", "pending_client_review").orderBy("submittedAt", "desc").limit(5).get();
-      const timesheets = await Promise.all(
-        tsSnap.docs.map(async (d) => {
-          const ts = d.data();
-          const cgSnap8 = await db.collection("caregivers").doc(ts.caregiverId as string).get().catch(() => null);
-          const cg8 = cgSnap8?.data() ?? {};
-          // Real shiftHours fields (createValidatedShiftHours.ts) — this used
-          // to read date/clockInTime/clockOutTime/durationHours, none of which
-          // are ever written, so every real record came back blank. Mirrors
-          // Payments.tsx's own display priority: final* wins once set.
-          const startTime = ts.finalStartTime ?? ts.submittedStartTime;
-          const endTime   = ts.finalEndTime   ?? ts.submittedEndTime;
-          return {
-            appointmentId:  ts.appointmentId,
-            caregiverName:  (cg8.name ?? `${cg8.firstName ?? ""} ${cg8.lastName ?? ""}`.trim()) || "Caregiver",
-            date:           startTime ? new Date(startTime as string).toISOString().slice(0, 10) : null,
-            clockIn:        startTime ?? null,
-            clockOut:       endTime ?? null,
-            hours:          ts.finalTotalHours ?? ts.submittedTotalHours ?? null,
-            amountOwed:     `$${((ts.amountCents as number ?? 0) / 100).toFixed(2)}`,
-            submittedAt:    ts.submittedAt,
-          };
-        })
-      );
-      return { success: true, timesheets, total: timesheets.length };
+      const { readTimesheetsPage } = await import("../agents/timesheetsPage");
+      const page = await readTimesheetsPage(clientId as string, {
+        tab: tab === "history" ? "history" : "needs_review",
+        ...(typeof from === "string" && from ? { from } : {}),
+        ...(typeof to === "string" && to ? { to } : {}),
+      });
+      return { success: true, ...page, total: page.rows.length };
     }
 
-    // ── get_care_journal_client ─────────────────────────────────────────────
     if (name === "get_care_journal_client") {
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
@@ -7512,44 +7324,42 @@ async function executeToolCall(
 
     // ── get_payment_update_link ─────────────────────────────────────────────
     if (name === "get_payment_update_link") {
+      // The Payment Method tab (Payments.tsx): customers/{uid}.stripeCustomerId decides
+      // "Add a card" (→ the membership page) vs "Manage payment method" (Stripe Billing
+      // Portal, back to /client/payments); "Card on file" is the live Stripe check the
+      // page makes (v1-getPaymentMethodStatus, shared as getPaymentMethodStatusFor).
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
-
-      // customers/{uid} is the authoritative, immediately-written source (set
-      // the instant Stripe Checkout starts, functions/src/stripe.ts) — the
-      // rest of the codebase checks it first (shiftHours.ts's own payment
-      // logic), falling back to the users/{uid} mirror, which is only written
-      // later on the checkout.session.completed webhook. This tool used to
-      // check users-only, so a client with an in-progress/abandoned checkout
-      // (a customers doc, no users mirror yet) got wrongly told they had no
-      // billing account at all.
       const custSnap = await db.collection("customers").doc(clientId as string).get().catch(() => null);
-      let stripeCustomerId = custSnap?.data()?.stripeCustomerId as string | undefined;
-      if (!stripeCustomerId) {
-        const userSnap = await db.collection("users").doc(clientId as string).get();
-        if (!userSnap.exists) return toolError("NOT_FOUND", "Client not found");
-        stripeCustomerId = userSnap.data()?.stripeCustomerId as string | undefined;
-      }
-      if (!stripeCustomerId) return toolError("INVALID_INPUT", "No Stripe billing account found for this client. They may need to re-subscribe.");
-
-      const { getStripeClient } = await import("../stripe");
-      const sc = getStripeClient();
-
+      const stripeCustomerId = custSnap?.data()?.stripeCustomerId as string | undefined;
       const appUrl = getAppUrl();
-      const session = await sc.billingPortal.sessions.create({
+      let card: { hasCard: boolean; brand?: string | null; last4?: string | null } = { hasCard: false };
+      try {
+        const { getPaymentMethodStatusFor } = await import("../stripe");
+        card = await getPaymentMethodStatusFor(clientId as string);
+      } catch (err) {
+        console.warn("get_payment_update_link: card status check failed", err instanceof Error ? err.message : err);
+      }
+      if (!stripeCustomerId) {
+        return {
+          success: true, hasCard: false, cardOnFile: null, action: "add_card", url: `${appUrl}/client/membership`,
+          message: "No card on file — the page's 'Add a card' sends the family to the membership page to add one. Send them that link; never ask for card details.",
+        };
+      }
+      const { getStripeClient } = await import("../stripe");
+      const session = await getStripeClient().billingPortal.sessions.create({
         customer:   stripeCustomerId,
         return_url: `${appUrl}/client/payments`,
       });
-
       logAudit({ eventType: "billing_portal_opened", userId: clientId as string, data: { source: "mcp:get_payment_update_link" } }).catch(() => {});
-      return { success: true, url: session.url, expiresIn: "5 minutes" };
+      return {
+        success: true, hasCard: card.hasCard,
+        cardOnFile: card.hasCard ? { brand: card.brand ?? null, last4: card.last4 ?? null } : null,
+        action: card.hasCard ? "manage_payment_method" : "add_card",
+        url: session.url, expiresIn: "5 minutes",
+      };
     }
 
-    // ── retry_shift_payment ─────────────────────────────────────────────────
-    // Agent mirror of the v1-retryShiftPayment callable (shiftHours.ts): reset a
-    // payment_failed shift to 'approved' so the onShiftHoursApproved trigger
-    // re-charges. Naturally idempotent — a replay finds status !== payment_failed
-    // and refuses instead of double-charging.
     if (name === "retry_shift_payment") {
       const { appointmentId, clientId } = input as Record<string, unknown>;
       if (!appointmentId || !clientId) return toolError("INVALID_INPUT", "appointmentId and clientId are required");
@@ -7825,65 +7635,6 @@ async function executeToolCall(
     }
 
     // ── get_invoice_details ─────────────────────────────────────────────────
-    if (name === "get_invoice_details") {
-      const { clientId: invClientId, invoiceId: invId } = input as Record<string, string | undefined>;
-      if (!invClientId) return toolError("INVALID_INPUT", "clientId is required");
-      // Real per-shift billing lives in shiftHours (same collection
-      // get_invoice_history reads and hands its own doc ids back as
-      // "invoiceId") — `invoices` is a separate, admin-only manual-invoicing
-      // collection that's essentially always empty for a real client, so this
-      // always 404'd before.
-      let invDocs: admin.firestore.DocumentSnapshot[];
-      if (invId) {
-        const doc = await db.collection("shiftHours").doc(invId).get();
-        invDocs = (doc.exists && doc.data()?.clientId === invClientId) ? [doc] : [];
-      } else {
-        const q = await db.collection("shiftHours")
-          .where("clientId", "==", invClientId)
-          .where("status", "in", ["approved", "auto_approved", "paid"])
-          .orderBy("submittedAt", "desc")
-          .limit(1)
-          .get();
-        invDocs = q.docs;
-      }
-      if (!invDocs.length) return toolError("NOT_FOUND", "No invoices found for this client.");
-      const invoice = invDocs[0].data()!;
-      const invStartTime = invoice.finalStartTime ?? invoice.submittedStartTime;
-      return {
-        invoiceId:     invDocs[0].id,
-        caregiverName: invoice.caregiverName,
-        date:          invStartTime ? new Date(invStartTime as string).toISOString().slice(0, 10) : null,
-        status:        invoice.status,
-        hours:         invoice.finalTotalHours ?? invoice.submittedTotalHours,
-        total:         invoice.grossPay ?? (Number(invoice.amountCents ?? 0) / 100),
-        lineItems:     invoice.lineItems ?? [],
-        createdAt:     invoice.submittedAt,
-      };
-    }
-
-    // ── create_refund_request ───────────────────────────────────────────────
-    if (name === "create_refund_request") {
-      const { clientId: rfClientId, appointmentId: rfApptId, reason: rfReason } = input as Record<string, string | undefined>;
-      if (!rfClientId || !rfApptId) return toolError("INVALID_INPUT", "clientId and appointmentId are required");
-      const refundAppt = await db.collection("appointments").doc(rfApptId).get();
-      if (!refundAppt.exists) return toolError("NOT_FOUND", "Appointment not found");
-      if (refundAppt.data()?.clientId !== rfClientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
-      const ref = db.collection("refundRequests").doc(`${rfApptId}:${rfClientId}`);
-      try {
-        await ref.create({
-          clientId:      rfClientId,
-          appointmentId: rfApptId,
-          reason:        rfReason ?? "",
-          status:        "requested",
-          requestedAt:   nowIso,
-          source:        "cara_self_service",
-        });
-      } catch (error: any) {
-        if (error?.code !== 6 && !/already exists/i.test(String(error?.message ?? ""))) throw error;
-      }
-      return { success: true, requestId: ref.id, status: "requested", message: "Refund request submitted. Admin review within 24 hours." };
-    }
-
     // ── request_shift_swap ──────────────────────────────────────────────────
     if (name === "request_shift_swap") {
       const { caregiverId, appointmentId, reason } = input as Record<string, string>;
@@ -7933,32 +7684,6 @@ async function executeToolCall(
       if (swapDoc.data()!.fromCaregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "You can only cancel your own swap requests");
       await swapRef.update({ status: "cancelled" });
       return { success: true };
-    }
-
-    // ── initiate_client_swap ────────────────────────────────────────────────
-    if (name === "initiate_client_swap") {
-      const { appointmentId } = input as Record<string, string>;
-      const appt = await db.collection("appointments").doc(appointmentId).get();
-      if (!appt.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const data = appt.data()!;
-      const dayOfWeek = new Date(data.date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-      const shiftHour = parseInt((data.time ?? "09:00").split(":")[0], 10);
-      const snap = await db.collection("caregivers").where("verified", "==", true).limit(30).get();
-      const options: Array<{ caregiverId: string; name: string; rate?: number }> = [];
-      for (const doc of snap.docs) {
-        if (doc.id === data.caregiverId) continue;
-        const cg = doc.data();
-        if (isSeededCaregiver(cg)) continue;
-        if (!isCaregiverBookable(cg)) continue;
-        const avail = cg.weeklyAvailability?.[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
-        if (!avail?.some(s => parseInt(s.start.split(":")[0], 10) <= shiftHour && shiftHour < parseInt(s.end.split(":")[0], 10))) continue;
-        const conflict = await db.collection("appointments").where("caregiverId", "==", doc.id).where("date", "==", data.date).where("status", "in", ["confirmed"]).limit(1).get();
-        if (!conflict.empty) continue;
-        options.push({ caregiverId: doc.id, name: cg.name ?? cg.firstName ?? "Caregiver", rate: cg.hourlyRate });
-        if (options.length >= 3) break;
-      }
-      if (!options.length) return { available: [], message: "No available caregivers found for that date." };
-      return { available: options, appointmentDate: data.date, currentCaregiver: data.caregiverName };
     }
 
     // ── get_job_recommendations ─────────────────────────────────────────────
@@ -8200,20 +7925,18 @@ async function executeToolCall(
 
       if (blockAction === "block") {
         if (userId === targetUserId) return toolError("INVALID_INPUT", "Cannot block yourself");
+        // The Inbox menu's Block User (InboxView.tsx handleBlock): blockedUsers +
+        // blockedUserProfiles.{id} = { name, photo } (what Account Settings' Blocked
+        // list renders) — and nothing else; the site writes no alert.
+        const blockedPub = await db.collection("publicCaregiverProfiles").doc(targetUserId as string).get();
+        const blockedUser = blockedPub.exists ? null : await db.collection("users").doc(targetUserId as string).get();
+        const bp = ((blockedPub.exists ? blockedPub.data() : blockedUser?.data()) ?? {}) as Record<string, unknown>;
+        const blockedName = (bp.name as string | undefined) || [bp.firstName, bp.lastName].filter(Boolean).join(" ") || "";
+        const blockedPhoto = (bp.photo as string | undefined) || (bp.imageUrl as string | undefined) || (bp.profilePhotoUrl as string | undefined) || (bp.photoURL as string | undefined) || "";
         await db.collection("users").doc(userId as string).set({
           blockedUsers: admin.firestore.FieldValue.arrayUnion(targetUserId),
-          updatedAt: nowIso,
+          blockedUserProfiles: { [targetUserId as string]: { name: blockedName, photo: blockedPhoto } },
         }, { merge: true });
-        // Surface to ops so abuse patterns become visible.
-        db.collection("admin_alerts").add({
-          type:        "user_blocked",
-          userId,
-          targetUserId,
-          reason:      reason ?? null,
-          severity:    "medium",
-          resolved:    false,
-          createdAt:   nowIso,
-        }).catch(() => {});
         logAudit({ eventType: "user_blocked", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId, reason } }).catch(() => {});
         return { success: true, blocked: true };
       }
@@ -8288,16 +8011,6 @@ async function executeToolCall(
           details,
           createdAt:        admin.firestore.FieldValue.serverTimestamp(),
         });
-        db.collection("admin_alerts").add({
-          type:        "user_reported",
-          reporterId:  userId,
-          targetUserId,
-          category,
-          reportId:    reportRef.id,
-          severity:    "medium",
-          resolved:    false,
-          createdAt:   nowIso,
-        }).catch(() => {});
         logAudit({ eventType: "user_reported", userId: userId as string, data: { source: "mcp:set_block_status", targetUserId, category, reportId: reportRef.id } }).catch(() => {});
         return { success: true, reported: true, reportId: reportRef.id, followUpWindow: "24h" };
       }
@@ -8410,18 +8123,6 @@ async function executeToolCall(
     }
 
     // ── get_refund_requests ─────────────────────────────────────────────────
-    if (name === "get_refund_requests") {
-      const { clientId: rrClientId } = input as Record<string, unknown>;
-      if (!rrClientId) return toolError("INVALID_INPUT", "clientId is required");
-      const rrSnap = await db.collection("refundRequests").where("clientId", "==", rrClientId).get();
-      const requests: Record<string, unknown>[] = rrSnap.docs
-        .map((d): Record<string, unknown> => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
-        .sort((a, b) => String(b.requestedAt ?? "").localeCompare(String(a.requestedAt ?? "")))
-        .slice(0, 20);
-      return { success: true, requests, count: requests.length };
-    }
-
-    // ── get_shifts ──────────────────────────────────────────────────────────
     if (name === "get_shifts") {
       const { caregiverId: gsCgId, clientId: gsClientId, status: gsStatus } = input as Record<string, unknown>;
       if (!gsCgId && !gsClientId) return toolError("INVALID_INPUT", "Provide caregiverId or clientId");
@@ -8583,6 +8284,10 @@ async function executeToolCall(
             startedAt:        s.startedAt ?? null,
             completedAt:      s.completedAt ?? null,
             paid:             s.paid ?? null,
+            // The Past Booking card's detail: tasks checked off, the visit log, the closing note.
+            tasksCompleted:   Array.isArray(s.tasksCompleted) ? s.tasksCompleted : [],
+            notesLog:         Array.isArray(s.notesLog) ? s.notesLog : [],
+            completionNotes:  s.completionNotes ?? null,
           };
         })
         .sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`))

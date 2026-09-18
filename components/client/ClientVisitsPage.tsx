@@ -54,6 +54,8 @@ interface Shift {
   address?: string;
   notes?: string;
   completionNotes?: string;
+  /** Append-only lines the caregiver adds during the visit (Add a note on their pages). */
+  notesLog?: Array<{ at: string; text: string; by?: string }>;
   careNeeds?: string[];
   tasksCompleted?: string[];
   startedAt?: any;
@@ -824,9 +826,11 @@ interface ActiveVisitGroupCardProps {
   onSkipReplacement: (shiftId: string) => Promise<void>;
   onFindReplacement: (shift: Shift) => void;
   onWithdrawReplacement: (replacementRequestId: string) => Promise<void>;
+  /** The generator paused new visits because the membership lapsed (booking_requests.schedulePausedAt). */
+  schedulePaused?: boolean;
 }
 
-const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement }) => {
+const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onCancelBooking, navigate: _navigate, onMessage, onSkipReplacement, onFindReplacement, onWithdrawReplacement, schedulePaused }) => {
   const base = shifts[0];
   const [cancelling, setCancelling] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -1014,6 +1018,11 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                   ? <span className="text-xs text-slate-500">Until {new Date(endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   : null
               }
+              {schedulePaused && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full" title="Visits already on the calendar still happen. Reactivate your membership to resume new visits.">
+                  Schedule paused — membership inactive
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -1681,6 +1690,19 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
                       </div>
                     );
                   })()}
+                  {/* Visit notes — the caregiver's log during the visit (append-only, live) */}
+                  {Array.isArray(s.notesLog) && s.notesLog.length > 0 && (
+                    <div className="p-3 bg-white border border-slate-200 rounded-xl">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Visit Notes</p>
+                      <div className="space-y-1">
+                        {s.notesLog.map((n, i) => (
+                          <p key={i} className="text-xs text-slate-600">
+                            <span className="text-slate-400 mr-1.5">{new Date(n.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>{n.text}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {/* Caregiver notes */}
                   {s.completionNotes && (
                     <div className="p-3 bg-white border border-slate-200 rounded-xl">
@@ -1721,10 +1743,23 @@ export const ClientVisitsPage: React.FC = () => {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [pendingBookings, setPendingBookings] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<BookingAmendment[]>([]);
+  const [pausedBookingIds, setPausedBookingIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const { gate, Modals: GateModals } = useAccessGates();
 
   const user = useAuthUser();
+
+  // Accepted bookings — only for the membership-pause flag the shift generator writes.
+  useEffect(() => {
+    if (!user || !db) return;
+    const unsub = db.collection('booking_requests')
+      .where('clientId', '==', user.uid)
+      .where('status', '==', 'accepted')
+      .onSnapshot(snap => {
+        setPausedBookingIds(new Set(snap.docs.filter(d => !!(d.data() as any).schedulePausedAt).map(d => d.id)));
+      }, () => {});
+    return unsub;
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user || !db) { setLoading(false); return; }
@@ -2042,6 +2077,7 @@ export const ClientVisitsPage: React.FC = () => {
                 onSkipReplacement={handleSkipReplacement}
                 onFindReplacement={setReplacementShift}
                 onWithdrawReplacement={handleWithdrawReplacement}
+                schedulePaused={pausedBookingIds.has(String(groupShifts[0]?.bookingRequestId ?? ''))}
               />
             ))}
             {tab === 'past' && Array.from(pastGroups.entries()).map(([key, groupShifts]) => (

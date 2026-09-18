@@ -128,23 +128,6 @@ describe("missing CRUD tools", () => {
     });
   });
 
-  describe("get_refund_requests", () => {
-    it("requires clientId", async () => {
-      const r = await handleToolCall("get_refund_requests", {}) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("returns requests newest first", async () => {
-      hoisted.collState.set("refundRequests", [
-        { id: "r1", clientId: "c1", status: "pending_review", requestedAt: "2026-01-01" },
-        { id: "r2", clientId: "c1", status: "approved", requestedAt: "2026-04-01" },
-      ]);
-      const r = await handleToolCall("get_refund_requests", { clientId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.requests.map((x: any) => x.id)).toEqual(["r2", "r1"]);
-    });
-  });
-
   describe("get_shifts", () => {
     it("requires caregiverId or clientId", async () => {
       const r = await handleToolCall("get_shifts", {}) as any;
@@ -279,6 +262,89 @@ describe("missing CRUD tools", () => {
   // Past Bookings tab (2026-09-16).
   // My Calendar page (2026-09-16): visits in a date range with the site's
   // display status (overdue = scheduled, time passed) plus interviews.
+  describe("get_pending_tasks — the site's pending items, never an Evia-only queue", () => {
+    it("returns the Requests tab, Needs Replacement / Review buttons, interview proposals, Care Plan banner and timesheets with waitingOn", async () => {
+      hoisted.collState.set("booking_requests", [{ id: "br1", clientId: "c1", status: "pending", caregiverName: "Basra Yousuf", isResend: true }]);
+      hoisted.collState.set("booking_amendments", [{ id: "am1", clientId: "c1", status: "pending", bookingRequestId: "br0", caregiverName: "Basra Yousuf", startDate: "2099-01-08" }]);
+      hoisted.collState.set("shifts", [
+        { id: "s1", clientId: "c1", status: "needs_replacement", date: "2099-01-05", startTime: "14:00", endTime: "15:00", caregiverName: "Basra Yousuf" },
+        { id: "s2", clientId: "c1", status: "scheduled", date: "2099-01-06", startTime: "20:00", endTime: "21:30", caregiverName: "Basra Yousuf", reschedulePendingDate: "2099-01-07", reschedulePendingStartTime: "10:00", reschedulePendingEndTime: "11:30", rescheduledBy: "caregiver" },
+        { id: "s3", clientId: "c1", status: "scheduled", date: "2099-01-08", startTime: "20:00", endTime: "21:30", caregiverName: "Basra Yousuf", reschedulePendingDate: "2099-01-09", reschedulePendingStartTime: "10:00", rescheduledBy: "client" },
+        { id: "s4", clientId: "c1", status: "scheduled", date: "2099-01-10", startTime: "20:00", endTime: "21:30", caregiverName: "Basra Yousuf" },
+      ]);
+      hoisted.docState.set("carePlans/c1", { recipientPlans: {} });
+      hoisted.collState.set("shiftHours", [{ id: "h1", clientId: "c1", status: "pending_client_review" }, { id: "h2", clientId: "c1", status: "pending_client_review" }]);
+      const r = await handleToolCall("get_pending_tasks", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      const byKind = Object.fromEntries(r.items.map((i: any) => [i.kind + ":" + (i.shiftId ?? i.amendmentId ?? i.bookingRequestId ?? ""), i]));
+      expect(byKind["booking_request_pending:br1"]).toMatchObject({ waitingOn: "caregiver", isResend: true, page: "My Bookings > Requests" });
+      expect(byKind["visit_request_pending:am1"]).toMatchObject({ waitingOn: "caregiver" });
+      expect(byKind["visit_needs_replacement:s1"]).toMatchObject({ waitingOn: "you", actions: ["find_replacement", "skip"] });
+      expect(byKind["visit_reschedule_proposal:s2"]).toMatchObject({ waitingOn: "you", proposedDate: "2099-01-07" });
+      expect(byKind["visit_reschedule_proposal:s3"]).toMatchObject({ waitingOn: "caregiver" });
+      expect(r.items.some((i: any) => i.shiftId === "s4")).toBe(false);
+      expect(r.items.find((i: any) => i.kind === "care_plan_review")).toMatchObject({ waitingOn: "you" });
+      expect(r.items.find((i: any) => i.kind === "timesheets_to_review")).toMatchObject({ waitingOn: "you", count: 2 });
+      expect(r.waitingOnYou).toBe(4);
+    });
+    it("a reviewed care plan and no open items → Nothing pending", async () => {
+      hoisted.docState.set("carePlans/c1", { carePlanReviewedAt: "2099-01-01T00:00:00.000Z" });
+      const r = await handleToolCall("get_pending_tasks", { clientId: "c1" }) as any;
+      expect(r).toMatchObject({ success: true, total: 0, summary: "Nothing pending" });
+    });
+  });
+
+  describe("get_pending_timesheets — the website's Timesheets page", () => {
+    const seed = () => hoisted.collState.set("shiftHours", [
+      { id: "a1", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", status: "pending_client_review", submittedStartTime: "2099-01-05T22:00:00.000Z", submittedEndTime: "2099-01-05T23:30:00.000Z", payRate: 20, lineItems: [], submittedAt: "2099-01-05T23:35:00.000Z", autoApproveAt: "2099-01-06T23:35:00.000Z" },
+      { id: "a2", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", status: "correction_proposed", submittedStartTime: "2099-01-04T22:00:00.000Z", submittedEndTime: "2099-01-05T00:00:00.000Z", payRate: 20, submittedAt: "2099-01-05T00:05:00.000Z", correctionHistory: [{ by: "caregiver", action: "submitted", at: "x" }, { by: "client", action: "proposed_correction", at: "y", hours: 1.5 }] },
+      { id: "a3", clientId: "c1", caregiverId: "cg2", caregiverName: "Imran", status: "payment_failed", submittedStartTime: "2099-01-03T20:00:00.000Z", submittedEndTime: "2099-01-03T21:00:00.000Z", payRate: 24, grossPay: 24, submittedAt: "2099-01-03T21:05:00.000Z" },
+      { id: "a4", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", status: "paid", finalStartTime: "2099-01-01T20:00:00.000Z", finalEndTime: "2099-01-01T22:00:00.000Z", submittedStartTime: "2099-01-01T20:00:00.000Z", submittedEndTime: "2099-01-01T22:30:00.000Z", payRate: 20, grossPay: 40, resolvedBy: "caregiver", submittedAt: "2099-01-01T22:35:00.000Z" },
+      { id: "a5", clientId: "c1", caregiverId: "cg1", caregiverName: "Basra Yousuf", status: "auto_approved", submittedStartTime: "2098-12-20T20:00:00.000Z", submittedEndTime: "2098-12-20T21:00:00.000Z", payRate: 20, grossPay: 20, submittedAt: "2098-12-20T21:05:00.000Z" },
+    ]);
+
+    it("requires clientId", async () => {
+      const r = await handleToolCall("get_pending_timesheets", {}) as any;
+      expect(r._toolError).toBe(true);
+    });
+
+    it("Needs Review = the page's six statuses, grouped by caregiver, with the card's fields and button", async () => {
+      seed();
+      const r = await handleToolCall("get_pending_timesheets", { clientId: "c1" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.tab).toBe("needs_review");
+      expect(r.rows.map((x: any) => x.id).sort()).toEqual(["a1", "a2", "a3"]);
+      expect(r.counts).toEqual({ needsReview: 3, history: 2, pendingReview: 1, pending: 1 });
+      const a1 = r.rows.find((x: any) => x.id === "a1");
+      expect(a1).toMatchObject({ caregiverName: "Basra Yousuf", hours: 1.5, duration: "1:30:00", basePay: 30, grossPay: 30, statusLabel: "Needs Review", actions: ["review_and_approve"], autoApproveAt: "2099-01-06T23:35:00.000Z" });
+      const a2 = r.rows.find((x: any) => x.id === "a2");
+      expect(a2).toMatchObject({ statusLabel: "Correction Sent", actions: [] });
+      expect(a2.statusHint).toMatch(/Waiting for the caregiver/);
+      expect(a2.correctionHistory).toEqual([expect.objectContaining({ action: "proposed_correction", label: "Client proposed correction", hours: 1.5 })]);
+      expect(r.rows.find((x: any) => x.id === "a3")).toMatchObject({ statusLabel: "Payment Failed", actions: ["retry_payment"], grossPay: 24 });
+      const basra = r.groups.find((g: any) => g.caregiverId === "cg1");
+      expect(basra.rows.map((x: any) => x.id)).toEqual(["a1", "a2"]); // actionable first
+      expect(r.groups.find((g: any) => g.caregiverId === "cg2").rows).toHaveLength(1);
+    });
+
+    it("History = approved / auto-approved / paid, final times win, with the report totals and date range", async () => {
+      seed();
+      const all = await handleToolCall("get_pending_timesheets", { clientId: "c1", tab: "history" }) as any;
+      expect(all.rows.map((x: any) => x.id).sort()).toEqual(["a4", "a5"]);
+      expect(all.rows.find((x: any) => x.id === "a4")).toMatchObject({ hours: 2, isCorrected: true, statusLabel: "Paid", actions: [] });
+      expect(all.report).toMatchObject({ shifts: 2, hours: 3, pay: 60 });
+      const ranged = await handleToolCall("get_pending_timesheets", { clientId: "c1", tab: "history", from: "2099-01-01", to: "2099-01-31" }) as any;
+      expect(ranged.rows.map((x: any) => x.id)).toEqual(["a4"]);
+      expect(ranged.report).toMatchObject({ from: "2099-01-01", to: "2099-01-31", shifts: 1, hours: 2, pay: 40 });
+    });
+
+    it("get_payment_update_link with no billing account = the page's Add a card → membership page", async () => {
+      const r = await handleToolCall("get_payment_update_link", { clientId: "c1" }) as any;
+      expect(r).toMatchObject({ success: true, hasCard: false, action: "add_card" });
+      expect(r.url).toMatch(/\/client\/membership$/);
+    });
+  });
+
   describe("get_calendar", () => {
     it("returns visits with display status and interviews inside the range, and defaults the range to a week", async () => {
       hoisted.collState.set("shifts", [

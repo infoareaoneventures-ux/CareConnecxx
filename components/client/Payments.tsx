@@ -1043,7 +1043,7 @@ export const Payments: React.FC = () => {
 
                 <div className="border-t border-slate-100 px-6 py-4 bg-slate-50">
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, your card is automatically charged.
+                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, or 24 hours pass without you reviewing them, your card is automatically charged.
                   </p>
                 </div>
               </div>

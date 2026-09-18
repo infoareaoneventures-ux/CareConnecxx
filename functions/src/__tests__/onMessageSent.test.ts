@@ -52,7 +52,7 @@ vi.mock("firebase-functions/v1", () => {
 const sendSMSToUser = vi.fn().mockResolvedValue({ success: true });
 vi.mock("../sms", () => ({
   sendSMSToUser: (...a: unknown[]) => sendSMSToUser(...a),
-  SMS_TEMPLATES: { newMessage: (name: string) => `Evia: New message from ${name}. Open the app to reply.` },
+  SMS_TEMPLATES: { newMessage: (name: string, text?: string) => text ? `Evia: New message from ${name}: "${text}" — reply here and I'll pass it along.` : `Evia: New message from ${name}. Open the app to reply.` },
 }));
 
 import { onMessageSent } from "../notifications";
@@ -76,6 +76,8 @@ describe("onMessageSent (Messages/Inbox parity — reads chatRooms, not threads)
     const message = { senderId: CAREGIVER, senderName: "Alice", text: "on my way", type: "text" };
     await (onMessageSent as any)(snap(message), { params: { chatRoomId: ROOM_ID, messageId: "m1" } });
     expect(sendSMSToUser).toHaveBeenCalledWith(CLIENT, expect.stringContaining("New message from Alice"));
+    // The message itself rides along — the family gets what was said, not just "open the app".
+    expect(sendSMSToUser).toHaveBeenCalledWith(CLIENT, expect.stringContaining("on my way"));
   });
 
   it("writes an in-app notification for the recipient, not the sender", async () => {
@@ -86,11 +88,11 @@ describe("onMessageSent (Messages/Inbox parity — reads chatRooms, not threads)
     expect(notifSet?.data).toMatchObject({ type: "message", title: expect.stringContaining("Sarah") });
   });
 
-  it("does NOT double-text a message Evia already relayed by SMS (viaAgent:true)", async () => {
+  it("texts a message Evia posted on someone's behalf too — one path for every chatRooms message (2026-09-17)", async () => {
     hoisted.docState.set(`chatRooms/${ROOM_ID}`, { participants: [CAREGIVER, CLIENT].sort() });
-    const message = { senderId: CAREGIVER, senderName: "Alice", text: "on my way", type: "text", viaAgent: true };
+    const message = { senderId: CAREGIVER, senderName: "Alice", text: "on my way", type: "text" };
     await (onMessageSent as any)(snap(message), { params: { chatRoomId: ROOM_ID, messageId: "m1" } });
-    expect(sendSMSToUser).not.toHaveBeenCalled();
+    expect(sendSMSToUser).toHaveBeenCalledTimes(1);
   });
 
   it("ignores system messages", async () => {
@@ -100,12 +102,12 @@ describe("onMessageSent (Messages/Inbox parity — reads chatRooms, not threads)
     expect(sendSMSToUser).not.toHaveBeenCalled();
   });
 
-  it("throttles a burst of messages to one SMS within 5 minutes", async () => {
+  it("does not throttle — every message reaches the recipient as it happens", async () => {
     hoisted.docState.set(`chatRooms/${ROOM_ID}`, { participants: [CAREGIVER, CLIENT].sort() });
     hoisted.docState.set(`smsThrottles/lastMessageSMS_${ROOM_ID}_${CLIENT}`, { timestamp: { toMillis: () => Date.now() } });
     const message = { senderId: CAREGIVER, senderName: "Alice", text: "one more thing", type: "text" };
     await (onMessageSent as any)(snap(message), { params: { chatRoomId: ROOM_ID, messageId: "m2" } });
-    expect(sendSMSToUser).not.toHaveBeenCalled();
+    expect(sendSMSToUser).toHaveBeenCalledWith(CLIENT, expect.stringContaining("one more thing"));
   });
 
   it("does nothing if the chatRoom doc is missing", async () => {

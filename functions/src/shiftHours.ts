@@ -7,9 +7,23 @@ import { TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 import { timesheetAutoApprovalEnabled } from './config/featureFlags';
 import { createValidatedShiftHours, createValidatedShiftHoursFromShift, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
 import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
-import { ShiftBillingPolicyError } from './billing/shiftBillingPolicy';
 import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem } from './billing/shiftBillingAmounts';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
+import { fmtHours, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
+// One review path for the website's callable and Evia's review_shift_hours tool (2026-09-17).
+export { notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
+
+// Everything the family would see in the app reaches them over Evia's text as it
+// happens (standing rule, 2026-09-17) — same wording as the in-app notification.
+// Fail-soft: the in-app notification is already written when this runs.
+async function textClient(clientId: string, message: string): Promise<void> {
+  try {
+    const { sendSMSToUser } = await import('./sms');
+    await sendSMSToUser(clientId, `Evia: ${message}`);
+  } catch (err) {
+    console.warn('shiftHours: client text failed (in-app notification still written)', err instanceof Error ? err.message : err);
+  }
+}
 
 export { sanitizeShiftLineItems } from './billing/shiftBillingAmounts';
 
@@ -29,7 +43,6 @@ type ShiftHoursStatus =
   | 'paid'
   | 'payment_failed';
 
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const PLATFORM_FEE_RATE = SHIFT_PLATFORM_FEE_RATE;  // 1.5% — see billing/config.ts
 const PLATFORM_FEE_MIN = SHIFT_PLATFORM_FEE_MIN_DOLLARS;  // $0.50 min
 const MAX_PAYMENT_ATTEMPTS = 5;
@@ -42,14 +55,6 @@ async function requireAdmin(uid: string) {
   if (!userDoc.exists || userDoc.data()?.userType !== 'admin') {
     throw new functions.https.HttpsError('permission-denied', 'Admin access required');
   }
-}
-
-function fmtHours(hours: number): string {
-  const totalSecs = Math.round(hours * 3600);
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor((totalSecs % 3600) / 60);
-  const s = totalSecs % 60;
-  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function nowIso() {
@@ -67,52 +72,6 @@ function nextPaymentAttemptAt(attempt: number, fromMs = Date.now()): string {
 // a user set line items and feeds them into a charged/paid amount MUST run this
 // (submit, propose_correction, counter_propose) — otherwise negative or absurd
 // `amount`s flow straight into grossPay and the Stripe transfer/charge.
-function resolveBillableOrHttpsError(input: Parameters<typeof resolveShiftBillableAmount>[0]) {
-  try {
-    return resolveShiftBillableAmount(input);
-  } catch (error) {
-    if (error instanceof ShiftBillingPolicyError) {
-      throw new functions.https.HttpsError('invalid-argument', error.message);
-    }
-    throw error;
-  }
-}
-
-async function pushNotification(userId: string, type: string, title: string, message: string, data: any) {
-  await db.collection('users').doc(userId).collection('notifications').add({
-    userId,
-    type,
-    title,
-    body: message,
-    data,
-    isRead: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-}
-
-export async function notifyAdmins(type: string, title: string, message: string, data: any) {
-  const admins = await db.collection('users').where('userType', '==', 'admin').get();
-  const batch = db.batch();
-  admins.forEach(docSnap => {
-    const ref = db.collection('users').doc(docSnap.id).collection('notifications').doc();
-    batch.set(ref, {
-      userId: docSnap.id,
-      type,
-      title,
-      body: message,
-      data,
-      isRead: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-  });
-  await batch.commit();
-}
-
-// ---------- callables ----------
-
-/**
- * Caregiver submits hours for a completed appointment.
- */
 export const submitShiftHours = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
@@ -234,199 +193,9 @@ export const reviewShiftHours = functions.https.onCall(async (data, context) => 
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
   }
-
-  const { appointmentId, action, proposedStartTime, proposedEndTime, proposalReason, lineItems: rawLineItems } = data;
-  if (!appointmentId || !['approve', 'propose_correction', 'accept_counter', 'escalate'].includes(action)) {
-    throw new functions.https.HttpsError('invalid-argument', 'appointmentId and valid action required');
-  }
-
-  const ref = db.collection('shiftHours').doc(appointmentId);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Shift hours not found');
-  }
-  const shift = snap.data()!;
-
-  if (shift.clientId !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Not your appointment');
-  }
-
-  // Validate status constraints per action
-  if ((action === 'approve' || action === 'propose_correction') && shift.status !== 'pending_client_review') {
-    throw new functions.https.HttpsError('failed-precondition', 'Already reviewed');
-  }
-  if ((action === 'accept_counter' || action === 'escalate') && shift.status !== 'caregiver_counter_proposed') {
-    throw new functions.https.HttpsError('failed-precondition', 'No counter-proposal to respond to');
-  }
-
-  const now = nowIso();
-
-  if (action === 'approve') {
-    const approved = resolveBillableOrHttpsError({
-      startTime: shift.submittedStartTime,
-      endTime: shift.submittedEndTime,
-      bookedRateDollars: Number(shift.payRate),
-      lineItems: shift.lineItems,
-    });
-    await ref.update({
-      status: 'approved',
-      finalStartTime: shift.submittedStartTime,
-      finalEndTime: shift.submittedEndTime,
-      finalTotalHours: approved.totalHours,
-      basePay: approved.basePay,
-      lineItems: approved.lineItems,
-      lineItemsTotal: approved.lineItemsTotal,
-      grossPay: approved.grossPay,
-      amountCents: approved.grossPayCents,
-      requiresExplicitApproval: approved.requiresExplicitApproval,
-      resolvedAt: now,
-      resolvedBy: 'client',
-      updatedAt: now,
-      correctionHistory: admin.firestore.FieldValue.arrayUnion({
-        by: 'client',
-        action: 'accepted',
-        at: now,
-        startTime: shift.submittedStartTime,
-        endTime: shift.submittedEndTime,
-        hours: approved.totalHours,
-        lineItems: approved.lineItems,
-        lineItemsTotal: approved.lineItemsTotal,
-        basePay: approved.basePay,
-        grossPay: approved.grossPay,
-      }),
-    });
-    await pushNotification(
-      shift.caregiverId,
-      'shift_hours_approved',
-      'Your hours were approved',
-      `Client approved ${fmtHours(approved.totalHours)}.`,
-      { appointmentId }
-    );
-    return { success: true };
-  }
-
-  if (action === 'propose_correction') {
-    if (!proposedStartTime || !proposedEndTime) {
-      throw new functions.https.HttpsError('invalid-argument', 'Proposed start/end required');
-    }
-    const correctionRespondByAt = new Date(Date.now() + ONE_DAY_MS).toISOString();
-
-    // Clamp/whitelist — a client-proposed correction feeds proposedGrossPay,
-    // which autoAcceptCorrection later charges/pays. Fall back to the already-
-    // sanitized stored line items when the caller sends none.
-    const proposed = resolveBillableOrHttpsError({
-      startTime: proposedStartTime,
-      endTime: proposedEndTime,
-      bookedRateDollars: Number(shift.payRate),
-      lineItems: rawLineItems !== undefined ? rawLineItems : shift.lineItems,
-    });
-
-    await ref.update({
-      status: 'correction_proposed',
-      proposedStartTime,
-      proposedEndTime,
-      proposedTotalHours: proposed.totalHours,
-      proposedLineItems: proposed.lineItems,
-      proposedLineItemsTotal: proposed.lineItemsTotal,
-      proposedGrossPay: proposed.grossPay,
-      requiresExplicitApproval: proposed.requiresExplicitApproval,
-      proposalReason: proposalReason || null,
-      proposedAt: now,
-      correctionRespondByAt,
-      updatedAt: now,
-      correctionHistory: admin.firestore.FieldValue.arrayUnion({
-        by: 'client',
-        action: 'proposed_correction',
-        at: now,
-        startTime: proposedStartTime,
-        endTime: proposedEndTime,
-        hours: proposed.totalHours,
-        basePay: proposed.basePay,
-        lineItems: proposed.lineItems,
-        lineItemsTotal: proposed.lineItemsTotal,
-        grossPay: proposed.grossPay,
-        note: proposalReason || null,
-      }),
-    });
-
-    await pushNotification(
-      shift.caregiverId,
-      'shift_hours_correction_proposed',
-      'Client proposed a correction',
-      `Client proposed ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)}). Respond within 24h or it auto-accepts.`,
-      { appointmentId, proposedTotalHours: proposed.totalHours }
-    );
-    return { success: true };
-  }
-
-  if (action === 'accept_counter') {
-    if (!shift.counterStartTime || !shift.counterEndTime) {
-      throw new functions.https.HttpsError('failed-precondition', 'Counter-proposal data missing');
-    }
-    const accepted = resolveBillableOrHttpsError({
-      startTime: shift.counterStartTime,
-      endTime: shift.counterEndTime,
-      bookedRateDollars: Number(shift.payRate),
-      lineItems: shift.counterLineItems,
-    });
-
-    await ref.update({
-      status: 'approved',
-      finalStartTime: shift.counterStartTime,
-      finalEndTime: shift.counterEndTime,
-      finalTotalHours: accepted.totalHours,
-      lineItems: accepted.lineItems,
-      lineItemsTotal: accepted.lineItemsTotal,
-      basePay: accepted.basePay,
-      grossPay: accepted.grossPay,
-      amountCents: accepted.grossPayCents,
-      requiresExplicitApproval: accepted.requiresExplicitApproval,
-      resolvedAt: now,
-      resolvedBy: 'client',
-      updatedAt: now,
-      correctionHistory: admin.firestore.FieldValue.arrayUnion({
-        by: 'client',
-        action: 'accepted',
-        at: now,
-        startTime: shift.counterStartTime,
-        endTime: shift.counterEndTime,
-        hours: accepted.totalHours,
-        lineItems: accepted.lineItems,
-        lineItemsTotal: accepted.lineItemsTotal,
-        basePay: accepted.basePay,
-        grossPay: accepted.grossPay,
-      }),
-    });
-    await pushNotification(
-      shift.caregiverId,
-      'shift_hours_approved',
-      'Client accepted your counter-proposal',
-      `Client accepted ${accepted.totalHours}h. Payment will be processed shortly.`,
-      { appointmentId }
-    );
-    return { success: true };
-  }
-
-  // action === 'escalate'
-  await ref.update({
-    status: 'disputed_admin_review',
-    resolvedBy: null,
-    updatedAt: now,
-    correctionHistory: admin.firestore.FieldValue.arrayUnion({
-      by: 'client',
-      action: 'escalated',
-      at: now,
-    }),
-  });
-
-  await notifyAdmins(
-    'shift_hours_admin_review',
-    'Shift hours dispute needs mediation',
-    `${shift.clientName} escalated a dispute with ${shift.caregiverName} for appointment ${appointmentId}.`,
-    { appointmentId }
-  );
-
-  return { success: true };
+  // The modal's four actions live in billing/reviewShiftHours.ts so Evia's
+  // review_shift_hours tool runs the very same function (one write path).
+  return reviewShiftHoursAs(context.auth.uid, data ?? {});
 });
 
 /**
@@ -549,6 +318,7 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     `${shift.caregiverName} sent a counter-proposal for ${counter.totalHours}h. Review and accept or escalate.`,
     { appointmentId, counterTotalHours: counter.totalHours }
   );
+  await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal for ${counter.totalHours}h on their hours. Reply here to accept it, or ask me to escalate it to our team.`);
 
   return { success: true };
 });
@@ -712,6 +482,7 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
 
     await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
+    await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved (${Number(autoGrossPay).toFixed(2)}) and your card is being charged.`);
   }
 
   return null;
@@ -797,6 +568,7 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
 
     await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${autoFinal.totalHours}h proposal was accepted.`, { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${autoFinal.totalHours}h is final.`, { appointmentId: doc.id });
+    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${autoFinal.totalHours}h is final and your card is being charged.`);
   }
 
   return null;
@@ -1103,14 +875,13 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       throw new Error('Caregiver has no Stripe Connect account');
     }
 
-    // The Stripe customer id lives in customers/{clientId} (written when the
-    // checkout session is created) AND is mirrored onto users/{clientId} by the
-    // checkout webhook. Read customers first, then fall back to users so a
-    // client subscribed via either path can be charged.
-    let stripeCustomerId = (await db.collection('customers').doc(shift.clientId).get()).data()?.stripeCustomerId;
-    if (!stripeCustomerId) {
-      stripeCustomerId = (await db.collection('users').doc(shift.clientId).get()).data()?.stripeCustomerId;
-    }
+    // ONE source of truth for the family's Stripe customer: customers/{clientId} —
+    // the same record the Payment Method tab (v1-getPaymentMethodStatus /
+    // getPaymentMethodStatusFor) and both checkout paths use. The old fallback
+    // to users/{clientId}.stripeCustomerId let a family be charged while the
+    // tab told them they had no card on file; removed 2026-09-17 (no live
+    // clients predate the customers/{uid} write, so nothing to backfill).
+    const stripeCustomerId = (await db.collection('customers').doc(shift.clientId).get()).data()?.stripeCustomerId;
     if (!stripeCustomerId) {
       throw new Error('Client has no Stripe customer');
     }
@@ -1259,6 +1030,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
       );
       await Promise.all([
         pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment needs review', 'We could not complete this visit payment. Evia support is reviewing it.', { appointmentId }),
+        textClient(shift.clientId, `We couldn't complete the payment for ${shift.caregiverName ?? 'your caregiver'}'s visit. Please check the card on file (say "update my card" and I'll send the link), then tell me to retry the payment.`),
         pushNotification(shift.caregiverId, 'shift_hours_payment_failed', 'Payment needs review', 'This visit payment could not be completed automatically. Evia support is reviewing it.', { appointmentId }),
       ]);
     }
@@ -1275,30 +1047,15 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
  * Approve shift hours on behalf of the client via iMessage reply.
  */
 export async function approveShiftHoursForClient(appointmentId: string): Promise<void> {
+  // The APPROVE keyword reply = the Timesheets modal's Approve button: the same
+  // shared write (final times, billable amounts, correctionHistory, the
+  // caregiver's notification) — not a separate Evia-only approval shape.
   const snap = await db.collection("shiftHours")
     .where("appointmentId", "==", appointmentId)
     .where("status", "==", "pending_client_review")
     .limit(1)
     .get();
   if (snap.empty) return;
-  const iMsgShift = snap.docs[0].data();
-  const iMsgBasePay        = Math.round(iMsgShift.submittedTotalHours * iMsgShift.payRate * 100) / 100;
-  const iMsgLineItems      = Array.isArray(iMsgShift.lineItems) ? iMsgShift.lineItems : [];
-  const iMsgLineItemsTotal = Math.round(iMsgLineItems.reduce((s: number, li: any) => s + (Number(li.amount) || 0), 0) * 100) / 100;
-  const iMsgGrossPay       = iMsgShift.grossPay ?? Math.round((iMsgBasePay + iMsgLineItemsTotal) * 100) / 100;
-  await snap.docs[0].ref.update({
-    status:          "approved",
-    finalStartTime:  iMsgShift.submittedStartTime,
-    finalEndTime:    iMsgShift.submittedEndTime,
-    finalTotalHours: iMsgShift.submittedTotalHours,
-    basePay:         iMsgBasePay,
-    lineItems:       iMsgLineItems,
-    lineItemsTotal:  iMsgLineItemsTotal,
-    grossPay:        iMsgGrossPay,
-    resolvedAt:      new Date().toISOString(),
-    resolvedBy:      "client_imessage",
-    approvedAt:      new Date().toISOString(),
-    approvedBy:      "client_imessage",
-    updatedAt:       new Date().toISOString(),
-  });
+  const doc = snap.docs[0];
+  await reviewShiftHoursAs(String(doc.data().clientId ?? ""), { appointmentId: doc.id, action: "approve" });
 }

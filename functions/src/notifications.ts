@@ -222,14 +222,6 @@ export const onMessageSent = functions.firestore
                 return;
             }
 
-            // A message Evia relayed (send_caregiver_message/send_client_message)
-            // already sent the recipient a guaranteed-delivery SMS as part of
-            // that same tool call — sending another one here would double-text
-            // them for one message.
-            if (message.viaAgent === true) {
-                return;
-            }
-
             const chatRoomDoc = await db.collection('chatRooms').doc(chatRoomId).get();
             const chatRoom = chatRoomDoc.data();
 
@@ -247,17 +239,12 @@ export const onMessageSent = functions.firestore
                         type: 'message'
                     });
 
-                    // SMS notification (only for first message in a burst - check last message time)
-                    const lastSMSKey = `lastMessageSMS_${chatRoomId}_${recipient}`;
-                    const lastSMSDoc = await db.collection('smsThrottles').doc(lastSMSKey).get();
-                    const lastSMSTime = lastSMSDoc.exists ? lastSMSDoc.data()?.timestamp?.toMillis() : 0;
-                    const now = Date.now();
-
-                    // Only send SMS if last one was more than 5 minutes ago (avoid spam)
-                    if (now - lastSMSTime > 5 * 60 * 1000) {
-                        await sendSMSToUser(recipient, SMS_TEMPLATES.newMessage(senderName));
-                        await db.collection('smsThrottles').doc(lastSMSKey).set({ timestamp: admin.firestore.FieldValue.serverTimestamp() });
-                    }
+                    // Everything reaches people over Evia's text as it happens: the
+                    // message itself, every time — not a throttled "open the app"
+                    // notice (2026-09-17, Inbox parity). Both directions: a caregiver
+                    // typing in the website Inbox reaches the family this way, and a
+                    // message Evia posted for either side reaches the other the same way.
+                    await sendSMSToUser(recipient, SMS_TEMPLATES.newMessage(senderName, String(message.text ?? '')));
                 }
             }
         } catch (error) {

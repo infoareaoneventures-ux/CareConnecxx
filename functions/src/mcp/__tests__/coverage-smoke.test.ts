@@ -96,6 +96,7 @@ vi.mock("firebase-admin", () => ({
       arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
       increment:   (n: number) => ({ __increment: n }),
       delete:      () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
     Timestamp: {
       now: () => ({ toDate: () => new Date(), seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 }),
@@ -439,11 +440,11 @@ describe("MCP tool smoke coverage", () => {
   });
 
   // ── Tasks / preferences ──────────────────────────────────────────────────
-  it("get_pending_tasks happy path", async () => {
-    hoisted.collState.set("agent_tasks", []);
-    hoisted.collState.set("interviews", []);
+  it("get_pending_tasks happy path (reads only the site's collections)", async () => {
     const r = await handleToolCall("get_pending_tasks", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
+    expect(r.total).toBe(0);
+    expect(r.summary).toBe("Nothing pending");
   });
 
   it("update_preferences happy path", async () => {
@@ -488,14 +489,16 @@ describe("MCP tool smoke coverage", () => {
     expect(r.success).toBe(true);
   });
 
-  it("get_invoice_history happy path", async () => {
+  it("get_pending_timesheets history tab happy path (the page's History pill)", async () => {
     hoisted.collState.set("shiftHours", []);
-    const r = await handleToolCall("get_invoice_history", { clientId: "c1" }) as any;
+    const r = await handleToolCall("get_pending_timesheets", { clientId: "c1", tab: "history" }) as any;
     expect(r.success).toBe(true);
+    expect(r.tab).toBe("history");
+    expect(r.report).toMatchObject({ shifts: 0 });
   });
 
   it("get_payment_update_link happy path", async () => {
-    hoisted.docState.set("users/c1", { stripeCustomerId: "cus_1" });
+    hoisted.docState.set("customers/c1", { stripeCustomerId: "cus_1" });
     const r = await handleToolCall("get_payment_update_link", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
     expect(r.url).toContain("stripe");

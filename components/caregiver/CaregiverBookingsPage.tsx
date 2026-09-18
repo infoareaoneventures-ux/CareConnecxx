@@ -105,6 +105,8 @@ interface Shift {
   emergencyContact?: { name?: string; phone?: string; relationship?: string } | null;
   tasksCompleted?: string[];
   completionNotes?: string;
+  /** Append-only visit log — lines added during the visit; the family sees them live and gets them texted. */
+  notesLog?: Array<{ at: string; text: string; by?: string }>;
   careNeeds?: string[];
   startedAt?: any;
   completedAt?: any;
@@ -682,7 +684,9 @@ const BookingGroupCard: React.FC<{
   amendments: BookingAmendment[];
   onCancel: (id: string) => void;
   onAcceptAmendment: (amendment: BookingAmendment) => Promise<void>;
-}> = ({ shifts, amendments, onCancel, onAcceptAmendment }) => {
+  /** The family's membership lapsed past its grace window — no new visits are generated (booking_requests.schedulePausedAt). */
+  schedulePaused?: boolean;
+}> = ({ shifts, amendments, onCancel, onAcceptAmendment, schedulePaused }) => {
   const navigate = useNavigate();
   const { blockReason } = useCaregiverGate();
   const { setMembershipModalOpen } = useCareConnex();
@@ -705,6 +709,7 @@ const BookingGroupCard: React.FC<{
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [endingShiftId, setEndingShiftId] = useState<string | null>(null);
   const [endNotesByShift, setEndNotesByShift] = useState<Record<string, string>>({});
+  const [noteDraftByShift, setNoteDraftByShift] = useState<Record<string, string>>({});
 
   const handleStart = async (shiftId: string) => {
     if (!db) return;
@@ -727,6 +732,19 @@ const BookingGroupCard: React.FC<{
     };
     if (notes?.trim()) update.completionNotes = notes.trim();
     await db.collection('shifts').doc(shiftId).update(update).catch(() => {}).finally(() => setSubmitting(null));
+  };
+
+  // Visit notes log — append-only lines while the visit is in progress. Once a
+  // line is saved the family can already see it (live card + grouped text), so
+  // there is no edit or delete: a correction is another line.
+  const addVisitNote = async (shiftId: string) => {
+    const text = (noteDraftByShift[shiftId] || '').trim();
+    if (!db || !text) return;
+    setNoteDraftByShift(p => ({ ...p, [shiftId]: '' }));
+    await db.collection('shifts').doc(shiftId).update({
+      notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {});
   };
 
   const handleCancelShift = async (shift: Shift) => {
@@ -903,6 +921,11 @@ const BookingGroupCard: React.FC<{
             <span className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2.5 py-0.5 rounded-full mt-0.5">
               <Repeat className="w-3 h-3" /> Ongoing
             </span>
+            {schedulePaused && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full mt-0.5 ml-1" title="Visits already on your calendar still happen and are paid as normal.">
+                Schedule paused — family's membership inactive
+              </span>
+            )}
           </div>
         </div>
         <button
@@ -1525,13 +1548,43 @@ const BookingGroupCard: React.FC<{
                 </div>
               )}
 
+              {/* Visit notes log — add lines during the visit; the family sees them live */}
+              {(inProgress || (shift.notesLog?.length ?? 0) > 0) && (
+                <div className="px-5 pb-4">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Visit notes</p>
+                  {(shift.notesLog?.length ?? 0) > 0 && (
+                    <div className="space-y-1 mb-2">
+                      {shift.notesLog!.map((n, i) => (
+                        <p key={i} className="text-xs text-slate-600">
+                          <span className="text-slate-400 mr-1.5">{new Date(n.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>{n.text}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {inProgress && (
+                    <div className="flex gap-2">
+                      <input
+                        value={noteDraftByShift[shift.id] || ''}
+                        onChange={e => setNoteDraftByShift(p => ({ ...p, [shift.id]: e.target.value }))}
+                        placeholder="Add a note for the family (e.g. ate half her lunch)…"
+                        className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      />
+                      <button type="button" onClick={() => addVisitNote(shift.id)} disabled={!(noteDraftByShift[shift.id] || '').trim()}
+                        className="px-3 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-xl disabled:opacity-50">
+                        Add note
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* End shift notes step */}
               {shift.status === 'in-progress' && endingShiftId === shift.id && (
                 <div className="px-5 pb-4 space-y-2">
                   <textarea
                     value={endNotesByShift[shift.id] || ''}
                     onChange={e => setEndNotesByShift(p => ({ ...p, [shift.id]: e.target.value }))}
-                    placeholder="Add shift notes (optional)…"
+                    placeholder="Closing note (optional) — your visit notes above are already saved…"
                     rows={3}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-200 resize-none"
                   />
@@ -2359,6 +2412,7 @@ export const CaregiverBookingsPage: React.FC = () => {
                     amendments={[]}
                     onCancel={handleCancelShift}
                     onAcceptAmendment={handleAcceptAmendment}
+                    schedulePaused={!!(requests.find(r => r.id === groupShifts[0]?.bookingRequestId) as any)?.schedulePausedAt}
                   />
                 ));
               })()

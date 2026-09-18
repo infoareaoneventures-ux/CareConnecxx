@@ -19,6 +19,7 @@
 import * as admin from "firebase-admin";
 import { getSharedClient } from "../utils/claudeClient";
 import { sendMessage, AgentSession } from "../linq/client";
+import { enforceClientGate } from "./clientAccessGate";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
@@ -220,6 +221,8 @@ export async function startVisitRequestFlow(
     await sendMessage(chatId, "I couldn't find your account to look up your bookings. Please try again.");
     return { started: false, reason: "no_client_id" };
   }
+  // Schedule.tsx: "+ Request Visit" runs gate('booking').
+  if (await enforceClientGate(phone, chatId, clientId, "booking")) return { started: false, reason: "gated" };
   const caregivers = await listVisitRequestCaregivers(clientId);
   if (caregivers.length === 0) {
     await sendMessage(chatId,
@@ -594,6 +597,8 @@ async function handleConfirm(phone: string, chatId: string, text: string, sessio
 
 async function commit(phone: string, chatId: string, session: AgentSession, data: VisitRequestFlowData): Promise<void> {
   const clientId = session.userId as string;
+  // Schedule.tsx: the Request Visit modal's submit runs gate('booking', caregiverName).
+  if (await enforceClientGate(phone, chatId, clientId, "booking", data.caregiverName)) return;
   if (!data.caregiverId || !data.bookingId || !data.days?.length || !data.dayTimes) {
     await updateStep(phone, "vr_pick_caregiver");
     await sendMessage(chatId, CAREGIVER_QUESTION(data));

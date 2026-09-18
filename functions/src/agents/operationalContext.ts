@@ -268,7 +268,12 @@ export async function loadCaraOperationalContext(params: {
   } : undefined;
 
   return {
-    pendingActions: pendingDocs.map((doc) => {
+    // pending_actions expire after 15 minutes (pendingActions.ts) but keep
+    // status "awaiting" until something reads them — never surface an expired one.
+    pendingActions: pendingDocs.filter((doc) => {
+      const exp = asString(doc.data().expiresAt);
+      return !exp || new Date(exp).getTime() > Date.now();
+    }).map((doc) => {
       const data = doc.data();
       return {
         id: doc.id,

@@ -84,47 +84,6 @@ async function carePlanHasMeds(seniorId: string, clientId: string): Promise<bool
   return false;
 }
 
-function formatClockTime(ms: number): string {
-  return new Date(ms).toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit",
-  });
-}
-
-// Facts-only family heartbeat: built entirely from known facts (names + arrival
-// time). Never asserts wellbeing and never says the caregiver is unresponsive.
-async function sendFamilyHeartbeat(params: {
-  clientPhone: string;
-  clientId:    string;
-  seniorFirstName: string;
-  caregiverFirstName: string;
-  anchorMs: number | null;
-}): Promise<boolean> {
-  const { clientPhone, seniorFirstName, caregiverFirstName, anchorMs } = params;
-  const since = anchorMs ? ` since ${formatClockTime(anchorMs)}` : "";
-  const fallback =
-    `${caregiverFirstName} is with ${seniorFirstName}${since} — the visit's going along ` +
-    `and I'll pass along the next update as soon as I have it.`;
-
-  const content = await generateCaraMessage({
-    audience: "family",
-    context:
-      `Write a brief, warm 1-2 sentence reassurance to a family member during an in-progress care visit. ` +
-      `State ONLY these facts: ${caregiverFirstName} is with ${seniorFirstName}${since}, the visit is ongoing, ` +
-      `and you'll share the next update soon. Do NOT claim anything about how ${seniorFirstName} is feeling or ` +
-      `doing, and do NOT say the caregiver is unresponsive or hasn't checked in. From Evia, a care coordinator. No emoji.`,
-    fallback,
-    maxTokens: 90,
-  });
-
-  return sendViaInteractionAgent(clientPhone, {
-    content,
-    urgency:       "standard",
-    sourceAgent:   "in_shift_heartbeat",
-    canDrop:       true,
-    bypassDailyCap: true,
-  });
-}
-
 export const sendInShiftUpdates = functions.pubsub
   .schedule("*/15 * * * *")
   .onRun(async () => {
@@ -189,16 +148,11 @@ export const sendInShiftUpdates = functions.pubsub
         if (hb.action === "heartbeat") {
           // The per-shift ceiling counts only real deliveries — a heartbeat that
           // was DND-skipped or had no reachable family must not burn a slot.
-          let heartbeatSent = false;
-          if (clientSession) {
-            heartbeatSent = await sendFamilyHeartbeat({
-              clientPhone: clientSession.phone,
-              clientId,
-              seniorFirstName,
-              caregiverFirstName,
-              anchorMs,
-            });
-          }
+          // 2026-09-17: the family no longer gets an invented "the visit's going
+          // along" reassurance — they get the real thing (tasks checked off and
+          // visit notes, triggers/familyVisitUpdates.ts). The unanswered-prompt
+          // bookkeeping below stays for the caregiver-side silence alert.
+          const heartbeatSent = false;
           // Increment (not overwrite) so a reply landing concurrently — its
           // handler resets the counter to 0 — isn't clobbered by our stale read.
           const unanswered = (appt.inShiftUnansweredCount ?? 0) + 1;

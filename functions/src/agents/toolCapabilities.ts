@@ -57,7 +57,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   request_shift_swap:           ["booking", "scheduling", "messaging"],
   accept_shift_swap:            ["booking", "scheduling", "messaging"],
   cancel_shift_swap:            ["booking", "scheduling", "messaging"],
-  initiate_client_swap:         ["booking", "scheduling", "messaging"],
   withdraw_job_application:     ["booking"],
   respond_to_booking_request:   ["booking", "messaging"],
   // Booking-pipeline parity (2026-08-30): booking_requests/shifts/booking_amendments
@@ -76,10 +75,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── billing ──────────────────────────────────────────────────────────────
   get_billing_summary:      ["billing"],
   set_subscription_status:  ["billing"],
-  get_invoice_history:      ["billing"],
-  get_invoice_details:      ["billing"],
-  create_refund_request:    ["billing"],
-  get_refund_requests:      ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
   retry_shift_payment:      ["billing"],            // parity 2026-07-06: agent mirror of v1-retryShiftPayment
@@ -102,6 +97,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   update_care_plan:          ["care_plan"],
   create_senior_profile:     ["care_plan"],
   remove_care_recipient:     ["care_plan"],
+  set_recipient_photo:       ["care_plan"],
   // U7
   delete_care_journal_entry: ["care_plan"],
   delete_review:             ["booking"],
@@ -258,7 +254,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   CAREGIVER_DECLINE_JOB: ["booking", "messaging"],
   RESCHEDULE_REQUEST:    ["booking", "scheduling", "messaging"],
   SWAP_REQUEST:          ["booking", "scheduling", "messaging"],
-  CLIENT_SWAP_REQUEST:   ["booking", "scheduling", "messaging"],
   FIND_REPLACEMENT:      ["booking", "scheduling", "messaging"],
   CANCEL_SHIFT:          ["booking", "scheduling", "messaging"],
 
@@ -280,11 +275,9 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 
   // Billing
   UPDATE_PAYMENT_METHOD: ["billing"],
-  REQUEST_REFUND:        ["billing"],
   VIEW_INVOICE:          ["billing"],
   VIEW_EARNINGS:         ["billing"],
   INSTANT_PAYOUT:        ["billing"],
-  APPROVE_TIMESHEET:     ["billing", "care_plan"],
 
   // Care plan
   VIEW_JOURNAL:            ["care_plan"],
@@ -315,7 +308,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
 // (memory notes Evia already echoes back) are intentionally excluded.
 export const HIGH_STAKES_MUTATIONS = new Set<string>([
   // bookings & visits
-  "initiate_client_swap",
   // interviews, hiring, jobs
   "schedule_interview", "respond_to_interview_request", "submit_interview_feedback",
   "complete_interview", "respond_to_job_application", "apply_to_job",
@@ -324,7 +316,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
   "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
   // money
-  "set_subscription_status", "create_refund_request",
+  "set_subscription_status",
   "request_instant_payout", "retry_shift_payment",
   // people & safety
   "add_family_member", "remove_family_member", "set_block_status",

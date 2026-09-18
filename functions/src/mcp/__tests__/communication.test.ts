@@ -120,7 +120,8 @@ describe("communication tools", () => {
       expect(r.success).toBe(true);
       expect(r.sent).toBe(true);
       expect(r.notification.sent).toBe(true);
-      expect(trySend).toHaveBeenCalledWith("+15555550100", "Alice: hi", "mcp:send_client_message");
+      // No direct SMS from the tool — onMessageSent notifies the family like a website message.
+      expect(trySend).not.toHaveBeenCalled();
     });
 
     it("blocks an explicit clientId when no relationship exists", async () => {
@@ -132,22 +133,16 @@ describe("communication tools", () => {
       expect(r.code).toBe("FORBIDDEN");
     });
 
-    it("surfaces notification.sent=false when Linq send fails", async () => {
-      hoisted.collState.set("appointments", [
-        { caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" },
-      ]);
-      hoisted.docState.set("users/c1", { phone: "+15555550100" });
+    it("posts into the shared thread and does not text the family directly (the trigger does, like a website message)", async () => {
+      hoisted.collState.set("appointments", [{ caregiverId: "cg1", clientId: "c1", status: "confirmed", date: "2026-06-01" }]);
+      hoisted.docState.set("users/c1", { phone: "+15555550100", name: "Sarah" });
       hoisted.docState.set("caregivers/cg1", { name: "Alice", membershipStatus: "active" });
-      trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed" });
-      const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
+      const r = await handleToolCall("send_client_message", { caregiverId: "cg1", message: "on my way", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.notification.sent).toBe(false);
+      expect(r.sent).toBe(true);
+      expect(trySend).not.toHaveBeenCalled();
     });
 
-    // 2026-08-31: Messages/Inbox parity audit — the website blocks a caregiver
-    // with an inactive membership from sending in the Inbox composer
-    // (useCaregiverGate's gateMembership(), InboxView.tsx); send_client_message
-    // had no equivalent check.
     describe("caregiver membership gate (Messages/Inbox parity)", () => {
       it("blocks when the caregiver has no membershipStatus/membershipPaid at all", async () => {
         hoisted.collState.set("appointments", [
@@ -238,13 +233,6 @@ describe("communication tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("returns NOT_FOUND if caregiver has no phone", async () => {
-      seedVerifiedClient();
-      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
-      const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
     // 2026-08-31: Messages/Inbox parity — BrowseCaregivers.tsx never surfaces a
     // hidden profile to browse/message; Evia shouldn't relay to one either.
     it("returns NOT_FOUND for a caregiver with profileVisibility:'hidden'", async () => {
@@ -256,23 +244,21 @@ describe("communication tools", () => {
       expect(trySend).not.toHaveBeenCalled();
     });
 
-    it("sends and returns notification status", async () => {
+    it("posts the message and reports it sent — with no phone on file at all (the Inbox needs none)", async () => {
       seedVerifiedClient();
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
+      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "she napped well", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
       expect(r.notification.sent).toBe(true);
       expect(r.sent).toBe(true);
     });
 
-    it("surfaces notification failure", async () => {
+    it("does not text the caregiver itself — the chatRooms trigger notifies them exactly like a website message", async () => {
       seedVerifiedClient();
       hoisted.docState.set("caregivers/cg1", { name: "Alice", phone: "+15555550101" });
-      trySend.mockResolvedValueOnce({ sent: false, reason: "linq_send_failed" });
       const r = await handleToolCall("send_caregiver_message", { caregiverId: "cg1", message: "hi", clientId: "c1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.sent).toBe(false);
-      expect(r.notification.sent).toBe(false);
+      expect(trySend).not.toHaveBeenCalled();
     });
   });
 
@@ -313,7 +299,7 @@ describe("communication tools", () => {
       });
     });
 
-    it("send_caregiver_message still sends the SMS even if the thread write fails to resolve names", async () => {
+    it("send_caregiver_message still posts when the family's name is missing", async () => {
       // users/c1 has no `name` — clientName resolves to "", but the tool must
       // not fail or skip the SMS relay over it. (identity/membership fields
       // are still required to pass the gate above.)
@@ -331,75 +317,104 @@ describe("communication tools", () => {
   // so it always returned empty no matter what. Real conversations live in
   // chatRooms/{sortedIds}/messages — the same collection send_caregiver_message
   // and send_client_message write to via relayIntoSharedChatThread.
-  describe("get_recent_messages (reads real chatRooms, not threads)", () => {
+  describe("get_recent_messages — the website's Inbox page", () => {
+    const roomId = ["c1", "cg1"].sort().join("_");
+
     it("requires userId", async () => {
       const r = await handleToolCall("get_recent_messages", {}) as any;
       expect(r._toolError).toBe(true);
     });
 
-    it("returns empty when the user has no chatRooms", async () => {
+    it("returns an empty inbox when the user has no chatRooms", async () => {
       const r = await handleToolCall("get_recent_messages", { userId: "c1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.threads).toEqual([]);
+      expect(r.rooms).toEqual([]);
+      expect(r.total).toBe(0);
+      expect(r.unreadTotal).toBe(0);
     });
 
     it("ignores the unrelated `threads` (Evia-assistant) collection entirely", async () => {
-      // A cara_c1 doc with participants [c1,'cara'] must never surface here.
       hoisted.docState.set("threads/cara_c1", { participants: ["c1", "cara"], updatedAt: "2026-08-31" });
       const r = await handleToolCall("get_recent_messages", { userId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.threads).toEqual([]);
+      expect(r.rooms).toEqual([]);
     });
 
-    it("reads a real caregiver<->client conversation from chatRooms, oldest-to-newest", async () => {
-      const roomId = ["c1", "cg1"].sort().join("_");
+    it("lists the page: My Care Team / Other Caregivers / Support sections, last message or Start a conversation, unread, blocked hidden", async () => {
       hoisted.collState.set("chatRooms", [
-        { id: roomId, participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], lastMessageTimestamp: "t2" },
+        { id: roomId, participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], lastMessage: "she napped well", lastMessageTime: "2026-09-16T20:00:00.000Z", unreadCount: { c1: 2, cg1: 0 } },
+        { id: "c1_cg2", participants: ["c1", "cg2"], participantNames: ["Sarah", "Bob"], lastMessage: "", lastMessageTime: "", unreadCount: { c1: 0, cg2: 0 } },
+        { id: "c1_support", participants: ["c1", "careconnex-support"], participantNames: ["Sarah", "Evia Support"], isSupport: true, lastMessage: "How can we help?", unreadCount: { c1: 1 } },
+        { id: "c1_cg3", participants: ["c1", "cg3"], participantNames: ["Sarah", "Blocked Guy"], lastMessage: "hey", unreadCount: { c1: 5 } },
+        { id: "c1_cg4", participants: ["c1", "cg4"], participantNames: ["Sarah", "Gone"], lastMessage: "bye", deletedAt: { c1: "2026-09-01T00:00:00.000Z" }, unreadCount: { c1: 1 } },
       ]);
-      // The mock's orderBy() is a no-op passthrough (unlike real Firestore),
-      // so the fixture is seeded already in the "orderBy('timestamp','desc')"
-      // order (newest first) the real query would return — the code then
-      // reverses it to oldest-first for display, same as real Firestore.
-      hoisted.collState.set(`chatRooms/${roomId}/messages`, [
-        { senderId: "c1",  text: "thank you!",       timestamp: "t2" },
-        { senderId: "cg1", text: "she napped well", timestamp: "t1" },
-      ]);
+      hoisted.collState.set("booking_requests", [{ id: "br1", clientId: "c1", caregiverId: "cg1", status: "accepted" }]);
+      hoisted.docState.set("users/c1", { blockedUsers: ["cg3"] });
       const r = await handleToolCall("get_recent_messages", { userId: "c1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.threads).toHaveLength(1);
-      expect(r.threads[0]).toMatchObject({ threadId: roomId, with: "Alice", withId: "cg1" });
-      expect(r.threads[0].messages).toEqual([
-        { from: "Alice", text: "she napped well", timestamp: "t1" },
-        { from: "you",   text: "thank you!",       timestamp: "t2" },
-      ]);
+      expect(r.sections.careTeam.map((x: any) => x.withName)).toEqual(["Alice"]);
+      expect(r.sections.careTeam[0]).toMatchObject({ roomId, withId: "cg1", unread: 2, lastMessagePreview: "she napped well" });
+      expect(r.sections.other.map((x: any) => x.withName)).toEqual(["Bob"]);
+      expect(r.sections.other[0].lastMessagePreview).toBe("Start a conversation");
+      expect(r.sections.support).toHaveLength(1);
+      expect(r.rooms.some((x: any) => x.withId === "cg3" || x.withId === "cg4")).toBe(false);
+      expect(r.unreadTotal).toBe(3);
     });
 
-    it("with counterpartId, looks up the exact deterministic room directly instead of scanning", async () => {
-      const roomId = ["c1", "cg1"].sort().join("_");
-      hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"] });
+    it("query = the search box (contact name or last message)", async () => {
+      hoisted.collState.set("chatRooms", [
+        { id: roomId, participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], lastMessage: "she napped well" },
+        { id: "c1_cg2", participants: ["c1", "cg2"], participantNames: ["Sarah", "Bob"], lastMessage: "" },
+      ]);
+      const byName = await handleToolCall("get_recent_messages", { userId: "c1", query: "bob" }) as any;
+      expect(byName.rooms.map((x: any) => x.withName)).toEqual(["Bob"]);
+      const byText = await handleToolCall("get_recent_messages", { userId: "c1", query: "napped" }) as any;
+      expect(byText.rooms.map((x: any) => x.withName)).toEqual(["Alice"]);
+    });
+
+    it("with counterpartId opens that conversation: oldest → newest, and marks it read like the page", async () => {
+      hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], unreadCount: { c1: 1 } });
+      // The mock's orderBy() is a passthrough, so seed newest-first like the real query; the code reverses it.
       hoisted.collState.set(`chatRooms/${roomId}/messages`, [
-        { senderId: "cg1", text: "on my way", timestamp: "t1" },
+        { id: "m2", senderId: "c1",  senderName: "Sarah", text: "thank you!",       timestamp: "2026-09-16T20:05:00.000Z", isRead: true,  readBy: ["c1"] },
+        { id: "m1", senderId: "cg1", senderName: "Alice", text: "she napped well", timestamp: "2026-09-16T20:00:00.000Z", isRead: false, readBy: [] },
       ]);
       const r = await handleToolCall("get_recent_messages", { userId: "c1", counterpartId: "cg1" }) as any;
       expect(r.success).toBe(true);
-      expect(r.threads).toHaveLength(1);
-      expect(r.threads[0].messages[0]).toMatchObject({ from: "Alice", text: "on my way" });
+      expect(r.thread).toMatchObject({ roomId, withId: "cg1", withName: "Alice" });
+      expect(r.thread.messages.map((m: any) => [m.from, m.text])).toEqual([["Alice", "she napped well"], ["you", "thank you!"]]);
+      expect(r.thread.messages[0].date).toBe("2026-09-16");
+      const readSet = hoisted.sets.find((s) => s.path === `chatRooms/${roomId}/messages/m1`);
+      expect(readSet?.data).toMatchObject({ isRead: true, readBy: { __arrayUnion: ["c1"] } });
+      const roomSet = hoisted.sets.find((s) => s.path === `chatRooms/${roomId}` && "unreadCount.c1" in s.data);
+      expect(roomSet?.data["unreadCount.c1"]).toBe(0);
+      expect(r.thread.messagesMarkedRead).toBe(1);
     });
 
-    it("returns empty for counterpartId when no room exists between the two", async () => {
+    it("hides messages before the family's cutoff (deleted-then-resumed conversation), like the page", async () => {
+      hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], messagesCutoff: { c1: "2026-09-10T00:00:00.000Z" } });
+      hoisted.collState.set(`chatRooms/${roomId}/messages`, [
+        { id: "m2", senderId: "cg1", senderName: "Alice", text: "new one", timestamp: "2026-09-16T20:00:00.000Z" },
+        { id: "m1", senderId: "cg1", senderName: "Alice", text: "old one", timestamp: "2026-09-01T20:00:00.000Z" },
+      ]);
+      const r = await handleToolCall("get_recent_messages", { userId: "c1", counterpartId: "cg1" }) as any;
+      expect(r.thread.messages.map((m: any) => m.text)).toEqual(["new one"]);
+    });
+
+    it("returns no thread for counterpartId when no room exists between the two", async () => {
       const r = await handleToolCall("get_recent_messages", { userId: "c1", counterpartId: "cg-ghost" }) as any;
       expect(r.success).toBe(true);
-      expect(r.threads).toEqual([]);
+      expect(r.thread).toBeNull();
     });
 
-    it("skips a room the user has soft-deleted (deletedAt set, no new message since)", async () => {
-      const roomId = ["c1", "cg1"].sort().join("_");
+    it("a soft-deleted room is hidden from the list and cannot be opened (deletedAt set, no new message since)", async () => {
       hoisted.collState.set("chatRooms", [
         { id: roomId, participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], deletedAt: { c1: "2026-08-01" } },
       ]);
-      const r = await handleToolCall("get_recent_messages", { userId: "c1" }) as any;
-      expect(r.success).toBe(true);
-      expect(r.threads).toEqual([]);
+      hoisted.docState.set(`chatRooms/${roomId}`, { participants: ["c1", "cg1"], participantNames: ["Sarah", "Alice"], deletedAt: { c1: "2026-08-01" } });
+      const list = await handleToolCall("get_recent_messages", { userId: "c1" }) as any;
+      expect(list.rooms).toEqual([]);
+      const open = await handleToolCall("get_recent_messages", { userId: "c1", counterpartId: "cg1" }) as any;
+      expect(open.thread).toBeNull();
     });
   });
 

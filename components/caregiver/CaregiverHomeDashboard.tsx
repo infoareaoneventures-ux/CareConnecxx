@@ -86,6 +86,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
   const [startingShift, setStartingShift] = useState<string | null>(null);
   const [endingShift, setEndingShift] = useState<string | null>(null);
   const [endNote, setEndNote] = useState('');
+  const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [taskModalShift, setTaskModalShift] = useState<any | null>(null);
 
   // Real-time: booking requests + shifts
@@ -364,6 +365,36 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                           </button>
                         );
                       })()}
+                      {/* Visit notes log — append-only lines the family sees live */}
+                      {isInProgress && (
+                        <div className="mt-2">
+                          {Array.isArray(s.notesLog) && s.notesLog.length > 0 && (
+                            <div className="space-y-0.5 mb-1.5">
+                              {s.notesLog.map((n: any, i: number) => (
+                                <p key={i} className="text-xs text-slate-600"><span className="text-slate-400 mr-1">{new Date(n.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>{n.text}</p>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-1.5">
+                            <input value={noteDraft[s.id] || ''} onChange={e => setNoteDraft(p => ({ ...p, [s.id]: e.target.value }))}
+                              placeholder="Add a visit note for the family…"
+                              className="flex-1 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary-300" />
+                            <button type="button" disabled={!(noteDraft[s.id] || '').trim()}
+                              onClick={async () => {
+                                const text = (noteDraft[s.id] || '').trim();
+                                if (!db || !text) return;
+                                setNoteDraft(p => ({ ...p, [s.id]: '' }));
+                                await db.collection('shifts').doc(s.id).update({
+                                  notesLog: firebase.firestore.FieldValue.arrayUnion({ at: new Date().toISOString(), text, by: 'caregiver' }),
+                                  updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                }).catch(() => {});
+                              }}
+                              className="px-2.5 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50">
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {isInProgress && endingShift !== s.id && (
                         <button
                           onClick={() => { setEndingShift(s.id); setEndNote(''); }}
@@ -377,7 +408,7 @@ export const CaregiverHomeDashboard: React.FC<CaregiverHomeDashboardProps> = ({
                           <textarea
                             value={endNote}
                             onChange={e => setEndNote(e.target.value)}
-                            placeholder="Add a note (optional)..."
+                            placeholder="Closing note (optional)..."
                             rows={2}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400"
                           />

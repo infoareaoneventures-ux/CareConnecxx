@@ -18,7 +18,11 @@ const hoisted = vi.hoisted(() => {
   });
   return {
     docState,
-    collectionMock: vi.fn((c: string) => ({ where: (f: string, op: string, v: any) => makeQuery(c, [[f, op, v]]) })),
+    collectionMock: vi.fn((c: string) => ({
+      where: (f: string, op: string, v: any) => makeQuery(c, [[f, op, v]]),
+      // doc().get() — the booking_requests read for the membership-pause flag.
+      doc: (id: string) => ({ get: async () => ({ exists: docState.has(`${c}/${id}`), data: () => docState.get(`${c}/${id}`) }) }),
+    })),
     reset: () => docState.clear(),
   };
 });
@@ -136,5 +140,17 @@ describe("listActiveBookings", () => {
   it("returns an empty tab when nothing is active", async () => {
     hoisted.docState.set("shifts/done", { ...BASE, status: "completed", date: "2026-09-01" });
     expect(await listActiveBookings("c1")).toEqual([]);
+  });
+
+  it("carries the membership-pause flag the generator writes on the booking (schedulePaused + the page's note)", async () => {
+    hoisted.docState.set("shifts/s1", { ...BASE, date: "2099-01-05", startTime: "20:00", endTime: "21:30", status: "scheduled" });
+    hoisted.docState.set("booking_requests/br1", { clientId: "c1", status: "accepted", schedulePausedAt: "2099-01-01T00:00:00.000Z", schedulePausedReason: "membership_lapsed" });
+    const [b] = await listActiveBookings("c1");
+    expect(b.schedulePaused).toBe(true);
+    expect(b.schedulePausedNote).toMatch(/membership is inactive/);
+    hoisted.docState.set("booking_requests/br1", { clientId: "c1", status: "accepted" });
+    const [b2] = await listActiveBookings("c1");
+    expect(b2.schedulePaused).toBe(false);
+    expect(b2.schedulePausedNote).toBeNull();
   });
 });

@@ -61,6 +61,7 @@ vi.mock("../../safety/outputGuard", () => ({
 }));
 const describeSharedProfileMock = vi.fn((..._a: unknown[]) => "");
 vi.mock("../profileBriefing", () => ({ describeSharedProfile: (...a: unknown[]) => describeSharedProfileMock(...a) }));
+vi.mock("../onboardingConversation", () => ({ sendOnboardingLink: vi.fn(async () => ({ success: true })) }));
 vi.mock("../buildJobPost", () => ({
   buildAndSaveJobPost: vi.fn(async () => ({ jobId: "job-1", notifiedCount: 0 })),
   jobLiveMessage: "live",
@@ -103,6 +104,7 @@ function modelReplies(...texts: string[]) {
 
 beforeEach(() => {
   hoisted.reset();
+  hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "active" });
   sendMessage.mockClear();
   messagesCreate.mockReset();
   describeSharedProfileMock.mockReset().mockReturnValue("");
@@ -519,6 +521,13 @@ describe("jp_confirm_post (live-caught: a bare 'yes' never actually posted the j
 });
 
 describe("startJobPostingFlow", () => {
+  it("is gated like the page's New Request button: a lapsed membership gets the plan text and the wizard never opens", async () => {
+    hoisted.docState.set(`users/${UID}`, { identityCheckStatus: "verified", membershipStatus: "canceled" });
+    await startJobPostingFlow(PHONE, CHAT, baseSession());
+    expect(sendMessage.mock.calls.map((c: any[]) => (typeof c[1] === "string" ? c[1] : JSON.stringify(c[1]))).join(" ")).toMatch(/Select a plan/);
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`)?.jobPostingStep).not.toBe("jp_ask_frequency");
+  });
+
   it("kicks off at jp_ask_frequency (schedule questions run before who/where)", async () => {
     await startJobPostingFlow(PHONE, CHAT, baseSession());
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);

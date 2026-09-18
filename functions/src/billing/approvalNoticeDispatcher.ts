@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
+import { buildApprovalNoticeText, ApprovalNoticePayload } from "./approvalNoticeText";
 
 const db = admin.firestore();
 const LEASE_MS = 2 * 60 * 1000;
@@ -12,12 +13,7 @@ type OutboxState = "pending" | "retry" | "processing" | "sent" | "delivered" | "
 interface ApprovalOutboxRecord {
   appointmentId: string;
   recipientUid: string;
-  payloadSnapshot?: {
-    caregiverName?: string;
-    date?: string | null;
-    totalHours?: number;
-    grossPayCents?: number;
-  };
+  payloadSnapshot?: ApprovalNoticePayload;
   state: OutboxState;
   attemptCount?: number;
   nextAttemptAt?: string | null;
@@ -106,18 +102,19 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
     return false;
   }
 
+  // The Timesheets card in words (approvalNoticeText.ts) — the family reads the
+  // same facts over text that the page shows: clock in/out, duration, scheduled
+  // window, rate, base pay, charges, total, and the auto-approve time (or why not).
   const payload = record.payloadSnapshot ?? {};
+  const content = buildApprovalNoticeText(payload);
+  // Kept on the session for the APPROVE / DISPUTE keyword reply (routeClient.ts).
   const caregiverName = payload.caregiverName ?? "Your caregiver";
   const amount = (Number(payload.grossPayCents ?? 0) / 100).toFixed(2);
-  const hours = Number(payload.totalHours ?? 0);
-  const date = payload.date ?? "the completed visit";
   const providerMessageIds: string[] = [];
 
   try {
     const sent = await sendViaInteractionAgent(phone, {
-      content:
-        `${caregiverName} submitted ${hours}h for ${date} ($${amount}).\n\n` +
-        "Reply APPROVE to confirm and release payment, or DISPUTE if something looks off.",
+      content,
       urgency: "standard",
       sourceAgent: "billing_approval_notice",
       canDrop: false,

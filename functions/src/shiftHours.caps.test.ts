@@ -95,6 +95,10 @@ vi.mock("firebase-functions/v1", () => {
   };
 });
 
+// The family text mirror (shiftHours.ts textClient → sendSMSToUser) is a fire-and-forget
+// side effect here; mock it so the cold import of ./sms never eats the test timeout.
+vi.mock("./sms", () => ({ sendSMSToUser: vi.fn(async () => ({ success: true })) }));
+
 vi.mock("stripe", () => ({
   __esModule: true,
   default: class StripeMock { constructor(_key?: string, _opts?: any) {} },

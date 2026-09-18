@@ -94,8 +94,8 @@ describe("t (message bank)", () => {
 
 describe("flowLabel", () => {
   it("returns localized flow names", () => {
-    expect(flowLabel("refund", "en")).toBe("requesting a refund");
-    expect(flowLabel("refund", "es")).toBe("solicitar un reembolso");
+    expect(flowLabel("booking", "en")).toBe("sending a booking request");
+    expect(flowLabel("booking", "es")).toBe("enviar una solicitud de reserva");
     expect(flowLabel("job_posting", "es")).toBe("publicar un trabajo");
   });
 

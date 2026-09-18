@@ -58,7 +58,6 @@ export async function relayIntoSharedChatThread(opts: {
     // caller of this function) — the chatRooms-message-created trigger that
     // texts the recipient on a new message (notifications.ts onMessageSent)
     // must skip this message, or the recipient gets double-texted for one.
-    viaAgent:   true,
   });
 
   // Mirrors chatService.ts's sendMessage exactly: clear deletedAt for BOTH

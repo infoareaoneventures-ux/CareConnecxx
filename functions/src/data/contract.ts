@@ -219,18 +219,18 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
   agent_tasks: {
     path: "agent_tasks",
     docId: "auto",
-    caraWrites: true,
+    caraWrites: false,
     webReads: true,
     notes:
-      "Task records written server-side (matchingAgent caregiver_interest, triggers, etc.; the booking_confirmation type was retired 2026-09-17). Two web readers: (1) the public QuickConfirmPage reads the SINGLE token-scoped doc via where('confirmToken','=='), (2) admin AuditDashboard reads awaiting tasks. Web writes are NOT allowed — confirmation is committed server-side via the confirmAgentTask callable. Rules: token-scoped reads for the public page + admin reads; writes denied.",
+      "RETIRED 2026-09-17: no Evia code writes or reads this collection any more — the booking_confirmation, replacement_confirmation, replacement_or_skip and caregiver_interest queues were removed; the site's booking_requests / booking_amendments / shifts / video_interviews are the only pending state (get_pending_tasks reads those). Existing docs are inert. Remaining web readers, both queued for the full sweep: the public QuickConfirmPage magic link (token-scoped via getAgentTaskByToken / confirmAgentTask) and the admin AuditDashboard.",
   },
   agent_tasks_active: {
     path: "agent_tasks_active",
     docId: "phone",
-    caraWrites: true,
+    caraWrites: false,
     webReads: false,
     notes:
-      "Server-only single-active-task index keyed by clientPhone (matchingAgent/caraAgent writers, qaAgent reader; the emergency-replacement writer was removed 2026-09-16). No web reader — used only by backend routing to know if a matching search is in-flight. No rules block required (default-deny is correct).",
+      "RETIRED 2026-09-17: no writers remain (the matchingAgent / caraAgent execution agents were removed) and qaAgent no longer injects it as an ACTIVE BACKGROUND TASK. Existing docs are inert.",
   },
   agent_approvals: {
     path: "agent_approvals",

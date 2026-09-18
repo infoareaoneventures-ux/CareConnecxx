@@ -77,19 +77,22 @@ const hoisted = vi.hoisted(() => {
   return {
     docState, collState, sets, adds, updates,
     collectionMock: vi.fn((p: string) => makeCollRef(p)),
+    // WriteBatch shim for notifyAdmins (billing/reviewShiftHours.ts).
+    batch: () => ({ set: (ref: any, data: any) => { ref.set(data); }, update: (ref: any, data: any) => { ref.update(data); }, commit: async () => undefined }),
     reset: () => { docState.clear(); collState.clear(); sets.length = 0; adds.length = 0; updates.length = 0; },
   };
 });
 
 vi.mock("firebase-admin", () => ({
   __esModule: true,
-  default: { firestore: () => ({ collection: hoisted.collectionMock }) },
-  firestore: Object.assign(() => ({ collection: hoisted.collectionMock }), {
+  default: { firestore: () => ({ collection: hoisted.collectionMock, batch: hoisted.batch }) },
+  firestore: Object.assign(() => ({ collection: hoisted.collectionMock, batch: hoisted.batch }), {
     FieldValue: {
       arrayUnion:  (...v: any[]) => ({ __arrayUnion: v }),
       arrayRemove: (...v: any[]) => ({ __arrayRemove: v }),
       increment:   (n: number) => ({ __increment: n }),
       delete:      () => ({ __delete: true }),
+      serverTimestamp: () => ({ __serverTimestamp: true }),
     },
     Timestamp: {
       fromMillis: (ms: number) => ({ __timestampMillis: ms }),
@@ -647,6 +650,7 @@ describe("U11 payment auditing & safety", () => {
     });
 
     it("escalates a dispute to admin mediation and notifies admins", async () => {
+      hoisted.collState.set("users", [{ id: "admin1", userType: "admin" }]);
       hoisted.docState.set("shiftHours/a1", {
         clientId: "c1", caregiverId: "cg1", status: "caregiver_counter_proposed",
         clientName: "A Family", caregiverName: "Alice",
@@ -656,36 +660,11 @@ describe("U11 payment auditing & safety", () => {
       const shift = hoisted.docState.get("shiftHours/a1");
       expect(shift.status).toBe("disputed_admin_review");
       expect(shift.correctionHistory).toEqual([expect.objectContaining({ by: "client", action: "escalated" })]);
-      expect(notifyAdmins).toHaveBeenCalledWith(
-        "shift_hours_admin_review",
-        expect.any(String),
-        expect.stringContaining("A Family"),
-        { appointmentId: "a1" },
-      );
+      // The callable's own notifyAdmins ran (billing/reviewShiftHours.ts): one in-app notification per admin.
+      const adminNote = hoisted.sets.find((x) => x.path.startsWith("users/admin1/notifications/"));
+      expect(adminNote?.data).toMatchObject({ type: "shift_hours_admin_review", data: { appointmentId: "a1" } });
+      expect(String(adminNote?.data.body)).toContain("A Family");
     });
   });
 
-  // Scenario 5 — a refund request creates admin-visible state and never auto-refunds.
-  describe("create_refund_request", () => {
-    it("writes an authorized requested refund record and does NOT auto-refund", async () => {
-      hoisted.docState.set("appointments/a1", { clientId: "c1", status: "completed" });
-      const r = await handleToolCall("create_refund_request", {
-        clientId: "c1", appointmentId: "a1", reason: "Visit was cut short",
-      }) as any;
-      expect(r.success).toBe(true);
-      expect(r.requestId).toBeTruthy();
-      const req = hoisted.docState.get("refundRequests/a1:c1");
-      expect(req).toBeTruthy();
-      expect(req.status).toBe("requested");
-      expect(req.clientId).toBe("c1");
-      // No Stripe refund was issued — admin review is required first.
-      expect(payoutCreate).not.toHaveBeenCalled();
-    });
-
-    it("requires clientId and appointmentId", async () => {
-      const r = await handleToolCall("create_refund_request", { clientId: "c1" }) as any;
-      expect(r._toolError).toBe(true);
-      expect(r.code).toBe("INVALID_INPUT");
-    });
-  });
 });

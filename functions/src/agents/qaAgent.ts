@@ -94,7 +94,7 @@ const FACT_CHANGE_SKIP_INTENTS: ReadonlySet<Intent> = new Set<Intent>([
   "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "SCHEDULE_REQUEST", "REBOOK_REQUEST",
   "CANCEL_REQUEST", "CANCEL_SHIFT", "CANCEL_SCHEDULE", "PAUSE_SCHEDULE",
   "FIND_CAREGIVER", "FIND_REPLACEMENT", "HIRE_CAREGIVER", "BOOKING_CONFIRM", "BOOKING_DECLINE",
-  "SWAP_REQUEST", "CLIENT_SWAP_REQUEST", "APPROVE_TIMESHEET",
+  "SWAP_REQUEST",
 ]);
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
@@ -786,7 +786,7 @@ export function buildClientSystemPrompt(
     `- For questions about appointments, journal entries, or health data, call the relevant tool rather than guessing from cached context.`,
     `- For multi-step requests (e.g. "find out who's coming Thursday and tell them I'll be home at 3"), call tools in order: get appointment → send_caregiver_message.`,
     `- You can take real actions on behalf of the family:`,
-    `  · send_caregiver_message — relay a message; tell the family what you're sending`,
+    `  · send_caregiver_message — the Inbox composer: posts the family's message into their shared thread with that caregiver; the caregiver is notified like any website message (in-app + text). Tell the family what you're sending first; never claim you texted the caregiver separately.`,
     `  · find_nearby_caregivers — the website's Find Caregivers page (Find Care), exactly: same pool, same filter panel (search, distance, max rate, rating, experience, background checked, reliable transportation, specialties, languages), same sort (Highest rated / price), and the Favorites tab (favoritesOnly). It texts the family the "<N> caregivers found" line and one card per caregiver (with each card's button state: Request Interview / Active Booking / Interview requested / Re-book) and records them in pendingMatches; a pick from that list goes to start_interview_flow (or start_booking_flow for a Re-book). "Show me more" = same filters + offset. NEVER use it for a visit the caregiver cancelled: for anything about replacing/covering a cancelled visit or a visit showing "Needs Replacement", call get_upcoming_appointments to find that visit's id (status "needs_replacement"), then start_replacement_flow — that is the website's own Find Replacement flow and ends in a replacement booking request, not an interview.`,
     `  · get_caregiver_booking_rate — look up what a caregiver charges (read-only)`,
     `  · start_booking_flow — once the family is ready to book, call this INSTEAD of collecting rate/schedule/location yourself. caregiverId and interviewId are BOTH OPTIONAL: pass caregiverId when a specific caregiver was named; OMIT it entirely when they haven't ("let's send a booking") and this will show every completed-interview-ready option across all their caregivers to pick from. Pass interviewId only when you already have the exact id (e.g. right after submit_interview_feedback) — otherwise leave it out. It runs Evia's own scripted flow (which interview if that's still ambiguous, rate, schedule, location if ambiguous, then a full recap matching the website's review modal, then the family's own YES/NO) and ALREADY TEXTS THE FAMILY ITSELF, in one combined message. Send NOTHING else this turn — not even a brief acknowledgment like "on it" or "starting that now" — a separate reply from you can arrive out of order against the flow's own message and read as confusing or backwards.`,
@@ -803,7 +803,7 @@ export function buildClientSystemPrompt(
     `  · get_callout_backups / select_callout_backup — the same two steps as individual tools, only for a replacement already mid-conversation outside the flow. get_callout_backups finds candidates ranked the same way the website's own Find Replacement picker does (Care Team first, then nearby matches) and ALREADY TEXTS THE FAMILY each one's real profile card itself (tappable photo-preview link, same as find_nearby_caregivers) — send NOTHING else this turn beyond following its own instruction (which one they'd like). The candidates also land in pendingMatches, so a later "send me Maria's profile again" works via resend_caregiver_profile exactly like any other caregiver search. select_callout_backup then sends a NEW booking request to the family's chosen candidate (they get the normal accept/decline text — this does not reassign the visit outright). If the family decides they don't need a replacement, use manage_booking's cancel_visit on that same shift instead (matches the website's Skip button) — there is no refund tool; refunds are handled separately, not through this flow.`,
     `  · send_referral / get_referral_status — invite a friend by email or check referral status`,
     `  · react_to_message — add an iMessage tapback (heart, thumbs-up, laugh, or any custom emoji) to the family's most recent message. Use it the way a person texting would: heart a photo of ${seniorName}, thumbs-up a quick "sounds good", laugh at a joke. It's silent — a reaction alone is often the whole answer, so don't follow it with a redundant text. If the tool reports a fallback (SMS chat), express the sentiment briefly in your reply instead.`,
-    `  · get_pending_tasks — call this when the family says hello or asks if anything needs attention`,
+    `  · get_pending_tasks — everything the website shows as pending (Requests tab, Needs Replacement / Review buttons, interview proposals, Care Plan review banner, timesheets), each marked waitingOn you/caregiver. Call it when the family says hello or asks if anything needs attention, and never say something is waiting on them unless it came back from this tool this turn.`,
     `  · cara_knows — call when the family asks what you remember about ${seniorName}, what's on file, or to verify what you've been told. Summarize the returned context warmly in 2–3 sentences as prose, never a list.`,
     `  · suggest_upcoming_care — call this proactively during casual conversation to check if ${seniorName} has upcoming care coverage. If they don't have a visit next week and their preferred caregiver is available, naturally weave in a suggestion to book.`,
     `  · get_care_plan — the website's Care Plan page exactly: every care recipient (tab) with Care Needs & Tasks (needs + sub-tasks), Care Location, Notes, Lifestyle & Preferences, plus the shared locationPool, the Emergency Contacts card and whether the plan has been reviewed. Call before any care plan question or change. Non-medical — there are no medications or diagnoses on this page.`,
@@ -812,7 +812,7 @@ export function buildClientSystemPrompt(
     `  · add_family_member — add someone new to the care group. They'll get a welcome text and start receiving care updates.`,
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
-    `  · review_shift_hours — approve hours a caregiver submitted, propose a correction (ask for the correct start AND end time, not just total hours), or — if the caregiver then pushes back with a counter-proposal — accept their counter or escalate to Evia's team to mediate.`,
+    `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the caregiver then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
     `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. MANDATORY for cancel: tell family when it ends and ask for explicit confirmation before calling. Reactivate needs no confirmation.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accepting an applicant means requesting an interview with them (the website has no direct "accept" — this IS how you show interest); include preferredDate/preferredTime when accepting. Rejecting just declines the application.`,
@@ -829,6 +829,7 @@ export function buildClientSystemPrompt(
     `  · list_household_seniors — the Care Plan page's recipient tabs (name, relationship, age, primary). Use when a family manages care for more than one person and you need to know who's on file.`,
     `  · create_senior_profile — the Care Plan page's "+ Add" recipient form: needs first name, relationship (Myself/Parent/Grandparent/Spouse/Sibling/Other) and a care location with a street address (reuse one from get_care_plan's locationPool when it's the same home), plus optional care needs/sub-tasks and a note. Collect what's missing one question at a time, read it back, confirm, then call. Non-medical — no conditions or medications.`,
     `  · remove_care_recipient — remove a care recipient from the household (same as the trash icon on the Care Plan page). Confirm before calling — permanent, and can't remove the household's only recipient.`,
+    `  · set_recipient_photo — the Care Plan page's recipient photo (the tab avatar). When the family sends a picture of a care recipient ("this is Samira"), the photo they just attached IS the file — save it with this. One recipient on file → just save; several and no name → ask which. If photos won't come through on their phone, send the Care Plan page link so they can upload it there.`,
     `  · create_job_post — post a new caregiver job so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.`,
     `  · delete_review — remove a review the family left for a caregiver. Permanent — confirm first.`,
     `  · delete_care_journal_entry — hide an incorrect care-journal entry from the family view (soft-delete, audit retained). Confirm first.`,
@@ -841,15 +842,14 @@ export function buildClientSystemPrompt(
     `  · cancel_job_post — close an open job post. Confirm before calling.`,
     `  · list_job_applicants — the website's View Applicants panel: pending applicants for one post, each with locked + label ("Hired" / "Booking Sent" / "Interviewed" / "Interview Sent") exactly as the panel shows. A locked applicant can't be declined or re-interviewed — say why using the label. Ask which job if they have more than one open.`,
     `  · edit_job_post — the website's Edit post modal: description, rate or rate-flexible, type (occasional/part-time/full-time), start/end date or ongoing, days, time of day, care types (at least one), pets, smoking, caregivers needed, recipients count. Read the current values back from list_client_jobs, confirm the exact changes, then call. Cancel post = cancel_job_post (the "..." menu's Cancel).`,
-    `  · get_pending_timesheets — check for shift hours waiting for the family's approval. Call when they ask "do I have anything to approve" or "any pending timesheets".`,
+    `  · get_pending_timesheets — the website's Timesheets page: tab needs_review (hours to approve, counters to answer, failed payments to retry, plus items waiting on someone else) or tab history (approved/paid with from/to totals). Call for "anything to approve", "what did I pay", "payment history". When a pending row has autoApproveAt, say when it auto-approves and charges the card (the page shows the same "Auto-approves" time); when it has none, say nothing about auto-approval — that row waits for the family. Never invent a timesheet that isn't in the result.`,
     `  · get_care_journal_client — get recent care journal notes from the caregiver. Prefer this over get_care_journal when the family asks about visit updates.`,
-    `  · get_recent_messages — show recent inbox messages with a caregiver. Use when they ask "what did they say", "catch me up on messages", or reference a prior conversation.`,
+    `  · get_recent_messages — the website's Inbox page: without counterpartId the thread list (My Care Team / Other Caregivers / Support, last message or "Start a conversation", unread counts; 'query' = the search box); with counterpartId that conversation's messages, which also marks it read like opening it on the page. Use for "what did they say", "any new messages", "catch me up".`,
     `  · get_signup_completeness — FINAL SIGNUP CHECK: audit the family's account for anything signup missed (membership payment, care-recipient profile, care needs, location). Use right after signup wraps up or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result — report each \`missing\` item with its fix, treat \`optionalGaps\` as optional, and if \`complete\` is true say they're all set.`,
     `  · create_support_ticket — LAST RESORT, only for issues no other tool can resolve. Do NOT use it for link/onboarding/signup/subscription/payment/identity requests — those you can fulfill yourself with send_onboarding_link or get_payment_update_link. Never tell someone "the team will follow up" for something you can do right now.`,
     `  · schedule_followup — use this when a family member mentions a future event that deserves a natural check-in. Examples: they mention ${seniorName} has a doctor appointment Thursday → schedule a follow-up Friday morning ("How did Thursday's appointment go?"). They mention trying a new medication → schedule 3 days out. They mention a family member is visiting → schedule a check-in the day after. Do this naturally, without asking for permission — just confirm what you're doing ("I'll check in with you Friday to hear how it went."). Only schedule one follow-up per event.`,
-    `  · initiate_client_swap — find replacement caregivers for a specific visit. Use when the family wants to swap who's coming for a single date (vs. cancelling outright).`,
-    `  · get_active_bookings — the website's My Bookings > Active Bookings tab exactly: each active booking (caregiver, Ongoing/Until, Starts, weekly days+times with hours, address, rate, note, care recipients' care plan, emergency contact) with its UPCOMING SHIFTS — each visit's status pill (Scheduled/Overdue/In progress/Needs Replacement), any pending reschedule proposal and who it's waiting on, reschedule history, and 'actions' = the buttons the page shows for that row. Call for "what's my schedule", "when is Basra coming", "is anything waiting on me", "how many visits are left", and BEFORE any cancel/reschedule/replacement so you act on the real visit. To cancel use start_cancel_flow; to add a recurring day use start_visit_request_flow; there is no way to edit an agreed recurring day's times (matches the website).`,
-    `  · get_payment_update_link — generate a Stripe billing portal link for the family to update their payment method. Send them the link; never ask them to type card details.`,
+    `  · get_active_bookings — the website's My Bookings > Active Bookings tab exactly: each active booking (caregiver, Ongoing/Until, Starts, weekly days+times with hours, address, rate, note, care recipients' care plan, emergency contact) with its UPCOMING SHIFTS — each visit's status pill (Scheduled/Overdue/In progress/Needs Replacement), any pending reschedule proposal and who it's waiting on, reschedule history, and 'actions' = the buttons the page shows for that row. Call for "what's my schedule", "when is Basra coming", "is anything waiting on me", "how many visits are left", and BEFORE any cancel/reschedule/replacement so you act on the real visit. To cancel use start_cancel_flow; to add a recurring day use start_visit_request_flow; there is no way to edit an agreed recurring day's times (matches the website). If a booking has schedulePaused=true, the family's membership lapsed and no new visits are being added until they reactivate (already-scheduled visits still happen) — say so plainly and point them to the membership page.`,
+    `  · get_payment_update_link — the Timesheets > Payment Method tab: card on file (brand, last 4) and the page's button — an "Add a card" membership-page link when there's no billing account, otherwise a Stripe Billing Portal link to manage the card. Send the link; never take card details in chat.`,
     `  · send_onboarding_link — generate AND send a tappable onboarding/signup link directly to the chat. Use for ANY request to (re)send a subscription/payment, identity verification, profile photo, document, background-check, or payout link. Pick linkType: client_payment, client_identity, caregiver_membership, caregiver_photo, caregiver_documents, caregiver_background_check, caregiver_payouts. The tool sends the link itself — after it succeeds, just briefly confirm (e.g. "Sent! Tap the link to verify your identity — takes about 30 seconds."). Do NOT open a support ticket for these.`,
     `  · get_invoice_details — pull the itemized breakdown for a specific invoice. Use when they ask "what was I charged for on June 3?".`,
     `  · get_family_group — list everyone in the care group with their role and phone.`,
@@ -872,8 +872,6 @@ export function buildClientSystemPrompt(
     `  · delete_memory_file — permanently delete one of your memory files for this family (content + search index). MANDATORY: read back which file and wait for explicit YES. To fix a single fact use edit_memory_file instead.`,
     `  · list_blocked_users — show who the family has blocked. Use before set_block_status or when they ask "who have I blocked?".`,
     `  · retry_shift_payment — re-run a FAILED visit payment when the family asks ("my payment didn't go through, try again"). Usually after they've fixed their card via get_payment_update_link. Don't promise success — the charge runs asynchronously; say you've re-run it.`,
-    `  · create_refund_request — file a refund request for a specific visit or invoice. Confirm the amount and what it's for before calling; tell the family ops reviews it.`,
-    `  · get_refund_requests — check the status of the family's refund requests.`,
     `  · edit_review — update a review the family previously left for a caregiver.`,
     `  · cancel_followup — cancel a follow-up check-in you scheduled if the family says it's no longer needed.`,
     `  · update_preferences — update the family's notification, do-not-disturb, or timezone preferences ("don't text me after 8pm").`,
@@ -2612,18 +2610,6 @@ export async function runQaAgent(params: {
     if (goalContext) systemPrompt += goalContext;
   }
 
-  // Inject active background task status (e.g. emergency replacement in progress)
-  if (!skipCrossEntity) {
-    const activeTaskSnap = await db.collection("agent_tasks_active").doc(phone).get().catch(() => null);
-    // emergency_replacement entries are leftovers of the removed no-show
-    // automation (2026-09-16) — never let a stale one steer a turn.
-    if (activeTaskSnap?.exists && activeTaskSnap.data()!.type !== "emergency_replacement") {
-      const t = activeTaskSnap.data()!;
-      systemPrompt +=
-        `\n\nACTIVE BACKGROUND TASK:\nType: ${sanitizePromptContext(t.type, 80)}\nStatus: ${sanitizePromptContext(t.status, 80)}\nDetails: ${sanitizePromptContext(t.description, 400)}\n` +
-        `If the family asks for an update or "what's happening", report this status directly.`;
-    }
-  }
 
   // Roster check — inject active execution agent context so Claude can route follow-up questions
   if (userType !== "caregiver" && !skipCrossEntity) {
@@ -4085,19 +4071,9 @@ export async function runQuickReply(params: {
 
   // Pre-fetch lightweight context in parallel — used to make greetings smart.
   // Each loader is wrapped so a single failure doesn't break the reply.
-  const [history, nextAppt, pendingTask, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts, cgProfile] = await Promise.all([
+  const [history, nextAppt, pendingTimesheets, activeAgent, seniorProfile, cgSnapshot, cgAccountFacts, cgProfile] = await Promise.all([
     getConversationHistory(phone).catch(() => []),
     userType === "client" && userId ? getNextAppointment(userId).catch(() => null) : Promise.resolve(null),
-    userType === "client"
-      ? db.collection("agent_tasks")
-          .where("clientPhone", "==", phone)
-          .where("status",      "==", "awaiting_approval")
-          .orderBy("createdAt", "desc")
-          .limit(1)
-          .get()
-          .then(s => s.empty ? null : s.docs[0].data())
-          .catch(() => null)
-      : Promise.resolve(null),
     userType === "client" && userId
       ? db.collection("shiftHours")
           .where("clientId", "==", userId)
@@ -4143,9 +4119,6 @@ export async function runQuickReply(params: {
   if (activeAgent) {
     const goal = (activeAgent as any).goal?.description ?? "an open task";
     contextLines.push(`OPEN GOAL: You're in the middle of "${goal}" with this family — pick up where you left off.`);
-  }
-  if (pendingTask) {
-    contextLines.push(`PENDING APPROVAL: There's a booking/task awaiting their reply ("${(pendingTask as any).summary ?? (pendingTask as any).type ?? "action needed"}").`);
   }
   if (pendingTimesheets > 0) {
     contextLines.push(`PENDING TIMESHEETS: ${pendingTimesheets} caregiver shift hours waiting for their approval.`);
@@ -4204,7 +4177,6 @@ export async function runQuickReply(params: {
   // Built verbatim from Firestore facts — safe to send without a grounding
   // check, so the gate below skips replies that came from here.
   const contextFallbackGreeting = (): string => {
-    if (pendingTask) return "Hey! You still have that booking waiting on a yes/no — want me to pull it up?";
     if (pendingTimesheets > 0) return `Hey! ${pendingTimesheets > 1 ? `${pendingTimesheets} timesheets are` : "A timesheet is"} waiting for your approval whenever you're ready.`;
     if (nextAppt) {
       const cg = (nextAppt as any).caregiverName ?? "your caregiver";

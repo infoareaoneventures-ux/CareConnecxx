@@ -86,7 +86,17 @@ const TITLE = "Senior care in Austin"; // 22 chars — within 10-80
 const NOTES = "Mom needs help with bathing, medication reminders, and light housekeeping most weekday afternoons."; // >50 chars
 
 describe("create_job_post", () => {
-  beforeEach(() => { hoisted.reset(); lookupZipPlace.mockReset(); });
+  it("is gated like the page's New Request button (identity, then membership)", async () => {
+    hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "canceled" });
+    const r = await handleToolCall("create_job_post", { clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], hourlyRate: 25 }) as any;
+    expect(r._toolError).toBe(true);
+    expect(r.code).toBe("MEMBERSHIP_REQUIRED");
+    hoisted.docState.set(`users/${CLIENT}`, { membershipStatus: "active" });
+    const r2 = await handleToolCall("create_job_post", { clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], hourlyRate: 25 }) as any;
+    expect(r2.code).toBe("IDENTITY_REQUIRED");
+  });
+
+  beforeEach(() => { hoisted.reset(); lookupZipPlace.mockReset(); hoisted.docState.set(`users/${CLIENT}`, { identityCheckStatus: "verified", membershipStatus: "active" }); });
 
   it("requires a zip code — no longer accepts a bare city", async () => {
     const r = await handleToolCall("create_job_post", { clientId: CLIENT, title: TITLE, notes: NOTES, careTypes: ["companionship"], hourlyRate: 25 }) as any;

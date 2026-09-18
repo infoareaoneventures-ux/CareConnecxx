@@ -68,16 +68,15 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("start_booking_flow")).toBe(true);
     expect(filtered.has("get_caregiver_info")).toBe(true);
     // Billing tools should NOT be included
-    expect(filtered.has("get_invoice_history")).toBe(false);
-    expect(filtered.has("create_refund_request")).toBe(false);
+    expect(filtered.has("get_pending_timesheets")).toBe(false);
     // Memory write tools should NOT be included
     expect(filtered.has("search_memory")).toBe(false);
   });
 
   it("filters down to billing-only tools for VIEW_INVOICE", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "VIEW_INVOICE"));
-    expect(filtered.has("get_invoice_history")).toBe(true);
-    expect(filtered.has("get_invoice_details")).toBe(true);
+    expect(filtered.has("get_pending_timesheets")).toBe(true);
+    expect(filtered.has("review_shift_hours")).toBe(true);
     expect(filtered.has("get_billing_summary")).toBe(true);
     // Booking tools NOT included
     expect(filtered.has("start_booking_flow")).toBe(false);
@@ -89,7 +88,7 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("add_family_member")).toBe(true);
     expect(filtered.has("get_family_group")).toBe(true);
     expect(filtered.has("send_caregiver_message")).toBe(true);
-    expect(filtered.has("get_invoice_history")).toBe(false);
+    expect(filtered.has("get_pending_timesheets")).toBe(false);
   });
 
   it("ALWAYS includes core tools regardless of intent", () => {
@@ -100,14 +99,6 @@ describe("selectToolsForIntent", () => {
     expect(filtered.has("get_pending_tasks")).toBe(true);
     expect(filtered.has("resume_execution_agent")).toBe(true);
     expect(filtered.has("create_support_ticket")).toBe(true);
-  });
-
-  it("includes both billing AND care_plan tools for APPROVE_TIMESHEET", () => {
-    const filtered = names(selectToolsForIntent(MCP_TOOLS, "APPROVE_TIMESHEET"));
-    expect(filtered.has("get_pending_timesheets")).toBe(true);
-    expect(filtered.has("review_shift_hours")).toBe(true);
-    // care_plan side — needed to look up shift details
-    expect(filtered.has("get_care_journal")).toBe(true);
   });
 
   it("includes booking + messaging for HIRE_CAREGIVER (compound flow)", () => {
@@ -124,7 +115,7 @@ describe("selectToolsForIntent", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "CREDENTIAL_MANAGEMENT"));
     expect(filtered.has("read_memory_file")).toBe(true);
     expect(filtered.has("start_booking_flow")).toBe(false);
-    expect(filtered.has("get_invoice_history")).toBe(false);
+    expect(filtered.has("get_pending_timesheets")).toBe(false);
   });
 
   it("scopes SCHEDULE_REQUEST to scheduling only — no booking or billing", () => {
@@ -134,7 +125,7 @@ describe("selectToolsForIntent", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "SCHEDULE_REQUEST"));
     expect(filtered.has("schedule_followup")).toBe(true);
     expect(filtered.has("start_booking_flow")).toBe(false);
-    expect(filtered.has("get_invoice_history")).toBe(false);
+    expect(filtered.has("get_pending_timesheets")).toBe(false);
   });
 
   it("noticeably reduces the tool surface for narrow intents", () => {

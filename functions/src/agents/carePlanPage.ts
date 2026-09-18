@@ -16,6 +16,7 @@
 // senior_profiles.needs mirror; saveNewRecipient; deleteRecipient; saveContacts
 // (dbService.updateCarePlan); handleReview.
 import * as admin from "firebase-admin";
+import { randomUUID } from "crypto";
 import { recipientPlanKey } from "./careRecipients";
 import { geocodeStreetAddress, lookupZipPlace } from "../utils/geocode";
 
@@ -441,4 +442,75 @@ export async function confirmCarePlanReviewed(clientId: string): Promise<{ migra
   }
   await cpRef.set(update, { merge: true });
   return { migratedWizardContact: migrated };
+}
+
+// ── Recipient photo (the avatar on each recipient tab) ───────────────────────
+// CarePlan.tsx handleRecipientPhotoUpload: file → storage
+// clients/{uid}/recipients/recipient_{index}_{ts}.{ext} → the roster field
+// (index 0 = careRecipientPhotoURL on job_postings/{uid}; index i+1 =
+// additionalRecipients[i].photoURL). Over text there is no file picker — the
+// "file" is the photo the family just attached, already stored by the inbound
+// media handler; this copies it into the page's own folder and field.
+export type RecipientPhotoResult =
+  | { ok: true; recipient: CarePlanRecipient; photoURL: string; storagePath: string }
+  | { ok: false; code: "NOT_FOUND" | "INVALID_INPUT"; message: string; options?: string[] };
+
+export interface RecipientPhotoDeps {
+  fetchImage: (url: string) => Promise<{ buffer: Buffer; content_type: string; ext: string }>;
+  storeImage: (path: string, buffer: Buffer, contentType: string) => Promise<string>;
+}
+
+const defaultPhotoDeps: RecipientPhotoDeps = {
+  fetchImage: async (url) => {
+    const { downloadMedia } = await import("../utils/mediaIntake");
+    return downloadMedia({ kind: "image", url });
+  },
+  storeImage: async (path, buffer, contentType) => {
+    // Same token-URL shape the site's storage SDK produces (and mediaIntake uses).
+    const bucket = admin.storage().bucket();
+    const token = randomUUID();
+    await bucket.file(path).save(buffer, {
+      contentType, resumable: false,
+      metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+    });
+    return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+  },
+};
+
+export async function setRecipientPhoto(
+  clientId: string,
+  input: { firstName?: string; sourceUrl: string },
+  deps: RecipientPhotoDeps = defaultPhotoDeps,
+): Promise<RecipientPhotoResult> {
+  if (!input.sourceUrl) return { ok: false, code: "INVALID_INPUT", message: "No photo to save." };
+  const res = await resolveRecipient(clientId, input.firstName);
+  if (!res.ok) {
+    if (res.reason === "none_on_file") return { ok: false, code: "NOT_FOUND", message: "No care recipients on file for this household." };
+    const page = await load(clientId);
+    const options = page.recipients.map((r) => r.name);
+    if (res.reason === "ambiguous") return { ok: false, code: "INVALID_INPUT", message: "Which care recipient is this photo of?", options };
+    return { ok: false, code: "NOT_FOUND", message: `No care recipient named ${input.firstName} on file.`, options };
+  }
+  const { recipient, page } = res;
+  // The page's roster index: 0 = primary; i+1 = additionalRecipients[i].
+  const additionals = ((page.wizard.additionalRecipients as Array<Record<string, unknown>> | undefined) ?? []);
+  let index: number;
+  if (recipient.isPrimary) index = 0;
+  else {
+    const i = additionals.findIndex((r) => recipientPlanKey(String(r.firstName ?? ""), String(r.lastName ?? "")) === recipient.key);
+    if (i < 0) return { ok: false, code: "NOT_FOUND", message: `${recipient.name} has no roster entry to attach a photo to.` };
+    index = i + 1;
+  }
+  const img = await deps.fetchImage(input.sourceUrl);
+  const ext = (img.ext || "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
+  const storagePath = `clients/${clientId}/recipients/recipient_${index}_${Date.now()}.${ext}`;
+  const photoURL = await deps.storeImage(storagePath, img.buffer, img.content_type || "image/jpeg");
+  const jpRef = db.collection("job_postings").doc(clientId);
+  if (index === 0) {
+    await jpRef.set({ careRecipientPhotoURL: photoURL }, { merge: true });
+  } else {
+    const next = additionals.map((r, i) => (i === index - 1 ? { ...r, photoURL } : r));
+    await jpRef.set({ additionalRecipients: next }, { merge: true });
+  }
+  return { ok: true, recipient, photoURL, storagePath };
 }

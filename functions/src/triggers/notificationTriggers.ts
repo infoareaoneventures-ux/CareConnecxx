@@ -4,6 +4,7 @@ import { writeUserNotification } from '../notifications/userNotification';
 import { sendToPhone } from '../linq/client';
 import { sendViaInteractionAgent } from '../agents/caraAgent';
 import { formatDateForDisplay, formatHHMMForDisplay } from '../utils/scheduledTime';
+import { recordVisitProgress, buildVisitCompletionText, buildFamilyUpdateText, queuedItems } from './familyVisitUpdates';
 
 const db = admin.firestore();
 
@@ -62,14 +63,14 @@ async function sendTransactionalText(phone: string, message: string, sourceAgent
     console.error(`[notificationTriggers] ${sourceAgent} failed (no agent session):`, err));
 }
 
-async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
+export async function notifyCaregiverByText(caregiverId: string, message: string): Promise<void> {
   const snap = await db.collection('caregivers').doc(caregiverId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
   await sendTransactionalText(phone, message, 'notification_trigger');
 }
 
-async function notifyClientByText(clientId: string, message: string): Promise<void> {
+export async function notifyClientByText(clientId: string, message: string): Promise<void> {
   const snap = await db.collection('users').doc(clientId).get().catch(() => null);
   const phone = snap?.data()?.phone as string | undefined;
   if (!phone) return;
@@ -514,6 +515,15 @@ export const onShiftStatusChanged = functions.firestore
 
     const shiftId = context.params.shiftId;
 
+    // In-progress activity — tasks checked off / visit notes added on the
+    // caregiver's pages — reaches the family as ONE grouped text per burst
+    // (familyVisitUpdates.ts). Status is unchanged on these writes, so this
+    // must run before the statusBefore === statusAfter return below.
+    if (before?.status === 'in-progress' && after.status === 'in-progress') {
+      const handled = await recordVisitProgress(change.after.ref, before, after, notifyClientByText);
+      if (handled) return;
+    }
+
     // Rescheduled (proposed) — a NEW or CHANGED reschedulePendingDate, same
     // pattern as video_interviews' reschedulePendingTime (see
     // notificationTriggers.ts's onVideoInterviewWrite): the real date/
@@ -667,7 +677,9 @@ export const onShiftStatusChanged = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} has started your visit.`,
           data: { shiftId: context.params.shiftId },
         });
-        await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} has arrived and started the visit.`);
+        // The Start button has no location check on either side — the system knows
+        // the visit started, not that anyone arrived (2026-09-17).
+        await notifyClientByText(after.clientId, `${after.caregiverName || 'Your caregiver'} started the visit.`);
       } else if (after.status === 'completed' && after.clientId) {
         // Caregiver ended shift → notify client
         await addNotification(after.clientId, {
@@ -676,8 +688,20 @@ export const onShiftStatusChanged = functions.firestore
           body: `${after.caregiverName || 'Your caregiver'} has completed your visit.`,
           data: { shiftId: context.params.shiftId },
         });
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'}'s visit is complete. A care journal entry will be posted shortly.`);
+        // The Past Booking card in words (tasks done / not done per recipient,
+        // the visit log, the closing note, what happens next). Anything still
+        // waiting in the grouped-update window rides along first. (The old
+        // "care journal entry will be posted shortly" promised something nothing
+        // wrote any more — removed 2026-09-17.)
+        const pendingItems = queuedItems(after);
+        const completionText = (pendingItems.length ? buildFamilyUpdateText(after.caregiverName, pendingItems) + '\n\n' : '') + buildVisitCompletionText(after);
+        await notifyClientByText(after.clientId, completionText);
+        if (pendingItems.length || after.familyUpdateQueuedAt) {
+          await change.after.ref.update({
+            familyUpdateQueue: admin.firestore.FieldValue.delete(),
+            familyUpdateQueuedAt: admin.firestore.FieldValue.delete(),
+          }).catch(() => {});
+        }
       } else if (after.status === 'needs_replacement' && after.clientId) {
         // Caregiver cancelled with < 24h notice (site rule: CaregiverBookingsPage's
         // handleCancelShift / ClientVisitsPage's caregiver-side cancel both set

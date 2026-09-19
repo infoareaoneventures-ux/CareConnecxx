@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DollarSign, Clock, AlertCircle, Check, Calendar } from 'lucide-react';
+import { instantPayoutFeeDollars } from '../../utils/pricing';
 
 interface InstantPayoutModalProps {
     availableBalance: number;
@@ -12,8 +13,8 @@ interface InstantPayoutModalProps {
 /**
  * Cash-out modal. Regular earnings pay out automatically on Stripe's daily
  * schedule (free, ~2 business days after each shift payment) — this modal only
- * offers the optional instant payout, which is also free to the caregiver
- * (the platform absorbs Stripe's instant fee; pricing decision 2026-07-06).
+ * offers the optional instant payout, which carries Stripe's 1% fee (min $0.50),
+ * passed to the caregiver (founder decision 2026-09-19; free before that).
  */
 export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
     availableBalance,
@@ -75,12 +76,12 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
                         </div>
                         <div className="border-t border-gray-200 pt-4">
                             <div className="flex justify-between items-center text-sm mb-2">
-                                <span className="text-gray-600">Fee</span>
-                                <span className="text-gray-900 font-medium">Free</span>
+                                <span className="text-gray-600">Stripe instant fee (1%, min $0.50)</span>
+                                <span className="text-gray-900 font-medium">−${instantPayoutFeeDollars(availableBalance).toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between items-center">
                                 <span className="text-gray-900 font-semibold">You'll Receive</span>
-                                <span className="text-3xl font-bold text-green-600">${availableBalance.toFixed(2)}</span>
+                                <span className="text-3xl font-bold text-green-600">${Math.max(0, availableBalance - instantPayoutFeeDollars(availableBalance)).toFixed(2)}</span>
                             </div>
                         </div>
                     </div>
@@ -149,7 +150,7 @@ export const InstantPayoutModal: React.FC<InstantPayoutModalProps> = ({
 
                 {/* Disclaimer */}
                 <p className="text-xs text-gray-500 text-center mt-4">
-                    Instant payouts are free. Regular payouts happen automatically every day — nothing to request.
+                    Stripe charges 1% (minimum $0.50) for instant payouts. Regular payouts happen automatically every day and are free — nothing to request.
                 </p>
             </div>
         </div>

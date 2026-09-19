@@ -1387,7 +1387,7 @@ async function handleCareNotes(
   // Submit the completed visit into the real payment rail: create a shiftHours
   // doc (pending_client_review) and ask the family to APPROVE. On approval,
   // routeClient → approveShiftHoursForClient flips it to "approved", which fires
-  // the onShiftHoursApproved trigger to charge the client (incl. the 1.5%
+  // the onShiftHoursApproved trigger to charge the client (incl. the 9%
   // platform fee) and transfer net pay to the caregiver's Connect account.
   // Idempotent on appointmentId so it never double-bills if hours were already
   // submitted (e.g. via the MCP submit_shift_hours tool).

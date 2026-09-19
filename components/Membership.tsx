@@ -13,6 +13,7 @@ import {
   getClientBillingPortalUrl,
 } from '../services/stripeService';
 import { PlanSelectModal } from './client/PlanSelectModal';
+import { SERVICE_FEE_PERCENT_LABEL } from '../utils/pricing';
 
 interface PlanFeature {
   text: string;
@@ -279,6 +280,11 @@ export default function Membership() {
                 </div>
               </div>
             </div>
+
+            {/* The other fee, explained once (Help/FAQ repeat it) — founder decision 2026-09-19. */}
+            <p className="text-xs text-slate-500 mt-4">
+              Plus a {SERVICE_FEE_PERCENT_LABEL} service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Caregivers keep 100% of their rate.
+            </p>
 
             {/* CTA Button */}
             <div className="mt-8">

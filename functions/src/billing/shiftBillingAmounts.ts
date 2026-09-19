@@ -1,4 +1,30 @@
 import { evaluateShiftBillingPolicy } from "./shiftBillingPolicy";
+import {
+  SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS, INSTANT_PAYOUT_FEE_RATE, INSTANT_PAYOUT_FEE_MIN_DOLLARS,
+} from "./config";
+
+/**
+ * The family's service fee on a visit, in integer cents: max(gross × 9%, $1),
+ * rounded once; a $0 visit carries no fee. This is THE fee calculation — the
+ * charge, every stored amount, the approval text, the Timesheets card and
+ * Evia's reads all go through it (the site mirrors it in utils/pricing.ts).
+ */
+export function serviceFeeCentsFor(grossCents: number): number {
+  const g = Math.max(0, Math.round(Number(grossCents) || 0));
+  if (g === 0) return 0;
+  return Math.max(Math.round(g * SHIFT_PLATFORM_FEE_RATE), Math.round(SHIFT_PLATFORM_FEE_MIN_DOLLARS * 100));
+}
+export function totalChargeCentsFor(grossCents: number): number {
+  const g = Math.max(0, Math.round(Number(grossCents) || 0));
+  return g + serviceFeeCentsFor(g);
+}
+
+/** Stripe's instant-payout fee passed to the caregiver: max(amount × 1%, $0.50); $0 → 0. */
+export function instantPayoutFeeCentsFor(amountCents: number): number {
+  const a = Math.max(0, Math.round(Number(amountCents) || 0));
+  if (a === 0) return 0;
+  return Math.max(Math.round(a * INSTANT_PAYOUT_FEE_RATE), Math.round(INSTANT_PAYOUT_FEE_MIN_DOLLARS * 100));
+}
 
 const VALID_LINE_ITEM_TYPES = ["overtime", "mileage", "supplies", "bonus", "custom"];
 
@@ -39,12 +65,19 @@ export function resolveShiftBillableAmount(input: {
     approvedLineItemsTotalCents,
   });
 
+  const serviceFeeCents = serviceFeeCentsFor(policy.grossPayCents);
+  const totalChargeCents = policy.grossPayCents + serviceFeeCents;
   return {
     ...policy,
     lineItems,
     basePay: policy.basePayCents / 100,
     lineItemsTotal: policy.lineItemsTotalCents / 100,
     grossPay: policy.grossPayCents / 100,
+    // What the FAMILY is charged: gross + the service fee (the caregiver's transfer stays the gross).
+    serviceFeeCents,
+    serviceFee: serviceFeeCents / 100,
+    totalChargeCents,
+    totalCharge: totalChargeCents / 100,
   };
 }
 

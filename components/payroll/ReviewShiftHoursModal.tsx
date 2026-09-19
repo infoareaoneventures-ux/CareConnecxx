@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { X, CheckCircle2, AlertTriangle, ArrowUpRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { shiftHoursService } from '../../services/api';
 import { paymentMethodLabel } from '../../types';
+import { totalChargedDollars, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
 
 interface CorrectionHistoryEntry {
   by: string;
@@ -416,6 +417,11 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
               <span className="text-sm text-slate-500">Proposed total</span>
               <span className="text-base font-bold text-slate-900">{fmtDuration(proposedHours)}</span>
             </div>
+            {shift.payRate && (
+              <p className="text-xs text-slate-500 px-1">
+                Charged to your card if accepted: ${totalChargedDollars(proposedHours * shift.payRate + correctedLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0)).toFixed(2)} (incl. {SERVICE_FEE_PERCENT_LABEL} service fee)
+              </p>
+            )}
             {(Array.isArray(shift.lineItems) && shift.lineItems.length > 0) && (
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Additional charges</p>

@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getStripeClient } from "./stripe";
+import { instantPayoutFeeCentsFor } from "./billing/shiftBillingAmounts";
 
 /**
  * ── Payout model (decided 2026-07-06) ────────────────────────────────────────
@@ -13,7 +14,7 @@ import { getStripeClient } from "./stripe";
  * automatic schedules, and the sweep already does the job for free.
  *
  * On top of that, a caregiver may cash out early with an INSTANT payout
- * (arrives in ~30 minutes). Instant payouts are FREE to the caregiver — the
+ * (arrives in ~30 minutes). Instant payouts carry Stripe's 1% fee (min $0.50), passed to the caregiver since 2026-09-19 — the
  * platform absorbs Stripe's instant-payout fee (founder decision 2026-07-06).
  *
  * `executeInstantPayout` below is the ONLY code path that may create a payout.
@@ -82,7 +83,12 @@ export class InstantPayoutError extends Error {
 export interface InstantPayoutSuccess {
     payoutDocId: string;
     stripePayoutId: string;
+    /** What arrives in the caregiver's bank: gross − Stripe's instant fee. */
     amountCents: number;
+    /** The instantly-available balance paid out (before the fee). */
+    grossCents: number;
+    /** Stripe's instant-payout fee (1%, $0.50 min), passed to the caregiver (founder decision 2026-09-19). */
+    feeCents: number;
     status: string;
     arrivalDate: string | null;
 }
@@ -91,6 +97,15 @@ export interface InstantPayoutSuccess {
  *  replies, Linq redeliveries, and agent-loop retries that would otherwise
  *  mint a fresh payout doc (and therefore a fresh Stripe idempotency key). */
 const REPLAY_WINDOW_MS = 2 * 60 * 1000;
+
+let platformAccountIdCache: string | null = null;
+async function getPlatformAccountId(stripe: ReturnType<typeof getStripeClient>): Promise<string> {
+    if (platformAccountIdCache) return platformAccountIdCache;
+    const acct = await stripe.accounts.retrieve();
+    if (!acct?.id) throw new Error("platform account id unavailable");
+    platformAccountIdCache = acct.id;
+    return acct.id;
+}
 
 /**
  * The single instant-payout implementation. Balance-based: pays out the
@@ -145,6 +160,16 @@ export async function executeInstantPayout(opts: {
         amountCents = requestedCents;
     }
 
+    // Stripe's instant fee is the caregiver's (2026-09-19): the payout is created
+    // for amount − fee, and the fee is recouped from the connected account by an
+    // account-debit transfer below (a smaller payout alone would just sweep the
+    // remainder back to the caregiver on the daily schedule).
+    const feeCents = instantPayoutFeeCentsFor(amountCents);
+    const netCents = amountCents - feeCents;
+    if (netCents <= 0) {
+        throw new InstantPayoutError("EXCEEDS_BALANCE", "That amount is too small to cover Stripe's $0.50 instant-payout fee.");
+    }
+
     // Replay guard — reuse the most recent payout instead of creating another.
     // Runs in a TRANSACTION so two concurrent requests (e.g. a duplicate SMS
     // "YES" and an app tap landing on different instances) can't both read
@@ -179,6 +204,8 @@ export async function executeInstantPayout(opts: {
                             payoutDocId: recentSnap.docs[0].id,
                             stripePayoutId: recent.stripePayoutId,
                             amountCents: Math.round((recent.amount ?? 0) * 100),
+                            grossCents: Math.round((recent.grossAmount ?? recent.amount ?? 0) * 100),
+                            feeCents: Math.round((recent.fee ?? 0) * 100),
                             status: recent.status ?? "pending",
                             arrivalDate: recent.arrivalDate ?? null,
                         },
@@ -189,9 +216,9 @@ export async function executeInstantPayout(opts: {
         }
         const newRef = payoutsCol.doc();
         txn.set(newRef, {
-            amount: amountCents / 100,
+            amount: netCents / 100,
             grossAmount: amountCents / 100,
-            fee: 0,
+            fee: feeCents / 100,
             type: "instant",
             status: "pending",
             source,
@@ -211,7 +238,7 @@ export async function executeInstantPayout(opts: {
     try {
         payout = await stripe.payouts.create(
             {
-                amount: amountCents,
+                amount: netCents,
                 currency: "usd",
                 method: "instant",
                 statement_descriptor: "Evia Payout",
@@ -231,18 +258,44 @@ export async function executeInstantPayout(opts: {
     }
 
     const arrivalDate = payout.arrival_date ? new Date(payout.arrival_date * 1000).toISOString() : null;
+    // Recoup the fee: an account debit (transfer from the caregiver's connected
+    // account to the platform). Best-effort — the payout is already on its way;
+    // a failed debit is recorded and alerted, never retried into a double debit.
+    let feeTransferId: string | null = null;
+    let feeDebitError: string | null = null;
+    if (feeCents > 0) {
+        try {
+            const platformAccountId = await getPlatformAccountId(stripe);
+            const feeTransfer = await stripe.transfers.create(
+                { amount: feeCents, currency: "usd", destination: platformAccountId, description: "Instant payout fee (Stripe 1%, min $0.50)", metadata: { payoutDocId: payoutRef.id, stripePayoutId: payout.id } },
+                { stripeAccount: stripeAccountId, idempotencyKey: `instant-payout-fee-${payoutRef.id}` },
+            );
+            feeTransferId = feeTransfer.id;
+        } catch (feeErr: any) {
+            feeDebitError = feeErr?.message || "fee_debit_failed";
+            console.error(`[instantPayout] fee debit failed for ${caregiverId} (${payoutRef.id}):`, feeErr);
+            try {
+                await db.collection("admin_alerts").add({
+                    type: "instant_payout_fee_debit_failed", severity: "medium", caregiverId, payoutDocId: payoutRef.id,
+                    stripePayoutId: payout.id, feeCents, error: feeDebitError, createdAt: new Date().toISOString(), resolved: false,
+                });
+            } catch { /* alert is best-effort */ }
+        }
+    }
     await payoutRef.update({
         status: payout.status,
         stripePayoutId: payout.id,
         arrivalDate,
         paidOutAt: new Date().toISOString(),
+        feeTransferId,
+        ...(feeDebitError ? { feeDebitError } : {}),
     });
 
     await db.collection("users").doc(caregiverId).collection("notifications").add({
         userId: caregiverId,
         type: "payout_initiated",
         title: "Instant Payout Initiated",
-        body: `Your instant payout of $${(amountCents / 100).toFixed(2)} has been initiated — no fee, arrives within about 30 minutes.`,
+        body: `Your instant payout is on its way — $${(netCents / 100).toFixed(2)} after Stripe's $${(feeCents / 100).toFixed(2)} instant fee (1%, min $0.50). It arrives within about 30 minutes.`,
         isRead: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     }).catch(() => { /* notification is best-effort; the payout already succeeded */ });
@@ -250,7 +303,9 @@ export async function executeInstantPayout(opts: {
     return {
         payoutDocId: payoutRef.id,
         stripePayoutId: payout.id,
-        amountCents,
+        amountCents: netCents,
+        grossCents: amountCents,
+        feeCents,
         status: payout.status,
         arrivalDate,
     };

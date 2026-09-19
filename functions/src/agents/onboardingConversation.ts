@@ -5496,11 +5496,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
       await sendMessage(chatId, activationMsg);
 
       // How-you-get-paid facts (2026-07-06 money model): automatic daily payouts
-      // are the standard rail and instant payouts are free. Sent once, here, so
+      // are the standard rail; instant payouts carry Stripe's 1% fee (2026-09-19). Sent once, here, so
       // every caregiver leaves onboarding knowing how money reaches them.
       await sendMessage(chatId,
         `Quick money note: payouts are automatic — your earnings land in your bank about 2 business days after each visit is paid, no action needed. ` +
-        `Need it sooner? Just text me PAYOUT for a free instant payout. ` +
+        `Need it sooner? Text me PAYOUT for an instant payout — Stripe charges 1% (minimum $0.50) for that; the daily payout is free. ` +
         `You can see your balance and payment history anytime at ${APP_URL}/caregiver/payments`
       );
 
@@ -6068,7 +6068,7 @@ const BGCHECK_WAIT_STEP_FACTS =
   "then they're approved and families can book them (never promise a specific turnaround time).";
 const PAYOUTS_STEP_FACTS =
   "Their background check cleared — they're approved on Evia. The payout link sets up their Stripe account so they get paid after each visit: " +
-  "earnings pay out daily automatically, and instant payouts are free.";
+  "earnings pay out daily automatically (free); an optional instant payout carries Stripe's 1% fee (min $0.50).";
 const PHOTO_STEP_FACTS =
   "A profile photo is how families see who they're trusting — a clear, friendly headshot makes them much more likely to request an interview. " +
   "The link Evia sent opens a phone-friendly upload page and returns them right back to Messages when they're done. Next after the photo is certifications.";

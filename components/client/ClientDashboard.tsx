@@ -23,6 +23,7 @@ import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 import { VisitProgressPanel } from './VisitProgressPanel';
+import { totalChargedDollars } from '../../utils/pricing';
 
 
 interface ClientDashboardProps {
@@ -1325,7 +1326,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
                               {durationStr && <span className="text-slate-500">{durationStr}</span>}
                               {durationStr && <span className="text-slate-300">·</span>}
-                              <span className="font-semibold text-slate-700">${pay.toFixed(2)}</span>
+                              <span className="font-semibold text-slate-700">${pay.toFixed(2)} <span className="font-normal text-slate-400">· ${(typeof shift.totalChargeCents === 'number' ? shift.totalChargeCents / 100 : totalChargedDollars(pay)).toFixed(2)} charged</span></span>
                               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
                                 Card
                               </span>
@@ -1371,7 +1372,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                     : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
                   return r.grossPay ?? (hrs * (r.payRate ?? 0));
                 };
-                const grandTotal = unpaidShifts.reduce((s, r) => s + shiftAmt(r), 0);
+                // What will go on the card: each caregiver total plus the 9% service fee (utils/pricing.ts = the backend math).
+                const grandTotal = unpaidShifts.reduce((s, r) => s + (typeof r.totalChargeCents === 'number' ? r.totalChargeCents / 100 : totalChargedDollars(shiftAmt(r))), 0);
                 const needsActionCount = unpaidShifts.filter(r =>
                   ['pending_client_review','caregiver_counter_proposed','correction_proposed','payment_failed'].includes(r.status)
                 ).length;

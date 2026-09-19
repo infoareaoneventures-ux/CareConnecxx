@@ -66,10 +66,11 @@ export const requestInstantPayout = functions.https.onCall(async (_data, context
         return {
             success: true,
             amount: result.amountCents / 100,
-            fee: 0,
+            gross: result.grossCents / 100,
+            fee: result.feeCents / 100,
             payoutId: result.stripePayoutId,
             arrivalDate: result.arrivalDate,
-            message: 'Instant payout initiated — no fee, funds arrive within about 30 minutes.',
+            message: `Instant payout initiated — $${(result.amountCents / 100).toFixed(2)} after Stripe's $${(result.feeCents / 100).toFixed(2)} instant fee; funds arrive within about 30 minutes.`,
         };
     } catch (error: any) {
         if (error instanceof InstantPayoutError) {

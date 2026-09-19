@@ -99,7 +99,7 @@ const familiesContent = [
       },
       {
         q: 'Does Evia charge a service fee?',
-        a: 'Evia adds a service fee to each visit’s charge to cover payment processing and coordinating the visit. Caregivers keep 100% of their hourly rate.',
+        a: 'Evia adds a 9% service fee (minimum $1) to each visit’s charge to cover payment processing and coordinating the visit. Caregivers keep 100% of their hourly rate.',
       },
       {
         q: 'Are there membership plans?',
@@ -199,11 +199,11 @@ const caregiversContent = [
     faqs: [
       {
         q: 'How do I get paid?',
-        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe — no action needed, funds typically arrive within 2 business days. Need money sooner? Request a free instant payout from the Payments page (or text PAYOUT to Evia) and it arrives in about 30 minutes.',
+        a: 'Once the family approves your submitted hours (or 24 hours pass with no dispute), payment is automatically initiated to your connected bank account via Stripe — no action needed, funds typically arrive within 2 business days. Need money sooner? Request an instant payout from the Payments page (or text PAYOUT to Evia) — Stripe\'s 1% fee (minimum $0.50) is deducted and it arrives in about 30 minutes.',
       },
       {
         q: 'Does Evia take a cut of my rate?',
-        a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges the family a platform service fee — your earnings are never reduced.',
+        a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges the family a 9% service fee on each visit — your earnings are never reduced.',
       },
       {
         q: 'How do I set or update my hourly rate?',

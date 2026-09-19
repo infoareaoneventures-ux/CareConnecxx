@@ -96,5 +96,5 @@ export async function handleEarningsView(
     ? `\n\nPayouts are automatic — money lands in your bank about 2 business days after each visit is paid.`
     : "";
 
-  await sendMessage(`${opener}\n\n${body}${nextPayoutLine}\n\nText PAYOUT for a free instant payout (arrives in ~30 min), or ask me anything else.`);
+  await sendMessage(`${opener}\n\n${body}${nextPayoutLine}\n\nText PAYOUT for an instant payout (Stripe's 1% fee, min $0.50, comes off it; arrives in ~30 min), or ask me anything else.`);
 }

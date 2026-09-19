@@ -54,10 +54,11 @@ const hoisted = vi.hoisted(() => {
   const accountsRetrieve = vi.fn();
   const balanceRetrieve  = vi.fn();
   const payoutsCreate    = vi.fn();
+  const transfersCreate  = vi.fn(async () => ({ id: "tr_fee_1" }));
 
   return {
     caregiverGet, payoutSet, payoutUpdate, recentGet, notifAdd, collection,
-    accountsRetrieve, balanceRetrieve, payoutsCreate,
+    accountsRetrieve, balanceRetrieve, payoutsCreate, transfersCreate,
     lockGet, lockSet, runTransaction,
   };
 });
@@ -75,6 +76,7 @@ vi.mock("./stripe", () => ({
     accounts: { retrieve: hoisted.accountsRetrieve },
     balance:  { retrieve: hoisted.balanceRetrieve },
     payouts:  { create:   hoisted.payoutsCreate },
+    transfers: { create:  hoisted.transfersCreate },
   }),
 }));
 
@@ -117,7 +119,8 @@ describe("executeInstantPayout", () => {
     hoisted.lockSet.mockClear();
     hoisted.runTransaction.mockClear();
     hoisted.recentGet.mockReset().mockResolvedValue({ empty: true, docs: [] });
-    hoisted.accountsRetrieve.mockReset().mockResolvedValue(READY_ACCOUNT);
+    // With an account id → the caregiver's connected account (readiness); with none → the platform account (fee debit destination).
+    hoisted.accountsRetrieve.mockReset().mockImplementation(async (id?: string) => (id ? READY_ACCOUNT : { ...READY_ACCOUNT, id: "acct_platform" }));
     hoisted.balanceRetrieve.mockReset().mockResolvedValue({
       instant_available: [{ amount: 5000, currency: "usd" }],
     });
@@ -127,16 +130,23 @@ describe("executeInstantPayout", () => {
     hoisted.caregiverGet.mockResolvedValue({ exists: true, data: () => ({ stripeAccountId: "acct_1" }) });
   });
 
-  it("pays the full instant balance with a doc-keyed Stripe idempotency key, no fee", async () => {
+  it("pays the instant balance minus Stripe's 1% fee (min $0.50), recoups the fee by account debit, doc-keyed idempotency", async () => {
     const r = await executeInstantPayout({ caregiverId: "cg1", source: "app" });
-    expect(r.amountCents).toBe(5000);
+    // $50.00 available → $0.50 fee → $49.50 arrives.
+    expect(r).toMatchObject({ amountCents: 4950, grossCents: 5000, feeCents: 50 });
     expect(r.stripePayoutId).toBe("po_1");
     expect(hoisted.payoutsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 5000, currency: "usd", method: "instant" }),
+      expect.objectContaining({ amount: 4950, currency: "usd", method: "instant" }),
       expect.objectContaining({ stripeAccount: "acct_1", idempotencyKey: "instant-payout-payout-doc-1" }),
     );
-    // Unified record: pending → settled, fee 0
-    expect(hoisted.payoutSet).toHaveBeenCalledWith(expect.objectContaining({ fee: 0, type: "instant", status: "pending", source: "app" }));
+    // The fee comes back to the platform from the connected account.
+    expect(hoisted.transfersCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50, currency: "usd", destination: "acct_platform" }),
+      expect.objectContaining({ stripeAccount: "acct_1", idempotencyKey: "instant-payout-fee-payout-doc-1" }),
+    );
+    expect(hoisted.payoutUpdate).toHaveBeenCalledWith(expect.objectContaining({ feeTransferId: "tr_fee_1" }));
+    // Unified record: what arrives, what was paid out, and the fee.
+    expect(hoisted.payoutSet).toHaveBeenCalledWith(expect.objectContaining({ amount: 49.5, grossAmount: 50, fee: 0.5, type: "instant", status: "pending", source: "app" }));
     expect(hoisted.payoutUpdate).toHaveBeenCalledWith(expect.objectContaining({ stripePayoutId: "po_1" }));
     expect(hoisted.notifAdd).toHaveBeenCalled();
     // Replay guard runs transactionally: the shared lock doc is read (this is
@@ -160,7 +170,8 @@ describe("executeInstantPayout", () => {
 
   it("honors a requested partial amount and rejects overdraw", async () => {
     const r = await executeInstantPayout({ caregiverId: "cg1", requestedCents: 2000, source: "mcp" });
-    expect(r.amountCents).toBe(2000);
+    // $20 requested → $0.50 fee (the minimum) → $19.50 arrives.
+    expect(r).toMatchObject({ amountCents: 1950, grossCents: 2000, feeCents: 50 });
     await expectPayoutError(
       executeInstantPayout({ caregiverId: "cg1", requestedCents: 999999, source: "mcp" }),
       "EXCEEDS_BALANCE",

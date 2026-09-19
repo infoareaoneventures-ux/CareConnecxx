@@ -124,15 +124,16 @@ describe("instantPayoutHandler", () => {
       expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ pendingInstantPayoutConfirm: expect.anything() }));
     });
 
-    it("positive balance → shows free-payout confirmation and persists state", async () => {
+    it("positive balance → shows the fee and what arrives, and persists state", async () => {
       docGetMock.mockResolvedValueOnce({ exists: true, data: () => ({ stripeAccountId: "acct_123" }) });
       balanceRetrieve.mockResolvedValueOnce({ instant_available: [{ amount: 5000, currency: "usd" }] });
       await startInstantPayout(CG_ID, PHONE, CHAT);
 
-      // Confirmation message — free, no fee language
+      // Confirmation message — Stripe's fee and the net amount, YES/NO gate
       expect(sendMessage.mock.calls[0][1]).toMatch(/\$50\.00[\s\S]*YES[\s\S]*NO/i);
-      expect(sendMessage.mock.calls[0][1]).toMatch(/free/i);
-      expect(sendMessage.mock.calls[0][1]).not.toMatch(/fee/i);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\$0\.50/);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/\$49\.50/);
+      expect(sendMessage.mock.calls[0][1]).not.toMatch(/free instant/i);
       // State persisted with confirm flag + amount
       expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
         pendingInstantPayoutConfirm: expect.any(String),
@@ -151,12 +152,12 @@ describe("instantPayoutHandler", () => {
   describe("handleInstantPayoutConfirm", () => {
     it("question route → answers and does NOT create payout", async () => {
       parseWithClaude.mockResolvedValueOnce("YES"); // isQuestionOrOther
-      hoisted.quickComplete.mockResolvedValueOnce("Instant payouts are free.");
+      hoisted.quickComplete.mockResolvedValueOnce("Stripe charges 1% (minimum $0.50) for instant payouts.");
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "is there a fee?", CHAT);
 
       expect(executeInstantPayout).not.toHaveBeenCalled();
-      expect(sendMessage.mock.calls[0][1]).toMatch(/free/i);
+      expect(sendMessage.mock.calls[0][1]).toMatch(/1%/);
     });
 
     it("YES path → delegates to shared executeInstantPayout", async () => {
@@ -164,7 +165,7 @@ describe("instantPayoutHandler", () => {
         .mockResolvedValueOnce("NO")   // isQuestionOrOther
         .mockResolvedValueOnce("YES"); // decision
       executeInstantPayout.mockResolvedValueOnce({
-        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 5000, status: "pending", arrivalDate: null,
+        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 4950, grossCents: 5000, feeCents: 50, status: "pending", arrivalDate: null,
       });
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "yes send it", CHAT);
@@ -172,7 +173,7 @@ describe("instantPayoutHandler", () => {
       expect(executeInstantPayout).toHaveBeenCalledWith(
         expect.objectContaining({ caregiverId: CG_ID, source: "cara_sms" }),
       );
-      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/\$50\.00 is on the way.*no fee/i);
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatch(/\$49\.50 is on the way.*\$0\.50 instant fee/i);
     });
 
     it("NO path → no payout, friendly ack", async () => {
@@ -224,7 +225,7 @@ describe("instantPayoutHandler", () => {
         .mockResolvedValueOnce("NO")
         .mockResolvedValueOnce("YES");
       executeInstantPayout.mockResolvedValueOnce({
-        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 5000, status: "pending", arrivalDate: null,
+        payoutDocId: "p1", stripePayoutId: "po_123", amountCents: 4950, grossCents: 5000, feeCents: 50, status: "pending", arrivalDate: null,
       });
 
       await handleInstantPayoutConfirm(CG_ID, PHONE, "yes", CHAT);

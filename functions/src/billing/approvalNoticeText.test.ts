@@ -30,6 +30,8 @@ describe("buildApprovalNoticeText", () => {
     expect(t).toContain("Base pay: 0:00:46 @ $5/hr = $0.06");
     expect(t).toContain("No additional charges");
     expect(t).toContain("Total: $0.06");
+    expect(t).toContain("Service fee (9%): $1.00"); // the $1 minimum
+    expect(t).toContain("Charged to your card: $1.06");
     expect(t).toMatch(/Auto-approves .*Sep 18.* unless you review it first\./);
     expect(t).toContain("Reply APPROVE to release payment, or tell me the correct clock-in and clock-out");
     expect(t).not.toContain("DISPUTE");
@@ -44,6 +46,8 @@ describe("buildApprovalNoticeText", () => {
     });
     expect(t).toContain("Additional charges: Mileage $8.40 (12 mi), Supplies $3.00");
     expect(t).toContain("Total: $11.46");
+    expect(t).toContain("Service fee (9%): $1.03");
+    expect(t).toContain("Charged to your card: $12.49");
     expect(t).toContain("won't auto-approve because of the additional charges");
     expect(t).not.toContain("Auto-approves");
   });

@@ -40,7 +40,7 @@ export const TermsOfServicePage: React.FC = () => (
           <h2 className="text-lg font-semibold text-ink-900 mb-2">4. Payments &amp; Fees</h2>
           <ul className="list-disc pl-5 space-y-1">
             <li>All payments are processed through Stripe. The client's card is charged after the client approves the caregiver's submitted hours, or when the review window closes.</li>
-            <li>Caregivers receive payment after the hours are approved. Evia adds a service fee to each visit's charge; the fee is shown before booking and on each timesheet.</li>
+            <li>Caregivers receive payment after the hours are approved. Evia adds a 9% service fee (minimum $1) to each visit's charge; the fee is shown before booking and on each timesheet.</li>
             <li><strong>Cancellation:</strong> a visit may be cancelled before it starts. A visit that did not take place is not charged.</li>
             <li>Hours are reviewed before any charge: the client may approve, propose a correction, or let the review window close; the caregiver may accept or counter; unresolved cases are settled by Evia.</li>
           </ul>

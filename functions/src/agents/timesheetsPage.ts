@@ -7,6 +7,7 @@
 // button it offers (Review & Approve / Review & Respond / Retry payment).
 import * as admin from "firebase-admin";
 import { businessTodayStr, formatInterviewTime } from "../utils/scheduledTime";
+import { serviceFeeCentsFor } from "../billing/shiftBillingAmounts";
 
 const db = admin.firestore();
 
@@ -79,15 +80,18 @@ export interface TimesheetRow {
   basePay: number;
   lineItems: Array<{ type?: string; label?: string; note?: string; amount?: number }>;
   grossPay: number;
+  /** The family's side of the card: the 9% service fee (min $1) and what goes on their card — same math as the charge. */
+  serviceFee: number;
+  totalCharged: number;
   status: string;
   statusLabel: string;
   statusHint: string | null;
   isCorrected: boolean;
   autoApproveAt: string | null;
   /** Correction Sent only: the proposed window/pay — the row's live figures on the page while the caregiver decides. */
-  proposed: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number } | null;
+  proposed: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number } | null;
   /** Counter Received only: the caregiver's counter — the row's live figures on the page while the family decides. */
-  counter: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; note: string | null } | null;
+  counter: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number; note: string | null } | null;
   submittedAt: string | null;
   correctionHistory: Array<{ by?: string; action?: string; label: string; at?: string; hours?: number; grossPay?: number; note?: string | null }>;
   /** The card's button: review_and_approve (Needs Review) / review_and_respond (Counter Received) / retry_payment (Payment Failed). */
@@ -150,6 +154,9 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
     basePay,
     lineItems,
     grossPay: Math.round(grossPay * 100) / 100,
+    // Stored at every amount write; computed only for rows that predate the fee.
+    serviceFee: (typeof r.serviceFeeCents === "number" ? r.serviceFeeCents : serviceFeeCentsFor(Math.round(grossPay * 100))) / 100,
+    totalCharged: (typeof r.totalChargeCents === "number" ? r.totalChargeCents : Math.round(grossPay * 100) + serviceFeeCentsFor(Math.round(grossPay * 100))) / 100,
     status,
     statusLabel: STATUS_LABEL[status] ?? STATUS_LABEL.pending_client_review,
     statusHint: STATUS_HINT[status] ?? null,
@@ -161,7 +168,7 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
       if (!Number.isFinite(ps) || !Number.isFinite(pe)) return null;
       const ph = (pe - ps) / 3_600_000;
       const pg = typeof r.proposedGrossPay === "number" ? r.proposedGrossPay : Math.round(ph * payRate * 100) / 100;
-      return { clockIn: r.proposedStartTime, clockOut: r.proposedEndTime, clockInLocal: formatInterviewTime(ps), clockOutLocal: formatInterviewTime(pe), hours: Math.round(ph * 100) / 100, duration: fmtDuration(ph), grossPay: Math.round(pg * 100) / 100 };
+      const pgc = Math.round(pg * 100); return { clockIn: r.proposedStartTime, clockOut: r.proposedEndTime, clockInLocal: formatInterviewTime(ps), clockOutLocal: formatInterviewTime(pe), hours: Math.round(ph * 100) / 100, duration: fmtDuration(ph), grossPay: pgc / 100, serviceFee: serviceFeeCentsFor(pgc) / 100, totalCharged: (pgc + serviceFeeCentsFor(pgc)) / 100 };
     })(),
     counter: (() => {
       if (status !== "caregiver_counter_proposed" || typeof r.counterStartTime !== "string" || typeof r.counterEndTime !== "string") return null;
@@ -169,7 +176,7 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
       if (!Number.isFinite(cs) || !Number.isFinite(ce)) return null;
       const ch = (ce - cs) / 3_600_000;
       const cg = typeof r.counterGrossPay === "number" ? r.counterGrossPay : Math.round(ch * payRate * 100) / 100;
-      return { clockIn: r.counterStartTime, clockOut: r.counterEndTime, clockInLocal: formatInterviewTime(cs), clockOutLocal: formatInterviewTime(ce), hours: Math.round(ch * 100) / 100, duration: fmtDuration(ch), grossPay: Math.round(cg * 100) / 100, note: typeof r.counterNote === "string" && r.counterNote ? r.counterNote : null };
+      const cgc = Math.round(cg * 100); return { clockIn: r.counterStartTime, clockOut: r.counterEndTime, clockInLocal: formatInterviewTime(cs), clockOutLocal: formatInterviewTime(ce), hours: Math.round(ch * 100) / 100, duration: fmtDuration(ch), grossPay: cgc / 100, serviceFee: serviceFeeCentsFor(cgc) / 100, totalCharged: (cgc + serviceFeeCentsFor(cgc)) / 100, note: typeof r.counterNote === "string" && r.counterNote ? r.counterNote : null };
     })(),
     submittedAt: typeof r.submittedAt === "string" ? r.submittedAt : (Number.isFinite(toMs(r.submittedAt)) ? new Date(toMs(r.submittedAt)).toISOString() : null),
     correctionHistory: history

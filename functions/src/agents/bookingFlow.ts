@@ -51,6 +51,7 @@ import {
   listRecipientOptions, findSendBookingEligibleInterviews, type LocationOption, type RecipientOption,
   type SendBookingEligibleInterview,
 } from "./bookingResolution";
+import { SHIFT_PLATFORM_FEE_RATE } from "../billing/config";
 
 const db = admin.firestore();
 
@@ -1416,7 +1417,8 @@ export function buildBookingRecap(data: BookingFlowData): string {
     // you're sending — nothing here ever named WHICH interview/job post
     // this booking follows, even though jobTitle is already tracked.
     ...(data.jobTitle ? [`Following: ${data.jobTitle}`] : []),
-    `Agreed rate: $${data.hourlyRate}/hr`,
+    // The site's Rate & Payment section shows the billed rate too (2026-09-19 fee).
+    `Agreed rate: $${data.hourlyRate}/hr (+${Math.round(SHIFT_PLATFORM_FEE_RATE * 100)}% service fee → $${(Number(data.hourlyRate ?? 0) * (1 + SHIFT_PLATFORM_FEE_RATE)).toFixed(2)}/hr billed to you)`,
     `Schedule: ${scheduleLine}`,
     `Care recipients:`,
     ...recipientLines,

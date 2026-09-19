@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { businessTodayStr, formatDateWithWeekday } from "../utils/scheduledTime";
+import { serviceFeeCentsFor } from "../billing/shiftBillingAmounts";
 
 const db = admin.firestore();
 
@@ -125,7 +126,8 @@ export const sendPendingTimesheetNudges = functions.pubsub
         const cents = isCounter && typeof oldest.counterGrossPay === "number" ? Math.round(oldest.counterGrossPay * 100)
           : typeof oldest.amountCents === "number" ? oldest.amountCents
           : typeof oldest.grossPay === "number" ? Math.round(oldest.grossPay * 100) : null;
-        const amount = cents !== null ? `${(cents / 100).toFixed(2)}` : null;
+        // The dollar sign had been lost in an earlier edit; and the family's number is what goes on the card.
+        const amount = cents !== null ? `$${(cents / 100).toFixed(2)} to ${cgName}, $${((cents + serviceFeeCentsFor(cents)) / 100).toFixed(2)} charged` : null;
         const startMs = toMillis(oldest.finalStartTime ?? oldest.submittedStartTime);
         const dateLabel = (oldest.date as string | undefined)
           ?? (startMs !== null ? formatDateWithWeekday(businessTodayStr(undefined, new Date(startMs))) : "a recent visit");

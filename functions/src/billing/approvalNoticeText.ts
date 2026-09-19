@@ -5,6 +5,10 @@
 // charge, the total, and whether it auto-approves (and when) or needs the
 // family — same facts the page shows, nothing the page doesn't.
 import { formatClockTime, formatDateWithWeekday, formatInterviewTimeShort } from "../utils/scheduledTime";
+import { serviceFeeCentsFor } from "./shiftBillingAmounts";
+import { SHIFT_PLATFORM_FEE_RATE } from "./config";
+
+export const SERVICE_FEE_LABEL = `Service fee (${Math.round(SHIFT_PLATFORM_FEE_RATE * 100)}%)`;
 
 export interface ApprovalNoticePayload {
   caregiverName?: string;
@@ -56,6 +60,11 @@ export function buildApprovalNoticeText(p: ApprovalNoticePayload): string {
     ? `• Additional charges: ${lineItems.map((li) => `${li.label || li.type || "charge"} $${Number(li.amount ?? 0).toFixed(2)}${li.note ? ` (${li.note})` : ""}`).join(", ")}`
     : "• No additional charges");
   lines.push(`• Total: $${total}`);
+  // The family's side of the card: the fee and what actually goes on their card.
+  const grossCents = Number(p.grossPayCents ?? 0);
+  const feeCents = serviceFeeCentsFor(grossCents);
+  lines.push(`• ${SERVICE_FEE_LABEL}: $${(feeCents / 100).toFixed(2)}`);
+  lines.push(`• Charged to your card: $${((grossCents + feeCents) / 100).toFixed(2)}`);
   lines.push("");
 
   if (p.autoApproveAt) {

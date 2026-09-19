@@ -228,8 +228,8 @@ export function buildCorrectionRecap(d: CorrectionFlowData): string {
   return [
     `Here's your correction for ${first(r.caregiverName)}'s ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet:`.replace("  ", " "),
     "",
-    `Submitted: ${clock(r.clockIn)}–${clock(r.clockOut)} (${fmtDuration(submitted.totalHours)}) · ${money(submitted.grossPay)}`,
-    `Proposed: ${clock(d.proposedStart)}–${clock(d.proposedEnd)} (${fmtDuration(proposed.totalHours)}) · base pay ${money(proposed.basePay)} at $${r.payRate}/hr${charges} · total ${money(proposed.grossPay)}`,
+    `Submitted: ${clock(r.clockIn)}–${clock(r.clockOut)} (${fmtDuration(submitted.totalHours)}) · ${money(submitted.grossPay)} (+${money(submitted.serviceFee)} service fee = ${money(submitted.totalCharge)} charged)`,
+    `Proposed: ${clock(d.proposedStart)}–${clock(d.proposedEnd)} (${fmtDuration(proposed.totalHours)}) · base pay ${money(proposed.basePay)} at $${r.payRate}/hr${charges} · total ${money(proposed.grossPay)} · ${money(proposed.totalCharge)} charged to your card incl. ${money(proposed.serviceFee)} service fee`,
     `Reason: ${d.reason ? `"${d.reason}"` : "None"}`,
     "",
     `${first(r.caregiverName)} has 24 hours to accept or send a counter; if they don't respond, your proposal is auto-accepted. Reply YES to send it, NO to cancel, or tell me what to change.`,
@@ -240,7 +240,7 @@ export function buildCounterText(r: CorrectionRow): string {
   const c = r.counter!;
   const amount = resolveShiftBillableAmount({ startTime: c.start, endTime: c.end, bookedRateDollars: r.payRate, lineItems: r.lineItems });
   const yours = r.proposed ? ` You proposed ${clock(r.proposed.start)}–${clock(r.proposed.end)}.` : "";
-  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)}.${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nReply ACCEPT to accept their counter (payment goes through at that amount), or ESCALATE to send it to our team to resolve.`.replace("  ", " ");
+  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)} (${money(amount.totalCharge)} charged incl. ${money(amount.serviceFee)} service fee).${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nReply ACCEPT to accept their counter (payment goes through at that amount), or ESCALATE to send it to our team to resolve.`.replace("  ", " ");
 }
 
 // ── Times: the family's words → an ISO instant on the visit's date ───────────
@@ -535,7 +535,7 @@ async function commit(phone: string, chatId: string, session: AgentSession, data
   await clearFlow(phone);
   const proposed = resolveShiftBillableAmount({ startTime: data.proposedStart, endTime: data.proposedEnd, bookedRateDollars: r.payRate, lineItems: r.lineItems });
   await sendMessage(chatId,
-    `Sent — I proposed ${clock(data.proposedStart)}–${clock(data.proposedEnd)} (${fmtDuration(proposed.totalHours)}, ${money(proposed.grossPay)}) to ${first(r.caregiverName)}. ` +
+    `Sent — I proposed ${clock(data.proposedStart)}–${clock(data.proposedEnd)} (${fmtDuration(proposed.totalHours)}, ${money(proposed.grossPay)}; ${money(proposed.totalCharge)} charged incl. service fee) to ${first(r.caregiverName)}. ` +
     `They have 24 hours to accept or send a counter; if they don't respond, it's auto-accepted. I'll text you as soon as they answer. It shows as "Correction Sent" on your Timesheets page too.`);
 }
 
@@ -580,6 +580,6 @@ async function handleRespondCounter(phone: string, chatId: string, text: string,
   const c = r.counter;
   const amount = resolveShiftBillableAmount({ startTime: c.start, endTime: c.end, bookedRateDollars: r.payRate, lineItems: r.lineItems });
   await sendMessage(chatId, action === "accept_counter"
-    ? `Done — ${first(r.caregiverName)}'s counter is accepted: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}), ${money(amount.grossPay)} goes on your card on file.`
+    ? `Done — ${first(r.caregiverName)}'s counter is accepted: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}), ${money(amount.grossPay)} to ${first(r.caregiverName)} — ${money(amount.totalCharge)} goes on your card on file incl. the ${money(amount.serviceFee)} service fee.`
     : `Escalated — our team will look at this one and settle it within 48 hours. Nothing is charged until then; you'll hear from me when it's resolved.`);
 }

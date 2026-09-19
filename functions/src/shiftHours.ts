@@ -1,13 +1,12 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
-import { SHIFT_PLATFORM_FEE_RATE, SHIFT_PLATFORM_FEE_MIN_DOLLARS } from './billing/config';
 import { isOfflinePaymentMethod } from './billing/paymentMethods';
 import { TIMESHEET_AUTO_APPROVE_HOURS } from './config/slaConstants';
 import { timesheetAutoApprovalEnabled } from './config/featureFlags';
 import { createValidatedShiftHours, createValidatedShiftHoursFromShift, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
 import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
-import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem } from './billing/shiftBillingAmounts';
+import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem, serviceFeeCentsFor } from './billing/shiftBillingAmounts';
 import { formatClockTime } from './utils/scheduledTime';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
 import { fmtHours, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
@@ -44,8 +43,6 @@ type ShiftHoursStatus =
   | 'paid'
   | 'payment_failed';
 
-const PLATFORM_FEE_RATE = SHIFT_PLATFORM_FEE_RATE;  // 1.5% — see billing/config.ts
-const PLATFORM_FEE_MIN = SHIFT_PLATFORM_FEE_MIN_DOLLARS;  // $0.50 min
 const MAX_PAYMENT_ATTEMPTS = 5;
 const PAYMENT_RETRY_DELAYS_MINUTES = [5, 30, 120, 360, 720];
 
@@ -167,6 +164,8 @@ export const submitShiftHours = functions.https.onCall(async (data, context) => 
       appointmentId,
       totalHours: result.totalHours,
       amountCents: result.grossPayCents,
+      serviceFeeCents: serviceFeeCentsFor(result.grossPayCents),
+      totalChargeCents: result.grossPayCents + serviceFeeCentsFor(result.grossPayCents),
       status: result.status,
       alreadyExisted: result.alreadyExisted,
     };
@@ -246,6 +245,8 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
       basePay: finalAmount.basePay,
       grossPay: finalAmount.grossPay,
       amountCents: finalAmount.grossPayCents,
+      serviceFeeCents: finalAmount.serviceFeeCents,
+      totalChargeCents: finalAmount.totalChargeCents,
       requiresExplicitApproval: finalAmount.requiresExplicitApproval,
       resolvedAt: now,
       resolvedBy: 'caregiver',
@@ -274,7 +275,7 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     // and the 24h auto-accept already text them; an accept only left an in-app
     // notification (live-caught 2026-09-18). Same information as the card.
     await textClient(shift.clientId,
-      `${shift.caregiverName ?? 'Your caregiver'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} is final and goes on your card on file.`);
+      `${shift.caregiverName ?? 'Your caregiver'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} to ${shift.caregiverName ?? 'your caregiver'}; $${(finalAmount.totalChargeCents / 100).toFixed(2)} goes on your card on file (incl. the $${(finalAmount.serviceFeeCents / 100).toFixed(2)} service fee).`);
     return { success: true };
   }
 
@@ -371,6 +372,8 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
     lineItemsTotal: finalAmount.lineItemsTotal,
     grossPay: finalAmount.grossPay,
     amountCents: finalAmount.grossPayCents,
+      serviceFeeCents: finalAmount.serviceFeeCents,
+      totalChargeCents: finalAmount.totalChargeCents,
     requiresExplicitApproval: finalAmount.requiresExplicitApproval,
     resolvedAt: now,
     resolvedBy: 'admin',
@@ -488,7 +491,7 @@ export const autoApproveShiftHours = functions.pubsub.schedule('every 1 hours').
 
     await pushNotification(shift.caregiverId, 'shift_hours_auto_approved', 'Hours auto-approved', `Client did not respond in ${TIMESHEET_AUTO_APPROVE_HOURS}h; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_auto_approved', 'Hours auto-approved', `The ${TIMESHEET_AUTO_APPROVE_HOURS}h review window closed; ${fmtHours(shift.submittedTotalHours)} auto-approved.`, { appointmentId: doc.id });
-    await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved (${Number(autoGrossPay).toFixed(2)}) and your card is being charged.`);
+    await textClient(shift.clientId, `The ${TIMESHEET_AUTO_APPROVE_HOURS}-hour review window closed, so ${shift.caregiverName ?? 'your caregiver'}'s ${fmtHours(shift.submittedTotalHours)} were auto-approved ($${Number(autoGrossPay).toFixed(2)} to them) and your card is being charged $${((Math.round(Number(autoGrossPay) * 100) + serviceFeeCentsFor(Math.round(Number(autoGrossPay) * 100))) / 100).toFixed(2)} (incl. the 9% service fee).`);
   }
 
   return null;
@@ -554,6 +557,8 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
       basePay: autoFinal.basePay,
       grossPay: autoFinal.grossPay,
       amountCents: autoFinal.grossPayCents,
+      serviceFeeCents: autoFinal.serviceFeeCents,
+      totalChargeCents: autoFinal.totalChargeCents,
       requiresExplicitApproval: false,
       resolvedAt: now,
       resolvedBy: 'system_auto_accept',
@@ -574,7 +579,7 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
 
     await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${autoFinal.totalHours}h proposal was accepted.`, { appointmentId: doc.id });
     await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${autoFinal.totalHours}h is final.`, { appointmentId: doc.id });
-    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${autoFinal.totalHours}h is final and your card is being charged.`);
+    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${autoFinal.totalHours}h ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
   }
 
   return null;
@@ -907,8 +912,11 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
     }
 
     const grossCents = computeGrossCents(shift);
-    const feeCents = Math.max(Math.round(grossCents * PLATFORM_FEE_RATE), Math.round(PLATFORM_FEE_MIN * 100));
+    // The service fee — one calculation for the charge and every display (billing/shiftBillingAmounts.ts).
+    const feeCents = serviceFeeCentsFor(grossCents);
     const totalChargeCents = grossCents + feeCents;
+    // Recorded on the timesheet so the card, the texts and the Stripe dashboard all show the same three numbers.
+    await ref.update({ serviceFeeCents: feeCents, totalChargeCents }).catch(() => {});
 
     // Charge the client, then capture whether it actually settled. An
     // off_session card charge usually returns 'succeeded' synchronously, but
@@ -935,7 +943,7 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
         confirm: true,
         off_session: true,
         description: `Evia shift ${appointmentId}`,
-        metadata: { appointmentId, shiftHoursId: appointmentId, paymentGeneration: String(generation) },
+        metadata: { appointmentId, shiftHoursId: appointmentId, paymentGeneration: String(generation), grossCents: String(grossCents), serviceFeeCents: String(feeCents) },
       }, {
         // Key on (appointment, attempt) ALWAYS. `attempt` is derived from the
         // input snapshot's paymentAttemptCount, so:

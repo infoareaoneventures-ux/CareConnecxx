@@ -1557,7 +1557,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
     try {
       const result = await requestInstantPayout();
       if (result.success) {
-        addToast(`Instant payout of $${result.amount.toFixed(2)} initiated — free, arrives in ~30 minutes!`, 'success');
+        addToast(`Instant payout of $${result.amount.toFixed(2)} initiated (after Stripe's $${Number(result.fee ?? 0).toFixed(2)} instant fee) — arrives in ~30 minutes!`, 'success');
       }
     } catch (error: any) {
       addToast(error.message || 'Payout failed. Please try again.', 'error');
@@ -1978,7 +1978,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                 )}
 
                 <p className="text-xs text-slate-400 mt-3">
-                  💡 Earnings pay out automatically every day (free) · Instant cash-out: free, ~30 min
+                  💡 Earnings pay out automatically every day (free) · Instant cash-out: Stripe's 1% fee (min $0.50), ~30 min
                 </p>
               </div>
             </div>
@@ -1994,7 +1994,7 @@ export const CaregiverPaymentsPage: React.FC = () => {
                   </div>
                   <p className="text-sm text-slate-500 mb-3">
                     Earnings pay out automatically every day and arrive ~2 business days after each visit is paid (free).
-                    Instant payouts arrive in about 30 minutes — also free.
+                    Instant payouts arrive in about 30 minutes and carry Stripe's 1% fee (minimum $0.50).
                   </p>
                   <a
                     href="https://dashboard.stripe.com/express"
@@ -2254,7 +2254,7 @@ const MembershipCard: React.FC<MembershipCardProps> = ({
         <p className="font-bold text-slate-900 mb-3">What's included</p>
         <ul className="space-y-2.5">
           {[
-            'No platform fees — keep 100% of every booking',
+            'Keep 100% of your rate on every booking — families pay the service fee',
             'Access all job postings and apply instantly',
             'Background check badge on your profile',
             'Direct messaging with families',

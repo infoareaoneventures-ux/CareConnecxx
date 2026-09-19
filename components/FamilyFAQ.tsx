@@ -102,7 +102,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'py-2',
             q: 'Does Evia take a cut of the caregiver\'s hourly rate?',
-            a: 'No. Caregivers keep 100% of the hourly rate they set. Evia adds a service fee to each visit’s charge to cover payment processing and coordinating the visit.'
+            a: 'No. Caregivers keep 100% of the hourly rate they set. Evia adds a 9% service fee (minimum $1) to each visit’s charge to cover payment processing and coordinating the visit.'
          },
          {
             id: 'py-3',

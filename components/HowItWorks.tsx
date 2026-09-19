@@ -83,7 +83,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "04",
          icon: <DollarSign className="w-6 h-6" />,
          title: "Get Paid Daily",
-         desc: "Clock in and out on every shift. Funds transfer to your bank automatically after each approved shift. Keep 100% of your rate — families pay the service fee.",
+         desc: "Clock in and out on every shift. Funds transfer to your bank automatically after each approved shift. Keep 100% of your rate — families pay the 9% service fee.",
          highlight: "Fast payment",
          color: "green"
       }
@@ -92,11 +92,11 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a per-visit service fee that is shown before you book. No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a 9% service fee on each visit (minimum $1). No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",
-         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers at the rate they set, plus a flat monthly membership and a per-visit service fee. You get more control, better transparency, and caregivers earn more."
+         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers at the rate they set, plus a flat monthly membership and a 9% service fee on each visit. You get more control, better transparency, and caregivers earn more."
       },
       {
          q: "Are the caregivers really verified?",
@@ -314,7 +314,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$29.95</span>
                            <span className="text-ink-600">/month</span>
                         </div>
-                        <p className="text-ink-600 mb-6">Plus the caregiver's hourly rate and a per-visit service fee</p>
+                        <p className="text-ink-600 mb-6">Plus the caregiver's hourly rate and a 9% service fee per visit</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
                               'Caregiver matching',
@@ -340,7 +340,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <div className="flex items-baseline justify-center gap-2 mb-4">
                            <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$54.99<span className="text-2xl text-ink-500">/yr</span></span>
                         </div>
-                        <p className="text-ink-600 mb-6">Keep 100% of your hourly rate</p>
+                        <p className="text-ink-600 mb-6">Keep 100% of your hourly rate. Daily payouts are free; instant cash-out carries Stripe's 1% fee.</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
                               'Free profile & job access',
@@ -476,7 +476,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               <tr>
                                  <td className="py-4 px-6 font-medium text-ink-900">Agency Markup</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">None — a per-visit service fee, shown before you book</span>
+                                    <span className="font-bold text-primary-700">None — a 9% service fee per visit, shown before you book</span>
                                  </td>
                                  <td className="py-4 px-6 text-center text-ink-600">40-50%</td>
                               </tr>
@@ -503,7 +503,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                                  <td className="py-4 px-6 text-center text-ink-600">They assign</td>
                               </tr>
                               <tr>
-                                 <td className="py-4 px-6 font-medium text-ink-900">Platform Fee</td>
+                                 <td className="py-4 px-6 font-medium text-ink-900">Membership</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
                                     <span className="font-bold text-primary-700">$29.95/month membership</span>
                                  </td>

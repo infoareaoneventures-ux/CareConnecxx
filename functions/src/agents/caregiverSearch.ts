@@ -332,7 +332,9 @@ export async function presentCaregiverSearch(args: PresentCaregiverSearchArgs): 
   }
 
   const header = `${result.total} caregiver${result.total === 1 ? "" : "s"} found${active.length ? ` (${active.join(", ")})` : ""}` +
-    (result.total > shown.length ? ` — here ${offset > 0 ? "are the next" : "are the first"} ${shown.length}:` : ":");
+    (result.total > shown.length ? ` — here ${offset > 0 ? "are the next" : "are the first"} ${shown.length}:` : ":") +
+    // The Find Caregivers page's footnote (2026-09-19): rates are the caregiver's; the fee is added per visit.
+    "\n(Rates are the caregiver's — a 9% service fee is added to each visit.)";
   await sendMessage(args.chatId, header);
   for (const c of shown) {
     try {

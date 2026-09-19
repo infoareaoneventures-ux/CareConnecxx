@@ -1400,7 +1400,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "request_instant_payout",
     description:
-      "Request an instant payout of the caregiver's instantly-available balance — free, arrives within ~30 minutes. " +
+      "Request an instant payout of the caregiver's instantly-available balance — Stripe's 1% instant fee (min $0.50) is deducted from it (founder decision 2026-09-19); arrives within ~30 minutes. Always tell the caregiver the fee and what arrives. " +
       "If no amount specified, pays out the full instantly-available balance. Regular earnings need no request: " +
       "Stripe pays the balance out automatically every day (arrives ~2 business days after each shift payment).",
     input_schema: {
@@ -3656,13 +3656,23 @@ async function executeToolCall(
         const { readMembershipPage } = await import("../agents/membershipPage");
         const role = (input.role === "caregiver" ? "caregiver" : "client") as "client" | "caregiver";
         const page = await readMembershipPage(input.userId as string, role);
-        return { success: true, ...page, page: "Membership", url: `${getAppUrl()}${role === "caregiver" ? "/caregiver/payments" : "/client/membership"}` };
+        return {
+          success: true, ...page, page: "Membership", url: `${getAppUrl()}${role === "caregiver" ? "/caregiver/payments" : "/client/membership"}`,
+          ...(role === "client" ? { serviceFeeNote: "Plus a 9% service fee on each visit (minimum $1), covering payment processing and coordinating the visit. Caregivers keep 100% of their rate." } : {}),
+        };
       }
       case "get_caregiver_booking_rate": {
         // U9b: read-only rate lookup extracted from request_booking. No write.
         const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
         if (!rate.ok) return toolError(rate.code, rate.message);
-        return { success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate };
+        // The profile shows the billed rate next to the caregiver's (2026-09-19 fee): quote both.
+        const { SHIFT_PLATFORM_FEE_RATE: feeRate, SHIFT_PLATFORM_FEE_MIN_DOLLARS: feeMin } = await import("../billing/config");
+        return {
+          success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate,
+          serviceFeeRate: feeRate, serviceFeeMinDollars: feeMin,
+          billedHourlyRate: Math.round(Number(rate.hourlyRate) * (1 + feeRate) * 100) / 100,
+          note: `The caregiver keeps $${rate.hourlyRate}/hr; the family is billed $${(Number(rate.hourlyRate) * (1 + feeRate)).toFixed(2)}/hr (rate + ${Math.round(feeRate * 100)}% service fee, min $${feeMin} per visit).`,
+        };
       }
 
       case "start_interview_flow": {
@@ -5900,7 +5910,9 @@ async function executeToolCall(
           success: true,
           amountCents: result.amountCents,
           amountDollars: `$${(result.amountCents / 100).toFixed(2)}`,
-          fee: 0,
+          fee: result.feeCents / 100,
+          feeDollars: `$${(result.feeCents / 100).toFixed(2)}`,
+          grossCents: result.grossCents,
           estimatedArrival: "within ~30 minutes",
         };
       } catch (err) {

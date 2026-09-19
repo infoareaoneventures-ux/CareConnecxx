@@ -39,7 +39,7 @@ export const LegalDocs: React.FC<LegalDocsProps> = ({ type, onClose }) => {
 
                <p><strong>3. Trust & Safety</strong><br/>We perform background checks via Checkr and identity verification via Stripe Identity. We do not guarantee the conduct of any user. Users are responsible for their interactions and should exercise appropriate caution.</p>
 
-               <p><strong>4. Payments & Fees</strong><br/>Clients are charged via Stripe after approving the caregiver's submitted hours (or when the review window closes). Evia adds a service fee to each visit's charge. A visit cancelled before it starts is not charged. Caregivers receive payouts via Stripe Connect.</p>
+               <p><strong>4. Payments & Fees</strong><br/>Clients are charged via Stripe after approving the caregiver's submitted hours (or when the review window closes). Evia adds a 9% service fee (minimum $1) to each visit's charge. A visit cancelled before it starts is not charged. Caregivers receive payouts via Stripe Connect.</p>
 
                <p><strong>5. Medical Disclaimer</strong><br/>Caregivers provide non-medical assistance unless specifically licensed (e.g., RN). This platform does not provide medical advice. Always consult a qualified healthcare professional for medical concerns.</p>
 

@@ -12,6 +12,7 @@ import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
 import { getClientBillingPortalUrl, getClientPaymentMethodStatus } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
+import { serviceFeeDollars, totalChargedDollars, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
 
 type Tab = 'timesheets' | 'payment-method';
 
@@ -80,6 +81,9 @@ interface ShiftHoursRow {
   lineItemsTotal?: number;
   basePay?: number;
   grossPay?: number;
+  /** Written by the backend at every amount write (2026-09-19): the fee and the family's charge as they stood — history must show what was charged, not what today's rate would say. */
+  serviceFeeCents?: number;
+  totalChargeCents?: number;
   submittedAt: string;
   autoApproveAt: string | null;
   status: ShiftHoursStatus;
@@ -97,6 +101,13 @@ function fmtTime(iso: string) {
 function fmtDateTime(iso: string) {
   const d = new Date(iso);
   return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${fmtTime(iso)}`;
+}
+/** The family's fee / charge for a row: the backend-recorded values when present, else the same arithmetic as the backend (utils/pricing.ts). */
+function feeFor(r: { serviceFeeCents?: number }, gross: number): number {
+  return typeof r.serviceFeeCents === 'number' ? r.serviceFeeCents / 100 : serviceFeeDollars(gross);
+}
+function chargedFor(r: { totalChargeCents?: number }, gross: number): number {
+  return typeof r.totalChargeCents === 'number' ? r.totalChargeCents / 100 : totalChargedDollars(gross);
 }
 function fmtAmount(hours: number, rate: number) {
   return `$${(hours * rate).toFixed(2)}`;
@@ -213,10 +224,16 @@ const CorrectionTimeline: React.FC<{
                     </div>
                   ))}
                   {entryGrossPay != null && (
-                    <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50">
-                      <span className="font-semibold text-slate-600">Total</span>
-                      <span className="font-bold text-slate-900">${entryGrossPay.toFixed(2)}</span>
-                    </div>
+                    <>
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50">
+                        <span className="font-semibold text-slate-600">Total</span>
+                        <span className="font-bold text-slate-900">${entryGrossPay.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-3 py-1.5">
+                        <span className="text-slate-400">Service fee ({SERVICE_FEE_PERCENT_LABEL}) · charged ${totalChargedDollars(entryGrossPay).toFixed(2)}</span>
+                        <span className="font-medium text-slate-700">${serviceFeeDollars(entryGrossPay).toFixed(2)}</span>
+                      </div>
+                    </>
                   )}
                   {entry.note && (
                     <div className="px-3 py-1.5 text-slate-400 italic">"{entry.note}"</div>
@@ -393,6 +410,28 @@ const ShiftRow: React.FC<{
                     : <span className="text-amber-700 font-medium text-right">No — needs your approval (hours fall outside the scheduled visit or need a look)</span>}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* What goes on the family's card — the caregiver's total plus the
+              service fee (founder decision 2026-09-19: 9%, $1 minimum). The same
+              arithmetic as the backend charge (utils/pricing.ts mirrors
+              billing/shiftBillingAmounts.ts), so this can never disagree with it. */}
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Your card</p>
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">Caregiver total</span>
+                <span className="font-semibold text-slate-700">${shownPay.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-slate-500">Service fee ({SERVICE_FEE_PERCENT_LABEL})</span>
+                <span className="font-semibold text-slate-700">${(livePending ? serviceFeeDollars(shownPay) : feeFor(row, shownPay)).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50">
+                <span className="font-semibold text-slate-700">{['approved', 'auto_approved', 'paid'].includes(row.status) ? 'Charged to your card' : livePending ? `${liveLabel} charge` : 'Will be charged'}</span>
+                <span className="font-bold text-slate-900">${(livePending ? totalChargedDollars(shownPay) : chargedFor(row, shownPay)).toFixed(2)}</span>
+              </div>
             </div>
           </div>
 
@@ -682,7 +721,8 @@ export const Payments: React.FC = () => {
       return s + h;
     }, 0);
     const totalPay = reportedRows.reduce((s, r) => s + (r.grossPay ?? 0), 0);
-    return { shifts: reportedRows.length, hours: totalHours, pay: totalPay };
+    const totalCharged = reportedRows.reduce((s, r) => s + chargedFor(r, r.grossPay ?? 0), 0);
+    return { shifts: reportedRows.length, hours: totalHours, pay: totalPay, charged: totalCharged };
   }, [reportedRows]);
 
   const filteredRows = useMemo(() => {
@@ -691,7 +731,7 @@ export const Payments: React.FC = () => {
   }, [rows, statusFilter, showReport, reportFrom, reportTo, reportedRows, historyRows]);
 
   const handleExportCSV = () => {
-    const header = ['Caregiver', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Method', 'Status'];
+    const header = ['Caregiver', 'Date', 'Clock In', 'Clock Out', 'Duration', 'Pay ($)', 'Service fee ($)', 'Charged ($)', 'Method', 'Status'];
     const lines = reportedRows.map(r => {
       const startTs = r.finalStartTime ?? r.submittedStartTime;
       const endTs   = r.finalEndTime   ?? r.submittedEndTime;
@@ -702,7 +742,10 @@ export const Payments: React.FC = () => {
         ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
         : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
       const duration = `"${fmtDuration(h)}"`;  // quote to prevent Excel treating H:MM:SS as time
-      const pay = (r.grossPay ?? h * (r.payRate ?? 0)).toFixed(2);
+      const payNum = r.grossPay ?? h * (r.payRate ?? 0);
+      const pay = payNum.toFixed(2);
+      const fee = feeFor(r, payNum).toFixed(2);
+      const charged = chargedFor(r, payNum).toFixed(2);
       return [
         `"${(r.caregiverName ?? '').replace(/"/g, '""')}"`,
         date,
@@ -710,6 +753,8 @@ export const Payments: React.FC = () => {
         clockOut,
         duration,
         pay,
+        fee,
+        charged,
         r.paymentMethod ?? '',
         r.status,
       ].join(',');
@@ -858,7 +903,8 @@ export const Payments: React.FC = () => {
                     {[
                       { label: 'Shifts',         value: String(reportSummary.shifts) },
                       { label: 'Total hours',    value: fmtDuration(reportSummary.hours) },
-                      { label: 'Total paid',     value: `$${reportSummary.pay.toFixed(2)}` },
+                      { label: 'To caregivers',  value: `$${reportSummary.pay.toFixed(2)}` },
+                      { label: 'Charged to you', value: `$${reportSummary.charged.toFixed(2)}` },
                     ].map(s => (
                       <div key={s.label}>
                         <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{s.label}</p>
@@ -916,6 +962,12 @@ export const Payments: React.FC = () => {
                       const hrs = (start && end) ? (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000 : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
                       return s + (r.grossPay ?? hrs * (r.payRate ?? 0));
                     }, 0);
+                    const monthCharged = monthGroup.rows.reduce((s, r) => {
+                      const start = r.finalStartTime ?? r.submittedStartTime;
+                      const end = r.finalEndTime ?? r.submittedEndTime;
+                      const hrs = (start && end) ? (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000 : (r.finalTotalHours ?? r.submittedTotalHours ?? 0);
+                      return s + chargedFor(r, r.grossPay ?? hrs * (r.payRate ?? 0));
+                    }, 0);
                     // Group by caregiver within the month
                     const cgGroups = monthGroup.rows.reduce((acc, row) => {
                       const key = row.caregiverId || row.caregiverName || 'unknown';
@@ -929,7 +981,7 @@ export const Payments: React.FC = () => {
                         {/* Month header */}
                         <div className="flex items-center justify-between px-1 pt-2 border-t border-slate-100 first:border-t-0 first:pt-0">
                           <span className="text-sm font-bold text-slate-800">{monthGroup.label}</span>
-                          <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)}</span>
+                          <span className="text-xs text-slate-500">{monthGroup.rows.length} shift{monthGroup.rows.length !== 1 ? 's' : ''} · ${monthTotal.toFixed(2)} to caregivers · ${monthCharged.toFixed(2)} charged</span>
                         </div>
                         {/* Caregivers within month */}
                         {Object.entries(cgGroups).map(([cgKey, cgGroup]) => {
@@ -1074,7 +1126,7 @@ export const Payments: React.FC = () => {
 
                 <div className="border-t border-slate-100 px-6 py-4 bg-slate-50">
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, or 24 hours pass without you reviewing them, your card is automatically charged.
+                    <span className="font-medium text-slate-500">How payments work:</span> When you approve a caregiver's hours, or 24 hours pass without you reviewing them, your card is automatically charged for the caregiver's total plus Evia's {SERVICE_FEE_PERCENT_LABEL} service fee (minimum $1). Caregivers keep 100% of their rate.
                   </p>
                 </div>
               </div>

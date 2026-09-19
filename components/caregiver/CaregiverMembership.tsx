@@ -19,8 +19,8 @@ interface CaregiverMembershipProps {
 const BENEFITS = [
   {
     icon: DollarSign,
-    title: 'No platform fees',
-    desc: 'Keep 100% of every booking — we never take a cut.',
+    title: 'Keep 100% of your rate',
+    desc: 'Families pay the service fee — your rate is never reduced. Daily payouts are free; instant cash-out carries Stripe\'s 1% fee.',
   },
   {
     icon: ShieldCheck,

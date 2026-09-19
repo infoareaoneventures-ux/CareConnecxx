@@ -91,7 +91,7 @@ export const CaregiverPayoutPage: React.FC = () => {
                   <p className="text-sm text-slate-600 mb-4">
                     You're all set to receive payouts. Earnings pay out automatically every day and
                     arrive in your bank ~2 business days after each visit is paid (free).
-                    Need money sooner? Instant payouts arrive in about 30 minutes — also free.
+                    Need money sooner? Instant payouts arrive in about 30 minutes and carry Stripe's 1% fee (minimum $0.50).
                   </p>
                   <a
                     href="https://dashboard.stripe.com/express"

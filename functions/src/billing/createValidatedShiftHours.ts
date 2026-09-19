@@ -4,7 +4,7 @@ import { apptStartMs } from "../utils/scheduledTime";
 import { normalizePaymentMethod } from "./paymentMethods";
 import { BILLING_CURRENCY } from "./config";
 import { evaluateShiftBillingPolicy } from "./shiftBillingPolicy";
-import { ShiftLineItem } from "./shiftBillingAmounts";
+import { ShiftLineItem, serviceFeeCentsFor, totalChargeCentsFor } from "./shiftBillingAmounts";
 
 const db = admin.firestore();
 
@@ -164,6 +164,8 @@ export async function createValidatedShiftHours(input: {
       basePay: policy.basePayCents / 100,
       grossPay: policy.grossPayCents / 100,
       amountCents: policy.grossPayCents,
+      serviceFeeCents: serviceFeeCentsFor(policy.grossPayCents),
+      totalChargeCents: totalChargeCentsFor(policy.grossPayCents),
       requiresExplicitApproval,
       billingAuthority: trustedAppointment ? BILLING_AUTHORITY_VERSION : "unverified",
       billingSource: input.source,
@@ -347,6 +349,8 @@ export async function createValidatedShiftHoursFromShift(input: {
       basePay: policy.basePayCents / 100,
       grossPay: policy.grossPayCents / 100,
       amountCents: policy.grossPayCents,
+      serviceFeeCents: serviceFeeCentsFor(policy.grossPayCents),
+      totalChargeCents: totalChargeCentsFor(policy.grossPayCents),
       requiresExplicitApproval,
       billingAuthority: BILLING_AUTHORITY_VERSION,
       billingSource: "web_legacy_shift",

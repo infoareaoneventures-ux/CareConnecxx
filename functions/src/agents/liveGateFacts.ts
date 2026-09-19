@@ -310,7 +310,7 @@ export async function buildLiveCaregiverPermissionsFact(phone: string, session: 
         const { getCaregiverPayoutFields } = await import("../caregiverPrivate");
         const cg = await getCaregiverPayoutFields(caregiverId, data);
         if (cg.stripeOnboardingComplete === true || cg.payoutsEnabled === true) {
-          payoutLine = "Their payout setup is DONE — earnings pay out automatically and instant payouts are free.";
+          payoutLine = "Their payout setup is DONE — earnings pay out automatically (free); an optional instant payout carries Stripe's 1% fee (min $0.50).";
         } else {
           payoutLine = "Their payout setup is NOT finished yet — do NOT say payouts are live, set up, or ready. " +
             "If they ask about getting paid or payout setup, send it with send_onboarding_link " +

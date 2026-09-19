@@ -22,7 +22,7 @@ function envRate(name: string, fallback: number): number {
     return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
 }
 const TAX_RATE = envRate('INVOICE_TAX_RATE', 0.05);
-const PLATFORM_FEE_RATE = envRate('INVOICE_PLATFORM_FEE_RATE', 0.02);
+const PLATFORM_FEE_RATE = envRate('INVOICE_PLATFORM_FEE_RATE', 0.09);
 
 // Signed PDF URLs expire after 7 days; regenerate via generateInvoicePDF.
 const PDF_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;

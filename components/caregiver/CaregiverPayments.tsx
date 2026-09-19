@@ -230,7 +230,7 @@ export const CaregiverPayments: React.FC<CaregiverPaymentsProps> = ({
                   <p className="font-medium text-[var(--color-neutral-900)]">Instant Payout</p>
                   <p className="text-sm text-[var(--color-neutral-500)]">Available 24/7 — arrives in ~30 minutes</p>
                 </div>
-                <span className="text-sm text-[var(--color-primary-600)] font-medium">Free</span>
+                <span className="text-sm text-[var(--color-primary-600)] font-medium">1% fee (min $0.50)</span>
               </div>
             </div>
           </div>

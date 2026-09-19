@@ -410,17 +410,17 @@ describe("U2 caregiver action tools", () => {
   // wiring: delegation, error surfacing, and that the removed standard-payout
   // tool stays removed.
   describe("payouts", () => {
-    it("request_instant_payout delegates to the shared executeInstantPayout and reports free payout", async () => {
+    it("request_instant_payout delegates to the shared executeInstantPayout and reports the fee", async () => {
       payoutCommonMock.executeInstantPayout.mockResolvedValueOnce({
-        payoutDocId: "p1", stripePayoutId: "po_1", amountCents: 5000, status: "pending", arrivalDate: null,
+        payoutDocId: "p1", stripePayoutId: "po_1", amountCents: 4950, grossCents: 5000, feeCents: 50, status: "pending", arrivalDate: null,
       });
       const r = await handleToolCall("request_instant_payout", { caregiverId: "cg1" }) as any;
       expect(payoutCommonMock.executeInstantPayout).toHaveBeenCalledWith(
         expect.objectContaining({ caregiverId: "cg1", source: "mcp" }),
       );
       expect(r.success).toBe(true);
-      expect(r.fee).toBe(0);
-      expect(r.amountCents).toBe(5000);
+      expect(r.fee).toBe(0.5);
+      expect(r.amountCents).toBe(4950);
     });
 
     it("request_instant_payout surfaces payout preconditions as tool errors (no silent success)", async () => {

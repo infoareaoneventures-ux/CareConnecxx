@@ -5,6 +5,7 @@ import { parseWithClaude } from "../utils/parseWithClaude";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { answerHumanMidFlow } from "./humanReply";
 import { executeInstantPayout, InstantPayoutError } from "../payoutCommon";
+import { instantPayoutFeeCentsFor } from "../billing/shiftBillingAmounts";
 
 const db = admin.firestore();
 
@@ -19,7 +20,7 @@ function getStripe(): Stripe {
  * their instantly-available balance via Stripe Connect and ask for confirmation.
  * The router calls handleInstantPayoutConfirm for the subsequent YES/NO reply.
  * The payout itself goes through payoutCommon.executeInstantPayout — the same
- * implementation as the app and the MCP tool. Instant payouts are free to the
+ * implementation as the app and the MCP tool. Instant payouts carry Stripe's 1% fee (min $0.50), passed to the
  * caregiver; regular earnings arrive automatically on Stripe's daily schedule.
  */
 export async function startInstantPayout(
@@ -84,14 +85,17 @@ export async function startInstantPayout(
   }
 
   const amount = (availableCents / 100).toFixed(2);
+  const feeCents = instantPayoutFeeCentsFor(availableCents);
+  const fee = (feeCents / 100).toFixed(2);
+  const net = ((availableCents - feeCents) / 100).toFixed(2);
   await db.collection("agent_sessions").doc(phone).update({
     pendingInstantPayoutConfirm: new Date().toISOString(),
     pendingInstantPayoutAmount: String(availableCents),
   } as any);
   await sendMessage(chatId,
     `You have $${amount} available for instant payout.\n\n` +
-    `Instant payouts are free and arrive within about 30 minutes. ` +
-    `Want me to send $${amount} to your bank now? Reply YES to send it, or NO to hold off.`,
+    `Stripe's instant fee is $${fee} (1%, minimum $0.50), so $${net} would arrive in your bank within about 30 minutes. ` +
+    `Or wait for the free daily payout — about 2 business days. Send $${net} now? Reply YES to send it, or NO to hold off.`,
   );
 }
 
@@ -154,7 +158,7 @@ export async function handleInstantPayoutConfirm(
       source: "cara_sms",
     });
     await sendMessage(chatId,
-      `Done — $${(result.amountCents / 100).toFixed(2)} is on the way to your bank, no fee. ` +
+      `Done — $${(result.amountCents / 100).toFixed(2)} is on the way to your bank ($${(result.grossCents / 100).toFixed(2)} minus Stripe's $${(result.feeCents / 100).toFixed(2)} instant fee). ` +
       `Instant payouts typically arrive within 30 minutes.`,
     );
   } catch (err) {

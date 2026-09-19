@@ -29,7 +29,7 @@ export const faqs = [
     },
     {
         question: "How much does it cost compared to traditional agencies?",
-        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With Evia, families pay the caregiver’s own hourly rate plus a flat $29.95/month membership and a per-visit service fee — caregivers keep 100% of their rate. No agency markup and no long-term contracts.",
+        answer: "In Santa Clara County, traditional agencies typically charge $32-42/hour while paying caregivers only $18-22/hour. With Evia, families pay the caregiver’s own hourly rate plus a flat $29.95/month membership and a 9% service fee on each visit — caregivers keep 100% of their rate. No agency markup and no long-term contracts.",
         category: "Pricing"
     },
     {

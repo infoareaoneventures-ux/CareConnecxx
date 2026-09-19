@@ -181,7 +181,7 @@ describe("the steps, then YES → the modal's Send correction", () => {
     });
     expect(sess().correctionFlowStep).toBeUndefined();
     expect(sess().correctionFlowData).toBeUndefined();
-    expect(lastSent()).toContain("Sent — I proposed 10:05 PM–10:30 PM (0:25:00, $2.08) to Basra.");
+    expect(lastSent()).toContain("Sent — I proposed 10:05 PM–10:30 PM (0:25:00, $2.08; $3.08 charged incl. service fee) to Basra.");
     expect(lastSent()).toContain("24 hours to accept or send a counter");
   });
 

@@ -12,7 +12,7 @@ const readRate = (name: string, fallback: number): number => {
 };
 
 const INVOICE_TAX_RATE = readRate('VITE_INVOICE_TAX_RATE', 0.05);
-const INVOICE_PLATFORM_FEE_RATE = readRate('VITE_INVOICE_PLATFORM_FEE_RATE', 0.02);
+const INVOICE_PLATFORM_FEE_RATE = readRate('VITE_INVOICE_PLATFORM_FEE_RATE', 0.09);
 const formatPercent = (rate: number) => `${(rate * 100).toFixed(rate * 100 % 1 === 0 ? 0 : 2)}%`;
 
 export const InvoicingTab = () => {

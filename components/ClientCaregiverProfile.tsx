@@ -15,6 +15,7 @@ import { ClientNavigation } from './client/ClientNavigation';
 import { LeaveReviewModal } from './client/LeaveReviewModal';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
 import { weeklySlotsToBl } from '../services/availabilityService';
+import { billedHourlyRate, SERVICE_FEE_PERCENT_LABEL } from '../utils/pricing';
 
 interface CaregiverProfile {
   id: string;
@@ -361,7 +362,7 @@ export default function ClientCaregiverProfile({
                     </span>
                   )}
                   {caregiver.hourlyRate > 0 && (
-                    <span className="font-semibold text-slate-800">${caregiver.hourlyRate}/hr</span>
+                    <span className="font-semibold text-slate-800">${caregiver.hourlyRate}/hr <span className="text-xs font-normal text-slate-400">· ${billedHourlyRate(caregiver.hourlyRate).toFixed(2)}/hr billed to you incl. {SERVICE_FEE_PERCENT_LABEL} service fee</span></span>
                   )}
                 </div>
               </div>
@@ -444,9 +445,10 @@ export default function ClientCaregiverProfile({
                 ].filter(r => r.rate && Number(r.rate) > 0).map(({ label, rate }) => (
                   <div key={label} className="flex items-center justify-between py-2.5">
                     <span className="text-sm text-slate-600">{label}</span>
-                    <span className="text-sm font-bold text-slate-900">${rate}/hr</span>
+                    <span className="text-sm font-bold text-slate-900">${rate}/hr <span className="text-xs font-normal text-slate-400">· ${billedHourlyRate(Number(rate)).toFixed(2)} billed</span></span>
                   </div>
                 ))}
+                <p className="text-xs text-slate-400 pt-2">Billed = the caregiver's rate plus Evia's {SERVICE_FEE_PERCENT_LABEL} service fee (minimum $1 per visit). The caregiver keeps 100% of their rate.</p>
                 {caregiver.experience && (
                   <div className="pt-2.5 text-xs text-slate-500">{caregiver.experience} experience</div>
                 )}

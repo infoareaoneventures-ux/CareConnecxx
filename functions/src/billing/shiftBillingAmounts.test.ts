@@ -22,6 +22,11 @@ describe("resolveShiftBillableAmount", () => {
       lineItemsTotal: 12.35,
       grossPay: 192.35,
       requiresExplicitApproval: true,
+      // The family's charge: 9% of 19235 = 1731.15 → 1731 cents, above the $1 minimum.
+      serviceFeeCents: 1731,
+      serviceFee: 17.31,
+      totalChargeCents: 20966,
+      totalCharge: 209.66,
     });
   });
 

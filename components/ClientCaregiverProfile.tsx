@@ -16,6 +16,7 @@ import { LeaveReviewModal } from './client/LeaveReviewModal';
 import { TIME_BLOCKS, DAYS } from './caregiver/signup/constants';
 import { weeklySlotsToBl } from '../services/availabilityService';
 import { billedHourlyRate, SERVICE_FEE_PERCENT_LABEL } from '../utils/pricing';
+import { formatExperience } from '../utils/experience';
 
 interface CaregiverProfile {
   id: string;
@@ -116,6 +117,11 @@ export default function ClientCaregiverProfile({
   const [hasCompletedShift, setHasCompletedShift] = useState(false);
   const [hasReviewed, setHasReviewed] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  // ?review=1 (the dashboard's first-visit card, the bell notification, Evia's
+  // link) opens Leave a Review as soon as the page confirms they can (2026-09-19).
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('review') === '1' && hasCompletedShift && !hasReviewed) setShowReviewModal(true);
+  }, [location.search, hasCompletedShift, hasReviewed]);
   const [showAllReviews, setShowAllReviews] = useState(false);
   const { gate, Modals: GateModals } = useAccessGates();
   const { addToast } = useCareConnex();
@@ -450,7 +456,7 @@ export default function ClientCaregiverProfile({
                 ))}
                 <p className="text-xs text-slate-400 pt-2">Billed includes Evia's {SERVICE_FEE_PERCENT_LABEL} service fee. The caregiver keeps 100% of their rate.</p>
                 {caregiver.experience && (
-                  <div className="pt-2.5 text-xs text-slate-500">{caregiver.experience} experience</div>
+                  <div className="pt-2.5 text-xs text-slate-500">{formatExperience(caregiver.experience)}</div>
                 )}
               </div>
             </Section>

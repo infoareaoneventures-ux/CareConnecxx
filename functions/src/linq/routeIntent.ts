@@ -8,6 +8,7 @@ import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../
 import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { handleCompletionNudgeReply, freshCompletionNudgeInterviewId } from "../agents/completionNudgeReply";
+import { handleReviewPromptReply } from "../agents/reviewPrompt";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { updatePermissionFromText } from "../agents/permissionsConversation";
@@ -1055,6 +1056,11 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       await persistDefaultQaTurn(ctx, nudgeReply);
       return;
     }
+    // 2026-09-19: the first-visit review prompt ("reply with 1 to 5 stars") on
+    // the completion recap. A star count / yes starts reviewFlow.ts (the site's
+    // Leave a Review modal) with the rating prefilled; "no thanks" clears it;
+    // anything else is not ours and routes as normal. LLM-classified, fresh 24h.
+    if (await handleReviewPromptReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> })) return;
     if (
       intent === "QUESTION" &&
       !intentDegraded &&

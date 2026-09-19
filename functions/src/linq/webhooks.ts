@@ -788,7 +788,7 @@ async function handleGroupDisambiguationReply(
 // proactive questions with no site equivalent, and both treated the family's
 // NEXT message — whatever it was — as the answer (live-caught: a "yes" to the
 // interview check-in was consumed as visit feedback for a question that was
-// never even delivered). Reviews stay: submit_review / the site's review page.
+// never even delivered). Reviews: reviewFlow.ts = the site's Leave a Review modal, plus the one first-visit prompt (reviewPrompt.ts).
 
 // ── Main inbound handler ──────────────────────────────────────────────────────
 
@@ -1479,6 +1479,7 @@ const handleInboundInner = traceable(
         (session as any).jobPostingStep        ? "job_posting"      :
         (session as any).bookingFlowStep       ? "booking"          :
         (session as any).interviewFlowStep     ? "interview"        :
+        (session as any).reviewFlowStep        ? "review"           :
         (session as any).healthcareFlowStep    ? "healthcare"       :
         (session as any).collectingCredential  ? "credential"       :
         (session as any).pendingMatches        ? "matches"          :

@@ -49,7 +49,7 @@ const familiesContent = [
       },
       {
         q: 'How does the review system work?',
-        a: 'Only families who have completed a paid booking through Evia can leave a review. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
+        a: 'Only families who have completed a visit with a caregiver through Evia can leave a review, one review per caregiver. This means every star rating and written testimonial reflects a verified, firsthand experience — no fake or unverified reviews.',
       },
       {
         q: 'What do caregiver badges mean?',

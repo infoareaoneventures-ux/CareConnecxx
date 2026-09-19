@@ -5,6 +5,7 @@ import { sendToPhone } from '../linq/client';
 import { sendViaInteractionAgent } from '../agents/caraAgent';
 import { formatDateForDisplay, formatHHMMForDisplay } from '../utils/scheduledTime';
 import { recordVisitProgress, buildVisitCompletionText, buildFamilyUpdateText, queuedItems } from './familyVisitUpdates';
+import { isFirstCompletedVisit, firstVisitReviewPromptLine, firstVisitReviewNotification, setReviewPromptAnchor } from '../agents/reviewPrompt';
 
 const db = admin.firestore();
 
@@ -694,7 +695,16 @@ export const onShiftStatusChanged = functions.firestore
         // "care journal entry will be posted shortly" promised something nothing
         // wrote any more — removed 2026-09-17.)
         const pendingItems = queuedItems(after);
-        const completionText = (pendingItems.length ? buildFamilyUpdateText(after.caregiverName, pendingItems) + '\n\n' : '') + buildVisitCompletionText(after);
+        let completionText = (pendingItems.length ? buildFamilyUpdateText(after.caregiverName, pendingItems) + '\n\n' : '') + buildVisitCompletionText(after);
+        // First completed visit with this caregiver and no review yet → the one
+        // review prompt (founder, 2026-09-19): dashboard card + bell on the site,
+        // one closing line here; a star reply starts reviewFlow.ts. Never again
+        // for the same caregiver — the button stays on the profile page.
+        if (after.caregiverId && await isFirstCompletedVisit(after.clientId, after.caregiverId, context.params.shiftId).catch(() => false)) {
+          completionText += '\n\n' + firstVisitReviewPromptLine(after.caregiverName);
+          await addNotification(after.clientId, firstVisitReviewNotification(after.caregiverName, after.caregiverId, context.params.shiftId));
+          await setReviewPromptAnchor(after.clientId, after.caregiverId, String(after.caregiverName || '')).catch(() => {});
+        }
         await notifyClientByText(after.clientId, completionText);
         if (pendingItems.length || after.familyUpdateQueuedAt) {
           await change.after.ref.update({

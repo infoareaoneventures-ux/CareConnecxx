@@ -6,7 +6,7 @@ vi.mock("firebase-admin", () => ({ firestore: () => ({ collection: () => ({ doc:
 vi.mock("../../config/appUrl", () => ({ getAppUrl: () => "https://eviacares.com" }));
 
 import {
-  weeklySlotsToBlocks, mapRawToProfileRecord, shapeCaregiverProfilePage, deriveProfileActions, billedHourly, NO_RELATIONSHIP,
+  weeklySlotsToBlocks, mapRawToProfileRecord, shapeCaregiverProfilePage, deriveProfileActions, billedHourly, formatExperience, NO_RELATIONSHIP,
 } from "../caregiverProfilePage";
 
 describe("weeklySlotsToBlocks (ported from services/availabilityService.ts)", () => {
@@ -61,6 +61,8 @@ describe("shapeCaregiverProfilePage", () => {
     expect(page.badges.transportation).toBe(true);
     expect(page.weeklyAvailability).toEqual([{ day: "monday", blocks: ["morning", "afternoon"] }]);
     expect(page.background).toBe("CNA");
+    expect(page.experience).toBe("5+ years experience");
+    expect(page.summary).toContain("5+ years experience.");
     expect(page.location).toEqual({ city: "Seattle", serviceRadiusMiles: 15 });
     expect(page.actions).toEqual({ primary: "request_interview", message: true, review: null });
     expect(page.summary).toContain("$25/hr ($27.25/hr billed)");
@@ -96,6 +98,17 @@ describe("deriveProfileActions — the page's button ladder", () => {
     expect(deriveProfileActions({ ...base, hasCompletedShift: true }).review).toBe("leave_review");
     expect(deriveProfileActions({ ...base, hasCompletedShift: true, hasReviewed: true }).review).toBe("reviewed");
     expect(deriveProfileActions(base).review).toBeNull();
+  });
+});
+
+describe("formatExperience (mirror of utils/experience.ts)", () => {
+  it("words a bare number, passes a phrase through, hides nothing/zero", () => {
+    expect(formatExperience("8")).toBe("8 years experience");
+    expect(formatExperience(1)).toBe("1 year experience");
+    expect(formatExperience("5+ years")).toBe("5+ years experience");
+    expect(formatExperience("10 years experience")).toBe("10 years experience");
+    expect(formatExperience("")).toBe("");
+    expect(formatExperience(0)).toBe("");
   });
 });
 

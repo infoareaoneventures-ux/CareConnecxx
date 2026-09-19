@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { hasValidTransportDocs } from '../utils/transportDocs';
+import { formatExperience } from '../utils/experience';
 import { geocodeToLatLng } from '../utils/geocode';
 import { isCaregiverBookable } from '../utils/caregiverEligibility';
 import firebase from 'firebase/compat/app';
@@ -1024,7 +1025,7 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
         <div className="space-y-3.5 mb-5 mt-1">
           <div className="flex items-center gap-3.5 text-slate-700">
             <Briefcase className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
-            <span className="text-[17px]">{caregiver.experience || 0} experience</span>
+            <span className="text-[17px]">{formatExperience(caregiver.experience, '0 years experience')}</span>
           </div>
           <div className="flex items-center gap-3.5 text-slate-700">
             <MapPin className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />

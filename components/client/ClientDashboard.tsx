@@ -149,6 +149,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [requestedCaregiverIds, setRequestedCaregiverIds] = useState<Set<string>>(new Set());
   const [clientOpenPosts, setClientOpenPosts] = useState<{ id: string; title: string; createdAt?: string }[]>([]);
   const [activeShifts, setActiveShifts] = useState<any[]>([]);
+  // First-visit review prompt (2026-09-19): a caregiver with a completed shift,
+  // no review from this family yet, and not dismissed → one card. Same facts the
+  // profile page's Leave a Review button reads; Evia texts the same prompt once.
+  const [completedShiftDocs, setCompletedShiftDocs] = useState<any[]>([]);
+  const [myReviewCaregiverIds, setMyReviewCaregiverIds] = useState<Set<string>>(new Set());
+  const [dismissedReviewPrompts, setDismissedReviewPrompts] = useState<string[]>([]);
   // Raw booking_requests docs with status:'accepted' — status stays 'accepted'
   // forever once accepted, so this alone does NOT mean the relationship is
   // still ongoing (see activeCareTeam below).
@@ -191,6 +197,26 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   );
 
   const hasActiveBooking = activeCareTeam.length > 0;
+
+  const firstVisitReviewPrompts = useMemo(() => {
+    // Exactly ONE completed shift with the caregiver = the first-visit window (same
+    // moment Evia's recap line fires). A second shift, a review, or Not now ends it.
+    const counts = new Map<string, { n: number; name: string }>();
+    for (const s of completedShiftDocs) {
+      const id = s.caregiverId as string | undefined;
+      if (!id) continue;
+      const cur = counts.get(id) ?? { n: 0, name: String(s.caregiverName || 'your caregiver') };
+      counts.set(id, { n: cur.n + 1, name: cur.name });
+    }
+    return [...counts.entries()]
+      .filter(([id, c]) => c.n === 1 && !myReviewCaregiverIds.has(id) && !dismissedReviewPrompts.includes(id))
+      .map(([caregiverId, c]) => ({ caregiverId, caregiverName: c.name }));
+  }, [completedShiftDocs, myReviewCaregiverIds, dismissedReviewPrompts]);
+  const dismissReviewPrompt = async (caregiverId: string) => {
+    setDismissedReviewPrompts(prev => [...prev, caregiverId]);
+    if (!currentUser?.uid || !db) return;
+    await db.collection('users').doc(currentUser.uid).set({ dismissedReviewPrompts: firebase.firestore.FieldValue.arrayUnion(caregiverId) }, { merge: true }).catch(() => {});
+  };
 
   // A caregiver whose booking has ended but who was actually interviewed
   // before shouldn't be asked to "Request Interview" again in Nearby
@@ -312,6 +338,15 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     // caregiver-initiated and client-initiated swaps, live.
     unsubs.push(dbService.subscribeShiftSwapsForClient(currentUser.uid, setPendingSwaps));
 
+    // Completed shifts + this family's reviews — the first-visit review card.
+    unsubs.push(db.collection('shifts')
+      .where('clientId', '==', currentUser.uid)
+      .where('status', '==', 'completed')
+      .onSnapshot(snap => setCompletedShiftDocs(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))), () => {}));
+    unsubs.push(db.collection('reviews')
+      .where('clientId', '==', currentUser.uid)
+      .onSnapshot(snap => setMyReviewCaregiverIds(new Set(snap.docs.map(d => (d.data() as any).caregiverId).filter(Boolean))), () => {}));
+
     return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [currentUser?.uid]);
 
@@ -390,6 +425,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const userData = userDoc.data() as any;
             // Show setup wizard for clients who haven't completed it yet.
             const savedIds: string[] = userData?.savedCaregiverIds || [];
+            setDismissedReviewPrompts(Array.isArray(userData?.dismissedReviewPrompts) ? userData.dismissedReviewPrompts : []);
             if (savedIds.length > 0) {
               const snap = await db.collection('publicCaregiverProfiles')
                 .where(firebase.firestore.FieldPath.documentId(), 'in', savedIds.slice(0, 10))
@@ -635,6 +671,20 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           if (!active) return null;
           return <LiveCareFeed clientId={currentUser.uid} />;
         })()}
+
+        {/* First-visit review prompt — one card per caregiver, until reviewed or dismissed (2026-09-19) */}
+        {firstVisitReviewPrompts.map(p => (
+          <div key={p.caregiverId} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <p className="font-semibold text-slate-900">How was your first visit with {p.caregiverName.split(' ')[0]}?</p>
+              <p className="text-sm text-slate-500">Leave a review — it helps other families choose.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => dismissReviewPrompt(p.caregiverId)} className="px-4 py-2 text-sm font-semibold text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50">Not now</button>
+              <button onClick={() => navigate(`/client/caregiver/${p.caregiverId}?review=1`)} className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-full hover:bg-primary-700">Leave a review</button>
+            </div>
+          </div>
+        ))}
 
         {/* Care journal — caregiver visit notes (web + Evia tools); hides itself when empty */}
         {currentUser?.uid && <CareJournalFeed clientId={currentUser.uid} />}

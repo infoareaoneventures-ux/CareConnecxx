@@ -18,7 +18,6 @@ const ClientVisitsPage = lazy(() => import('./components/client/ClientVisitsPage
 const ClientCaregiverProfile = lazy(() => import('./components/ClientCaregiverProfile'));
 const IdentityCallback = lazy(() => import('./components/client/IdentityCallback'));
 const BookingFlow = lazy(() => import('./components/client/booking/BookingFlow'));
-const ReviewSystem = lazy(() => import('./components/ReviewSystem'));
 const WeeklySummary = lazy(() => import('./components/WeeklySummary'));
 const InterviewOutcome = lazy(() => import('./components/InterviewOutcome'));
 const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').then(module => ({ default: module.CaregiverDashboard })));
@@ -415,7 +414,6 @@ const AppContent: React.FC = () => {
               (waits for the webhook). Gating it behind ClientRoute bounced them to login. */}
           <Route path="/client/identity-callback" element={<IdentityCallback />} />
           <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />
-          <Route path="/client/review/:visitId" element={<ClientRoute element={<ReviewSystem />} />} />
           <Route path="/client/weekly-summary" element={<ClientRoute element={<WeeklySummary />} />} />
           <Route path="/client/interview-outcome/:interviewId" element={<ClientRoute element={<InterviewOutcome />} />} />
           <Route path="/client/profile-old" element={<ClientRoute element={<ClientProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />

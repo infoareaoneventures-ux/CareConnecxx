@@ -244,6 +244,23 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_notifications",
+    description:
+      "The website's notification bell as data: the family's notifications newest first (chat messages excluded — the Inbox owns them), the unread count, and for each one the " +
+      "page the bell opens (page.label / page.path). Use when they ask what's new, what a notification was about, or to clear the bell. action: list (default) | mark_all_read " +
+      "(the bell's Mark all read) | mark_read (one, needs notificationId) | delete (the trash icon on one, needs notificationId).",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:         { type: "string", description: "The family's user ID (auto-injected)" },
+        action:         { type: "string", enum: ["list", "mark_all_read", "mark_read", "delete"], description: "Default list" },
+        notificationId: { type: "string", description: "For mark_read / delete: the id from a previous list" },
+        show:           { type: "number", description: "How many to include in the summary line (default 5; items always has all of them)" },
+      },
+      required: ["userId"],
+    },
+  },
+  {
     name: "get_membership_page",
     description:
       `The website's Membership page exactly: the plan card (Standard Plan, ${clientMonthlyDisplay()}), status, next billing date — or the end date once ` +
@@ -914,7 +931,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "log_match_feedback",
-    description: "Record the family's qualitative feedback about a caregiver match (e.g. 'great with mom but often late'). Feeds future matching. Distinct from submit_review (post-visit star rating).",
+    description: "Record the family's qualitative feedback about a caregiver match (e.g. 'great with mom but often late'). Feeds future matching. Distinct from start_review_flow (the public star review).",
     input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, caregiverId: { type: "string" }, sentiment: { type: "string", description: "'positive', 'neutral', or 'negative'" }, note: { type: "string" } }, required: ["clientId", "caregiverId", "note"] },
   },
   {
@@ -1266,20 +1283,19 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "submit_review",
+    name: "start_review_flow",
     description:
-      "Submit a public star rating and optional comment for a caregiver after a completed visit. " +
-      "Rating must be 1–5. One review per appointment.",
+      "Start Evia's scripted Leave a Review flow for a caregiver — the website's review modal, step for step (overall stars 1–5, optional category " +
+      "ratings, a 10–250 character review, would-you-recommend YES/NO, a recap, then YES to post). Use when the family wants to review or rate a caregiver they " +
+      "have had a completed visit with; the flow checks that itself (one review per caregiver per family) and tells them if they can't yet. This tool ALREADY " +
+      "TEXTS THE FAMILY the first question — send NOTHING else this turn. Do not collect the rating or comment yourself.",
     input_schema: {
       type: "object",
       properties: {
-        caregiverId:   { type: "string",  description: "The caregiver's Firestore document ID" },
-        appointmentId: { type: "string",  description: "The appointment document ID being reviewed" },
-        clientId:      { type: "string",  description: "The client's user ID" },
-        rating:        { type: "integer", minimum: 1, maximum: 5, description: "Star rating 1–5" },
-        comment:       { type: "string",  description: "Optional written comment" },
+        caregiverId: { type: "string",  description: "The caregiver being reviewed" },
+        rating:      { type: "integer", minimum: 1, maximum: 5, description: "Only if the family already stated a star count in THIS message" },
       },
-      required: ["caregiverId", "appointmentId", "clientId", "rating"],
+      required: ["caregiverId"],
     },
   },
   {
@@ -2659,6 +2675,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "search_memory",
   "get_membership_page",
   "contact_support",
+  "get_notifications",
   "update_caregiver_profile",
   "pause_account",
   "reactivate_account",
@@ -3657,6 +3674,29 @@ async function executeToolCall(
         const { roomId } = await relayToTeam({ userId: String(userId), text: message.trim().slice(0, 2000) });
         logAudit({ eventType: "support_message_relayed", userId: String(userId), data: { source: "mcp:contact_support", roomId } }).catch(() => {});
         return { success: true, roomId, instruction: "Tell them in one line that our team has their message and will reply here by text. Do not promise a time, and do not keep answering the thing they asked the team about." };
+      }
+
+      case "get_notifications": {
+        // The bell as data (agents/notificationsPage.ts): the hook's query and
+        // filter, its three writes, and the same destination per type as the
+        // site (utils/notificationRoutes.ts). 2026-09-19.
+        if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
+        const { readNotificationsPage, markNotificationsRead, deleteNotification } = await import("../agents/notificationsPage");
+        const nfUid = String(input.userId);
+        const nfAction = typeof input.action === "string" ? input.action : "list";
+        if (nfAction === "mark_all_read" || nfAction === "mark_read") {
+          if (nfAction === "mark_read" && !input.notificationId) return toolError("INVALID_INPUT", "notificationId is required for mark_read");
+          const marked = await markNotificationsRead(nfUid, nfAction === "mark_read" ? String(input.notificationId) : undefined);
+          return { success: true, marked, instruction: marked ? `Marked ${marked} as read — confirm in a few words.` : "Nothing was unread — say so." };
+        }
+        if (nfAction === "delete") {
+          if (!input.notificationId) return toolError("INVALID_INPUT", "notificationId is required for delete");
+          await deleteNotification(nfUid, String(input.notificationId));
+          return { success: true, instruction: "Removed from their bell — confirm in a few words." };
+        }
+        const nfPage = await readNotificationsPage(nfUid, "client", { show: typeof input.show === "number" ? input.show : 5 });
+        logAudit({ eventType: "health_data_accessed", userId: nfUid, data: { source: "mcp:get_notifications", total: nfPage.total, unread: nfPage.unreadCount } }).catch(() => {});
+        return { success: true, results: nfPage, instruction: "This is the bell exactly as the site shows it. Answer from items; when you mention one, name the page it opens (page.label). Never invent a notification." };
       }
 
       case "get_membership_page": {
@@ -5366,24 +5406,27 @@ async function executeToolCall(
       });
     }
 
-    if (name === "submit_review") {
-      const { caregiverId, appointmentId, clientId, rating, comment } = input as Record<string, unknown>;
-      if (!caregiverId || !appointmentId || !clientId || rating == null) return toolError("INVALID_INPUT", "caregiverId, appointmentId, clientId, and rating are required");
-      const ratingNum = Number(rating);
-      if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) return toolError("INVALID_INPUT", "rating must be an integer from 1 to 5");
-      const apptSnap = await db.collection("appointments").doc(appointmentId as string).get();
-      if (!apptSnap.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const appt = apptSnap.data()!;
-      if (appt.clientId !== clientId) return toolError("PERMISSION_DENIED", "Appointment does not belong to this client");
-      if (appt.hasReview === true) return toolError("INVALID_INPUT", "This appointment has already been reviewed");
-      const dupSnap = await db.collection("reviews").where("appointmentId", "==", appointmentId).limit(1).get();
-      if (!dupSnap.empty) return toolError("INVALID_INPUT", "A review for this appointment already exists");
-      const reviewRef = await db.collection("reviews").add({ caregiverId, clientId, appointmentId, rating: ratingNum, comment: comment ?? "", source: "cara_sms", createdAt: nowIso });
-      await apptSnap.ref.update({ hasReview: true, reviewId: reviewRef.id });
-      const { onFeedbackSubmitted } = await import("../agents/feedbackAggregator");
-      onFeedbackSubmitted(caregiverId as string, ratingNum, appointmentId as string, clientId as string).catch(err => console.error("submit_review aggregation error:", err));
-      logAudit({ eventType: "review_submitted", userId: clientId as string, data: { source: "mcp:submit_review", caregiverId, appointmentId, rating: ratingNum } }).catch(() => {});
-      return { success: true, reviewId: reviewRef.id, rating: ratingNum };
+    if (name === "start_review_flow") {
+      // The site's Leave a Review modal in text (agents/reviewFlow.ts). Replaced
+      // submit_review (2026-09-19), which looked visits up in the legacy
+      // `appointments` collection and wrote an Evia-only document shape.
+      const { clientId, caregiverId, rating, phone } = input as Record<string, unknown>;
+      if (!clientId || !caregiverId) return toolError("INVALID_INPUT", "clientId and caregiverId are required");
+      if (!phone) return toolError("INVALID_INPUT", "phone is required (auto-injected from session)");
+      const rvSessSnap = await db.collection("agent_sessions").doc(phone as string).get();
+      const rvSession = rvSessSnap.data();
+      const rvChatId = rvSession?.chatId as string | undefined;
+      if (!rvChatId || !rvSession) return toolError("NOT_FOUND", "No active conversation to start the review in");
+      const { startReviewFlow } = await import("../agents/reviewFlow");
+      const rvResult = await startReviewFlow(phone as string, rvChatId, rvSession as any, {
+        caregiverId: caregiverId as string,
+        ...(Number.isInteger(rating) ? { rating: rating as number } : {}),
+      });
+      logAudit({ eventType: "review_submitted", userId: clientId as string, data: { source: "mcp:start_review_flow", caregiverId, started: rvResult.started, reason: rvResult.reason ?? null } }).catch(() => {});
+      if (!rvResult.started) {
+        return { success: false, reason: rvResult.reason ?? "failed_to_start", instruction: "The family has already been told why the review can't start (or that they already reviewed this caregiver) — do not repeat or add anything else this turn." };
+      }
+      return { success: true, instruction: "This tool already texted the family the first review question. Send NOTHING else this turn." };
     }
 
     if (name === "set_subscription_status") {

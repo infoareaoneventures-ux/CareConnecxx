@@ -28,7 +28,6 @@ const KNOWN_OFFENDERS = new Set<string>([
   "components/CaregiverProfile.tsx",
   "components/FindCaregivers.tsx",
   "components/InboxView.tsx",
-  "components/ReviewSystem.tsx",
   "components/Schedule.tsx",
   "components/admin/AdminClientManager.tsx",
   "components/admin/AdminMessages.tsx",

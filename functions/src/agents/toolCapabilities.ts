@@ -43,7 +43,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   resend_caregiver_profile:     ["booking"],
   respond_to_interview_request: ["booking"],
   submit_interview_feedback:    ["booking"],
-  submit_review:                ["booking"],
+  start_review_flow:            ["booking"],  // the site's Leave a Review modal, step for step — see reviewFlow.ts
   save_caregiver_favorite:      ["booking"],
   unsave_caregiver_favorite:    ["booking"],
   apply_to_job:                 ["booking"],
@@ -76,6 +76,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   // ── billing ──────────────────────────────────────────────────────────────
   get_membership_page:      ["billing"],
   contact_support:          ["messaging"],  // the website's "Message our team" button — see utils/supportRoom.ts  // Membership page as data — see agents/membershipPage.ts
+  get_notifications:        ["messaging"],  // the website's bell as data — see agents/notificationsPage.ts
   set_subscription_status:  ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],

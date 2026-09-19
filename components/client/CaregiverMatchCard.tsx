@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatExperience } from '../../utils/experience';
 import { Star, Heart, MapPin, MessageSquare, DollarSign, CheckCircle, Briefcase, RefreshCw } from 'lucide-react';
 import { Caregiver } from '../../types';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
@@ -99,12 +100,7 @@ export const CaregiverMatchCard: React.FC<CaregiverMatchCardProps> = ({
           <div className="flex items-center gap-3.5 text-slate-700">
             <Briefcase className="w-6 h-6 text-slate-600 flex-shrink-0 stroke-[1.5]" />
             <span className="text-[17px]">
-              {(() => {
-                const exp = caregiver.experience;
-                if (!exp) return '0 years experience';
-                const s = String(exp);
-                return /year/i.test(s) ? s : `${s} years experience`;
-              })()}
+              {formatExperience(caregiver.experience, '0 years experience')}
             </span>
           </div>
           <div className="flex items-center gap-3.5 text-slate-700">

@@ -153,10 +153,6 @@ vi.mock("../../triggers/userTriggerManager", () => ({
 }));
 
 
-vi.mock("../../agents/feedbackAggregator", () => ({
-  onFeedbackSubmitted: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("../../linq/client", () => ({
   sendToPhone: vi.fn().mockResolvedValue(undefined),
 }));
@@ -453,21 +449,12 @@ describe("MCP tool smoke coverage", () => {
   });
 
   // ── Reviews + care plan ──────────────────────────────────────────────────
-  it("submit_review rejects rating out of range", async () => {
-    hoisted.docState.set("appointments/a1", { clientId: "c1", caregiverId: "cg1" });
-    const r = await handleToolCall("submit_review", {
-      caregiverId: "cg1", appointmentId: "a1", clientId: "c1", rating: 10,
-    }) as any;
-    expect(r._toolError).toBe(true);
-  });
-
-  it("submit_review happy path", async () => {
-    hoisted.docState.set("appointments/a1", { clientId: "c1", caregiverId: "cg1" });
-    hoisted.collState.set("reviews", []);
-    const r = await handleToolCall("submit_review", {
-      caregiverId: "cg1", appointmentId: "a1", clientId: "c1", rating: 5, comment: "Great!",
-    }) as any;
-    expect(r.success).toBe(true);
+  it("start_review_flow requires the ids and an active conversation (the flow itself is the site's Leave a Review modal, tested in reviewFlow.test.ts)", async () => {
+    const r1 = await handleToolCall("start_review_flow", { clientId: "c1" }) as any;
+    expect(r1._toolError).toBe(true);
+    const r2 = await handleToolCall("start_review_flow", { clientId: "c1", caregiverId: "cg1", phone: "+15550000000" }) as any;
+    expect(r2._toolError).toBe(true);
+    expect(r2.code).toBe("NOT_FOUND");
   });
 
   it("get_care_team happy path", async () => {

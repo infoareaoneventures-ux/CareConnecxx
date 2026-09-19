@@ -10,6 +10,7 @@ import { handleVisitRequestFlowStep } from "../agents/visitRequestFlow";
 import { handleCorrectionFlowStep } from "../agents/correctionFlow";
 import { handleCancelFlowStep } from "../agents/cancelFlow";
 import { handleInterviewFlowStep } from "../agents/interviewFlow";
+import { handleReviewFlowStep } from "../agents/reviewFlow";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
 
 const db = admin.firestore();
@@ -290,6 +291,22 @@ export async function routeClientStateMachines(ctx: ClientRouteContext): Promise
     if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
     try {
       await handleInterviewFlowStep(phone, chatId, text, session);
+    } finally {
+      if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
+    }
+    return "handled";
+  }
+
+  // ── Leave a Review flow (2026-09-19) — the site's review modal, step for step ──
+  if ((session as any).reviewFlowStep) {
+    if (isStateExpired(session)) {
+      await clearFlags(phone, db, ["reviewFlowStep", "reviewFlowData", "stateExpiresAt"]);
+      await sendMessage(chatId, "Your review timed out — nothing was posted. Text me anytime to leave it, or use the Leave a Review button on their profile.");
+      return "handled";
+    }
+    if (session.service === "iMessage" && !session.groupChatId) await startTyping(chatId).catch(() => {});
+    try {
+      await handleReviewFlowStep(phone, chatId, text, session);
     } finally {
       if (session.service === "iMessage" && !session.groupChatId) await stopTyping(chatId).catch(() => {});
     }

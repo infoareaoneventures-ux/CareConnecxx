@@ -172,6 +172,7 @@ export interface CaregiverProfilePage {
   careServices: string[];
   rates: Array<{ label: "1 Person" | "2 People" | "3+ People"; rate: number; billed: number }>;
   ratesNote: string;
+  /** "8 years experience" — already worded, as the page shows it. */
   experience: string | null;
   /** Weekly Availability grid, only days with a lit block; omitted section when empty (the page hides it). */
   weeklyAvailability: Array<{ day: string; blocks: AvailabilityBlock[] }>;
@@ -186,6 +187,17 @@ export interface CaregiverProfilePage {
   published: boolean;
   /** One paragraph in the page's order, for Evia to quote from. */
   summary: string;
+}
+
+/** Mirror of utils/experience.ts formatExperience: "8" → "8 years experience", "5+ years" → "5+ years experience". */
+export function formatExperience(exp: unknown): string {
+  const s = String(exp ?? "").trim();
+  if (!s || s === "0") return "";
+  if (/experience/i.test(s)) return s;
+  if (/year/i.test(s)) return `${s} experience`;
+  const n = Number(s);
+  if (Number.isFinite(n)) return `${s} ${n === 1 ? "year" : "years"} experience`;
+  return `${s} experience`;
 }
 
 export function billedHourly(rate: number): number {
@@ -247,7 +259,7 @@ export function shapeCaregiverProfilePage(
   parts.push(`About: ${rec.bio || "No bio yet."} Languages: ${rec.languages.join(", ")}.`);
   if (careServices.length) parts.push(`Care services: ${careServices.join(", ")}.`);
   if (rates.length) parts.push(`Rates: ${rates.map((r) => `${r.label} $${r.rate}/hr (${money(r.billed)} billed)`).join("; ")}. ${ratesNote}`);
-  if (rec.experience) parts.push(`${rec.experience} experience.`);
+  if (formatExperience(rec.experience)) parts.push(`${formatExperience(rec.experience)}.`);
   if (weeklyAvailability.length) parts.push(`Weekly availability: ${weeklyAvailability.map((d) => `${DAY_LABEL(d.day)} ${d.blocks.join("/")}`).join("; ")}.`);
   if (rec.education) parts.push(`Background: ${rec.education}.`);
   parts.push(`Lives in ${rec.city}; willing to travel within ${rec.serviceRadius} miles.`);
@@ -274,7 +286,7 @@ export function shapeCaregiverProfilePage(
     careServices,
     rates,
     ratesNote,
-    experience: rec.experience || null,
+    experience: formatExperience(rec.experience) || null,
     weeklyAvailability,
     background: rec.education,
     location: { city: rec.city, serviceRadiusMiles: rec.serviceRadius },

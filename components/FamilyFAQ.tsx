@@ -58,7 +58,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'ts-2',
             q: 'How does the review system work?',
-            a: 'Only families who have successfully hired and paid a caregiver through Evia can leave a review. This ensures that every rating and testimonial is based on a verified, firsthand experience.'
+            a: 'Only families who have completed a visit with a caregiver through Evia can leave a review, one review per caregiver. This ensures that every rating and testimonial is based on a verified, firsthand experience.'
          },
          {
             id: 'ts-3',

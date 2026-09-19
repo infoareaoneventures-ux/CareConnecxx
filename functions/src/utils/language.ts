@@ -164,6 +164,7 @@ export const flowLabel = (key: string, lang: Language): string => {
     job_posting:           { en: "posting a job",                  es: "publicar un trabajo" },
     booking:               { en: "sending a booking request",      es: "enviar una solicitud de reserva" },
     interview:             { en: "setting up an interview",        es: "programar una entrevista" },
+    review:                { en: "leaving a review",               es: "dejar una reseña" },
     modify_schedule:       { en: "changing your recurring schedule", es: "cambiar tu horario recurrente" },
     healthcare:            { en: "a healthcare action",             es: "una acción médica" },
     credential:            { en: "saving a portal login",           es: "guardar un acceso de portal" },

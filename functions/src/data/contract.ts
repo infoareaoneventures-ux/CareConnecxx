@@ -327,7 +327,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Client→caregiver post-visit reviews (services/api.ts, ReviewSystem.tsx; Evia via mcp/server.ts submit_review). Public read; author-scoped write.",
+    notes: "Client→caregiver reviews (components/client/LeaveReviewModal.tsx; Evia via agents/reviewFlow.ts start_review_flow — the same document). Public read; author-scoped write.",
   },
   seniors: {
     path: "seniors",

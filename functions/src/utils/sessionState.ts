@@ -41,6 +41,9 @@ export const STATE_MACHINE_FLAGS = [
   // Scripted interview-scheduling flow (interviewFlow.ts, 2026-09-13)
   "interviewFlowStep",
   "interviewFlowData",
+  // Scripted Leave a Review flow (reviewFlow.ts, 2026-09-19) — the site's review modal, step for step.
+  "reviewFlowStep",
+  "reviewFlowData",
   // Mid-shift task acknowledgment flow
   "awaitingTaskAck",
   // Day-before shift confirmation from caregiver
@@ -196,6 +199,7 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["visitRequestFlowStep",    "requesting an extra visit"],
   ["correctionFlowStep",      "correcting a caregiver's timesheet"],
   ["interviewFlowStep",       "setting up your interview request"],
+  ["reviewFlowStep",          "leaving your review"],
   ["healthcareFlowStep",      "that healthcare request"],
   ["awaitingIssueDescription", "the issue you started telling me about"],
   ["cancelStep",              "cancelling that shift"],
@@ -349,6 +353,7 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["visitRequestFlowStep", "generic"],
   ["correctionFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
+  ["reviewFlowStep", "generic"],
   ["swapStep", "stampedStep"],
   // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
   // pendingSwapRequestIdSetAt); routeCaregiver.ts clears on the same stamp.
@@ -380,6 +385,7 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "visitRequestFlowData",
   "correctionFlowData",
   "interviewFlowData",
+  "reviewFlowData",
   "awaitingTaskAck",
   "pendingShiftConfirmation",
   "swapStepSetAt",

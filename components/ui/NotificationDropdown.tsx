@@ -4,29 +4,14 @@ import { Bell, BellRing, Info, Calendar, MessageSquare, AlertTriangle, Trash2, C
 import { useNotifications } from '../../hooks/useNotifications';
 import { authService } from '../../services/api';
 import { AppNotification } from '../../types';
+import { routeForNotification } from '../../utils/notificationRoutes';
 
 interface NotificationDropdownProps {
   /** Which nav mounted this dropdown — decides where a notification click navigates. */
   role?: 'client' | 'caregiver';
 }
 
-// Notification click → destination. Every notification lands somewhere useful:
-// clicking used to only mark-as-read (found live 2026-07-15 — "New Applicant"
-// went nowhere), so the applicant/interview/booking surfaces were undiscoverable.
-const routeForNotification = (n: AppNotification, role: 'client' | 'caregiver'): string => {
-  const t = (n as any).type || '';
-  if (role === 'client') {
-    if (t === 'job_application') return '/client/posts';
-    if (t.startsWith('interview') || t === 'hire_decision') return '/client/posts?tab=interviews';
-    if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/client/bookings';
-    if (t.includes('payment') || t.includes('membership')) return '/client/payments';
-    return '/client/dashboard';
-  }
-  if (t.startsWith('interview') || t === 'hire_decision') return '/caregiver/jobs?tab=interviews';
-  if (t.startsWith('booking') || t.startsWith('amendment') || t.startsWith('shift')) return '/caregiver/bookings';
-  if (t.includes('payment') || t.includes('payout') || t.includes('membership')) return '/caregiver/payments';
-  return '/caregiver/dashboard';
-};
+// Notification click → destination: utils/notificationRoutes.ts (one map, mirrored for Evia).
 
 /**
  * Accessible notification dropdown with keyboard navigation

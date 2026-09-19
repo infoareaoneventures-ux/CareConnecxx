@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Users, Briefcase, Globe, ChevronRight, LifeBuoy, BookOpen } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
 import { ViewType } from '../types';
@@ -50,6 +51,10 @@ const popularArticles = [
 ];
 
 export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
+  // The box used to be read-only. Enter searches every help section (HelpPage reads ?q=).
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  const submitSearch = () => { const q = query.trim(); if (q) navigate(`/help/families?q=${encodeURIComponent(q)}`); };
   return (
     <div className="min-h-screen bg-paper-50 flex flex-col font-sans">
       <SEO title="Help Center | Evia" description="Find answers about using Evia — for families, caregivers, and general platform questions." keywords="help, support, Evia, FAQ" />
@@ -77,7 +82,7 @@ export const HelpCenter: React.FC<HelpCenterProps> = ({ onNavigate }) => {
             <p className="text-lg text-ink-600 mb-8">Browse articles for families, caregivers, and general platform questions.</p>
             <div className="relative max-w-xl mx-auto">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400" />
-              <input type="text" placeholder="Search for help articles…" className="w-full pl-12 pr-4 py-4 rounded-full bg-white text-ink-900 text-base border hairline shadow-sm outline-none" readOnly />
+              <input type="text" placeholder="Search for help articles…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submitSearch(); }} className="w-full pl-12 pr-4 py-4 rounded-full bg-white text-ink-900 text-base border hairline shadow-sm outline-none" />
             </div>
           </div>
         </section>

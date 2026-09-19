@@ -1390,8 +1390,11 @@ export const createIdentityVerificationSession = functions.https.onCall(async (d
   }
 
   try {
+    // 2026-09-19 (founder): the same Stripe Identity check as Evia's text link —
+    // government ID photo + selfie ('document'), not the records-only
+    // 'id_number' lookup this button used to request.
     const session = await stripe.identity.verificationSessions.create({
-      type: 'id_number',
+      type: 'document',
       metadata: { firebaseUID: userId },
       return_url: returnUrl,
     });

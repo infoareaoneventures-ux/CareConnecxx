@@ -77,6 +77,7 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_membership_page:      ["billing"],
   contact_support:          ["messaging"],  // the website's "Message our team" button — see utils/supportRoom.ts  // Membership page as data — see agents/membershipPage.ts
   get_notifications:        ["messaging"],  // the website's bell as data — see agents/notificationsPage.ts
+  get_account_settings:     ["care_plan"],   // the website's Account Settings page as data — see agents/accountSettingsPage.ts
   set_subscription_status:  ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],
@@ -141,7 +142,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   add_family_member:                ["messaging"],
   remove_family_member:             ["messaging"],
   update_preferences:               ["messaging"],
-  update_communication_preferences: ["messaging"],
   set_visit_update_frequency:       ["messaging"],
   request_email_change:             ["messaging"],
   set_block_status:                 ["messaging"],
@@ -327,7 +327,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "update_care_plan",
   "create_care_journal_entry",
   // profiles & account
-  "update_user_profile", "update_communication_preferences",
+  "update_user_profile",
   "update_caregiver_profile", "update_caregiver_availability",
   "pause_account", "reactivate_account", "delete_account",
   // reminders & follow-ups

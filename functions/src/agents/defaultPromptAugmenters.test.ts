@@ -111,7 +111,6 @@ describe("communicationPreferencesAugmenter", () => {
     expect(out).toContain("America/Los_Angeles");
     expect(out).toContain("Prefers SMS");
     expect(out).toContain("I'll hold this until morning");
-    expect(out).toContain("update_communication_preferences");
   });
 
   it("says quiet hours are not enabled when DND is off", () => {

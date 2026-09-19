@@ -173,7 +173,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      Finding care just got <span className="text-ink-400">simple.</span>
                   </h1>
                   <p className="text-xl text-ink-600 max-w-2xl mx-auto mb-10 leading-relaxed">
-                     No agencies. No markups. No endless phone calls. Just verified, local caregivers ready to help your family.
+                     No agencies. No endless phone calls. Just verified, local caregivers ready to help your family.
                   </p>
 
                   {/* Feature Pills */}
@@ -340,10 +340,10 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                         <div className="flex items-baseline justify-center gap-2 mb-4">
                            <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$54.99<span className="text-2xl text-ink-500">/yr</span></span>
                         </div>
-                        <p className="text-ink-600 mb-6">Keep 100% of your hourly rate. Daily payouts are free; instant cash-out carries Stripe's 1% fee.</p>
+                        <p className="text-ink-600 mb-6">Keep 100% of your hourly rate. Daily payouts are free; instant cash-out carries Stripe's 1% fee (min $0.50).</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
-                              'Free profile & job access',
+                              'Profile & job board included',
                               'Instant job notifications',
                               'Secure payments via Stripe',
                               'Direct client relationships',

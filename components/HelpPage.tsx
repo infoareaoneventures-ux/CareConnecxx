@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ChevronDown, ChevronUp, ChevronRight, Users, Briefcase, Globe, LifeBuoy, MessageCircle } from 'lucide-react';
 import { BloomMark } from './ui/BloomMark';
 import { CARA_CAPABILITIES, CapabilityRole, capabilityLabel, capabilityExample } from '../constants/caraCapabilities';
@@ -354,6 +355,13 @@ const AskEviaSection: React.FC<{ roles: CapabilityRole[] }> = ({ roles }) => (
 export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
   const [openFaq, setOpenFaq] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState(0);
+  // ?q= from the Help Center search box: matches across every section's questions and answers.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = (searchParams.get('q') ?? '').trim();
+  const searchHits = q
+    ? [...familiesContent, ...caregiversContent, ...generalContent].flatMap(c => c.faqs.map(f => ({ ...f, category: c.category })))
+        .filter(f => f.q.toLowerCase().includes(q.toLowerCase()) || (typeof f.a === 'string' && f.a.toLowerCase().includes(q.toLowerCase())))
+    : null;
 
   const config = {
     families: {
@@ -451,7 +459,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
                   {config.content.map((cat, idx) => (
                     <li key={idx}>
                       <button
-                        onClick={() => { setActiveCat(idx); setOpenFaq(null); }}
+                        onClick={() => { setActiveCat(idx); setOpenFaq(null); if (q) setSearchParams({}); }}
                         className={`w-full text-left px-5 py-4 flex items-center justify-between text-sm font-medium transition-colors ${
                           activeCat === idx
                             ? 'bg-paper-100 text-ink-900 border-l-4 border-ink-900'
@@ -470,11 +478,14 @@ export const HelpPage: React.FC<HelpPageProps> = ({ section, onNavigate }) => {
             {/* FAQ Accordion */}
             <div className="lg:w-3/4">
               <h2 className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-6 pb-4 border-b hairline">
-                {config.content[activeCat].category}
+                {searchHits ? `Results for "${q}"` : config.content[activeCat].category}
               </h2>
+              {searchHits && searchHits.length === 0 && (
+                <p className="text-ink-600 mb-6">No articles match that. Try another word, or text Evia your question.</p>
+              )}
               <div className="space-y-4">
-                {config.content[activeCat].faqs.map((faq, i) => {
-                  const id = `${section}-${activeCat}-${i}`;
+                {(searchHits ?? config.content[activeCat].faqs).map((faq, i) => {
+                  const id = `${section}-${searchHits ? 'search' : activeCat}-${i}`;
                   return (
                     <Accordion
                       key={id}

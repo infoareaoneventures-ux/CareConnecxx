@@ -76,8 +76,8 @@ export const TrustAndSafetyPage: React.FC<TrustAndSafetyPageProps> = ({ onNaviga
 
    const supportFeatures = [
       {
-         title: "7 days a week",
-         desc: "Our award-winning member services team is available seven days a week to help with booking questions, safety concerns, or anything else you need."
+         title: "Here when you need us",
+         desc: "Text Evia any time, day or night, or message our team from your account — for booking questions, safety concerns, or anything else you need."
       },
       {
          title: "Upgraded background checks",

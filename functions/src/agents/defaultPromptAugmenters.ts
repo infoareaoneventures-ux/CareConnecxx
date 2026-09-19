@@ -117,8 +117,7 @@ export const communicationPreferencesAugmenter: PromptAugmenter = {
       "COMMUNICATION PREFERENCES (delivery timing is enforced downstream - use these to REASON about timing, not to gate your reply to this message):\n" +
       lines.join("\n") + "\n" +
       "When a reminder, follow-up, or proactive message would land inside quiet hours, say you'll hold it until the window ends " +
-      "(e.g. \"I'll hold this until morning\") and schedule it for after. Never promise delivery inside the quiet-hours window. " +
-      "Use update_communication_preferences when the user asks to change any of these."
+      "(e.g. \"I'll hold this until morning\") and schedule it for after. Never promise delivery inside the quiet-hours window."
     );
   },
 };

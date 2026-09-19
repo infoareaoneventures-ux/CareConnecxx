@@ -13,7 +13,6 @@ export type AuditEventType =
   | "booking_cancelled"
   | "caregiver_matched"
   | "permissions_updated"
-  | "preferences_updated"
   | "crisis_detected"
   | "session_created"
   | "safety_violation"

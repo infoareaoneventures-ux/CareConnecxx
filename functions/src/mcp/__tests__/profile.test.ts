@@ -264,28 +264,6 @@ describe("profile tools", () => {
     });
   });
 
-  describe("update_communication_preferences", () => {
-    it("requires userId", async () => {
-      const r = await handleToolCall("update_communication_preferences", { newsletter: true }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("requires at least one preference field", async () => {
-      const r = await handleToolCall("update_communication_preferences", { userId: "u1" }) as any;
-      expect(r._toolError).toBe(true);
-    });
-
-    it("coerces values to boolean", async () => {
-      const r = await handleToolCall("update_communication_preferences", {
-        userId: "u1", newsletter: 1, privacyShowBookings: 0,
-      }) as any;
-      expect(r.success).toBe(true);
-      const set = hoisted.sets.find(s => s.path === "users/u1");
-      expect(set?.data.newsletter).toBe(true);
-      expect(set?.data.privacyShowBookings).toBe(false);
-    });
-  });
-
   describe("request_email_change", () => {
     it("requires userId and newEmail", async () => {
       expect(((await handleToolCall("request_email_change", { userId: "u1" })) as any)._toolError).toBe(true);

@@ -18,7 +18,7 @@ const PLANS = [
   },
 ];
 
-const RENEWAL_TERMS = `Monthly, Quarterly, and Annual Memberships continue and automatically renew for the same membership period (e.g., monthly, quarterly, or annually) until you cancel. Unless you cancel before your Membership renews, you will be charged the then-current Membership rate (which is subject to change) for your plan. You may cancel anytime via your Account Settings, and your cancellation will be effective at the end of your current Membership term. Memberships are non-refundable.`;
+const RENEWAL_TERMS = `Your Monthly Membership continues and automatically renews each month until you cancel. Unless you cancel before it renews, you will be charged the then-current monthly Membership rate (which is subject to change). You may cancel anytime from your Membership page, and your cancellation takes effect at the end of your current month. Memberships are non-refundable.`;
 
 interface Props {
   onClose: () => void;

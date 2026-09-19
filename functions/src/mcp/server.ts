@@ -261,6 +261,14 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_account_settings",
+    description:
+      "The website's Account Settings page as data, row by row: profile photo, name + joined date, membership plan, identity check, recovery email, mobile phone, location, " +
+      "blocked users, and delete account — each with the tool that is that row's Edit (actions[]). Use before answering anything about the family's own account details " +
+      "or before changing one, and quote only what it returns.",
+    input_schema: { type: "object", properties: { userId: { type: "string", description: "The family's user ID (auto-injected)" } }, required: ["userId"] },
+  },
+  {
     name: "get_membership_page",
     description:
       `The website's Membership page exactly: the plan card (Standard Plan, ${clientMonthlyDisplay()}), status, next billing date — or the end date once ` +
@@ -2232,21 +2240,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "update_communication_preferences",
-    description: "Toggle the family's communication preferences. Confirm each change with them first.",
-    input_schema: {
-      type: "object",
-      properties: {
-        userId:               { type: "string", description: "The user's ID" },
-        newsletter:           { type: "boolean", description: "Receive the Evia newsletter" },
-        newMatchAlerts:       { type: "boolean", description: "Notify when new caregiver matches are found" },
-        reviewNotifications:  { type: "boolean", description: "Notify when caregivers receive reviews" },
-        privacyShowBookings:  { type: "boolean", description: "Show the family's booking calendar to caregivers" },
-      },
-      required: ["userId"],
-    },
-  },
-  {
     name: "request_email_change",
     description: "Request a change of the family's email address. Sends a verification link to the new email; does NOT change the auth email until verified. Tell the family they'll need to click the link from the new inbox.",
     input_schema: {
@@ -2676,6 +2669,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_membership_page",
   "contact_support",
   "get_notifications",
+  "get_account_settings",
   "update_caregiver_profile",
   "pause_account",
   "reactivate_account",
@@ -3697,6 +3691,17 @@ async function executeToolCall(
         const nfPage = await readNotificationsPage(nfUid, "client", { show: typeof input.show === "number" ? input.show : 5 });
         logAudit({ eventType: "health_data_accessed", userId: nfUid, data: { source: "mcp:get_notifications", total: nfPage.total, unread: nfPage.unreadCount } }).catch(() => {});
         return { success: true, results: nfPage, instruction: "This is the bell exactly as the site shows it. Answer from items; when you mention one, name the page it opens (page.label). Never invent a notification." };
+      }
+
+      case "get_account_settings": {
+        // Account Settings as data (agents/accountSettingsPage.ts): Auth user +
+        // users doc + the Membership page's record, the page's own fallbacks.
+        if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
+        logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_account_settings" } }).catch(() => {});
+        const { readAccountSettingsPage } = await import("../agents/accountSettingsPage");
+        const acct = await readAccountSettingsPage(String(input.userId));
+        if (!acct) return toolError("NOT_FOUND", "Account not found");
+        return { success: true, results: acct, instruction: "This is the Account Settings page as the family sees it. Answer from these rows; to change one, use the tool named in actions[] for that row and nothing else. Never quote a value that is not here." };
       }
 
       case "get_membership_page": {
@@ -5152,7 +5157,8 @@ async function executeToolCall(
       }
       if (requestPhoneChange === true) {
         const d = caregiverSnap.data() ?? {};
-        const email = (d.email as string | undefined)?.trim();
+        const authEmail = await (async () => { try { return (await admin.auth().getUser(caregiverId as string))?.email?.trim(); } catch { return undefined; } })();
+        const email = (d.email as string | undefined)?.trim() || authEmail;
         if (!email) {
           return {
             success: false,
@@ -7849,7 +7855,8 @@ async function executeToolCall(
         const snap = await db.collection("users").doc(userId as string).get();
         if (!snap.exists) return toolError("NOT_FOUND", "Account not found");
         const d = snap.data() ?? {};
-        const email = (d.email as string | undefined)?.trim();
+        const authEmail = await (async () => { try { return (await admin.auth().getUser(userId as string))?.email?.trim(); } catch { return undefined; } })();
+        const email = (d.email as string | undefined)?.trim() || authEmail;
         if (!email) {
           return {
             success: false,
@@ -7961,23 +7968,6 @@ async function executeToolCall(
       }
       logAudit({ eventType: "profile_updated", userId: userId as string, data: { source: "mcp:delete_account" } }).catch(() => {});
       return { success: true, deleted: true };
-    }
-
-    // ── update_communication_preferences ────────────────────────────────────
-    if (name === "update_communication_preferences") {
-      const { userId, newsletter, newMatchAlerts, reviewNotifications, privacyShowBookings } = input as Record<string, unknown>;
-      if (!userId) return toolError("INVALID_INPUT", "userId is required");
-      const patch: Record<string, unknown> = { updatedAt: nowIso };
-      if (newsletter           != null) patch.newsletter           = !!newsletter;
-      if (newMatchAlerts       != null) patch.newMatchAlerts       = !!newMatchAlerts;
-      if (reviewNotifications  != null) patch.reviewNotifications  = !!reviewNotifications;
-      if (privacyShowBookings  != null) patch.privacyShowBookings  = !!privacyShowBookings;
-      if (Object.keys(patch).length === 1) {
-        return toolError("INVALID_INPUT", "No preference fields provided");
-      }
-      await db.collection("users").doc(userId as string).set(patch, { merge: true });
-      logAudit({ eventType: "preferences_updated", userId: userId as string, data: { source: "mcp:update_communication_preferences", fields: Object.keys(patch).filter(k => k !== "updatedAt") } }).catch(() => {});
-      return { success: true, updated: Object.keys(patch).filter(k => k !== "updatedAt") };
     }
 
     // ── request_email_change ────────────────────────────────────────────────

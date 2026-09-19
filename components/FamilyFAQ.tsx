@@ -10,9 +10,16 @@ interface FamilyFAQProps {
    onNavigate: (view: ViewType) => void;
 }
 
+// Search matches a question or a plain-text answer (case-insensitive). The box used to be read-only ("just for visual UI") — live-caught 2026-09-19.
+const faqMatches = (f: { q: string; a: string | React.ReactNode }, q: string) => {
+   const needle = q.trim().toLowerCase();
+   return f.q.toLowerCase().includes(needle) || (typeof f.a === 'string' && f.a.toLowerCase().includes(needle));
+};
+
 export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
    const [activeCategory, setActiveCategory] = useState<string>('getting-started');
    const [openFaq, setOpenFaq] = useState<string | null>(null);
+   const [query, setQuery] = useState('');
 
    const toggleFaq = (id: string) => {
       setOpenFaq(openFaq === id ? null : id);
@@ -41,7 +48,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'gs-3',
             q: 'Can I manage care for a family member living in another state?',
-            a: 'Yes. Evia is designed for remote family management. Our platform includes a Family Command Center (the Care Journal) where caregivers can log daily activities, meals, and medication adherence in real-time, allowing you to monitor care from anywhere.'
+            a: 'Yes, as long as the person receiving care is in Santa Clara County, where Evia currently operates — you can be anywhere. Evia texts you as each visit happens: when the caregiver starts, each task they check off, their notes, and a recap when they finish. Your Past Bookings page keeps the full record.'
          },
          {
             id: 'gs-4',
@@ -178,8 +185,9 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
                      <input
                         type="text"
                         placeholder="Search for articles (e.g. background checks, payments)..."
+                        value={query}
+                        onChange={e => { setQuery(e.target.value); setOpenFaq(null); }}
                         className="block w-full pl-12 pr-4 py-4 rounded-full text-ink-900 bg-white border hairline shadow-sm focus:ring-2 focus:ring-ink-400/30 text-lg transition-all"
-                        readOnly // It's just for visual UI right now
                      />
                   </div>
                </div>
@@ -224,12 +232,15 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
                   <div className="lg:w-2/3">
                      <div className="mb-8 pb-4 border-b hairline">
                         <h2 className="text-3xl font-display font-semibold text-ink-900 tracking-[-0.02em]">
-                           {categories.find(c => c.id === activeCategory)?.title}
+                           {query.trim() ? `Results for "${query.trim()}"` : categories.find(c => c.id === activeCategory)?.title}
                         </h2>
                      </div>
 
+                     {query.trim() && Object.values(faqs).flat().filter(f => faqMatches(f, query)).length === 0 && (
+                        <p className="text-ink-600">No articles match that. Try another word, or text Evia your question.</p>
+                     )}
                      <div className="space-y-4">
-                        {faqs[activeCategory]?.map((faq) => {
+                        {(query.trim() ? Object.values(faqs).flat().filter(f => faqMatches(f, query)) : (faqs[activeCategory] ?? [])).map((faq) => {
                            const isOpen = openFaq === faq.id;
                            return (
                               <div key={faq.id} className="bg-white rounded-xl shadow-sm border hairline overflow-hidden transition-all duration-200">
@@ -262,7 +273,7 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
             <section className="py-20 bg-paper-100 border-t hairline">
                <div className="max-w-3xl mx-auto px-4 text-center">
                   <h2 className="text-3xl font-display font-semibold text-ink-900 tracking-[-0.02em] mb-6">Still have questions?</h2>
-                  <p className="text-lg text-ink-600 mb-8">Our award-winning member services team is available 7 days a week to help.</p>
+                  <p className="text-lg text-ink-600 mb-8">Text Evia any time, day or night, or message our team from your account.</p>
                   <div className="flex flex-col sm:flex-row justify-center gap-4">
                      <Button size="lg" onClick={() => onNavigate('client-signup')}>
                         Sign up free

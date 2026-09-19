@@ -2232,12 +2232,26 @@ async function handleClientConfirmIntake(phone: string, chatId: string, text: st
 
 async function createClientIdentitySession(phone: string): Promise<string> {
   const caraPhone = encodeURIComponent(process.env.LINQ_PHONE_NUMBER ?? "");
+  // 2026-09-19 (Account Settings parity): a signed-in family asking Evia for the
+  // identity check used to get a session keyed by phone only, so the webhook
+  // never wrote users.identityCheckStatus — the site's "Identity check" row and
+  // the client gate stayed unverified forever. Now the session also carries
+  // firebaseUID (what the site's callable sets) and the same "processing" write.
+  const sessSnap = await db.collection("agent_sessions").doc(phone).get().catch(() => null);
+  const uid = (sessSnap?.data()?.userId as string | undefined) || undefined;
   const session = await getStripe().identity.verificationSessions.create({
     type: "document",
-    metadata: { phone },
+    metadata: { phone, ...(uid ? { firebaseUID: uid } : {}) },
     return_url: `${APP_URL}/client/identity-callback?source=cara&caraPhone=${caraPhone}`,
   });
   await db.collection("agent_sessions").doc(phone).update({ identitySessionId: session.id });
+  if (uid) {
+    await db.collection("users").doc(uid).set({
+      identityCheckStatus: "processing",
+      stripeIdentityVerificationId: session.id,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch((err) => console.warn("identity processing write failed (non-fatal)", err instanceof Error ? err.message : err));
+  }
   // Branded wrapper: the texted link unfurls as an Evia card (/verify/{id} →
   // v1-linkRedirect) instead of raw verify.stripe.com. Fail-open to the raw URL.
   return createBrandedLink("verify", session.url!, phone);

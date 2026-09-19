@@ -82,7 +82,6 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   message_received:           { included: false },
   session_created:            { included: false },
   permissions_updated:        { included: false },
-  preferences_updated:        { included: false },
   profile_updated:            { included: false },
   senior_profile_updated:     { included: false },
   billing_portal_opened:      { included: false },

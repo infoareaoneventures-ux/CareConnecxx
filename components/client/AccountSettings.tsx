@@ -161,6 +161,10 @@ export const AccountSettings: React.FC = () => {
 
         // Phone saved by signup
         if (d.phone) setPersonalInfo(prev => ({ ...prev, phone: d.phone }));
+        // Recovery email: phone-OTP accounts have no Auth email — the address lives on
+        // the users doc (that is where a confirmed email change is written). Without
+        // this the row said "Not set" and the phone edit was blocked (live-caught 2026-09-19).
+        if (d.email) setPersonalInfo(prev => ({ ...prev, email: prev.email || d.email }));
         { const savedPhoto = [d.photoURL, d.photo, d.profilePhoto].find(isPhotoUrl); if (savedPhoto) setPhotoURL(savedPhoto); }
 
         // Address — prefer flat fields saved by signup, fall back to old careLocation object
@@ -406,7 +410,7 @@ export const AccountSettings: React.FC = () => {
                     <button
                       onClick={async () => {
                         try {
-                          const returnUrl = `${window.location.origin}/client/settings`;
+                          const returnUrl = `${window.location.origin}/client/account`;
                           await startIdentityVerification(returnUrl);
                         } catch (err: any) {
                           addToast(err?.message || 'Could not start identity verification', 'error');

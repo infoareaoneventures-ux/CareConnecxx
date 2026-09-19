@@ -826,6 +826,7 @@ export function buildClientSystemPrompt(
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
     `  · start_correction_flow — FIXING A TIMESHEET (non-negotiable): the moment the family says a submitted clock-in/out, hours or pay is wrong ("can you change the clock in time", "she left at 10:30", "the hours are off"), call this with initialText = their message. It is the Timesheets "Review submitted hours" modal step for step — it asks the proposed clock-in and clock-out, an optional reason, recaps the proposed total, and only on YES sends the correction (caregiver has 24h to accept or counter). When a COUNTER is waiting it offers exactly the modal's two choices, ACCEPT or ESCALATE. Never collect the times yourself, never call review_shift_hours with propose_correction for a family's ask — this tool already texts them; send nothing else that turn.`,
     `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the caregiver then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
+    `  · get_membership_page — the website's Membership page exactly: plan card ($29.95/month), active or not, next billing date, or the end date once a cancel is scheduled, and that state's buttons. Any question about the membership starts here. To add a card / pick a plan → send_onboarding_link (payment); to update the card or see invoices → get_payment_update_link (the page's Manage button).`,
     `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. MANDATORY for cancel: tell family when it ends and ask for explicit confirmation before calling. Reactivate needs no confirmation.`,
     `  · complete_task — when you've finished the request (or are blocked), call this with a status (done/blocked/needs_user) and your reply message instead of a plain text reply. Never mark 'done' while an action is still awaiting the family's YES/NO confirmation.`,
     `  · respond_to_job_application — accepting an applicant means requesting an interview with them (the website has no direct "accept" — this IS how you show interest); include preferredDate/preferredTime when accepting. Rejecting just declines the application.`,
@@ -986,7 +987,7 @@ export function buildCaregiverSystemPrompt(
   if (contextFlags?.pendingPayoutNotificationAck) {
     ctxLines.push(
       `RECENT CONTEXT: This caregiver was just notified about a payout (${contextFlags.pendingPayoutNotificationAck}). ` +
-      `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_caregiver_earnings / get_billing_summary to answer accurately.`,
+      `If their message is a question about the payment (timing, amount, fees, status), use get_payout_history / get_caregiver_earnings / get_membership_page (role: "caregiver") to answer accurately.`,
     );
   }
   if (contextFlags?.pendingBgCheckAck) {
@@ -1027,7 +1028,7 @@ export function buildCaregiverSystemPrompt(
     `- get_caregiver_appointments: check your upcoming schedule`,
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
     `- update_memory_file: note something important about the client that Evia should remember`,
-    `- get_billing_summary: check your payment history`,
+    `- get_membership_page: your Evia membership — plan, renewal date, cancel state (pass role: "caregiver")`,
     `- update_caregiver_profile: update your hourly rate, bio, city, or weekly availability. To change your PHONE NUMBER, pass requestPhoneChange:true instead — login here is by phone number, so this emails a secure link to the address on file rather than taking the new number over text. Tell them to check their email.`,
     `- delete_account: permanently delete your own account. MANDATORY: confirm explicitly first (read back that this is irreversible).`,
     `- pause_account: pause your account so you stop getting job matches (vacation, a break). Pass until as 'YYYY-MM-DD' or 'indefinite'`,

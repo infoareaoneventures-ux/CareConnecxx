@@ -69,6 +69,11 @@ interface ShiftHoursRow {
   counterStartTime?: string;
   counterEndTime?: string;
   counterTotalHours?: number;
+  counterGrossPay?: number;
+  proposedStartTime?: string;
+  proposedEndTime?: string;
+  proposedTotalHours?: number;
+  proposedGrossPay?: number;
   counterNote?: string;
   correctionHistory?: CorrectionHistoryEntry[];
   lineItems?: LineItem[];
@@ -281,6 +286,24 @@ const ShiftRow: React.FC<{
   const hasExtras = row.lineItems && row.lineItems.length > 0;
   // Use stored grossPay (includes line items) when available
   const totalPay  = row.grossPay ?? basePay;
+  // While a correction is pending (Correction Sent), the only live figures are
+  // the proposed ones — that is what the caregiver is deciding on and what will
+  // most likely be charged — so the row shows them, marked, with the submitted
+  // figures beneath the status. Resolved rows show the final figures as before.
+  // Same for a caregiver COUNTER (Counter Received): the counter's figures are
+  // what the family is deciding on.
+  const proposalPending = row.status === 'correction_proposed' && !!row.proposedStartTime && !!row.proposedEndTime;
+  const counterPending  = row.status === 'caregiver_counter_proposed' && !!row.counterStartTime && !!row.counterEndTime;
+  const livePending = proposalPending || counterPending;
+  const liveLabel = proposalPending ? 'Proposed' : 'Counter';
+  const shownStart = proposalPending ? row.proposedStartTime! : counterPending ? row.counterStartTime! : startTs;
+  const shownEnd   = proposalPending ? row.proposedEndTime!   : counterPending ? row.counterEndTime!   : endTs;
+  const shownHours = livePending
+    ? (new Date(shownEnd).getTime() - new Date(shownStart).getTime()) / 3_600_000
+    : dispHours;
+  const shownPay   = proposalPending ? (row.proposedGrossPay ?? Math.round(shownHours * row.payRate * 100) / 100)
+    : counterPending ? (row.counterGrossPay ?? Math.round(shownHours * row.payRate * 100) / 100)
+    : totalPay;
   const isPending = row.status === 'pending_client_review' || row.status === 'caregiver_counter_proposed';
   // Show "Corrected" whenever the correction flow was triggered (client proposed, caregiver countered, or admin resolved)
   const isCorrected = ['caregiver', 'admin', 'system_auto_accept'].includes(row.resolvedBy ?? '')
@@ -304,13 +327,13 @@ const ShiftRow: React.FC<{
       >
         <div className="shrink-0 w-[58px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-primary-600 mt-0.5">{new Date(row.submittedStartTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p></div>
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">In</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(startTs)}</p></div>
+        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{livePending ? `${liveLabel} in` : 'In'}</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(shownStart)}</p></div>
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Out</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(endTs)}</p></div>
+        <div className="shrink-0 w-[88px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{livePending ? `${liveLabel} out` : 'Out'}</p><p className="text-sm text-slate-700 mt-0.5">{fmtTime(shownEnd)}</p></div>
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <div className="shrink-0 w-[62px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duration</p><p className="text-sm text-slate-700 mt-0.5">{dispHours > 0 ? fmtDuration(dispHours) : '—'}</p></div>
+        <div className="shrink-0 w-[62px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duration</p><p className="text-sm text-slate-700 mt-0.5">{shownHours > 0 ? fmtDuration(shownHours) : '—'}</p></div>
         <div className="w-px h-8 bg-slate-100 shrink-0" />
-        <div className="shrink-0 w-[60px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pay</p><p className="text-sm font-bold text-slate-900 mt-0.5">${totalPay.toFixed(2)}</p></div>
+        <div className="shrink-0 w-[60px]"><p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{livePending ? liveLabel : 'Pay'}</p><p className="text-sm font-bold text-slate-900 mt-0.5">${shownPay.toFixed(2)}</p></div>
         <div className="w-px h-8 bg-slate-100 shrink-0" />
         <div className="shrink-0 w-[46px]">
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Method</p>
@@ -321,6 +344,12 @@ const ShiftRow: React.FC<{
         </div>
         <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
           <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
+          {livePending && (
+            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+              Submitted {fmtTime(startTs)}–{fmtTime(endTs)} · ${totalPay.toFixed(2)}
+              {counterPending && row.proposedStartTime && row.proposedEndTime && <> · You proposed {fmtTime(row.proposedStartTime)}–{fmtTime(row.proposedEndTime)}</>}
+            </span>
+          )}
           {(isCorrected || row.loggedManually) && (
             <div className="flex items-center gap-1 flex-wrap justify-end">
               {isCorrected && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-teal-50 text-teal-700 border-teal-200">Corrected</span>}
@@ -769,7 +798,7 @@ export const Payments: React.FC = () => {
             {/* Status filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {([
-                { id: 'needs-review', label: 'Needs Review', count: rows.filter(r => NEEDS_REVIEW_STATUSES.includes(r.status)).length },
+                { id: 'needs-review', label: 'Needs Review', count: pendingCount },
                 { id: 'history',      label: 'History',      count: historyRows.length },
               ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
                 <button

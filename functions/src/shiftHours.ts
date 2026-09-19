@@ -8,6 +8,7 @@ import { timesheetAutoApprovalEnabled } from './config/featureFlags';
 import { createValidatedShiftHours, createValidatedShiftHoursFromShift, ValidatedShiftHoursError } from './billing/createValidatedShiftHours';
 import { claimShiftPaymentOperation, shiftPaymentOperationKey, updateShiftPaymentOperation } from './billing/paymentOperation';
 import { resolveShiftBillableAmount, sanitizeShiftLineItems, ShiftLineItem } from './billing/shiftBillingAmounts';
+import { formatClockTime } from './utils/scheduledTime';
 import { resetShiftPaymentForRetry } from './billing/shiftPaymentRetry';
 import { fmtHours, resolveBillableOrHttpsError, pushNotification, notifyAdmins, reviewShiftHoursAs } from './billing/reviewShiftHours';
 // One review path for the website's callable and Evia's review_shift_hours tool (2026-09-17).
@@ -269,6 +270,11 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
       `${shift.caregiverName} accepted your proposed ${finalAmount.totalHours}h.`,
       { appointmentId }
     );
+    // The family was promised a text as soon as the caregiver answers — a counter
+    // and the 24h auto-accept already text them; an accept only left an in-app
+    // notification (live-caught 2026-09-18). Same information as the card.
+    await textClient(shift.clientId,
+      `${shift.caregiverName ?? 'Your caregiver'} accepted your correction: ${formatClockTime(Date.parse(shift.proposedStartTime))}–${formatClockTime(Date.parse(shift.proposedEndTime))} (${fmtHours(finalAmount.totalHours)}). $${finalAmount.grossPay.toFixed(2)} is final and goes on your card on file.`);
     return { success: true };
   }
 

@@ -49,7 +49,8 @@ issueEscalator (reply half)|caregiverReferral (reply half)`.
 | `scheduled/wowMomentsJob.ts` | daily warmth sends | **gated (engineGate.ts)** |
 | `scheduled/morningBriefing.ts` | briefing sends | **gated (engineGate.ts)** |
 | `scheduled/familySilenceCheckin.ts` | re-engagement | **gated (engineGate.ts)** |
-| `scheduled/familySatisfactionCheckin.ts` | satisfaction ask | **gated (engineGate.ts)** |
+| ~~`scheduled/familySatisfactionCheckin.ts`~~ | satisfaction ask | **removed 2026-09-18** — Evia-only question that treated the next reply as its answer; no site equivalent |
+| ~~`scheduled/nextDayFamilyFeedback.ts`~~ | next-day "how did the visit go?" | **removed 2026-09-18** — same reason; the inbound intercept and `feedbackExpiry` went with it |
 | `scheduled/wellbeingCheckin.ts` | wellbeing ask | **gated (engineGate.ts)** |
 | `scheduled/staleSessionNudge.ts` | stale-session nudge | **gated (engineGate.ts)** |
 | `scheduled/staleApplicantNudge.ts` | family nudge on applicants | **gated (engineGate.ts)** |

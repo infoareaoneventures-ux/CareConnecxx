@@ -31,8 +31,7 @@ export interface ProactiveTrigger {
   phone:             string;
   type:              "appointment_reminder" | "weekly_checkin" | "medication_reminder" | "custom"
                    | "qa_retry" | "caregiver_checkin" | "caregiver_checkin_escalation"
-                   | "issue_escalation" | "issue_escalation_final" | "issue_followup"
-                   | "post_visit_feedback";
+                   | "issue_escalation" | "issue_escalation_final" | "issue_followup";
   scheduledAt:       string;   // ISO
   message:           string;
   firedAt?:          string | null;
@@ -206,7 +205,6 @@ export async function shouldFireTrigger(
 const REPLY_EXEMPT_TYPES = new Set([
   "appointment_reminder",
   "medication_reminder",
-  "post_visit_feedback",
 ]);
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
   "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
@@ -506,6 +504,9 @@ export const runTriggerEngine = functions.pubsub
       const claimed = await claimProactiveTrigger(db, doc.ref, now);
       if (!claimed) continue;
 
+      // null = this branch does its own delivery (escalations, retries); a boolean
+      // is the send layer's verdict for a plain text.
+      let delivered: boolean | null = null;
       try {
         if (trigger.message.startsWith("health_escalation:")) {
           const [, seniorId, alertDocId] = trigger.message.split(":");
@@ -583,21 +584,33 @@ export const runTriggerEngine = functions.pubsub
           const memCtx = await getMemoryContext(trigger.userId).catch(() => "");
           const content = await generateTriggerMessage(trigger, memCtx);
 
-          await sendViaInteractionAgent(trigger.phone, {
+          delivered = await sendViaInteractionAgent(trigger.phone, {
             content,
             urgency:     isHealthTrigger ? "immediate" : "standard",
             sourceAgent: "trigger_engine",
             canDrop:     !isHealthTrigger,
           });
         } else {
-          await sendViaInteractionAgent(trigger.phone, {
+          delivered = await sendViaInteractionAgent(trigger.phone, {
             content:     trigger.message,
             urgency:     isHealthTrigger ? "immediate" : "standard",
             sourceAgent: "trigger_engine",
             canDrop:     !isHealthTrigger,
           });
         }
-        await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString());
+        if (delivered === false) {
+          // The send layer dropped it (quiet hours / DND / daily cap / wait-tool).
+          // Record that truthfully — 2026-09-18 (live-caught): a dropped text was
+          // stamped "delivered", so downstream code believed the family had been
+          // asked something they never saw.
+          await doc.ref.update({
+            deliveryState: "suppressed",
+            deliveryCompletedAt: new Date().toISOString(),
+            suppressionReason: "send_layer_dropped",
+          });
+        } else {
+          await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString());
+        }
       } catch (err) {
         console.error("triggerEngine: failed to send for", doc.id, err);
         await settleProactiveTriggerDelivery(doc.ref, new Date().toISOString(), err).catch((settleError) => {

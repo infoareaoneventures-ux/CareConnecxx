@@ -483,10 +483,11 @@ describe("MCP tool smoke coverage", () => {
   });
 
   // ── Subscription / billing ───────────────────────────────────────────────
-  it("get_billing_summary happy path", async () => {
+  it("get_membership_page happy path (no record → Select a plan)", async () => {
     hoisted.collState.set(`customers/u1/subscriptions`, []);
-    const r = await handleToolCall("get_billing_summary", { userId: "u1" }) as any;
+    const r = await handleToolCall("get_membership_page", { userId: "u1" }) as any;
     expect(r.success).toBe(true);
+    expect(r.actions).toEqual(["select_plan"]);
   });
 
   it("get_pending_timesheets history tab happy path (the page's History pill)", async () => {

@@ -245,6 +245,23 @@ export function buildCounterText(r: CorrectionRow): string {
 
 // ── Times: the family's words → an ISO instant on the visit's date ───────────
 
+// The model is asked for 24-hour HH:MM anchored on the submitted time, but a
+// bare "10:05" for a 10:03 PM visit still came back as 10:05 (live, 2026-09-18:
+// the correction was stored as 10:05 AM). So the 12-hour ambiguity is settled
+// here, deterministically: of the two readings (h and h+12) take the one
+// nearest the submitted time. Pure arithmetic — no intent parsing.
+export function hhmmToIsoNearAnchor(hh: number, mm: number, anchorIso: string): string | null {
+  if (!(hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59)) return null;
+  const anchorMs = Date.parse(anchorIso);
+  if (!Number.isFinite(anchorMs)) return null;
+  const dateStr = businessTodayStr(DEFAULT_TZ, new Date(anchorMs));
+  const candidates = [hh, (hh + 12) % 24]
+    .map((h) => parseScheduledTimeMs(`${dateStr}T${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`, DEFAULT_TZ))
+    .filter((ms) => Number.isFinite(ms))
+    .sort((a, b) => Math.abs(a - anchorMs) - Math.abs(b - anchorMs));
+  return candidates.length ? new Date(candidates[0]).toISOString() : null;
+}
+
 // "10:05", "10:05 pm", "five past ten" → HH:MM (24h) anchored on the submitted
 // time so a bare "10:05" for a 10:03 PM visit means 22:05, not 10:05 AM.
 async function parseClockTime(text: string, anchorIso: string, which: "clock-in" | "clock-out"): Promise<{ kind: "time"; iso: string } | { kind: "keep" } | { kind: "none" }> {
@@ -261,12 +278,8 @@ async function parseClockTime(text: string, anchorIso: string, which: "clock-in"
   if (parsed?.keep === true) return { kind: "keep" };
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(parsed?.time ?? ""));
   if (!m) return { kind: "none" };
-  const hh = Number(m[1]); const mm = Number(m[2]);
-  if (hh > 23 || mm > 59) return { kind: "none" };
-  const dateStr = businessTodayStr(DEFAULT_TZ, new Date(anchorMs));
-  const ms = parseScheduledTimeMs(`${dateStr}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`, DEFAULT_TZ);
-  if (!Number.isFinite(ms)) return { kind: "none" };
-  return { kind: "time", iso: new Date(ms).toISOString() };
+  const iso = hhmmToIsoNearAnchor(Number(m[1]), Number(m[2]), anchorIso);
+  return iso ? { kind: "time", iso } : { kind: "none" };
 }
 
 // ── Entry ────────────────────────────────────────────────────────────────────
@@ -319,9 +332,7 @@ async function selectRow(phone: string, chatId: string, r: CorrectionRow, initia
     const toIso = (hhmm: unknown, anchor: string) => {
       const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? ""));
       if (!m) return undefined;
-      const dateStr = businessTodayStr(DEFAULT_TZ, new Date(Date.parse(anchor)));
-      const ms = parseScheduledTimeMs(`${dateStr}T${m[1].padStart(2, "0")}:${m[2]}:00`, DEFAULT_TZ);
-      return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+      return hhmmToIsoNearAnchor(Number(m[1]), Number(m[2]), anchor) ?? undefined;
     };
     const start = toIso(parsed?.start, r.clockIn);
     const end = toIso(parsed?.end, r.clockOut);

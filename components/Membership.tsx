@@ -23,11 +23,12 @@ const PLAN_FEATURES: PlanFeature[] = [
   { text: 'Unlimited caregiver messaging', included: true },
   { text: 'AI-powered caregiver matching', included: true },
   { text: 'Schedule coordination tools', included: true },
-  { text: 'GPS shift verification', included: true },
   { text: 'Background-checked caregivers', included: true },
-  { text: 'Interview scheduling & feedback', included: true },
-  { text: '24/7 emergency support', included: true },
-  { text: 'Cancel anytime', included: true },
+  { text: 'Interview scheduling', included: true },
+  // 2026-09-18: 'GPS shift verification' removed until shift location capture ships;
+  // 'emergency support' reworded to what exists (Evia by text around the clock,
+  // urgent issues flagged to the team) — no one is on call.
+  { text: 'Evia available by text 24/7, urgent issues flagged to our team', included: true },
 ];
 
 export default function Membership() {
@@ -290,12 +291,9 @@ export default function Membership() {
                 </button>
               ) : !isCanceled ? (
                 <div className="space-y-3">
-                  <button
-                    onClick={() => setShowPlanModal(true)}
-                    className="w-full py-4 bg-primary-600 text-white rounded-xl font-bold text-lg hover:bg-primary-700 transition-colors"
-                  >
-                    Change plan
-                  </button>
+                  {/* "Change plan" hidden 2026-09-18: PlanSelectModal has exactly one
+                      client plan, so the button opened a modal showing the plan the
+                      family is already on. Restore when a second plan exists. */}
                   <button
                     onClick={() => setShowCancelConfirm(true)}
                     className="w-full py-4 border-2 border-slate-200 text-slate-600 rounded-xl font-bold text-lg hover:bg-slate-50 transition-colors"

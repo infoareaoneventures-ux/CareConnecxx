@@ -129,19 +129,5 @@ describe("retry_shift_payment tool", () => {
   });
 });
 
-describe("get_billing_summary tool (canonical field split, R7)", () => {
-  beforeEach(() => hoisted.reset());
-
-  it("queries invoices by clientId and payments by userId", async () => {
-    const r = await handleToolCall("get_billing_summary", { userId: CLIENT }) as any;
-    expect(r.success).toBe(true);
-    const invoiceWhere = hoisted.wheres.find(w => w.path === "invoices");
-    const paymentWhere = hoisted.wheres.find(w => w.path === "payments");
-    // Invoices are keyed by clientId (= the client uid) per invoicing.ts.
-    expect(invoiceWhere).toMatchObject({ field: "clientId", op: "==", value: CLIENT });
-    // Payments keep userId, matching the Stripe writer.
-    expect(paymentWhere).toMatchObject({ field: "userId", op: "==", value: CLIENT });
-    // The old bug: invoices filtered by userId. Guard against regression.
-    expect(hoisted.wheres.some(w => w.path === "invoices" && w.field === "userId")).toBe(false);
-  });
-});
+// (get_billing_summary was replaced by get_membership_page on 2026-09-18 — the
+// Membership page never showed invoices/payments; see agents/__tests__/membershipPage.test.ts.)

@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { claimWebhookEvent, settleWebhookEvent, STRIPE_EVENTS_COLLECTION } from './utils/webhookLedger';
 import { fetchWithTimeout } from './utils/httpTimeout';
 import { appLink } from './config/appUrl';
+import { businessTodayStr, DEFAULT_TZ, formatDateWithWeekday } from './utils/scheduledTime';
 import { assertMvrPaymentConfig, assertMvrCheckConfig } from './mvrConfig';
 import { writeCaregiverBackgroundPII } from './caregiverPrivate';
 
@@ -689,6 +690,23 @@ async function resolveSubscriptionUserId(subscription: Stripe.Subscription): Pro
  * webapp (CaregiverProgressCard, useCaregiverGate) reads membershipStatus /
  * membershipPaid from the CAREGIVERS doc, not users. No-op for clients.
  */
+// Text a FAMILY member about their membership (2026-09-18, Membership page
+// parity): the page shows cancel-scheduled / reactivated / renewed states the
+// family was never told about by text — only payment failure and full
+// cancellation were. Same session lookup as the dunning path; never dropped.
+async function textMember(userId: string, content: string): Promise<void> {
+  try {
+    const sessionSnap = await admin.firestore().collection("agent_sessions")
+      .where("userId", "==", userId).where("optedOut", "==", false).limit(1).get();
+    if (sessionSnap.empty) return;
+    const { sendViaInteractionAgent } = await import("./agents/caraAgent");
+    await sendViaInteractionAgent(sessionSnap.docs[0].id, { content, urgency: "standard", sourceAgent: "membership", canDrop: false });
+  } catch (err) {
+    console.error(`textMember failed for ${userId}:`, err);
+  }
+}
+const membershipDay = (unixSeconds: number) => formatDateWithWeekday(businessTodayStr(DEFAULT_TZ, new Date(unixSeconds * 1000)));
+
 async function mirrorMembershipToCaregiverDoc(userId: string, membershipStatus: string): Promise<boolean> {
   try {
     const ref = admin.firestore().collection('caregivers').doc(userId);
@@ -735,7 +753,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     membershipStatus: 'active',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
-  await mirrorMembershipToCaregiverDoc(userId, 'active');
+  const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'active');
 
   // Notify caregiver of successful payment
   const amountPaid = (invoice.amount_paid / 100).toFixed(2);
@@ -750,6 +768,13 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     isRead: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // The family's monthly renewal — the in-app notice above was the only word of
+  // it (2026-09-18). First payments are already texted by the signup flow.
+  if (!isCaregiverMember && isRenewal) {
+    await textMember(userId,
+      `Your Evia membership renewed — $${amountPaid} was charged to your card on file. Next billing date: ${membershipDay(invoice.period_end)}.`);
+  }
 
   // Only re-initiate Checkr on annual renewal, not on first subscription payment
   if (invoice.billing_reason !== 'subscription_cycle') {
@@ -1058,11 +1083,11 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   // Update subscription in Firestore. set/merge — SMS-created subscriptions
   // have no customers/{uid}/subscriptions doc (that's written by the web
   // flow's created-handler), and update() on a missing doc throws.
-  await admin.firestore()
-    .collection('customers')
-    .doc(userId)
-    .collection('subscriptions')
-    .doc(subscription.id)
+  const subRef = admin.firestore().collection('customers').doc(userId).collection('subscriptions').doc(subscription.id);
+  const prevSnap = await subRef.get().catch(() => null);
+  const prevCancelScheduled = prevSnap?.data()?.cancel_at_period_end === true;
+  const hadRecord = !!prevSnap?.exists;
+  await subRef
     .set({
       status: subscription.status,
       current_period_start: new Date(subscription.current_period_start * 1000),
@@ -1079,7 +1104,23 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     subscriptionActive: subscription.status === 'active' || subscription.status === 'trialing',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
-  await mirrorMembershipToCaregiverDoc(userId, subscription.status);
+  const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, subscription.status);
+
+  // The Membership page's two transitions the family could only see by opening
+  // the site: cancel scheduled ("Your membership ends on …" + Reactivate) and
+  // reactivated ("Next billing date: …"). Fires for the site's buttons, Evia's
+  // set_subscription_status AND the Stripe portal alike — the webhook is where
+  // every channel meets. Caregiver texts are the caregiver pass's job.
+  if (!isCaregiverMember && hadRecord) {
+    const isLive = subscription.status === 'active' || subscription.status === 'trialing';
+    if (isLive && !prevCancelScheduled && subscription.cancel_at_period_end) {
+      await textMember(userId,
+        `Your Evia membership is set to end on ${membershipDay(subscription.current_period_end)}. You keep everything until then, and you can reactivate anytime — just tell me, or use the Membership page: ${appLink('/client/membership')}`);
+    } else if (isLive && prevCancelScheduled && !subscription.cancel_at_period_end) {
+      await textMember(userId,
+        `Welcome back — your Evia membership is active again. Next billing date: ${membershipDay(subscription.current_period_end)}.`);
+    }
+  }
 
   // Repair a stuck Evia SMS session (2026-09-03): agent_sessions.onboardingStep
   // only advances to "complete" via advanceOnboardingStep('payment', ...),

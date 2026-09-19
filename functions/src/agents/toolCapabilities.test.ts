@@ -77,7 +77,7 @@ describe("selectToolsForIntent", () => {
     const filtered = names(selectToolsForIntent(MCP_TOOLS, "VIEW_INVOICE"));
     expect(filtered.has("get_pending_timesheets")).toBe(true);
     expect(filtered.has("review_shift_hours")).toBe(true);
-    expect(filtered.has("get_billing_summary")).toBe(true);
+    expect(filtered.has("get_membership_page")).toBe(true);
     // Booking tools NOT included
     expect(filtered.has("start_booking_flow")).toBe(false);
     expect(filtered.has("schedule_interview")).toBe(false);

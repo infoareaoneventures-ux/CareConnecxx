@@ -71,7 +71,7 @@ vi.mock("../../utils/parseWithClaude", () => ({
 const reviewShiftHoursAs = vi.fn(async (_uid: string, _data: unknown) => ({ success: true }));
 vi.mock("../../billing/reviewShiftHours", () => ({ reviewShiftHoursAs: (...a: unknown[]) => reviewShiftHoursAs(...(a as [string, any])) }));
 
-import { startCorrectionFlow, handleCorrectionFlowStep, buildCorrectionRecap } from "../correctionFlow";
+import { startCorrectionFlow, handleCorrectionFlowStep, buildCorrectionRecap, hhmmToIsoNearAnchor } from "../correctionFlow";
 
 const PHONE = "+15551234567";
 const CHAT  = "chat-1";
@@ -120,6 +120,24 @@ describe("startCorrectionFlow — the Review submitted hours modal, opened", () 
     expect(sess().correctionFlowStep).toBe("cf_ask_reason");
     expect(sess().correctionFlowData).toMatchObject({ proposedStart: "2026-09-18T05:05:00.000Z", proposedEnd: "2026-09-18T05:30:00.000Z" });
     expect(lastSent()).toContain("Got it — 10:05 PM to 10:30 PM.");
+  });
+});
+
+describe("12-hour ambiguity is settled against the submitted time (live-caught: 10:05 stored as 10:05 AM)", () => {
+  it("picks the reading nearest the submitted time", () => {
+    const anchor = "2026-09-18T05:03:27.000Z"; // 10:03 PM Pacific
+    expect(hhmmToIsoNearAnchor(10, 5, anchor)).toBe("2026-09-18T05:05:00.000Z");  // "10:05" → 10:05 PM
+    expect(hhmmToIsoNearAnchor(22, 5, anchor)).toBe("2026-09-18T05:05:00.000Z");  // "22:05" → same
+    expect(hhmmToIsoNearAnchor(9, 45, "2026-09-17T16:00:00.000Z")).toBe("2026-09-17T16:45:00.000Z"); // 9 AM visit, "9:45" → 9:45 AM
+    expect(hhmmToIsoNearAnchor(25, 0, anchor)).toBeNull();
+  });
+  it("a model reply of '10:05' for a 10:03 PM visit becomes 10:05 PM in the flow", async () => {
+    hoisted.docState.set("shiftHours/sh-1", SUBMITTED);
+    await startCorrectionFlow(PHONE, CHAT, session(), {});
+    modelReplies(JSON.stringify({ time: "10:05" }));
+    await handleCorrectionFlowStep(PHONE, CHAT, "10:05", session());
+    expect(sess().correctionFlowData.proposedStart).toBe("2026-09-18T05:05:00.000Z");
+    expect(lastSent()).toContain("Clock-in 10:05 PM, got it.");
   });
 });
 

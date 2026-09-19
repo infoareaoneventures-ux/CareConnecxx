@@ -167,8 +167,6 @@ export {
 // Evia scheduled jobs
 export { dailyContactCardShare } from './scheduled/dailyContactCardShare';
 export { sendMorningBriefings } from './scheduled/morningBriefing';
-export { sendNextDayFamilyFeedback } from './scheduled/nextDayFamilyFeedback';
-export { sendFamilySatisfactionCheckins } from './scheduled/familySatisfactionCheckin';
 export { sendStaleSessionNudges } from './scheduled/staleSessionNudge';
 export { familySilenceCheckinJob } from './scheduled/familySilenceCheckin';
 export { consolidateMemoryNightly } from './scheduled/nightlyMemory';
@@ -191,7 +189,6 @@ export { drainLinqOutboundQueue } from './scheduled/outboundQueueDrain';
 export { adminAlertAgingDaily } from './scheduled/adminAlertAging';
 export { opsAnomalyWatchHourly } from './scheduled/opsAnomalyWatch';
 export { inferActiveHoursWeekly } from './scheduled/inferActiveHours';
-export { expirePostVisitFeedback } from './scheduled/feedbackExpiry';
 export { expirePendingShiftOffers } from './scheduled/shiftOfferExpiry';
 export { expireAccountRecoveryRequests } from './scheduled/accountRecoveryExpiry';
 export { checkCaregiverInactivity } from './scheduled/caregiverInactivityCheck';

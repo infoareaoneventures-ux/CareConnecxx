@@ -92,9 +92,37 @@ async function moveToRetryOrReview(outboxId: string, errorCode: string): Promise
   });
 }
 
+// Terminal, no send: the family has already acted on (or the system has already
+// resolved) this timesheet, or the transport accepted the text but can never
+// confirm delivery. Either way there is nothing left for this notice to do.
+async function closeOutbox(outboxId: string, appointmentId: string, providerStatus: "superseded" | "assumed_delivered"): Promise<void> {
+  const now = new Date().toISOString();
+  const outboxRef = db.collection("billingApprovalOutbox").doc(outboxId);
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(outboxRef);
+    if (!snap.exists || snap.data()?.state === "delivered") return;
+    transaction.update(outboxRef, {
+      state: "delivered", providerStatus, completedAt: now, nextAttemptAt: null, leaseOwner: null, leaseExpiresAt: null, updatedAt: now,
+    });
+    transaction.update(db.collection("shiftHours").doc(appointmentId), {
+      approvalNoticeState: "delivered", approvalNoticeDeliveredAt: now, updatedAt: now,
+    });
+  });
+}
+
 export async function dispatchApprovalNotice(outboxId: string, workerId: string): Promise<boolean> {
   const record = await claimOutbox(outboxId, workerId);
   if (!record) return false;
+  // 2026-09-18 (live-caught): the family had already sent a correction, yet the
+  // same "submitted hours — reply APPROVE" notice went out a second time a day
+  // later (see the receipt-timeout note in processApprovalNoticeOutbox). A notice
+  // only exists while the timesheet is waiting on the family; once it is not,
+  // the notice is done — never re-sent, on any retry path.
+  const shiftSnap = await db.collection("shiftHours").doc(record.appointmentId).get().catch(() => null);
+  if (shiftSnap?.exists && shiftSnap.data()?.status !== "pending_client_review") {
+    await closeOutbox(outboxId, record.appointmentId, "superseded");
+    return false;
+  }
 
   const phone = await resolveRecipientPhone(record.recipientUid);
   if (!phone) {
@@ -230,13 +258,21 @@ export async function processApprovalNoticeOutbox(): Promise<{ attempted: number
     if (await dispatchApprovalNotice(doc.id, workerId)) sent += 1;
   }
 
+  // "sent" with no delivery receipt after 24h. This used to go back to retry and
+  // RE-SEND the notice (2026-09-18, live: the transport had accepted the text but
+  // returned no message id, so no receipt could ever arrive; the family got the
+  // same notice again a day after they had already acted, and would have again
+  // every day until the 5th attempt parked the timesheet in admin review). A
+  // missing receipt is not evidence of non-delivery — only a "failed" receipt is
+  // (recordApprovalNoticeProviderStatus handles that). Close it out instead.
   const staleSent = await db.collection("billingApprovalOutbox")
     .where("state", "==", "sent")
     .where("nextAttemptAt", "<=", now)
     .limit(20)
     .get();
   for (const doc of staleSent.docs) {
-    await moveToRetryOrReview(doc.id, "delivery_receipt_timeout");
+    const record = doc.data() as ApprovalOutboxRecord;
+    await closeOutbox(doc.id, record.appointmentId, "assumed_delivered");
   }
 
   return { attempted: ready.size, sent };

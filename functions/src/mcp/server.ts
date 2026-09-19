@@ -53,7 +53,7 @@ import { getSeniorProfileWithSource } from "../data/seniorProfileRepository";
 export const IDEMPOTENT_CONFIRMED_TOOLS = new Set<string>([]);
 import { runEphemeralSubAgent, buildTaskToolDescription, getPublicSubAgentNames, INTERNAL_SUB_AGENT_NAMES } from "../agents/ephemeralSubAgents";
 import { getAppUrl } from "../config/appUrl";
-import { caregiverAnnualAmount, clientMonthlyAmount } from "../config/pricing";
+import { caregiverAnnualAmount, clientMonthlyAmount, clientMonthlyDisplay } from "../config/pricing";
 import { logAgentAction } from "../observability/actionLedger";
 import { createCaraOpsAlert } from "../observability/caraOpsAlerts";
 import {
@@ -223,12 +223,16 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_billing_summary",
-    description: "Get the client's current subscription status and recent billing history.",
+    name: "get_membership_page",
+    description:
+      `The website's Membership page exactly: the plan card (Standard Plan, ${clientMonthlyDisplay()}), status, next billing date — or the end date once ` +
+      "a cancel is scheduled — and the buttons for that state (Select a plan / Cancel + Manage / Reactivate + Manage). Use for any question " +
+      "about the membership: is it active, when it renews, when it ends, what it costs. 'manage' (card, invoices) is get_payment_update_link; " +
+      "cancel/reactivate is set_subscription_status; 'select_plan' is send_onboarding_link (payment).",
     input_schema: {
       type: "object",
       properties: {
-        userId: { type: "string", description: "The client's user ID" },
+        userId: { type: "string", description: "The user's ID" },
       },
       required: ["userId"],
     },
@@ -2632,7 +2636,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "update_memory_file",
   "edit_memory_file",
   "search_memory",
-  "get_billing_summary",
+  "get_membership_page",
   "update_caregiver_profile",
   "pause_account",
   "reactivate_account",
@@ -3149,7 +3153,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   // synthesized under shadow — the same double-send-audit lesson (2026-07-06)
   // that got the old tool off this list.
   "get_active_bookings",
-  "get_billing_summary", "get_invoice_history", "get_invoice_details",
+  "get_membership_page", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
   "get_care_journal", "get_care_journal_client", "get_care_plan",
   "get_recent_messages", "get_family_group",
@@ -3644,50 +3648,16 @@ async function executeToolCall(
         };
       }
 
-      case "get_billing_summary": {
+      case "get_membership_page": {
+        // The Membership page as data (agents/membershipPage.ts) — same record the
+        // page reads (customers/{uid}/subscriptions), same card, same buttons.
         if (!input.userId) return toolError("INVALID_INPUT", "userId is required");
-        logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_billing_summary" } }).catch(() => {});
-        const userId = input.userId as string;
-        const [subSnap, invoiceSnap, paymentsSnap, userSnap] = await Promise.all([
-          // The real subscription doc lives under customers/{uid}/subscriptions
-          // (Stripe webhook writer, stripe.ts) — a top-level `subscriptions`
-          // collection is never written by anything, so this always returned
-          // null. Mirrors the same lookup cancel_subscription/reactivate_subscription
-          // already use.
-          db.collection("customers").doc(userId).collection("subscriptions").limit(1).get(),
-          // Invoices are keyed by clientId (= the client's uid) per the canonical
-          // invoicing.ts writer; querying userId returned nothing. Payments keep
-          // userId, matching the Stripe writer (R7). Reuses the existing
-          // invoices (clientId, createdAt DESC) composite.
-          db.collection("invoices")
-            .where("clientId", "==", userId)
-            .orderBy("createdAt", "desc")
-            .limit(3)
-            .get(),
-          db.collection("payments")
-            .where("userId", "==", userId)
-            .orderBy("createdAt", "desc")
-            .limit(6)
-            .get(),
-          db.collection("users").doc(userId).get(),
-        ]);
-        const userDoc = userSnap.data() ?? {};
-        return {
-          success: true,
-          subscription: subSnap.docs[0]?.data() ?? null,
-          membershipStatus: (userDoc.membershipStatus ?? userDoc.subscriptionStatus ?? "unknown") as string,
-          recentInvoices: invoiceSnap.docs.map((d) => d.data()),
-          recentPayments: paymentsSnap.docs.map((d) => {
-            const p = d.data();
-            return {
-              date:    (p.createdAt as any)?.toDate?.()?.toISOString?.() ?? p.createdAt,
-              amount:  typeof p.amount === "number" ? `$${(p.amount / 100).toFixed(2)}` : p.amount,
-              status:  p.status,
-            };
-          }),
-        };
+        logAudit({ eventType: "health_data_accessed", userId: input.userId as string, data: { source: "mcp:get_membership_page" } }).catch(() => {});
+        const { readMembershipPage } = await import("../agents/membershipPage");
+        const role = (input.role === "caregiver" ? "caregiver" : "client") as "client" | "caregiver";
+        const page = await readMembershipPage(input.userId as string, role);
+        return { success: true, ...page, page: "Membership", url: `${getAppUrl()}${role === "caregiver" ? "/caregiver/payments" : "/client/membership"}` };
       }
-
       case "get_caregiver_booking_rate": {
         // U9b: read-only rate lookup extracted from request_booking. No write.
         const rate = await resolveCaregiverRate(String(input.caregiverId ?? ""));
@@ -4861,13 +4831,15 @@ async function executeToolCall(
         const ptClientId = input.clientId as string | undefined;
         if (!ptClientId) return toolError("INVALID_INPUT", "clientId is required");
         logAudit({ eventType: "health_data_accessed", userId: ptClientId, data: { source: "mcp:get_pending_tasks" } }).catch(() => {});
-        const [ptBrSnap, ptAmSnap, ptShiftSnap, ptIvRows, ptCpSnap, ptTsSnap] = await Promise.all([
+        const [ptBrSnap, ptAmSnap, ptShiftSnap, ptIvRows, ptCpSnap, ptTsSnap, ptCounterSnap] = await Promise.all([
           db.collection("booking_requests").where("clientId", "==", ptClientId).where("status", "==", "pending").get(),
           db.collection("booking_amendments").where("clientId", "==", ptClientId).where("status", "==", "pending").get(),
           db.collection("shifts").where("clientId", "==", ptClientId).where("status", "in", ["scheduled", "needs_replacement"]).get(),
           listClientInterviews(ptClientId).catch(() => [] as Awaited<ReturnType<typeof listClientInterviews>>),
           db.collection("carePlans").doc(ptClientId).get(),
           db.collection("shiftHours").where("clientId", "==", ptClientId).where("status", "==", "pending_client_review").get(),
+          // The page's banner counts a caregiver COUNTER awaiting the family too.
+          db.collection("shiftHours").where("clientId", "==", ptClientId).where("status", "==", "caregiver_counter_proposed").get(),
         ]);
         const ptItems: Array<Record<string, unknown>> = [];
         ptBrSnap.docs.forEach((d) => {
@@ -4894,7 +4866,16 @@ async function executeToolCall(
           else if (iv.displayStatus === "pending") ptItems.push({ kind: "interview_request_pending", waitingOn: "caregiver", page: "Care Requests > Interviews", interviewId: iv.interviewId, caregiverName: iv.caregiverName, scheduledTimeLocal: iv.scheduledTimeLocal });
         });
         if (ptCpSnap.exists && !ptCpSnap.data()?.carePlanReviewedAt) ptItems.push({ kind: "care_plan_review", waitingOn: "you", page: "Care Plan", actions: ["looks_good"] });
-        if (!ptTsSnap.empty) ptItems.push({ kind: "timesheets_to_review", waitingOn: "you", page: "Payments > Timesheets", count: ptTsSnap.size });
+        {
+          // Same rule as the page's "N shifts to review" banner: submissions awaiting
+          // the family's review + counters awaiting their answer. A correction the
+          // caregiver is sitting on (Correction Sent) is NOT counted — nothing to do.
+          const tsDocs = new Map<string, Record<string, unknown>>();
+          for (const d of [...ptTsSnap.docs, ...ptCounterSnap.docs]) tsDocs.set(d.id, d.data());
+          const awaitingReview = [...tsDocs.values()].filter((r) => r.status === "pending_client_review").length;
+          const countersToAnswer = [...tsDocs.values()].filter((r) => r.status === "caregiver_counter_proposed").length;
+          if (tsDocs.size) ptItems.push({ kind: "timesheets_to_review", waitingOn: "you", page: "Payments > Timesheets", count: tsDocs.size, awaitingReview, countersToAnswer });
+        }
         const waitingOnYou = ptItems.filter((i) => i.waitingOn === "you").length;
         return {
           success: true,

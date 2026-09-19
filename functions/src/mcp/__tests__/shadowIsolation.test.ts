@@ -60,7 +60,7 @@ describe("shadow/dry-run isolation (U11)", () => {
   });
 
   it("does NOT synthesize a read-only tool under shadowMode (still runs for real)", async () => {
-    const r = await handleToolCall("get_billing_summary", { phone: "+1", clientId: "c1", userId: "c1" }, true) as any;
+    const r = await handleToolCall("get_membership_page", { phone: "+1", clientId: "c1", userId: "c1" }, true) as any;
     expect(r?._shadow).toBeUndefined();
   });
 
@@ -70,7 +70,7 @@ describe("shadow/dry-run isolation (U11)", () => {
   });
 
   it("classifies tools conservatively (mutating tools are not read-only)", () => {
-    expect(isReadOnlyTool("get_billing_summary")).toBe(true);
+    expect(isReadOnlyTool("get_membership_page")).toBe(true);
     // 2026-09-14: find_nearby_caregivers took over the removed
     // find_replacement_caregivers' job of texting the family each caregiver's
     // profile card and writing pendingMatches — it sends real SMS, so it is

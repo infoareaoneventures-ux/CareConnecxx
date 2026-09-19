@@ -25,7 +25,7 @@ describe("isHighStakesMutation (U3)", () => {
       "get_upcoming_appointments",
       "browse_job_board",
       "search_memory",
-      "get_billing_summary",
+      "get_membership_page",
       "list_job_applicants",
     ]) {
       expect(isHighStakesMutation(tool), `${tool} should not be high-stakes`).toBe(false);

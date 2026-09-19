@@ -84,6 +84,10 @@ export interface TimesheetRow {
   statusHint: string | null;
   isCorrected: boolean;
   autoApproveAt: string | null;
+  /** Correction Sent only: the proposed window/pay — the row's live figures on the page while the caregiver decides. */
+  proposed: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number } | null;
+  /** Counter Received only: the caregiver's counter — the row's live figures on the page while the family decides. */
+  counter: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; note: string | null } | null;
   submittedAt: string | null;
   correctionHistory: Array<{ by?: string; action?: string; label: string; at?: string; hours?: number; grossPay?: number; note?: string | null }>;
   /** The card's button: review_and_approve (Needs Review) / review_and_respond (Counter Received) / retry_payment (Payment Failed). */
@@ -151,6 +155,22 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
     statusHint: STATUS_HINT[status] ?? null,
     isCorrected,
     autoApproveAt: (r.autoApproveAt as string | undefined) ?? null,
+    proposed: (() => {
+      if (status !== "correction_proposed" || typeof r.proposedStartTime !== "string" || typeof r.proposedEndTime !== "string") return null;
+      const ps = toMs(r.proposedStartTime); const pe = toMs(r.proposedEndTime);
+      if (!Number.isFinite(ps) || !Number.isFinite(pe)) return null;
+      const ph = (pe - ps) / 3_600_000;
+      const pg = typeof r.proposedGrossPay === "number" ? r.proposedGrossPay : Math.round(ph * payRate * 100) / 100;
+      return { clockIn: r.proposedStartTime, clockOut: r.proposedEndTime, clockInLocal: formatInterviewTime(ps), clockOutLocal: formatInterviewTime(pe), hours: Math.round(ph * 100) / 100, duration: fmtDuration(ph), grossPay: Math.round(pg * 100) / 100 };
+    })(),
+    counter: (() => {
+      if (status !== "caregiver_counter_proposed" || typeof r.counterStartTime !== "string" || typeof r.counterEndTime !== "string") return null;
+      const cs = toMs(r.counterStartTime); const ce = toMs(r.counterEndTime);
+      if (!Number.isFinite(cs) || !Number.isFinite(ce)) return null;
+      const ch = (ce - cs) / 3_600_000;
+      const cg = typeof r.counterGrossPay === "number" ? r.counterGrossPay : Math.round(ch * payRate * 100) / 100;
+      return { clockIn: r.counterStartTime, clockOut: r.counterEndTime, clockInLocal: formatInterviewTime(cs), clockOutLocal: formatInterviewTime(ce), hours: Math.round(ch * 100) / 100, duration: fmtDuration(ch), grossPay: Math.round(cg * 100) / 100, note: typeof r.counterNote === "string" && r.counterNote ? r.counterNote : null };
+    })(),
     submittedAt: typeof r.submittedAt === "string" ? r.submittedAt : (Number.isFinite(toMs(r.submittedAt)) ? new Date(toMs(r.submittedAt)).toISOString() : null),
     correctionHistory: history
       .filter((e) => e.action !== "submitted")

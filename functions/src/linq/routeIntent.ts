@@ -7,6 +7,7 @@ import { buildOperationalRecipeLead, loadCaraOperationalContext } from "../agent
 import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../utils/sessionState";
 import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
+import { handleCompletionNudgeReply, freshCompletionNudgeInterviewId } from "../agents/completionNudgeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { updatePermissionFromText } from "../agents/permissionsConversation";
@@ -1041,11 +1042,25 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // signal for "a multi-turn flow is in progress here" — any turn inside
     // one of those needs real grounding, so it must never take the no-tool
     // fast path regardless of how trivial the text looks in isolation.
+    // 2026-09-18 (live-caught): the interview check-in ("did it happen? I can
+    // mark it complete") is a yes/no question, but a bare "yes" classified as
+    // QUESTION, passed isTrivialQuickReply, and the no-tools quick reply
+    // answered "Got it, noted." — the interview stayed Accepted. A bare yes/no
+    // to a fresh check-in is the interview card's button: YES = the site's
+    // Mark as Completed write; NO = offer Reschedule / Cancel. Anything else
+    // goes to the full agent (which gets the interview id in its prompt) —
+    // never to the quick reply while the check-in is fresh.
+    const nudgeReply = await handleCompletionNudgeReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> });
+    if (nudgeReply) {
+      await persistDefaultQaTurn(ctx, nudgeReply);
+      return;
+    }
     if (
       intent === "QUESTION" &&
       !intentDegraded &&
       isTrivialQuickReply(text) &&
-      !hasActiveSmsFlow(session as unknown as Record<string, unknown>)
+      !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
+      !freshCompletionNudgeInterviewId(session as unknown as Record<string, unknown>)
     ) {
       const quickReply = await runQuickReply({
         text,

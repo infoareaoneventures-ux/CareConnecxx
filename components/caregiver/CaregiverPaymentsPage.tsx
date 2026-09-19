@@ -284,8 +284,11 @@ const ReviewRespondModal: React.FC<{
 
   const counterStartMs = counterStart ? new Date(counterStart).getTime() : 0;
   const counterEndMs   = counterEnd   ? new Date(counterEnd).getTime()   : 0;
+  // Exact seconds → cents, the same math the server bills with (billing/
+  // shiftBillingAmounts). Rounding the HOURS first showed "$2.10" for a 25-minute
+  // counter the server would charge as $2.08 (live-caught 2026-09-18).
   const counterHours   = counterStartMs && counterEndMs && counterEndMs > counterStartMs
-    ? Math.round(((counterEndMs - counterStartMs) / 3_600_000) * 100) / 100 : 0;
+    ? (counterEndMs - counterStartMs) / 3_600_000 : 0;
   const counterBase    = Math.round(counterHours * (row.payRate ?? 0) * 100) / 100;
   const counterLITotal = counterLineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
   const counterGross   = Math.round((counterBase + counterLITotal) * 100) / 100;

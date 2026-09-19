@@ -9,6 +9,11 @@ import { serviceFeeCentsFor } from "./shiftBillingAmounts";
 import { SHIFT_PLATFORM_FEE_RATE } from "./config";
 
 export const SERVICE_FEE_LABEL = `Service fee (${Math.round(SHIFT_PLATFORM_FEE_RATE * 100)}%)`;
+/** The receipt label names the $1 minimum only when it changed the number. */
+export function serviceFeeLabelFor(grossCents: number, feeCents: number): string {
+  const floored = grossCents > 0 && feeCents > Math.round(grossCents * SHIFT_PLATFORM_FEE_RATE);
+  return floored ? `Service fee (${Math.round(SHIFT_PLATFORM_FEE_RATE * 100)}%, $1 minimum)` : SERVICE_FEE_LABEL;
+}
 
 export interface ApprovalNoticePayload {
   caregiverName?: string;
@@ -63,7 +68,7 @@ export function buildApprovalNoticeText(p: ApprovalNoticePayload): string {
   // The family's side of the card: the fee and what actually goes on their card.
   const grossCents = Number(p.grossPayCents ?? 0);
   const feeCents = serviceFeeCentsFor(grossCents);
-  lines.push(`• ${SERVICE_FEE_LABEL}: $${(feeCents / 100).toFixed(2)}`);
+  lines.push(`• ${serviceFeeLabelFor(grossCents, feeCents)}: $${(feeCents / 100).toFixed(2)}`);
   lines.push(`• Charged to your card: $${((grossCents + feeCents) / 100).toFixed(2)}`);
   lines.push("");
 

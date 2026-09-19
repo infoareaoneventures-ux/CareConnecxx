@@ -24,7 +24,7 @@ import { DirectMessage, Thread } from '../types';
 import { validators, ValidationError } from '../utils/validation';
 
 export const SUPPORT_AGENT_ID = 'careconnex-support';
-export const SUPPORT_AGENT_NAME = 'Evia Support';
+export const SUPPORT_AGENT_NAME = 'Evia team';
 
 export interface ChatRoom {
   id: string;

@@ -19,6 +19,7 @@ export type AuditEventType =
   | "safety_violation"
   | "interview_scheduled"
   | "profile_updated"
+  | "support_message_relayed"
   | "review_submitted"
   | "subscription_cancelled"
   | "subscription_reactivated"

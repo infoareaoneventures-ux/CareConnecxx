@@ -86,7 +86,7 @@ import { handleToolCall } from "../server";
 describe("discovery tools", () => {
   beforeEach(() => hoisted.reset());
 
-  describe("get_caregiver_info (merged with the former get_caregiver_reviews, 2026-09-03)", () => {
+  describe("get_caregiver_info (the caregiver profile page as data, 2026-09-19; reviews folded in 2026-09-03)", () => {
     it("requires caregiverId", async () => {
       const r = await handleToolCall("get_caregiver_info", {}) as any;
       expect(r._toolError).toBe(true);
@@ -103,20 +103,33 @@ describe("discovery tools", () => {
         { rating: 5, comment: "Great with my dad", createdAt: "2026-05-01" },
         { rating: 4, comment: "Punctual and kind",  createdAt: "2026-04-15" },
       ]);
-      hoisted.docState.set("caregivers/cg1", { name: "Alice", averageRating: 4.7, reviewCount: 12, hourlyRate: 30 });
+      // The page reads users/{id} over publicCaregiverProfiles/{id} — never the raw caregivers doc.
+      hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice", rating: 4.7, reviewCount: 12, hourlyRate: 30 });
       const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1" }) as any;
       expect(r.success).toBe(true);
       expect(r.results.name).toBe("Alice");
       expect(r.results.hourlyRate).toBe(30);
+      expect(r.results.billedHourlyRate).toBe(32.7);
       expect(r.results.averageRating).toBe(4.7);
       expect(r.results.totalReviews).toBe(12);
       expect(r.results.recentReviews).toHaveLength(2);
+      expect(r.results.reviews[0]).toMatchObject({ reviewerName: "A client", rating: 5, comment: "Great with my dad" });
+      expect(r.results.actions).toEqual({ primary: "request_interview", message: true, review: null });
+      expect(r.results.published).toBe(true);
     });
 
     it("caps reviewLimit at 20", async () => {
-      hoisted.docState.set("caregivers/cg1", { name: "Alice" });
+      hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice" });
       const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1", reviewLimit: 999 }) as any;
       expect(r.success).toBe(true);
+    });
+
+    it("an account with no published profile is flagged so Evia never quotes the page defaults as facts", async () => {
+      hoisted.docState.set("users/cg9", { firstName: "New", lastName: "Caregiver" });
+      const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg9" }) as any;
+      expect(r.success).toBe(true);
+      expect(r.results.published).toBe(false);
+      expect(r.instruction).toContain("not listed on the site yet");
     });
   });
 

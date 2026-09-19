@@ -160,6 +160,8 @@ export const ACTIVITY_FEED_EVENTS: Record<AuditEventType, ActivityPolicy> = {
   emergency_alert_raised:             { included: false },
   callout_backup_selected:            { included: false },
   callout_refund_requested:           { included: false },
+  // A person's message to the team (or Evia's handoff note) — internal, never in the family feed.
+  support_message_relayed:            { included: false },
   // withdraw_replacement_request (client) uses the same event type regardless
   // of which side calls it in principle, but is currently client-only —
   // excluded for consistency with its callout_backup_* siblings above.

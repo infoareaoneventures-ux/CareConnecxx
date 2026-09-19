@@ -196,7 +196,7 @@ export const ClientNavigation: React.FC = () => {
                       } catch { navigate('/client/inbox'); }
                     }}
                     className="w-full flex items-center justify-center gap-1.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors">
-                    <MessageSquare className="w-3.5 h-3.5" />Chat with Us
+                    <MessageSquare className="w-3.5 h-3.5" />Message our team
                   </button>
                 </div>
               )}

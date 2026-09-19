@@ -92,7 +92,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a 9% service fee on each visit (minimum $1). No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a 9% service fee on each visit. No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",

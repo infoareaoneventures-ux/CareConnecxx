@@ -30,7 +30,7 @@ describe("buildApprovalNoticeText", () => {
     expect(t).toContain("Base pay: 0:00:46 @ $5/hr = $0.06");
     expect(t).toContain("No additional charges");
     expect(t).toContain("Total: $0.06");
-    expect(t).toContain("Service fee (9%): $1.00"); // the $1 minimum
+    expect(t).toContain("Service fee (9%, $1 minimum): $1.00"); // the floor applied, so the label says so
     expect(t).toContain("Charged to your card: $1.06");
     expect(t).toMatch(/Auto-approves .*Sep 18.* unless you review it first\./);
     expect(t).toContain("Reply APPROVE to release payment, or tell me the correct clock-in and clock-out");

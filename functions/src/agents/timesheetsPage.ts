@@ -8,6 +8,7 @@
 import * as admin from "firebase-admin";
 import { businessTodayStr, formatInterviewTime } from "../utils/scheduledTime";
 import { serviceFeeCentsFor } from "../billing/shiftBillingAmounts";
+import { serviceFeeLabelFor } from "../billing/approvalNoticeText";
 
 const db = admin.firestore();
 
@@ -82,6 +83,8 @@ export interface TimesheetRow {
   grossPay: number;
   /** The family's side of the card: the 9% service fee (min $1) and what goes on their card — same math as the charge. */
   serviceFee: number;
+  /** "Service fee (9%)" — or "(9%, $1 minimum)" when the floor changed the number. */
+  serviceFeeLabel: string;
   totalCharged: number;
   status: string;
   statusLabel: string;
@@ -157,6 +160,7 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
     // Stored at every amount write; computed only for rows that predate the fee.
     serviceFee: (typeof r.serviceFeeCents === "number" ? r.serviceFeeCents : serviceFeeCentsFor(Math.round(grossPay * 100))) / 100,
     totalCharged: (typeof r.totalChargeCents === "number" ? r.totalChargeCents : Math.round(grossPay * 100) + serviceFeeCentsFor(Math.round(grossPay * 100))) / 100,
+    serviceFeeLabel: serviceFeeLabelFor(Math.round(grossPay * 100), typeof r.serviceFeeCents === "number" ? r.serviceFeeCents : serviceFeeCentsFor(Math.round(grossPay * 100))),
     status,
     statusLabel: STATUS_LABEL[status] ?? STATUS_LABEL.pending_client_review,
     statusHint: STATUS_HINT[status] ?? null,

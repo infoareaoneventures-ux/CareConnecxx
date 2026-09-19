@@ -30,7 +30,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "Do I pay caregivers separately?",
-            answer: "Yes. The $29.95/month membership gives you access to the platform. You pay caregivers at the rate they set, plus a 9% service fee on each visit (minimum $1)."
+            answer: "Yes. The $29.95/month membership gives you access to the platform. You pay caregivers at the rate they set, plus a 9% service fee on each visit."
         }
     ];
 

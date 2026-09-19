@@ -74,7 +74,8 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_caregiver_availability:    ["scheduling"],
 
   // ── billing ──────────────────────────────────────────────────────────────
-  get_membership_page:      ["billing"],  // Membership page as data — see agents/membershipPage.ts
+  get_membership_page:      ["billing"],
+  contact_support:          ["messaging"],  // the website's "Message our team" button — see utils/supportRoom.ts  // Membership page as data — see agents/membershipPage.ts
   set_subscription_status:  ["billing"],
   get_shifts:               ["billing"],
   get_payment_update_link:  ["billing"],

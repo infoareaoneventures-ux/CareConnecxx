@@ -50,3 +50,11 @@ export function instantPayoutFeeDollars(amountDollars: number): number {
 }
 
 export const fmtMoney = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
+
+/** Receipt label: names the minimum only when it changed the number (a $1.00 fee on a $2.95 visit is not 9%). */
+export function serviceFeeLabel(grossDollars: number, feeDollars?: number): string {
+  const g = Math.round((Number(grossDollars) || 0) * 100);
+  const fee = feeDollars != null ? Math.round(feeDollars * 100) : serviceFeeCents(g);
+  const floored = g > 0 && fee > Math.round(g * SERVICE_FEE_RATE);
+  return floored ? `Service fee (${SERVICE_FEE_PERCENT_LABEL}, $${(SERVICE_FEE_MIN_CENTS / 100).toFixed(0)} minimum)` : `Service fee (${SERVICE_FEE_PERCENT_LABEL})`;
+}

@@ -22,6 +22,9 @@ const HIGH_IMPORTANCE_TYPES = new Set([
 const SMS_NOTIFY_TYPES = new Set([
   "missing_emergency_contact",
   "background_check_expired",
+  // A family or caregiver wrote to the team (website "Message our team" button,
+  // a text to Evia asking for a person, or Evia's own low-confidence handoff).
+  "support_message",
 ]);
 
 function escapeHtml(value: string): string {
@@ -182,7 +185,9 @@ export async function handleAdminAlertCreated(
       try {
         const outcome = await sendToPhone(
           adminPhone,
-          `Evia Alert: ${type} - check admin dashboard.`,
+          type === "support_message"
+            ? `Evia: someone messaged the team — "${String(alert.message ?? "").slice(0, 160)}" Reply in Admin › Messages; your reply is texted to them.`
+            : `Evia Alert: ${type} - check admin dashboard.`,
           { source: "admin_alert_notifier" }
         );
         const attemptedAt = new Date().toISOString();

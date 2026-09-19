@@ -265,7 +265,7 @@ describe("MCP tool smoke coverage", () => {
   });
 
   it("get_caregiver_info happy path", async () => {
-    hoisted.docState.set("caregivers/cg1", { name: "Alice", hourlyRate: 25 });
+    hoisted.docState.set("publicCaregiverProfiles/cg1", { name: "Alice", hourlyRate: 25 });
     const r = await handleToolCall("get_caregiver_info", { caregiverId: "cg1" }) as any;
     expect(r.success).toBe(true);
   });

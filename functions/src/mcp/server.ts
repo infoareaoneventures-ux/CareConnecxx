@@ -212,14 +212,35 @@ export const MCP_TOOLS: McpTool[] = [
     // now always included alongside the profile fields, one lookup instead
     // of two for what's almost always wanted together.
     name: "get_caregiver_info",
-    description: "Get a caregiver's profile — name, rate, specialties, rating — AND their recent reviews, in one call.",
+    description:
+      "The website's caregiver profile page (/client/caregiver/{id}) as data, exactly as this family sees it: header (name, rating or 'No reviews yet', badges, city, " +
+      "$rate/hr · $billed/hr), About + languages, Care Services, Rates (1 / 2 / 3+ people, each with the billed figure), experience, Weekly Availability blocks, Background, " +
+      "Location & Travel, recent Reviews, and the buttons the page shows this family (Active Booking / Re-book / Interview Requested / Request Interview; Message; Leave a Review). " +
+      "Use for any question about a specific caregiver. Quote only what is in the result; `summary` is the page in one paragraph.",
     input_schema: {
       type: "object",
       properties: {
         caregiverId: { type: "string", description: "The caregiver's ID" },
-        reviewLimit: { type: "number", description: "Max recent reviews to include (default 5, max 20)" },
+        clientId:    { type: "string", description: "The family viewing the page (auto-injected) — decides which buttons the page shows them" },
+        reviewLimit: { type: "number", description: "Max recent reviews to include (default 5, max 20 — the page lists 20)" },
       },
       required: ["caregiverId"],
+    },
+  },
+  {
+    name: "contact_support",
+    description:
+      "Put the person in touch with Evia's human team — the website's 'Message our team' button. Use it the moment someone asks for a person, a human, " +
+      "support, a manager, or to complain about Evia; or when they raise something you must not handle yourself (a safety worry about a caregiver, a billing " +
+      "dispute you cannot settle, an accusation). Pass their words as `message`. It writes into their support room (the same room the website button opens); " +
+      "the team is alerted and replies are texted back to them. Then tell them, in one line, that the team has it and will reply here by text — do NOT promise a time.",
+    input_schema: {
+      type: "object",
+      properties: {
+        userId:  { type: "string", description: "The person's user ID (client or caregiver)" },
+        message: { type: "string", description: "What they want the team to know — their own words, verbatim where possible" },
+      },
+      required: ["userId", "message"],
     },
   },
   {
@@ -2637,6 +2658,7 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "edit_memory_file",
   "search_memory",
   "get_membership_page",
+  "contact_support",
   "update_caregiver_profile",
   "pause_account",
   "reactivate_account",
@@ -3153,7 +3175,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   // synthesized under shadow — the same double-send-audit lesson (2026-07-06)
   // that got the old tool off this list.
   "get_active_bookings",
-  "get_membership_page", "get_invoice_history", "get_invoice_details",
+  "get_membership_page", "contact_support", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
   "get_care_journal", "get_care_journal_client", "get_care_plan",
   "get_recent_messages", "get_family_group",
@@ -3602,50 +3624,39 @@ async function executeToolCall(
       }
 
       case "get_caregiver_info": {
+        // The caregiver profile page as data (agents/caregiverProfilePage.ts):
+        // the same users/{id} + publicCaregiverProfiles/{id} merge the page
+        // reads, its reviews query, and its six relationship queries for the
+        // buttons. Before 2026-09-19 this read the raw `caregivers` doc, which
+        // the site never shows a family.
         if (!input.caregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
         logAudit({ eventType: "health_data_accessed", userId: input.caregiverId as string, data: { source: "mcp:get_caregiver_info" } }).catch(() => {});
-        const snap = await db.collection("caregivers").doc(input.caregiverId as string).get();
-        if (!snap.exists) return toolError("NOT_FOUND", "Caregiver not found");
-        const d = snap.data()!;
-
-        // Reviews — folded in from the former get_caregiver_reviews tool.
+        const { readCaregiverProfilePage } = await import("../agents/caregiverProfilePage");
         const reviewLimit = Math.min((input.reviewLimit as number) ?? 5, 20);
-        const reviewsSnap = await db
-          .collection("reviews")
-          .where("caregiverId", "==", input.caregiverId as string)
-          .orderBy("createdAt", "desc")
-          .limit(reviewLimit + 1)
-          .get();
-        const recentReviews = reviewsSnap.docs.slice(0, reviewLimit).map((rd) => {
-          const r = rd.data();
-          return { rating: r.rating, comment: r.comment ?? "", createdAt: r.createdAt };
-        });
-        const averageRating = typeof d.averageRating === "number"
-          ? d.averageRating
-          : (typeof d.rating === "number" ? d.rating : null);
-
+        const page = await readCaregiverProfilePage(String(input.caregiverId), typeof input.clientId === "string" && input.clientId ? input.clientId : null, reviewLimit);
+        if (!page) return toolError("NOT_FOUND", "Caregiver not found");
         return {
           success: true,
           results: {
-            name:                      `${d.firstName ?? ""} ${d.lastName ?? ""}`.trim() || d.name,
-            rating:                    d.rating,
-            ratingCount:               d.ratingCount ?? 0,
-            yearsExperience:           d.yearsExperience,
-            specialties:               d.specialties ?? [],
-            certifications:            d.certifications ?? [],
-            backgroundCheckStatus:     d.backgroundCheckData?.status ?? "pending",
-            backgroundCheckClearedAt:  d.backgroundCheckData?.clearedAt ?? null,
-            isVerified:                d.status === "active",
-            bookable:                  d.status === "active",
-            hourlyRate:                d.hourlyRate,
-            city:                      d.city,
-            bio:                       d.bio ?? d.about ?? null,
-            averageRating,
-            totalReviews:              d.reviewCount ?? recentReviews.length,
-            recentReviews,
-            hasMoreReviews:            reviewsSnap.docs.length > reviewLimit,
+            ...page,
+            // Kept for callers/tests that read the pre-page shape.
+            averageRating: page.rating,
+            totalReviews:  page.reviewCount,
+            recentReviews: page.reviews,
           },
+          instruction: page.published
+            ? "This is the profile page as the family sees it. Answer only what they asked, from these fields; money = the page's figures (rate and billed). Offer the page's buttons for this family (actions), nothing else."
+            : "This caregiver is not listed on the site yet (no published profile) — only their account record exists. Do not quote a rate, skills, or availability as facts; say the profile isn't published yet.",
         };
+      }
+
+      case "contact_support": {
+        const { userId, message } = input as Record<string, unknown>;
+        if (!userId || typeof message !== "string" || !message.trim()) return toolError("INVALID_INPUT", "userId and message are required");
+        const { relayToTeam } = await import("../utils/supportRoom");
+        const { roomId } = await relayToTeam({ userId: String(userId), text: message.trim().slice(0, 2000) });
+        logAudit({ eventType: "support_message_relayed", userId: String(userId), data: { source: "mcp:contact_support", roomId } }).catch(() => {});
+        return { success: true, roomId, instruction: "Tell them in one line that our team has their message and will reply here by text. Do not promise a time, and do not keep answering the thing they asked the team about." };
       }
 
       case "get_membership_page": {
@@ -3671,7 +3682,7 @@ async function executeToolCall(
           success: true, caregiverId: String(input.caregiverId), caregiverName: rate.caregiverName, hourlyRate: rate.hourlyRate,
           serviceFeeRate: feeRate, serviceFeeMinDollars: feeMin,
           billedHourlyRate: Math.round(Number(rate.hourlyRate) * (1 + feeRate) * 100) / 100,
-          note: `The caregiver keeps $${rate.hourlyRate}/hr; the family is billed $${(Number(rate.hourlyRate) * (1 + feeRate)).toFixed(2)}/hr (rate + ${Math.round(feeRate * 100)}% service fee, min $${feeMin} per visit).`,
+          note: `The caregiver keeps $${rate.hourlyRate}/hr; the family is billed $${(Number(rate.hourlyRate) * (1 + feeRate)).toFixed(2)}/hr (rate + ${Math.round(feeRate * 100)}% service fee).`,
         };
       }
 

@@ -3,6 +3,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Resend } from "resend";
 import { sendSMSToUser, SMS_TEMPLATES } from "./sms";
+import { resolveSupportRouting, alertTeamAboutSupportMessage, SUPPORT_AGENT_NAME } from "./utils/supportRoom";
 import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs } from "./utils/scheduledTime";
 import {
     claimExternalSideEffectOperation,
@@ -225,12 +226,24 @@ export const onMessageSent = functions.firestore
             const chatRoomDoc = await db.collection('chatRooms').doc(chatRoomId).get();
             const chatRoom = chatRoomDoc.data();
 
+            // The website's "Message our team" room (isSupport). Before 2026-09-19 a
+            // family's message here "notified" the support account — a uid nobody
+            // reads — and reached no one. Now: the person wrote → the team is alerted
+            // (admin panel + the founder's phone); the team replied → the person is
+            // texted like any Inbox message, from "Evia team".
+            const routing = resolveSupportRouting(chatRoom, message);
+            if (routing.kind === 'skip') return;
+            if (routing.kind === 'alert_team') {
+                await alertTeamAboutSupportMessage({ userId: routing.userId, roomId: chatRoomId, preview: String(message.text ?? ''), source: 'support_room_message' });
+                return;
+            }
+
             if (chatRoom && chatRoom.participants && Array.isArray(chatRoom.participants)) {
-                // Find the recipient (not the sender)
-                const recipient = chatRoom.participants.find((p: string) => p !== message.senderId);
+                // Find the recipient (not the sender) — in a support room, the person.
+                const recipient = routing.kind === 'relay_to_user' ? routing.userId : chatRoom.participants.find((p: string) => p !== message.senderId);
 
                 if (recipient) {
-                    const senderName = message.senderName || 'Someone';
+                    const senderName = routing.kind === 'relay_to_user' ? SUPPORT_AGENT_NAME : (message.senderName || 'Someone');
 
                     // In-app notification
                     await createNotification(recipient, {

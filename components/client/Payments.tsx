@@ -12,7 +12,7 @@ import { useAuthUser } from '../../hooks/useAuthUser';
 import { shiftHoursService } from '../../services/api';
 import { getClientBillingPortalUrl, getClientPaymentMethodStatus } from '../../services/stripeService';
 import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
-import { serviceFeeDollars, totalChargedDollars, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
+import { serviceFeeDollars, totalChargedDollars, serviceFeeLabel, SERVICE_FEE_PERCENT_LABEL } from '../../utils/pricing';
 
 type Tab = 'timesheets' | 'payment-method';
 
@@ -230,7 +230,7 @@ const CorrectionTimeline: React.FC<{
                         <span className="font-bold text-slate-900">${entryGrossPay.toFixed(2)}</span>
                       </div>
                       <div className="flex items-center justify-between px-3 py-1.5">
-                        <span className="text-slate-400">Service fee ({SERVICE_FEE_PERCENT_LABEL}) · charged ${totalChargedDollars(entryGrossPay).toFixed(2)}</span>
+                        <span className="text-slate-400">{serviceFeeLabel(entryGrossPay)} · charged ${totalChargedDollars(entryGrossPay).toFixed(2)}</span>
                         <span className="font-medium text-slate-700">${serviceFeeDollars(entryGrossPay).toFixed(2)}</span>
                       </div>
                     </>
@@ -425,7 +425,7 @@ const ShiftRow: React.FC<{
                 <span className="font-semibold text-slate-700">${shownPay.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">Service fee ({SERVICE_FEE_PERCENT_LABEL})</span>
+                <span className="text-slate-500">{serviceFeeLabel(shownPay, livePending ? serviceFeeDollars(shownPay) : feeFor(row, shownPay))}</span>
                 <span className="font-semibold text-slate-700">${(livePending ? serviceFeeDollars(shownPay) : feeFor(row, shownPay)).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50">

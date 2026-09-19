@@ -825,7 +825,8 @@ export function buildClientSystemPrompt(
     `  · remove_family_member — remove someone from the care group. Confirm first — this stops all their updates immediately.`,
     `  · submit_review — submit a star rating (1–5) and optional comment for a caregiver after a completed visit.`,
     `  · start_correction_flow — FIXING A TIMESHEET (non-negotiable): the moment the family says a submitted clock-in/out, hours or pay is wrong ("can you change the clock in time", "she left at 10:30", "the hours are off"), call this with initialText = their message. It is the Timesheets "Review submitted hours" modal step for step — it asks the proposed clock-in and clock-out, an optional reason, recaps the proposed total, and only on YES sends the correction (caregiver has 24h to accept or counter). When a COUNTER is waiting it offers exactly the modal's two choices, ACCEPT or ESCALATE. Never collect the times yourself, never call review_shift_hours with propose_correction for a family's ask — this tool already texts them; send nothing else that turn.`,
-    `  · MONEY RULE (2026-09-19): a caregiver's rate is theirs to keep — 100%. The family pays the rate PLUS Evia's 9% service fee (minimum $1 per visit), charged to their card when hours are approved. Quote it the way the site shows it: a rate as "$25/hr, plus the 9% service fee — about $27.25/hr billed to you"; a visit amount as caregiver total, service fee, charged to your card (the tools return all three). The 9% covers payment processing and coordinating the visit; never describe it as protection, never mention refunds or insurance. Membership ($29.95/month) is separate and covers the platform.`,
+    `  · contact_support — REACHING A PERSON (non-negotiable): the moment the family asks for a human, a person, support, a manager, or to complain about you — or raises a safety worry about a caregiver, an accusation, or a dispute you cannot settle — call this with their words as message. It is the website's "Message our team" button: the team is alerted and replies are texted back here. Then say, in one line, that the team has it and will reply here by text. Never promise a time, never pretend to be the team, never keep arguing the point.`,
+    `  · MONEY RULE (2026-09-19): a caregiver's rate is theirs to keep — 100%. The family pays the rate PLUS Evia's 9% service fee, charged to their card when hours are approved (there is a $1 minimum — mention it only when it actually applied to a small visit, or when asked what the fee is). Quote it the way the site shows it: a rate as "$25/hr, plus the 9% service fee — about $27.25/hr billed to you"; a visit amount as caregiver total, service fee, charged to your card (the tools return all three). The 9% covers payment processing and coordinating the visit; never describe it as protection, never mention refunds or insurance. Membership ($29.95/month) is separate and covers the platform.`,
     `  · review_shift_hours — the Timesheets review modal, action for action: approve the hours as submitted; propose_correction with BOTH a corrected start and end (the caregiver then accepts or counters within 24h) — to drop an additional charge, pass lineItems without it, exactly like removing a charge in the modal (keep the times as submitted if only the charge is wrong); and after a counter, accept_counter or escalate to Evia's team. Always show the row (get_pending_timesheets) and get a clear yes before approving — approving releases payment.`,
     `  · get_membership_page — the website's Membership page exactly: plan card ($29.95/month), active or not, next billing date, or the end date once a cancel is scheduled, and that state's buttons. Any question about the membership starts here. To add a card / pick a plan → send_onboarding_link (payment); to update the card or see invoices → get_payment_update_link (the page's Manage button).`,
     `  · set_subscription_status — cancel or reactivate the Evia membership (action: 'cancel'|'reactivate'). Cancel takes effect at end of billing period. MANDATORY for cancel: tell family when it ends and ask for explicit confirmation before calling. Reactivate needs no confirmation.`,
@@ -872,7 +873,7 @@ export function buildClientSystemPrompt(
     `  · update_communication_preferences — toggle newsletter / new-match alerts / review notifications / privacy. Confirm each toggle with the family.`,
     `  · request_email_change — kick off an email change. Sends a verify link to the new address; tell the family they'll need to click it from the new inbox before it takes effect.`,
     `  · delete_account — permanently delete the family's own account. MANDATORY: confirm explicitly first (read back that this is irreversible and cancels any active membership).`,
-    `  · get_caregiver_info — pull a caregiver's profile AND their recent reviews/average rating in one call. Use for "what do other families say about Alice?" or any question about a specific known caregiver.`,
+    `  · get_caregiver_info — the website's caregiver profile page as data, as THIS family sees it: rating/reviews, badges, About, Care Services, Rates (rate + billed figure), Weekly Availability, Background, Location & Travel, and the page's buttons for them (actions.primary: Active Booking / Re-book / Interview Requested / Request Interview; Message; Leave a Review). Use for any question about a specific caregiver ("what do families say about Alice?", "is she free Tuesday mornings?", "what does she charge for two people?"). Quote only the result; offer only the buttons the page shows this family.`,
     `  · find_nearby_caregivers — the website's Find Caregivers page as texted cards (see above); filters = the page's panel, favoritesOnly = the Favorites tab.`,
     `  · save_caregiver_favorite / unsave_caregiver_favorite — the ♥ on a caregiver card (users.savedCaregiverIds, the same field the site's Favorites tab reads). To list favorites, call find_nearby_caregivers with favoritesOnly: true.`,
     `  · set_block_status — block, unblock, or report another user (action: 'block'|'unblock'|'report'). MANDATORY for 'block': read back who you're about to block and wait for explicit YES. MANDATORY for 'report': confirm category and details with the family, then call, and tell them ops follows up within 24 hours. Unblocking needs no confirmation.`,
@@ -1029,6 +1030,7 @@ export function buildCaregiverSystemPrompt(
     `- get_caregiver_appointments: check your upcoming schedule`,
     `- get_care_journal / get_senior_profile: review care history or client details before a visit`,
     `- update_memory_file: note something important about the client that Evia should remember`,
+    `- contact_support: reach Evia's human team when you ask for a person or raise something Evia must not handle — the team is alerted and replies come back here by text`,
     `- get_membership_page: your Evia membership — plan, renewal date, cancel state (pass role: "caregiver")`,
     `- update_caregiver_profile: update your hourly rate, bio, city, or weekly availability. To change your PHONE NUMBER, pass requestPhoneChange:true instead — login here is by phone number, so this emails a secure link to the address on file rather than taking the new number over text. Tell them to check their email.`,
     `- delete_account: permanently delete your own account. MANDATORY: confirm explicitly first (read back that this is irreversible).`,
@@ -3672,6 +3674,15 @@ export async function runQaAgent(params: {
           handedToHumanAt:     handoffIso,
           handedToHumanReason: "low_confidence_unbacked_claim",
         }, { merge: true }).catch(() => { /* non-critical */ });
+        // 2026-09-19: the "looping in a teammate" reply used to go nowhere — the
+        // flag was set and nothing told anyone. Now it lands in the person's
+        // support room (a system note, never texted back) and alerts the team.
+        import("../utils/supportRoom").then((m) => m.escalateToTeam({
+          userId,
+          role: userType === "caregiver" ? "caregiver" : "client",
+          source: "evia_handoff",
+          note: `Evia wasn't confident enough to answer this and told them a teammate would follow up. Their message: "${String(text).slice(0, 500)}"`,
+        })).catch((err) => console.warn("handoff escalateToTeam failed (non-fatal)", err instanceof Error ? err.message : err));
         db.collection("agent_uncertainty_log").add({
           userId,
           turnHash:  turnTextHash,

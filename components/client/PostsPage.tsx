@@ -1792,7 +1792,7 @@ export const PostsPage: React.FC = () => {
                         ) : d.agreedRate ? (
                           <div className="flex items-center gap-3 flex-wrap">
                             <p className="text-sm font-bold text-green-700">${d.agreedRate}/hr</p>
-                            <p className="text-xs text-slate-500">+ {SERVICE_FEE_PERCENT_LABEL} service fee = ${billedHourlyRate(d.agreedRate).toFixed(2)}/hr billed to you (min $1 per visit)</p>
+                            <p className="text-xs text-slate-500">+ {SERVICE_FEE_PERCENT_LABEL} service fee = ${billedHourlyRate(d.agreedRate).toFixed(2)}/hr billed to you</p>
                           </div>
                         ) : (
                           <p className="text-xs text-amber-600">Enter the agreed rate — click <strong>Edit</strong> above</p>

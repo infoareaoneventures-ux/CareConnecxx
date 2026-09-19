@@ -102,17 +102,17 @@ export const FamilyFAQ: React.FC<FamilyFAQProps> = ({ onNavigate }) => {
          {
             id: 'py-2',
             q: 'Does Evia take a cut of the caregiver\'s hourly rate?',
-            a: 'No. Caregivers keep 100% of the hourly rate they set. Evia charges a nominal service fee to families to cover background checks, platform maintenance, and customer support.'
+            a: 'No. Caregivers keep 100% of the hourly rate they set. Evia adds a service fee to each visit’s charge to cover payment processing and coordinating the visit.'
          },
          {
             id: 'py-3',
             q: 'What is the cancellation policy?',
-            a: 'If you cancel an appointment with less than 24 hours\' notice, a cancellation fee may apply to compensate the caregiver for their reserved time. Cancellations made further in advance are fully refunded.'
+            a: 'You can cancel a visit any time from My Bookings. Nothing is charged until you approve the caregiver’s hours after a visit, so a cancelled visit is never charged. Please give your caregiver as much notice as you can.'
          },
          {
             id: 'py-4',
             q: 'Are there membership fees?',
-            a: 'Evia offers flexible membership options, including a monthly subscription or a pay-as-you-go model. A premium membership provides reduced booking fees and priority support.'
+            a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay $54.99/year, which covers their background check.'
          }
       ],
       'account': [

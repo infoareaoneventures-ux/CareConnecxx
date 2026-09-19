@@ -2936,9 +2936,8 @@ async function handleClientPlanReply(
 
   if (intent === "options") {
     await sendMessage(chatId,
-      "Right now everyone starts on the same simple membership — it covers me coordinating care, weekly summaries, " +
-      "and family updates. Once you're set up, I can add things like 24/7 urgent response or a dedicated coordinator " +
-      "if you ever want them. If you want to keep going, say yes and I'll send the setup link again."
+      "Right now there's one simple membership — it covers me coordinating care, matching and interviews, and keeping " +
+      "you updated on every visit, and you can text me any time. If you want to keep going, say yes and I'll send the setup link again."
     );
     return;
   }

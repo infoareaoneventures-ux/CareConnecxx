@@ -86,7 +86,7 @@ const familiesContent = [
       },
       {
         q: 'What is your cancellation policy?',
-        a: 'Cancellations made more than 24 hours before a shift are fully refunded. Cancellations made within 24 hours may incur a small fee to compensate the caregiver for their reserved time.',
+        a: 'You can cancel a visit any time from My Bookings. Nothing is charged until you approve the caregiver’s hours after a visit, so a cancelled visit is never charged. Please give your caregiver as much notice as you can.',
       },
     ],
   },
@@ -99,15 +99,15 @@ const familiesContent = [
       },
       {
         q: 'Does Evia charge a service fee?',
-        a: 'Evia charges families a nominal platform service fee on each booking to cover background checks, payment processing, and 7-day support. Caregivers keep 100% of their hourly rate.',
+        a: 'Evia adds a service fee to each visit’s charge to cover payment processing and coordinating the visit. Caregivers keep 100% of their hourly rate.',
       },
       {
         q: 'Are there membership plans?',
-        a: 'Yes. Our Premium membership reduces per-booking service fees and unlocks priority support and advanced search filters. You can also use Evia on a pay-as-you-go basis with no monthly commitment.',
+        a: 'One plan for families: $29.95/month, billed monthly, cancel anytime. Caregivers pay $54.99/year, which covers their background check.',
       },
       {
         q: 'What if I am charged incorrectly?',
-        a: 'Contact our support team within 7 days of the shift and we will review the hours log and issue a correction or refund as appropriate.',
+        a: 'Nothing is charged until you approve the hours. If the submitted hours look wrong, propose a correction from the Timesheets page (or tell Evia) before approving — the caregiver accepts or counters, and our team settles anything escalated.',
       },
     ],
   },

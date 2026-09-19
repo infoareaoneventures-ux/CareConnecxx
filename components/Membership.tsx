@@ -20,7 +20,7 @@ interface PlanFeature {
 }
 
 const PLAN_FEATURES: PlanFeature[] = [
-  { text: 'Unlimited caregiver messaging', included: true },
+  { text: 'Caregiver messaging', included: true },
   { text: 'AI-powered caregiver matching', included: true },
   { text: 'Schedule coordination tools', included: true },
   { text: 'Background-checked caregivers', included: true },
@@ -28,7 +28,7 @@ const PLAN_FEATURES: PlanFeature[] = [
   // 2026-09-18: 'GPS shift verification' removed until shift location capture ships;
   // 'emergency support' reworded to what exists (Evia by text around the clock,
   // urgent issues flagged to the team) — no one is on call.
-  { text: 'Evia available by text 24/7, urgent issues flagged to our team', included: true },
+  { text: 'Evia text support, 24/7', included: true },
 ];
 
 export default function Membership() {
@@ -184,7 +184,7 @@ export default function Membership() {
                 <Crown className="w-8 h-8" />
               </div>
               <div className="flex-1">
-                <h2 className="text-xl font-bold">Premium Member</h2>
+                <h2 className="text-xl font-bold">Standard Plan</h2>
                 <p className="text-primary-100">
                   {isCanceled 
                     ? `Your membership ends on ${subscription.currentPeriodEnd?.toLocaleDateString()}`
@@ -206,7 +206,7 @@ export default function Membership() {
             {isCanceled && (
               <div className="mt-4 p-4 bg-white/10 rounded-xl">
                 <p className="text-sm">
-                  Your membership is set to cancel. You'll lose access to premium features after {subscription.currentPeriodEnd?.toLocaleDateString()}.
+                  Your membership is set to cancel. You'll lose access to membership features after {subscription.currentPeriodEnd?.toLocaleDateString()}.
                 </p>
                 <button
                   onClick={handleReactivate}
@@ -341,7 +341,7 @@ export default function Membership() {
           <div className="bg-white rounded-2xl p-6 max-w-md w-full">
             <h3 className="text-xl font-bold text-slate-900 mb-2">Cancel Membership?</h3>
             <p className="text-slate-600 mb-6">
-              You'll continue to have access until {subscription?.currentPeriodEnd?.toLocaleDateString()}. After that, you'll lose access to premium features.
+              You'll continue to have access until {subscription?.currentPeriodEnd?.toLocaleDateString()}. After that, you'll lose access to membership features.
             </p>
             <div className="flex gap-3">
               <button

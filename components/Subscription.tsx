@@ -26,23 +26,23 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         },
         {
             question: "What's included in the $29.95/month fee?",
-            answer: "Everything! Unlimited caregiver matches, background checks, GPS time tracking, automated tax forms, messaging, and dedicated support."
+            answer: "Caregiver matching, background-checked caregivers, interview scheduling, shift clock-in/out with hours review, messaging, care plan tools, and Evia text support 24/7."
         },
         {
             question: "Do I pay caregivers separately?",
-            answer: "Yes. The $29.95/month subscription gives you access to the platform. You negotiate and pay caregivers directly for their services at rates you both agree on."
+            answer: "Yes. The $29.95/month membership gives you access to the platform. You pay caregivers at the rate they set, plus a per-visit service fee that is shown before you book."
         }
     ];
 
     const clientFeatures = [
-        "Unlimited AI-powered caregiver matches",
+        "AI-powered caregiver matching",
         "Comprehensive background checks",
-        "GPS time tracking & verification",
+        "Shift clock-in/out and hours review",
         "Automated tax forms (1099)",
         "Secure messaging & scheduling",
-        "24/7 dedicated support",
+        "Evia text support, 24/7",
         "Care plan management tools",
-        "Emergency SOS features",
+        "Emergency alert button during visits",
         "Family manager access"
     ];
 
@@ -62,7 +62,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
         <>
             <SEO
                 title="Pricing & Subscription Plans - Evia"
-                description="Evia pricing: $29.95/month for families seeking care, completely free for caregivers. No hidden fees, cancel anytime."
+                description="Evia pricing: $29.95/month for families, $54.99/year for caregivers. Cancel anytime."
                 keywords="caregiver pricing, senior care cost, caregiving subscription, affordable care platform, free for caregivers"
                 canonicalUrl="https://www.eviacares.com/pricing"
             />
@@ -149,7 +149,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                             <span className="text-2xl text-ink-600">.95</span>
                                             <span className="text-ink-600 font-medium">/month</span>
                                         </div>
-                                        <p className="text-sm text-ink-600">Cancel anytime • No hidden fees</p>
+                                        <p className="text-sm text-ink-600">Cancel anytime • Clear pricing</p>
                                     </div>
 
                                     <div className="space-y-4 mb-8">
@@ -251,7 +251,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                                 <div className="bg-primary-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
                                     <Shield className="w-8 h-8 text-primary-600" />
                                 </div>
-                                <h3 className="text-xl font-bold text-ink-900 mb-3">Premium Protection</h3>
+                                <h3 className="text-xl font-bold text-ink-900 mb-3">Trust &amp; Safety</h3>
                                 <p className="text-ink-600 leading-relaxed">
                                     Your subscription includes background checks, identity verification, and secure payments—peace of mind at an affordable price.
                                 </p>
@@ -341,7 +341,7 @@ export const Subscription: React.FC<SubscriptionProps> = ({ onNavigate }) => {
                             </Button>
                         </div>
                         <p className="text-primary-100 text-sm mt-6">
-                            Cancel anytime • No hidden fees
+                            Cancel anytime • Clear pricing
                         </p>
                     </div>
                 </section>

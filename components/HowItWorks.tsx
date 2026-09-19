@@ -32,7 +32,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "02",
          icon: <Search className="w-6 h-6" />,
          title: "Get Matched Instantly",
-         desc: "Our AI analyzes your needs and matches you with verified caregivers in Santa Clara County. View profiles, rates, experience, and reviews. All caregivers are background-checked and insured.",
+         desc: "Our AI analyzes your needs and matches you with verified caregivers in Santa Clara County. View profiles, rates, experience, and reviews. All caregivers are background-checked and identity-verified.",
          highlight: "Smart AI matching",
          color: "blue"
       },
@@ -48,7 +48,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
          step: "04",
          icon: <ShieldCheck className="w-6 h-6" />,
          title: "Book with Confidence",
-         desc: "Secure payments via Stripe, GPS time tracking, and 24/7 support included. Start care and get peace of mind.",
+         desc: "Secure payments via Stripe, clock-in/out tracking on every visit, and Evia text support 24/7. Start care and get peace of mind.",
          highlight: "Fully supported",
          color: "green"
       }
@@ -82,8 +82,8 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
       {
          step: "04",
          icon: <DollarSign className="w-6 h-6" />,
-         title: "Get Paid Instantly",
-         desc: "Clock in/out with GPS verification. Funds transfer to your bank automatically after each shift. Keep 100% of your rate - families pay the platform fee.",
+         title: "Get Paid Daily",
+         desc: "Clock in and out on every shift. Funds transfer to your bank automatically after each approved shift. Keep 100% of your rate — families pay the service fee.",
          highlight: "Fast payment",
          color: "green"
       }
@@ -92,15 +92,15 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
    const faqs = [
       {
          q: "How much does it cost?",
-         a: "Families pay $29.95/month for unlimited access to the platform, plus the caregiver's hourly rate ($22-35/hour). There are no hidden fees, no placement fees, and no long-term contracts. Caregivers join for free and keep 100% of their hourly rate."
+         a: "Families pay $29.95/month for the platform, plus the caregiver's hourly rate and a per-visit service fee that is shown before you book. No placement fees and no long-term contracts. Caregivers pay $54.99/year, which covers their background check, and keep 100% of their hourly rate."
       },
       {
          q: "How is this different from a traditional agency?",
-         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers directly at market rates ($22-35/hour) plus a flat monthly fee. You get more control, better transparency, and caregivers earn more."
+         a: "Traditional agencies charge $35-50/hour and keep 40-50% as their markup. With Evia, you pay caregivers at the rate they set, plus a flat monthly membership and a per-visit service fee. You get more control, better transparency, and caregivers earn more."
       },
       {
          q: "Are the caregivers really verified?",
-         a: "Yes. Every caregiver undergoes a comprehensive background check through Checkr, including criminal history, sex offender registry, and driving records. We also verify certifications."
+         a: "Yes. Every caregiver undergoes a comprehensive background check through Checkr, including criminal history and the sex offender registry — plus driving records for caregivers who add the Approved Driver check. We also verify identity through Stripe."
       },
       {
          q: "What areas do you serve?",
@@ -112,13 +112,13 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
       },
       {
          q: "How do payments work?",
-         a: "Families pay caregivers directly via secure Stripe integration. Caregivers clock in/out with GPS verification. Payment is processed automatically after each shift. Families receive invoices, caregivers get paid fast."
+         a: "Payments run through Stripe. Caregivers clock in and out on every shift; you review the hours, and your card is charged automatically once they're approved. Caregivers are paid out daily."
       }
    ];
 
    const features = [
       { icon: <ShieldCheck className="w-5 h-5" />, text: "Background checked" },
-      { icon: <Clock className="w-5 h-5" />, text: "GPS time tracking" },
+      { icon: <Clock className="w-5 h-5" />, text: "Clock-in/out tracking" },
       { icon: <Zap className="w-5 h-5" />, text: "Instant matching" }
    ];
 
@@ -232,7 +232,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <p className="text-lg text-ink-600 max-w-2xl mx-auto">
                         {activeTab === 'families' 
                            ? 'From search to care, we handle the hard parts so you can focus on your loved one.'
-                           : 'Join thousands of caregivers earning more with flexible schedules and instant payments.'
+                           : 'Join caregivers earning more with flexible schedules and daily payouts.'
                         }
                      </p>
                   </div>
@@ -293,7 +293,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <p className="mt-4 text-sm text-ink-600">
                         {activeTab === 'families' 
                            ? 'Free to browse. $29.95/month when you hire.' 
-                           : 'Free to join. Keep 100% of your rate.'
+                           : '$54.99/year. Keep 100% of your rate.'
                         }
                      </p>
                   </div>
@@ -304,7 +304,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
             <section className="py-20 bg-white">
                <div className="max-w-4xl mx-auto px-4 text-center">
                   <h2 className="font-display text-3xl font-semibold tracking-[-0.02em] text-ink-900 mb-4">Simple, transparent pricing</h2>
-                  <p className="text-ink-600 mb-12">No hidden fees. No surprises. Just straightforward care.</p>
+                  <p className="text-ink-600 mb-12">Clear pricing. No surprises. Just straightforward care.</p>
 
                   <div className="grid md:grid-cols-2 gap-8">
                      {/* Family Pricing */}
@@ -314,13 +314,13 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                            <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$29.95</span>
                            <span className="text-ink-600">/month</span>
                         </div>
-                        <p className="text-ink-600 mb-6">Plus caregiver hourly rate ($22-35/hour)</p>
+                        <p className="text-ink-600 mb-6">Plus the caregiver's hourly rate and a per-visit service fee</p>
                         <ul className="text-left space-y-3 mb-8">
                            {[
-                              'Unlimited caregiver matches',
+                              'Caregiver matching',
                               'Background checks included',
-                              'GPS time tracking',
-                              '24/7 customer support',
+                              'Clock-in/out tracking',
+                              'Evia text support, 24/7',
                               'Cancel anytime'
                            ].map((item, i) => (
                               <li key={i} className="flex items-center gap-3 text-ink-600">
@@ -338,7 +338,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      <div className="bg-accent-50 rounded-3xl p-8 border border-accent-100">
                         <div className="text-accent-600 font-semibold mb-2">For Caregivers</div>
                         <div className="flex items-baseline justify-center gap-2 mb-4">
-                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">Free</span>
+                           <span className="font-display text-5xl font-semibold tracking-[-0.02em] text-ink-900">$54.99<span className="text-2xl text-ink-500">/yr</span></span>
                         </div>
                         <p className="text-ink-600 mb-6">Keep 100% of your hourly rate</p>
                         <ul className="text-left space-y-3 mb-8">
@@ -469,14 +469,14 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               <tr>
                                  <td className="py-4 px-6 font-medium text-ink-900">Hourly Rate</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">$22-35/hour</span>
+                                    <span className="font-bold text-primary-700">The caregiver’s own rate</span>
                                  </td>
                                  <td className="py-4 px-6 text-center text-ink-600">$35-50/hour</td>
                               </tr>
                               <tr>
                                  <td className="py-4 px-6 font-medium text-ink-900">Agency Markup</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">None</span>
+                                    <span className="font-bold text-primary-700">None — a per-visit service fee, shown before you book</span>
                                  </td>
                                  <td className="py-4 px-6 text-center text-ink-600">40-50%</td>
                               </tr>
@@ -505,7 +505,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                               <tr>
                                  <td className="py-4 px-6 font-medium text-ink-900">Platform Fee</td>
                                  <td className="py-4 px-6 text-center bg-primary-50">
-                                    <span className="font-bold text-primary-700">$29.95/month</span>
+                                    <span className="font-bold text-primary-700">$29.95/month membership</span>
                                  </td>
                                  <td className="py-4 px-6 text-center text-ink-600">Hidden in markup</td>
                               </tr>
@@ -651,9 +651,9 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onNavigate }) => {
                      {[
                         { title: "Identity Verification", desc: "Every caregiver verified via Stripe & Checkr background checks" },
                         { title: "Secure Payments", desc: "No cash exchanges. All payments tracked via Stripe" },
-                        { title: "GPS Monitoring", desc: "Real-time check-ins ensure caregivers are on site when they clock in" },
+                        { title: "Shift Tracking", desc: "Caregivers clock in and out on every visit, and you see tasks and notes as they happen" },
                         { title: "Interview First", desc: "Meet your caregiver via video call before making any decisions" },
-                        { title: "24/7 Support", desc: "Our team is always available for emergencies" }
+                        { title: "Evia, 24/7", desc: "Text Evia any time; urgent issues are flagged to our team" }
                      ].map((item, i) => (
                         <div key={i} className="flex items-start gap-4 p-6 bg-slate-800 rounded-2xl border border-slate-700">
                            <CheckCircle className="w-6 h-6 text-primary-400 flex-shrink-0 mt-0.5" />

@@ -71,7 +71,7 @@ export const FamilyEmergency: React.FC<FamilyEmergencyProps> = ({ appointmentId 
 
             <h2 className="text-lg font-bold text-slate-900 mb-2">Send Emergency Alert?</h2>
             <p className="text-sm text-slate-600 mb-6">
-              This will immediately alert your caregiver, our support team, and your emergency contact.
+              This will immediately alert your caregiver and our support team.
             </p>
 
             <div className="flex gap-3">

@@ -213,7 +213,7 @@ export const ClientProfile: React.FC<ClientProfileProps> = ({ onNavigate, onShow
                   <h2 className="text-xl font-bold text-slate-900">{profile.name}</h2>
                   <p className="text-slate-500 text-sm">Member since 2023</p>
                 </div>
-                <Badge variant="success">Premium Plan</Badge>
+                <Badge variant="success">Standard Plan</Badge>
               </div>
               
               <div className="space-y-4">

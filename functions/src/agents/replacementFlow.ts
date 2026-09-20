@@ -26,8 +26,9 @@ import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepH
 import { bookingTimeToMinutes } from "./bookingResolution";
 import {
   findReplacementCandidates, loadReplacementShift, sendReplacementCandidateCards,
-  createReplacementRequest, describeVisitWindow, skipReplacementShift,
+  createReplacementRequest, describeVisitWindow, skipReplacementShift, rateLabel,
 } from "./shiftReplacement";
+import { billedHourly } from "./caregiverProfilePage";
 
 const db = admin.firestore();
 
@@ -170,7 +171,7 @@ function effectiveWindow(d: ReplacementFlowData): string {
 }
 
 function candidateList(d: ReplacementFlowData): string {
-  return d.candidates.map((c, i) => `${i + 1}. ${c.name}${c.rate ? ` — $${c.rate}/hr` : ""}`).join("\n");
+  return d.candidates.map((c, i) => `${i + 1}. ${c.name}${rateLabel(c.rate)}`).join("\n");
 }
 
 // The modal's two decisions in one question: who, and keep or change the
@@ -192,7 +193,7 @@ function TIME_QUESTION(d: ReplacementFlowData): string {
 }
 
 function RECAP(d: ReplacementFlowData): string {
-  return `Send a replacement request to ${d.caregiverName}${d.caregiverRate ? ` ($${d.caregiverRate}/hr)` : ""} for ${effectiveWindow(d)}?\n\n` +
+  return `Send a replacement request to ${d.caregiverName}${d.caregiverRate ? ` ($${d.caregiverRate}/hr · $${billedHourly(d.caregiverRate).toFixed(2)}/hr billed)` : ""} for ${effectiveWindow(d)}?\n\n` +
     `Reply YES to send it, NO to cancel, or tell me what to change (a different caregiver or day/time).`;
 }
 

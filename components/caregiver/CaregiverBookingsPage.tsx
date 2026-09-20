@@ -381,15 +381,17 @@ const RequestCard: React.FC<{
           const orderedDays = dayShiftTimes
             ? ALL_DAYS_ORDER.filter(d => dayShiftTimes[d]?.some(b => b.start && b.end))
             : [];
+          // One calendar day (e.g. a shift-replacement request): one visit, no weekly total.
+          const singleDay = !req.schedule?.ongoing && !!req.schedule?.startDate && req.schedule?.startDate === req.schedule?.endDate;
           return (
             <div className="space-y-1.5 text-sm text-slate-600 mb-4">
               {req.schedule?.startDate && (
                 <div className="flex items-center gap-2">
                   <CalendarDays className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span>Starts {fmtDate(req.schedule.startDate)}</span>
+                  <span>{singleDay ? 'One visit · ' : 'Starts '}{fmtDate(req.schedule.startDate)}</span>
                 </div>
               )}
-              {(req.schedule?.ongoing || req.schedule?.endDate) && (
+              {!singleDay && (req.schedule?.ongoing || req.schedule?.endDate) && (
                 <div className="flex items-center gap-2">
                   <Repeat className="w-4 h-4 text-slate-400 flex-shrink-0" />
                   {req.schedule.ongoing
@@ -416,7 +418,7 @@ const RequestCard: React.FC<{
                     {(() => {
                       const totalMins = orderedDays.reduce((sum, day) =>
                         sum + (dayShiftTimes![day]?.filter(b => b.start && b.end).reduce((s, b) => s + calcShiftMins(b.start, b.end), 0) || 0), 0);
-                      return totalMins > 0 ? (
+                      return totalMins > 0 && !singleDay ? (
                         <div className="text-xs font-semibold text-slate-500 mt-1 pt-1 border-t border-slate-100">
                           {fmtHours(totalMins)} / week
                         </div>

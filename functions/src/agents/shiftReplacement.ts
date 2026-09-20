@@ -25,6 +25,7 @@ const db = admin.firestore();
 // replacementFlow.ts — so the tool path and the conversation path can never
 // drift apart in what they write.
 
+import { billedHourly } from "./caregiverProfilePage";
 export type ReplacementShiftLoad =
   | { ok: true; shift: FirebaseFirestore.DocumentData; ref: FirebaseFirestore.DocumentReference }
   | { ok: false; code: "NOT_FOUND" | "PERMISSION_DENIED" | "INVALID_INPUT"; message: string };
@@ -70,6 +71,13 @@ export async function skipReplacementShift(clientId: string, shiftId: string): P
   };
 }
 
+// Same rate shape as the site's Find a replacement modal and every other
+// caregiver row: the caregiver's rate first, what the family is billed second.
+export function rateLabel(hourlyRate: number | null | undefined): string {
+  if (!hourlyRate) return "";
+  return ` — $${hourlyRate}/hr · $${billedHourly(hourlyRate).toFixed(2)}/hr billed`;
+}
+
 // Text the family one profile card per candidate (same tappable photo-preview
 // link every other gallery uses) and record the list on the session.
 // pendingMatchesSource:"replacement" marks it so a pick is a booking request
@@ -77,10 +85,10 @@ export async function skipReplacementShift(clientId: string, shiftId: string): P
 export async function sendReplacementCandidateCards(
   phone: string, chatId: string, shiftId: string, candidates: ReplacementCandidate[], nowIso: string,
 ): Promise<void> {
-  for (const c of candidates) {
+  for (const [i, c] of candidates.entries()) {
     try {
       await sendMessage(chatId,
-        `${c.name}${c.hourlyRate ? ` — $${c.hourlyRate}/hr` : ""}${c.source === "care_team" ? " (on your Care Team)" : ""}\n` +
+        `${i + 1}. ${c.name}${rateLabel(c.hourlyRate)}${c.source === "care_team" ? " (on your Care Team)" : ""}\n` +
         `Tap to view ${c.name.split(" ")[0]}'s profile: ${getAppUrl()}/p/${c.caregiverId}`,
       );
       await new Promise<void>((r) => setTimeout(r, 400));

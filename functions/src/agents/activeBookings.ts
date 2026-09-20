@@ -74,7 +74,9 @@ export interface ActiveBooking {
   endDate:           string | null;
   startDate:         string | null;
   weeklySchedule:    Array<{ day: string; blocks: Array<{ start: string; end: string }>; hours: string }>;
-  weeklyHours:       string;
+  /** Weekly total; null when the booking covers exactly one calendar day (one visit, e.g. a shift replacement) — the site shows no "/ week" total then. */
+  weeklyHours:       string | null;
+  singleVisit:       boolean;
   address:           string;
   rate:              number | null;
   paymentMethod:     string | null;
@@ -177,6 +179,7 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
       return { day, blocks: blocks.map((b) => ({ start: b.start, end: b.end })), hours: fmtHours(mins) };
     });
     const ongoing = Boolean(schedule.ongoing ?? base.recurringWeekly ?? false);
+    const singleVisit = !ongoing && !!schedule.startDate && schedule.startDate === schedule.endDate;
     const paymentMethod = (base.paymentMethod as string | undefined) ?? null;
     out.push({
       bookingRequestId:  (base.bookingRequestId as string | undefined) ?? null,
@@ -187,7 +190,8 @@ export async function listActiveBookings(clientId: string): Promise<ActiveBookin
       endDate:           ongoing ? null : ((schedule.endDate as string | undefined) ?? null),
       startDate:         (schedule.startDate as string | undefined) ?? null,
       weeklySchedule,
-      weeklyHours:       fmtHours(weeklyMinutes),
+      weeklyHours:       singleVisit ? null : fmtHours(weeklyMinutes),
+      singleVisit,
       address:           String(base.address ?? ""),
       rate:              (base.rate as number | undefined) ?? null,
       paymentMethod,

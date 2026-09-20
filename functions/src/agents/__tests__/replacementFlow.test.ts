@@ -154,7 +154,7 @@ describe("startReplacementFlow", () => {
     const r = await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });
     expect(r.started).toBe(true);
     const texts = sendMessage.mock.calls.map((c) => String(c[1]));
-    expect(texts[0]).toContain("Maria Santos — $28/hr");
+    expect(texts[0]).toContain("1. Maria Santos — $28/hr · $30.52/hr billed");
     expect(texts[0]).toContain("https://app.test/p/cg-maria");
     expect(texts.at(-1)).toContain("Which one would you like to send the request to?");
     expect(texts.at(-1)).toContain("Tuesday, September 15, 2026, 11:00 AM–1:00 PM");
@@ -257,7 +257,7 @@ describe("rp_pick", () => {
     expect(stored.replacementFlowStep).toBe("rp_confirm");
     expect(stored.replacementFlowData.caregiverName).toBe("Maria Santos");
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
-    expect(recap).toContain("Send a replacement request to Maria Santos ($28/hr) for Tuesday, September 15, 2026, 11:00 AM–1:00 PM?");
+    expect(recap).toContain("Send a replacement request to Maria Santos ($28/hr · $30.52/hr billed) for Tuesday, September 15, 2026, 11:00 AM–1:00 PM?");
     expect(recap).toContain("Reply YES to send it");
   });
 

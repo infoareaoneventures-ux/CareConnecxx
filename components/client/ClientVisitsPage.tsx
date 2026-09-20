@@ -258,7 +258,13 @@ function fmtHours(mins: number): string {
 // Tue ..." string with no per-day or weekly duration, while the caregiver's
 // equivalent card already showed both — same booking, same data, just a
 // less detailed client-side render).
-function WeeklyScheduleBlock({ dayShiftTimes }: { dayShiftTimes?: Record<string, Array<{ start: string; end: string }>> }) {
+// A schedule that covers exactly one calendar day (e.g. a shift-replacement
+// request): show it as one visit, never as a weekly total.
+function isSingleDaySchedule(sch?: { startDate?: string; endDate?: string; ongoing?: boolean } | null): boolean {
+  return !!sch && !sch.ongoing && !!sch.startDate && !!sch.endDate && sch.startDate === sch.endDate;
+}
+
+function WeeklyScheduleBlock({ dayShiftTimes, singleDay }: { dayShiftTimes?: Record<string, Array<{ start: string; end: string }>>; singleDay?: boolean }) {
   if (!dayShiftTimes || Object.keys(dayShiftTimes).length === 0) return null;
   const orderedDays = DAY_ORDER.filter(d => dayShiftTimes[d]?.some(b => b.start && b.end));
   if (orderedDays.length === 0) return null;
@@ -279,7 +285,7 @@ function WeeklyScheduleBlock({ dayShiftTimes }: { dayShiftTimes?: Record<string,
             </div>
           );
         })}
-        {totalMins > 0 && (
+        {totalMins > 0 && !singleDay && (
           <div className="text-xs font-semibold text-slate-500 mt-1 pt-1 border-t border-slate-100">
             {fmtHours(totalMins)} / week
           </div>
@@ -351,7 +357,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
                     <Repeat className="w-3 h-3" /> Ongoing
                   </span>
                 : booking.schedule?.endDate
-                  ? <span className="text-xs text-slate-500">Until {new Date(booking.schedule.endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  ? <span className="text-xs text-slate-500">{isSingleDaySchedule(booking.schedule) ? 'One visit · ' : 'Until '}{new Date(booking.schedule.endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   : null
               }
               {booking.jobTitle && <p className="text-xs text-slate-500 truncate">{booking.jobTitle}</p>}
@@ -371,10 +377,10 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
         {booking.schedule?.startDate && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>Starts {fmtDate(booking.schedule.startDate)}</span>
+            <span>{isSingleDaySchedule(booking.schedule) ? "" : "Starts "}{fmtDate(booking.schedule.startDate)}</span>
           </div>
         )}
-        <WeeklyScheduleBlock dayShiftTimes={booking.schedule?.dayShiftTimes} />
+        <WeeklyScheduleBlock dayShiftTimes={booking.schedule?.dayShiftTimes} singleDay={isSingleDaySchedule(booking.schedule)} />
         {booking.address && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
@@ -788,7 +794,7 @@ const ReplacementPickerModal: React.FC<ReplacementPickerModalProps> = ({ shift, 
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-800 truncate">{c.name}</p>
                   <p className="text-xs text-slate-400">
-                    {[c.source === 'care_team' ? 'On your Care Team' : null, c.hourlyRate != null ? `$${c.hourlyRate}/hr` : null]
+                    {[c.source === 'care_team' ? 'On your Care Team' : null, c.hourlyRate != null ? `$${c.hourlyRate}/hr · $${billedHourlyRate(Number(c.hourlyRate)).toFixed(2)}/hr billed` : null]
                       .filter(Boolean).join(' · ')}
                   </p>
                 </div>
@@ -1018,7 +1024,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     <Repeat className="w-3 h-3" /> Ongoing
                   </span>
                 : endDate
-                  ? <span className="text-xs text-slate-500">Until {new Date(endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  ? <span className="text-xs text-slate-500">{isSingleDaySchedule(base.schedule) ? 'One visit · ' : 'Until '}{new Date(endDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   : null
               }
               {schedulePaused && (
@@ -1042,10 +1048,10 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
         {base.schedule?.startDate && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <CalendarDays className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>Starts {fmtDate(base.schedule.startDate)}</span>
+            <span>{isSingleDaySchedule(base.schedule) ? "" : "Starts "}{fmtDate(base.schedule.startDate)}</span>
           </div>
         )}
-        <WeeklyScheduleBlock dayShiftTimes={base.schedule?.dayShiftTimes} />
+        <WeeklyScheduleBlock dayShiftTimes={base.schedule?.dayShiftTimes} singleDay={isSingleDaySchedule(base.schedule)} />
         {base.address && (
           <div className="flex items-start gap-2 text-sm text-slate-700">
             <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />

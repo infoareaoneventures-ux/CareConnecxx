@@ -8234,6 +8234,7 @@ async function executeToolCall(
       const requests = pbrSnap.docs
         .map((d): Record<string, unknown> => {
           const r = d.data() as Record<string, unknown>;
+          const sch = (r.schedule ?? {}) as Record<string, unknown>;
           return {
             bookingRequestId:   d.id,
             clientId:           r.clientId ?? null,
@@ -8242,6 +8243,8 @@ async function executeToolCall(
             caregiverName:      r.caregiverName ?? null,
             hourlyRate:         r.rate ?? r.hourlyRate ?? null,
             schedule:           r.schedule ?? null,
+            // One calendar day (startDate === endDate, not ongoing): describe it as one visit, never as a weekly schedule — same as the site's card.
+            singleVisit:        !sch.ongoing && !!sch.startDate && sch.startDate === sch.endDate,
             isShiftReplacement: r.isShiftReplacement ?? false,
             isResend:           r.isResend ?? false,
             createdAt:          r.createdAt ?? null,

@@ -2579,6 +2579,7 @@ export async function runQaAgent(params: {
       onboardingRole,
       effectiveOnboardingData,
       caregiverRateRangeText,
+      (session as any)?.__capturedThisTurn as string[] | undefined,
     );
   }
 
@@ -3416,7 +3417,14 @@ export async function runQaAgent(params: {
       }).catch(() => { /* non-critical — TTL guard in build handles stale flags */ });
     }
 
-    const repairReasons = getConversationRepairReasons(reply);
+    // Onboarding turns: the directive already enforces one question at a time,
+    // and the generic repair editor has no idea which role is texting — live
+    // 2026-09-20 it rewrote a correct caregiver reply ("what's your caregiving
+    // experience like?") into a family question ("what's the main care need for
+    // your loved one?"). Only the safety reason survives during onboarding.
+    const repairReasons = onboardingMode
+      ? getConversationRepairReasons(reply).filter((r) => r === "unsafe_medication_instruction")
+      : getConversationRepairReasons(reply);
     if (repairReasons.length > 0) {
       console.warn("qaAgent: conversation repair triggered", { userId, reasons: repairReasons, preview: reply.slice(0, 120) });
       metrics.conversationRepairTriggered = true;
@@ -3443,6 +3451,7 @@ export async function runQaAgent(params: {
             "- If the draft asks for multiple pieces of information, keep only the first missing item.",
             "- If the draft gives medication/dosing advice, replace it with: 'I can’t advise on changing meds. Please call her doctor or pharmacist. If this feels urgent, call 911 now.'",
             "- One short SMS. No lists, headers, markdown, corporate language, or third-person Evia references.",
+            `The person texting is ${userType === "caregiver" ? "a CAREGIVER talking about their OWN work and profile — never refer to 'your loved one'" : "a family member arranging care for a loved one"}.`,
             `Repair reasons: ${repairReasons.join(", ")}`,
             `User message: ${text.slice(0, 500)}`,
           ].join("\n"),

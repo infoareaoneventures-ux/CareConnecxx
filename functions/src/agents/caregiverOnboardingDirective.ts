@@ -50,6 +50,7 @@ const DEFAULT_RATE_RANGE_TEXT = `$${FALLBACK_RANGE.min}–${FALLBACK_RANGE.max}/
 export function buildCaregiverOnboardingDirective(
   onboardingData: Record<string, unknown> | undefined,
   rateRangeText: string = DEFAULT_RATE_RANGE_TEXT,
+  capturedThisTurn?: string[],
 ): string {
   const labelFor = (field: string): string => {
     if (field === "hourlyRate") return `their hourly rate (most caregivers charge ${rateRangeText})`;
@@ -79,13 +80,22 @@ export function buildCaregiverOnboardingDirective(
       `back like a form, do NOT send or mention any link (the next message walks them through ` +
       `their profile photo automatically), and do NOT ask for more details.`;
 
+  // Fields the pre-turn absorber captured from the message being answered
+  // RIGHT NOW. Without this the model saw the asked field as "already have
+  // it" and filed the SAME text under the next missing field (live
+  // 2026-09-20: a caregiver's name reply was saved as their city).
+  const capturedLabels = (capturedThisTurn ?? []).filter((f) => known.includes(f)).map((f) => labelFor(f));
+  const knownBlock = capturedLabels.length
+    ? `${knownLines}\n  ⚠ Their LAST message answered: ${capturedLabels.join(", ")} — already saved above. That message answers ONLY that item. Do NOT save its text into any other field (it is not their city, zip, rate, or anything else). Acknowledge it in a few words and ask the next STILL NEEDED item.`
+    : knownLines;
+
   return [
     `ONBOARDING IN PROGRESS — you are setting up this caregiver over text. Your job this`,
     `conversation is to collect the items below, naturally, like a real care-team recruiter who`,
     `leads a conversation — never a form.`,
     ``,
     `ALREADY KNOWN:`,
-    knownLines,
+    knownBlock,
     ``,
     `STILL NEEDED (one at a time, in roughly this order):`,
     missingLines,

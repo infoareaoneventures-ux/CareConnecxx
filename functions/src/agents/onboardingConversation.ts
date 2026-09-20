@@ -1706,6 +1706,20 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
       await sendMessage(chatId, msgConflict);
       return;
     }
+    // Cold-SMS parity with /start (createWebOnboardingSession): the site seeds
+    // users/{uid} {uid, phone, userType} the moment the phone is verified, so
+    // the app can resolve a role on login. The SMS path minted the Auth account
+    // at consent but wrote no users doc until much later — a caregiver who
+    // signed in mid-onboarding hit "Account connection problem" (live
+    // 2026-09-20). Texting Evia IS the connection, so eviaConnected is set too
+    // (the web bridge sets it on the first inbound for /start accounts).
+    const seededUid = await ensureWebAccount(phone, claimedRole, "");
+    if (seededUid) {
+      await db.collection("users").doc(seededUid).set(
+        { eviaConnected: true, eviaConnectedAt: admin.firestore.Timestamp.now() },
+        { merge: true },
+      ).catch(() => {/* non-critical */});
+    }
   }
 
   if (raw === "self") {

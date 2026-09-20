@@ -104,6 +104,14 @@ describe("supervise", () => {
     expect(out).toMatch(/what.*name/i);
   });
 
+  it("applies the rewrite when the JSON is fenced and followed by a trailing note", async () => {
+    hoisted.messagesCreate.mockResolvedValueOnce({
+      content: [{ type: "text", text: '```json' + String.fromCharCode(10) + '{"violation": true, "revised": "Got it. What city are you based in?"}' + String.fromCharCode(10) + '```' + String.fromCharCode(10) + 'Note: shortened for SMS.' }],
+    });
+    const out = await supervise("Please contact our team for help with that.", "+15551234567");
+    expect(out).toBe("Got it. What city are you based in?");
+  });
+
   it("falls back when Haiku returns malformed JSON", async () => {
     hoisted.messagesCreate.mockResolvedValueOnce({
       content: [{ text: "not json at all" }],

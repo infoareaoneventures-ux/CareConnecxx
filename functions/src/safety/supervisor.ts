@@ -47,7 +47,12 @@ export async function supervise(
 
     const raw = ((result.content[0] as { text: string }).text ?? "").trim();
     // Strip markdown code fences if model wraps the JSON
-    const jsonText = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    // Strip fences, then keep only the outermost {...} — the model sometimes
+    // adds a trailing note after the closing fence, which broke JSON.parse and
+    // silently dropped the rewrite (live 2026-09-20).
+    const unfenced = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const braceStart = unfenced.indexOf("{"); const braceEnd = unfenced.lastIndexOf("}");
+    const jsonText = braceStart >= 0 && braceEnd > braceStart ? unfenced.slice(braceStart, braceEnd + 1) : unfenced;
 
     let parsed: { violation: boolean; revised: string } | null = null;
     try {

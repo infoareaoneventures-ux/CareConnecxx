@@ -2281,6 +2281,9 @@ const handleInboundInner = traceable(
         await db.collection("agent_sessions").doc(phone)
           .set({ onboardingData: preAbsorbed }, { merge: true });
         (session as any).onboardingData = { ...preData, ...preAbsorbed };
+        // Tell the directive which fields THIS message just answered (qaAgent →
+        // buildOnboardingDirective) so the model never files the same text twice.
+        (session as any).__capturedThisTurn = Object.keys(preAbsorbed);
         console.info("webhooks: pre-turn absorber captured fields before loop", { phone, fields: Object.keys(preAbsorbed) });
       }
 

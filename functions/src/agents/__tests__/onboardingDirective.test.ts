@@ -146,3 +146,15 @@ describe("buildOnboardingDirective", () => {
     expect(d).toContain("never send a numbered list");
   });
 });
+
+describe("buildOnboardingDirective — fields captured from the current message (client)", () => {
+  it("names the just-answered field and forbids re-filing the same text elsewhere", () => {
+    const d = buildOnboardingDirective("client", { firstName: "Imran" }, undefined, ["firstName"]);
+    expect(d).toContain("Their LAST message answered:");
+    expect(d).toContain("Do NOT save its text into any other field");
+  });
+  it("ignores captured fields that are not actually known", () => {
+    const d = buildOnboardingDirective("client", {}, undefined, ["firstName"]);
+    expect(d).not.toContain("Their LAST message answered");
+  });
+});

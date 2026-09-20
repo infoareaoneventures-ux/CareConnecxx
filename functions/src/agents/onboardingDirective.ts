@@ -121,12 +121,13 @@ export function buildOnboardingDirective(
   role: OnboardingRole,
   onboardingData: Record<string, unknown> | undefined,
   caregiverRateRangeText?: string,
+  capturedThisTurn?: string[],
 ): string {
   // Caregiver collection has its own directive (same structure + tone contract,
   // caregiver field checklist, plus the deterministic gate-handoff block).
   // caregiverRateRangeText: live market-rate hint (utils/marketRateRange) —
   // optional so this stays a pure function; omitted → static default.
-  if (role === "caregiver") return buildCaregiverOnboardingDirective(onboardingData, caregiverRateRangeText);
+  if (role === "caregiver") return buildCaregiverOnboardingDirective(onboardingData, caregiverRateRangeText, capturedThisTurn);
 
   const data    = onboardingData ?? {};
   const missing = missingRequiredFields(role, data);
@@ -189,13 +190,22 @@ export function buildOnboardingDirective(
       `it, treat it as addressed even though it has no value here — do not ask again, and call ` +
       `complete_collection now instead of waiting for a value that will never come.`;
 
+  // Fields the pre-turn absorber captured from the message being answered
+  // RIGHT NOW. Without this the model saw the asked field as "already have
+  // it" and filed the SAME text under the next missing field (live
+  // 2026-09-20: a caregiver's name reply was saved as their city).
+  const capturedLabels = (capturedThisTurn ?? []).filter((f) => known.includes(f)).map((f) => labelFor(f));
+  const knownBlock = capturedLabels.length
+    ? `${knownLines}\n  ⚠ Their LAST message answered: ${capturedLabels.join(", ")} — already saved above. That message answers ONLY that item. Do NOT save its text into any other field (it is not their city, zip, rate, or anything else). Acknowledge it in a few words and ask the next STILL NEEDED item.`
+    : knownLines;
+
   return [
     `ONBOARDING IN PROGRESS — you are setting up this ${audience} over text, following the`,
     `same steps as the Evia web setup wizard. Your job is to collect the items below`,
     `naturally, like a real care coordinator — never a form, one question at a time.`,
     ``,
     `ALREADY KNOWN:`,
-    knownLines,
+    knownBlock,
     ``,
     `STILL NEEDED (collect in EXACTLY this wizard order):`,
     missingLines,

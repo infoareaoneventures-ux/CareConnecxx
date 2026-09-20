@@ -109,6 +109,7 @@ function shiftRow(s: ShiftDoc, base: ShiftDoc): ActiveBookingShift {
   }
   if (s.status === "needs_replacement") {
     if (s.replacementRequestId) actions.push("choose_someone_else");
+    else if (ds === "overdue") actions.push("skip"); // the page hides Find replacement once the window passed
     else actions.push("find_replacement", "skip");
   }
   return {

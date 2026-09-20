@@ -104,11 +104,13 @@ describe("listActiveBookings", () => {
     shift("live", { date: "2099-09-22", status: "in-progress" });
     shift("nr", { date: "2099-09-23", status: "needs_replacement" });
     shift("nr2", { date: "2099-09-24", status: "needs_replacement", replacementRequestId: "br-repl", replacementCaregiverName: "Maya" });
+    shift("nrPast", { date: "2026-01-06", startTime: "09:00", endTime: "10:00", status: "needs_replacement" }); // window passed → Overdue, Skip only
     const [b] = await listActiveBookings("c1");
     const byId = Object.fromEntries(b.upcomingShifts.map((s) => [s.id, s]));
     expect(byId.past).toMatchObject({ displayStatus: "overdue", actions: ["cancel_visit"] });
     expect(byId.live).toMatchObject({ displayStatus: "in-progress", actions: [] });
     expect(byId.nr).toMatchObject({ displayStatus: "needs_replacement", actions: ["find_replacement", "skip"], replacement: { status: "needs_choice" } });
+    expect(byId.nrPast).toMatchObject({ displayStatus: "overdue", actions: ["skip"] });
     expect(byId.nr2).toMatchObject({ actions: ["choose_someone_else"], replacement: { status: "waiting_on_caregiver", requestId: "br-repl", caregiverName: "Maya" } });
   });
 

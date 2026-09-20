@@ -225,6 +225,8 @@ export async function proposeShiftReschedule(args: {
 
 // ── The page's status pill (utils/shiftUtils.ts shiftDisplayStatus) ─────────
 export function shiftDisplayStatus(v: { status?: unknown; date?: unknown; startTime?: unknown; endTime?: unknown }): string {
+  // Mirrors the page: a needs_replacement visit whose window passed is Overdue.
+  if (v.status === "needs_replacement") return isShiftOverdue({ ...v, status: "scheduled" }) ? "overdue" : "needs_replacement";
   if (v.status !== "scheduled") return String(v.status ?? "");
   return isShiftOverdue(v) ? "overdue" : "scheduled";
 }

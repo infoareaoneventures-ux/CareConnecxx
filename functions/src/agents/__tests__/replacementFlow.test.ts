@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // replacementFlow.ts (2026-09-14): the website's Find Replacement modal as a
 // scripted SMS flow — candidates + keep/change the visit's date/time → pick →
@@ -146,7 +146,12 @@ beforeEach(() => {
   hoisted.reset();
   sendMessage.mockClear();
   messagesCreate.mockReset();
+  // Fixtures are dated 2026-09-15; pin "today" before that so they stay upcoming
+  // (a past needs_replacement visit now routes to the Skip confirm — see below).
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-14T19:00:00Z"));
 });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("startReplacementFlow", () => {
   it("texts each candidate's card, records pendingMatches as a replacement list, and asks the modal's one question", async () => {
@@ -173,6 +178,17 @@ describe("startReplacementFlow", () => {
     expect(r.started).toBe(false);
     expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBeUndefined();
     expect(String(sendMessage.mock.calls[0][1])).toContain("isn't waiting on a replacement");
+  });
+
+  it("a needs_replacement visit whose window already passed offers only Skip (the page hides Find replacement)", async () => {
+    seedNeedsReplacement();
+    vi.setSystemTime(new Date("2026-09-16T19:00:00Z")); // the day after the visit
+    const r = await startReplacementFlow(PHONE, CHAT, session(), { shiftId: "sh1" });
+    expect(r).toEqual({ started: true, reason: "past_visit" });
+    const sent = String(sendMessage.mock.calls[0][1]);
+    expect(sent).toContain("has already passed without a replacement");
+    expect(sent).toContain("Reply YES to skip it");
+    expect(hoisted.docState.get(`agent_sessions/${PHONE}`).replacementFlowStep).toBe("rp_skip_confirm");
   });
 
   it("when nobody is available, says so plainly and offers the site's only other button — Skip — as a real YES/NO step", async () => {

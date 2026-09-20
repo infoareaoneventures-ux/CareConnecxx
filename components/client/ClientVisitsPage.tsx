@@ -1349,13 +1349,13 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs text-amber-800 flex-1 min-w-[160px]">Your caregiver cancelled this visit.</p>
-                      <button
+                      <p className="text-xs text-amber-800 flex-1 min-w-[160px]">{ds === 'overdue' ? 'Your caregiver cancelled this visit and it passed without a replacement.' : 'Your caregiver cancelled this visit.'}</p>
+                      {ds !== 'overdue' && <button
                         onClick={() => onFindReplacement(s)}
                         className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors"
                       >
                         Find replacement
-                      </button>
+                      </button>}
                       <button
                         onClick={() => onSkipReplacement(s.id)}
                         className="px-3 py-1.5 border border-amber-300 hover:bg-amber-100 text-amber-700 text-xs font-semibold rounded-xl transition-colors"

@@ -24,6 +24,7 @@ import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { logAudit } from "../observability/auditLog";
 import { isBackOutRequest, TRIVIAL_CONFIRM_WORDS, bareNumberPick } from "./stepHandler";
 import { bookingTimeToMinutes } from "./bookingResolution";
+import { shiftDisplayStatus } from "./shiftReschedule";
 import {
   findReplacementCandidates, loadReplacementShift, sendReplacementCandidateCards,
   createReplacementRequest, describeVisitWindow, skipReplacementShift, rateLabel,
@@ -215,6 +216,23 @@ export async function startReplacementFlow(
     return { started: false, reason: loaded.code.toLowerCase() };
   }
   const shift = loaded.shift;
+  // The page hides Find replacement once the visit's window has passed —
+  // nobody can cover a visit that already happened. Offer Skip instead.
+  if (shiftDisplayStatus(shift) === "overdue") {
+    const past: ReplacementFlowData = {
+      shiftId: args.shiftId, candidates: [],
+      visitDate: String(shift.date ?? ""), visitStart: String(shift.startTime ?? ""), visitEnd: String(shift.endTime ?? shift.startTime ?? ""),
+    };
+    await db.collection("agent_sessions").doc(phone).update({
+      replacementFlowStep: "rp_skip_confirm",
+      replacementFlowData: past,
+      stateExpiresAt:      new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    await sendMessage(chatId,
+      `The ${describeVisitWindow({ date: past.visitDate, startTime: past.visitStart, endTime: past.visitEnd })} visit has already passed without a replacement, so there's nothing to cover now. ` +
+      `Want me to skip it so it drops off your bookings? Reply YES to skip it, or NO to leave it as is.`);
+    return { started: true, reason: "past_visit" };
+  }
   const candidates = await findReplacementCandidates(clientId, shift.caregiverId as string, shift as { careRecipients?: Array<{ careNeeds?: string[] }> });
   const nowIso = new Date().toISOString();
   if (candidates.length === 0) {

@@ -25,7 +25,10 @@ export function shiftDisplayStatus(shift: {
   startTime?: string;
   endTime?: string;
 }): ShiftDisplayStatus {
-  if (shift.status !== 'scheduled') return shift.status as ShiftDisplayStatus;
+  // A caregiver-cancelled visit nobody covered ages out like any other: once its
+  // window has passed it is Overdue, not "Needs Replacement" forever (live
+  // 2026-09-20: a 1:30 PM visit still offered Find replacement at 2:49 PM).
+  if (shift.status !== 'scheduled' && shift.status !== 'needs_replacement') return shift.status as ShiftDisplayStatus;
 
   const now = new Date();
   const todayStr = localDateStr(now);
@@ -37,7 +40,7 @@ export function shiftDisplayStatus(shift: {
   // Treat the effective end as endMins + 1440 so the shift isn't falsely overdue.
   const effectiveEndMins = endMins < startMins ? endMins + 1440 : endMins;
   if (shift.date < todayStr || (shift.date === todayStr && effectiveEndMins <= nowMins)) return 'overdue';
-  return 'scheduled';
+  return shift.status as ShiftDisplayStatus;
 }
 
 /** Tailwind classes for calendar event blocks */

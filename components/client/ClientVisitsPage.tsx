@@ -14,6 +14,7 @@ import { shiftDisplayStatus, shiftStatusBadgeClass, shiftStatusLabel } from '../
 import { isCaregiverBookable } from '../../utils/caregiverEligibility';
 import { paymentMethodLabel } from '../../types';
 import { VisitProgressPanel } from './VisitProgressPanel';
+import { billedHourlyRate } from '../../utils/pricing';
 
 interface Shift {
   id: string;
@@ -387,6 +388,7 @@ const PendingBookingCard: React.FC<PendingBookingCardProps> = ({ booking, onCanc
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${booking.rate}/hr</span>
+              <span className="text-slate-400"> · ${billedHourlyRate(Number(booking.rate)).toFixed(2)}/hr billed</span>
               <span className="text-slate-400"> · {booking.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(booking.paymentMethod)}</span>
             </span>
           </div>
@@ -1057,6 +1059,7 @@ const ActiveVisitGroupCard: React.FC<ActiveVisitGroupCardProps> = ({ shifts, onC
               : <Banknote className="w-4 h-4 text-slate-400 shrink-0" />}
             <span>
               <span className="font-semibold">${base.rate}/hr</span>
+              <span className="text-slate-400"> · ${billedHourlyRate(Number(base.rate)).toFixed(2)}/hr billed</span>
               <span className="text-slate-400"> · {base.paymentMethod === 'credit' ? 'Card' : paymentMethodLabel(base.paymentMethod)}</span>
             </span>
           </div>
@@ -1609,15 +1612,8 @@ const PastVisitGroupCard: React.FC<PastVisitGroupCardProps> = ({ shifts, navigat
                       </div>
                     )}
                   </div>
-                  {/* Tasks per recipient + visit notes — same panel as the live view */}
-                  <VisitProgressPanel shift={s} />
-                  {/* Caregiver notes */}
-                  {s.completionNotes && (
-                    <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
-                      <p className="text-xs text-slate-600">{s.completionNotes}</p>
-                    </div>
-                  )}
+                  {/* Notes first (log + closing note, one block), then the tasks collapsed to a count — same panel as the live view */}
+                  <VisitProgressPanel shift={s} completionNotes={s.completionNotes} />
                 </div>
               )}
             </div>

@@ -1,172 +1,12 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
-import { getSharedClient } from "../utils/claudeClient";
-import { AgentSession } from "../linq/client";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { getPermissions } from "../agents/permissionsConversation";
-import { handlePromptGet } from "../mcp/server";
-import { getMemoryContext } from "../memory/memoryFiles";
-import { getRelevantFacts } from "../memory/learnedFacts";
 import { generateCaraMessage } from "../utils/caraMessage";
-import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
-import { caraOutputGuardEnabled } from "../config/featureFlags";
-import { parseWellness, describeWellness } from "../agents/careEvidence";
-import { formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
 // ── Data loaders ──────────────────────────────────────────────────────────────
 
-async function getWeekData(seniorId: string, userId: string) {
-  const now     = new Date();
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  // appointments uses `isoDate` (full ISO string); shifts (2026-08-30
-  // pipeline) has no such field, only a plain `date` (YYYY-MM-DD) — queried
-  // separately at day granularity and merged.
-  const todayStr = now.toISOString().slice(0, 10);
-  const [journalSnap, pastApptSnap, pastShiftSnap, upcomingApptSnap, upcomingShiftSnap, seniorSnap, userSnap] = await Promise.all([
-    db.collection("care_journal")
-      .where("seniorId", "==", seniorId)
-      .where("timestamp", ">=", weekAgo)
-      .orderBy("timestamp", "desc")
-      .limit(10)
-      .get(),
-    db.collection("appointments")
-      .where("clientId", "==", userId)
-      .where("isoDate", ">=", weekAgo)
-      .where("isoDate", "<=", now.toISOString())
-      .where("status", "==", "completed")
-      .limit(10)
-      .get(),
-    db.collection("shifts")
-      .where("clientId", "==", userId)
-      .where("date", ">=", weekAgo.slice(0, 10))
-      .where("date", "<=", todayStr)
-      .where("status", "==", "completed")
-      .limit(10)
-      .get(),
-    db.collection("appointments")
-      .where("clientId", "==", userId)
-      .where("isoDate", ">", now.toISOString())
-      .where("isoDate", "<=", weekAhead)
-      .where("status", "in", ["confirmed", "pending_caregiver_confirmation"])
-      .orderBy("isoDate", "asc")
-      .limit(5)
-      .get(),
-    db.collection("shifts")
-      .where("clientId", "==", userId)
-      .where("date", ">=", todayStr)
-      .where("date", "<=", weekAhead.slice(0, 10))
-      .where("status", "==", "scheduled")
-      .orderBy("date", "asc")
-      .limit(5)
-      .get(),
-    db.collection("senior_profiles").doc(seniorId).get(),
-    db.collection("users").doc(userId).get(),
-  ]);
-
-  return {
-    journal:    journalSnap.docs.map(d => d.data()),
-    pastAppts:  [...pastApptSnap.docs, ...pastShiftSnap.docs].map(d => d.data()),
-    upcoming:   [...upcomingApptSnap.docs, ...upcomingShiftSnap.docs]
-      .map(d => d.data())
-      .sort((a, b) => String(a.date ?? a.isoDate ?? "").localeCompare(String(b.date ?? b.isoDate ?? ""))),
-    seniorName: seniorSnap.data()?.name ?? "your loved one",
-    clientName: userSnap.data()?.firstName ?? userSnap.data()?.name?.split(" ")[0] ?? "there",
-  };
-}
-
-// ── Claude digest generation ──────────────────────────────────────────────────
-
-// Journal lines for the digest prompt, tri-state (U1/R2/AE1): an entry that
-// omitted ateWell/tookMeds says "not recorded" — it is never rendered as
-// "appetite concerns" or "meds missed". Exported for tests.
-export function buildJournalContext(journal: Array<Record<string, unknown>>): string {
-  return journal.map(e => {
-    const line = describeWellness(parseWellness(e));
-    return `- ${(e.timestamp as string)?.slice(0, 10)}: ${line}. Notes: ${(e.notes as string)?.slice(0, 150) ?? "none"}`;
-  }).join("\n");
-}
-
-// Exported for tests (U2 — anti-invention clause + output guard).
-export async function generateDigest(data: Awaited<ReturnType<typeof getWeekData>>, userId: string): Promise<string> {
-  const { journal, pastAppts, upcoming, seniorName, clientName } = data;
-
-  const [memCtx, facts] = await Promise.all([
-    getMemoryContext(userId).catch(() => ""),
-    getRelevantFacts(userId).catch(() => [] as { fact: string; category: string }[]),
-  ]);
-
-  const topFacts = facts
-    .filter((f) => f.category === "medical" || f.category === "preference")
-    .slice(0, 3)
-    .map((f) => f.fact);
-
-  if (journal.length === 0 && pastAppts.length === 0) {
-    return `Good morning ${clientName}. No visits were logged this week for ${seniorName}. If this seems wrong, please check the app or contact support.`;
-  }
-
-  const journalContext = buildJournalContext(journal);
-
-  const apptContext = upcoming.map(a =>
-    `- ${formatDateForDisplay(a.date)} at ${formatHHMMForDisplay(a.time ?? a.startTime)} with ${a.caregiverName}`
-  ).join("\n");
-
-  const completedCount = pastAppts.length;
-  const now = new Date();
-  const dayName = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "America/Los_Angeles" });
-
-  const factsLine = topFacts.length > 0
-    ? `Care notes on file: ${topFacts.join("; ")}.`
-    : "";
-  const memLine = memCtx ? memCtx.slice(0, 400) : "";
-
-  const prompt = handlePromptGet("weekly-care-summary", {
-    clientName,
-    seniorName,
-    completedCount: String(completedCount),
-    journalContext: journalContext || "None",
-    apptContext:    apptContext    || "Nothing scheduled yet",
-    careNotes:      factsLine,
-    memoryContext:  memLine,
-  });
-
-  // Deterministic digest — sent on API failure AND when the model output is
-  // rejected by the output guard (U2, R2): raw meta-responses/URLs never ship.
-  const fallbackDigest = () =>
-    `Good morning ${clientName}. Here's ${seniorName}'s week:\n\n` +
-    `${completedCount} visit(s) completed\n\n` +
-    (apptContext ? `Coming up:\n${apptContext}\n\n` : "") +
-    `Have a wonderful ${dayName}.`;
-
-  try {
-    const response = await getSharedClient().messages.create({
-      model:      "claude-sonnet-4-6",
-      max_tokens: 400,
-      // U2: the digest prompt arrives fully-formed via handlePromptGet as the
-      // user message, so the anti-invention rule rides in the system slot.
-      system:     ANTI_INVENTION_CLAUSE,
-      messages:   [{ role: "user", content: prompt }],
-    });
-    const text = ((response.content[0] as { text: string }).text ?? "").trim();
-    if (text && caraOutputGuardEnabled() && !guardModelOutput(text).ok) {
-      return fallbackDigest();
-    }
-    return text;
-  } catch (err) {
-    console.error("weeklyDigest Claude error:", err);
-    return fallbackDigest();
-  }
-}
-
-// ── Caregiver earnings (shiftHours rail) ─────────────────────────────────────
-// Successful visits bill through the shiftHours rail now; the legacy
-// visit_payments collection is no longer written for them, so the weekly
-// earnings summary reads shiftHours. A shift counts toward "this week's
-// earnings" once the client has approved it — money that is on its way or
-// already sent. pending_client_review is excluded: it is not yet confirmed.
 export const EARNED_SHIFT_STATUSES: ReadonlySet<string> = new Set([
   "approved",
   "auto_approved",
@@ -214,50 +54,13 @@ async function runInBatches<T>(items: T[], size: number, fn: (item: T) => Promis
 }
 
 // Send one client's weekly care digest. Returns true when a digest was sent.
-async function sendClientDigest(sessionDoc: any, today: string): Promise<boolean> {
-  const session = sessionDoc.data() as AgentSession;
-  if (!session.userId || session.optedIn === false) return false;
-
-  const phone = sessionDoc.id;
-  const perms = await getPermissions(session.userId).catch(() => null);
-  if (perms !== null && perms.canSendWeeklyDigest === false) return false;
-
-  const seniorId = session.seniorId ?? session.userId;
-  const data     = await getWeekData(seniorId, session.userId);
-  const digest   = await generateDigest(data, session.userId);
-
-  await sendViaInteractionAgent(phone, {
-    content:     digest,
-    urgency:     "standard",
-    sourceAgent: "weekly_digest",
-    canDrop:     true,
-  });
-
-  await db.collection("weekly_digests").doc(`${session.userId}_${today}`).set({
-    clientId:  session.userId,
-    seniorId,
-    phone,
-    sentAt:    new Date().toISOString(),
-    digestLen: digest.length,
-  });
-  return true;
-}
-
 export async function runWeeklyDigests(): Promise<number> {
   const today = new Date().toISOString().slice(0, 10);
 
-  const sessionsSnap = await db
-    .collection("agent_sessions")
-    .where("optedOut", "==", false)
-    .get();
-
-  const sent = await runInBatches(sessionsSnap.docs, DIGEST_BATCH_SIZE, (doc) =>
-    sendClientDigest(doc, today).catch((err) => {
-      console.error(`weeklyDigest error for session ${doc.id}:`, err);
-      return false;
-    }),
-  );
-
+  // 2026-09-20 (founder): the FAMILY digest was removed — Evia-only, no site
+  // counterpart, and every visit already reaches the family as it happens
+  // (start, tasks, notes, recap, hours). The caregiver earnings summary below
+  // stays for the caregiver pass.
   // ── Caregiver earnings summaries ─────────────────────────────────────────────
   const cgSessionsSnap = await db
     .collection("agent_sessions")
@@ -274,9 +77,8 @@ export async function runWeeklyDigests(): Promise<number> {
     }),
   );
 
-  const total = sent + cgSent;
-  console.log(`weeklyDigest: sent ${total} digests (${sent} client, ${cgSent} caregiver)`);
-  return total;
+  console.log(`weeklyDigest: sent ${cgSent} caregiver earnings digests`);
+  return cgSent;
 }
 
 // Send one caregiver's weekly earnings summary. Returns true when sent.
@@ -340,7 +142,7 @@ async function sendCaregiverEarnings(cgDoc: any, weekAgo: string, today: string)
   return true;
 }
 
-// ── Scheduled function — every Sunday at 8am ET ───────────────────────────────
+// ── Scheduled function — every Sunday at 8am ET (caregiver earnings only since 2026-09-20) ───────────────────────────────
 
 export const sendWeeklyDigests = functions.pubsub
   .schedule("0 13 * * 0") // 8am ET = 13:00 UTC

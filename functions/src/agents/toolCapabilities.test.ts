@@ -49,7 +49,7 @@ describe("selectToolsForIntent", () => {
       const filtered = names(selectToolsForIntent(MCP_TOOLS, intent));
       expect(filtered.has("perform_web_action")).toBe(false);
       expect(filtered.has("search_healthcare_provider")).toBe(false);
-      expect(filtered.has("get_care_journal")).toBe(true);
+      expect(filtered.has("get_care_journal_client")).toBe(true);
     }
   });
 

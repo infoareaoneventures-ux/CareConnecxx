@@ -40,7 +40,7 @@ import { buildOnboardingDirective } from "./onboardingDirective";
 import { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } from "./clientJobPostingContract";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
-import { parseWellness, describeWellness, selectNextAppointment } from "./careEvidence";
+import { selectNextAppointment } from "./careEvidence";
 import { buildCareSituation, situationHealth, CARE_SITUATION_CAPABILITY } from "./careSituation";
 import { projectCareSituation } from "./careSituationProjection";
 import { getRolloutDecision } from "../config/rolloutPolicy";
@@ -132,14 +132,21 @@ async function getSeniorProfile(seniorId: string) {
   return profile;
 }
 
-async function getRecentJournalEntries(seniorId: string, limit = 3) {
-  const snap = await db
-    .collection("care_journal")
-    .where("seniorId", "==", seniorId)
-    .orderBy("timestamp", "desc")
-    .limit(limit)
-    .get();
-  return snap.docs.map((d) => d.data());
+// The caregiver's notes from the family's most recent completed visits — the shift
+// record (notesLog + completionNotes), the same words the Past Bookings card shows.
+// Replaced the legacy care_journal read (2026-09-20). No orderBy → no composite index.
+async function getRecentVisitNotes(userId: string, limit = 3) {
+  const snap = await db.collection("shifts").where("clientId", "==", userId).where("status", "==", "completed").limit(40).get();
+  return snap.docs
+    .map((d) => d.data())
+    .sort((a, b) => String(b.completedAt ?? b.date ?? "").localeCompare(String(a.completedAt ?? a.date ?? "")))
+    .slice(0, limit)
+    .map((s) => {
+      const log = (Array.isArray(s.notesLog) ? s.notesLog : []) as Array<{ text?: unknown }>;
+      const notes = log.map((n) => String(n.text ?? "").trim()).filter(Boolean);
+      if (typeof s.completionNotes === "string" && s.completionNotes.trim()) notes.push(s.completionNotes.trim());
+      return { timestamp: String(s.completedAt ?? s.date ?? ""), date: String(s.date ?? ""), caregiverName: String(s.caregiverName ?? "the caregiver"), notes: notes.join(" | ") };
+    });
 }
 
 async function getNextAppointment(userId: string) {
@@ -359,8 +366,8 @@ export const MEMORY_SOURCE_PRIORITY_POLICY = [
   "<memory_source_priority>",
   "When sources disagree, use this order:",
   "1. The user's latest message in this turn.",
-  "2. Fresh tool results or live Firestore state from this turn, including care plan, appointments, shiftHours, invoices, Checkr, and care journal reads.",
-  "3. Recent care journal entries and active visit context already loaded into this prompt.",
+  "2. Fresh tool results or live Firestore state from this turn, including care plan, appointments, shiftHours, invoices, Checkr, and visit-note reads.",
+  "3. Recent visit notes and active visit context already loaded into this prompt.",
   "4. Learned facts that are not superseded.",
   "5. Memory files and Zep long-term context.",
   "Never use older memory to override a newer user correction or a fresh tool result. If a memory fact conflicts with a tool result, trust the tool result, mention the current value only, and use edit_memory_file or update_memory_file when a memory tool is available. If the user asks you to forget or stop remembering a fact, retract or edit it instead of repeating it.",
@@ -703,15 +710,12 @@ export function buildClientSystemPrompt(
 
   // Tri-state wellness rendering (U1/R2/AE1): omitted fields are "not
   // recorded", never "appetite concerns" / "medications missed".
+  // The caregiver's own words from the last completed visits — never a wellness read.
   const journalSummary = journal.length
     ? journal
-        .map((e) => {
-          const line = describeWellness(parseWellness(e));
-          const note = e.notes ? `Notes: ${e.notes.slice(0, 200)}` : "";
-          return `- Visit on ${e.timestamp?.slice(0, 10)}: ${line}. ${note}`;
-        })
+        .map((e) => `- Visit on ${String(e.date ?? e.timestamp ?? "").slice(0, 10)} with ${e.caregiverName ?? "the caregiver"}: ${e.notes ? `"${String(e.notes).slice(0, 240)}"` : "no notes written"}`)
         .join("\n")
-    : "No recent journal entries.";
+    : "No visit notes yet.";
 
   const apptLine = nextAppt
     ? `Next visit: ${formatDateWithWeekday(nextAppt.date)} ${nextAppt.startTime ? `at ${formatHHMMForDisplay(nextAppt.startTime)}` : ""} with ${nextAppt.caregiverName ?? "your caregiver"}.`
@@ -775,7 +779,7 @@ export function buildClientSystemPrompt(
     factsSection,
     visitSection,
     patternSection,
-    `Recent care journal:`,
+    `Recent visit notes (the caregiver's own words — quote, never interpret):`,
     journalSummary,
     ``,
     apptLine,
@@ -795,7 +799,7 @@ export function buildClientSystemPrompt(
     `If a tool result contains "_toolError": true, tell the user you can't access that right now and offer to try again.`,
     ``,
     `TOOLS — use them proactively and in sequence:`,
-    `- For questions about appointments, journal entries, or health data, call the relevant tool rather than guessing from cached context.`,
+    `- For questions about appointments, visit notes, or health data, call the relevant tool rather than guessing from cached context.`,
     `- For multi-step requests (e.g. "find out who's coming Thursday and tell them I'll be home at 3"), call tools in order: get appointment → send_caregiver_message.`,
     `- You can take real actions on behalf of the family:`,
     `  · send_caregiver_message — the Inbox composer: posts the family's message into their shared thread with that caregiver; the caregiver is notified like any website message (in-app + text). Tell the family what you're sending first; never claim you texted the caregiver separately.`,
@@ -849,7 +853,6 @@ export function buildClientSystemPrompt(
     `  · set_recipient_photo — the Care Plan page's recipient photo (the tab avatar). When the family sends a picture of a care recipient ("this is Samira"), the photo they just attached IS the file — save it with this. One recipient on file → just save; several and no name → ask which. If photos won't come through on their phone, send the Care Plan page link so they can upload it there.`,
     `  · create_job_post — post a new caregiver job so nearby caregivers can apply. Collect care needs, schedule, and hourly rate; confirm, then call.`,
     `  · delete_review — remove a review the family left for a caregiver. Permanent — confirm first.`,
-    `  · delete_care_journal_entry — hide an incorrect care-journal entry from the family view (soft-delete, audit retained). Confirm first.`,
     `  · log_match_feedback — record the family's qualitative take on a caregiver match ("great with mom but often late"). Feeds future matching; separate from start_review_flow (the public review).`,
     `  · list_support_tickets / get_support_ticket — check the family's existing support tickets so you can give a status update instead of opening a duplicate.`,
     `  · update_support_ticket — add a follow-up note to, or reopen, one of the family's own tickets.`,
@@ -860,7 +863,7 @@ export function buildClientSystemPrompt(
     `  · list_job_applicants — the website's View Applicants panel: pending applicants for one post, each with locked + label ("Hired" / "Booking Sent" / "Interviewed" / "Interview Sent") exactly as the panel shows. A locked applicant can't be declined or re-interviewed — say why using the label. Ask which job if they have more than one open.`,
     `  · edit_job_post — the website's Edit post modal: description, rate or rate-flexible, type (occasional/part-time/full-time), start/end date or ongoing, days, time of day, care types (at least one), pets, smoking, caregivers needed, recipients count. Read the current values back from list_client_jobs, confirm the exact changes, then call. Cancel post = cancel_job_post (the "..." menu's Cancel).`,
     `  · get_pending_timesheets — the website's Timesheets page: tab needs_review (hours to approve, counters to answer, failed payments to retry, plus items waiting on someone else) or tab history (approved/paid with from/to totals). Call for "anything to approve", "what did I pay", "payment history". When a pending row has autoApproveAt, say when it auto-approves and charges the card (the page shows the same "Auto-approves" time); when it has none, say nothing about auto-approval — that row waits for the family. Never invent a timesheet that isn't in the result.`,
-    `  · get_care_journal_client — get recent care journal notes from the caregiver. Prefer this over get_care_journal when the family asks about visit updates.`,
+    `  · get_care_journal_client — the caregiver's notes from completed visits (the shift record — what the Past Bookings card shows). Use for "what did Basra write", "any notes from this week". Quote their words; never describe how the person is doing beyond them.`,
     `  · get_recent_messages — the website's Inbox page: without counterpartId the thread list (My Care Team / Other Caregivers / Support, last message or "Start a conversation", unread counts; 'query' = the search box); with counterpartId that conversation's messages, which also marks it read like opening it on the page. Use for "what did they say", "any new messages", "catch me up".`,
     `  · get_signup_completeness — FINAL SIGNUP CHECK: audit the family's account for anything signup missed (membership payment, care-recipient profile, care needs, location). Use right after signup wraps up or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result — report each \`missing\` item with its fix, treat \`optionalGaps\` as optional, and if \`complete\` is true say they're all set.`,
     `  · create_support_ticket — LAST RESORT, only for issues no other tool can resolve. Do NOT use it for link/onboarding/signup/subscription/payment/identity requests — those you can fulfill yourself with send_onboarding_link or get_payment_update_link. Never tell someone "the team will follow up" for something you can do right now.`,
@@ -1875,7 +1878,7 @@ export async function runQaAgent(params: {
     } else {
       [senior, journal, nextAppt, permissions, history] = await Promise.all([
         getSeniorProfile(seniorId),
-        getRecentJournalEntries(seniorId, 3),
+        getRecentVisitNotes(userId, 3),
         getNextAppointment(userId),
         getAgentPermissions(userId),
         getConversationHistory(phone),
@@ -1922,7 +1925,7 @@ export async function runQaAgent(params: {
               },
               recentJournal: {
                 load: () => (journal ?? []) as Array<Record<string, unknown>>,
-                source: { type: sourceType, ref: "care_journal" },
+                source: { type: sourceType, ref: "shifts" },
                 authority: "canonical",
                 untrusted: true,
               },

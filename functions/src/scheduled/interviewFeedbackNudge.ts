@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { formatInterviewTime, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -110,19 +111,24 @@ export const sendInterviewFeedbackNudges = functions.pubsub
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
 
         const caregiverName = ((interview.caregiverName ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
+        // 2026-09-20: a family with several interviews on file replied "on which
+        // interview?" — every nudge names its interview's date and time.
+        const whenMs = parseScheduledTimeMs(String(interview.scheduledTime ?? ""));
+        const when = Number.isFinite(whenMs) && whenMs > 0 ? formatInterviewTime(whenMs) : "";
+        const whenClause = when ? ` (the interview on ${when})` : "";
 
         const message = await generateCaraMessage({
           audience: "family",
           context: fitLevel === "maybe"
-            ? `The family said they were still deciding ("maybe") about ${caregiverName} after their interview, and ` +
+            ? `The family said they were still deciding ("maybe") about ${caregiverName} after their interview${when ? ` on ${when}` : ""}, and ` +
               `still haven't given a final answer. Check back in warmly — any updates, ready to move forward, or ` +
-              `would they rather pass? One or two warm sentences.`
-            : `The family's interview with ${caregiverName} is marked completed, but they never gave a fit decision. ` +
+              `would they rather pass? Name the interview date${when ? ` (${when})` : ""} so they know which one you mean. One or two warm sentences.`
+            : `The family's interview with ${caregiverName}${when ? ` on ${when}` : ""} is marked completed, but they never gave a fit decision. ` +
               `Ask whether they'd like to move forward with ${caregiverName} or pass, so you can help book them or ` +
-              `keep looking. One or two warm sentences.`,
+              `keep looking. Name the interview date${when ? ` (${when})` : ""} so they know which one you mean. One or two warm sentences.`,
           fallback: fitLevel === "maybe"
-            ? `Checking back in — any more thoughts on ${caregiverName}? Ready to move forward, or would you rather keep looking?`
-            : `Following up on your interview with ${caregiverName} — would you like to move forward with them, or keep looking?`,
+            ? `Checking back in on ${caregiverName}${whenClause} — ready to move forward, or would you rather keep looking?`
+            : `Following up on your interview with ${caregiverName}${whenClause} — would you like to move forward with them, or keep looking?`,
           maxTokens: 100,
         });
 

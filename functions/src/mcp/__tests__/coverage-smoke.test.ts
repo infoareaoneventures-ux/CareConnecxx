@@ -233,11 +233,16 @@ describe("MCP tool smoke coverage", () => {
     expect(r.success).toBe(true);
   });
 
-  it("get_care_journal happy path", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
-    hoisted.collState.set("care_journal", [{ id: "j1", notes: "good visit" }]);
-    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
+  it("get_care_journal_client reads the caregiver's notes from completed shifts (the Past Bookings card), newest first", async () => {
+    hoisted.collState.set("shifts", [
+      { id: "s1", clientId: "c1", status: "completed", date: "2026-09-17", completedAt: "2026-09-18T03:38:00Z", caregiverName: "Basra Yousuf", notesLog: [{ at: "x", text: "Samira finished her sandwich" }], completionNotes: "everything went well today", tasksCompleted: ["0_a", "0_b"] },
+      { id: "s2", clientId: "c1", status: "completed", date: "2026-09-10", caregiverName: "Basra Yousuf" },
+    ]);
+    const r = await handleToolCall("get_care_journal_client", { clientId: "c1" }) as any;
     expect(r.success).toBe(true);
+    expect(r.entries.map((e: any) => e.shiftId)).toEqual(["s1", "s2"]);
+    expect(r.entries[0]).toMatchObject({ caregiverName: "Basra Yousuf", notes: "Samira finished her sandwich | everything went well today", closingNote: "everything went well today", tasksDone: 2 });
+    expect(r.entries[1].notes).toBeNull();
   });
 
   it("get_upcoming_appointments happy path", async () => {

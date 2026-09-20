@@ -28,8 +28,8 @@
 | client | Record per-recipient day-to-day care tasks by category (care-plan interview / Step3CareNeeds parity) | components/client/postJob/Step3CareNeeds.tsx | carePlans | `save_care_task_detail` | client | shipped | Added 2026-07-15 with the post-payment care-plan interview; writes recipientPlans.{key}.careNeedDetails in the exact shape CarePlan.tsx renders. |
 | client | Add a member to the family group | components/client/MyCareTeam.tsx | family_groups | `add_family_member` | client | shipped |  |
 | client | Remove a member from the family group | components/client/MyCareTeam.tsx | family_groups | `remove_family_member` | client | shipped |  |
-| client | Read the care journal / visit updates | components/client/CareJournalFeed.tsx | care_journal | `get_care_journal_client` | any | shipped |  |
-| client | Comment on / like a care journal entry | components/client/CareJournalFeed.tsx | care_journal | `comment_on_journal_entry` | any | shipped |  |
+| client | Read the caregiver's notes from completed visits (Past Bookings card: visit log + closing note, notes first, tasks collapsed) | components/client/ClientVisitsPage.tsx, components/client/VisitProgressPanel.tsx | shifts (notesLog, completionNotes) | `get_care_journal_client` | client | shipped | Retargeted 2026-09-20 from the legacy care_journal collection (nothing on the site writes or shows it); the dashboard CareJournalFeed strip and /client/weekly-summary were removed. |
+| family | Read the caregiver's notes from completed visits | components/client/ClientVisitsPage.tsx, components/client/VisitProgressPanel.tsx | shifts (notesLog, completionNotes) | `get_care_journal_client` | any | shipped | Same read as the client row (family-group members see the same Past Bookings card). |
 | client | Message a caregiver | components/InboxView.tsx | threads | `send_caregiver_message` | client | shipped |  |
 | client | Open a support ticket | components/shared/SupportChatModal.tsx | support_tickets | `create_support_ticket` | any | shipped |  |
 | client | Payment Method tab (card on file, Add a card / Manage payment method) | components/client/Payments.tsx | n/a | `get_payment_update_link` | client | shipped | Same reads as the page: customers/{uid}.stripeCustomerId + the live Stripe card check (getPaymentMethodStatusFor); Add a card → /client/membership, Manage → Billing Portal. Raw card details never in chat. |
@@ -94,7 +94,6 @@
 
 | Actor | Action | Web surface | Collection | Evia tool/handler | Prompt actor | Status | Notes |
 |---|---|---|---|---|---|---|---|
-| family | Read care updates for the senior | components/client/CareJournalFeed.tsx | care_journal | `get_care_journal_client` | any | shipped |  |
 | family | Add another family member to the group | components/client/MyCareTeam.tsx | family_groups | `add_family_member` | any | shipped | AE3 — added member receives a Linq welcome and the action is logged. |
 
 ## Admin

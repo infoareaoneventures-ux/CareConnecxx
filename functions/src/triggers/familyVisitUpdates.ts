@@ -155,13 +155,14 @@ export function buildVisitCompletionText(shift: Record<string, unknown>): string
     if (needs.length) lines.push(`Tasks: ${doneLabels.length ? `${doneLabels.join(", ")} ✓` : "nothing checked off"}${notDone.length ? ` · ${notDone.join(", ")} not done` : ""}`);
   }
   if (totalT) lines.push(`${doneT} of ${totalT} tasks checked off.`);
+  // 2026-09-20 (founder): notes before the task list — the same order the Past
+  // Bookings card now uses (notes first, tasks collapsed to a count).
   const sections: string[] = [header];
-  if (lines.length) sections.push(lines.join("\n"));
-
   const log = ((Array.isArray(shift.notesLog) ? shift.notesLog : []) as VisitNoteEntry[])
     .map((n) => String(n.text ?? "").trim()).filter(Boolean);
   if (log.length) sections.push(["Visit notes", ...log.map((t) => `· ${t}`)].join("\n"));
   if (typeof shift.completionNotes === "string" && shift.completionNotes.trim()) sections.push(`Caregiver note\n${shift.completionNotes.trim()}`);
+  if (lines.length) sections.push(lines.join("\n"));
   sections.push(`${cg} will submit the hours next; you'll get them here to review.`);
   return sections.join("\n\n");
 }

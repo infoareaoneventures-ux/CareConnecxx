@@ -4,7 +4,7 @@ import {
   Sparkles, Heart, Clock, MapPin, Calendar, Loader2, Phone, Briefcase
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
-import { dbService, createJobPosting } from '../../services/api';
+import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -91,38 +91,7 @@ function todayISO(): string {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => {
-  const { addToast } = useCareConnex();
-
-  const [step, setStep] = useState(1);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [nearbyCount, setNearbyCount] = useState<number | null>(null);
-  // Account-recovery email (2026-09-05) — the account's phone number IS the
-  // login, so there was no way back in if it's ever lost. Evia's SMS
-  // onboarding already collects this same field (users/{uid}.email); this
-  // closes the parity gap on the web side. Optional, asked at the very end
-  // so it never blocks the actual job-posting submission at Step 14.
-  const [recoveryEmail, setRecoveryEmail] = useState('');
-  // 2026-09-06: /start now collects this up front for every new account —
-  // without this check, every client would see this prompt again here even
-  // though they already provided one at signup.
-  const [hasEmailOnFile, setHasEmailOnFile] = useState(false);
-  const [emailSaving, setEmailSaving] = useState(false);
-  const [emailSaved, setEmailSaved] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [exampleIdx, setExampleIdx] = useState(0);
-  const [clientFirstName, setClientFirstName] = useState('');
-  const [clientLastName, setClientLastName] = useState('');
-  const [clientAddress, setClientAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
-  const [customAddressOpen, setCustomAddressOpen] = useState(false);
-  const [zipLooking, setZipLooking] = useState(false);
-  const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [homeAddress, setHomeAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
-  const [homeZipLooking, setHomeZipLooking] = useState(false);
-  const homeZipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [form, setForm] = useState<WizardForm>({
+const INITIAL_FORM: WizardForm = {
     careFrequency: '',
     street: '',
     zipCode: '',
@@ -154,7 +123,40 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
     rateFlexible: false,
     paymentMethod: 'credit',
     jobDescription: '',
-  });
+  };
+
+export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => {
+  const { addToast } = useCareConnex();
+
+  const [step, setStep] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [nearbyCount, setNearbyCount] = useState<number | null>(null);
+  // Account-recovery email (2026-09-05) — the account's phone number IS the
+  // login, so there was no way back in if it's ever lost. Evia's SMS
+  // onboarding already collects this same field (users/{uid}.email); this
+  // closes the parity gap on the web side. Optional, asked at the very end
+  // so it never blocks the actual job-posting submission at Step 14.
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  // 2026-09-06: /start now collects this up front for every new account —
+  // without this check, every client would see this prompt again here even
+  // though they already provided one at signup.
+  const [hasEmailOnFile, setHasEmailOnFile] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailSaved, setEmailSaved] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [exampleIdx, setExampleIdx] = useState(0);
+  const [clientFirstName, setClientFirstName] = useState('');
+  const [clientLastName, setClientLastName] = useState('');
+  const [clientAddress, setClientAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
+  const [customAddressOpen, setCustomAddressOpen] = useState(false);
+  const [zipLooking, setZipLooking] = useState(false);
+  const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [homeAddress, setHomeAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
+  const [homeZipLooking, setHomeZipLooking] = useState(false);
+  const homeZipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [form, setForm] = useState<WizardForm>(INITIAL_FORM);
 
   // Pre-fill address and name from users doc
   useEffect(() => {
@@ -308,19 +310,51 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
 
   const progressPct = Math.round(((step - 1) / (TOTAL_STEPS - 1)) * 100);
 
-  const canAdvance = (): boolean => {
-    if (step === 2) return !!form.careFrequency;
-    if (step === 3) return homeAddress.street.trim().length > 0 && homeAddress.zipCode.trim().length >= 5;
-    if (step === 4) return customAddressOpen
+  const canAdvanceAt = (s: number): boolean => {
+    if (s === 2) return !!form.careFrequency;
+    if (s === 3) return homeAddress.street.trim().length > 0 && homeAddress.zipCode.trim().length >= 5;
+    if (s === 4) return customAddressOpen
       ? form.zipCode.trim().length >= 5
       : clientAddress.zipCode.trim().length >= 5;
-    if (step === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
-    if (step === 10) return form.careRecipientFirstName.trim().length > 0;
-    if (step === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
-    if (step === 12) return form.careNeeds.length > 0;
-    if (step === 13) return !!form.rate && (form.rate ?? 0) > 0;
+    if (s === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
+    if (s === 10) return form.careRecipientFirstName.trim().length > 0;
+    if (s === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
+    if (s === 12) return form.careNeeds.length > 0;
+    if (s === 13) return !!form.rate && (form.rate ?? 0) > 0;
     return true;
   };
+  const canAdvance = (): boolean => canAdvanceAt(step);
+
+  // ── Draft: resume + per-step save (2026-09-20, founder: one questionnaire, two doors) ──
+  // job_postings/{uid} holds the answers so far — from THIS wizard's earlier steps
+  // or from Evia over text (she mirrors each answer in these same field names).
+  const draftReady = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await loadJobPostingDraft(uid);
+        if (cancelled || !d || d.status === 'active') return;
+        setForm(f => {
+          const next: any = { ...f };
+          for (const k of Object.keys(f)) if (d[k] !== undefined && d[k] !== null) next[k] = d[k];
+          return next as WizardForm;
+        });
+        if (d._homeAddress) setHomeAddress(d._homeAddress);
+        if (typeof d._customAddressOpen === 'boolean') setCustomAddressOpen(d._customAddressOpen);
+        if (typeof d.draftStep === 'number' && d.draftStep > 1 && d.draftStep < TOTAL_STEPS) setStep(d.draftStep);
+        else setStep(prev => (prev === 1 && Object.keys(d).some(k => k in INITIAL_FORM) ? 2 : prev));
+      } catch { /* start fresh */ }
+      finally { draftReady.current = true; }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+  useEffect(() => {
+    if (!draftReady.current || step <= 1 || step >= TOTAL_STEPS) return;
+    void saveJobPostingDraft(uid, { ...form, _homeAddress: homeAddress, _customAddressOpen: customAddressOpen }, step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   const next = () => setStep(s => Math.min(s + 1, TOTAL_STEPS));
   const back = () => setStep(s => Math.max(s - 1, 1));

@@ -118,22 +118,6 @@ describe("senior data isolation (PHI read tools)", () => {
     expect(r.results?.name).toBe("Mary");
   });
 
-  it("get_care_journal denies cross-tenant access", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "OTHER_CLIENT" });
-    hoisted.collState.set("care_journal", [{ seniorId: "s1", notes: "private" }]);
-    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
-    expect(r._toolError).toBe(true);
-    expect(r.code).toBe("PERMISSION_DENIED");
-    expect(r.results).toBeUndefined();
-  });
-
-  it("get_care_journal allows the owning client", async () => {
-    hoisted.docState.set("senior_profiles/s1", { userId: "c1" });
-    hoisted.collState.set("care_journal", [{ seniorId: "s1", notes: "ate well today", timestamp: "2026-01-01T00:00:00Z" }]);
-    const r = await handleToolCall("get_care_journal", { seniorId: "s1", clientId: "c1" }) as any;
-    expect(r.success).toBe(true);
-    expect(r.results).toBeDefined();
-  });
 
 
   it("allows the owning client of a migrated household senior (clientId back-reference, no userId)", async () => {

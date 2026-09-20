@@ -93,7 +93,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   get_tax_summary:          ["billing"],
 
   // ── care_plan (includes journal, health, profiles) ──────────────────────
-  get_care_journal:          ["care_plan"],
   get_care_journal_client:   ["care_plan"],
   create_care_journal_entry: ["care_plan"],
   update_care_journal_entry: ["care_plan"],
@@ -103,7 +102,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   remove_care_recipient:     ["care_plan"],
   set_recipient_photo:       ["care_plan"],
   // U7
-  delete_care_journal_entry: ["care_plan"],
   delete_review:             ["booking"],
   log_match_feedback:        ["booking"],
   create_job_post:           ["booking"],

@@ -26,6 +26,8 @@ export function routeForNotification(n: RoutableNotification, role: Notification
     if (t === "review_prompt") return data.caregiverId ? `/client/caregiver/${data.caregiverId}?review=1` : "/client/dashboard";
     if (t === "job_application") return "/client/posts";
     if (t.startsWith("interview") || t === "hire_decision") return "/client/posts?tab=interviews";
+    // Timesheets (submitted / approved / counter / auto-accepted / payment failed) live on Payments.
+    if (t.startsWith("shift_hours")) return "/client/payments";
     if (t === "booking_declined" || tt === "booking_declined") return "/client/find-caregivers";
     if (t === "shift_completed") return "/client/bookings?tab=past";
     if (t === "amendment_request") return "/client/bookings?tab=requests";

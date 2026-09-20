@@ -48,7 +48,7 @@ const PROMPT_EXEMPT = new Set<string>([
   // qaAgent.ts (it ends the turn), not a user-facing action — internal-only like
   // `task`/`resume_execution_agent`, so it is not a capability-map row.
   "task", "write_todos", "resume_execution_agent", "complete_task",
-  "morning-caregiver-briefing", "weekly-care-summary",
+  "morning-caregiver-briefing",
   // Onboarding-loop plumbing: described per-turn by the onboarding directive
   // (buildOnboardingDirective / caregiverOnboardingDirective), not by the static
   // system prompts this guard scans — the directive is the authoritative doc.

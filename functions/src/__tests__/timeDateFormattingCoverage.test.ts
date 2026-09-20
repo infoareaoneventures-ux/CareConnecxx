@@ -48,7 +48,6 @@ const MIN_FORMATTER_CALLS: Array<[string, number]> = [
   ["../triggers/appointmentUpdated.ts",         4],
   ["../agents/latenessTracker.ts",              1],
   ["../scheduled/shiftTaskNudges.ts",           4],
-  ["../scheduled/weeklyDigest.ts",              2],
   ["../scheduled/dayBeforeShiftReminder.ts",    2],
   // 2 (2026-09-17): the reminder is now one deterministic sentence per language,
   // each formatting the start time once — no model rewrite of the time anymore.

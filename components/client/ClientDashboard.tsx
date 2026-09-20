@@ -18,12 +18,11 @@ import { SupportChatModal } from '../shared/SupportChatModal';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import firebase, { db } from '../../lib/firebase';
 import { LiveCareFeed } from './LiveCareFeed';
-import { CareJournalFeed } from './CareJournalFeed';
 import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 import { VisitProgressPanel } from './VisitProgressPanel';
-import { totalChargedDollars } from '../../utils/pricing';
+import { billedHourlyRate, totalChargedDollars } from '../../utils/pricing';
 
 
 interface ClientDashboardProps {
@@ -159,7 +158,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   // forever once accepted, so this alone does NOT mean the relationship is
   // still ongoing (see activeCareTeam below).
   const [acceptedBookingDocs, setAcceptedBookingDocs] = useState<any[]>([]);
-  const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
+  const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; reviewCount?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
   const [pendingSwaps, setPendingSwaps] = useState<PendingSwap[]>([]);
@@ -358,7 +357,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     if (!db || activeCareTeam.length === 0) { setCareTeamProfiles({}); return; }
     let cancelled = false;
     (async () => {
-      const profiles: Record<string, { rating?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
+      const profiles: Record<string, { rating?: number; reviewCount?: number; verified?: boolean; backgroundCheckStatus?: string }> = {};
       await Promise.all(
         activeCareTeam.slice(0, 2).map(async (d: any) => {
           if (!d.caregiverId) return;
@@ -367,6 +366,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const cg = cgDoc.data() || {};
             profiles[d.caregiverId] = {
               rating: cg.rating ?? cg.averageRating ?? undefined,
+              reviewCount: cg.reviewCount ?? cg.totalReviews ?? 0,
               verified: cg.verified === true || cg.identityVerified === true,
               backgroundCheckStatus: cg.backgroundCheckStatus ?? cg.checkrStatus ?? undefined,
             };
@@ -686,8 +686,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
           </div>
         ))}
 
-        {/* Care journal — caregiver visit notes (web + Evia tools); hides itself when empty */}
-        {currentUser?.uid && <CareJournalFeed clientId={currentUser.uid} />}
 
         {reviewingShift && (
           <ReviewShiftHoursModal
@@ -1041,7 +1039,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-bold text-slate-900 truncate">{booking.caregiverName}</p>
                               <p className="text-xs text-slate-500">{booking.caregiverRole || 'Caregiver'}</p>
-                              {cgProfile.rating != null && (
+                              {cgProfile.rating != null && (cgProfile.reviewCount ?? 0) > 0 && (
                                 <div className="flex items-center gap-1 mt-0.5">
                                   <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
                                   <span className="text-xs font-semibold text-slate-700">{Number(cgProfile.rating).toFixed(1)}</span>
@@ -1059,7 +1057,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                           {/* Rate + schedule days */}
                           <div className="flex items-center gap-3 mb-2 flex-wrap">
                             {rate != null && (
-                              <p className="text-sm font-bold text-slate-800"><span className="text-primary-600">${rate}</span><span className="text-xs font-normal text-slate-400">/hr</span></p>
+                              <p className="text-sm font-bold text-slate-800"><span className="text-primary-600">${rate}</span><span className="text-xs font-normal text-slate-400">/hr · ${billedHourlyRate(Number(rate)).toFixed(2)}/hr billed</span></p>
                             )}
                             {schedDays.length > 0 && (
                               <div className="flex gap-1 flex-wrap">
@@ -1376,7 +1374,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                             <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
                               {durationStr && <span className="text-slate-500">{durationStr}</span>}
                               {durationStr && <span className="text-slate-300">·</span>}
-                              <span className="font-semibold text-slate-700">${pay.toFixed(2)} <span className="font-normal text-slate-400">· ${(typeof shift.totalChargeCents === 'number' ? shift.totalChargeCents / 100 : totalChargedDollars(pay)).toFixed(2)} charged</span></span>
+                              <span className="font-semibold text-slate-700">${pay.toFixed(2)} <span className="font-normal text-slate-400">· ${(typeof shift.totalChargeCents === 'number' ? shift.totalChargeCents / 100 : totalChargedDollars(pay)).toFixed(2)} {shift.status === 'payment_failed' ? 'charge failed' : 'charged'}</span></span>
                               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
                                 Card
                               </span>

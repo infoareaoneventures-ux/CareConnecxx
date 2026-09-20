@@ -1,13 +1,16 @@
-import React from 'react';
-import { CheckCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
-// The family's read-only view of a visit's progress — the caregiver's task
-// checkboxes per recipient (shifts.tasksCompleted, keyed `${ri}_${category}` /
-// `${ri}_${category}_${sub}`) and the visit notes log (shifts.notesLog,
-// append-only). One component, three places: the Past Bookings detail, the
-// Active Bookings row while the visit is in progress, and the dashboard's
-// Active Shift card — so what the family sees on the site while the caregiver
-// works matches what Evia texts them as it happens.
+// The family's read-only view of a visit — the caregiver's notes first (the
+// running log written during the visit, shifts.notesLog, then the closing note,
+// shifts.completionNotes, as one block), then the task checkboxes per recipient
+// (shifts.tasksCompleted, keyed `${ri}_${category}` / `${ri}_${category}_${sub}`),
+// collapsed to "7 of 13 done" on a finished visit and open while it is live.
+// One component, three places: the Past Bookings detail, the Active Bookings
+// row while the visit is in progress, and the dashboard's Active Shift card —
+// so what the family sees on the site matches what Evia texts them as it
+// happens (the completion recap follows this same order: notes, then tasks).
+// Reordered 2026-09-20 (founder): the notes were under 13 task rows.
 export interface VisitProgressShift {
   tasksCompleted?: string[];
   careNeeds?: string[];
@@ -16,6 +19,7 @@ export interface VisitProgressShift {
     careNeeds?: string[]; careNeedDetails?: Record<string, string[]>;
   }>;
   notesLog?: Array<{ at: string; text: string; by?: string }>;
+  completionNotes?: string | null;
 }
 
 const fmtNoteTime = (at: string) => {
@@ -23,13 +27,15 @@ const fmtNoteTime = (at: string) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 };
 
-export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: boolean }> = ({ shift: s, live }) => {
+export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: boolean; completionNotes?: string | null }> = ({ shift: s, live, completionNotes }) => {
   const doneRaw: string[] = s.tasksCompleted || [];
   const recipients = s.careRecipients || [];
   const perRecipient = recipients.some(r => (r.careNeeds || []).length > 0);
   const hasTasks = perRecipient || (s.careNeeds || []).length > 0;
   const notes = Array.isArray(s.notesLog) ? s.notesLog : [];
-  if (!hasTasks && notes.length === 0) return null;
+  const closing = (completionNotes ?? s.completionNotes ?? '').trim();
+  const [tasksOpen, setTasksOpen] = useState<boolean>(!!live);
+  if (!hasTasks && notes.length === 0 && !closing) return null;
 
   let totalT = 0; let doneT = 0;
   if (perRecipient) {
@@ -81,17 +87,49 @@ export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: bo
 
   return (
     <div className="space-y-3">
+      {/* Notes first — the caregiver's log during the visit, then the closing note, one block */}
+      {(notes.length > 0 || closing || live) && (
+        <div className="p-3 bg-white border border-slate-200 rounded-xl">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Visit Notes</p>
+          {notes.length > 0 || closing ? (
+            <div className="space-y-1">
+              {notes.map((n, i) => (
+                <p key={i} className="text-xs text-slate-600">
+                  <span className="text-slate-400 mr-1.5">{fmtNoteTime(n.at)}</span>{n.text}
+                </p>
+              ))}
+              {closing && (
+                <p className={`text-xs text-slate-700 ${notes.length > 0 ? 'pt-1.5 mt-1.5 border-t border-slate-100' : ''}`}>
+                  <span className="text-slate-400 mr-1.5">Closing note</span>{closing}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400 italic">No notes yet — they appear here as your caregiver adds them.</p>
+          )}
+        </div>
+      )}
+
+      {/* Tasks — a one-line summary on a finished visit, the full checklist while live or when opened */}
       {hasTasks && (
         <div>
-          <div className="flex items-center justify-between mb-2">
+          <button
+            type="button"
+            onClick={() => setTasksOpen(o => !o)}
+            className="w-full flex items-center justify-between mb-2 text-left"
+            aria-expanded={tasksOpen}
+          >
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{live ? 'Tasks so far' : 'Tasks'}</p>
-            {totalT > 0 && (
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                {doneT}/{totalT}
-              </span>
-            )}
-          </div>
-          {perRecipient
+            <span className="flex items-center gap-2">
+              {totalT > 0 && (
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${doneT === totalT ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                  {doneT} of {totalT} done
+                </span>
+              )}
+              {tasksOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+            </span>
+          </button>
+          {tasksOpen && (perRecipient
             ? recipients.map((r, ri) => {
                 const needs = r.careNeeds || [];
                 if (needs.length === 0) return null;
@@ -109,24 +147,7 @@ export const VisitProgressPanel: React.FC<{ shift: VisitProgressShift; live?: bo
                   </div>
                 );
               })
-            : renderCards(s.careNeeds || [], {}, 0)}
-        </div>
-      )}
-      {/* Visit notes — the caregiver's log during the visit (append-only, live) */}
-      {(notes.length > 0 || live) && (
-        <div className="p-3 bg-white border border-slate-200 rounded-xl">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Visit Notes</p>
-          {notes.length > 0 ? (
-            <div className="space-y-1">
-              {notes.map((n, i) => (
-                <p key={i} className="text-xs text-slate-600">
-                  <span className="text-slate-400 mr-1.5">{fmtNoteTime(n.at)}</span>{n.text}
-                </p>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-slate-400 italic">No notes yet — they appear here as your caregiver adds them.</p>
-          )}
+            : renderCards(s.careNeeds || [], {}, 0))}
         </div>
       )}
     </div>

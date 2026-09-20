@@ -2219,27 +2219,6 @@ export const dbService = {
      * admins to read. Single-field query + client-side sort — no composite
      * index needed.
      */
-    subscribeCareJournal: (clientId: string, onUpdate: (entries: any[]) => void) => {
-        if (isConfigured && db && clientId) {
-            const q = db.collection('care_journal')
-                .where('clientId', '==', clientId)
-                .limit(50);
-            return q.onSnapshot(snapshot => {
-                const entries = snapshot.docs
-                    .map(doc => ({ id: doc.id, ...doc.data() } as any))
-                    .sort((a, b) => String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? '')));
-                onUpdate(entries);
-            }, (error: any) => {
-                if (error.code === 'permission-denied') {
-                    onUpdate([]);
-                    return;
-                }
-                console.error('Care journal subscription error:', error);
-                onUpdate([]);
-            });
-        }
-        return () => { };
-    },
 
     notifyFamilyOfArrival: async (seniorId: string, caregiverId: string, appointmentTime: string) => {
         // Get senior's profile
@@ -3568,6 +3547,26 @@ export interface WizardJobPostingData {
     smokingHousehold?: boolean;
 }
 
+// ── Wizard draft (2026-09-20): every step saves onto job_postings/{uid} — the same
+// doc, same field names Evia mirrors her answers into as she asks them — so the
+// questionnaire resumes from either door. `draftStep` is the wizard's own resume
+// point; a draft written by Evia has none and the wizard finds the first gap itself.
+export async function loadJobPostingDraft(uid: string): Promise<Record<string, any> | null> {
+    if (!db) return null;
+    const snap = await db.collection('job_postings').doc(uid).get().catch(() => null);
+    return snap?.exists ? (snap.data() as Record<string, any>) : null;
+}
+export async function saveJobPostingDraft(uid: string, fields: Record<string, any>, draftStep: number): Promise<void> {
+    if (!db) return;
+    const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)));
+    await db.collection('job_postings').doc(uid).set({
+        ...clean,
+        clientId: uid,
+        draftStep,
+        draftUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true }).catch(() => { /* best effort — the wizard keeps working from state */ });
+}
+
 export async function createJobPosting(uid: string, data: WizardJobPostingData): Promise<void> {
     if (!isConfigured || !db) throw new Error("Database not connected");
 
@@ -3625,6 +3624,8 @@ export async function createJobPosting(uid: string, data: WizardJobPostingData):
         ...cleanForJobPosting,
         clientId: uid,
         status: 'active',
+        draftStep: firebase.firestore.FieldValue.delete(),
+        draftUpdatedAt: firebase.firestore.FieldValue.delete(),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         ...(lat !== null && lng !== null ? { lat, lng } : {}),
         ...(photoURL && clean.relationship === 'myself' ? { careRecipientPhotoURL: photoURL } : {}),

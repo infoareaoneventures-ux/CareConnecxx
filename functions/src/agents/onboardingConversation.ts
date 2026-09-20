@@ -48,7 +48,7 @@ import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboard
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho, toWebsiteRelationship } from "./careRecipients";
-import { buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
+import { buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
@@ -239,6 +239,21 @@ async function mergeOnboardingData(phone: string, data: Record<string, unknown>)
       await db.collection("caregivers").doc(caregiverId)
         .set(mirror, { merge: true })
         .catch((err) => console.error("mergeOnboardingData: caregiver profile mirror failed (non-fatal):", err));
+    }
+  }
+
+  // 2026-09-20 (founder: one questionnaire, two doors): a FAMILY's answers land on
+  // job_postings/{uid} as they are given — the same doc, same field names the site
+  // wizard saves per step and reads back — so the wizard resumes where the text
+  // left off, and vice versa (qaAgent already merges that doc into this draft).
+  // Only fields actually answered; status is left to the submit paths.
+  const clientUid = sess.userId as string | undefined;
+  if (clientUid && sess.userType !== "caregiver" && Object.keys(data).length > 0) {
+    const draft = buildClientDraftMirror(clientUid, phone, merged);
+    if (Object.keys(draft).length > 0) {
+      await db.collection("job_postings").doc(clientUid)
+        .set({ ...draft, clientId: clientUid, draftUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        .catch((err) => console.error("mergeOnboardingData: client draft mirror failed (non-fatal):", err));
     }
   }
 }
@@ -2128,7 +2143,7 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   // budget.{min,max} is the legacy shape the client loop no longer writes.
   const b = (d.budget as { min?: number; max?: number } | undefined) ?? {};
   const budget = typeof d.rate === "number"
-    ? `$${d.rate}/hr`
+    ? `$${d.rate}/hr ($${(Math.round(d.rate * 1.09 * 100) / 100).toFixed(2)}/hr billed incl. the 9% service fee)`
     : typeof d.rate === "string" && d.rate
       ? d.rate
       : (b.min || b.max)
@@ -2852,15 +2867,15 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
       `Evia already showed this family real local caregivers for ${seniorName} (photos + profiles, sent earlier ` +
       `in this conversation) and their identity check just cleared. ` +
       pricePart +
-      `and for that Evia coordinates everything for ${seniorName} — scheduling, weekly summaries, and keeping ` +
-      `the whole family in the loop. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
+      `plus a 9% service fee on each visit (the caregiver keeps 100% of their rate), and for that Evia coordinates everything for ${seniorName} — ` +
+      `scheduling, live visit updates, and keeping the whole family in the loop. State both the membership price and the 9% fee. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
       `already set up, and do NOT mention sending any link. Membership is what lets the family actually message ` +
       `and book one of the caregivers just shown — do NOT say or imply that matching only starts once membership ` +
       `is active, that would contradict the real matches you just sent them. END with one clear yes/no question ` +
       `asking if they'd like to get set up (e.g. "Want me to get you set up?").`,
     fallback:
-      `Evia is ${priceLabel || "one simple monthly membership"} — I coordinate everything for ${seniorName}: ` +
-      `scheduling, weekly summaries, and keeping your whole family in the loop. Want me to get you set up?`,
+      `Evia is ${priceLabel || "one simple monthly membership"} plus a 9% service fee on each visit — the caregiver keeps 100% of their rate. ` +
+      `I coordinate everything for ${seniorName}: scheduling, live visit updates, and keeping your whole family in the loop. Want me to get you set up?`,
     emotionalDirective: (session as any)._emotionalDirective,
     maxTokens: 130,
   });

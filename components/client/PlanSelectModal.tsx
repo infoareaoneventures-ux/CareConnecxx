@@ -107,7 +107,7 @@ export function PlanSelectModal({ onClose, currentPriceId, caregiverName, caregi
           {/* ── Left panel — plan selection ─────────────────────────── */}
           <div className="flex-1 p-6">
             <p className="text-sm text-slate-500 mb-6">
-              All plans include full access to Evia caregivers, plus easy on-demand booking.
+              Full access to Evia caregivers and on-demand booking. Plus a 9% service fee on each visit — the caregiver keeps 100% of their rate.
             </p>
 
             {/* Plan radio cards */}

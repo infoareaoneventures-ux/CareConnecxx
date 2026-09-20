@@ -314,3 +314,36 @@ export function mapUsersDocToOnboardingData(
 // Re-export for callers that need the recipient list without importing
 // careRecipients.ts directly.
 export { allCareRecipients, normalizeAdditionalRecipients };
+
+// ── Per-step draft (2026-09-20, founder: "one questionnaire, two doors") ────
+// Evia writes each accepted answer onto job_postings/{uid} as it is given, in the
+// wizard's own field names, so the site wizard resumes where the text left off
+// (and the wizard's own per-step saves flow back into Evia through
+// mapJobPostingsDocToOnboardingData). Unlike buildJobPostingsDoc, NOTHING is
+// defaulted here — a key is present only when the family actually answered it,
+// so a merge can never overwrite a wizard answer with a placeholder.
+export function buildClientDraftMirror(uid: string, phone: string, d: Record<string, unknown>): Record<string, unknown> {
+  const full = buildJobPostingsDoc(uid, phone, d) as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const has = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+  const take = (key: string, when: boolean) => { if (when && has(full[key])) out[key] = full[key]; };
+  take("careFrequency", has(d.careFrequency));
+  take("street", has(d.street)); take("zipCode", has(d.zipCode)); take("city", has(d.city)); take("state", has(d.state));
+  take("startDate", has(d.startDate)); take("endDate", has(d.endDate));
+  if (d.ongoing !== undefined) out.ongoing = d.ongoing === true;
+  if (d.daysFlexible !== undefined) out.daysFlexible = d.daysFlexible === true;
+  take("selectedDays", has(d.selectedDays)); take("timeOfDay", has(d.timeOfDay));
+  take("careRecipientPhotoURL", has(d.careRecipientPhotoURL));
+  take("careRecipientFirstName", has(d.seniorName)); take("careRecipientLastName", has(d.seniorName)); take("careRecipientAge", d.age !== undefined && d.age !== null && d.age !== "");
+  take("relationship", has(d.relationship)); take("additionalRecipients", has(d.additionalRecipients));
+  if (has(d.additionalRecipients)) out.adultsCount = full.adultsCount;
+  take("caregiversNeeded", has(d.caregiversNeeded));
+  take("emergencyFirstName", has(d.emergencyContactName)); take("emergencyLastName", has(d.emergencyContactName));
+  take("emergencyPhone", has(d.emergencyContactPhone)); take("emergencyRelationship", has(d.emergencyContactRelationship));
+  take("careNeeds", has(d.careNeeds));
+  if (d.petsInHome !== undefined) out.petsInHome = d.petsInHome === true;
+  if (d.smokingHousehold !== undefined) out.smokingHousehold = d.smokingHousehold === true;
+  if (d.rate !== undefined && d.rate !== null && d.rate !== "") { take("rate", true); out.rateFlexible = full.rateFlexible === true; }
+  take("jobDescription", has(d.jobDescription));
+  return out;
+}

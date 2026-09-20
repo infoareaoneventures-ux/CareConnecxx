@@ -146,18 +146,6 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "get_care_journal",
-    description: "Get recent care journal entries for a senior, including wellness, meals, medications, and notes.",
-    input_schema: {
-      type: "object",
-      properties: {
-        seniorId: { type: "string", description: "The senior's user ID" },
-        limit:    { type: "number", description: "Number of entries to return (default 5)" },
-      },
-      required: ["seniorId"],
-    },
-  },
-  {
     name: "get_upcoming_appointments",
     description: "Get a client's upcoming visits — the same list the website's My Bookings > Active Bookings shows under UPCOMING SHIFTS: scheduled and in-progress visits AND any visit marked 'needs_replacement' (the caregiver cancelled it). Each result carries its id (the shiftId) and status — use that id for manage_booking (cancel_visit/propose_reschedule) and, for a needs_replacement visit, for get_callout_backups.",
     input_schema: {
@@ -916,11 +904,6 @@ export const MCP_TOOLS: McpTool[] = [
     name: "delete_review",
     description: "Delete a review the family previously left for a caregiver. Permanent — confirm before calling.",
     input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, reviewId: { type: "string", description: "The review document id." } }, required: ["clientId", "reviewId"] },
-  },
-  {
-    name: "delete_care_journal_entry",
-    description: "Hide an incorrect care journal entry from the family view (soft-delete — the entry is retained in the care record). Confirm before calling.",
-    input_schema: { type: "object", properties: { clientId: { type: "string", description: "Injected automatically." }, entryId: { type: "string", description: "The care_journal document id." } }, required: ["clientId", "entryId"] },
   },
   {
     name: "get_support_ticket",
@@ -2005,9 +1988,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_care_journal_client",
-    description:
-      "Get recent care journal entries for a client's senior — resolves the senior automatically from clientId. " +
-      "Returns notes, mood, activities, and caregiver name for each entry.",
+    description: "The caregiver's notes from the family's completed visits — the running notes written during the visit and the closing note, from the shift record (what the Past Bookings card shows). Use for 'what did Basra write', 'any notes from this week'. Never describe how the person is doing beyond these words.",
     input_schema: {
       type: "object",
       properties: {
@@ -2660,7 +2641,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_caregiver_appointments",
   "get_caregiver_info",
   "get_upcoming_appointments",
-  "get_care_journal",
   "get_senior_profile",
   "read_memory_file",
   "update_memory_file",
@@ -2883,17 +2863,6 @@ export interface McpPrompt {
 
 export const MCP_PROMPTS: McpPrompt[] = [
   {
-    name: "weekly-care-summary",
-    description: "Sunday morning digest — summarizes the week's care visits and previews the upcoming week.",
-    arguments: [
-      { name: "clientName",     description: "Family member's first name",    required: true },
-      { name: "seniorName",     description: "Senior's name",                 required: true },
-      { name: "completedCount", description: "Number of completed visits",    required: true },
-      { name: "journalContext", description: "Formatted journal entry lines", required: true },
-      { name: "apptContext",    description: "Upcoming appointment lines",    required: true },
-    ],
-  },
-  {
     name: "morning-caregiver-briefing",
     description: "Pre-shift briefing sent to caregivers on the morning of a visit.",
     arguments: [
@@ -2910,26 +2879,6 @@ export const MCP_PROMPTS: McpPrompt[] = [
 
 export function handlePromptGet(name: string, args: Record<string, string>): string {
   switch (name) {
-    case "weekly-care-summary": {
-      const { clientName, seniorName, completedCount, journalContext, apptContext } = args;
-      return [
-        `You are Evia. Write a Sunday morning text to ${clientName} about ${seniorName}'s week.`,
-        ``,
-        `Write it like you actually know both of them and genuinely care how the week went.`,
-        `If it was a good week, let that warmth come through.`,
-        `If there were concerns, acknowledge them honestly without being alarming.`,
-        `Mention the upcoming week naturally — not as a list.`,
-        ``,
-        `Do not follow a format. Just tell them what matters most.`,
-        `Under 200 words. Plain text only. No markdown. No bullet points.`,
-        ``,
-        `This week's data:`,
-        `- ${completedCount} visit(s) completed`,
-        `Journal entries:\n${journalContext || "None"}`,
-        `Upcoming:\n${apptContext || "Nothing scheduled yet"}`,
-      ].join("\n");
-    }
-
     case "morning-caregiver-briefing": {
       const { caregiverName, seniorName, schedule, address, mapsUrl, medLine, verifiedNote } = args;
       const extras = [
@@ -3188,7 +3137,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_active_bookings",
   "get_membership_page", "contact_support", "get_invoice_history", "get_invoice_details",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
-  "get_care_journal", "get_care_journal_client", "get_care_plan",
+  "get_care_journal_client", "get_care_plan",
   "get_recent_messages", "get_family_group",
   "read_memory_file", "search_memory",
   "list_client_jobs", "list_job_applicants", "browse_job_board",
@@ -3534,22 +3483,6 @@ async function executeToolCall(
           results: page.recipients.map((r) => ({ key: r.key, name: r.name, firstName: r.firstName, lastName: r.lastName, relationship: r.relationship, age: r.age, isPrimary: r.isPrimary })),
           hasMore: false,
         };
-      }
-
-      case "get_care_journal": {
-        if (!input.seniorId) return toolError("INVALID_INPUT", "seniorId is required");
-        const denied = await assertSeniorAccess(input.seniorId as string, input.clientId ?? input.userId);
-        if (denied) return denied;
-        logHealthDataAccessed(input.seniorId as string, input.seniorId as string, "mcp:get_care_journal").catch(() => {});
-        const limit = Math.min((input.limit as number) ?? 5, 20);
-        const snap = await db
-          .collection("care_journal")
-          .where("seniorId", "==", input.seniorId)
-          .orderBy("timestamp", "desc")
-          .limit(limit + 1)
-          .get();
-        const docs = snap.docs.slice(0, limit).map((d) => d.data());
-        return { success: true, results: docs, hasMore: snap.docs.length > limit };
       }
 
       case "get_upcoming_appointments": {
@@ -5596,21 +5529,6 @@ async function executeToolCall(
       return { success: true, reviewId };
     }
 
-    if (name === "delete_care_journal_entry") {
-      const { clientId, entryId } = input as Record<string, unknown>;
-      if (!clientId || !entryId) return toolError("INVALID_INPUT", "clientId and entryId are required");
-      const eSnap = await db.collection("care_journal").doc(entryId as string).get();
-      if (!eSnap.exists) return toolError("NOT_FOUND", "Journal entry not found");
-      const entry = eSnap.data()!;
-      if (entry.clientId !== clientId) return toolError("PERMISSION_DENIED", "Entry does not belong to this client");
-      // Soft-delete: care_journal is an append-only audit record (firestore.rules
-      // marks it never-client-deletable), so hide from the family view rather
-      // than hard-delete — preserves the audit trail (Success Criterion #2).
-      await eSnap.ref.update({ status: "hidden", hiddenAt: nowIso });
-      logAudit({ eventType: "care_journal_hidden", userId: clientId as string, data: { source: "mcp:delete_care_journal_entry", entryId } }).catch(() => {});
-      return { success: true, entryId, softDeleted: true };
-    }
-
     if (name === "get_support_ticket") {
       const { userId, ticketId } = input as Record<string, unknown>;
       if (!userId || !ticketId) return toolError("INVALID_INPUT", "userId and ticketId are required");
@@ -6509,7 +6427,9 @@ async function executeToolCall(
         const b = pick.b;
         const name = String(b.caregiverName || cg.name || `${cg.firstName ?? ""} ${cg.lastName ?? ""}`.trim() || "Caregiver");
         const dst = b.schedule?.dayShiftTimes;
-        const scheduleDays: string[] = dst && typeof dst === "object" ? Object.keys(dst) : ((b.schedule?.days as string[] | undefined) ?? []);
+        const WEEK = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+        const scheduleDays: string[] = (dst && typeof dst === "object" ? Object.keys(dst) : ((b.schedule?.days as string[] | undefined) ?? []))
+          .slice().sort((x, y) => WEEK.indexOf(x.slice(0, 3).toLowerCase()) - WEEK.indexOf(y.slice(0, 3).toLowerCase()));
         const recipients = (Array.isArray(b.careRecipients) ? b.careRecipients : []) as Array<{ firstName?: string; name?: string }>;
         const rating = Number(cg.rating ?? 0);
         const reviewCount = Number(cg.reviewCount ?? cg.totalReviews ?? 0);
@@ -7391,31 +7311,36 @@ async function executeToolCall(
     }
 
     if (name === "get_care_journal_client") {
+      // The caregiver's notes from completed visits — shifts.notesLog + the closing
+      // note — exactly what the Past Bookings card shows and the recap texts carry.
+      // Replaced the legacy care_journal read (2026-09-20): nothing on the site writes
+      // or shows that collection. No orderBy: two equality filters + a JS sort avoids
+      // a composite index.
       const { clientId } = input as Record<string, unknown>;
       if (!clientId) return toolError("INVALID_INPUT", "clientId is required");
       const limit9 = Math.min((input.limit as number) ?? 5, 20);
-      const userSnap = await db.collection("users").doc(clientId as string).get();
-      const seniorId9 = userSnap.data()?.seniorId as string | undefined;
-      if (!seniorId9) return toolError("NOT_FOUND", "No senior profile linked to this client");
-      logHealthDataAccessed(clientId as string, seniorId9, "mcp:get_care_journal_client").catch(() => {});
-      const jSnap = await db.collection("care_journal").where("seniorId", "==", seniorId9).orderBy("timestamp", "desc").limit(limit9).get();
-      const entries = await Promise.all(
-        jSnap.docs.map(async (d) => {
-          const entry = d.data();
-          const cgSnap9 = await db.collection("caregivers").doc(entry.caregiverId as string).get().catch(() => null);
-          const cg9 = cgSnap9?.data() ?? {};
+      logAudit({ eventType: "health_data_accessed", userId: clientId as string, data: { source: "mcp:get_care_journal_client" } }).catch(() => {});
+      const vSnap = await db.collection("shifts").where("clientId", "==", clientId as string).where("status", "==", "completed").limit(60).get();
+      const entries = vSnap.docs
+        .map((d): Record<string, unknown> & { id: string } => ({ ...(d.data() as Record<string, unknown>), id: d.id }))
+        .sort((a, b) => String(b.completedAt ?? b.date ?? "").localeCompare(String(a.completedAt ?? a.date ?? "")))
+        .slice(0, limit9)
+        .map((sh) => {
+          const log = (Array.isArray(sh.notesLog) ? sh.notesLog : []) as Array<{ at?: string; text?: string }>;
+          const closing = typeof sh.completionNotes === "string" && sh.completionNotes.trim() ? sh.completionNotes.trim() : null;
+          const notes = [...log.map((n) => String(n.text ?? "").trim()).filter(Boolean), ...(closing ? [closing] : [])];
           return {
-            timestamp:    entry.timestamp,
-            caregiverName: (cg9.name ?? `${cg9.firstName ?? ""} ${cg9.lastName ?? ""}`.trim()) || "Caregiver",
-            notes:        entry.notes       ?? null,
-            // SMS/care-notes entries nest mood under wellness; surface it consistently.
-            mood:         entry.mood        ?? entry.wellness?.mood ?? null,
-            activities:   entry.activities  ?? [],
-            wellness:     entry.wellness    ?? null,
+            shiftId:       sh.id,
+            date:          sh.date ?? null,
+            timestamp:     sh.completedAt ?? sh.date ?? null,
+            caregiverName: sh.caregiverName ?? "Caregiver",
+            notes:         notes.length ? notes.join(" | ") : null,
+            notesLog:      log,
+            closingNote:   closing,
+            tasksDone:     Array.isArray(sh.tasksCompleted) ? sh.tasksCompleted.length : 0,
           };
-        })
-      );
-      return { success: true, entries, total: entries.length };
+        });
+      return { success: true, entries, total: entries.length, instruction: "These are the caregiver's own words from completed visits (the Past Bookings card). Quote or paraphrase them only; never add observations about how anyone is doing. A visit with notes: null had no notes — say so." };
     }
 
     // ── get_payment_update_link ─────────────────────────────────────────────

@@ -389,14 +389,14 @@ const ShiftRow: React.FC<{
                 <span className="font-semibold text-slate-700">${row.payRate}/hr</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-slate-500">{row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
+                <span className="text-slate-500">{isCorrected ? 'Final in / out' : row.loggedManually ? 'Reported in / out' : 'Clock in / out'}</span>
                 <span className="font-semibold text-slate-700">
-                  {fmtDateTime(row.submittedStartTime)} – {fmtDateTime(row.submittedEndTime)}
+                  {fmtDateTime(startTs)} – {fmtDateTime(endTs)}
                 </span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-500">Total hours</span>
-                <span className="font-semibold text-slate-700">{fmtDuration((new Date(row.submittedEndTime).getTime() - new Date(row.submittedStartTime).getTime()) / 3_600_000)}</span>
+                <span className="font-semibold text-slate-700">{fmtDuration(dispHours)}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2">
                 <span className="text-slate-500">Base pay</span>
@@ -429,7 +429,7 @@ const ShiftRow: React.FC<{
                 <span className="font-semibold text-slate-700">${(livePending ? serviceFeeDollars(shownPay) : feeFor(row, shownPay)).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50">
-                <span className="font-semibold text-slate-700">{['approved', 'auto_approved', 'paid'].includes(row.status) ? 'Charged to your card' : livePending ? `${liveLabel} charge` : 'Will be charged'}</span>
+                <span className="font-semibold text-slate-700">{['approved', 'auto_approved', 'paid'].includes(row.status) ? 'Charged to your card' : livePending ? `${liveLabel} charge` : row.status === 'payment_failed' ? 'Charge failed' : 'Will be charged'}</span>
                 <span className="font-bold text-slate-900">${(livePending ? totalChargedDollars(shownPay) : chargedFor(row, shownPay)).toFixed(2)}</span>
               </div>
             </div>

@@ -2,6 +2,7 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
 import { generateCaraMessage } from "../utils/caraMessage";
+import { formatInterviewTime, parseScheduledTimeMs } from "../utils/scheduledTime";
 
 const db = admin.firestore();
 
@@ -97,15 +98,20 @@ export const sendBookingFollowupNudges = functions.pubsub
         const phone = (sessionData.phone ?? sessionDoc.id) as string;
 
         const caregiverName = ((interview.caregiverName ?? "your caregiver") as string).split(" ")[0] || "your caregiver";
+        // 2026-09-20: a family with several interviews on file replied "on which
+        // interview?" — every nudge names its interview's date and time.
+        const whenMs = parseScheduledTimeMs(String(interview.scheduledTime ?? ""));
+        const when = Number.isFinite(whenMs) && whenMs > 0 ? formatInterviewTime(whenMs) : "";
+        const whenClause = when ? ` (the interview on ${when})` : "";
 
         const message = await generateCaraMessage({
           audience: "family",
           context:
-            `The family decided ${caregiverName} was a strong fit after their interview, but the actual booking ` +
+            `The family decided ${caregiverName} was a strong fit after their interview${when ? ` on ${when}` : ""}, but the actual booking ` +
             `(schedule and rate) was never finished. Check back in warmly and offer to finish setting it up now — ` +
-            `what days/times work, and confirm the rate. One or two warm sentences.`,
+            `what days/times work, and confirm the rate. Name the interview date${when ? ` (${when})` : ""} so they know which one you mean. One or two warm sentences.`,
           fallback:
-            `Just following up — want me to finish setting up the booking with ${caregiverName}? I can lock in the schedule and rate whenever you're ready.`,
+            `Just following up on your interview with ${caregiverName}${whenClause} — want me to finish setting up the booking? I can lock in the schedule and rate whenever you're ready.`,
           maxTokens: 100,
         });
 

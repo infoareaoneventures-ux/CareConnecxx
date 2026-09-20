@@ -754,6 +754,11 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   const isCaregiverMember = await mirrorMembershipToCaregiverDoc(userId, 'active');
+  // A membership paid through the site's plan modal while Evia was waiting on it
+  // (Evia-started checkouts are advanced by checkout.session.completed; the
+  // step guard inside makes a second call a no-op).
+  const subIdForEvia = typeof subscriptionId === 'string' ? subscriptionId : (subscriptionId as { id?: string } | null)?.id ?? '';
+  if (!isCaregiverMember && subIdForEvia) await advanceEviaSessionForUid(userId, 'client_awaiting_payment', 'payment', subIdForEvia);
 
   // Notify caregiver of successful payment
   const amountPaid = (invoice.amount_paid / 100).toFixed(2);
@@ -1416,6 +1421,22 @@ export const createIdentityVerificationSession = functions.https.onCall(async (d
  * Handle Stripe Identity webhook events — mirror session status onto the user doc
  * so the client can unblock gated actions as soon as the webhook lands.
  */
+// 2026-09-20: a gate cleared from the SITE (identity button / plan modal) used to
+// advance Evia's conversation only when the family next texted (the awaiting
+// steps re-check live state). Now the webhook finds the session by uid and
+// advances it at once, so the family gets the next text the moment it clears.
+async function advanceEviaSessionForUid(userId: string, awaitingStep: string, task: string, taskData: string): Promise<void> {
+  try {
+    const q = await admin.firestore().collection('agent_sessions').where('userId', '==', userId).limit(1).get();
+    const sess = q.docs[0];
+    if (!sess || sess.data().onboardingStep !== awaitingStep) return;
+    const { advanceOnboardingStep } = await import('./agents/onboardingConversation');
+    await advanceOnboardingStep(sess.id, task as any, taskData);
+  } catch (err) {
+    console.error(`advanceEviaSessionForUid(${task}) failed:`, err);
+  }
+}
+
 async function handleIdentityVerificationEvent(session: Stripe.Identity.VerificationSession) {
   const userId = session.metadata?.firebaseUID;
   const phone  = session.metadata?.phone;
@@ -1479,6 +1500,7 @@ async function handleIdentityVerificationEvent(session: Stripe.Identity.Verifica
   }
 
   await admin.firestore().collection('users').doc(userId).set(update, { merge: true });
+  if (!phone && status === 'verified') await advanceEviaSessionForUid(userId, 'client_awaiting_identity', 'identity', '');
   console.log(`Identity verification ${status} for user: ${userId}`);
 }
 

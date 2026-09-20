@@ -8,6 +8,11 @@ import { useCareConnex } from '../../context/CareConnexContext';
 import { db } from '../../lib/firebase';
 import { authService } from '../../services/api';
 import { useAccessGates } from '../../hooks/useAccessGates';
+import { billedHourlyRate } from '../../utils/pricing';
+
+// Day chips in week order, not the order the booking happened to list them (2026-09-20).
+const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const sortWeekdays = (days: string[]) => [...days].sort((a, b) => WEEK.indexOf(a.slice(0, 3).toLowerCase()) - WEEK.indexOf(b.slice(0, 3).toLowerCase()));
 
 interface TeamCaregiver {
   id: string;
@@ -287,6 +292,7 @@ export const MyCareTeam: React.FC = () => {
                 ${caregiver.bookingRate ?? caregiver.hourlyRate}
               </span>
               <span className="text-sm text-gray-500">/hr</span>
+              <span className="text-xs text-gray-400">· ${billedHourlyRate(Number(caregiver.bookingRate ?? caregiver.hourlyRate)).toFixed(2)}/hr billed</span>
             </div>
           ) : null}
         </div>
@@ -294,7 +300,7 @@ export const MyCareTeam: React.FC = () => {
         {/* Schedule Days */}
         {caregiver.scheduleDays && caregiver.scheduleDays.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-4">
-            {caregiver.scheduleDays.map(day => (
+            {sortWeekdays(caregiver.scheduleDays).map(day => (
               <span
                 key={day}
                 className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700"

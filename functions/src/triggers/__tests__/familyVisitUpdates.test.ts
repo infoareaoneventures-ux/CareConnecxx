@@ -145,7 +145,7 @@ describe("recordVisitProgress — the 2-minute window", () => {
 });
 
 describe("buildVisitCompletionText — the Past Booking card in words", () => {
-  it("lists tasks done / not done per recipient, the count, the visit log, the closing note, and what happens next", () => {
+  it("notes first (the log, then the closing note), then tasks done / not done per recipient with the count, then what happens next", () => {
     const t = buildVisitCompletionText(shift);
     expect(t).toContain("Basra Yousuf's visit on Thursday, September 17, 2026 is complete (7:05 PM–7:06 PM, 0:00:46).");
     expect(t).toContain("Samira M: Personal Care, Medication Reminders ✓ · Breakfast (Meal Preparation) not done");
@@ -153,9 +153,10 @@ describe("buildVisitCompletionText — the Past Booking card in words", () => {
     expect(t).toContain("3 of 5 tasks checked off.");
     // Sections separated by blank lines; the log bulleted without clock times;
     // the closing note under the Past Bookings card's "Caregiver note" label.
-    expect(t).toContain("3 of 5 tasks checked off.\n\nVisit notes\n· Samira ate half her breakfast\n\nCaregiver note\njust ended the shift for testing purpose\n\nBasra will submit");
+    expect(t).toContain("is complete (7:05 PM–7:06 PM, 0:00:46).\n\nVisit notes\n· Samira ate half her breakfast\n\nCaregiver note\njust ended the shift for testing purpose\n\nSamira M:");
+    expect(t).toContain("3 of 5 tasks checked off.\n\nBasra will submit");
     expect(t).not.toContain("7:06 PM — ");
-    expect(t).toMatch(/is complete \(7:05 PM–7:06 PM, 0:00:46\)\.\n\nSamira M:/);
+    expect(t).toMatch(/Caregiver note\njust ended the shift for testing purpose\n\nSamira M:/);
     expect(t).toContain("Basra will submit the hours next; you'll get them here to review.");
     expect(t).not.toContain("care journal");
   });

@@ -672,7 +672,7 @@ export const AdminClientManager: React.FC = () => {
                   {confirmAction === 'reset' && (
                     <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                       <p className="text-sm text-purple-800 mb-1 font-medium">Reset {selected.name}?</p>
-                      <p className="text-xs text-purple-700 mb-2">This permanently deletes their Auth account, all Firestore docs, conversation history, and Zep memory. Use for test accounts only.</p>
+                      <p className="text-xs text-purple-700 mb-2">This permanently deletes everything tied to this account and phone number: the login, profile, care plan, bookings, shifts, timesheets, interviews, reviews, chat rooms, notifications, conversation history, memory, uploads, and the Stripe customer and subscription. Use for test accounts only.</p>
                       <div className="flex gap-2">
                         <button onClick={() => setConfirmAction(null)} className="px-3 py-1 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-white">Cancel</button>
                         <button onClick={handleReset} className="px-3 py-1 text-sm bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700">

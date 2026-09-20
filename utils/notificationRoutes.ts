@@ -23,6 +23,8 @@ export function routeForNotification(n: RoutableNotification, role: Notification
     if (t === 'job_application') return '/client/posts';
     if (t.startsWith('interview') || t === 'hire_decision') return '/client/posts?tab=interviews';
     // A declined request is listed nowhere — the useful page is finding someone else.
+    // Timesheets (submitted / approved / counter / auto-accepted / payment failed) live on Payments.
+    if (t.startsWith('shift_hours')) return '/client/payments';
     if (t === 'booking_declined' || tt === 'booking_declined') return '/client/find-caregivers';
     // The finished visit's tasks, notes and hours live on the Past Bookings tab.
     if (t === 'shift_completed') return '/client/bookings?tab=past';

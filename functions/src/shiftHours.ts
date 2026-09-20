@@ -268,7 +268,7 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
       shift.clientId,
       'shift_hours_approved',
       'Caregiver accepted correction',
-      `${shift.caregiverName} accepted your proposed ${finalAmount.totalHours}h.`,
+      `${shift.caregiverName} accepted your proposed ${fmtHours(finalAmount.totalHours)}.`,
       { appointmentId }
     );
     // The family was promised a text as soon as the caregiver answers — a counter
@@ -322,10 +322,10 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     shift.clientId,
     'shift_hours_counter_proposed',
     'Caregiver sent a counter-proposal',
-    `${shift.caregiverName} sent a counter-proposal for ${counter.totalHours}h. Review and accept or escalate.`,
+    `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)}. Review and accept or escalate.`,
     { appointmentId, counterTotalHours: counter.totalHours }
   );
-  await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal for ${counter.totalHours}h on their hours. Reply here to accept it, or ask me to escalate it to our team.`);
+  await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)} on their hours. Reply here to accept it, or ask me to escalate it to our team.`);
 
   return { success: true };
 });
@@ -399,14 +399,14 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
     shift.caregiverId,
     'shift_hours_approved',
     'Admin resolved your dispute',
-    `Final: ${finalAmount.totalHours}h.`,
+    `Final: ${fmtHours(finalAmount.totalHours)}.`,
     { appointmentId }
   );
   await pushNotification(
     shift.clientId,
     'shift_hours_approved',
     'Admin resolved the dispute',
-    `Final: ${finalAmount.totalHours}h.`,
+    `Final: ${fmtHours(finalAmount.totalHours)}.`,
     { appointmentId }
   );
 
@@ -577,9 +577,9 @@ export const autoAcceptCorrection = functions.pubsub.schedule('every 1 hours').o
       }),
     });
 
-    await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${autoFinal.totalHours}h proposal was accepted.`, { appointmentId: doc.id });
-    await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${autoFinal.totalHours}h is final.`, { appointmentId: doc.id });
-    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${autoFinal.totalHours}h ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
+    await pushNotification(shift.caregiverId, 'shift_hours_approved', 'Correction auto-accepted', `You did not respond in 24h; client's ${fmtHours(autoFinal.totalHours)} proposal was accepted.`, { appointmentId: doc.id });
+    await pushNotification(shift.clientId, 'shift_hours_approved', 'Correction auto-accepted', `Caregiver did not respond; your proposed ${fmtHours(autoFinal.totalHours)} is final.`, { appointmentId: doc.id });
+    await textClient(shift.clientId, `${shift.caregiverName ?? 'Your caregiver'} didn't respond to your correction in 24 hours, so your proposed ${fmtHours(autoFinal.totalHours)} ($${autoFinal.grossPay.toFixed(2)} to them) is final and your card is being charged $${(autoFinal.totalChargeCents / 100).toFixed(2)} (incl. the $${(autoFinal.serviceFeeCents / 100).toFixed(2)} service fee).`);
   }
 
   return null;
@@ -1034,6 +1034,22 @@ export async function processShiftPayment(appointmentId: string, inputShift: any
         lastErrorCode: errorMessage.slice(0, 100),
       },
     );
+
+    // 2026-09-20 (live-caught: no card on file → "Payment Failed" on the card, but no
+    // text until the 5th retry). The family hears on the FIRST failure, once; the
+    // silent retries continue and the admin escalation below still fires at the end.
+    if (attempt === 1 && !terminal && shift.clientId) {
+      const failedGross = computeGrossCents(shift);
+      const failedTotal = failedGross + serviceFeeCentsFor(failedGross);
+      const cgFirst = String(shift.caregiverName ?? 'your caregiver').split(' ')[0];
+      const amount = `$${(failedTotal / 100).toFixed(2)}`;
+      const lower = errorMessage.toLowerCase();
+      const why = lower.includes('no payment method') || lower.includes('payment method') || lower.includes('no card') || lower.includes('customer') ? "there's no card on file" : 'the card was declined';
+      await Promise.all([
+        pushNotification(shift.clientId, 'shift_hours_payment_failed', 'Payment failed', `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Add or update your card under Payments › Payment Method and we'll retry.`, { appointmentId }),
+        textClient(shift.clientId, `The ${amount} charge for ${cgFirst}'s visit didn't go through — ${why}. Say "update my card" and I'll send the link, or add one under Payments › Payment Method. I'll retry in ${PAYMENT_RETRY_DELAYS_MINUTES[0]} minutes.`),
+      ]).catch((err) => console.warn('first-failure notice failed (non-fatal)', err instanceof Error ? err.message : err));
+    }
 
     if (attempt >= MAX_PAYMENT_ATTEMPTS) {
       await notifyAdmins(

@@ -108,7 +108,7 @@ describe("supervise", () => {
     hoisted.messagesCreate.mockResolvedValueOnce({
       content: [{ type: "text", text: '```json' + String.fromCharCode(10) + '{"violation": true, "revised": "Got it. What city are you based in?"}' + String.fromCharCode(10) + '```' + String.fromCharCode(10) + 'Note: shortened for SMS.' }],
     });
-    const out = await supervise("Please contact our team for help with that.", "+15551234567");
+    const out = await supervise("Please contact our team for help with that.", { phone: "+15551234567" });
     expect(out).toBe("Got it. What city are you based in?");
   });
 

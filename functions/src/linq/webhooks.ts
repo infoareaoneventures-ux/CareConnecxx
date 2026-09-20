@@ -967,6 +967,25 @@ const handleInboundInner = traceable(
     }
     await db.collection("agent_sessions").doc(phone).update(update).catch(() => {});
 
+    // Web bridge for an EXISTING session (live 2026-09-20): a caregiver who
+    // texted Evia cold first and later verified on /start was parked forever on
+    // /caregiver/connect — the two eviaConnected writes below only ran on FIRST
+    // contact (consent YES / brand-new session). Same writes, same shape, for a
+    // phone that already has a session: flip the web tab and open the gate.
+    const existingWebRef  = db.collection("web_onboarding_sessions").doc(phone);
+    const existingWebSnap = await existingWebRef.get().catch(() => null);
+    if (existingWebSnap?.exists && existingWebSnap.data()?.status === "awaiting_inbound") {
+      const bridgeUid = (existingWebSnap.data()?.uid as string | undefined) ?? stored.userId ?? null;
+      await existingWebRef.update({ status: "connected", connectedAt: admin.firestore.Timestamp.now(), chatId }).catch(() => {/* non-critical */});
+      if (bridgeUid) {
+        await db.collection("users").doc(bridgeUid).set(
+          { eviaConnected: true, eviaConnectedAt: admin.firestore.Timestamp.now() },
+          { merge: true },
+        ).catch(() => {/* non-critical */});
+        if (!stored.userId) await db.collection("agent_sessions").doc(phone).update({ userId: bridgeUid }).catch(() => {});
+      }
+    }
+
     // Mirror the user's inbound message into the web chat inbox so the Evia
     // conversation shows up in Chat/ChatInbox. Best-effort, never blocks.
     if (text && stored.userId) {

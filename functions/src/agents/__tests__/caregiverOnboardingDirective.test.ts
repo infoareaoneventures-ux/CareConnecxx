@@ -178,16 +178,16 @@ describe("buildCaregiverOnboardingDirective", () => {
 
 describe("buildCaregiverOnboardingDirective — fields captured from the current message", () => {
   it("names the just-answered field and forbids re-filing the same text elsewhere", () => {
-    const d = buildCaregiverOnboardingDirective({ name: "Hamse" }, FALLBACK_RANGE, ["name"]);
+    const d = buildCaregiverOnboardingDirective({ name: "Hamse" }, "$18–$28/hr", ["name"]);
     expect(d).toContain("Their LAST message answered: " + CAREGIVER_FIELD_LABEL.name);
     expect(d).toContain("Do NOT save its text into any other field");
   });
   it("says nothing extra when nothing was captured this turn", () => {
-    const d = buildCaregiverOnboardingDirective({ name: "Hamse" }, FALLBACK_RANGE, []);
+    const d = buildCaregiverOnboardingDirective({ name: "Hamse" }, "$18–$28/hr", []);
     expect(d).not.toContain("Their LAST message answered");
   });
   it("routes through buildOnboardingDirective for the caregiver role", () => {
-    const d = buildOnboardingDirective("caregiver", { name: "Hamse" }, FALLBACK_RANGE, ["name"]);
+    const d = buildOnboardingDirective("caregiver", { name: "Hamse" }, "$18–$28/hr", ["name"]);
     expect(d).toContain("Their LAST message answered");
   });
 });

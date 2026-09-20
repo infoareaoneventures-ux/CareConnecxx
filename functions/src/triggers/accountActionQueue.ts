@@ -19,6 +19,10 @@ type ActionType =
   | "confirm_phone_change"
   | "request_email_change"
   | "confirm_email_change"
+  | "approve_email_change"
+  | "start_email_change_fallback"
+  | "confirm_email_change_fallback"
+  | "resend_email_confirmation"
   | "delete_account"
   | "set_caregiver_pause_status";
 
@@ -52,6 +56,10 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
     confirmPhoneChange,
     requestEmailChangeSelf,
     confirmEmailChange,
+    approveEmailChange,
+    startEmailChangeFallback,
+    confirmEmailChangeFallback,
+    resendEmailConfirmation,
   } = await import("../accountRecovery");
   const { deleteAccountForUser } = await import("../accountDeletion");
   const { pauseCaregiver, reactivateCaregiver } = await import("../agents/pauseAccount");
@@ -73,8 +81,23 @@ async function dispatch(type: ActionType, data: Record<string, unknown>): Promis
       return;
 
     case "request_email_change":
-      await requestEmailChangeSelf(String(data.uid ?? ""), String(data.newEmail ?? ""));
+      // Returns { stage, token, sentTo, oldEmail } — the page needs the stage
+      // (old-address approval vs new-inbox confirmation) and the token for
+      // the "Text me a code" fallback.
+      return await requestEmailChangeSelf(String(data.uid ?? ""), String(data.newEmail ?? "")) as unknown as Record<string, unknown>;
+
+    case "approve_email_change":
+      return await approveEmailChange(String(data.token ?? ""), "old_email");
+
+    case "start_email_change_fallback":
+      await startEmailChangeFallback(String(data.token ?? ""));
       return;
+
+    case "confirm_email_change_fallback":
+      return await confirmEmailChangeFallback(String(data.token ?? ""), String(data.code ?? ""));
+
+    case "resend_email_confirmation":
+      return await resendEmailConfirmation(String(data.uid ?? "")) as unknown as Record<string, unknown>;
 
     case "confirm_email_change":
       await confirmEmailChange(String(data.token ?? ""));

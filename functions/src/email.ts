@@ -583,3 +583,75 @@ export const sendWelcomeEmail = functions.firestore
       return { success: false, error: err.message };
     }
   });
+
+// Sent to the CURRENT (confirmed) recovery email when a change is requested —
+// that address approves the change before the new one is ever contacted.
+export function emailChangeApprovalHtml(newEmailMasked: string, approveUrl: string): string {
+  const body = `
+    <div style="height:4px;background:linear-gradient(90deg,#0d9488,#14b8a6,#06b6d4);
+                border-radius:4px;margin-bottom:36px;"></div>
+
+    <div style="text-align:center;margin-bottom:28px;">
+      <span style="display:inline-block;width:64px;height:64px;border-radius:50%;
+                   background:#f0fdfa;line-height:64px;font-size:30px;">🔐</span>
+    </div>
+
+    <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
+               text-align:center;">Approve this email change?</h1>
+    <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
+      Someone signed in to your Evia account asked to change its recovery email to
+      <strong style="color:#0f172a;">${newEmailMasked}</strong>. Because this address is the one on file,
+      it has to approve the change first. If that was you, tap below — the new address will then get its own
+      confirmation link, and nothing changes until it's opened.
+    </p>
+
+    ${ctaButton("Approve the change", approveUrl, "#0d9488")}
+
+    <p style="font-size:13px;color:#94a3b8;text-align:center;line-height:1.6;
+              margin:0 0 24px;word-break:break-all;">
+      Or paste this link into your browser:<br>
+      <a href="${approveUrl}" style="color:#0d9488;text-decoration:underline;">${approveUrl}</a>
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
+                   padding:16px 20px;">
+          <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+            <strong>Didn't ask for this?</strong> Ignore this email and nothing will change. This link expires in
+            <strong>30 minutes</strong>. If you think someone else has access to your account, text Evia and
+            we'll help you lock it down.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because this address is the recovery email on an Evia account.</p>`);
+}
+
+// Sent to the OLD address once a change has fully gone through.
+export function emailChangedNoticeHtml(newEmailMasked: string): string {
+  const body = `
+    <div style="height:4px;background:linear-gradient(90deg,#0d9488,#14b8a6,#06b6d4);
+                border-radius:4px;margin-bottom:36px;"></div>
+
+    <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:#0f172a;
+               text-align:center;">Your recovery email was changed</h1>
+    <p style="margin:0 0 24px;font-size:16px;color:#64748b;line-height:1.6;text-align:center;">
+      The recovery email on your Evia account is now <strong style="color:#0f172a;">${newEmailMasked}</strong>.
+      This address no longer receives account security links.
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;
+                   padding:16px 20px;">
+          <p style="margin:0;font-size:13px;color:#92400e;line-height:1.6;">
+            <strong>Wasn't you?</strong> Text Evia right away from the phone on your account and we'll help you secure it.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return emailWrapper(body, `<p style="margin:0;">You're receiving this because this address was the recovery email on an Evia account.</p>`);
+}

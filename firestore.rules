@@ -123,6 +123,8 @@ service cloud.firestore {
           'isAdmin', 'userType', 'role', 'isBanned',
           'verified', 'verificationStatus', 'totalEarnings',
           'identityCheckStatus',
+          // Recovery-email confirmation state — written only by accountRecovery.ts (2026-09-20).
+          'emailVerified', 'emailVerifiedAt', 'emailVerifiedFor', 'emailConfirmSentFor',
           'stripeIdentityVerificationId',
           'identityVerifiedAt',
           'membershipStatus',
@@ -196,6 +198,8 @@ service cloud.firestore {
                 'detailsSubmitted',
                 'stripeOnboardingComplete',
                 'stripeOnboardingCompletedAt',
+                // Recovery-email confirmation state — server-only (accountRecovery.ts, 2026-09-20).
+                'emailVerified', 'emailVerifiedAt', 'emailVerifiedFor', 'emailConfirmSentFor',
                 // MVR / Approved Driver — webhook-only (top-level so affectedKeys() can
                 // actually block them; nested backgroundCheckData.* is reachable via the
                 // 'submitted' escape below, so the security-critical MVR signals must NOT
@@ -1427,14 +1431,16 @@ service cloud.firestore {
       allow create: if request.resource.data.type in [
           'request_phone_change', 'start_phone_verification', 'confirm_phone_change',
           'confirm_email_change', 'request_email_change', 'delete_account',
-          'set_caregiver_pause_status'
+          'set_caregiver_pause_status',
+          'approve_email_change', 'start_email_change_fallback', 'confirm_email_change_fallback',
+          'resend_email_confirmation'
         ]
         && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(
           ['type', 'status', 'createdAt', 'email', 'token', 'newPhone', 'code', 'uid', 'newEmail', 'action', 'until']
         )
         && (
-          request.resource.data.type in ['request_email_change', 'delete_account', 'set_caregiver_pause_status']
+          request.resource.data.type in ['request_email_change', 'resend_email_confirmation', 'delete_account', 'set_caregiver_pause_status']
             ? (request.auth != null && request.auth.uid == request.resource.data.uid)
             : true
         )

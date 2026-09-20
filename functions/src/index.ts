@@ -32,6 +32,8 @@ export * from './stripe';
 // comment. Reached via the account_action_requests Firestore-trigger queue
 // below, or directly by Evia's MCP tools.
 export { processAccountActionQueue } from './triggers/accountActionQueue';
+// Recovery email confirmed at first entry — one write trigger per profile collection (2026-09-20).
+export { onUserEmailWrite, onCaregiverEmailWrite } from './triggers/emailConfirmation';
 
 // CHECKR - Background check initiation + webhook
 export * from './checkr';

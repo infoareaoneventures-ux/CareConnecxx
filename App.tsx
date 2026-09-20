@@ -70,6 +70,7 @@ const PrivacyPolicyPage   = lazy(() => import('./components/pages/PrivacyPolicyP
 const RequestAccountRecoveryPage = lazy(() => import('./components/pages/RequestAccountRecoveryPage'));
 const VerifyPhoneChangePage      = lazy(() => import('./components/pages/VerifyPhoneChangePage'));
 const VerifyEmailChangePage      = lazy(() => import('./components/pages/VerifyEmailChangePage'));
+const ApproveEmailChangePage     = lazy(() => import('./components/pages/ApproveEmailChangePage'));
 
 
 
@@ -389,6 +390,7 @@ const AppContent: React.FC = () => {
           <Route path="/caregiver/forgot-password" element={<RequestAccountRecoveryPage />} />
           <Route path="/verify-phone-change" element={<VerifyPhoneChangePage />} />
           <Route path="/verify-email-change" element={<VerifyEmailChangePage />} />
+          <Route path="/approve-email-change" element={<ApproveEmailChangePage />} />
 
           <Route path="/client/connect" element={<ClientAuthRoute element={<ClientConnectPage />} />} />
           <Route path="/caregiver/connect" element={<CaregiverAuthRoute element={<CaregiverConnectPage />} />} />

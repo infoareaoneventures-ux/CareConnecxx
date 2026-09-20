@@ -2222,14 +2222,15 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "request_email_change",
-    description: "Request a change of the family's email address. Sends a verification link to the new email; does NOT change the auth email until verified. Tell the family they'll need to click the link from the new inbox.",
+    description: "Recovery-email changes and confirmations — the same steps as the site's Account Settings. With newEmail: if the CURRENT recovery email is confirmed, an approval link goes to THAT address first (result.stage awaiting_old_approval; Evia also texts them that they can reply APPROVE from this phone instead, or NO); once approved, the new address gets its confirmation link (stage awaiting_new_confirm). Nothing changes until the new inbox's link is tapped. With resend:true (no newEmail): re-sends the confirmation link for the address already on file when it is not confirmed yet.",
     input_schema: {
       type: "object",
       properties: {
         userId:   { type: "string", description: "The user's ID" },
-        newEmail: { type: "string", description: "The new email address" },
+        newEmail: { type: "string", description: "The new email address (omit when resend is true)" },
+        resend:   { type: "boolean", description: "true = re-send the confirmation link for the unconfirmed address already on file" },
       },
-      required: ["userId", "newEmail"],
+      required: ["userId"],
     },
   },
   // ── Favorites ─────────────────────────────────────────────────────────────
@@ -5099,6 +5100,18 @@ async function executeToolCall(
             guidance: "This account has no email on file, so there's no way to send a verification link. Ask them to set a recovery email first, then try again.",
           };
         }
+        {
+          // An unconfirmed recovery email proves nothing, so it is never used to
+          // verify a phone change (the site's page says the same and offers Resend).
+          const { isEmailVerified } = await import("../accountRecovery");
+          if (!isEmailVerified(d)) {
+            return {
+              success: false,
+              emailUnverified: true,
+              guidance: "Their recovery email hasn't been confirmed yet, so it can't be used to verify a phone change. Offer to resend the confirmation link (request_email_change with resend:true); once they tap it, the phone change can go ahead.",
+            };
+          }
+        }
         const name = ((d.firstName || d.name || "there") as string).split(" ")[0];
         const { requestPhoneChangeForAccount } = await import("../accountRecovery");
         await requestPhoneChangeForAccount({ uid: caregiverId as string, role: "caregiver", name }, email);
@@ -7789,6 +7802,18 @@ async function executeToolCall(
             guidance: "This account has no email on file, so there's no way to send a verification link. Ask them to set a recovery email first, then try again.",
           };
         }
+        {
+          // An unconfirmed recovery email proves nothing, so it is never used to
+          // verify a phone change (the site's page says the same and offers Resend).
+          const { isEmailVerified } = await import("../accountRecovery");
+          if (!isEmailVerified(d)) {
+            return {
+              success: false,
+              emailUnverified: true,
+              guidance: "Their recovery email hasn't been confirmed yet, so it can't be used to verify a phone change. Offer to resend the confirmation link (request_email_change with resend:true); once they tap it, the phone change can go ahead.",
+            };
+          }
+        }
         const name = ((d.displayName || d.firstName || d.name || "there") as string).split(" ")[0];
         const { requestPhoneChangeForAccount } = await import("../accountRecovery");
         await requestPhoneChangeForAccount({ uid: userId as string, role: "client", name }, email);
@@ -7897,8 +7922,17 @@ async function executeToolCall(
 
     // ── request_email_change ────────────────────────────────────────────────
     if (name === "request_email_change") {
-      const { userId, newEmail } = input as Record<string, unknown>;
-      if (!userId || !newEmail) return toolError("INVALID_INPUT", "userId and newEmail are required");
+      const { userId, newEmail, resend } = input as Record<string, unknown>;
+      if (!userId) return toolError("INVALID_INPUT", "userId is required");
+      if (resend === true) {
+        const { resendEmailConfirmation, maskEmail } = await import("../accountRecovery");
+        const r = await resendEmailConfirmation(userId as string);
+        logAudit({ eventType: "email_change_requested", userId: userId as string, data: { source: "mcp:request_email_change", resend: true } }).catch(() => {});
+        return r.sentTo
+          ? { success: true, resent: true, sentTo: maskEmail(r.sentTo), note: "Confirmation link re-sent. Tell them to tap it from that inbox (and to check Junk)." }
+          : { success: true, resent: false, alreadyConfirmed: true, note: "Their recovery email is already confirmed — nothing to resend." };
+      }
+      if (!newEmail) return toolError("INVALID_INPUT", "newEmail is required (or pass resend:true)");
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail as string)) {
         return toolError("INVALID_INPUT", "newEmail is not a valid email address");
       }
@@ -7907,15 +7941,27 @@ async function executeToolCall(
       if (!existing.empty && existing.docs[0].id !== userId) {
         return toolError("INVALID_INPUT", "An account already exists with that email address");
       }
-      const { requestEmailChangeForAccount } = await import("../accountRecovery");
-      await requestEmailChangeForAccount(userId as string, "client", newEmail as string);
-      logAudit({ eventType: "email_change_requested", userId: userId as string, data: { source: "mcp:request_email_change", maskedEmail: (newEmail as string).replace(/(.{2}).*(@.*)/, "$1***$2") } }).catch(() => {});
-      return {
-        success: true,
-        verificationSent: true,
-        newEmail,
-        note: "Confirmation link sent to the new address. The change isn't live until they click it.",
-      };
+      // Same server function as the site's Account Settings (role-aware, rate
+      // limited, approval-first when the current address is confirmed).
+      const { requestEmailChangeSelf, maskEmail } = await import("../accountRecovery");
+      const start = await requestEmailChangeSelf(userId as string, newEmail as string);
+      logAudit({ eventType: "email_change_requested", userId: userId as string, data: { source: "mcp:request_email_change", stage: start.stage, maskedEmail: maskEmail(newEmail as string) } }).catch(() => {});
+      return start.stage === "awaiting_old_approval"
+        ? {
+            success: true,
+            verificationSent: true,
+            stage: start.stage,
+            approvalSentTo: maskEmail(start.sentTo),
+            newEmail,
+            note: `An approval link went to their CURRENT recovery email (${maskEmail(start.sentTo)}), and Evia already texted them that they can reply APPROVE from this phone instead, or NO if it wasn't them. Only after approval does ${maskEmail(newEmail as string)} get its confirmation link. Say exactly that — do not tell them to check the new inbox yet.`,
+          }
+        : {
+            success: true,
+            verificationSent: true,
+            stage: start.stage,
+            newEmail,
+            note: "Confirmation link sent to the new address. The change isn't live until they tap it from that inbox.",
+          };
     }
 
     // ── save_caregiver_favorite ─────────────────────────────────────────────

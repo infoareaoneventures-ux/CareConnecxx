@@ -165,6 +165,8 @@ export const AccountSettings: React.FC = () => {
         // the users doc (that is where a confirmed email change is written). Without
         // this the row said "Not set" and the phone edit was blocked (live-caught 2026-09-19).
         if (d.email) setPersonalInfo(prev => ({ ...prev, email: prev.email || d.email }));
+        // Confirmed only for the exact address on file (accountRecovery.ts isEmailVerified).
+        setEmailVerified(d.emailVerified === true && !!d.email && String(d.emailVerifiedFor || '').toLowerCase() === String(d.email || '').toLowerCase());
         { const savedPhoto = [d.photoURL, d.photo, d.profilePhoto].find(isPhotoUrl); if (savedPhoto) setPhotoURL(savedPhoto); }
 
         // Address — prefer flat fields saved by signup, fall back to old careLocation object
@@ -249,13 +251,42 @@ export const AccountSettings: React.FC = () => {
   const [emailRequestSent, setEmailRequestSent] = useState(false);
   const [phoneRequestSent, setPhoneRequestSent] = useState(false);
   const [newEmailDraft, setNewEmailDraft] = useState('');
+  // Recovery email is confirmed at first entry and a change is approved from the
+  // confirmed address first (2026-09-20): stage awaiting_old_approval → the old
+  // inbox (or a code texted to the phone) approves; awaiting_new_confirm → the
+  // new inbox's link does the swap.
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailChange, setEmailChange] = useState<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string } | null>(null);
+  const [fallbackCodeSent, setFallbackCodeSent] = useState(false);
+  const [fallbackCode, setFallbackCode] = useState('');
 
   const handleRequestEmailChange = () => saving(async () => {
     const user = authService.getCurrentUser();
     if (!newEmailDraft.trim() || !user?.uid) return;
-    await submitAccountAction('request_email_change', { uid: user.uid, newEmail: newEmailDraft.trim() });
+    const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: user.uid, newEmail: newEmailDraft.trim() });
+    setEmailChange(r);
+    setFallbackCodeSent(false);
+    setFallbackCode('');
     setEmailRequestSent(true);
-  }, 'Confirmation link sent');
+  }, 'Link sent');
+
+  const handleResendEmailConfirmation = () => saving(async () => {
+    const user = authService.getCurrentUser();
+    if (!user?.uid) return;
+    await submitAccountAction('resend_email_confirmation', { uid: user.uid });
+  }, 'Confirmation link sent — check your inbox (and Junk)');
+
+  const handleStartFallback = () => saving(async () => {
+    if (!emailChange?.token) return;
+    await submitAccountAction('start_email_change_fallback', { token: emailChange.token });
+    setFallbackCodeSent(true);
+  }, 'Code texted to your phone');
+
+  const handleConfirmFallback = () => saving(async () => {
+    if (!emailChange?.token || !fallbackCode.trim()) return;
+    const r = await submitAccountAction<{ sentTo: string }>('confirm_email_change_fallback', { token: emailChange.token, code: fallbackCode.trim() });
+    setEmailChange({ stage: 'awaiting_new_confirm', token: emailChange.token, sentTo: r.sentTo });
+  }, 'Approved — confirmation link sent to the new address');
 
   const handleRequestPhoneChange = () => saving(async () => {
     await submitAccountAction('request_phone_change', { email: personalInfo.email });
@@ -429,8 +460,44 @@ export const AccountSettings: React.FC = () => {
                 <Row label="Recovery email">
                   {editingEmail ? (
                     emailRequestSent ? (
+                      emailChange?.stage === 'awaiting_old_approval' ? (
+                        <div className="text-sm text-slate-600 space-y-2 max-w-sm">
+                          <p>
+                            We emailed <span className="font-medium text-slate-800">{emailChange.sentTo}</span> to approve this change.
+                            Once approved, <span className="font-medium text-slate-800">{newEmailDraft}</span> gets its own confirmation link. Nothing changes until then.
+                          </p>
+                          {fallbackCodeSent ? (
+                            <div className="flex gap-2 items-center">
+                              <input
+                                value={fallbackCode}
+                                onChange={e => setFallbackCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                inputMode="numeric"
+                                placeholder="6-digit code"
+                                className={inputCls}
+                              />
+                              <button
+                                onClick={handleConfirmFallback}
+                                disabled={isLoading || fallbackCode.trim().length < 4}
+                                className="px-3 py-1.5 bg-primary-600 text-white text-xs font-semibold rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 shrink-0"
+                              >
+                                Confirm code
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={handleStartFallback} disabled={isLoading} className="text-xs text-primary-600 hover:underline">
+                              Can't open that inbox? Text me a code
+                            </button>
+                          )}
+                          <button
+                            onClick={() => { setEditingEmail(false); setEmailRequestSent(false); }}
+                            className="block text-xs text-slate-500 hover:underline"
+                          >
+                            Done
+                          </button>
+                        </div>
+                      ) : (
                       <p className="text-sm text-slate-600">
-                        Check <span className="font-medium text-slate-800">{newEmailDraft}</span> for a confirmation link.
+                        Check <span className="font-medium text-slate-800">{emailChange?.sentTo || newEmailDraft}</span> for a confirmation link. Your recovery email changes the moment it's opened.
                         <button
                           onClick={() => { setEditingEmail(false); setEmailRequestSent(false); }}
                           className="block text-xs text-primary-600 hover:underline mt-1"
@@ -438,6 +505,7 @@ export const AccountSettings: React.FC = () => {
                           Done
                         </button>
                       </p>
+                      )
                     ) : (
                       <div className="space-y-2 max-w-sm">
                         <input
@@ -467,13 +535,27 @@ export const AccountSettings: React.FC = () => {
                     )
                   ) : (
                     <div>
-                      <p className="text-sm text-slate-700">{personalInfo.email || <span className="text-slate-400">Not set</span>}</p>
-                      <button
-                        onClick={() => { setNewEmailDraft(personalInfo.email); setEmailRequestSent(false); setEditingEmail(true); }}
-                        className="text-xs text-primary-600 hover:underline mt-0.5"
-                      >
-                        Edit
-                      </button>
+                      <p className="text-sm text-slate-700">
+                        {personalInfo.email || <span className="text-slate-400">Not set</span>}
+                        {personalInfo.email && (
+                          emailVerified
+                            ? <span className="ml-2 text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Confirmed</span>
+                            : <span className="ml-2 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Not confirmed yet</span>
+                        )}
+                      </p>
+                      <div className="flex gap-3 mt-0.5">
+                        <button
+                          onClick={() => { setNewEmailDraft(personalInfo.email); setEmailRequestSent(false); setEmailChange(null); setEditingEmail(true); }}
+                          className="text-xs text-primary-600 hover:underline"
+                        >
+                          Edit
+                        </button>
+                        {personalInfo.email && !emailVerified && (
+                          <button onClick={handleResendEmailConfirmation} disabled={isLoading} className="text-xs text-primary-600 hover:underline">
+                            Resend confirmation link
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </Row>
@@ -497,6 +579,12 @@ export const AccountSettings: React.FC = () => {
                       <p className="text-sm text-slate-600">
                         Set a recovery email above first — we use it to verify phone number changes.
                         <button onClick={() => setEditingPhone(false)} className="block text-xs text-primary-600 hover:underline mt-1">Close</button>
+                      </p>
+                    ) : !emailVerified ? (
+                      <p className="text-sm text-slate-600">
+                        Confirm your recovery email first — we use it to verify phone number changes.
+                        <button onClick={handleResendEmailConfirmation} disabled={isLoading} className="block text-xs text-primary-600 hover:underline mt-1">Resend confirmation link</button>
+                        <button onClick={() => setEditingPhone(false)} className="block text-xs text-slate-500 hover:underline mt-1">Close</button>
                       </p>
                     ) : (
                       <div className="space-y-2 max-w-sm">

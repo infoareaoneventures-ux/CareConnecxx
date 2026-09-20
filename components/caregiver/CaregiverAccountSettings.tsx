@@ -71,6 +71,13 @@ export const CaregiverAccountSettings: React.FC = () => {
   const [savingEmail, setSavingEmail] = useState(false);
   const [emailRequestSent, setEmailRequestSent] = useState(false);
   const [phoneRequestSent, setPhoneRequestSent] = useState(false);
+  // Recovery email is confirmed at first entry; a change is approved from the
+  // confirmed address first (2026-09-20) — same flow as the client page.
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailChange, setEmailChange] = useState<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string } | null>(null);
+  const [fallbackCodeSent, setFallbackCodeSent] = useState(false);
+  const [fallbackCode, setFallbackCode] = useState('');
+  const [fallbackBusy, setFallbackBusy] = useState(false);
   const [requestingPhoneChange, setRequestingPhoneChange] = useState(false);
 
   // Delete account modal — reauth is via phone OTP, not a password (no
@@ -112,6 +119,7 @@ export const CaregiverAccountSettings: React.FC = () => {
         setDob(cp.dateOfBirth || cp.dob || '');
         setGender(cp.gender || '');
         setEmail(cp.email || '');
+        setEmailVerified(cp.emailVerified === true && !!cp.email && String(cp.emailVerifiedFor || '').toLowerCase() === String(cp.email || '').toLowerCase());
         setPhone(cp.phone || '');
         setStreet(cp.street || cp.streetAddress || cp.address || '');
         setZip(cp.zipCode || cp.zip || '');
@@ -166,10 +174,45 @@ export const CaregiverAccountSettings: React.FC = () => {
     if (!newEmailDraft.trim() || !currentUser?.uid) return;
     setSavingEmail(true);
     try {
-      await submitAccountAction('request_email_change', { uid: currentUser.uid, newEmail: newEmailDraft.trim() });
+      const r = await submitAccountAction<{ stage: 'awaiting_old_approval' | 'awaiting_new_confirm'; token: string; sentTo: string }>('request_email_change', { uid: currentUser.uid, newEmail: newEmailDraft.trim() });
+      setEmailChange(r);
+      setFallbackCodeSent(false);
+      setFallbackCode('');
       setEmailRequestSent(true);
-    } catch { addToast('Failed to send confirmation link', 'error'); }
+    } catch { addToast('Failed to send the link', 'error'); }
     finally { setSavingEmail(false); }
+  };
+
+  const resendEmailConfirmation = async () => {
+    if (!currentUser?.uid) return;
+    setSavingEmail(true);
+    try {
+      await submitAccountAction('resend_email_confirmation', { uid: currentUser.uid });
+      addToast('Confirmation link sent — check your inbox (and Junk)', 'success');
+    } catch { addToast('Failed to send the link', 'error'); }
+    finally { setSavingEmail(false); }
+  };
+
+  const startFallback = async () => {
+    if (!emailChange?.token) return;
+    setFallbackBusy(true);
+    try {
+      await submitAccountAction('start_email_change_fallback', { token: emailChange.token });
+      setFallbackCodeSent(true);
+      addToast('Code texted to your phone', 'success');
+    } catch { addToast('Could not text a code', 'error'); }
+    finally { setFallbackBusy(false); }
+  };
+
+  const confirmFallback = async () => {
+    if (!emailChange?.token || !fallbackCode.trim()) return;
+    setFallbackBusy(true);
+    try {
+      const r = await submitAccountAction<{ sentTo: string }>('confirm_email_change_fallback', { token: emailChange.token, code: fallbackCode.trim() });
+      setEmailChange({ stage: 'awaiting_new_confirm', token: emailChange.token, sentTo: r.sentTo });
+      addToast('Approved — confirmation link sent to the new address', 'success');
+    } catch (e: any) { addToast(e?.message || 'Incorrect code', 'error'); }
+    finally { setFallbackBusy(false); }
   };
 
   const requestPhoneChange = async () => {
@@ -353,11 +396,36 @@ export const CaregiverAccountSettings: React.FC = () => {
             <Field label="Recovery email">
               {editingEmail ? (
                 emailRequestSent ? (
+                  emailChange?.stage === 'awaiting_old_approval' ? (
+                    <div className="text-sm text-slate-600 space-y-2">
+                      <p>
+                        We emailed <span className="font-medium text-slate-800">{emailChange.sentTo}</span> to approve this change.
+                        Once approved, <span className="font-medium text-slate-800">{newEmailDraft}</span> gets its own confirmation link. Nothing changes until then.
+                      </p>
+                      {fallbackCodeSent ? (
+                        <div className="flex gap-2 items-center">
+                          <input value={fallbackCode} onChange={e => setFallbackCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" placeholder="6-digit code"
+                            className="w-40 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-primary-400" />
+                          <button onClick={confirmFallback} disabled={fallbackBusy || fallbackCode.trim().length < 4}
+                            className="px-4 py-1.5 rounded-full bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-40">
+                            {fallbackBusy ? 'Checking…' : 'Confirm code'}
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={startFallback} disabled={fallbackBusy} className="text-xs text-primary-600 hover:underline">
+                          Can't open that inbox? Text me a code
+                        </button>
+                      )}
+                      <button onClick={() => { setEditingEmail(false); setEmailRequestSent(false); }}
+                        className="block text-xs text-slate-500 hover:underline">Done</button>
+                    </div>
+                  ) : (
                   <p className="text-sm text-slate-600">
-                    Check <span className="font-medium text-slate-800">{newEmailDraft}</span> for a confirmation link.
+                    Check <span className="font-medium text-slate-800">{emailChange?.sentTo || newEmailDraft}</span> for a confirmation link. Your recovery email changes the moment it's opened.
                     <button onClick={() => { setEditingEmail(false); setEmailRequestSent(false); }}
                       className="block text-xs text-primary-600 hover:underline mt-1">Done</button>
                   </p>
+                  )
                 ) : (
                   <div className="space-y-2">
                     <input value={newEmailDraft} onChange={e => setNewEmailDraft(e.target.value)} placeholder="you@example.com"
@@ -375,7 +443,19 @@ export const CaregiverAccountSettings: React.FC = () => {
                   </div>
                 )
               ) : (
-                <EditableRow value={email || '—'} onEdit={() => { setNewEmailDraft(email); setEmailRequestSent(false); setEditingEmail(true); }} />
+                <div>
+                  <EditableRow value={email || '—'} onEdit={() => { setNewEmailDraft(email); setEmailRequestSent(false); setEmailChange(null); setEditingEmail(true); }} />
+                  {email && (
+                    <div className="flex items-center gap-3 mt-1">
+                      {emailVerified
+                        ? <span className="text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">Confirmed</span>
+                        : <>
+                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Not confirmed yet</span>
+                            <button onClick={resendEmailConfirmation} disabled={savingEmail} className="text-xs text-primary-600 hover:underline">Resend confirmation link</button>
+                          </>}
+                    </div>
+                  )}
+                </div>
               )}
             </Field>
 
@@ -394,6 +474,12 @@ export const CaregiverAccountSettings: React.FC = () => {
                   <p className="text-sm text-slate-600">
                     Set a recovery email above first — we use it to verify phone number changes.
                     <button onClick={() => setEditingPhone(false)} className="block text-xs text-primary-600 hover:underline mt-1">Close</button>
+                  </p>
+                ) : !emailVerified ? (
+                  <p className="text-sm text-slate-600">
+                    Confirm your recovery email first — we use it to verify phone number changes.
+                    <button onClick={resendEmailConfirmation} disabled={savingEmail} className="block text-xs text-primary-600 hover:underline mt-1">Resend confirmation link</button>
+                    <button onClick={() => setEditingPhone(false)} className="block text-xs text-slate-500 hover:underline mt-1">Close</button>
                   </p>
                 ) : (
                   <div className="space-y-2">

@@ -25,12 +25,20 @@ const startPhoneChangeVerification = vi.fn();
 const confirmPhoneChange = vi.fn();
 const requestEmailChangeSelf = vi.fn();
 const confirmEmailChange = vi.fn();
+const approveEmailChange = vi.fn();
+const startEmailChangeFallback = vi.fn();
+const confirmEmailChangeFallback = vi.fn();
+const resendEmailConfirmation = vi.fn();
 vi.mock("../../accountRecovery", () => ({
   requestPhoneChangeByEmail: (...a: unknown[]) => requestPhoneChangeByEmail(...a),
   startPhoneChangeVerification: (...a: unknown[]) => startPhoneChangeVerification(...a),
   confirmPhoneChange: (...a: unknown[]) => confirmPhoneChange(...a),
   requestEmailChangeSelf: (...a: unknown[]) => requestEmailChangeSelf(...a),
   confirmEmailChange: (...a: unknown[]) => confirmEmailChange(...a),
+  approveEmailChange: (...a: unknown[]) => approveEmailChange(...a),
+  startEmailChangeFallback: (...a: unknown[]) => startEmailChangeFallback(...a),
+  confirmEmailChangeFallback: (...a: unknown[]) => confirmEmailChangeFallback(...a),
+  resendEmailConfirmation: (...a: unknown[]) => resendEmailConfirmation(...a),
 }));
 
 const deleteAccountForUser = vi.fn();
@@ -58,6 +66,10 @@ beforeEach(() => {
   confirmPhoneChange.mockReset().mockResolvedValue(undefined);
   requestEmailChangeSelf.mockReset().mockResolvedValue(undefined);
   confirmEmailChange.mockReset().mockResolvedValue(undefined);
+  approveEmailChange.mockReset().mockResolvedValue({ sentTo: "new@x.com" });
+  startEmailChangeFallback.mockReset().mockResolvedValue(undefined);
+  confirmEmailChangeFallback.mockReset().mockResolvedValue({ sentTo: "new@x.com" });
+  resendEmailConfirmation.mockReset().mockResolvedValue({ sentTo: "a@x.com" });
   deleteAccountForUser.mockReset().mockResolvedValue({ deleted: true });
   pauseCaregiver.mockReset().mockResolvedValue(undefined);
   reactivateCaregiver.mockReset().mockResolvedValue(undefined);
@@ -144,5 +156,35 @@ describe("processAccountActionQueue", () => {
     const snap = makeSnap({ type: "not_a_real_type" });
     await processAccountActionQueue(snap as any);
     expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({ status: "error" }));
+  });
+});
+
+describe("recovery-email approval flow actions (2026-09-20)", () => {
+  it("request_email_change hands the page the stage + token it needs for the old-inbox / phone-code step", async () => {
+    requestEmailChangeSelf.mockResolvedValueOnce({ stage: "awaiting_old_approval", token: "t1", sentTo: "old@x.com", oldEmail: "old@x.com" });
+    const snap = makeSnap({ type: "request_email_change", uid: "u1", newEmail: "new@x.com" });
+    await (processAccountActionQueue as any)(snap);
+    expect(requestEmailChangeSelf).toHaveBeenCalledWith("u1", "new@x.com");
+    expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({ status: "done", result: expect.objectContaining({ stage: "awaiting_old_approval", token: "t1" }) }));
+  });
+
+  it("approve / fallback start / fallback confirm / resend each route to accountRecovery", async () => {
+    let snap = makeSnap({ type: "approve_email_change", token: "t1" });
+    await (processAccountActionQueue as any)(snap);
+    expect(approveEmailChange).toHaveBeenCalledWith("t1", "old_email");
+    expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({ status: "done", result: { sentTo: "new@x.com" } }));
+
+    snap = makeSnap({ type: "start_email_change_fallback", token: "t1" });
+    await (processAccountActionQueue as any)(snap);
+    expect(startEmailChangeFallback).toHaveBeenCalledWith("t1");
+
+    snap = makeSnap({ type: "confirm_email_change_fallback", token: "t1", code: "246810" });
+    await (processAccountActionQueue as any)(snap);
+    expect(confirmEmailChangeFallback).toHaveBeenCalledWith("t1", "246810");
+
+    snap = makeSnap({ type: "resend_email_confirmation", uid: "u1" });
+    await (processAccountActionQueue as any)(snap);
+    expect(resendEmailConfirmation).toHaveBeenCalledWith("u1");
+    expect(snap.ref.update).toHaveBeenCalledWith(expect.objectContaining({ status: "done", result: { sentTo: "a@x.com" } }));
   });
 });

@@ -24,6 +24,7 @@ export function routeForNotification(n: RoutableNotification, role: Notification
   const data = (n.data || {}) as Record<string, unknown>;
   if (role === "client") {
     if (t === "review_prompt") return data.caregiverId ? `/client/caregiver/${data.caregiverId}?review=1` : "/client/dashboard";
+    if (t.startsWith("account")) return "/client/account";
     if (t === "job_application") return "/client/posts";
     if (t.startsWith("interview") || t === "hire_decision") return "/client/posts?tab=interviews";
     // Timesheets (submitted / approved / counter / auto-accepted / payment failed) live on Payments.
@@ -37,6 +38,7 @@ export function routeForNotification(n: RoutableNotification, role: Notification
     if (t.includes("payment")) return "/client/payments";
     return "/client/dashboard";
   }
+  if (t.startsWith("account")) return "/caregiver/settings";
   if (t.startsWith("interview") || t === "hire_decision") return "/caregiver/jobs?tab=interviews";
   if (t.startsWith("booking") || t.startsWith("amendment") || t.startsWith("shift")) return "/caregiver/bookings";
   if (t.includes("payment") || t.includes("payout") || t.includes("membership")) return "/caregiver/payments";
@@ -55,6 +57,8 @@ export function pageLabelFor(path: string): string {
     "/client/membership": "Membership",
     "/client/payments": "Payments",
     "/client/dashboard": "Dashboard",
+    "/client/account": "Account Settings",
+    "/caregiver/settings": "Account Settings",
     "/caregiver/jobs": "Jobs › Interviews",
     "/caregiver/bookings": "My Bookings",
     "/caregiver/payments": "Payments",

@@ -24,6 +24,8 @@ export interface AccountSettingsPage {
   membership: { label: string; actions: MembershipPage["actions"] };
   identity: { status: "verified" | "processing" | "pending" | "requires_input" | "canceled" | "not_started"; label: string };
   recoveryEmail: string | null;
+  /** Confirmed for the exact address on file (accountRecovery.ts isEmailVerified). */
+  recoveryEmailVerified: boolean;
   googleEmail: string | null;
   phone: string | null;
   location: { street: string; city: string; state: string; zip: string; label: string } | null;
@@ -54,6 +56,9 @@ export function shapeAccountSettingsPage(input: AccountSettingsInput): AccountSe
   const photoURL = [auth?.photoURL, doc.photoURL, doc.photo, doc.profilePhoto].find(isPhotoUrl) ?? null;
   // Recovery email: Auth email (Google/email signups), else users.email (phone-OTP signups — 2026-09-19 fix).
   const recoveryEmail = str(auth?.email) || str(doc.email);
+  // Same rule as accountRecovery.ts isEmailVerified: the flag counts only for the exact address on file.
+  const recoveryEmailVerified = doc.emailVerified === true && !!str(doc.email)
+    && String(doc.emailVerifiedFor ?? "").trim().toLowerCase() === String(doc.email ?? "").trim().toLowerCase();
   const phone = str(doc.phone);
   const flatStreet = str(doc.street), flatZip = str(doc.zipCode), flatCity = str(doc.city), flatState = str(doc.state);
   const legacy = (doc.careLocation ?? null) as Record<string, unknown> | null;
@@ -84,8 +89,9 @@ export function shapeAccountSettingsPage(input: AccountSettingsInput): AccountSe
       ? { id: "manage_membership", label: "Manage", tool: "get_membership_page", note: "cancel/reactivate = set_subscription_status; card = get_payment_update_link" }
       : { id: "add_plan", label: "Add a plan", tool: "send_onboarding_link", note: "linkType client_payment" },
     ...(identityStatus === "verified" ? [] : [{ id: "identity_check", label: identityLabel, tool: "send_onboarding_link", note: "linkType client_identity" }]),
-    { id: "edit_email", label: "Edit recovery email", tool: "request_email_change", note: "sends a confirmation link to the NEW address; nothing changes until it is clicked" },
-    { id: "edit_phone", label: "Edit mobile phone", tool: "update_user_profile", note: recoveryEmail ? "requestPhoneChange: true — a secure link goes to the recovery email" : "blocked: set a recovery email first (the page says the same)" },
+    ...(recoveryEmail && !recoveryEmailVerified ? [{ id: "resend_email_confirmation", label: "Resend confirmation link", tool: "request_email_change", note: "resend: true — the address on file is not confirmed yet" }] : []),
+    { id: "edit_email", label: "Edit recovery email", tool: "request_email_change", note: recoveryEmailVerified ? "newEmail — the CURRENT confirmed address approves first (link, or they reply APPROVE from their phone), then the new address gets its confirmation link; nothing changes until that is tapped" : "newEmail — sends a confirmation link to the NEW address; nothing changes until it is tapped" },
+    { id: "edit_phone", label: "Edit mobile phone", tool: "update_user_profile", note: !recoveryEmail ? "blocked: set a recovery email first (the page says the same)" : !recoveryEmailVerified ? "blocked: their recovery email is not confirmed yet — offer Resend confirmation link first (the page says the same)" : "requestPhoneChange: true — a secure link goes to the recovery email" },
     { id: "edit_location", label: "Edit location", tool: "update_user_profile", note: "address / city / state / zip" },
     ...(blockedUsers.length ? [{ id: "unblock", label: "Unblock", tool: "set_block_status", note: "action unblock with the blocked user's id" }] : []),
     { id: "delete_account", label: "Delete account", tool: "delete_account", note: "permanent; confirm explicitly first" },
@@ -96,7 +102,7 @@ export function shapeAccountSettingsPage(input: AccountSettingsInput): AccountSe
     `Profile photo: ${photoURL ? "set" : "none"}.`,
     `Membership plan: ${membershipLabel}.`,
     `Identity check: ${identityLabel}.`,
-    `Recovery email: ${recoveryEmail ?? "Not set"}.`,
+    `Recovery email: ${recoveryEmail ? `${recoveryEmail} (${recoveryEmailVerified ? "confirmed" : "NOT confirmed yet"})` : "Not set"}.`,
     `Mobile phone: ${phone ?? "Not set"}.`,
     `Location: ${location?.label ?? "Not set"}.`,
     `Blocked users: ${blockedUsers.length ? blockedUsers.map((b) => b.name).join(", ") : "none"}.`,
@@ -109,6 +115,7 @@ export function shapeAccountSettingsPage(input: AccountSettingsInput): AccountSe
     membership: { label: membershipLabel, actions: membership.actions },
     identity: { status: identityStatus, label: identityLabel },
     recoveryEmail,
+    recoveryEmailVerified,
     googleEmail: str(auth?.googleEmail),
     phone,
     location,

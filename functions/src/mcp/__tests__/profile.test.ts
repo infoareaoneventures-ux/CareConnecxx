@@ -101,9 +101,15 @@ vi.mock("../../agents/caregiverSearch", () => ({
 // call it with the right account details.
 const requestPhoneChangeForAccount = vi.fn().mockResolvedValue(undefined);
 const requestEmailChangeForAccount = vi.fn().mockResolvedValue(undefined);
+const requestEmailChangeSelf = vi.fn().mockResolvedValue({ stage: "awaiting_new_confirm", token: "t1", sentTo: "new@example.com", oldEmail: null });
+const resendEmailConfirmation = vi.fn().mockResolvedValue({ sentTo: "a@example.com" });
 vi.mock("../../accountRecovery", () => ({
   requestPhoneChangeForAccount: (...a: unknown[]) => requestPhoneChangeForAccount(...a),
   requestEmailChangeForAccount: (...a: unknown[]) => requestEmailChangeForAccount(...a),
+  requestEmailChangeSelf: (...a: unknown[]) => requestEmailChangeSelf(...a),
+  resendEmailConfirmation: (...a: unknown[]) => resendEmailConfirmation(...a),
+  maskEmail: (e: string) => e,
+  isEmailVerified: () => true,
 }));
 
 // The profile photo goes through the site's own upload path (agents/profilePhoto.ts,
@@ -120,6 +126,8 @@ describe("profile tools", () => {
     hoisted.reset();
     requestPhoneChangeForAccount.mockClear();
     requestEmailChangeForAccount.mockClear();
+    requestEmailChangeSelf.mockClear();
+    resendEmailConfirmation.mockClear();
     setClientProfilePhoto.mockClear();
   });
 
@@ -265,7 +273,7 @@ describe("profile tools", () => {
   });
 
   describe("request_email_change", () => {
-    it("requires userId and newEmail", async () => {
+    it("requires userId and newEmail (unless resend)", async () => {
       expect(((await handleToolCall("request_email_change", { userId: "u1" })) as any)._toolError).toBe(true);
       expect(((await handleToolCall("request_email_change", { newEmail: "a@b.co" })) as any)._toolError).toBe(true);
     });
@@ -282,9 +290,25 @@ describe("profile tools", () => {
       // The actual token doc + email send now live in accountRecovery.ts
       // (its own tests cover that) — this boundary just confirms the tool
       // calls it with the right account and never writes pendingEmail itself.
-      expect(requestEmailChangeForAccount).toHaveBeenCalledWith("u1", "client", "new@example.com");
+      // Same role-aware, approval-first server function the site's Account Settings uses.
+      expect(requestEmailChangeSelf).toHaveBeenCalledWith("u1", "new@example.com");
+      expect(r.stage).toBe("awaiting_new_confirm");
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
       expect(userSet?.data.pendingEmail).toBeUndefined();
+    });
+
+    it("approval-first: when the current address is confirmed the note points at the OLD inbox, never the new one", async () => {
+      requestEmailChangeSelf.mockResolvedValueOnce({ stage: "awaiting_old_approval", token: "t2", sentTo: "old@example.com", oldEmail: "old@example.com" });
+      const r = await handleToolCall("request_email_change", { userId: "u1", newEmail: "new@example.com" }) as any;
+      expect(r.stage).toBe("awaiting_old_approval");
+      expect(r.approvalSentTo).toBe("old@example.com");
+      expect(r.note).toContain("reply APPROVE");
+    });
+
+    it("resend:true re-sends the confirmation link for the unconfirmed address on file", async () => {
+      const r = await handleToolCall("request_email_change", { userId: "u1", resend: true }) as any;
+      expect(resendEmailConfirmation).toHaveBeenCalledWith("u1");
+      expect(r.resent).toBe(true);
     });
   });
 });

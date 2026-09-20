@@ -14,6 +14,10 @@ export type AccountActionType =
   | 'confirm_phone_change'
   | 'request_email_change'
   | 'confirm_email_change'
+  | 'approve_email_change'
+  | 'start_email_change_fallback'
+  | 'confirm_email_change_fallback'
+  | 'resend_email_confirmation'
   | 'delete_account'
   | 'set_caregiver_pause_status';
 

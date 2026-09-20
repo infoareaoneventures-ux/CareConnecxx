@@ -5,6 +5,8 @@ import {
   phoneChangeRequestHtml,
   phoneChangeConfirmedHtml,
   emailChangeConfirmHtml,
+  emailChangeApprovalHtml,
+  emailChangedNoticeHtml,
 } from "./email";
 import { sendSMS } from "./sms";
 import { appLink } from "./config/appUrl";
@@ -36,10 +38,13 @@ import { generateOtp, verifyOtp, OtpState } from "./utils/phoneVerification";
 //                                    access)
 //   confirmPhoneChange            — token + code in, does the actual swap
 //
-// Email-change is gated the same way, one step shorter (no OTP — clicking the
-// link IS the proof of owning the new inbox):
-//   requestEmailChangeSelf (auth'd) — new email in, confirmation email out
-//   confirmEmailChange              — token in, writes the new email
+// Email: confirmed at first entry, changes approved from the confirmed address
+// first (see the "Recovery email" section below):
+//   sendEmailConfirmation         — one confirmation link to one inbox
+//   requestEmailChangeSelf        — approval link to the OLD address (or straight
+//                                    to the new inbox when nothing is confirmed)
+//   approveEmailChange / *Fallback — old-address link, phone code, or APPROVE text
+//   confirmEmailChange            — the new inbox's link does the swap
 
 const db = () => admin.firestore();
 
@@ -152,6 +157,13 @@ export async function requestPhoneChangeByEmail(rawEmail: string): Promise<void>
   try {
     const account = await findAccountByEmail(email);
     if (!account) return;
+    // The recovery email is the anchor for this flow — an unconfirmed one proves
+    // nothing, so it is never used (the logged-in pages explain and offer Resend;
+    // this logged-out path stays silent by design).
+    if (!(await emailVerifiedForAccount(account.uid, account.role))) {
+      console.info("requestPhoneChangeByEmail: recovery email not confirmed, no link sent", { uid: account.uid });
+      return;
+    }
     await requestPhoneChangeForAccount(account, email);
   } catch (err) {
     console.error("requestPhoneChangeByEmail:", err);
@@ -236,54 +248,285 @@ export async function confirmPhoneChange(token: string, code: string): Promise<v
   ]);
 }
 
-// Core logic shared by the website's email-change request flow and Evia's
-// request_email_change MCP tool — one place creates the request doc and
-// sends the confirmation email. Callers are responsible for auth/ownership
-// checks and any duplicate-email validation before calling this.
-export async function requestEmailChangeForAccount(uid: string, role: Role, newEmail: string): Promise<void> {
+// ── Recovery email: confirmed at first entry, changes approved from the old ──
+// address (founder decision 2026-09-20). The recovery email is the phone-change
+// flow's trust anchor, so:
+//   1. Every address is CONFIRMED when first entered — from the signup page or
+//      Evia's onboarding alike. triggers/emailConfirmation.ts watches
+//      users/{uid}.email and caregivers/{uid}.email and calls
+//      sendEmailConfirmation; no surface has to remember to do it.
+//   2. Changing a CONFIRMED address is approved FROM that address first (an
+//      approval link), and only then does the new inbox get its confirmation
+//      link. Fallback when the old inbox is gone: a code texted to the phone on
+//      file (the site's "Text me a code"); over SMS, replying APPROVE from that
+//      same phone is the identical proof.
+//   3. Phone changes refuse an unconfirmed email (emailVerifiedForAccount).
+// Profile fields (users for clients, caregivers for caregivers — a caregiver's
+// users doc mirrors them): email, emailVerified, emailVerifiedAt,
+// emailVerifiedFor (the exact address the flag is for), emailConfirmSentFor
+// (the trigger's idempotency marker).
+
+export type EmailRequestKind  = "initial" | "change";
+export type EmailRequestStage = "awaiting_old_approval" | "awaiting_new_confirm";
+export type EmailApprovalVia  = "old_email" | "phone_code" | "phone_reply";
+
+export function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return email;
+  return `${email.slice(0, Math.min(2, at))}***${email.slice(at)}`;
+}
+
+export function profileCollectionFor(role: Role): "users" | "caregivers" {
+  return role === "caregiver" ? "caregivers" : "users";
+}
+
+export async function resolveRole(uid: string): Promise<Role> {
+  const cg = await db().collection("caregivers").doc(uid).get();
+  return cg.exists ? "caregiver" : "client";
+}
+
+/** True only when the flag was set for the address currently on file. */
+export function isEmailVerified(d: Record<string, unknown> | undefined | null): boolean {
+  if (!d || d.emailVerified !== true) return false;
+  const email = typeof d.email === "string" ? d.email.trim().toLowerCase() : "";
+  const forEmail = typeof d.emailVerifiedFor === "string" ? d.emailVerifiedFor.trim().toLowerCase() : "";
+  return !!email && email === forEmail;
+}
+
+export async function emailVerifiedForAccount(uid: string, role: Role): Promise<boolean> {
+  const snap = await db().collection(profileCollectionFor(role)).doc(uid).get();
+  return isEmailVerified(snap.data());
+}
+
+async function phoneForAccount(uid: string, role: Role): Promise<string | null> {
+  const snap = await db().collection(profileCollectionFor(role)).doc(uid).get();
+  const p = snap.data()?.phone;
+  if (typeof p === "string" && p) return p;
+  if (role === "caregiver") {
+    const u = await db().collection("users").doc(uid).get();
+    const up = u.data()?.phone;
+    if (typeof up === "string" && up) return up;
+  }
+  return null;
+}
+
+// Text the account holder as Evia — but only once they've opted in (TCPA): a
+// brand-new /start signup has an email on file before their first text.
+async function textAccount(uid: string, role: Role, message: string): Promise<void> {
+  try {
+    const phone = await phoneForAccount(uid, role);
+    if (!phone) return;
+    const sess = await db().collection("agent_sessions").doc(phone).get();
+    if (!sess.exists || sess.data()?.optedIn !== true) return;
+    await sendSMS({ to: phone, message: `Evia: ${message}` });
+  } catch (err) {
+    console.warn("accountRecovery: account text failed", err instanceof Error ? err.message : err);
+  }
+}
+
+async function bell(uid: string, type: string, title: string, body: string): Promise<void> {
+  await db().collection("users").doc(uid).collection("notifications").add({
+    userId: uid, type, title, body, data: {}, isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch(() => {});
+}
+
+// Session anchor so the family/caregiver can answer Evia's "reply APPROVE / NO"
+// text (agents/emailChangeReply.ts reads it; 30 min like the request itself).
+export const EMAIL_CHANGE_ANCHOR_TTL_MS = REQUEST_TTL_MS;
+async function setEmailChangeAnchor(uid: string, role: Role, token: string): Promise<void> {
+  const phone = await phoneForAccount(uid, role);
+  if (!phone) return;
+  await db().collection("agent_sessions").doc(phone).set({
+    pendingEmailChangeToken: token,
+    pendingEmailChangeSetAt: new Date().toISOString(),
+  }, { merge: true }).catch(() => {});
+}
+export async function clearEmailChangeAnchor(uid: string, role: Role): Promise<void> {
+  const phone = await phoneForAccount(uid, role);
+  if (!phone) return;
+  await db().collection("agent_sessions").doc(phone).update({
+    pendingEmailChangeToken: admin.firestore.FieldValue.delete(),
+    pendingEmailChangeSetAt: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+}
+
+async function loadPendingEmailRequest(token: string) {
+  if (!token) throw new Error("Missing token");
+  const ref = db().collection("email_change_requests").doc(token);
+  const snap = await ref.get();
+  const data = snap.data() as Record<string, unknown> | undefined;
+  if (!snap.exists || !data || data.status !== "pending" || (data.expiresAt as number) < Date.now()) {
+    throw new Error("This link is invalid or has expired.");
+  }
+  return { ref, data: data as { uid: string; role: Role; newEmail: string; oldEmail?: string | null; kind?: EmailRequestKind; stage?: EmailRequestStage; fallbackOtp?: OtpState | null } };
+}
+
+// One confirmation link to ONE inbox. Used for first entry (trigger), for a
+// change whose old address was never confirmed, and as the second step of an
+// approved change. Returns the token.
+export async function sendEmailConfirmation(
+  uid: string, role: Role, email: string, kind: EmailRequestKind,
+  opts: { oldEmail?: string | null; approvedVia?: EmailApprovalVia | null } = {},
+): Promise<string> {
   const token = randomToken();
   const now = Date.now();
   await db().collection("email_change_requests").doc(token).set({
-    uid, role, newEmail,
-    requestedAt: now,
-    expiresAt: now + REQUEST_TTL_MS,
-    status: "pending",
+    uid, role, newEmail: email, kind, stage: "awaiting_new_confirm",
+    oldEmail: opts.oldEmail ?? null, approvedVia: opts.approvedVia ?? null,
+    requestedAt: now, expiresAt: now + REQUEST_TTL_MS, status: "pending",
   });
-
+  // Idempotency marker for the trigger; first entry also stamps the flag false
+  // so the site can show "Not confirmed yet" (a change leaves the OLD address's
+  // flag alone until the swap actually happens).
+  await db().collection(profileCollectionFor(role)).doc(uid).set(
+    { emailConfirmSentFor: email, ...(kind === "initial" ? { emailVerified: false } : {}) },
+    { merge: true },
+  );
   const verifyUrl = appLink(`/verify-email-change?token=${token}`);
   await sendTransactionalEmail({
-    to: newEmail,
-    subject: "Confirm your new Evia email address",
+    to: email,
+    subject: kind === "initial" ? "Confirm your Evia recovery email" : "Confirm your new Evia email address",
     html: emailChangeConfirmHtml(verifyUrl),
   });
+  await textAccount(uid, role, kind === "initial"
+    ? `I sent a confirmation link to ${maskEmail(email)} — tap it when you can so your recovery email is confirmed. (Check Junk if it isn't there.)`
+    : `I sent the confirmation link to ${maskEmail(email)}. Your recovery email changes the moment it's tapped.`);
+  return token;
 }
 
-// ── requestEmailChangeSelf (website's Account Settings entry point, auth'd) ──
-export async function requestEmailChangeSelf(uid: string, rawNewEmail: string): Promise<void> {
+// The settings page's "Resend link" (and Evia's request_email_change resend).
+export async function resendEmailConfirmation(uid: string): Promise<{ sentTo: string | null }> {
+  const role = await resolveRole(uid);
+  const snap = await db().collection(profileCollectionFor(role)).doc(uid).get();
+  const d = (snap.data() ?? {}) as Record<string, unknown>;
+  const email = typeof d.email === "string" ? d.email.trim() : "";
+  if (!email) throw new Error("No recovery email on file");
+  if (isEmailVerified(d)) return { sentTo: null };
+  if (await isRateLimited("email_change_rate_limits", uid)) throw new Error("Please wait a minute before requesting another link.");
+  await sendEmailConfirmation(uid, role, email, "initial");
+  return { sentTo: email };
+}
+
+export interface EmailChangeStart { stage: EmailRequestStage; token: string; sentTo: string; oldEmail: string | null }
+
+// ── requestEmailChangeSelf (Account Settings + Evia's request_email_change) ──
+export async function requestEmailChangeSelf(uid: string, rawNewEmail: string): Promise<EmailChangeStart> {
   const newEmail = rawNewEmail.trim();
   if (!newEmail || !isValidEmail(newEmail)) throw new Error("Valid email required");
-  if (await isRateLimited("email_change_rate_limits", uid)) return;
+  if (await isRateLimited("email_change_rate_limits", uid)) throw new Error("Please wait a minute before requesting another link.");
 
-  const caregiverSnap = await db().collection("caregivers").doc(uid).get();
-  const role: Role = caregiverSnap.exists ? "caregiver" : "client";
-  await requestEmailChangeForAccount(uid, role, newEmail);
-}
+  const role = await resolveRole(uid);
+  const snap = await db().collection(profileCollectionFor(role)).doc(uid).get();
+  const d = (snap.data() ?? {}) as Record<string, unknown>;
+  const current = typeof d.email === "string" ? d.email.trim() : "";
 
-// ── confirmEmailChange ───────────────────────────────────────────────────────
-export async function confirmEmailChange(token: string): Promise<void> {
-  if (!token) throw new Error("Missing token");
-
-  const ref = db().collection("email_change_requests").doc(token);
-  const snap = await ref.get();
-  const reqData = snap.data();
-  if (!snap.exists || !reqData || reqData.status !== "pending" || (reqData.expiresAt as number) < Date.now()) {
-    throw new Error("This link is invalid or has expired.");
+  if (current && isEmailVerified(d) && current.toLowerCase() !== newEmail.toLowerCase()) {
+    // Confirmed address on file → it approves first.
+    const token = randomToken();
+    const now = Date.now();
+    await db().collection("email_change_requests").doc(token).set({
+      uid, role, newEmail, oldEmail: current, kind: "change", stage: "awaiting_old_approval",
+      approvedVia: null, fallbackOtp: null,
+      requestedAt: now, expiresAt: now + REQUEST_TTL_MS, status: "pending",
+    });
+    const approveUrl = appLink(`/approve-email-change?token=${token}`);
+    await sendTransactionalEmail({
+      to: current,
+      subject: "Approve a change to your Evia recovery email",
+      html: emailChangeApprovalHtml(maskEmail(newEmail), approveUrl),
+    });
+    await textAccount(uid, role,
+      `A request was just made to change your recovery email to ${maskEmail(newEmail)}. I emailed ${maskEmail(current)} to approve it. ` +
+      `Can't open that inbox? Reply APPROVE and I'll use this phone as your proof instead. Wasn't you? Reply NO.`);
+    await setEmailChangeAnchor(uid, role, token);
+    return { stage: "awaiting_old_approval", token, sentTo: current, oldEmail: current };
   }
 
-  const { uid, role, newEmail } = reqData as { uid: string; role: Role; newEmail: string };
-  const collection = role === "caregiver" ? "caregivers" : "users";
-  await db().collection(collection).doc(uid).set({ email: newEmail }, { merge: true });
+  // Nothing confirmed to anchor to → the new inbox's own link is the proof.
+  const token = await sendEmailConfirmation(uid, role, newEmail, "change", { oldEmail: current || null, approvedVia: null });
+  return { stage: "awaiting_new_confirm", token, sentTo: newEmail, oldEmail: current || null };
+}
+
+// Approval from the OLD address (link) or the phone (code / APPROVE reply):
+// consumes the approval token and sends the new inbox its confirmation link.
+export async function approveEmailChange(token: string, via: EmailApprovalVia = "old_email"): Promise<{ sentTo: string }> {
+  const { ref, data } = await loadPendingEmailRequest(token);
+  if (data.stage !== "awaiting_old_approval") throw new Error("This link is invalid or has expired.");
+  await ref.update({ status: "consumed", approvedVia: via, approvedAt: Date.now() });
+  await sendEmailConfirmation(data.uid, data.role, data.newEmail, "change", { oldEmail: data.oldEmail ?? null, approvedVia: via });
+  await clearEmailChangeAnchor(data.uid, data.role);
+  return { sentTo: data.newEmail };
+}
+
+// Site fallback when the old inbox is gone: a code to the phone on file.
+export async function startEmailChangeFallback(token: string): Promise<void> {
+  const { ref, data } = await loadPendingEmailRequest(token);
+  if (data.stage !== "awaiting_old_approval") throw new Error("This link is invalid or has expired.");
+  const phone = await phoneForAccount(data.uid, data.role);
+  if (!phone) throw new Error("No phone number on file");
+  const otp = generateOtp();
+  await ref.update({ fallbackOtp: otp });
+  const r = await sendSMS({ to: phone, message: `Evia: your code to approve the recovery email change is ${otp.code}. It expires in 15 minutes. If you didn't request this, reply NO.` });
+  if (!r.success) throw new Error(r.error || "Could not text a code to the phone on file.");
+}
+
+export async function confirmEmailChangeFallback(token: string, code: string): Promise<{ sentTo: string }> {
+  if (!code) throw new Error("Missing code");
+  const { ref, data } = await loadPendingEmailRequest(token);
+  if (data.stage !== "awaiting_old_approval" || !data.fallbackOtp) throw new Error("This link is invalid or has expired.");
+  const result = verifyOtp(code, data.fallbackOtp);
+  if (result.status !== "ok") {
+    await ref.update({ fallbackOtp: { ...data.fallbackOtp, attempts: (data.fallbackOtp.attempts ?? 0) + 1 } });
+    throw new Error(result.status === "wrong"
+      ? "Incorrect code. Please try again."
+      : "That code expired or too many attempts were made. Request a new one.");
+  }
+  return approveEmailChange(token, "phone_code");
+}
+
+// "NO" from the phone, or Cancel on the page: nothing changes.
+export async function cancelEmailChange(token: string): Promise<void> {
+  const { ref, data } = await loadPendingEmailRequest(token);
+  await ref.update({ status: "cancelled", cancelledAt: Date.now() });
+  await clearEmailChangeAnchor(data.uid, data.role);
+}
+
+// ── confirmEmailChange (the new inbox's link) ────────────────────────────────
+export async function confirmEmailChange(token: string): Promise<void> {
+  const { ref, data } = await loadPendingEmailRequest(token);
+  // Legacy request docs (pre-2026-09-20) have no stage; anything staged must be
+  // the new-inbox step — an approval token can never confirm an address.
+  if (data.stage && data.stage !== "awaiting_new_confirm") throw new Error("This link is invalid or has expired.");
+
+  const { uid, role, newEmail } = data;
+  const kind: EmailRequestKind = data.kind ?? "change";
+  const oldEmail = data.oldEmail ?? null;
+  const verified = {
+    email: newEmail,
+    emailVerified: true,
+    emailVerifiedAt: new Date().toISOString(),
+    emailVerifiedFor: newEmail,
+    emailConfirmSentFor: newEmail,
+  };
+  await db().collection(profileCollectionFor(role)).doc(uid).set(verified, { merge: true });
+  if (role === "caregiver") await db().collection("users").doc(uid).set(verified, { merge: true }).catch(() => {});
   await ref.update({ status: "consumed" });
+
+  const changed = kind === "change" && !!oldEmail && oldEmail.toLowerCase() !== newEmail.toLowerCase();
+  await bell(uid, "account_email_confirmed",
+    changed ? "Recovery email updated" : "Recovery email confirmed",
+    `${newEmail} is now the confirmed recovery email on your account.`);
+  await textAccount(uid, role, changed
+    ? `Done — your recovery email is now ${maskEmail(newEmail)}.`
+    : `Your recovery email ${maskEmail(newEmail)} is confirmed. Thanks!`);
+  if (changed && oldEmail) {
+    await sendTransactionalEmail({
+      to: oldEmail,
+      subject: "Your Evia recovery email was changed",
+      html: emailChangedNoticeHtml(maskEmail(newEmail)),
+    }).catch(() => {});
+  }
 }
 
 // ── Expiry sweep ─────────────────────────────────────────────────────────────

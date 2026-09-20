@@ -9,6 +9,7 @@ import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { handleCompletionNudgeReply, freshCompletionNudgeInterviewId } from "../agents/completionNudgeReply";
 import { handleReviewPromptReply } from "../agents/reviewPrompt";
+import { handleEmailChangeReply } from "../agents/emailChangeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
 import { intentToShadowFlow, shadowTap } from "../agents/routingShadowTap";
 import { updatePermissionFromText } from "../agents/permissionsConversation";
@@ -1060,6 +1061,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // the completion recap. A star count / yes starts reviewFlow.ts (the site's
     // Leave a Review modal) with the rating prefilled; "no thanks" clears it;
     // anything else is not ours and routes as normal. LLM-classified, fresh 24h.
+    // 2026-09-20: "Reply APPROVE to use this phone as your proof, or NO" after a
+    // recovery-email change request (accountRecovery.ts sets the anchor).
+    if (await handleEmailChangeReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> })) return;
     if (await handleReviewPromptReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> })) return;
     if (
       intent === "QUESTION" &&

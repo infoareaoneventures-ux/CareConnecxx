@@ -3,18 +3,21 @@ import { Link } from 'react-router-dom';
 import { submitAccountAction } from '../../services/accountActionQueue';
 import { BloomMark } from '../ui/BloomMark';
 
-// Destination of the link emailed by the request_email_change flow. Clicking
-// it IS the proof of owning the new inbox — no further input needed here.
-type Status = 'confirming' | 'done' | 'expired';
+// Destination of the link emailed to the CURRENT (confirmed) recovery email
+// when a change is requested. Clicking it is the old address approving the
+// change; the new address then gets its own confirmation link. Mirrors
+// VerifyEmailChangePage (the second step) in shape and copy.
+type Status = 'approving' | 'done' | 'expired';
 
-export default function VerifyEmailChangePage() {
-  const [status, setStatus] = useState<Status>('confirming');
+export default function ApproveEmailChangePage() {
+  const [status, setStatus] = useState<Status>('approving');
+  const [sentTo, setSentTo] = useState<string>('');
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token') ?? '';
     if (!token) { setStatus('expired'); return; }
-    submitAccountAction('confirm_email_change', { token })
-      .then(() => setStatus('done'))
+    submitAccountAction<{ sentTo?: string }>('approve_email_change', { token })
+      .then((r) => { setSentTo(r?.sentTo ?? ''); setStatus('done'); })
       .catch(() => setStatus('expired'));
   }, []);
 
@@ -28,14 +31,17 @@ export default function VerifyEmailChangePage() {
           <div className="text-2xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Evia</div>
         </div>
 
-        {status === 'confirming' && (
-          <p className="text-ink-600 text-sm">Confirming your email…</p>
+        {status === 'approving' && (
+          <p className="text-ink-600 text-sm">Approving the change…</p>
         )}
 
         {status === 'done' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Email confirmed</h2>
-            <p className="text-ink-600 text-sm">This is now the confirmed recovery email on your Evia account.</p>
+            <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">Change approved</h2>
+            <p className="text-ink-600 text-sm">
+              We've sent a confirmation link to {sentTo ? <span className="font-medium text-ink-900">{sentTo}</span> : 'the new address'}.
+              Your recovery email updates the moment that link is opened. Nothing changes until then.
+            </p>
             <Link to="/login" className="inline-block text-ink-600 hover:text-ink-900 text-sm font-medium underline underline-offset-2">
               Sign in
             </Link>
@@ -46,7 +52,7 @@ export default function VerifyEmailChangePage() {
           <div className="space-y-4">
             <h2 className="text-xl font-display font-semibold text-ink-900 tracking-[-0.02em]">This link has expired</h2>
             <p className="text-ink-600 text-sm">
-              For your security these links expire after 30 minutes. Go back to Account Settings and try again.
+              For your security these links expire after 30 minutes, and each one works once. Go back to Account Settings and start the change again.
             </p>
           </div>
         )}

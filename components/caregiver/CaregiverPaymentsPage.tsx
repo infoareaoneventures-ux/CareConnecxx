@@ -117,7 +117,7 @@ const fmtDuration = (hours: number): string => {
 function toDateTimeLocal(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
@@ -278,7 +278,10 @@ const ReviewRespondModal: React.FC<{
 
   const [counterStart,     setCounterStart]     = React.useState(row.proposedStartTime ? toDateTimeLocal(row.proposedStartTime) : '');
   const [counterEnd,       setCounterEnd]       = React.useState(row.proposedEndTime   ? toDateTimeLocal(row.proposedEndTime)   : '');
-  const [counterLineItems, setCounterLineItems] = React.useState<LineItem[]>(row.lineItems ?? []);
+  // A counter answers the client's proposal, so it starts from the proposal's charges (as the
+  // times do) — the caregiver edits what they dispute. Before: it silently reverted to the
+  // submitted list, so an untouched counter re-asserted the old amounts.
+  const [counterLineItems, setCounterLineItems] = React.useState<LineItem[]>(((row as any).proposedLineItems as LineItem[] | undefined) ?? row.lineItems ?? []);
   const [counterNote,      setCounterNote]      = React.useState('');
   const [submitting,       setSubmitting]       = React.useState(false);
 
@@ -362,12 +365,12 @@ const ReviewRespondModal: React.FC<{
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Counter start</label>
-                <input type="datetime-local" value={counterStart} onChange={e => setCounterStart(e.target.value)}
+                <input type="datetime-local" step={1} value={counterStart} onChange={e => setCounterStart(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Counter end</label>
-                <input type="datetime-local" value={counterEnd} onChange={e => setCounterEnd(e.target.value)}
+                <input type="datetime-local" step={1} value={counterEnd} onChange={e => setCounterEnd(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
               </div>
             </div>

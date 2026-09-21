@@ -28,7 +28,7 @@ interface Props {
 function toLocal(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function fmtTimestamp(iso: string): string {
@@ -405,12 +405,12 @@ export const ReviewShiftHoursModal: React.FC<Props> = ({ shift, onClose, onDone,
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Proposed start</label>
-              <input type="datetime-local" value={start} onChange={e => setStart(e.target.value)}
+              <input type="datetime-local" step={1} value={start} onChange={e => setStart(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Proposed end</label>
-              <input type="datetime-local" value={end} onChange={e => setEnd(e.target.value)}
+              <input type="datetime-local" step={1} value={end} onChange={e => setEnd(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-2">

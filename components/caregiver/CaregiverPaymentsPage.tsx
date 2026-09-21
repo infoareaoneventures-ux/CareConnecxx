@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import {
   Zap, Landmark, CheckCircle2, AlertCircle, Lock,
   ExternalLink, Calendar, DollarSign, FileDown,
@@ -1152,13 +1153,7 @@ const ShiftDetailModal: React.FC<{ shiftId: string; onClose: () => void }> = ({ 
                 );
               })()}
 
-              {/* Completion notes */}
-              {data.completionNotes && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
-                  <p className="text-xs text-slate-600">{data.completionNotes}</p>
-                </div>
-              )}
+              <VisitNotesBlock notesLog={(data as any).notesLog} completionNotes={data.completionNotes} className="p-3 bg-slate-50 border border-slate-200 rounded-xl" />
             </>
           )}
         </div>

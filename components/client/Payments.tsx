@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
 import {
   Clock, CreditCard, CheckCircle, AlertTriangle, Loader2, RefreshCw,
@@ -569,13 +570,8 @@ const ShiftRow: React.FC<{
                 );
               })()}
 
-              {/* Notes */}
-              {shiftDetails.completionNotes && (
-                <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Caregiver Notes</p>
-                  <p className="text-xs text-slate-600">{shiftDetails.completionNotes}</p>
-                </div>
-              )}
+              {/* Visit notes log + closing note */}
+              <VisitNotesBlock notesLog={shiftDetails.notesLog} completionNotes={shiftDetails.completionNotes} uppercase className="bg-white border border-slate-200 rounded-xl px-4 py-3" />
             </>
           )}
 

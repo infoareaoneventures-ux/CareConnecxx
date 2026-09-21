@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays, Clock, MapPin, CheckCircle, XCircle,
@@ -1879,13 +1880,8 @@ const PastBookingGroupCard: React.FC<{ shifts: Shift[]; onLogHours?: (shift: Shi
                       </div>
                     );
                   })()}
-                  {/* Caregiver notes */}
-                  {shift.completionNotes && (
-                    <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                      <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
-                      <p className="text-xs text-slate-600">{shift.completionNotes}</p>
-                    </div>
-                  )}
+                  {/* Visit notes log + closing note — the same block the family's Past Bookings card shows */}
+                  <VisitNotesBlock notesLog={shift.notesLog} completionNotes={shift.completionNotes} />
                 </div>
               )}
             </div>

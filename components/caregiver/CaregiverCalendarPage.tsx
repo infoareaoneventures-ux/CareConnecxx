@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { VisitNotesBlock } from '../shared/VisitNotesBlock';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -775,12 +776,7 @@ export const CaregiverCalendarPage: React.FC<CaregiverCalendarPageProps> = ({ on
               <div className="flex items-center justify-center gap-1.5 py-2 text-green-700 text-sm font-semibold bg-green-50 rounded-xl border border-green-200">
                 <CheckCircle className="w-4 h-4" /> Shift Completed
               </div>
-              {shift.completionNotes && (
-                <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
-                  {shift.completionNotes}
-                </div>
-              )}
+              <VisitNotesBlock notesLog={(shift as any).notesLog} completionNotes={shift.completionNotes} className="p-3 bg-slate-50 rounded-xl border border-slate-200" />
             </div>
           )}
 

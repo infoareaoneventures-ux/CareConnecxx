@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { VisitNotesBlock } from './shared/VisitNotesBlock';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar as CalendarIcon, MapPin, User,
@@ -732,12 +733,7 @@ export default function Schedule() {
         })()}
         {/* Notes */}
         {shift.notes && <div className="p-3 bg-slate-50 rounded-xl text-slate-600 text-xs">{shift.notes}</div>}
-        {shift.completionNotes && (
-          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-            <p className="text-xs font-semibold text-slate-500 mb-1">Caregiver Notes</p>
-            <p className="text-xs text-slate-600">{shift.completionNotes}</p>
-          </div>
-        )}
+        <VisitNotesBlock notesLog={(shift as any).notesLog} completionNotes={shift.completionNotes} className="p-3 bg-slate-50 rounded-xl border border-slate-200" />
       </div>
       {shift.status === 'scheduled' && (
         <div className="flex gap-2">

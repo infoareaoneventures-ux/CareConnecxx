@@ -31,3 +31,22 @@ describe("buildClientDraftMirror", () => {
     expect(buildClientDraftMirror("u1", "+1", { firstName: "Hamse" })).toEqual({});
   });
 });
+
+describe("buildClientDraftMirror — wizard home address + care-need details (2026-09-20)", () => {
+  it("fills the wizard's own home-address draft fields from Evia's home* fields", () => {
+    const out = buildClientDraftMirror("u1", "+1", { homeStreet: "4746 Campbell Ave", homeZipCode: "95130", homeCity: "San Jose", homeState: "CA", sameAsHomeAddress: true, street: "4746 Campbell Ave", zipCode: "95130", city: "San Jose", state: "CA" });
+    expect(out._homeAddress).toEqual({ street: "4746 Campbell Ave", zipCode: "95130", city: "San Jose", state: "CA" });
+    expect(out._customAddressOpen).toBe(false);
+  });
+  it("same-as-home with only the care address known still fills the home step; a different care address opens the custom section", () => {
+    expect(buildClientDraftMirror("u1", "+1", { sameAsHomeAddress: true, street: "1 Main St", zipCode: "95130" })._homeAddress).toEqual({ street: "1 Main St", zipCode: "95130", city: "", state: "" });
+    expect(buildClientDraftMirror("u1", "+1", { sameAsHomeAddress: false, street: "1 Main St" })._customAddressOpen).toBe(true);
+    expect(buildClientDraftMirror("u1", "+1", { street: "1 Main St" })).not.toHaveProperty("_homeAddress");
+  });
+  it("carries careNeedDetails and reads the wizard's home address back into Evia's fields", () => {
+    const out = buildClientDraftMirror("u1", "+1", { careNeeds: ["Personal Care"], careNeedDetails: { "Personal Care": ["Bathing"] } });
+    expect(out.careNeedDetails).toEqual({ "Personal Care": ["Bathing"] });
+    const back = mapJobPostingsDocToOnboardingData({ clientId: "u1", _homeAddress: { street: "9 Elm", zipCode: "95134", city: "San Jose", state: "CA" }, _customAddressOpen: false, careNeedDetails: { "Personal Care": ["Bathing"] } });
+    expect(back).toMatchObject({ homeStreet: "9 Elm", homeZipCode: "95134", homeCity: "San Jose", homeState: "CA", sameAsHomeAddress: true, careNeedDetails: { "Personal Care": ["Bathing"] } });
+  });
+});

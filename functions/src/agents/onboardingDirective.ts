@@ -57,7 +57,7 @@ const FIELD_LABEL: Record<string, string> = {
   emergencyContactPhone:        "the emergency contact's phone number",
   emergencyContactRelationship: "the emergency contact's relationship (e.g. son, neighbor)",
   // Step 11
-  careNeeds:      "what kind of help is needed day to day (e.g. companionship, meals, bathing, medication reminders, transportation)",
+  careNeeds:      "what kind of help is needed day to day — save the site's CATEGORY names only: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care (bathing, dressing, toileting, feeding, grooming), Companionship, Transportation, Meal Preparation, Light Housekeeping (e.g. 'help with bathing' → 'Personal Care')",
   conditions:     "any diagnoses or conditions (e.g. Alzheimer's, Parkinson's) — optional",
   petsInHome:       "whether there are pets in the home",
   smokingHousehold: "whether anyone in the household smokes",

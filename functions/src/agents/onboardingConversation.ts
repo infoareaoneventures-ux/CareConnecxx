@@ -49,6 +49,7 @@ import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewActio
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
 import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho, toWebsiteRelationship } from "./careRecipients";
 import { buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
+import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
 import { describeSharedProfile } from "./profileBriefing";
@@ -2130,7 +2131,7 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   const conditions = Array.isArray(d.conditions) && d.conditions.length
     ? (d.conditions as string[]).join(", ")
     : Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
-      ? (d.careNeeds as string[]).join(", ")
+      ? describeCareNeeds(d.careNeeds as string[], d.careNeedDetails as Record<string, string[]> | undefined)
       : "";
   // Full street address (2026-08-24), not just city+zip — a wrong house number
   // or street name is a real, consequential mistake (a caregiver can't find
@@ -2180,6 +2181,9 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   if (start) pieces.push(`starting ${start}`);
   if (prefBits.length) pieces.push(`preference: ${prefBits.join(", ")}`);
   if (budget) pieces.push(`budget ${budget}`);
+  // The wizard's "What would you like caregivers to know" answer — the Care Plan
+  // page shows it as the recipient's Notes, so the family sees it here too.
+  if (typeof d.jobDescription === "string" && d.jobDescription.trim()) pieces.push(`note for caregivers: "${d.jobDescription.trim()}"`);
 
   return `Here's what I've got: ${pieces.join("; ")}. Did I get that right? Say yes and I'll show you who can help, or tell me what to fix.`;
 }
@@ -2226,21 +2230,33 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
 }
 
 async function handleClientConfirmIntake(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  // Mid-flow question (e.g. "what address did I give you?") — answer it, then
-  // re-ask for confirmation instead of falling through to the generic
-  // "tell me what to change" line, which never actually answers the question.
-  const confirmQuestion = `Evia sent the family a summary of their care request and asked: "Did I get that right?"`;
-  if (await isQuestionOrOther(text, confirmQuestion)) {
+  // One classification for the reply to "Did I get that right?": confirm, a
+  // correction, a NOTE for caregivers (the wizard's "What would you like
+  // caregivers to know" answer often lands here — live 2026-09-20 "my son is
+  // amazing" was treated as chit-chat and never saved), or a question.
+  const kind = await parseWithClaude(
+    'Evia sent the family a summary of their care request and asked "Did I get that right?". Classify their reply with exactly one word: ' +
+    'confirm — yes / correct / looks good / go ahead. ' +
+    'edit — they correct or change a detail that is IN the summary (a day, time, rate, name, age, address, care need). ' +
+    'note — they add something for the caregivers to know rather than correcting anything (e.g. "my son is amazing", "she loves gardening", "please be patient with him", "he is hard of hearing"). ' +
+    'question — they ask something, or say something unrelated. Reply with one word: confirm, edit, note, or question.',
+    text,
+  );
+  if (kind === "question") {
     const answer = await answerQuestionMidFlow(text, session, phone);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "Does that all look right? Say yes and I'll show you who can help, or tell me what to fix.");
+    await sendMessage(chatId, `${answer}\n\nDoes that all look right? Say yes and I'll show you who can help, or tell me what to fix.`);
     return;
   }
-  const intent = await parseWithClaude(
-    '"yes", "yep", "correct", "looks good", "that\'s right", "go", "perfect" → confirm. ' +
-    'Anything that corrects/changes a detail, or says no → edit. Reply with exactly one word: confirm or edit.',
-    text
-  );
+  if (kind === "note") {
+    const prev = ((session.onboardingData?.jobDescription as string | undefined) ?? "").trim();
+    const note = [prev, text.trim()].filter(Boolean).join(" ").slice(0, 2500);
+    await mergeOnboardingData(phone, { jobDescription: note });
+    const refreshed = await db.collection("agent_sessions").doc(phone).get();
+    await sendMessage(chatId, "Lovely — I'll make sure caregivers see that.");
+    await sendClientIntakeSummary(chatId, refreshed.data() as AgentSession);
+    return;
+  }
+  const intent = kind === "confirm" ? "confirm" : "edit";
   if (intent === "confirm") {
     const refreshed = await db.collection("agent_sessions").doc(phone).get();
     const rs = refreshed.data() as AgentSession;
@@ -2313,7 +2329,28 @@ export async function persistClientCareRecords(
   const street       = (d.street       ?? "") as string;
   const state        = (d.state        ?? "") as string;
   const conditions   = (d.conditions   ?? []) as string[];
-  const careNeeds    = (d.careNeeds    ?? []) as string[];
+  const rawCareNeeds = (d.careNeeds    ?? []) as string[];
+  // Site taxonomy (careNeedsTaxonomy.ts): recipientPlans[key].careNeeds holds the
+  // page's CATEGORY names and careNeedDetails the sub-tasks — never the family's
+  // raw words ("bathing" → Personal Care › Bathing). Written back onto the draft
+  // so the job_postings mirror and the summary use the same names.
+  const canon = rawCareNeeds.length ? await canonicalizeCareNeeds(rawCareNeeds).catch(() => null) : null;
+  const careNeeds = canon && canon.careNeeds.length ? canon.careNeeds : rawCareNeeds;
+  const careNeedDetails = canon && canon.careNeeds.length
+    ? canon.careNeedDetails
+    : ((d.careNeedDetails as Record<string, string[]> | undefined) ?? {});
+  if (canon && canon.careNeeds.length && (!isCanonicalCareNeeds(rawCareNeeds) || !d.careNeedDetails)) {
+    d = { ...d, careNeeds, careNeedDetails };
+    await mergeOnboardingData(phone, { careNeeds, careNeedDetails }).catch(() => {});
+  }
+  // Care Plan "Notes" = the wizard's "What would you like caregivers to know" (the
+  // page falls back to job_postings.jobDescription only when notes is unset, so an
+  // empty string here used to hide the note). Anything the taxonomy could not place
+  // is kept as a note rather than dropped.
+  const noteText = [
+    typeof d.jobDescription === "string" ? d.jobDescription.trim() : "",
+    canon?.unmapped.length ? `Also mentioned: ${canon.unmapped.join(", ")}` : "",
+  ].filter(Boolean).join(" ");
   const seniorAge    = d.age as number | undefined;
   // Home address (account holder) — may differ from care address
   const homeStreet   = (d.homeStreet  as string | undefined) || street;
@@ -2336,7 +2373,9 @@ export async function persistClientCareRecords(
         age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
         relationship: r.relationship ?? "",
         careNeeds,
+        careNeedDetails,
         conditions,
+        ...(noteText ? { notes: noteText } : {}),
         // Provenance for multi-recipient households: these needs/conditions are
         // a signup-time COPY shared across everyone — the care-plan interview
         // confirms them per person rather than trusting them as individual.
@@ -2879,7 +2918,9 @@ async function handleClientPresentPlan(phone: string, chatId: string, session: A
     audience: "family",
     context:
       `Evia already showed this family real local caregivers for ${seniorName} (photos + profiles, sent earlier ` +
-      `in this conversation) and their identity check just cleared. ` +
+      `in this conversation). The FAMILY MEMBER texting just finished their own identity check — Evia already told them ` +
+      `"you're verified" one message ago, so do NOT repeat or rephrase that. It was NOT a background check and it is not about ${seniorName} ` +
+      `(${seniorName} is the person receiving care); never use the words "background check" here. ` +
       pricePart +
       `plus a 9% service fee on each visit (the caregiver keeps 100% of their rate), and for that Evia coordinates everything for ${seniorName} — ` +
       `scheduling, live visit updates, and keeping the whole family in the loop. State both the membership price and the 9% fee. 2-3 sentences, no bullet lists, no pressure, do NOT claim anything is ` +
@@ -2965,8 +3006,9 @@ async function handleClientPlanReply(
   // Mid-flow question (e.g. "is it monthly?") — answer, then re-offer.
   if (await isQuestionOrOther(text, "Are you ready to go ahead with setup? (a yes gets the setup link)")) {
     const answer = await answerQuestionMidFlow(text, session, phone);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, "When you're ready, say yes and I'll send the setup link again.");
+    // One message: two back-to-back texts were delivered in the wrong order live
+    // (2026-09-20 — the re-ask showed above the answer).
+    await sendMessage(chatId, `${answer}\n\nWhen you're ready, say yes and I'll send the setup link again.`);
     return;
   }
 
@@ -4942,6 +4984,12 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         timeOfDay:   d.timeOfDay    as string | undefined,
       }).catch((err) => console.error("pushOnboardingDataToZep error:", err));
 
+      // "Your membership is active" — once per account, same moment the site's
+      // Membership page flips (client-notified rule; live 2026-09-20 nothing was sent).
+      if (uid) {
+        const { notifyClientMembershipActivatedOnce } = await import("../membershipNotify");
+        await notifyClientMembershipActivatedOnce(uid).catch((err) => console.warn("membership notice failed", err instanceof Error ? err.message : err));
+      }
       // We already collected schedule, care needs, and budget during intake —
       // don't make them re-answer it all. Pre-fill the job post and ask for a
       // single confirmation (they can still choose to edit, which drops into the

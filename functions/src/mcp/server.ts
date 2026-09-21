@@ -3865,8 +3865,17 @@ async function executeToolCall(
           ...(typeof startTime === "string" && startTime ? { startTime } : {}),
           ...(typeof endTime === "string" && endTime ? { endTime } : {}),
           ...(typeof initialText === "string" && initialText ? { initialText } : {}),
+          quiet: true,
         });
         if (!result.started) {
+          if (result.reason === "no_visits") {
+            return {
+              success: false, reason: "no_visits", nothingSent: true,
+              instruction: "The family has NO scheduled visits, so there is nothing to reschedule and NOTHING was texted. " +
+                "If they were actually asking to set up / schedule an INTERVIEW with a caregiver (not to move a visit), call start_interview_flow now. " +
+                `Otherwise tell them once, in your own words: ${result.message ?? "there are no upcoming scheduled visits to move."}`,
+            };
+          }
           return {
             success: false, reason: result.reason ?? "failed_to_start",
             instruction: "The family has already been told what was found (or not found) — do not repeat or add anything else this turn.",

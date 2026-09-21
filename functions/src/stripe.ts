@@ -473,6 +473,9 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const caregiverSnap = await admin.firestore().collection('caregivers').doc(userId).get();
   if (!caregiverSnap.exists) {
     console.log(`Checkout completed for client user: ${userId}`);
+    // Site plan-modal checkout: tell the family (text + bell), once per account.
+    const { notifyClientMembershipActivatedOnce } = await import('./membershipNotify');
+    await notifyClientMembershipActivatedOnce(userId).catch((err) => console.warn('membership notice failed', err instanceof Error ? err.message : err));
     return;
   }
 
@@ -763,6 +766,11 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   // Notify caregiver of successful payment
   const amountPaid = (invoice.amount_paid / 100).toFixed(2);
   const isRenewal = invoice.billing_reason === 'subscription_cycle';
+  // First activation seen here first (this event can beat checkout.session.completed): same once-only notice.
+  if (!isCaregiverMember && !isRenewal) {
+    const { notifyClientMembershipActivatedOnce } = await import('./membershipNotify');
+    await notifyClientMembershipActivatedOnce(userId).catch((err) => console.warn('membership notice failed', err instanceof Error ? err.message : err));
+  }
   await admin.firestore().collection('users').doc(userId).collection('notifications').add({
     userId,
     type: 'membership_payment_succeeded',

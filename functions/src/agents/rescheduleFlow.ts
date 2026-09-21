@@ -201,6 +201,11 @@ export interface StartRescheduleArgs {
   // visit to 9/17 10am to 3pm") — parsed against the REAL visit list so the
   // pick and the new time both come from what they actually said.
   initialText?: string;
+  // Tool path: when there is nothing to reschedule, return the explanation
+  // instead of texting it — the model decides once (live 2026-09-20: "set up an
+  // interview with Basra" was routed here, the no-visits line went out twice,
+  // and the model then replied as if an interview flow had started).
+  quiet?: boolean;
 }
 
 function resolveVisit(d: RescheduleFlowData, pickIndex: unknown, pickDate: unknown): ReschedulableVisit | undefined {
@@ -224,7 +229,7 @@ async function selectVisit(phone: string, v: ReschedulableVisit): Promise<void> 
 
 export async function startRescheduleFlow(
   phone: string, chatId: string, session: AgentSession, args: StartRescheduleArgs = {},
-): Promise<{ started: boolean; reason?: string }> {
+): Promise<{ started: boolean; reason?: string; message?: string }> {
   const clientId = session.userId as string | undefined;
   if (!clientId) {
     await sendMessage(chatId, "I couldn't find your account to look up your visits. Please try again.");
@@ -233,10 +238,11 @@ export async function startRescheduleFlow(
   // Always fresh — the family may have changed things on the site since.
   const visits = await listReschedulableVisits(clientId);
   if (visits.length === 0) {
-    await sendMessage(chatId,
+    const message =
       "I don't see any upcoming scheduled visits to move right now. If you're expecting one, check your My Bookings page — " +
-      "a visit still waiting on a caregiver's acceptance or a replacement can't be rescheduled yet.");
-    return { started: false, reason: "no_visits" };
+      "a visit still waiting on a caregiver's acceptance or a replacement can't be rescheduled yet.";
+    if (!args.quiet) await sendMessage(chatId, message);
+    return { started: false, reason: "no_visits", message };
   }
 
   const data: RescheduleFlowData = { visits };

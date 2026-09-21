@@ -192,6 +192,8 @@ vi.mock("../../utils/openaiClient", () => ({
     if (prompt.includes("You are Evia, an AI care assistant")) return "Here's a helpful answer.";
     if (prompt.includes("warm human-feeling care coordinator")) return "Here's a helpful answer."; // answerQuestionMidFlow
     if (prompt.includes("confirm or edit")) return intakeConfirmIntent;
+    // 2026-09-20: handleClientConfirmIntake classifies confirm / edit / note / question in one call.
+    if (prompt.includes("confirm, edit, note, or question")) return questionMode ? "question" : intakeConfirmIntent;
     if (prompt.includes("The family is correcting their care intake")) return intakeCorrectionJson;
     return stepAnswer;
   }),
@@ -703,7 +705,7 @@ describe("client care records + payment mirror", () => {
     const senior = hoisted.docState.get(`senior_profiles/${CLIENT_UID}`);
     expect(senior?.name).toBe("Margaret");
     expect(senior?.clientId).toBe(CLIENT_UID);
-    expect(senior?.needs).toEqual(["companionship"]);
+    expect(senior?.needs).toEqual(["Companionship"]); // site taxonomy category (careNeedsTaxonomy.ts)
     expect(senior?.diagnoses).toEqual(["dementia"]);
 
     const intake = hoisted.docState.get(`clientIntakes/${CLIENT_UID}`);

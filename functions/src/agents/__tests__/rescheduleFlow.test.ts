@@ -210,6 +210,12 @@ describe("startRescheduleFlow", () => {
     expect(r.started).toBe(false);
     expect(r.reason).toBe("no_visits");
     expect(lastSent()).toContain("don't see any upcoming scheduled visits to move");
+    // Tool path: quiet → nothing texted, the explanation comes back for the model to use once.
+    const sentBefore = sendMessage.mock.calls.length;
+    const q = await startRescheduleFlow(PHONE, CHAT, session(), { quiet: true });
+    expect(q.started).toBe(false);
+    expect(q.message).toContain("don't see any upcoming scheduled visits to move");
+    expect(sendMessage.mock.calls.length).toBe(sentBefore);
     expect(sess().rescheduleFlowStep).toBeUndefined();
   });
 

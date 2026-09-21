@@ -2307,11 +2307,13 @@ const handleInboundInner = traceable(
       }
 
       let loopReplied = false;
+      const loopToolCalls: string[] = [];
       try {
         await runQaAgent({
           text,
           phone,
           chatId,
+          _toolCallsOut: loopToolCalls,
           userId:      (session as any).userId ?? "",
           seniorId:    (session as any).seniorId ?? "",
           userType:    loopRole,
@@ -2398,7 +2400,14 @@ const handleInboundInner = traceable(
           }
         }
 
-        if (collectionStepsForRole(loopRole).includes(curStep) && missingRequiredFields(loopRole, curData).length === 0) {
+        // A loop that just SAVED a field is still working (the wizard's optional
+        // questions — pets, notes for caregivers — come after the last required
+        // one) and ends collection itself via complete_collection. Live 2026-09-20:
+        // the loop asked "What would you like caregivers to know?" and this net
+        // sent the intake summary in the same turn, so the family's answer landed
+        // on the confirm step and was lost. Only an IDLE loop is stuck.
+        const loopStillCollecting = loopToolCalls.includes("save_onboarding_field");
+        if (collectionStepsForRole(loopRole).includes(curStep) && missingRequiredFields(loopRole, curData).length === 0 && !loopStillCollecting) {
           await db.collection("agent_sessions").doc(phone).update({ onboardingStep: firstGateStep(loopRole) });
           curStep = firstGateStep(loopRole);
           console.info("webhooks: stuck-signup net advanced cursor to gate", { phone, from: step });

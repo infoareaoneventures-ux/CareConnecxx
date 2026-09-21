@@ -322,10 +322,10 @@ export const respondToCorrection = functions.https.onCall(async (data, context) 
     shift.clientId,
     'shift_hours_counter_proposed',
     'Caregiver sent a counter-proposal',
-    `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)}. Review and accept or escalate.`,
+    `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)}${counter.lineItemsTotal !== (Number(shift.proposedLineItemsTotal ?? shift.lineItemsTotal) || 0) ? ` with additional charges of $${counter.lineItemsTotal.toFixed(2)}` : ''}. Review and accept or escalate.`,
     { appointmentId, counterTotalHours: counter.totalHours }
   );
-  await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)} on their hours. Reply here to accept it, or ask me to escalate it to our team.`);
+  await textClient(shift.clientId, `${shift.caregiverName} sent a counter-proposal of ${fmtHours(counter.totalHours)} on their hours${counter.lineItemsTotal !== (Number(shift.proposedLineItemsTotal ?? shift.lineItemsTotal) || 0) ? ` with additional charges of $${counter.lineItemsTotal.toFixed(2)}` : ''}. Reply here to accept it, or ask me to escalate it to our team.`);
 
   return { success: true };
 });

@@ -249,3 +249,70 @@ describe("counter waiting — the modal's two buttons only", () => {
     expect(lastSent()).toContain("Escalated — our team will look at this one");
   });
 });
+
+// ── Additional charges (2026-09-21): the modal lets the family adjust an amount or remove a charge ──
+const WITH_CHARGE = { ...SUBMITTED, lineItems: [{ type: "mileage", label: "mileage", note: "", amount: 5 }] };
+
+describe("additional charges in a correction", () => {
+  it("the family's first message changes a charge: it is applied, then the times are still confirmed", async () => {
+    hoisted.docState.set("shiftHours/sh-1", WITH_CHARGE);
+    modelReplies(JSON.stringify({ start: null, end: null, charges: [{ label: "mileage", amount: 10 }] }));
+    await startCorrectionFlow(PHONE, CHAT, session(), { initialText: "additional charge from $5 to $10" });
+    expect(sess().correctionFlowStep).toBe("cf_ask_start");
+    expect(sess().correctionFlowData).toMatchObject({ chargesAddressed: true, proposedLineItems: [{ label: "mileage", amount: 10 }] });
+    expect(lastSent()).toContain("Charges: mileage $10.00 (was $5.00).");
+    expect(lastSent()).toContain("What should the clock-in be?");
+  });
+
+  it("with charges on the timesheet the flow asks about them after the times; 'remove' drops the charge and the recap + send carry the edited list", async () => {
+    hoisted.docState.set("shiftHours/sh-1", WITH_CHARGE);
+    await startCorrectionFlow(PHONE, CHAT, session(), {});
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());   // clock-in
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());   // clock-out → charges question
+    expect(sess().correctionFlowStep).toBe("cf_ask_charges");
+    expect(lastSent()).toContain("Additional charges on this timesheet: mileage $5.00.");
+    modelReplies(JSON.stringify({ changes: [{ label: "mileage", amount: null }] }));
+    await handleCorrectionFlowStep(PHONE, CHAT, "remove the mileage charge", session());
+    expect(sess().correctionFlowStep).toBe("cf_ask_reason");
+    expect(sess().correctionFlowData.proposedLineItems).toEqual([]);
+    expect(lastSent()).toContain("Charges: mileage $5.00 removed.");
+    await handleCorrectionFlowStep(PHONE, CHAT, "NO", session());      // no reason → recap
+    expect(lastSent()).toContain("charges: mileage $5.00 removed");
+    await handleCorrectionFlowStep(PHONE, CHAT, "yes", session());
+    expect(reviewShiftHoursAs).toHaveBeenCalledWith(UID, expect.objectContaining({ action: "propose_correction", lineItems: [] }));
+  });
+
+  it("KEEP at the charges question leaves them as submitted; a timesheet without charges never asks", async () => {
+    hoisted.docState.set("shiftHours/sh-1", WITH_CHARGE);
+    await startCorrectionFlow(PHONE, CHAT, session(), {});
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());
+    expect(sess().correctionFlowStep).toBe("cf_ask_reason");
+    expect(lastSent()).toContain("Keeping the charges as submitted.");
+    expect(buildCorrectionRecap(sess().correctionFlowData)).toContain("charges: mileage $5.00 kept");
+
+    hoisted.reset(); sendMessage.mockClear();
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { chatId: CHAT, userId: UID });
+    hoisted.docState.set("shiftHours/sh-1", SUBMITTED);
+    await startCorrectionFlow(PHONE, CHAT, session(), {});
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());
+    await handleCorrectionFlowStep(PHONE, CHAT, "KEEP", session());
+    expect(sess().correctionFlowStep).toBe("cf_ask_reason");
+  });
+});
+
+describe("counter that changed the additional charges", () => {
+  it("shows the caregiver's charge amounts, not the submitted ones", async () => {
+    hoisted.docState.set("shiftHours/sh-1", {
+      ...SUBMITTED, status: "caregiver_counter_proposed",
+      lineItems: [{ type: "mileage", label: "mileage", amount: 5 }],
+      counterStartTime: "2026-09-18T05:03:27.000Z", counterEndTime: "2026-09-18T05:35:00.000Z", counterNote: null,
+      counterLineItems: [{ type: "mileage", label: "mileage", amount: 8 }],
+    });
+    await startCorrectionFlow(PHONE, CHAT, session(), {});
+    expect(sess().correctionFlowStep).toBe("cf_respond_counter");
+    expect(lastSent()).toContain("charges: mileage $8.00 (was $5.00)");
+    expect(lastSent()).toContain("$10.63"); // 0:31:33 at $5/hr = $2.63 + $8.00
+  });
+});

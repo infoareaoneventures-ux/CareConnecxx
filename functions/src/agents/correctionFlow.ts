@@ -46,7 +46,7 @@ export interface CorrectionRow {
   grossPay: number;
   status: "pending_client_review" | "caregiver_counter_proposed";
   // Counter mode only.
-  counter?: { start: string; end: string; note: string | null };
+  counter?: { start: string; end: string; note: string | null; lineItems?: Array<{ type?: string; label?: string; note?: string; amount?: number }> };
   proposed?: { start: string; end: string };
 }
 
@@ -56,6 +56,12 @@ export interface CorrectionFlowData {
   proposedStart?: string;     // ISO
   proposedEnd?: string;       // ISO
   reason?: string;
+  // The modal's "Additional charges" list after the family's edits (adjust an
+  // amount / remove a charge). Undefined until asked; chargesAddressed marks
+  // KEEP as answered (live 2026-09-21: the flow could only move times, so
+  // "additional charge from $5 to $10" went out as "charges $5.00 kept").
+  proposedLineItems?: Array<{ type?: string; label?: string; note?: string; amount?: number }>;
+  chargesAddressed?: boolean;
 }
 
 const CF_DIDNT_CATCH = "Sorry, I didn't quite catch that.";
@@ -187,7 +193,7 @@ export async function listCorrectionRows(clientId: string): Promise<CorrectionRo
         grossPay: row.grossPay,
         status,
         ...(status === "caregiver_counter_proposed" && raw.counterStartTime && raw.counterEndTime
-          ? { counter: { start: String(raw.counterStartTime), end: String(raw.counterEndTime), note: raw.counterNote ? String(raw.counterNote) : null } }
+          ? { counter: { start: String(raw.counterStartTime), end: String(raw.counterEndTime), note: raw.counterNote ? String(raw.counterNote) : null, ...(Array.isArray(raw.counterLineItems) ? { lineItems: raw.counterLineItems as CorrectionRow["lineItems"] } : {}) } }
           : {}),
         ...(raw.proposedStartTime && raw.proposedEndTime
           ? { proposed: { start: String(raw.proposedStartTime), end: String(raw.proposedEndTime) } }
@@ -219,12 +225,80 @@ function END_QUESTION(r: CorrectionRow): string {
 }
 const REASON_QUESTION = "Why the correction? This goes to the caregiver with your proposal — optional, reply NO to skip.";
 
+// ── Additional charges: the modal lets the family adjust each amount or remove a charge ──
+type LineItem = { type?: string; label?: string; note?: string; amount?: number };
+function chargeName(li: LineItem): string { return String(li.label || li.type || "charge").trim(); }
+function effectiveLineItems(r: CorrectionRow, d: Pick<CorrectionFlowData, "proposedLineItems">): LineItem[] { return d.proposedLineItems ?? r.lineItems; }
+/** "mileage $10.00 (was $5.00), parking $3.00 kept, tolls $2.00 removed" */
+export function describeChargeChanges(r: CorrectionRow, d: Pick<CorrectionFlowData, "proposedLineItems">): string {
+  if (!r.lineItems.length) return "";
+  const proposed = effectiveLineItems(r, d);
+  return r.lineItems.map((li) => {
+    const name = chargeName(li); const was = Number(li.amount) || 0;
+    const now = proposed.find((p) => chargeName(p).toLowerCase() === name.toLowerCase());
+    if (!now) return `${name} ${money(was)} removed`;
+    const amt = Number(now.amount) || 0;
+    return amt === was ? `${name} ${money(amt)} kept` : `${name} ${money(amt)} (was ${money(was)})`;
+  }).join(", ");
+}
+function CHARGES_QUESTION(r: CorrectionRow): string {
+  const list = r.lineItems.map((li) => `${chargeName(li)} ${money(Number(li.amount) || 0)}`).join(", ");
+  const ex = chargeName(r.lineItems[0]);
+  return `Additional charges on this timesheet: ${list}. Keep them, change an amount, or remove one? (e.g. "${ex} $10", "remove ${ex}", or KEEP)`;
+}
+// The family's words → the modal's edited list. Every label is validated
+// against the caregiver's own items (a name that isn't there is ignored, an
+// amount is never invented); null = remove, exactly the modal's X button.
+export function applyChargeChanges(r: CorrectionRow, changes: Array<{ label?: unknown; amount?: unknown }>): LineItem[] | null {
+  const out: LineItem[] = r.lineItems.map((li) => ({ ...li }));
+  let touched = false;
+  for (const c of changes) {
+    const label = String(c.label ?? "").trim().toLowerCase();
+    let i = out.findIndex((li) => chargeName(li).toLowerCase() === label);
+    if (i < 0 && /^\d+$/.test(label)) { const n = Number(label) - 1; if (n >= 0 && n < out.length) i = n; }
+    if (i < 0) continue;
+    if (c.amount === null || c.amount === undefined) { out.splice(i, 1); touched = true; continue; }
+    const amt = Number(c.amount);
+    if (!Number.isFinite(amt) || amt < 0) continue;
+    out[i] = { ...out[i], amount: Math.round(amt * 100) / 100 }; touched = true;
+  }
+  return touched ? out : null;
+}
+async function parseChargeChanges(text: string, r: CorrectionRow): Promise<{ kind: "keep" } | { kind: "changes"; items: LineItem[] } | { kind: "none" }> {
+  const bare = text.trim().toUpperCase().replace(/[.!?]+$/g, "");
+  if (BARE_KEEP.has(bare)) return { kind: "keep" };
+  const names = r.lineItems.map((li) => chargeName(li)).join(", ");
+  const raw = await parseWithClaude(
+    `The family is reviewing a caregiver's additional charges on a timesheet: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}. ` +
+    `Return ONLY JSON. If they want everything left as is: {"keep": true}. Otherwise: {"changes": [{"label": "<one of: ${names}>", "amount": <new dollar amount as a number, or null to remove that charge>}]}. ` +
+    "Only include charges they actually mention; never invent an amount.",
+    text,
+  );
+  const parsed = parseJsonLoose(raw, "parseChargeChanges");
+  if (parsed?.keep === true) return { kind: "keep" };
+  if (Array.isArray(parsed?.changes)) { const items = applyChargeChanges(r, parsed.changes); if (items) return { kind: "changes", items }; }
+  return { kind: "none" };
+}
+// After both times: the charges question when the timesheet has charges the
+// family hasn't addressed yet, otherwise the reason. Same order as the modal.
+async function afterTimes(phone: string, chatId: string, r: CorrectionRow, lead: string): Promise<void> {
+  const d = await getFlowData(phone);
+  if (r.lineItems.length && !d.chargesAddressed) {
+    await updateStep(phone, "cf_ask_charges");
+    await sendMessage(chatId, `${lead} ${CHARGES_QUESTION(r)}`);
+    return;
+  }
+  await updateStep(phone, "cf_ask_reason");
+  await sendMessage(chatId, `${lead} ${REASON_QUESTION}`);
+}
+
 export function buildCorrectionRecap(d: CorrectionFlowData): string {
   const r = chosen(d);
   if (!r || !d.proposedStart || !d.proposedEnd) return CF_DIDNT_CATCH;
   const submitted = resolveShiftBillableAmount({ startTime: r.clockIn, endTime: r.clockOut, bookedRateDollars: r.payRate, lineItems: r.lineItems });
-  const proposed = resolveShiftBillableAmount({ startTime: d.proposedStart, endTime: d.proposedEnd, bookedRateDollars: r.payRate, lineItems: r.lineItems });
-  const charges = proposed.lineItemsTotal > 0 ? ` · charges ${money(proposed.lineItemsTotal)} kept` : "";
+  const proposed = resolveShiftBillableAmount({ startTime: d.proposedStart, endTime: d.proposedEnd, bookedRateDollars: r.payRate, lineItems: effectiveLineItems(r, d) });
+  const chargeText = describeChargeChanges(r, d);
+  const charges = chargeText ? ` · charges: ${chargeText}` : "";
   return [
     `Here's your correction for ${first(r.caregiverName)}'s ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet:`.replace("  ", " "),
     "",
@@ -238,9 +312,14 @@ export function buildCorrectionRecap(d: CorrectionFlowData): string {
 
 export function buildCounterText(r: CorrectionRow): string {
   const c = r.counter!;
-  const amount = resolveShiftBillableAmount({ startTime: c.start, endTime: c.end, bookedRateDollars: r.payRate, lineItems: r.lineItems });
+  // The caregiver's counter form can change the additional charges too — show
+  // THEIR list (vs what was submitted), never the submitted one (2026-09-21).
+  const counterItems = c.lineItems ?? r.lineItems;
+  const amount = resolveShiftBillableAmount({ startTime: c.start, endTime: c.end, bookedRateDollars: r.payRate, lineItems: counterItems });
+  const chargeText = r.lineItems.length || counterItems.length ? describeChargeChanges({ ...r, lineItems: r.lineItems.length ? r.lineItems : counterItems }, { proposedLineItems: counterItems }) : "";
+  const charges = chargeText ? ` · charges: ${chargeText}` : "";
   const yours = r.proposed ? ` You proposed ${clock(r.proposed.start)}–${clock(r.proposed.end)}.` : "";
-  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)} (${money(amount.totalCharge)} charged incl. ${money(amount.serviceFee)} service fee).${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nReply ACCEPT to accept their counter (payment goes through at that amount), or ESCALATE to send it to our team to resolve.`.replace("  ", " ");
+  return `${first(r.caregiverName)} sent a counter on the ${r.date ? formatDateWithWeekday(r.date) : ""} timesheet: ${clock(c.start)}–${clock(c.end)} (${fmtDuration(amount.totalHours)}) · ${money(amount.grossPay)}${charges} (${money(amount.totalCharge)} charged incl. ${money(amount.serviceFee)} service fee).${c.note ? ` Their note: "${c.note}"` : ""}${yours}\n\nReply ACCEPT to accept their counter (payment goes through at that amount), or ESCALATE to send it to our team to resolve.`.replace("  ", " ");
 }
 
 // ── Times: the family's words → an ISO instant on the visit's date ───────────
@@ -323,9 +402,10 @@ async function selectRow(phone: string, chatId: string, r: CorrectionRow, initia
   // The family's own words may already carry the corrected time(s).
   if (initialText?.trim()) {
     const raw = await parseWithClaude(
-      `The family wants to correct a caregiver's submitted timesheet (submitted ${clock(r.clockIn)}–${clock(r.clockOut)}). ` +
-      'If their message states a corrected clock-in and/or clock-out time, return ONLY {"start": "HH:MM" | null, "end": "HH:MM" | null} in 24-hour time, choosing the reading closest to the submitted times when AM/PM is missing. ' +
-      'If it states no actual time (e.g. "can you change the clock in time"), return {"start": null, "end": null}.',
+      `The family wants to correct a caregiver's submitted timesheet (submitted ${clock(r.clockIn)}–${clock(r.clockOut)}${r.lineItems.length ? `; additional charges: ${r.lineItems.map((li) => `${chargeName(li)} $${Number(li.amount) || 0}`).join(", ")}` : ""}). ` +
+      'Return ONLY JSON: {"start": "HH:MM" | null, "end": "HH:MM" | null, "charges": [{"label": "<charge name>", "amount": <number, or null to remove>}] | null}. ' +
+      'start/end: a corrected clock-in/clock-out ONLY if the message states an actual time, in 24-hour time, choosing the reading closest to the submitted times when AM/PM is missing (e.g. "can you change the clock in time" → both null). ' +
+      'charges: ONLY if the message changes or removes one of the listed additional charges (e.g. "mileage from $5 to $10" → [{"label": "mileage", "amount": 10}]); otherwise null. Never invent a time or an amount.',
       initialText,
     );
     const parsed = parseJsonLoose(raw, "selectRow:initialText");
@@ -336,16 +416,27 @@ async function selectRow(phone: string, chatId: string, r: CorrectionRow, initia
     };
     const start = toIso(parsed?.start, r.clockIn);
     const end = toIso(parsed?.end, r.clockOut);
+    let chargeLead = "";
+    if (r.lineItems.length && Array.isArray(parsed?.charges)) {
+      const items = applyChargeChanges(r, parsed.charges);
+      if (items) {
+        await mergeFlowData(phone, { proposedLineItems: items, chargesAddressed: true });
+        chargeLead = `Charges: ${describeChargeChanges(r, { proposedLineItems: items })}. `;
+      }
+    }
     if (start) await mergeFlowData(phone, { proposedStart: start });
     if (start && end && Date.parse(end) > Date.parse(start)) {
       await mergeFlowData(phone, { proposedEnd: end });
-      await updateStep(phone, "cf_ask_reason");
-      await sendMessage(chatId, `Got it — ${clock(start)} to ${clock(end)}. ${REASON_QUESTION}`);
-      return;
+      return afterTimes(phone, chatId, r, `${chargeLead}Got it — ${clock(start)} to ${clock(end)}.`);
     }
     if (start) {
       await updateStep(phone, "cf_ask_end");
-      await sendMessage(chatId, `Clock-in ${clock(start)}, got it. ${END_QUESTION(r)}`);
+      await sendMessage(chatId, `${chargeLead}Clock-in ${clock(start)}, got it. ${END_QUESTION(r)}`);
+      return;
+    }
+    if (chargeLead) {
+      await updateStep(phone, "cf_ask_start");
+      await sendMessage(chatId, `${chargeLead}${START_QUESTION(r)}`);
       return;
     }
   }
@@ -363,6 +454,7 @@ export async function handleCorrectionFlowStep(
     case "cf_pick":            return handlePick(phone, chatId, text, session);
     case "cf_ask_start":       return handleAskStart(phone, chatId, text, session);
     case "cf_ask_end":         return handleAskEnd(phone, chatId, text, session);
+    case "cf_ask_charges":     return handleAskCharges(phone, chatId, text, session);
     case "cf_ask_reason":      return handleAskReason(phone, chatId, text, session);
     case "cf_confirm":         return handleConfirm(phone, chatId, text, session);
     case "cf_respond_counter": return handleRespondCounter(phone, chatId, text, session);
@@ -430,14 +522,39 @@ async function handleAskEnd(phone: string, chatId: string, text: string, session
       return;
     }
     await mergeFlowData(phone, { proposedEnd: end });
-    await updateStep(phone, "cf_ask_reason");
-    await sendMessage(chatId, `${t.kind === "keep" ? `Keeping ${clock(end)}.` : `Clock-out ${clock(end)}, got it.`} ${REASON_QUESTION}`);
-    return;
+    return afterTimes(phone, chatId, r, t.kind === "keep" ? `Keeping ${clock(end)}.` : `Clock-out ${clock(end)}, got it.`);
   }
   if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
   if (await isQuestionOrOther(text, question)) {
     await sendMessage(chatId, await answerQuestionMidFlow(text));
     await sendMessage(chatId, question);
+    return;
+  }
+  await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
+}
+
+async function handleAskCharges(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
+  const data = await getFlowData(phone);
+  const r = chosen(data);
+  if (!r) return handleCorrectionFlowStep(phone, chatId, text, { ...session, correctionFlowStep: "cf_pick" } as any);
+  if (!r.lineItems.length) return afterTimes(phone, chatId, r, "");
+  const question = CHARGES_QUESTION(r);
+  const v = await parseChargeChanges(text, r);
+  if (v.kind === "keep") {
+    await mergeFlowData(phone, { proposedLineItems: r.lineItems.map((li) => ({ ...li })), chargesAddressed: true });
+    await updateStep(phone, "cf_ask_reason");
+    await sendMessage(chatId, `Keeping the charges as submitted. ${REASON_QUESTION}`);
+    return;
+  }
+  if (v.kind === "changes") {
+    await mergeFlowData(phone, { proposedLineItems: v.items, chargesAddressed: true });
+    await updateStep(phone, "cf_ask_reason");
+    await sendMessage(chatId, `Charges: ${describeChargeChanges(r, { proposedLineItems: v.items })}. ${REASON_QUESTION}`);
+    return;
+  }
+  if (await isBackOutRequest(text, question)) return handleBackOut(phone, chatId, session);
+  if (await isQuestionOrOther(text, question)) {
+    await sendMessage(chatId, `${await answerQuestionMidFlow(text)}\n\n${question}`);
     return;
   }
   await sendMessage(chatId, `${CF_DIDNT_CATCH} ${question}`);
@@ -479,8 +596,8 @@ async function handleConfirm(phone: string, chatId: string, text: string, sessio
 
   const raw = await parseWithClaude(
     `Evia asked: "${recap}"\n\nClassify the family's reply. Return ONLY a JSON object: ` +
-    '{"action": "confirm" | "cancel" | "change_start" | "change_end" | "change_reason" | "other"}. ' +
-    '"confirm" = clearly wants it sent; "cancel" = doesn\'t want to send anything; the change_* values = wants to change that part; "other" = a question or something else.',
+    '{"action": "confirm" | "cancel" | "change_start" | "change_end" | "change_charges" | "change_reason" | "other"}. ' +
+    '"confirm" = clearly wants it sent; "cancel" = doesn\'t want to send anything; the change_* values = wants to change that part (change_charges = an additional charge\'s amount, or removing one); "other" = a question or something else.',
     text,
   );
   const parsed = parseJsonLoose(raw, "handleConfirm");
@@ -497,6 +614,15 @@ async function handleConfirm(phone: string, chatId: string, text: string, sessio
       await mergeFlowData(phone, { proposedEnd: undefined });
       await updateStep(phone, "cf_ask_end");
       if (r) await sendMessage(chatId, END_QUESTION(r));
+      return;
+    case "change_charges":
+      if (r && r.lineItems.length) {
+        await mergeFlowData(phone, { chargesAddressed: false });
+        await updateStep(phone, "cf_ask_charges");
+        await sendMessage(chatId, CHARGES_QUESTION(r));
+        return;
+      }
+      await sendMessage(chatId, `There are no additional charges on this timesheet.\n\n${recap}`);
       return;
     case "change_reason":
       await updateStep(phone, "cf_ask_reason");
@@ -525,6 +651,7 @@ async function commit(phone: string, chatId: string, session: AgentSession, data
       appointmentId: r.appointmentId, action: "propose_correction",
       proposedStartTime: data.proposedStart, proposedEndTime: data.proposedEnd,
       proposalReason: data.reason || undefined,
+      ...(r.lineItems.length ? { lineItems: effectiveLineItems(r, data) } : {}),
     });
   } catch (err) {
     await clearFlow(phone);
@@ -533,9 +660,10 @@ async function commit(phone: string, chatId: string, session: AgentSession, data
     return;
   }
   await clearFlow(phone);
-  const proposed = resolveShiftBillableAmount({ startTime: data.proposedStart, endTime: data.proposedEnd, bookedRateDollars: r.payRate, lineItems: r.lineItems });
+  const proposed = resolveShiftBillableAmount({ startTime: data.proposedStart, endTime: data.proposedEnd, bookedRateDollars: r.payRate, lineItems: effectiveLineItems(r, data) });
+  const chargeNote = data.proposedLineItems ? ` Charges: ${describeChargeChanges(r, data)}.` : "";
   await sendMessage(chatId,
-    `Sent — I proposed ${clock(data.proposedStart)}–${clock(data.proposedEnd)} (${fmtDuration(proposed.totalHours)}, ${money(proposed.grossPay)}; ${money(proposed.totalCharge)} charged incl. service fee) to ${first(r.caregiverName)}. ` +
+    `Sent — I proposed ${clock(data.proposedStart)}–${clock(data.proposedEnd)} (${fmtDuration(proposed.totalHours)}, ${money(proposed.grossPay)}; ${money(proposed.totalCharge)} charged incl. service fee) to ${first(r.caregiverName)}.${chargeNote} ` +
     `They have 24 hours to accept or send a counter; if they don't respond, it's auto-accepted. I'll text you as soon as they answer. It shows as "Correction Sent" on your Timesheets page too.`);
 }
 

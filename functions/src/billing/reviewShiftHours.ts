@@ -192,7 +192,7 @@ export async function reviewShiftHoursAs(uid: string, data: ReviewShiftHoursInpu
       shift.caregiverId,
       "shift_hours_correction_proposed",
       "Client proposed a correction",
-      `Client proposed ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)}). Respond within 24h or it auto-accepts.`,
+      `Client proposed ${fmtHours(proposed.totalHours)} (you submitted ${fmtHours(shift.submittedTotalHours)})${proposed.lineItemsTotal !== (Number(shift.lineItemsTotal) || 0) ? ` and changed the additional charges to $${proposed.lineItemsTotal.toFixed(2)} (from $${(Number(shift.lineItemsTotal) || 0).toFixed(2)})` : ""}. Respond within 24h or it auto-accepts.`,
       { appointmentId, proposedTotalHours: proposed.totalHours },
     );
     return { success: true };

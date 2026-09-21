@@ -320,7 +320,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "start_correction_flow",
     description:
-      "Correct a caregiver's submitted timesheet hours — the website's Timesheets 'Review submitted hours' modal, step for " +
+      "Correct a caregiver's submitted timesheet — clock-in/out AND the additional charges (adjust an amount or remove one, exactly what the modal allows) — the website's Timesheets 'Review submitted hours' modal, step for " +
       "step. Starts Evia's scripted flow: which timesheet (only if more than one is waiting), the proposed clock-in (KEEP = as " +
       "submitted), the proposed clock-out, an optional reason, a recap with the proposed total and pay, then YES sends the " +
       "SAME propose_correction write the modal makes (the caregiver has 24h to accept or counter; silence auto-accepts). If the " +

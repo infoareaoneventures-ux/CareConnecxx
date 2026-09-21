@@ -226,10 +226,11 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     expect(stored.interviewFlowStep).toBe("iv_ask_date");
 
     // iv_ask_date
-    modelReplies("NO", '{"date": "2026-09-20"}');
+    // A date in the future relative to any test run — the flow rejects past dates (this fixture rolled into the past on 2026-09-21).
+    modelReplies("NO", '{"date": "2099-09-20"}');
     await handleInterviewFlowStep(PHONE, CHAT, "next Sunday", session({ interviewFlowStep: "iv_ask_date" }));
     stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.interviewFlowData.date).toBe("2026-09-20");
+    expect(stored.interviewFlowData.date).toBe("2099-09-20");
     expect(stored.interviewFlowStep).toBe("iv_ask_time");
 
     // iv_ask_time
@@ -247,7 +248,7 @@ describe("handleInterviewFlowStep — happy path through every step", () => {
     const recap = String(sendMessage.mock.calls.at(-1)![1]);
     expect(recap).toContain("Caregiver: Basra Yousuf");
     expect(recap).toContain("Related job post: Senior care in San Jose");
-    expect(recap).toContain("Date & time: September 20, 2026 at 2:00 PM");
+    expect(recap).toContain("Date & time: September 20, 2099 at 2:00 PM");
     expect(recap).toContain("Notes: None");
   });
 

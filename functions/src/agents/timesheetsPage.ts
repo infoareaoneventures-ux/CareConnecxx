@@ -92,9 +92,9 @@ export interface TimesheetRow {
   isCorrected: boolean;
   autoApproveAt: string | null;
   /** Correction Sent only: the proposed window/pay — the row's live figures on the page while the caregiver decides. */
-  proposed: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number } | null;
+  proposed: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number; lineItems: TimesheetRow["lineItems"] } | null;
   /** Counter Received only: the caregiver's counter — the row's live figures on the page while the family decides. */
-  counter: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number; note: string | null } | null;
+  counter: { clockIn: string; clockOut: string; clockInLocal: string; clockOutLocal: string; hours: number; duration: string; grossPay: number; serviceFee: number; totalCharged: number; note: string | null; lineItems: TimesheetRow["lineItems"] } | null;
   submittedAt: string | null;
   correctionHistory: Array<{ by?: string; action?: string; label: string; at?: string; hours?: number; grossPay?: number; note?: string | null }>;
   /** The card's button: review_and_approve (Needs Review) / review_and_respond (Counter Received) / retry_payment (Payment Failed). */
@@ -172,7 +172,7 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
       if (!Number.isFinite(ps) || !Number.isFinite(pe)) return null;
       const ph = (pe - ps) / 3_600_000;
       const pg = typeof r.proposedGrossPay === "number" ? r.proposedGrossPay : Math.round(ph * payRate * 100) / 100;
-      const pgc = Math.round(pg * 100); return { clockIn: r.proposedStartTime, clockOut: r.proposedEndTime, clockInLocal: formatInterviewTime(ps), clockOutLocal: formatInterviewTime(pe), hours: Math.round(ph * 100) / 100, duration: fmtDuration(ph), grossPay: pgc / 100, serviceFee: serviceFeeCentsFor(pgc) / 100, totalCharged: (pgc + serviceFeeCentsFor(pgc)) / 100 };
+      const pgc = Math.round(pg * 100); return { clockIn: r.proposedStartTime, clockOut: r.proposedEndTime, clockInLocal: formatInterviewTime(ps), clockOutLocal: formatInterviewTime(pe), hours: Math.round(ph * 100) / 100, duration: fmtDuration(ph), grossPay: pgc / 100, serviceFee: serviceFeeCentsFor(pgc) / 100, totalCharged: (pgc + serviceFeeCentsFor(pgc)) / 100, lineItems: Array.isArray(r.proposedLineItems) ? (r.proposedLineItems as TimesheetRow["lineItems"]) : lineItems };
     })(),
     counter: (() => {
       if (status !== "caregiver_counter_proposed" || typeof r.counterStartTime !== "string" || typeof r.counterEndTime !== "string") return null;
@@ -180,7 +180,7 @@ export function shapeTimesheetRow(id: string, r: Record<string, unknown>): Times
       if (!Number.isFinite(cs) || !Number.isFinite(ce)) return null;
       const ch = (ce - cs) / 3_600_000;
       const cg = typeof r.counterGrossPay === "number" ? r.counterGrossPay : Math.round(ch * payRate * 100) / 100;
-      const cgc = Math.round(cg * 100); return { clockIn: r.counterStartTime, clockOut: r.counterEndTime, clockInLocal: formatInterviewTime(cs), clockOutLocal: formatInterviewTime(ce), hours: Math.round(ch * 100) / 100, duration: fmtDuration(ch), grossPay: cgc / 100, serviceFee: serviceFeeCentsFor(cgc) / 100, totalCharged: (cgc + serviceFeeCentsFor(cgc)) / 100, note: typeof r.counterNote === "string" && r.counterNote ? r.counterNote : null };
+      const cgc = Math.round(cg * 100); return { clockIn: r.counterStartTime, clockOut: r.counterEndTime, clockInLocal: formatInterviewTime(cs), clockOutLocal: formatInterviewTime(ce), hours: Math.round(ch * 100) / 100, duration: fmtDuration(ch), grossPay: cgc / 100, serviceFee: serviceFeeCentsFor(cgc) / 100, totalCharged: (cgc + serviceFeeCentsFor(cgc)) / 100, lineItems: Array.isArray(r.counterLineItems) ? (r.counterLineItems as TimesheetRow["lineItems"]) : lineItems, note: typeof r.counterNote === "string" && r.counterNote ? r.counterNote : null };
     })(),
     submittedAt: typeof r.submittedAt === "string" ? r.submittedAt : (Number.isFinite(toMs(r.submittedAt)) ? new Date(toMs(r.submittedAt)).toISOString() : null),
     correctionHistory: history

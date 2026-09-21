@@ -76,6 +76,9 @@ interface ShiftHoursRow {
   proposedTotalHours?: number;
   proposedGrossPay?: number;
   counterNote?: string;
+  /** The family's proposed / the caregiver's countered charge lists (the modal + Evia can edit charges). */
+  proposedLineItems?: LineItem[];
+  counterLineItems?: LineItem[];
   correctionHistory?: CorrectionHistoryEntry[];
   lineItems?: LineItem[];
   lineItemsTotal?: number;
@@ -300,7 +303,6 @@ const ShiftRow: React.FC<{
     ? (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
     : (row.finalTotalHours ?? row.submittedTotalHours);
   const basePay   = dispHours * row.payRate;
-  const hasExtras = row.lineItems && row.lineItems.length > 0;
   // Use stored grossPay (includes line items) when available
   const totalPay  = row.grossPay ?? basePay;
   // While a correction is pending (Correction Sent), the only live figures are
@@ -313,6 +315,12 @@ const ShiftRow: React.FC<{
   const counterPending  = row.status === 'caregiver_counter_proposed' && !!row.counterStartTime && !!row.counterEndTime;
   const livePending = proposalPending || counterPending;
   const liveLabel = proposalPending ? 'Proposed' : 'Counter';
+  // Charges follow the same rule as the times: while a correction or counter is
+  // pending, the box shows the list being decided on (live 2026-09-21: the
+  // proposed total already included $10 mileage while this box still said $5).
+  const liveItems = proposalPending ? (row.proposedLineItems ?? row.lineItems) : counterPending ? (row.counterLineItems ?? row.lineItems) : row.lineItems;
+  const liveGross = proposalPending ? (row.proposedGrossPay ?? totalPay) : counterPending ? (row.counterGrossPay ?? totalPay) : totalPay;
+  const hasExtras = (liveItems && liveItems.length > 0) || (livePending && row.lineItems && row.lineItems.length > 0);
   const shownStart = proposalPending ? row.proposedStartTime! : counterPending ? row.counterStartTime! : startTs;
   const shownEnd   = proposalPending ? row.proposedEndTime!   : counterPending ? row.counterEndTime!   : endTs;
   const shownHours = livePending
@@ -362,7 +370,7 @@ const ShiftRow: React.FC<{
         <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
           <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>{cfg.label}</span>
           {livePending && (
-            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+            <span className="text-[10px] text-slate-400 text-right max-w-[14rem]">
               Submitted {fmtTime(startTs)}–{fmtTime(endTs)} · ${totalPay.toFixed(2)}
               {counterPending && row.proposedStartTime && row.proposedEndTime && <> · You proposed {fmtTime(row.proposedStartTime)}–{fmtTime(row.proposedEndTime)}</>}
             </span>
@@ -438,9 +446,12 @@ const ShiftRow: React.FC<{
           {/* Line items */}
           {hasExtras && (
             <div className="space-y-1">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Additional charges</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Additional charges{livePending ? ` (${liveLabel.toLowerCase()})` : ''}</p>
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
-                {row.lineItems!.map((li, i) => (
+                {(liveItems ?? []).length === 0 && (
+                  <div className="px-3 py-2 text-slate-400">All charges removed in this {liveLabel.toLowerCase()}</div>
+                )}
+                {(liveItems ?? []).map((li, i) => (
                   <div key={i} className="flex items-center justify-between px-3 py-2">
                     <span className="text-slate-600">
                       {li.type === 'custom' ? (li.label || 'Custom') : li.label}
@@ -451,7 +462,7 @@ const ShiftRow: React.FC<{
                 ))}
                 <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50">
                   <span className="font-semibold text-slate-700">Total</span>
-                  <span className="font-bold text-slate-900">${totalPay.toFixed(2)}</span>
+                  <span className="font-bold text-slate-900">${liveGross.toFixed(2)}</span>
                 </div>
               </div>
             </div>

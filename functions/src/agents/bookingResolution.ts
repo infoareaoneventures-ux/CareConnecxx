@@ -57,14 +57,23 @@ export async function resolveInterviewLinkage(
     const ivSnap = await db.collection("video_interviews").doc(interviewId).get();
     const iv = ivSnap.data();
     if (!iv || iv.clientId !== clientId || iv.caregiverId !== caregiverId) return {};
+    // The interview itself carries jobId/jobTitle when it was requested against a
+    // job post (the site's Send Booking reads interview.jobId directly). Only
+    // interviews that came in through a job application carry applicationId.
+    // Live 2026-09-21: a completed interview with a job but no application
+    // produced a booking with jobId null, so the Interviews card (keyed
+    // caregiverId_jobId) never saw it and kept offering "Send Booking".
     const applicationId = iv.applicationId as string | undefined;
-    if (!applicationId) return {};
-    const appSnap = await db.collection("job_applications").doc(applicationId).get();
-    const jobId = appSnap.data()?.jobId as string | undefined;
-    if (!jobId) return { applicationId };
+    let jobId = (typeof iv.jobId === "string" && iv.jobId) ? (iv.jobId as string) : undefined;
+    if (applicationId) {
+      const appSnap = await db.collection("job_applications").doc(applicationId).get();
+      const appJobId = appSnap.data()?.jobId as string | undefined;
+      if (appJobId) jobId = appJobId;
+    }
+    if (!jobId) return applicationId ? { applicationId } : {};
     const jobSnap = await db.collection("job_posts").doc(jobId).get();
     const jobData = jobSnap.data();
-    const jobTitle = jobData?.title as string | undefined;
+    const jobTitle = (jobData?.title as string | undefined) ?? (typeof iv.jobTitle === "string" ? (iv.jobTitle as string) : undefined);
     const daysOfWeek = jobData?.daysOfWeek as string[] | undefined;
     const jps: { daysOfWeek?: string[]; startDate?: string; endDate?: string } = {};
     if (Array.isArray(daysOfWeek) && daysOfWeek.length) jps.daysOfWeek = daysOfWeek;
@@ -72,7 +81,7 @@ export async function resolveInterviewLinkage(
     if (jobData?.endDate) jps.endDate = String(jobData.endDate);
     const coercedJobRate = coerceHourlyRate(jobData?.rate);
     return {
-      applicationId, jobId, jobTitle,
+      ...(applicationId ? { applicationId } : {}), jobId, jobTitle,
       ...(Object.keys(jps).length ? { jobPostSchedule: jps } : {}),
       ...(coercedJobRate !== null ? { jobPostRate: coercedJobRate } : {}),
     };

@@ -125,6 +125,17 @@ describe("resolveInterviewLinkage", () => {
       jobPostRate: 25,
     });
   });
+
+  it("an interview requested against a job post (jobId on the interview, no application) links the job — the Interviews card keys bookings by it", async () => {
+    hoisted.docState.set("video_interviews/iv2", { clientId: "client1", caregiverId: "cg1", jobId: "job2", jobTitle: "Senior care in San Jose" });
+    hoisted.docState.set("job_posts/job2", { title: "Senior care in San Jose", rate: 26 });
+    expect(await resolveInterviewLinkage("client1", "cg1", "iv2")).toEqual({ jobId: "job2", jobTitle: "Senior care in San Jose", jobPostRate: 26 });
+  });
+
+  it("falls back to the interview's own title when the job post is gone", async () => {
+    hoisted.docState.set("video_interviews/iv3", { clientId: "client1", caregiverId: "cg1", jobId: "job-gone", jobTitle: "Weekend help" });
+    expect(await resolveInterviewLinkage("client1", "cg1", "iv3")).toEqual({ jobId: "job-gone", jobTitle: "Weekend help" });
+  });
 });
 
 describe("resolveRecipientAttribution", () => {

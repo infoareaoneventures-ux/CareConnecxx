@@ -60,7 +60,6 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
   // (price_1TtBZ9…) charged in the same checkout when opted in.
   const annualPrice = 54.99;
   const mvrPrice = 11.50;
-  const annualPerMonth = (annualPrice / 12).toFixed(2);
 
   const selectedPrice = annualPrice;
   const selectedPriceId = CAREGIVER_ANNUAL_PRICE_ID;
@@ -162,7 +161,7 @@ export const CaregiverMembership: React.FC<CaregiverMembershipProps> = ({
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900 text-sm">Annual plan</p>
-                  <p className="text-xs text-slate-500">${annualPerMonth}/month billed annually</p>
+                  <p className="text-xs text-slate-500">Billed once a year</p>
                 </div>
               </div>
               <p className="font-extrabold text-primary-700 text-sm">${annualPrice}/yr</p>

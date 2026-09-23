@@ -256,7 +256,11 @@ export function caregiverCardText(c: CaregiverCard): string {
   const ratingLabel = c.reviewCount > 0 ? `★ ${c.rating.toFixed(1)} (${c.reviewCount} review${c.reviewCount === 1 ? "" : "s"})` : "No reviews yet";
   const exp = typeof c.experience === "number" ? `${c.experience} yrs experience` : `${c.experience} experience`;
   const where = [c.city, c.stateCode].filter(Boolean).join(", ") + (c.zipCode ? ` ${c.zipCode}` : "");
-  const skills = c.skills.length > 0 ? `${c.skills.slice(0, 2).join(", ")}${c.skills.length > 2 ? ` +${c.skills.length - 2}` : ""}` : "";
+  // Transportation only counts as a service once the badge is earned — same gate
+  // as the profile page (ClientCaregiverProfile.tsx / caregiverProfilePage.ts)
+  // and the site's Find Caregivers card (parity fix, 2026-09-22).
+  const visibleSkills = c.skills.filter((s) => s !== "Transportation" || c.hasReliableTransportation);
+  const skills = visibleSkills.length > 0 ? `${visibleSkills.slice(0, 2).join(", ")}${visibleSkills.length > 2 ? ` +${visibleSkills.length - 2}` : ""}` : "";
   const stateLabel = c.state === "active_booking" ? "Active booking with you"
     : c.state === "interview_requested" ? "Interview requested — waiting on their reply"
     : c.state === "rebook" ? "Worked with you before — can re-book"

@@ -1043,23 +1043,29 @@ const CaregiverCard: React.FC<CaregiverCardProps> = ({
           </div>
         </div>
 
-        {/* Skills pill tags */}
-        {(caregiver.skills && caregiver.skills.length > 0) ? (
+        {/* Skills pill tags — Transportation only counts once the badge is earned,
+            same gate as the profile page (ClientCaregiverProfile.tsx) and Evia's
+            mirror (caregiverProfilePage.ts); this card used to show it from the
+            raw skills list regardless of the badge (2026-09-22 parity fix). */}
+        {(() => {
+          const visibleSkills = (caregiver.skills ?? []).filter(s => s !== 'Transportation' || caregiver.hasReliableTransportation);
+          return visibleSkills.length > 0 ? (
           <div className="flex gap-2 mb-6 mt-1">
-            {caregiver.skills.slice(0, 2).map(skill => (
+            {visibleSkills.slice(0, 2).map(skill => (
               <span key={skill} className="shrink-0 px-3.5 py-1.5 bg-slate-100 border border-slate-200 text-slate-800 text-[13px] font-medium rounded-[1rem]">
                 {skill}
               </span>
             ))}
-            {caregiver.skills.length > 2 && (
+            {visibleSkills.length > 2 && (
               <span className="shrink-0 px-3.5 py-1.5 bg-white border border-slate-200 text-slate-500 text-[13px] font-medium rounded-[1rem]">
-                +{caregiver.skills.length - 2}
+                +{visibleSkills.length - 2}
               </span>
             )}
           </div>
         ) : (
           <div className="mb-6 mt-1"></div>
-        )}
+        );
+        })()}
 
 
       </div>

@@ -145,11 +145,20 @@ const ClientAuthRoute: React.FC<{ element: React.ReactElement }> = ({ element })
 
 const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) => {
   const { currentUser, authResolved, caregiverProfile, addToast } = useCareConnex();
+  const navigate = useNavigate();
   if (!authResolved) return <PageLoader fullScreen message="Loading..." />;
   if (!currentUser) return <Navigate to="/login" replace />;
   if (currentUser.userType === 'client') return <Navigate to="/client/dashboard" replace />;
   if (!currentUser.eviaConnected) return <Navigate to="/caregiver/connect" replace />;
-  const showWizard = caregiverProfile !== null && caregiverProfile.onboardingStatus !== 'profile_complete';
+  // Same default as ClientRoute's jobPostingCompleted check: treat "no record
+  // yet" as "still needs the wizard", not as "wait until one shows up". A
+  // caregiver's record is now created the moment they connect (webhooks.ts
+  // handlePendingConsentReply / onboardingConversation.ts handleAskRole), but
+  // this stays defensive against the listener not having caught up yet — the
+  // wizard does its own independent fetch on mount, so showing it immediately
+  // is safe even if `caregiverProfile` is still null here (2026-09-23, site
+  // signup parity with the client side).
+  const showWizard = caregiverProfile === null || caregiverProfile.onboardingStatus !== 'profile_complete';
   return (
     <>
       {element}
@@ -157,8 +166,8 @@ const CaregiverRoute: React.FC<{ element: React.ReactElement }> = ({ element }) 
         <Suspense fallback={null}>
           <CaregiverOnboardingWizard
             uid={currentUser.uid}
-            firstName={(caregiverProfile as any).firstName || currentUser.displayName?.split(' ')[0] || ''}
-            onComplete={() => {}}
+            firstName={(caregiverProfile as any)?.firstName || currentUser.displayName?.split(' ')[0] || ''}
+            onComplete={() => navigate('/caregiver/dashboard', { replace: true })}
             onShowToast={addToast}
           />
         </Suspense>

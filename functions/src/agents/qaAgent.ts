@@ -38,6 +38,7 @@ import { getActiveAgentForUser } from "./executionAgent";
 import { selectToolsForIntent, isHighStakesMutation } from "./toolCapabilities";
 import { buildOnboardingDirective } from "./onboardingDirective";
 import { mapJobPostingsDocToOnboardingData, mapUsersDocToOnboardingData } from "./clientJobPostingContract";
+import { mapCaregiversDocToOnboardingData } from "./caregiverDraftSync";
 import { describeWhoIsWho } from "./careRecipients";
 import { describeSharedProfile } from "./profileBriefing";
 import { selectNextAppointment } from "./careEvidence";
@@ -2573,6 +2574,26 @@ export async function runQaAgent(params: {
         }
       } catch (err) {
         console.error("onboarding: live job_postings/users sync failed (non-fatal, using draft only):", err);
+      }
+    }
+    // Same cross-channel sync for a caregiver signing up on the revived site
+    // wizard (2026-09-23) — unlike the client side there's a single shared
+    // record (caregivers/{uid}), not a separate draft doc, since the wizard and
+    // buildCaregiverProfileMirror already read/write mostly the same field
+    // names; mapCaregiversDocToOnboardingData only translates the handful that
+    // genuinely differ (jobTypes↔jobType, weeklyAvailability↔availability).
+    const caregiverUidForSync = onboardingRole === "caregiver"
+      ? (caregiverId ?? (session as any)?.caregiverId ?? userId ?? (session as any)?.userId)
+      : undefined;
+    if (caregiverUidForSync) {
+      try {
+        const cgSnap = await db.collection("caregivers").doc(caregiverUidForSync as string).get();
+        const liveData = mapCaregiversDocToOnboardingData(cgSnap.exists ? cgSnap.data() : undefined);
+        if (Object.keys(liveData).length > 0) {
+          effectiveOnboardingData = { ...liveData, ...(draftOnboardingData ?? {}) };
+        }
+      } catch (err) {
+        console.error("onboarding: live caregivers-doc sync failed (non-fatal, using draft only):", err);
       }
     }
     systemPrompt += "\n\n" + buildOnboardingDirective(

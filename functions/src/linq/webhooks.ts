@@ -1196,13 +1196,25 @@ const handleInboundInner = traceable(
         connectedAt: admin.firestore.Timestamp.now(),
         chatId,
       }).catch(() => {/* non-critical */});
-      // Mark the user as LINQ-connected so the client gate lets them in
+      // Mark the user as LINQ-connected so the client/caregiver gate lets them in
       const webUid = webSessionData.uid ?? null;
       if (webUid) {
         await db.collection("users").doc(webUid).set(
           { eviaConnected: true, eviaConnectedAt: admin.firestore.Timestamp.now() },
           { merge: true }
         ).catch(() => {/* non-critical */});
+      }
+      // A caregiver's own record (caregivers/{uid}) is what the site's revived
+      // signup wizard reads and what its "still incomplete" gate checks against
+      // — without it, a caregiver connecting for the very first time via /start
+      // has nowhere on the site to land (2026-09-23, site-side caregiver signup
+      // parity with the client side). ensureCaregiverDocForOnboarding is
+      // idempotent and safe this early — onboardingData may be empty, and every
+      // field it mirrors onto the doc is copy-if-present.
+      if (webRole === "caregiver" && !isReturning) {
+        const { ensureCaregiverDocForOnboarding } = await import("../agents/onboardingConversation");
+        await ensureCaregiverDocForOnboarding(phone).catch((err) =>
+          console.error("web bridge: caregiver doc pre-create failed", err));
       }
 
       await initializeZepOnFirstContact(phone).catch((err) =>

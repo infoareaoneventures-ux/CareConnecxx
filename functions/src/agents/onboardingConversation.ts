@@ -1721,6 +1721,15 @@ async function handleAskRole(phone: string, chatId: string, text: string, sessio
         { merge: true },
       ).catch(() => {/* non-critical */});
     }
+    // Same site-signup parity as the web path (webhooks.ts handlePendingConsentReply):
+    // the moment role resolves to caregiver, their own caregivers/{uid} record needs
+    // to exist so the site's dual-channel wizard has something to load and its
+    // "still incomplete" gate can find (2026-09-23). Idempotent; safe this early —
+    // onboardingData is still empty, and every mirrored field is copy-if-present.
+    if (claimedRole === "caregiver") {
+      await ensureCaregiverDocForOnboarding(phone).catch((err) =>
+        console.error("handleAskRole: caregiver doc pre-create failed", err));
+    }
   }
 
   if (raw === "self") {

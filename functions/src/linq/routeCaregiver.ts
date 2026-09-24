@@ -185,34 +185,6 @@ async function handleArrived(phone: string, chatId: string, session: AgentSessio
   const arrivedAt = new Date().toISOString();
   await appt.ref.update({ arrivedAt, status: "in-progress" });
 
-  // Track lateness if caregiver arrived >= 15 min after scheduled start.
-  // Pacific wall-clock parse — `new Date("YYYY-MM-DDTHH:mm")` on Cloud
-  // Functions reads PT times as UTC, which flagged every on-time daytime
-  // arrival as ~420 min late (false lateness alerts to admins + families) and
-  // hid real evening lateness.
-  const scheduledStart = apptData.startTime ?? apptData.time ?? "";
-  if (scheduledStart && session.caregiverId) {
-    const todayStr = today;
-    const schedMs  = parseScheduledTimeMs(`${todayStr}T${scheduledStart.slice(0, 5)}:00`);
-    const minutesLate = Math.round((Date.now() - schedMs) / 60000);
-    if (minutesLate >= 15) {
-      const cgSnap  = await db.collection("caregivers").doc(session.caregiverId).get();
-      const cgName  = cgSnap.data()?.name ?? "Unknown";
-      const { recordLatenessEvent, checkLatenessPattern } = await import("../agents/latenessTracker");
-      recordLatenessEvent({
-        caregiverId:   session.caregiverId,
-        caregiverName: cgName,
-        appointmentId: appt.id,
-        clientId:      apptData.clientId ?? "",
-        date:          todayStr,
-        scheduledTime: scheduledStart.slice(0, 5),
-        minutesLate,
-        selfReported:  false,
-      }).catch(() => {});
-      checkLatenessPattern(session.caregiverId, cgName).catch(() => {});
-    }
-  }
-
   // Notify family (DND-aware: high urgency — queued but priority delivery)
   const clientPhone = await getClientPhoneForAppt(apptData);
   if (clientPhone) {
@@ -1760,27 +1732,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
           .where("date",        "==", today2).limit(1).get();
         const clientPhone = lateApptSnap.empty ? null : await getClientPhoneForAppt(lateApptSnap.docs[0].data());
 
-        // Record lateness event
-        if (!lateApptSnap.empty && session.caregiverId) {
-          const lateApptData = lateApptSnap.docs[0].data();
-          const minutesLateNum = parseInt(text.replace(/\D/g, ""), 10);
-          if (!isNaN(minutesLateNum) && minutesLateNum > 0) {
-            const cgSnap2 = await db.collection("caregivers").doc(session.caregiverId).get();
-            const cgName2 = cgSnap2.data()?.name ?? "Unknown";
-            const { recordLatenessEvent, checkLatenessPattern } = await import("../agents/latenessTracker");
-            recordLatenessEvent({
-              caregiverId:   session.caregiverId,
-              caregiverName: cgName2,
-              appointmentId: lateApptSnap.docs[0].id,
-              clientId:      lateApptData.clientId ?? "",
-              date:          today2,
-              scheduledTime: (lateApptData.startTime ?? "").slice(0, 5),
-              minutesLate:   minutesLateNum,
-              selfReported:  true,
-            }).catch(() => {});
-            checkLatenessPattern(session.caregiverId, cgName2).catch(() => {});
-          }
-        }
 
         if (clientPhone) {
           const cgSnap = session.caregiverId

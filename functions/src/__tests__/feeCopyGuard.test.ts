@@ -49,11 +49,7 @@ const SCOPES = [
 describe("money claims match what is charged (source scan)", () => {
   const files = SCOPES.flatMap((d) => (fs.existsSync(d) ? walk(d) : []))
     // The admin panel is internal; legacy docs are dated records.
-    .filter((f) => !f.includes(`${path.sep}components${path.sep}admin${path.sep}`))
-    // The caregiver no-show "callout" modal still offers a refund through a live
-    // callable (v1-requestCalloutRefund) — a functional leftover on the full-sweep
-    // list, not a copy fix; excluded here so the guard stays honest about what it checks.
-    .filter((f) => !f.endsWith(`${path.sep}CaregiverCalloutModal.tsx`));
+    .filter((f) => !f.includes(`${path.sep}components${path.sep}admin${path.sep}`));
   it("scans a real set of files", () => {
     expect(files.length).toBeGreaterThan(50);
   });

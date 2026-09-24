@@ -65,7 +65,6 @@ export * from './email';
 export * from './pushNotifications';
 
 // CAREGIVER CALLOUT - emergency replacement when caregiver cancels
-export * from './caregiverCallout';
 
 // Export SMS Functions
 export { sendTestSMS } from './sms';
@@ -83,7 +82,6 @@ export * from './referralLookup';
 export * from './stripeConnectWebhook';
 
 // Appointment lifecycle: mark `completed` when scheduled end passes
-export * from './appointmentCompletion';
 
 // Export Care Coordinator Matching Functions
 export * from './matching';
@@ -116,8 +114,6 @@ export * from './linq/webhooks';
 export * from './triggers/userCreated';
 
 // Linq Sprint 2 — proactive care alerts + emergency replacement
-export * from './triggers/appointmentUpdated';
-export { onCheckinCreated } from './triggers/checkinAlert';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
 export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
 export { projectActivityFeed } from './triggers/projectActivityFeed';
@@ -128,7 +124,6 @@ export { createFamilyGroup, addFamilyGroupMember } from './agents/familyGroupMan
 
 // Token-scoped quick-confirm callable (replaces the QuickConfirmPage direct web
 // writes to agent_tasks / agent_approvals).
-export { confirmAgentTask, getAgentTaskByToken } from './agents/quickConfirm';
 
 // Linq Sprint 4 — weekly digest + monthly health trends
 export { sendWeeklyDigests, triggerWeeklyDigestNow } from './scheduled/weeklyDigest';
@@ -220,7 +215,6 @@ export { admin_retry_linq_delivery, admin_replay_pending_action, admin_cancel_pe
 export { onAdminAlertCreated } from './triggers/adminAlertNotifier';
 
 // Dispute resolution (Firestore trigger + hourly SLA check)
-export { onDisputeCreated, checkDisputeSLAs } from './triggers/disputeResolution';
 
 
 // CARE PLAN HISTORY trigger (saves version on every care plan write)

@@ -4,7 +4,6 @@ import { getSharedClient } from "../utils/claudeClient";
 import { guardModelOutput, ANTI_INVENTION_CLAUSE } from "../safety/outputGuard";
 import { caraOutputGuardEnabled } from "../config/featureFlags";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { sendToPhone } from "../linq/client";
 import { claimProactiveTrigger, settleProactiveTriggerDelivery } from "./proactiveTriggerClaim";
 import { gateOptionalSend } from "../scheduled/engineGate";
 
@@ -13,12 +12,9 @@ const db = admin.firestore();
 const SYSTEM_DIRECTIVE_PREFIXES = [
   "health_escalation:",
   "qa_retry:",
-  "caregiver_checkin:",
-  "caregiver_checkin_escalation:",
   "issue_escalation:",
   "issue_escalation_final:",
   "issue_followup:",
-  "interview_followup:",
 ];
 
 function isSystemDirectiveMessage(message: string): boolean {
@@ -207,9 +203,7 @@ const REPLY_EXEMPT_TYPES = new Set([
   "medication_reminder",
 ]);
 const REPLY_EXEMPT_MESSAGE_PREFIXES = [
-  "caregiver_checkin:", "caregiver_checkin_escalation:", "interview_followup:",
-  "health_escalation:", "issue_escalation:", "issue_escalation_final:",
-  "issue_followup:",
+  "issue_escalation:", "issue_escalation_final:", "issue_followup:",
 ];
 export function isReplyExempt(t: Pick<ProactiveTrigger, "type" | "message">): boolean {
   if (REPLY_EXEMPT_TYPES.has(t.type)) return true;
@@ -508,14 +502,7 @@ export const runTriggerEngine = functions.pubsub
       // is the send layer's verdict for a plain text.
       let delivered: boolean | null = null;
       try {
-        if (trigger.message.startsWith("health_escalation:")) {
-          const [, seniorId, alertDocId] = trigger.message.split(":");
-          if (seniorId && alertDocId) {
-            await escalateHealthAlert(seniorId, alertDocId, trigger.phone).catch(err =>
-              console.error("health escalation failed:", err)
-            );
-          }
-        } else if (trigger.message.startsWith("qa_retry:")) {
+        if (trigger.message.startsWith("qa_retry:")) {
           const raw = trigger.message.slice("qa_retry:".length);
           try {
             const params = JSON.parse(raw);
@@ -524,16 +511,6 @@ export const runTriggerEngine = functions.pubsub
           } catch (err) {
             console.error("qa_retry: parse/run failed:", err);
           }
-        } else if (trigger.message.startsWith("caregiver_checkin:")) {
-          const appointmentId = trigger.message.slice("caregiver_checkin:".length);
-          await handleCaregiverCheckin(appointmentId, trigger.phone).catch(err =>
-            console.error("caregiver_checkin failed:", err)
-          );
-        } else if (trigger.message.startsWith("caregiver_checkin_escalation:")) {
-          const appointmentId = trigger.message.slice("caregiver_checkin_escalation:".length);
-          await handleCaregiverCheckinEscalation(appointmentId).catch(err =>
-            console.error("caregiver_checkin_escalation failed:", err)
-          );
         } else if (trigger.message.startsWith("issue_escalation:")) {
           const issueLogId = trigger.message.slice("issue_escalation:".length);
           const { escalateIssue } = await import("../agents/issueEscalator");
@@ -650,11 +627,6 @@ export const runTriggerEngine = functions.pubsub
       console.error("checkIgnoredTriggers error:", err)
     );
 
-    // Fire any user-defined recurring reminders that are due
-    await evaluateUserTriggers().catch((err) =>
-      console.error("evaluateUserTriggers error:", err)
-    );
-
     // Clear expired state machine flags so users never get stuck
     await clearExpiredSessionStates().catch((err) =>
       console.error("clearExpiredSessionStates error:", err)
@@ -679,104 +651,6 @@ export { runTriggerEngine as triggerEngineScheduled };
 // negotiation flow (deleted the same day — schedule_interview/video_interviews
 // is the only interview path now), and by this point had zero remaining
 // callers anywhere in functions/src.
-
-// ── Escalate health alert to emergency contact if family didn't acknowledge ────
-
-async function escalateHealthAlert(seniorId: string, alertDocId: string, familyPhone: string): Promise<void> {
-  const alertSnap = await db.collection("health_alerts_pending").doc(alertDocId).get();
-  if (!alertSnap.exists) return;
-
-  const alert = alertSnap.data()!;
-  if (alert.escalated) return; // already escalated
-
-  // Check if the family replied after the alert was sent
-  const sentAt  = alert.sentAt as string;
-  const replied = await db.collection("agent_conversations")
-    .doc(familyPhone)
-    .collection("messages")
-    .where("role",      "==", "user")
-    .where("timestamp", ">=", new Date(sentAt).getTime())
-    .limit(1)
-    .get();
-
-  if (!replied.empty) {
-    // Family responded — no escalation needed
-    await alertSnap.ref.update({ escalated: false, familyReplied: true });
-    return;
-  }
-
-  // Family has not responded — find emergency contact
-  const seniorSnap = await db.collection("senior_profiles").doc(seniorId).get();
-  const senior     = seniorSnap.exists ? seniorSnap.data()! : {};
-  const ecPhone    = senior.emergencyContact?.phone as string | undefined;
-  const seniorName = (senior.name ?? "your loved one") as string;
-  const signals: string[] = alert.signals ?? [];
-
-  if (ecPhone && ecPhone !== familyPhone) {
-    await sendToPhone(ecPhone,
-      `Hi — this is Evia, the care coordinator for ${seniorName}.\n\n` +
-      `There were some health concerns noted in a recent care visit (${signals.slice(0, 2).join(", ")}) ` +
-      `and the primary contact hasn't responded in 24 hours.\n\n` +
-      `Please reach out to them or contact the care team directly.`
-    );
-  }
-
-  // Also flag for admin
-  await db.collection("admin_alerts").add({
-    type:        "health_alert_unacknowledged",
-    seniorId,
-    phone:       familyPhone,
-    signals,
-    sentAt,
-    createdAt:   new Date().toISOString(),
-    resolved:    false,
-    priority:    "high",
-  });
-
-  await alertSnap.ref.update({ escalated: true, escalatedAt: new Date().toISOString() });
-  console.log(`[escalateHealthAlert] Escalated health alert for senior ${seniorId}`);
-}
-
-// ── Fire user-defined recurring reminders ────────────────────────────────────
-
-async function evaluateUserTriggers(): Promise<void> {
-  const now = new Date().toISOString();
-
-  const snap = await db.collection("user_triggers")
-    .where("active",     "==", true)
-    .where("nextFireAt", "<=", now)
-    .get();
-
-  if (snap.empty) return;
-
-  const { calculateNextFireAt } = await import("./userTriggerManager");
-
-  for (const doc of snap.docs) {
-    const t = doc.data();
-    try {
-      await sendViaInteractionAgent(t.phone as string, {
-        content:     t.message     as string,
-        urgency:     "standard",
-        sourceAgent: "user_trigger",
-        canDrop:     false,
-      });
-
-      if (t.recurrence === "once") {
-        await doc.ref.update({ active: false, firedAt: now });
-      } else {
-        const next = calculateNextFireAt(
-          t.recurrence as "daily" | "weekly" | "monthly" | "once",
-          t.dayOfWeek  as number | undefined,
-          t.hour       as number,
-          t.minute     as number
-        );
-        await doc.ref.update({ nextFireAt: next, lastFiredAt: now });
-      }
-    } catch (err) {
-      console.error(`[evaluateUserTriggers] Failed for trigger ${doc.id}:`, err);
-    }
-  }
-}
 
 // ── Clear expired session state machine flags ─────────────────────────────────
 
@@ -841,94 +715,3 @@ async function clearExpiredSessionStates(): Promise<void> {
   }
 }
 
-// ── Caregiver check-in 2h before visit ───────────────────────────────────────
-
-async function handleCaregiverCheckin(appointmentId: string, caregiverPhone: string): Promise<void> {
-  const apptSnap = await db.collection("appointments").doc(appointmentId).get();
-  if (!apptSnap.exists) return;
-  const appt = apptSnap.data()!;
-
-  // Skip if already arrived or cancelled
-  if (["cancelled", "cancelled_by_client", "completed"].includes(appt.status ?? "")) return;
-  if (appt.arrivedAt) return;
-
-  const seniorName = appt.clientName ?? appt.seniorName ?? "your client";
-  const startTime  = appt.startTime ?? "";
-
-  await sendToPhone(caregiverPhone,
-    `Hey — are you confirmed for today's visit with ${seniorName} at ${startTime}?\n\nReply CONFIRM if you're good to go, or LATE if you're running behind.`
-  );
-
-  await db.collection("appointments").doc(appointmentId).update({
-    caregiverCheckInSent:   true,
-    caregiverCheckInSentAt: new Date().toISOString(),
-  });
-
-  // Schedule escalation in 30 min if no response
-  await db.collection("proactive_triggers").add({
-    userId:      appt.caregiverId ?? "",
-    phone:       caregiverPhone,
-    type:        "caregiver_checkin_escalation",
-    scheduledAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    message:     `caregiver_checkin_escalation:${appointmentId}`,
-    firedAt:     null,
-    cancelledAt: null,
-    createdAt:   new Date().toISOString(),
-  });
-}
-
-// ── Caregiver check-in escalation — warn family if no confirm/arrival ─────────
-
-async function handleCaregiverCheckinEscalation(appointmentId: string): Promise<void> {
-  const apptSnap = await db.collection("appointments").doc(appointmentId).get();
-  if (!apptSnap.exists) return;
-  const appt = apptSnap.data()!;
-
-  // If caregiver confirmed or arrived — nothing to do
-  if (appt.arrivedAt || appt.caregiverCheckInConfirmed) return;
-  if (["cancelled", "cancelled_by_client", "completed"].includes(appt.status ?? "")) return;
-
-  const seniorName    = appt.clientName ?? appt.seniorName ?? "your client";
-  const startTime     = appt.startTime ?? "";
-  const caregiverName = appt.caregiverName ?? "Your caregiver";
-
-  // Warn family
-  const clientSnap = await db.collection("users").doc(appt.clientId ?? "").get();
-  const clientPhone = (clientSnap.data() as any)?.phone as string | undefined;
-  if (clientPhone) {
-    await sendViaInteractionAgent(clientPhone, {
-      content:
-        `Heads-up — ${caregiverName} hasn't confirmed today's visit at ${startTime} with ${seniorName}. ` +
-        `I'm following up with them now. I'll let you know as soon as I hear back.`,
-      urgency:     "immediate",
-      sourceAgent: "caregiver_checkin",
-      canDrop:     false,
-    });
-  }
-
-  // Urgent re-ping caregiver
-  const cgSnap    = await db.collection("caregivers").doc(appt.caregiverId ?? "").get();
-  const cgPhone   = cgSnap.data()?.phone as string | undefined;
-  if (cgPhone) {
-    await sendToPhone(cgPhone,
-      `URGENT: We haven't heard back about your visit with ${seniorName} at ${startTime} today. ` +
-      `Please reply CONFIRM now or call us immediately.`
-    );
-  }
-
-  // Admin alert
-  await db.collection("admin_alerts").add({
-    type:          "caregiver_unresponsive_checkin",
-    appointmentId,
-    caregiverId:   appt.caregiverId ?? "",
-    caregiverName,
-    clientId:      appt.clientId ?? "",
-    seniorName,
-    startTime,
-    createdAt:     new Date().toISOString(),
-    resolved:      false,
-    priority:      "high",
-  });
-
-  console.log(`[handleCaregiverCheckinEscalation] Escalated check-in for appointment ${appointmentId}`);
-}

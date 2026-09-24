@@ -109,7 +109,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "Created pending_caregiver_confirmation; confirmed only after the caregiver accepts the shift offer.",
+    notes: "RETIRED: nothing creates appointments any more (the site and Evia both run on booking_requests → shifts). 2026-09-23 client sweep removed every client-facing reader (dashboard cards, callout modal, LiveCareFeed, the appointment triggers, callout/quick-confirm callables). Remaining .update() readers are caregiver-side (linq/routeCaregiver start/complete/late, caregiverSwapHandler) and queued for the caregiver pass.",
   },
   booking_requests: {
     path: "booking_requests",
@@ -222,7 +222,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: false,
     webReads: true,
     notes:
-      "RETIRED 2026-09-17: no Evia code writes or reads this collection any more — the booking_confirmation, replacement_confirmation, replacement_or_skip and caregiver_interest queues were removed; the site's booking_requests / booking_amendments / shifts / video_interviews are the only pending state (get_pending_tasks reads those). Existing docs are inert. Remaining web readers, both queued for the full sweep: the public QuickConfirmPage magic link (token-scoped via getAgentTaskByToken / confirmAgentTask) and the admin AuditDashboard.",
+      "RETIRED 2026-09-17: no Evia code writes or reads this collection any more — the booking_confirmation, replacement_confirmation, replacement_or_skip and caregiver_interest queues were removed; the site's booking_requests / booking_amendments / shifts / video_interviews are the only pending state (get_pending_tasks reads those). Existing docs are inert. The QuickConfirmPage magic link and its getAgentTaskByToken / confirmAgentTask callables were removed 2026-09-23; the only remaining reader is the admin AuditDashboard.",
   },
   agent_tasks_active: {
     path: "agent_tasks_active",
@@ -264,7 +264,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: false,
-    notes: "Payment/appointment dispute records with SLA escalation (functions/src/triggers/disputeResolution.ts). Server-only today; no web reader. Audit-sensitive: client-destructive delete is blocked.",
+    notes: "RETIRED 2026-09-23: disputeResolution.ts (onDisputeCreated / checkDisputeSLAs) removed — nothing wrote this collection, so the SLA texts could never fire. Existing docs inert. Audit-sensitive: client-destructive delete is blocked.",
   },
   hire_decisions: {
     path: "hire_decisions",
@@ -473,7 +473,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: false,
-    notes: "User-requested reminders (triggers/userTriggerManager.ts). Both creation paths (the MCP create/update/delete_reminder tools, and the conversational schedulingHandler.ts flow) were removed 2026-09-05 — no site equivalent. No new reminders can be created; triggers/triggerEngine.ts still fires any pre-existing docs on schedule until they complete naturally. Server/agent-only.",
+    notes: "User-requested reminders (triggers/userTriggerManager.ts). Both creation paths (the MCP create/update/delete_reminder tools, and the conversational schedulingHandler.ts flow) were removed 2026-09-05 — no site equivalent. No new reminders can be created, and since 2026-09-23 triggerEngine.ts no longer evaluates this collection at all (userTriggerManager.ts removed). Existing docs inert. Server/agent-only.",
   },
   shift_swap_requests: {
     path: "shift_swap_requests",

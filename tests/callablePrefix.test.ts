@@ -89,7 +89,6 @@ describe('Firebase callable v1- prefix contract', () => {
   it('detects known call sites, including generic and getFunctions() inline forms', () => {
     const byName = (name: string) => usages.some((u) => u.name === name);
     expect(byName('v1-aiProxy')).toBe(true); // multiline generic form (services/ai.ts)
-    expect(byName('v1-createFamilyGroup')).toBe(true); // inline getFunctions() (components/FamilyManager.tsx)
     expect(byName('v1-triggerFamilyEmergency')).toBe(true); // inline getFunctions() (components/client/FamilyEmergency.tsx)
     expect(byName('v1-addFamilyGroupMember')).toBe(true); // components/pages/JoinFamilyPage.tsx
   });

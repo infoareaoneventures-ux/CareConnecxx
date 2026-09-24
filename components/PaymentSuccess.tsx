@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle, ArrowRight, MessageCircle } from 'lucide-react';
 import { Button } from './ui/Button';
@@ -10,22 +10,12 @@ interface PaymentSuccessProps {
 }
 
 export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate }) => {
-  const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
 
   const sourceCara  = searchParams.get('source') === 'cara';
   const caraPhone   = searchParams.get('caraPhone') ?? '';
   const isMobile    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const showBackBtn = sourceCara && isMobile && !!caraPhone;
-
-  useEffect(() => {
-    const payingId = localStorage.getItem('payingAppointmentId');
-
-    if (payingId) {
-       setAppointmentId(payingId);
-       localStorage.removeItem('payingAppointmentId');
-    }
-  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -50,14 +40,6 @@ export const PaymentSuccess: React.FC<PaymentSuccessProps> = ({ onNavigate }) =>
               Thank you. Your invoice has been paid.
             </p>
           </>
-        )}
-
-        {appointmentId && !showBackBtn && (
-          <div className="bg-slate-50 rounded-2xl p-4 mb-8 text-left border border-slate-100">
-             <div className="flex items-center justify-center text-slate-700 font-medium mb-2">
-                <span className="text-sm">Invoice #{appointmentId} settled</span>
-             </div>
-          </div>
         )}
 
         {showBackBtn ? (

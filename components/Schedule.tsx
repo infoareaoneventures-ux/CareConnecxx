@@ -169,7 +169,7 @@ export default function Schedule() {
   const [cgBookedSlots, setCgBookedSlots] = useState<Record<string, Array<{s:number;e:number}>>>({});
 
   useEffect(() => { fetchShifts(); }, [monthDate]);
-  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); generateMissingShifts(); }, []);
+  useEffect(() => { fetchHiredCaregivers(); fetchInterviews(); }, []);
 
   // When the caregiver selection changes in the Request Visit modal,
   // load their upcoming scheduled shifts and build a day-of-week → blocks map.
@@ -221,114 +221,6 @@ export default function Schedule() {
       .catch(() => setCgShiftBlocks({}));
   }, [visitCaregiverId]);
 
-
-  // If no shifts exist for an accepted booking, generate 4 weeks client-side.
-  // This runs once on mount and acts as a safety net when the Cloud Function hasn't fired yet.
-  const generateMissingShifts = async () => {
-    try {
-      const fdb = db;
-      if (!fdb || !auth) return;
-      const user = auth.currentUser;
-      if (!user) return;
-
-      const bookingsSnap = await fdb.collection('booking_requests')
-        .where('clientId', '==', user.uid)
-        .where('status', '==', 'accepted')
-        .get();
-      if (bookingsSnap.empty) return;
-
-      const ALL_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const normDay = (d: string) => d.trim().charAt(0).toUpperCase() + d.trim().slice(1, 3).toLowerCase();
-      const addDays = (dateStr: string, days: number) => {
-        const d = new Date(dateStr + 'T12:00:00');
-        d.setDate(d.getDate() + days);
-        return d.toISOString().split('T')[0];
-      };
-      const nextOccurrence = (fromDate: string, dayName: string) => {
-        const target = ALL_DAYS.indexOf(normDay(dayName));
-        if (target === -1) return fromDate;
-        const base = new Date(fromDate + 'T12:00:00');
-        const diff = (target - base.getDay() + 7) % 7;
-        base.setDate(base.getDate() + diff);
-        return base.toISOString().split('T')[0];
-      };
-
-      const today = new Date().toISOString().split('T')[0];
-      const generateTo = addDays(today, 27);
-
-      for (const bookingDoc of bookingsSnap.docs) {
-        const booking = bookingDoc.data();
-        const bookingId = bookingDoc.id;
-
-        // Check if shifts already exist for this booking
-        const existingSnap = await fdb.collection('shifts')
-          .where('bookingRequestId', '==', bookingId)
-          .where('status', '==', 'scheduled')
-          .limit(1)
-          .get();
-        if (!existingSnap.empty) continue; // already has shifts
-
-        const dayShiftTimes: Record<string, Array<{ start: string; end: string }>> =
-          booking.schedule?.dayShiftTimes || {};
-        if (Object.keys(dayShiftTimes).length === 0) continue;
-
-        const startDate: string = booking.schedule?.startDate || today;
-        const generateFrom = startDate >= today ? startDate : today;
-        const endDate: string | null = booking.schedule?.ongoing ? null : (booking.schedule?.endDate || null);
-        if (endDate && generateFrom > endDate) continue;
-
-        const shiftBase = {
-          clientId: user.uid,
-          clientName: booking.clientName || '',
-          caregiverId: booking.caregiverId || '',
-          caregiverName: booking.caregiverName || '',
-          caregiverPhotoURL: booking.caregiverPhotoURL || null,
-          status: 'scheduled' as const,
-          address: booking.address || '',
-          rate: booking.rate ?? null,
-          notes: booking.notes || '',
-          careRecipients: booking.careRecipients || [],
-          bookingRequestId: bookingId,
-          recurringWeekly: true,
-          tasksCompleted: [],
-        };
-
-        const batch = fdb.batch();
-        let count = 0;
-
-        Object.entries(dayShiftTimes).forEach(([day, blocks]) => {
-          (blocks as Array<{ start: string; end: string }>)
-            .filter(b => b.start && b.end)
-            .forEach(b => {
-              let dateStr = nextOccurrence(generateFrom, day);
-              while (dateStr <= generateTo) {
-                if (endDate && dateStr > endDate) break;
-                if (count < 490) { // stay under Firestore batch limit
-                  batch.set(fdb.collection('shifts').doc(), {
-                    ...shiftBase,
-                    date: dateStr,
-                    startTime: b.start,
-                    endTime: b.end,
-                  });
-                  count++;
-                }
-                dateStr = addDays(dateStr, 7);
-              }
-            });
-        });
-
-        if (count > 0) {
-          await batch.commit();
-          console.log(`generateMissingShifts: created ${count} shifts for booking ${bookingId}`);
-        }
-      }
-
-      // Refresh the calendar after generating
-      fetchShifts();
-    } catch (e) {
-      console.error('generateMissingShifts error:', e);
-    }
-  };
 
   const fetchShifts = async () => {
     try {

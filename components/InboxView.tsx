@@ -78,7 +78,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [caregiverPendingRoom, setCaregiverPendingRoom] = useState<(ChatRoom & { id: string }) | undefined>();
   const pendingRoomState = caregiverPendingRoom
     ?? ((location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined);
-  const { appointments, blockedIds, setMembershipModalOpen } = useCareConnex();
+  const { blockedIds, setMembershipModalOpen } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
   const currentName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'You';
@@ -325,14 +325,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
       r.lastMessage?.toLowerCase().includes(search.toLowerCase());
   });
 
-  // Derive care team IDs from active bookings (appointments + accepted booking_requests)
-  const careTeamIds = new Set([
-    ...appointments
-      .filter(a => ['pending_caregiver_confirmation', 'confirmed', 'in-progress'].includes(a.status))
-      .map(a => isClient ? a.caregiverId : (a.clientId || ''))
-      .filter(Boolean),
-    ...acceptedBookingPartnerIds,
-  ]);
+  // Care team = everyone with an accepted booking (same rule as My Care Team).
+  const careTeamIds = acceptedBookingPartnerIds;
 
   const careTeamRooms = filteredRooms.filter(r => !r.isSupport && careTeamIds.has(getContact(r).id));
   const supportRooms = filteredRooms.filter(r => r.isSupport);

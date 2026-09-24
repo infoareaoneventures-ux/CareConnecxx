@@ -101,9 +101,9 @@ describe("isReplyExempt", () => {
   });
 
   it("exempts system-directive messages", () => {
-    expect(isReplyExempt({ type: "custom", message: "interview_followup:iv1" })).toBe(true);
-    expect(isReplyExempt({ type: "custom", message: "caregiver_checkin:appt1" })).toBe(true);
-    expect(isReplyExempt({ type: "custom", message: "health_escalation:s1:a1" })).toBe(true);
+    expect(isReplyExempt({ type: "custom", message: "issue_escalation:il1" })).toBe(true);
+    expect(isReplyExempt({ type: "custom", message: "issue_escalation_final:il1" })).toBe(true);
+    expect(isReplyExempt({ type: "custom", message: "issue_followup:il1" })).toBe(true);
   });
 
   it("keeps nudges and qa_retry reply-cancellable (twin-trigger + commitment tracker semantics)", () => {
@@ -139,7 +139,7 @@ describe("cancelTriggerIfUserReplied", () => {
       cancelledAt: null, firedAt: null,
     });
     hoisted.docs.set("directive", {
-      userId: "u1", phone: "+1", type: "custom", message: "caregiver_checkin:appt1",
+      userId: "u1", phone: "+1", type: "custom", message: "issue_escalation:il1",
       cancelledAt: null, firedAt: null,
     });
     await cancelTriggerIfUserReplied("u1", "+1");

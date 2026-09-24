@@ -5,7 +5,7 @@ import { pushNotificationService } from '../services/pushNotificationService';
 import { setSentryUser } from '../lib/sentry';
 import { isConfigured, db } from '../lib/firebase';
 import firebase from 'firebase/compat/app';
-import { Appointment, Caregiver, EmergencyAlert, ToastMessage, ToastType, User, UserProfile } from '../types';
+import { Caregiver, EmergencyAlert, ToastMessage, ToastType, User, UserProfile } from '../types';
 import { EmergencyAlertBanner } from '../components/EmergencyAlertBanner';
 
 /**
@@ -35,7 +35,6 @@ interface CareConnexContextType {
     currentUser: AuthenticatedUser | null;
     caregiverProfile: Caregiver | null;
     refreshCaregiverProfile: () => Promise<void>;
-    appointments: Appointment[];
     caregivers: Caregiver[];
     isLoading: boolean;
     authResolved: boolean;
@@ -45,9 +44,6 @@ interface CareConnexContextType {
     toasts: ToastMessage[];
     addToast: (message: string, type: ToastType) => void;
     removeToast: (id: string) => void;
-    bookAppointment: (appointment: Appointment) => Promise<void>;
-    completePayment: (appointmentId: string) => void;
-    submitReview: (appointmentId: string) => void;
     blockedIds: Set<string>;
     blockedUserProfiles: Record<string, { name: string; photo: string }>;
     unblockUser: (targetId: string) => Promise<void>;
@@ -60,7 +56,6 @@ const CareConnexContext = createContext<CareConnexContextType | undefined>(undef
 export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
     const [caregiverProfile, setCaregiverProfile] = useState<Caregiver | null>(null);
-    const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [authResolved, setAuthResolved] = useState(false);
@@ -286,30 +281,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             .catch(e => console.error("Failed to fetch caregivers", e));
     }, [currentUser?.uid, currentUser?.userType]);
 
-    // BUG FIX: Separate useEffect for appointment subscription
-    // This prevents memory leaks and ensures proper cleanup
-    useEffect(() => {
-        if (!currentUser) {
-            setAppointments([]); // Clear appointments when logged out
-            return;
-        }
-
-        console.log('[Evia] Subscribing to appointments for', currentUser.uid);
-        
-        const unsubscribe = dbService.subscribeToAppointments(
-            currentUser.uid,
-            currentUser.userType === 'admin' ? 'client' : currentUser.userType,
-            (updatedAppts) => {
-                setAppointments(updatedAppts);
-            }
-        );
-
-        return () => {
-            console.log('[Evia] Unsubscribing from appointments');
-            unsubscribe();
-        };
-    }, [currentUser?.uid, currentUser?.userType]); // Only re-subscribe when user changes
-
     // U2: Live caregiver-profile listener. Evia writes to caregivers/{uid}
     // during onboarding/profile edits/verification; this keeps the caregiver
     // dashboard fresh without a logout/login. Per KTD-4, the listener updates
@@ -360,42 +331,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
 
         return () => unsubscribe();
     }, [currentUser?.uid]);
-
-    const bookAppointment = async (appointment: Appointment) => {
-        try {
-            setAppointments(prev => [...prev, appointment]); // Optimistic
-            await dbService.createAppointment(appointment);
-            // Success toast is shown in ClientDashboard, not here
-        } catch (error: unknown) {
-            console.error("Booking failed:", error);
-
-            // Revert optimistic update
-            setAppointments(prev => prev.filter(a => a.id !== appointment.id));
-
-            // Show specific error message
-            const errorMessage = error instanceof Error ? error.message : '';
-            if (errorMessage.includes('Database not connected')) {
-                addToast("Unable to connect to server. Please check your internet connection.", 'error');
-            } else if (errorMessage.includes('permission-denied')) {
-                addToast("Permission denied. Please sign in again.", 'error');
-            } else {
-                addToast("Booking saved locally but failed to sync. We'll retry automatically.", 'error');
-            }
-        }
-    };
-
-    const completePayment = (appointmentId: string) => {
-        setAppointments(prev => prev.map(a =>
-            a.id === appointmentId ? { ...a, paymentStatus: 'paid' } : a
-        ));
-        addToast("Payment processing confirmed", 'success');
-    };
-
-    const submitReview = (appointmentId: string) => {
-        setAppointments(prev => prev.map(a =>
-            a.id === appointmentId ? { ...a, hasReview: true } : a
-        ));
-    };
 
     // Live emergency_alerts listener. Both the EmergencySOS UI and the agent's
     // trigger_emergency_alert MCP tool write this collection; this surfaces an
@@ -458,7 +393,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             currentUser,
             caregiverProfile,
             refreshCaregiverProfile,
-            appointments,
             caregivers,
             isLoading,
             authResolved,
@@ -468,9 +402,6 @@ export const CareConnexProvider: React.FC<{ children: ReactNode }> = ({ children
             toasts,
             addToast,
             removeToast,
-            bookAppointment,
-            completePayment,
-            submitReview,
             blockedIds,
             blockedUserProfiles,
             unblockUser,

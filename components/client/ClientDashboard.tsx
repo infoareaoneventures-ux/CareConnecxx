@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Hourglass, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
+import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, Home, CheckCircle, DollarSign, Briefcase, Users, MapPin, ChevronRight, Star, MessageSquare, Video, CreditCard } from 'lucide-react';
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService, normalizeJobPost } from '../../services/api';
@@ -17,8 +17,6 @@ import { ReviewShiftHoursModal } from '../payroll/ReviewShiftHoursModal';
 import { SupportChatModal } from '../shared/SupportChatModal';
 import { CaregiverVerificationBadges } from '../shared/CaregiverVerificationBadges';
 import firebase, { db } from '../../lib/firebase';
-import { LiveCareFeed } from './LiveCareFeed';
-import { FamilyEmergency } from './FamilyEmergency';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 import { VisitProgressPanel } from './VisitProgressPanel';
@@ -117,7 +115,7 @@ async function buildSeniorProfile(
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) => {
   const navigate = useNavigate();
-  const { appointments, addToast: onShowToast, blockedIds } = useCareConnex();
+  const { addToast: onShowToast, blockedIds } = useCareConnex();
   
   // Modal states
   const [scheduleInterviewCaregiver, setScheduleInterviewCaregiver] = useState<Caregiver | null>(null);
@@ -137,8 +135,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [topRatedCaregivers, setTopRatedCaregivers] = useState<Caregiver[]>([]);
 
   // Mark Paid state
-  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
-  const [markPaidTarget, setMarkPaidTarget] = useState<{ id: string; caregiverName: string; cost?: number } | null>(null);
 
   // Shift hours awaiting this client's review
   const [shiftsToReview, setShiftsToReview] = useState<any[]>([]);
@@ -485,17 +481,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
     db.collection('users').doc(currentUser.uid).update({ savedCaregiverIds: next }).catch(() => setSavedIds(savedIds));
   };
 
-  const handleMarkPaid = async () => {
-    if (!markPaidTarget || !db) return;
-    const id = markPaidTarget.id;
-    setPaidIds(prev => new Set([...prev, id]));
-    setMarkPaidTarget(null);
-    db.collection('appointments').doc(id).update({
-      paymentStatus: 'paid',
-      paidAt: new Date().toISOString(),
-    }).catch(() => setPaidIds(prev => { const s = new Set(prev); s.delete(id); return s; }));
-  };
-
   const fmtTime = (t?: string) => {
     if (!t) return '';
     const [hStr, mStr] = t.split(':');
@@ -658,18 +643,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
               </div>
             </div>
           );
-        })()}
-
-        {/* Live shift check-ins — shown when there is an active appointment today */}
-        {currentUser?.uid && (() => {
-          const _now = new Date();
-          const todayIso = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
-          const active = appointments.find(a =>
-            a.isoDate === todayIso &&
-            (a.status === 'confirmed' || a.status === 'in-progress')
-          );
-          if (!active) return null;
-          return <LiveCareFeed clientId={currentUser.uid} />;
         })()}
 
         {/* First-visit review prompt — one card per caregiver, until reviewed or dismissed (2026-09-19) */}
@@ -1535,67 +1508,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 )}
 
 
-                {appointments.filter(a => a.status === 'pending_caregiver_confirmation').length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-3">Pending Requests</h2>
-                    <div className="space-y-2">
-                      {appointments.filter(a => a.status === 'pending_caregiver_confirmation').slice(0, 3).map(appt => (
-                        <div key={appt.id} className="bg-amber-50 rounded-xl border border-amber-200 p-4 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                              <Hourglass className="w-5 h-5 text-amber-600" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="font-semibold text-slate-900 text-sm truncate">{appt.caregiverName}</p>
-                              <p className="text-xs text-slate-500">{appt.date} at {appt.time}</p>
-                            </div>
-                          </div>
-                          <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg flex-shrink-0">Awaiting response</span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {appointments.filter(a => a.status === 'confirmed').length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-3">Upcoming Visits</h2>
-                    <div className="space-y-2">
-                      {appointments.filter(a => a.status === 'confirmed').slice(0, 3).map(appt => {
-                        const isPaid = paidIds.has(appt.id) || appt.paymentStatus === 'paid';
-                        return (
-                          <div key={appt.id} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <div className="w-10 h-10 bg-primary-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                                <Calendar className="w-5 h-5 text-primary-600" />
-                              </div>
-                              <div className="min-w-0">
-                                <p className="font-semibold text-slate-900 text-sm truncate">{appt.caregiverName}</p>
-                                <p className="text-xs text-slate-500">{appt.date} at {appt.time}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              {isPaid ? (
-                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded-lg">
-                                  <CheckCircle className="w-3 h-3" /> Paid
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() => setMarkPaidTarget({ id: appt.id, caregiverName: appt.caregiverName, cost: appt.cost })}
-                                  className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 hover:bg-primary-100 px-2 py-1 rounded-lg transition-colors"
-                                >
-                                  <DollarSign className="w-3 h-3" /> Mark Paid
-                                </button>
-                              )}
-                              <button onClick={() => navigate('/client/calendar')} className="text-xs text-slate-400 hover:text-primary-600 font-medium transition-colors">View</button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-
 
               </div>
 
@@ -1827,35 +1739,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         )}
       </main>
 
-      {/* Mark Paid confirmation modal */}
-      {markPaidTarget && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <DollarSign className="w-6 h-6 text-green-600" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-900 text-center mb-1">Confirm Payment</h3>
-            <p className="text-sm text-slate-500 text-center mb-5">
-              Did you pay <span className="font-semibold text-slate-700">{markPaidTarget.caregiverName}</span>
-              {markPaidTarget.cost ? <span> <span className="font-semibold text-slate-700">${markPaidTarget.cost}</span></span> : ''} directly?
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setMarkPaidTarget(null)}
-                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                Not yet
-              </button>
-              <button
-                onClick={handleMarkPaid}
-                className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold transition-colors"
-              >
-                Yes, mark paid
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modals */}
       <GateModals />
@@ -2037,17 +1920,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         </div>
       )}
 
-      {/* Family emergency button — visible only when a shift is active today */}
-      {currentUser?.uid && (() => {
-        const _now = new Date();
-        const todayIso = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
-        const active = appointments.find(a =>
-          a.isoDate === todayIso &&
-          (a.status === 'confirmed' || a.status === 'in-progress')
-        );
-        if (!active) return null;
-        return <FamilyEmergency appointmentId={active.id} />;
-      })()}
     </div>
   );
 };

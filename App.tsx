@@ -10,23 +10,18 @@ const ClientDashboard = lazy(() => import('./components/client/ClientDashboard')
 const AccountSettings = lazy(() => import('./components/client/AccountSettings').then(module => ({ default: module.AccountSettings })));
 const Payments = lazy(() => import('./components/client/Payments').then(module => ({ default: module.Payments })));
 const MyCareTeam = lazy(() => import('./components/client/MyCareTeam').then(module => ({ default: module.MyCareTeam })));
-const BrowseCaregivers = lazy(() => import('./components/client/BrowseCaregivers').then(module => ({ default: module.BrowseCaregivers })));
 const FindCaregivers = lazy(() => import('./components/FindCaregivers'));
 const Membership = lazy(() => import('./components/Membership'));
 const Schedule = lazy(() => import('./components/Schedule'));
 const ClientVisitsPage = lazy(() => import('./components/client/ClientVisitsPage').then(m => ({ default: m.ClientVisitsPage })));
 const ClientCaregiverProfile = lazy(() => import('./components/ClientCaregiverProfile'));
 const IdentityCallback = lazy(() => import('./components/client/IdentityCallback'));
-const BookingFlow = lazy(() => import('./components/client/booking/BookingFlow'));
-const InterviewOutcome = lazy(() => import('./components/InterviewOutcome'));
 const CaregiverDashboard = lazy(() => import('./components/CaregiverDashboard').then(module => ({ default: module.CaregiverDashboard })));
 const AdminView = lazy(() => import('./components/AdminView').then(module => ({ default: module.AdminView })));
 const AuditDashboard = lazy(() => import('./components/admin/AuditDashboard').then(module => ({ default: module.AuditDashboard })));
 const JoinFamilyPage = lazy(() => import('./components/pages/JoinFamilyPage'));
 const ClientConnectPage = lazy(() => import('./components/client/ClientConnectPage').then(m => ({ default: m.ClientConnectPage })));
 const CaregiverConnectPage = lazy(() => import('./components/caregiver/CaregiverConnectPage').then(m => ({ default: m.CaregiverConnectPage })));
-const ClientProfile = lazy(() => import('./components/ClientProfile').then(module => ({ default: module.ClientProfile })));
-const ClientProfileDashboard = lazy(() => import('./components/ClientProfileDashboard'));
 const CaregiverProfile = lazy(() => import('./components/CaregiverProfile').then(module => ({ default: module.CaregiverProfile })));
 const InboxView = lazy(() => import('./components/InboxView').then(module => ({ default: module.InboxView })));
 const StripeCallback = lazy(() => import('./components/StripeCallback').then(module => ({ default: module.StripeCallback })));
@@ -57,7 +52,6 @@ const HelpCenter = lazy(() => import('./components/HelpCenter').then(module => (
 const HelpPage = lazy(() => import('./components/HelpPage').then(module => ({ default: module.HelpPage })));
 const BlogPage        = lazy(() => import('./components/pages/BlogPage').then(module => ({ default: module.BlogPage })));
 const CityPage        = lazy(() => import('./components/pages/CityPage').then(module => ({ default: module.CityPage })));
-const QuickConfirmPage    = lazy(() => import('./components/pages/QuickConfirmPage'));
 const HealthSummaryPage   = lazy(() => import('./components/pages/HealthSummaryPage'));
 const IMessageSignupPage  = lazy(() => import('./components/landing/IMessageSignupPage'));
 const PhoneSignupPage     = lazy(() => import('./components/auth/PhoneSignupPage'));
@@ -89,17 +83,12 @@ import { PasswordGate } from './components/auth/PasswordGate';
 
 // Push Notifications
 import { PushNotificationPrompt } from './components/PushNotificationPrompt';
-import { FloatingOnboardingHelper } from './components/shared/FloatingOnboardingHelper';
 import { pushNotificationService } from './services/pushNotificationService';
 
 // PWA Components
 import { PWAInstallPrompt, registerServiceWorker } from './utils/pwa';
 import { preloadCriticalResources } from './utils/performance';
 
-// Caregiver Callout
-import { useCaregiverCallout } from './hooks/useCaregiverCallout';
-import { CaregiverCalloutModal } from './components/CaregiverCalloutModal';
-import { useAppointmentForCallout } from './hooks/useCaregiverCallout';
 
 // We create an inner component to consume the context for 'isLoading' and 'toasts' which are global
 // But wait, ToastContainer needs 'toasts' and 'removeToast'.
@@ -202,29 +191,9 @@ const AppContent: React.FC = () => {
     toasts, removeToast, addToast, currentUser, membershipModalOpen, setMembershipModalOpen,
   } = useCareConnex();
 
-  // Caregiver Callout Handling
-  const { activeCallout, dismissCallout, error: calloutError, retry: retryCallout } =
-    useCaregiverCallout(currentUser?.uid || null);
-  const { appointment: calloutAppointment } = useAppointmentForCallout(
-    activeCallout?.data?.appointmentId || null
-  );
-
   const [viewingCaregiver, setViewingCaregiver] = useState<any>(null);
 
   // Handle caregiver selection from callout modal
-  const handleBackupCaregiverSelected = (caregiverId: string, caregiverName: string) => {
-    addToast(`Backup caregiver ${caregiverName} confirmed!`, 'success');
-    dismissCallout();
-    // Refresh the page or navigate to appointments to see the update
-    navigate('/client/dashboard');
-  };
-
-  // Handle refund request
-  const handleRefundRequested = () => {
-    addToast('Refund request submitted. You will receive confirmation shortly.', 'info');
-    dismissCallout();
-  };
-
   // State for holding the target client ID when a caregiver views a care plan
   const [viewingClientId, setViewingClientId] = useState<string | null>(null);
 
@@ -278,7 +247,6 @@ const AppContent: React.FC = () => {
       case 'client-apply': navigate('/start?role=client'); break;
       case 'caregiver-apply': navigate('/start?role=caregiver'); break;
       case 'client': navigate('/client/dashboard'); break;
-      case 'client-profile': navigate('/client/profile'); break;
       case 'client-inbox': navigate('/client/inbox'); break;
       case 'care-plan': navigate('/client/care-plan'); break;
       case 'caregiver': navigate('/caregiver/dashboard'); break;
@@ -369,7 +337,6 @@ const AppContent: React.FC = () => {
           <Route path="/bgcheck"            element={<BgcheckConsentPage />} />
           <Route path="/bgcheck-direct"     element={<BgcheckConsentPage />} />
           <Route path="/done"               element={<GenericSuccessPage />} />
-          <Route path="/confirm/:token"     element={<QuickConfirmPage />} />
           <Route path="/health-summary/:token" element={<ErrorBoundary><HealthSummaryPage /></ErrorBoundary>} />
           <Route path="/family-faq" element={<FamilyFAQ onNavigate={handleNavigation} />} />
           <Route path="/help" element={<HelpCenter onNavigate={handleNavigation} />} />
@@ -384,7 +351,6 @@ const AppContent: React.FC = () => {
           {/* Legacy email/password auth routes — phone OTP at /login is the only login */}
           <Route path="/client/login" element={<Navigate to="/login" replace />} />
           <Route path="/client/intake" element={<Navigate to="/client/dashboard" replace />} />
-          <Route path="/client/profile" element={<ClientRoute element={<ClientProfileDashboard />} />} />
           {/* "Trouble signing in?" on /login — one page for both roles, since login
               here is phone-OTP only and the recovery flow behind it checks both
               users/ and caregivers/ by email. */}
@@ -407,7 +373,6 @@ const AppContent: React.FC = () => {
           <Route path="/client/account" element={<ClientRoute element={<AccountSettings />} />} />
           <Route path="/client/payments" element={<ClientRoute element={<Payments />} />} />
           <Route path="/client/my-care-team" element={<ClientRoute element={<MyCareTeam />} />} />
-          <Route path="/client/browse-caregivers" element={<ClientRoute element={<BrowseCaregivers />} />} />
           <Route path="/client/find-caregivers" element={<ClientRoute element={<FindCaregivers />} />} />
           <Route path="/client/post-job" element={<ClientRoute element={<PostJobFlow />} />} />
           <Route path="/client/posts" element={<ClientRoute element={<PostsPage />} />} />
@@ -423,9 +388,6 @@ const AppContent: React.FC = () => {
               without a web session. The component already handles the no-auth case
               (waits for the webhook). Gating it behind ClientRoute bounced them to login. */}
           <Route path="/client/identity-callback" element={<IdentityCallback />} />
-          <Route path="/client/book/:caregiverId" element={<ClientRoute element={<BookingFlow />} />} />
-          <Route path="/client/interview-outcome/:interviewId" element={<ClientRoute element={<InterviewOutcome />} />} />
-          <Route path="/client/profile-old" element={<ClientRoute element={<ClientProfile onNavigate={handleNavigation} onShowToast={addToast} />} />} />
           <Route path="/client/inbox" element={<ClientRoute element={<InboxView
             userType="client"
             onNavigate={handleNavigation}
@@ -506,37 +468,6 @@ const AppContent: React.FC = () => {
         </Suspense>
       )}
 
-      {/* Caregiver Callout Modal */}
-      {activeCallout && calloutAppointment && (
-        <CaregiverCalloutModal
-          appointmentId={activeCallout.data?.appointmentId || ''}
-          originalCaregiverName={calloutAppointment.caregiverName || 'Your caregiver'}
-          date={calloutAppointment.date}
-          time={calloutAppointment.time}
-          onClose={dismissCallout}
-          onCaregiverSelected={handleBackupCaregiverSelected}
-          onRefundRequested={handleRefundRequested}
-        />
-      )}
-
-      {/* Callout listener unavailable (R33): a failed notifications query must
-          not read as "no callout". Non-blocking banner with a retry. */}
-      {calloutError && currentUser && (
-        <div
-          role="alert"
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 shadow-lg"
-        >
-          <span className="text-sm text-amber-800">
-            Notification updates are temporarily unavailable — urgent care alerts may not appear.
-          </span>
-          <button
-            onClick={retryCallout}
-            className="text-sm font-semibold text-amber-800 underline hover:no-underline whitespace-nowrap"
-          >
-            Retry
-          </button>
-        </div>
-      )}
 
     </div>
   );

@@ -24,7 +24,7 @@ export const EmergencyAlertBanner: React.FC<EmergencyAlertBannerProps> = ({ aler
                 <div key={alert.id} className="px-4 py-3 bg-red-600 text-white flex items-center gap-3 shadow-md border-b border-red-700">
                     <AlertCircle className="w-5 h-5 flex-shrink-0" />
                     <p className="flex-1 text-sm font-semibold">
-                        Emergency alert active — your emergency contacts have been notified.
+                        Emergency alert active — your caregiver and our support team have been notified.
                         <span className="font-normal text-white/80">
                             {' '}Started {new Date(alert.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
                             If this is a life-threatening emergency, call 911.

@@ -56,9 +56,9 @@ export const CARA_CAPABILITIES: Record<CapabilityRole, CapabilityEntry[]> = {
     {
       id: "billing",
       label: "View billing",
-      example: "Explain my latest invoice",
+      example: "Review my timesheets",
       labelEs: "Ver facturación",
-      exampleEs: "Explícame mi última factura",
+      exampleEs: "Revisar mis hojas de horas",
       featured: true,
     },
     {

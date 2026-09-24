@@ -305,18 +305,18 @@ describe("iv_confirm — edits", () => {
     hoisted.docState.set(`agent_sessions/${PHONE}`, {
       ...existing,
       interviewFlowStep: "iv_confirm",
-      interviewFlowData: { caregiverId: CG_ID, caregiverName: "Basra Yousuf", date: "2026-09-20", time: "14:00", ...overrides },
+      interviewFlowData: { caregiverId: CG_ID, caregiverName: "Basra Yousuf", date: "2099-09-20", time: "14:00", ...overrides },
     });
   }
 
   it("edit_date applies a stated new date in place and re-shows the recap", async () => {
     await seedAtConfirm();
-    modelReplies('{"action": "edit_date", "newDate": "2026-09-22", "newTime": null, "newNotes": null, "jobIndex": null}');
+    modelReplies('{"action": "edit_date", "newDate": "2099-09-22", "newTime": null, "newNotes": null, "jobIndex": null}');
     await handleInterviewFlowStep(PHONE, CHAT, "actually make it the 22nd", session({ interviewFlowStep: "iv_confirm" }));
     const stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
-    expect(stored.interviewFlowData.date).toBe("2026-09-22");
+    expect(stored.interviewFlowData.date).toBe("2099-09-22");
     expect(stored.interviewFlowStep).toBe("iv_confirm");
-    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("September 22, 2026");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("September 22, 2099");
   });
 
   it("edit_notes with no stated text asks the follow-up question instead of the recap", async () => {

@@ -1278,7 +1278,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               </div>
             )}
             <p className="text-indigo-200 text-sm">
-              In the meantime, feel free to explore CareConnex.
+              In the meantime, feel free to explore Evia.
             </p>
             {hasEmailOnFile ? null : emailSaved ? (
               <div className="w-full bg-white/15 rounded-2xl px-4 py-3 flex items-center gap-2 text-white text-sm">

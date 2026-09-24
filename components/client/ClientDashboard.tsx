@@ -1010,7 +1010,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 {activeCareTeam.length === 0 ? (
                   <div className="text-center py-6">
                     <p className="text-sm text-slate-400">No active caregivers</p>
-                    <button onClick={() => navigate('/client/find-care')} className="text-xs text-primary-600 font-medium hover:underline mt-1">Find a caregiver →</button>
+                    <button onClick={() => navigate('/client/find-caregivers')} className="text-xs text-primary-600 font-medium hover:underline mt-1">Find a caregiver →</button>
                   </div>
                 ) : (
                   <div className="space-y-3">

@@ -37,7 +37,6 @@ const HELPER_WIRED: Array<[string, number]> = [
   ["../../scheduled/upcomingVisitReminder.ts",  1],
   ["../../scheduled/morningBriefing.ts",        2], // primary briefing + generateCaraMessage fallback
   ["../../linq/webhooks.ts",                    1], // awaiting-supply hold reply
-  ["../../triggers/jobApplicationTriggers.ts",  1],
   // jobPostingFlow.ts deliberately dropped 2026-09-08: unlike every other file
   // here, a job post's recipient is CHOSEN mid-conversation and can differ
   // from the account's fixed onboarding senior (posting for someone new, or

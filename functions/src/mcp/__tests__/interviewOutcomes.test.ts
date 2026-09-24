@@ -219,11 +219,11 @@ describe("respond_to_interview_request", () => {
     expect(update?.data.status).toBe("accepted");
   });
 
-  it("accept notifies the client directly by text", async () => {
+  it("accept sends no text of its own — the Meet-link message (interviewLinkTrigger) is the family's one text", async () => {
     await handleToolCall("respond_to_interview_request", {
       caregiverId: "cg1", interviewId: IV_ID, decision: "accept",
     });
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("confirmed"));
+    expect(sendToPhone).not.toHaveBeenCalledWith("+15551234567", expect.anything());
   });
 
   it("decline writes status 'declined' and notifies the client", async () => {

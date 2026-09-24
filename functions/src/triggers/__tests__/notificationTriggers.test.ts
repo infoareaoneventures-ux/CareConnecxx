@@ -351,11 +351,11 @@ describe("onVideoInterviewWrite — SMS parity", () => {
       expect(sendViaInteractionAgent).not.toHaveBeenCalled();
     });
 
-    it("a plain accept texts the FAMILY that the caregiver accepted (2026-09-17: every client-facing bell has a text) and never the caregiver", async () => {
+    it("a plain accept writes the family's bell but sends NO text here — the confirmed-time + Meet link message (interviewLinkTrigger) is the one text (2026-09-23: it used to arrive two or three times)", async () => {
       const before = { status: "requested", caregiverId: CAREGIVER, clientId: CLIENT, clientName: "A Family", caregiverName: "Alice", scheduledTime: "2026-09-10T17:00:00.000Z" };
       const after  = { ...before, status: "accepted" };
       await (onVideoInterviewWrite as any)(change(before, "iv1", after), { params: { interviewId: "iv1" } });
-      expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550002222", expect.objectContaining({ content: expect.stringContaining("Alice accepted your interview request") }));
+      expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550002222", expect.anything());
       expect(sendViaInteractionAgent).not.toHaveBeenCalledWith("+15550001111", expect.anything());
       // The reschedule branch must not misfire on a plain accept.
       expect(sendToPhone).not.toHaveBeenCalled();

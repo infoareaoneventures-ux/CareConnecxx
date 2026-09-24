@@ -11,6 +11,7 @@ const hoisted = vi.hoisted(() => {
     get: async () => ({ exists: docState.has(path), data: () => docState.get(path) }),
     update: async (data: any) => { docState.set(path, { ...(docState.get(path) ?? {}), ...data }); },
     set: async (data: any) => { docState.set(path, { ...(docState.get(path) ?? {}), ...data }); },
+    collection: (sub: string) => coll(`${path}/${sub}`),
   });
   const makeQuery = (coll: string, conds: Array<[string, string, any]>): any => ({
     where: (f: string, op: string, v: any) => makeQuery(coll, [...conds, [f, op, v]]),
@@ -31,7 +32,7 @@ const hoisted = vi.hoisted(() => {
   return { docState, coll, runTransaction: async (fn: any) => fn(tx), reset: () => docState.clear() };
 });
 vi.mock("firebase-admin", () => ({
-  firestore: Object.assign(() => ({ collection: hoisted.coll, runTransaction: hoisted.runTransaction }), { FieldValue: {} }),
+  firestore: Object.assign(() => ({ collection: hoisted.coll, runTransaction: hoisted.runTransaction }), { FieldValue: { serverTimestamp: () => "SERVER_TS" } }),
 }));
 vi.mock("firebase-functions", () => {
   const fn: any = new Proxy(() => fn, { get: () => fn, apply: () => fn });
@@ -66,6 +67,10 @@ describe("approval notice — once, and only while the timesheet waits on the fa
     expect(await dispatchApprovalNotice(OUTBOX, "w1")).toBe(true);
     expect(sendViaInteractionAgent).toHaveBeenCalledTimes(1);
     expect(hoisted.docState.get(`billingApprovalOutbox/${OUTBOX}`).state).toBe("sent");
+    // The bell beside the text (2026-09-23): same event, routes to Timesheets, one per timesheet.
+    expect(hoisted.docState.get("users/c1/notifications/shift_hours_submitted:sh-1")).toMatchObject({
+      type: "shift_hours_submitted", body: expect.stringContaining("Basra Yousuf submitted hours — $2.95"),
+    });
   });
 
   it("24h with no delivery receipt → closed as assumed delivered, never re-sent", async () => {

@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import { parseScheduledTimeMs, formatInterviewTime } from "../utils/scheduledTime";
+import { parseScheduledTimeMs } from "../utils/scheduledTime";
 import { sendToPhone } from "../linq/client";
 import { logAudit } from "../observability/auditLog";
 
@@ -79,18 +79,18 @@ export async function respondToInterviewRequest(
   }
   await ivRef.update(upd);
 
-  const clientSess = await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
-  if (!clientSess.empty) {
+  // Accept: the family's one text is the confirmed-time + Meet link message from
+  // interviewLinkTrigger.ts, which fires on this same status change. Only the
+  // decline outcomes are texted from here.
+  const clientSess = decision === "accept"
+    ? null
+    : await db.collection("agent_sessions").where("userId", "==", iv.clientId).limit(1).get();
+  if (clientSess && !clientSess.empty) {
     const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
     const cgName = cgData?.name ?? "The caregiver";
-    const schedMs = parseScheduledTimeMs(iv.scheduledTime ?? "");
-    const whenText = Number.isNaN(schedMs) ? "the scheduled time" : formatInterviewTime(schedMs);
-    const notifyMsg = decision === "accept"
-      ? `${cgName} confirmed the interview for ${whenText}.` +
-        (iv.callUrl ? `\n\nJoin from your phone: ${iv.callUrl}` : "")
-      : proposedDate
-        ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
-        : `${cgName} isn't available for the interview. ${message ?? ""}`.trim();
+    const notifyMsg = proposedDate
+      ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
+      : `${cgName} isn't available for the interview. ${message ?? ""}`.trim();
     await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => {});
   }
 

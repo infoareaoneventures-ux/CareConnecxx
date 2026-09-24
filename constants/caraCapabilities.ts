@@ -28,7 +28,7 @@ export const CARA_CAPABILITIES: Record<CapabilityRole, FrontendCapabilityEntry[]
     { id: "find_caregiver", label: "Find a caregiver", example: "Find me a caregiver for weekday mornings", labelEs: "Encontrar un cuidador", exampleEs: "Búscame un cuidador para las mañanas entre semana", featured: true },
     { id: "manage_visits", label: "Book or change visits", example: "Reschedule my Tuesday visit to Wednesday", labelEs: "Reservar o cambiar visitas", exampleEs: "Cambia mi visita del martes al miércoles", featured: true },
     { id: "care_updates", label: "See care updates", example: "How is Mom doing this week?", labelEs: "Ver novedades del cuidado", exampleEs: "¿Cómo está mamá esta semana?", featured: true },
-    { id: "billing", label: "View billing", example: "Explain my latest invoice", labelEs: "Ver facturación", exampleEs: "Explícame mi última factura", featured: true },
+    { id: "billing", label: "View billing", example: "Review my timesheets", labelEs: "Ver facturación", exampleEs: "Revisar mis hojas de horas", featured: true },
     { id: "care_team", label: "See your care team", example: "Who's on my care team?", labelEs: "Ver tu equipo de cuidado", exampleEs: "¿Quién está en mi equipo de cuidado?", featured: false },
     { id: "message_caregiver", label: "Message a caregiver", example: "Send a message to Sarah", labelEs: "Enviar un mensaje a un cuidador", exampleEs: "Envía un mensaje a Sarah", featured: false },
   ],

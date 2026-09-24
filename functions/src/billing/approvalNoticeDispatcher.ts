@@ -187,6 +187,21 @@ export async function dispatchApprovalNotice(outboxId: string, workerId: string)
         approvalNoticeState: "sent",
         updatedAt: now,
       });
+      // The bell beside the text (routes to Timesheets). Deterministic id so a
+      // re-send after a transport failure overwrites rather than duplicates.
+      transaction.set(
+        db.collection("users").doc(record.recipientUid).collection("notifications")
+          .doc(`shift_hours_submitted:${record.appointmentId}`),
+        {
+          userId: record.recipientUid,
+          type: "shift_hours_submitted",
+          title: "Hours submitted for your review",
+          body: `${caregiverName} submitted hours — $${amount}. Review and approve on your Timesheets page.`,
+          data: { appointmentId: record.appointmentId },
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      );
       transaction.set(db.collection("agent_sessions").doc(phone), {
         pendingShiftApproval: {
           appointmentId: record.appointmentId,

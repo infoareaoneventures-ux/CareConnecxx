@@ -49,7 +49,7 @@ export const IdentityGateModal: React.FC<IdentityGateModalProps> = ({
             )}
           </p>
           <p className="text-sm text-slate-600 leading-relaxed mb-5">
-            Securely complete a quick identity check with our safety partner <span className="font-semibold">Stripe Identity</span>. You'll provide your name, date of birth, and last 4 digits of your SSN — no document scan needed.
+            Securely complete a quick identity check with our safety partner <span className="font-semibold">Stripe Identity</span>. You'll take a photo of your government ID and a quick selfie — it takes about a minute.
           </p>
 
           {/* Primary CTA */}

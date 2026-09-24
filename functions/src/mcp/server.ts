@@ -459,7 +459,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_callout_backups",
-    description: "THE tool for a visit marked 'Needs Replacement' (the caregiver cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating, and it EXCLUDES the caregiver who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it — never use find_replacement_caregivers for this. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
+    description: "THE tool for a visit marked 'Needs Replacement' (the caregiver cancelled it): find and TEXT the family replacement candidates — matches the website's own Find Replacement picker exactly: your Care Team first (anyone you've booked before), then other bookable caregivers ranked by care-needs match, distance, and rating, and it EXCLUDES the caregiver who cancelled. The family's pick then goes to select_callout_backup, which sends that candidate a real replacement booking request for this visit — no interview step, exactly like the website's Request button. Get the shiftId from get_upcoming_appointments (the visit whose status is 'needs_replacement') if you don't already have it. This tool ALREADY SENDS each candidate's profile card itself (same tappable photo-preview link format as find_nearby_caregivers) — do not repeat their names/rates yourself, just follow the instruction in its result. clientId and phone are injected automatically — only the visit's owner may view its candidates.",
     input_schema: {
       type: "object",
       properties: { shiftId: { type: "string", description: "The shift (visit) that needs a replacement." } },
@@ -511,7 +511,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "read_memory_file",
-    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_invoice_history_...\").",
+    description: "Read one of Evia's long-term memory files for a user. Canonical files: profile, health, family, recent_episodes, procedural. May also be an ad-hoc slug returned by another tool (e.g. an offloaded large result like \"tool_get_pending_timesheets_...\").",
     input_schema: {
       type: "object",
       properties: {
@@ -989,7 +989,7 @@ export const MCP_TOOLS: McpTool[] = [
       "Schedule a one-time proactive follow-up message to send to the family at a future time. " +
       "Use this when the family mentions a future event (doctor appointment, test results, family visit, procedure) and a check-in would be natural. " +
       "Examples: 'Mom has her MRI Thursday' → schedule a follow-up Friday morning. 'We're trying a new medication this week' → schedule 3 days out. " +
-      "Do NOT use for recurring reminders (use create_reminder instead). Do NOT schedule without a clear reason.",
+      "Do NOT schedule without a clear reason.",
     input_schema: {
       type: "object",
       properties: {
@@ -2773,6 +2773,11 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "get_checkr_report",
   // Booking-pipeline parity (2026-08-30) — caregiver-only accept/decline.
   "respond_to_schedule_amendment",
+  // Caregiver's own reschedule proposals / journal writes — were reachable from
+  // a client conversation because the filter is subtractive (2026-09-23 sweep).
+  "manage_shift_reschedule",
+  "create_care_journal_entry",
+  "update_care_journal_entry",
 ]);
 export const CLIENT_TOOLS: McpTool[] = MCP_TOOLS.filter(t => !CAREGIVER_ONLY_TOOL_NAMES.has(t.name));
 
@@ -3136,7 +3141,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   // synthesized under shadow — the same double-send-audit lesson (2026-07-06)
   // that got the old tool off this list.
   "get_active_bookings",
-  "get_membership_page", "contact_support", "get_invoice_history", "get_invoice_details",
+  "get_membership_page", "contact_support",
   "get_payout_history", "get_caregiver_earnings", "get_pending_timesheets", "get_tax_summary",
   "get_care_journal_client", "get_care_plan",
   "get_recent_messages", "get_family_group",
@@ -6488,8 +6493,6 @@ async function executeToolCall(
       const careTeam = [...activeCards, ...pastCards];
       return { success: true, active: activeCards, past: pastCards, careTeam, total: careTeam.length, activeCount: activeByCg.size };
     }
-
-    // ── get_invoice_history ─────────────────────────────────────────────────
     if (name === "edit_job_post") {
       const {
         jobId, clientId, rate, rateFlexible, description, jobFrequency, startDate, endDate, ongoing,
@@ -7416,7 +7419,7 @@ async function executeToolCall(
         return toolError(
           "INVALID_INPUT",
           `This visit's payment is not in a failed state (current status: ${shift.status}). ` +
-          "Nothing to retry — if they think a payment is wrong, check get_shifts / get_invoice_history.",
+          "Nothing to retry — if they think a payment is wrong, check get_pending_timesheets.",
         );
       }
 
@@ -7687,8 +7690,6 @@ async function executeToolCall(
       await ref.set({ onboardingStep: nextStep }, { merge: true });
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }
-
-    // ── get_invoice_details ─────────────────────────────────────────────────
     // ── request_shift_swap ──────────────────────────────────────────────────
     if (name === "request_shift_swap") {
       const { caregiverId, appointmentId, reason } = input as Record<string, string>;

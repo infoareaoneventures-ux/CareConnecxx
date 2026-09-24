@@ -405,10 +405,12 @@ export const adminResolveShiftHours = functions.https.onCall(async (data, contex
   await pushNotification(
     shift.clientId,
     'shift_hours_approved',
-    'Admin resolved the dispute',
+    'Our team resolved the dispute',
     `Final: ${fmtHours(finalAmount.totalHours)}.`,
     { appointmentId }
   );
+  await textClient(shift.clientId,
+    `our team resolved the dispute over ${shift.caregiverName || 'your caregiver'}'s hours. Final: ${fmtHours(finalAmount.totalHours)}. The charge is on your Timesheets page.`);
 
   return { success: true };
 });

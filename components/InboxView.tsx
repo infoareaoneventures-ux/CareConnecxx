@@ -74,7 +74,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   const navigate = useNavigate();
   const location = useLocation();
-  const pendingRoomState = (location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined;
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
+  const [caregiverPendingRoom, setCaregiverPendingRoom] = useState<(ChatRoom & { id: string }) | undefined>();
+  const pendingRoomState = caregiverPendingRoom
+    ?? ((location.state as any)?.pendingRoom as (ChatRoom & { id: string }) | undefined);
   const { appointments, blockedIds, setMembershipModalOpen } = useCareConnex();
   const currentUser = authService.getCurrentUser();
   const currentUid = currentUser?.uid ?? '';
@@ -163,10 +166,52 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (roomParam) setSelectedRoomId(roomParam);
   }, [searchParams]);
 
+  // `?caregiver=<id>` (Bookings, Care Requests, Calendar "Message" buttons):
+  // open the existing conversation with that caregiver, or stage a new one the
+  // same way the dashboard's Message button does (created on first send).
+  const caregiverParam = searchParams.get('caregiver');
+  useEffect(() => {
+    if (!caregiverParam || !currentUid || !isClient || !roomsLoaded || !db) return;
+    const existing = rooms.find(r => !r.isSupport && r.participants.includes(caregiverParam));
+    if (existing) { setSelectedRoomId(existing.id); return; }
+    let cancelled = false;
+    (async () => {
+      let name = 'Caregiver';
+      let photo = '';
+      const cgSnap = await db.collection('publicCaregiverProfiles').doc(caregiverParam).get().catch(() => null);
+      if (cgSnap?.exists) {
+        const d = cgSnap.data() as any;
+        name = d?.name || d?.displayName || name;
+        photo = d?.photo || d?.imageUrl || d?.profilePhotoUrl || '';
+      } else {
+        const uSnap = await db.collection('users').doc(caregiverParam).get().catch(() => null);
+        const d = (uSnap?.data() as any) || {};
+        name = d?.displayName || d?.name || name;
+        photo = d?.photoURL || d?.photo || '';
+      }
+      if (cancelled) return;
+      const sorted = [currentUid, caregiverParam].sort();
+      const roomId = sorted.join('_');
+      setCaregiverPendingRoom({
+        id: roomId,
+        participants: sorted,
+        participantNames: sorted.map(id => id === currentUid ? currentName : name),
+        participantAvatars: sorted.map(id => id === currentUid ? '' : photo),
+        unreadCount: { [currentUid]: 0, [caregiverParam]: 0 },
+        lastMessage: '',
+        lastMessageTime: '',
+        lastMessageTimestamp: null,
+        createdAt: null,
+      } as ChatRoom & { id: string });
+      setSelectedRoomId(roomId);
+    })();
+    return () => { cancelled = true; };
+  }, [caregiverParam, currentUid, isClient, roomsLoaded, rooms]);
+
   // Subscribe to this user's chat rooms
   useEffect(() => {
     if (!currentUid) return;
-    const unsub = chatService.subscribeToChatRooms(currentUid, setRooms);
+    const unsub = chatService.subscribeToChatRooms(currentUid, (next) => { setRooms(next); setRoomsLoaded(true); });
     return unsub;
   }, [currentUid]);
 

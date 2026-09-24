@@ -85,12 +85,12 @@ describe("respondToInterviewRequest", () => {
     ).rejects.toMatchObject({ code: "permission-denied" });
   });
 
-  it("accept writes status 'accepted' and notifies the client", async () => {
+  it("accept writes status 'accepted' and sends NO text of its own (the Meet-link message from interviewLinkTrigger is the family's one text)", async () => {
     const r = await respondToInterviewRequest({ caregiverId: CAREGIVER, interviewId: IV_ID, decision: "accept", source: "web" });
     expect(r.status).toBe("accepted");
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.status).toBe("accepted");
-    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("confirmed"));
+    expect(sendToPhone).not.toHaveBeenCalled();
   });
 
   it("decline with no counter-proposal writes status 'declined', no proposedTime", async () => {

@@ -110,7 +110,7 @@ export default function IdentityCallback() {
               </div>
               <h1 className="text-lg font-bold text-slate-900 mb-2">Additional info needed</h1>
               <p className="text-sm text-slate-600 mb-5">
-                Stripe couldn't verify your information. Please double-check your name, date of birth, and SSN digits, then try again.
+                Stripe couldn't verify your information. Please retake the photo of your ID and your selfie in good light, then try again.
               </p>
               <button
                 onClick={() => navigate(next, { replace: true })}

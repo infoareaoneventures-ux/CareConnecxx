@@ -7,7 +7,7 @@ import { gateOptionalSend } from "./engineGate";
 
 const db = admin.firestore();
 
-// Give the one-time "you got an applicant" alert (onJobApplicationCreated) time
+// Give the one-time "you got an applicant" alert (onJobApplicationCreate, notificationTriggers.ts) time
 // to be acted on before we follow up.
 export const MIN_AGE_MS = 24 * 60 * 60 * 1000;
 // At most one follow-up nudge per job per this window — never become a daily nag.
@@ -32,7 +32,7 @@ export function shouldNudgeStaleApplicants(p: {
 }
 
 /**
- * Stale-applicant nudge. `onJobApplicationCreated` alerts the family ONCE when a
+ * Stale-applicant nudge. `onJobApplicationCreate` (notificationTriggers.ts) alerts the family ONCE when a
  * caregiver applies; if they don't act, applicants go stale and caregivers feel
  * ghosted. This follows up — gently, at most once per 48h per job — so the
  * marketplace doesn't silently leak applicants.
@@ -90,7 +90,7 @@ export const sendStaleApplicantNudges = functions.pubsub
           nowMs,
         })) continue;
 
-        // Resolve the client session — mirrors onJobApplicationCreated.
+        // Resolve the client session — mirrors the applicant alert.
         const sessionQ = await db.collection("agent_sessions")
           .where("userId", "==", clientId)
           .limit(1)

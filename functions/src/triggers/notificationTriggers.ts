@@ -219,10 +219,9 @@ export const onVideoInterviewWrite = functions.firestore
           body: `${after.caregiverName} accepted your interview request.`,
           data: { interviewId: context.params.interviewId },
         });
-        // 2026-09-17: the family hears about every event over Evia too — this
-        // was the one client-facing bell with no text behind it.
-        await notifyClientByText(after.clientId,
-          `${after.caregiverName || 'Your caregiver'} accepted your interview request — it's on your Care Requests > Interviews tab.`);
+        // The family's ONE text for this event is the confirmed-time + Meet link
+        // message from interviewLinkTrigger.ts (it fires on the same accept and
+        // retries until delivered). Texting here too made it two or three.
       }
 
       // Declined — direction depends on who declined
@@ -306,10 +305,11 @@ export const onJobApplicationCreate = functions.firestore
         body: `${data.caregiverName} applied to your post: "${data.jobTitle}".`,
         data: { applicationId: context.params.applicationId, jobId: data.jobId },
       });
-      // Single source of truth for this text — apply_to_job (mcp/server.ts)
-      // deliberately does not also send it, to avoid a double text when a
-      // caregiver applies through Evia.
-      await notifyClientByText(data.clientId, "A caregiver applied to your job post. Text 'show applications' to review.");
+      // The ONE text for this event (same words as the bell). apply_to_job
+      // (mcp/server.ts) deliberately does not send its own, and the second
+      // LLM-worded trigger that used to fire on the same create was removed.
+      await notifyClientByText(data.clientId,
+        `${data.caregiverName || 'A caregiver'} applied to your post: "${data.jobTitle || 'your care request'}". Want me to pull up their profile?`);
     } catch (err) {
       console.error('[onJobApplicationCreate] error:', err);
     }

@@ -709,6 +709,13 @@ async function textMember(userId: string, content: string): Promise<void> {
   }
 }
 const membershipDay = (unixSeconds: number) => formatDateWithWeekday(businessTodayStr(DEFAULT_TZ, new Date(unixSeconds * 1000)));
+// The bell beside every family membership text (both route to /client/membership).
+async function addMemberBell(userId: string, type: string, title: string, body: string): Promise<void> {
+  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+    userId, type, title, body, isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch((err) => console.warn(`membership bell (${type}) failed for ${userId}:`, err));
+}
 
 async function mirrorMembershipToCaregiverDoc(userId: string, membershipStatus: string): Promise<boolean> {
   try {
@@ -771,16 +778,20 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     const { notifyClientMembershipActivatedOnce } = await import('./membershipNotify');
     await notifyClientMembershipActivatedOnce(userId).catch((err) => console.warn('membership notice failed', err instanceof Error ? err.message : err));
   }
-  await admin.firestore().collection('users').doc(userId).collection('notifications').add({
-    userId,
-    type: 'membership_payment_succeeded',
-    title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
-    body: isRenewal
-      ? `Your Evia membership has been renewed. $${amountPaid} was charged.`
-      : `Your Evia membership is now active. $${amountPaid} was charged.`,
-    isRead: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  // A family's first payment already got its one bell + text above
+  // (membership_activated); writing this one too showed two bells for one event.
+  if (isRenewal || isCaregiverMember) {
+    await admin.firestore().collection('users').doc(userId).collection('notifications').add({
+      userId,
+      type: 'membership_payment_succeeded',
+      title: isRenewal ? 'Membership Renewed' : 'Membership Activated',
+      body: isRenewal
+        ? `Your Evia membership has been renewed. $${amountPaid} was charged.`
+        : `Your Evia membership is now active. $${amountPaid} was charged.`,
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
 
   // The family's monthly renewal — the in-app notice above was the only word of
   // it (2026-09-18). First payments are already texted by the signup flow.
@@ -1127,11 +1138,17 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   if (!isCaregiverMember && hadRecord) {
     const isLive = subscription.status === 'active' || subscription.status === 'trialing';
     if (isLive && !prevCancelScheduled && subscription.cancel_at_period_end) {
+      const endsOn = membershipDay(subscription.current_period_end);
+      await addMemberBell(userId, 'membership_cancel_scheduled', 'Membership ending',
+        `Your Evia membership is set to end on ${endsOn}. You can reactivate anytime from the Membership page.`);
       await textMember(userId,
-        `Your Evia membership is set to end on ${membershipDay(subscription.current_period_end)}. You keep everything until then, and you can reactivate anytime — just tell me, or use the Membership page: ${appLink('/client/membership')}`);
+        `Your Evia membership is set to end on ${endsOn}. You keep everything until then, and you can reactivate anytime — just tell me, or use the Membership page: ${appLink('/client/membership')}`);
     } else if (isLive && prevCancelScheduled && !subscription.cancel_at_period_end) {
+      const nextBilling = membershipDay(subscription.current_period_end);
+      await addMemberBell(userId, 'membership_reactivated', 'Membership reactivated',
+        `Your Evia membership is active again. Next billing date: ${nextBilling}.`);
       await textMember(userId,
-        `Welcome back — your Evia membership is active again. Next billing date: ${membershipDay(subscription.current_period_end)}.`);
+        `Welcome back — your Evia membership is active again. Next billing date: ${nextBilling}.`);
     }
   }
 

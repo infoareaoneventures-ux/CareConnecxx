@@ -3,10 +3,11 @@ import { AlertTriangle, X, Phone, Loader2 } from 'lucide-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface FamilyEmergencyProps {
-  appointmentId: string;
+  /** The visit in progress or scheduled today (shifts/{id}). */
+  shiftId: string;
 }
 
-export const FamilyEmergency: React.FC<FamilyEmergencyProps> = ({ appointmentId }) => {
+export const FamilyEmergency: React.FC<FamilyEmergencyProps> = ({ shiftId }) => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -15,7 +16,7 @@ export const FamilyEmergency: React.FC<FamilyEmergencyProps> = ({ appointmentId 
     setSending(true);
     try {
       const triggerEmergency = httpsCallable(getFunctions(), 'v1-triggerFamilyEmergency');
-      await triggerEmergency({ appointmentId });
+      await triggerEmergency({ shiftId });
       setSent(true);
       setShowConfirm(false);
     } catch (err) {

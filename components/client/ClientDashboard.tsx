@@ -20,6 +20,7 @@ import firebase, { db } from '../../lib/firebase';
 import { shiftDisplayStatus } from '../../utils/shiftUtils';
 import { useNearbyCaregiversWithScores } from '../../hooks/useNearbyCaregiversWithScores';
 import { VisitProgressPanel } from './VisitProgressPanel';
+import { FamilyEmergency } from './FamilyEmergency';
 import { billedHourlyRate, totalChargedDollars } from '../../utils/pricing';
 
 
@@ -1770,6 +1771,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         )}
       </main>
 
+
+      {/* Family emergency button — only while a visit is in progress or scheduled today
+          (one path with Evia's trigger_emergency_alert: functions/src/emergency.ts) */}
+      {currentUser?.uid && (() => {
+        const _now = new Date();
+        const todayIso = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
+        const active = activeShifts.find((s: any) => s.status === 'in-progress')
+          ?? activeShifts.find((s: any) => s.status === 'scheduled' && s.date === todayIso);
+        return active ? <FamilyEmergency shiftId={active.id} /> : null;
+      })()}
 
       {/* Modals */}
       <GateModals />

@@ -176,7 +176,7 @@ describe("profile tools", () => {
 
   describe("update_user_profile", () => {
     it("requires userId", async () => {
-      const r = await handleToolCall("update_user_profile", { firstName: "Bob" }) as any;
+      const r = await handleToolCall("update_user_profile", { city: "NYC" }) as any;
       expect(r._toolError).toBe(true);
     });
 
@@ -190,29 +190,18 @@ describe("profile tools", () => {
       expect(r._toolError).toBe(true);
     });
 
-    it("updates name + address using the site's own field names (displayName/street/city/location)", async () => {
+    it("updates the address using the site's own field names (street/city/location) and never the name (2026-09-23: no rename anywhere)", async () => {
+      hoisted.docState.set("users/u1", { displayName: "Bob Smith" });
       const r = await handleToolCall("update_user_profile", {
-        userId: "u1", firstName: "Bob", address: "123 Main", city: "NYC",
+        userId: "u1", firstName: "Robert", address: "123 Main", city: "NYC",
       }) as any;
       expect(r.success).toBe(true);
-      // Matches components/client/AccountSettings.tsx exactly — a combined
-      // displayName (never separate firstName/lastName) and street/city/
-      // location/careLocation (never address/zip) for address fields.
-      expect(r.updated).toEqual(expect.arrayContaining(["displayName", "street", "city", "location", "careLocation"]));
-      expect(r.updated).not.toContain("firstName");
-      expect(r.updated).not.toContain("address");
+      expect(r.updated).toEqual(expect.arrayContaining(["street", "city", "location", "careLocation"]));
+      expect(r.updated).not.toContain("displayName");
       const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.displayName).toBe("Bob");
+      expect(userSet?.data.displayName).toBeUndefined();
       expect(userSet?.data.street).toBe("123 Main");
       expect(userSet?.data.city).toBe("NYC");
-    });
-
-    it("keeps the existing last name when only firstName is updated", async () => {
-      hoisted.docState.set("users/u1", { displayName: "Bob Smith" });
-      const r = await handleToolCall("update_user_profile", { userId: "u1", firstName: "Robert" }) as any;
-      expect(r.success).toBe(true);
-      const userSet = hoisted.sets.find(s => s.path === "users/u1");
-      expect(userSet?.data.displayName).toBe("Robert Smith");
     });
 
     it("profile photo goes through the site's upload path (storage → users.photoURL / senior_profiles.imageUrl / Auth), never a raw URL write", async () => {

@@ -207,15 +207,6 @@ export const AccountSettings: React.FC = () => {
     }
   };
 
-  const handleSaveBasics = () => saving(async () => {
-    const user = authService.getCurrentUser();
-    if (!user?.uid || !db) return;
-    await db.collection('users').doc(user.uid).update({
-      displayName: `${personalInfo.firstName} ${personalInfo.lastName}`.trim(),
-      phone: personalInfo.phone,
-    });
-  }, 'Account updated');
-
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !storage) return;

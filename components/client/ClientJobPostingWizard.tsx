@@ -4,6 +4,7 @@ import {
   Sparkles, Heart, Clock, MapPin, Calendar, Loader2, Phone, Briefcase
 } from 'lucide-react';
 import { AvatarUpload } from '../ui/AvatarUpload';
+import { evaluateServiceArea, OUT_OF_AREA_MESSAGE } from '../../utils/serviceArea';
 import { dbService, createJobPosting, loadJobPostingDraft, saveJobPostingDraft } from '../../services/api';
 import { useCareConnex } from '../../context/CareConnexContext';
 
@@ -313,9 +314,11 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   const canAdvanceAt = (s: number): boolean => {
     if (s === 2) return !!form.careFrequency;
     if (s === 3) return homeAddress.street.trim().length > 0 && homeAddress.zipCode.trim().length >= 5;
-    if (s === 4) return customAddressOpen
-      ? form.zipCode.trim().length >= 5
-      : clientAddress.zipCode.trim().length >= 5;
+    if (s === 4) {
+      // Same Santa Clara County check Evia runs during onboarding (2026-09-23).
+      const care = customAddressOpen ? form : clientAddress;
+      return care.zipCode.trim().length >= 5 && evaluateServiceArea({ zip: care.zipCode, city: care.city }) === 'in';
+    }
     if (s === 6) return !!form.startDate && (form.selectedDays.length > 0 || form.daysFlexible);
     if (s === 10) return form.careRecipientFirstName.trim().length > 0;
     if (s === 11) return form.emergencyFirstName.trim().length > 0 && form.emergencyPhone.trim().length >= 10;
@@ -625,6 +628,12 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
               </div>
             )}
 
+            {(() => {
+              const care = customAddressOpen ? form : clientAddress;
+              return care.zipCode.trim().length >= 5 && evaluateServiceArea({ zip: care.zipCode, city: care.city }) === 'out' ? (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{OUT_OF_AREA_MESSAGE}</p>
+              ) : null;
+            })()}
             <button
               onClick={next}
               disabled={!canAdvance()}

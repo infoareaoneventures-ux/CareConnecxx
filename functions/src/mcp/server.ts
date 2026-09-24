@@ -2046,13 +2046,11 @@ export const MCP_TOOLS: McpTool[] = [
   // ── Account & profile ─────────────────────────────────────────────────────
   {
     name: "update_user_profile",
-    description: "Update the client's own profile fields (name, address, photoUrl). Confirm changes with the family by reading back the new values before calling. If they want to change their PHONE number, pass requestPhoneChange:true instead — login here is by phone number, so a change is never a simple field edit: it emails a secure link to the address on file, and the actual new number is entered and verified there, never over SMS. Tell them to check their email; do NOT ask them for the new number yourself.",
+    description: "Update the client's own profile fields (address, photoUrl). The account holder's name cannot be changed here or on the site — a correction goes through contact_support. Confirm changes with the family by reading back the new values before calling. If they want to change their PHONE number, pass requestPhoneChange:true instead — login here is by phone number, so a change is never a simple field edit: it emails a secure link to the address on file, and the actual new number is entered and verified there, never over SMS. Tell them to check their email; do NOT ask them for the new number yourself.",
     input_schema: {
       type: "object",
       properties: {
         userId:    { type: "string", description: "The user's ID" },
-        firstName: { type: "string", description: "New first name (optional)" },
-        lastName:  { type: "string", description: "New last name (optional)" },
         requestPhoneChange: { type: "boolean", description: "Set true to start a phone number change (see description) — this is a request flag, not the new number itself" },
         address:   { type: "string", description: "New street address (optional)" },
         city:      { type: "string", description: "New city (optional)" },
@@ -3690,45 +3688,20 @@ async function executeToolCall(
 
       case "trigger_emergency_alert": {
         return runActionNativeMcpWrite(name, input, async () => {
-        // Parity with the EmergencySOS UI (dbService.triggerEmergencyAlert). clientId
-        // is session-injected. Writes an active emergency_alerts doc + an admin_alert.
+        // ONE path with the website's red Emergency button (v1-triggerFamilyEmergency):
+        // functions/src/emergency.ts writes the banner's emergency_alerts doc, texts the
+        // caregiver on the current visit, and pages the team. clientId is session-injected.
         const { clientId, note, location } = input;
         if (!clientId) return toolError("INVALID_INPUT", "clientId is required (auto-injected from session)");
-        // Idempotency: a model retry / double-call must not spawn duplicate active
-        // alerts (which double-pages ops). If this client already has an active
-        // alert raised in the last 2 minutes, return it instead of raising another
-        // — a genuine emergency that recent is already covered by the active one.
-        // Single-equality query (no composite index) so the emergency path can't
-        // fail on a missing index; per-client alert count is tiny.
-        const recentAlerts = await db.collection("emergency_alerts")
-          .where("initiatorId", "==", clientId)
-          .limit(50)
-          .get();
-        const twoMinAgoMs = Date.now() - 2 * 60 * 1000;
-        const activeRecent = recentAlerts.docs.find((d) => {
-          const data = d.data();
-          const ts = Date.parse((data.timestamp as string) ?? "");
-          return data.status === "active" && !isNaN(ts) && ts >= twoMinAgoMs;
+        const { raiseFamilyEmergency } = await import("../emergency");
+        const result = await raiseFamilyEmergency({
+          clientId: clientId as string,
+          note: typeof note === "string" ? note : null,
+          location: location && typeof location === "object" ? (location as { lat: number; lng: number }) : null,
+          source: "cara",
         });
-        if (activeRecent) {
-          return { success: true, alertId: activeRecent.id, status: "active", advise911: true, deduped: true };
-        }
-        const alertRef = await db.collection("emergency_alerts").add({
-          initiatorId:     clientId,
-          initiatorType:   "client",
-          timestamp:       nowIso,
-          ...(location ? { location } : {}),
-          ...(note ? { note: String(note).slice(0, 500) } : {}),
-          status:          "active",
-          notifiedContacts: [],
-          source:          "cara",
-        });
-        await db.collection("admin_alerts").add({
-          type: "emergency_alert", title: "🚨 Emergency alert raised via Evia",
-          clientId, alertId: alertRef.id, note: note ?? "", createdAt: nowIso, resolved: false,
-        }).catch(() => {});
-        logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: alertRef.id } }).catch(() => {});
-        return { success: true, alertId: alertRef.id, status: "active", advise911: true };
+        if (!result.deduped) logAudit({ eventType: "emergency_alert_raised", userId: clientId as string, data: { source: "mcp:trigger_emergency_alert", alertId: result.alertId } }).catch(() => {});
+        return { success: true, alertId: result.alertId, status: "active", advise911: true, deduped: result.deduped, caregiverNotified: result.caregiverNotified };
         });
       }
 
@@ -7195,7 +7168,7 @@ async function executeToolCall(
 
     // ── update_user_profile ─────────────────────────────────────────────────
     if (name === "update_user_profile") {
-      const { userId, firstName, lastName, requestPhoneChange, address, city, state, zip, photoUrl, photoFromMessage, phone } = input as Record<string, unknown>;
+      const { userId, requestPhoneChange, address, city, state, zip, photoUrl, photoFromMessage, phone } = input as Record<string, unknown>;
       if (!userId) return toolError("INVALID_INPUT", "userId is required");
 
       // requestPhoneChange is a request flag, not a field write — login here
@@ -7241,23 +7214,16 @@ async function executeToolCall(
       // and the photo field is `photoURL` (capital URL). Writing the old,
       // incompatible field names meant every edit made through Evia was invisible
       // on the site.
-      const touchesName    = firstName != null || lastName != null;
+      // No rename (founder, 2026-09-23): the site's Name row is display-only; the name is
+      // tied to the identity check, bookings and reviews. Corrections go through our team.
       const touchesAddress = address != null || city != null || state != null || zip != null;
       let existing: Record<string, unknown> = {};
-      if (touchesName || touchesAddress) {
+      if (touchesAddress) {
         const existingSnap = await db.collection("users").doc(userId as string).get();
         existing = existingSnap.data() ?? {};
       }
 
       const patch: Record<string, unknown> = { updatedAt: nowIso };
-      if (touchesName) {
-        const currentDisplay = (existing.displayName as string | undefined)
-          ?? (existing.firstName as string | undefined) ?? (existing.name as string | undefined) ?? "";
-        const [curFirst, ...curRest] = currentDisplay.split(" ");
-        const newFirst = (firstName as string | undefined) ?? curFirst ?? "";
-        const newLast  = (lastName as string | undefined) ?? curRest.join(" ");
-        patch.displayName = `${newFirst} ${newLast}`.trim();
-      }
       let finalStreet = "", finalCity = "", finalState = "", finalZip = "";
       if (touchesAddress) {
         finalStreet = (address as string | undefined) ?? (existing.street as string | undefined) ?? "";

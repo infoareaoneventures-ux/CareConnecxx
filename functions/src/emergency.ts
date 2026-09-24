@@ -83,8 +83,15 @@ export async function raiseFamilyEmergency(input: RaiseFamilyEmergencyInput): Pr
       if (phone) {
         const clientName = (visit?.data.clientName as string | undefined) || "The family";
         const who = (visit?.data.careRecipients as Array<{ name?: string }> | undefined)?.[0]?.name || "your client";
+        // The booking's emergency contact — the caregiver can already see it on
+        // their Bookings page; in an emergency it belongs in the text itself.
+        const ec = visit?.data.emergencyContact as { name?: string; phone?: string; relationship?: string } | null | undefined;
+        const contactLine = ec?.name || ec?.phone
+          ? `
+Family emergency contact: ${[ec.name, ec.relationship ? `(${ec.relationship})` : ""].filter(Boolean).join(" ")}${ec.phone ? `, ${ec.phone}` : ""}.`
+          : "";
         caregiverNotified = await sendViaInteractionAgent(phone, {
-          content: `🚨 EMERGENCY: ${clientName} needs immediate help. Please check on ${who} right away and call 911 if needed.`,
+          content: `🚨 EMERGENCY: ${clientName} needs immediate help. Please check on ${who} right away and call 911 if needed.${contactLine}`,
           urgency: "immediate",
           sourceAgent: "family_emergency",
           canDrop: false,

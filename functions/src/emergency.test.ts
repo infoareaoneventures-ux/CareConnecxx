@@ -37,7 +37,7 @@ beforeEach(() => { hoisted.reset(); sendViaInteractionAgent.mockClear(); });
 
 describe("raiseFamilyEmergency — the one path behind the site button and Evia's tool", () => {
   it("writes the banner's emergency_alerts doc, texts the caregiver on the visit, and pages the team", async () => {
-    hoisted.docState.set("shifts/s1", { clientId: "c1", caregiverId: "cg1", status: "in-progress", clientName: "Anahi", careRecipients: [{ name: "Rosie" }] });
+    hoisted.docState.set("shifts/s1", { clientId: "c1", caregiverId: "cg1", status: "in-progress", clientName: "Anahi", careRecipients: [{ name: "Rosie" }], emergencyContact: { name: "Maria", relationship: "daughter", phone: "(408) 555-0100" } });
     const r = await raiseFamilyEmergency({ clientId: "c1", shiftId: "s1", note: "Mom fell", source: "site" });
     expect(r.status).toBe("active");
     expect(r.deduped).toBe(false);
@@ -45,6 +45,7 @@ describe("raiseFamilyEmergency — the one path behind the site button and Evia'
     const alert = hoisted.adds.find((a) => a.path === "emergency_alerts")!.data;
     expect(alert).toMatchObject({ initiatorId: "c1", initiatorType: "client", status: "active", shiftId: "s1", caregiverId: "cg1", note: "Mom fell", source: "site" });
     expect(sendViaInteractionAgent).toHaveBeenCalledWith("+15550001111", expect.objectContaining({ content: expect.stringContaining("Rosie"), preferredService: "SMS", canDrop: false }));
+    expect(String((sendViaInteractionAgent as any).mock.calls[0][1].content)).toContain("Family emergency contact: Maria (daughter), (408) 555-0100.");
     expect(hoisted.adds.find((a) => a.path === "admin_alerts")!.data).toMatchObject({ type: "family_emergency", severity: "critical", clientId: "c1", caregiverId: "cg1" });
   });
 

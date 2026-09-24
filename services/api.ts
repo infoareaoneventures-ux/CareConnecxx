@@ -1726,6 +1726,37 @@ export const dbService = {
      * rule is added. The `v1-listAdminAlerts` / `v1-resolveAdminAlert` callables
      * (functions/src/adminAlerts.ts) are the rules-bypassing alternative.
      */
+    // Out-of-area waitlist — both doors write it (Evia's gate server-side, the
+    // wizard below); Admin › Waitlist reads it.
+    subscribeWaitlist: (
+        cb: (leads: Array<Record<string, any>>) => void,
+        onError?: (err: Error) => void
+    ): (() => void) => {
+        if (!isConfigured || !db) { cb([]); return () => {}; }
+        return db.collection('waitlist')
+            .orderBy('createdAt', 'desc')
+            .limit(500)
+            .onSnapshot(
+                (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+                (err) => { console.error('subscribeWaitlist:', err); onError?.(err as unknown as Error); cb([]); }
+            );
+    },
+
+    joinWaitlist: async (lead: { uid: string; phone: string; name?: string; city?: string; zipCode?: string }): Promise<void> => {
+        if (!isConfigured || !db) throw new Error("Database not connected");
+        await db.collection('waitlist').doc(lead.uid).set({
+            uid:           lead.uid,
+            phone:         lead.phone,
+            role:          'client',
+            attemptedCity: lead.city || null,
+            attemptedZip:  lead.zipCode || null,
+            name:          lead.name || null,
+            reason:        'out_of_area_santa_clara_only',
+            source:        'site',
+            createdAt:     new Date().toISOString(),
+        }, { merge: true });
+    },
+
     subscribeAdminAlerts: (
         cb: (alerts: Array<Record<string, any>>) => void,
         onError?: (err: Error) => void

@@ -150,6 +150,8 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
   const [clientAddress, setClientAddress] = useState({ street: '', zipCode: '', city: '', state: '' });
+  const [clientPhone, setClientPhone] = useState('');
+  const [waitlistState, setWaitlistState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [customAddressOpen, setCustomAddressOpen] = useState(false);
   const [zipLooking, setZipLooking] = useState(false);
   const zipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -183,6 +185,7 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
           setClientFirstName(first);
           setClientLastName(last);
           if ((d.email as string | undefined)?.trim()) setHasEmailOnFile(true);
+          setClientPhone((d.phone as string | undefined) || '');
           const street = d.street  || '';
           const zip    = d.zipCode || '';
           const city   = d.city    || '';
@@ -631,7 +634,27 @@ export const ClientJobPostingWizard: React.FC<Props> = ({ uid, onComplete }) => 
             {(() => {
               const care = customAddressOpen ? form : clientAddress;
               return care.zipCode.trim().length >= 5 && evaluateServiceArea({ zip: care.zipCode, city: care.city }) === 'out' ? (
-                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{OUT_OF_AREA_MESSAGE}</p>
+                <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-3 space-y-2">
+                  <p>{OUT_OF_AREA_MESSAGE}</p>
+                  {waitlistState === 'saved' ? (
+                    <p className="font-medium">Got it — we'll reach out when we're in your area.</p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={waitlistState === 'saving'}
+                      onClick={async () => {
+                        setWaitlistState('saving');
+                        try {
+                          await dbService.joinWaitlist({ uid, phone: clientPhone, name: [clientFirstName, clientLastName].filter(Boolean).join(' '), city: care.city, zipCode: care.zipCode });
+                          setWaitlistState('saved');
+                        } catch { setWaitlistState('error'); }
+                      }}
+                      className="text-sm font-semibold text-amber-900 underline hover:no-underline disabled:opacity-50"
+                    >
+                      {waitlistState === 'saving' ? 'Saving…' : waitlistState === 'error' ? "Couldn't save — try again" : 'Notify me when you reach my area'}
+                    </button>
+                  )}
+                </div>
               ) : null;
             })()}
             <button

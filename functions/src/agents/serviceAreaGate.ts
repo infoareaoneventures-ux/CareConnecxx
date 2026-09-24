@@ -28,6 +28,7 @@ async function recordWaitlist(args: {
     attemptedZip:   args.zipCode || null,
     name:           args.name ?? null,
     reason:         "out_of_area_santa_clara_only",
+    source:         "text",
     onboardingData: args.onboardingData ?? null,
     createdAt:      new Date().toISOString(),
   }, { merge: true }).catch((err) => console.error("recordWaitlist error:", err));

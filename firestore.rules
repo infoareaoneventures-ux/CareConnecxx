@@ -1067,6 +1067,15 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
+    // Out-of-area waitlist leads (Santa Clara County only). Evia's onboarding
+    // gate writes server-side; the site wizard's "Notify me" writes the family's
+    // own doc (id = uid). Read in Admin › Waitlist.
+    match /waitlist/{leadId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAuthenticated() && leadId == request.auth.uid
+        && request.resource.data.uid == request.auth.uid;
+    }
+
     // Agent audit log — every consequential Evia action (observability/auditLog.ts).
     // Written server-side only; AuditTrail/AuditDashboard admin surfaces read it.
     match /agent_audit_log/{entryId} {

@@ -23,6 +23,7 @@ import { CoordinatorManagement } from './admin/CoordinatorManagement';
 import { AdminBlogManager } from './admin/AdminBlogManager';
 import { AuditTrail } from './admin/AuditTrail';
 import { AdminAlertsPanel } from './admin/AdminAlertsPanel';
+import { WaitlistPanel } from './admin/WaitlistPanel';
 import { AdminCaraControlRoom } from './admin/AdminCaraControlRoom';
 import { AdminReports } from './admin/AdminReports';
 
@@ -34,7 +35,7 @@ type TabId =
   | 'overview' | 'clients' | 'caregivers' | 'verification' | 'coordinators'
   | 'appointments' | 'reviews' | 'intakes' | 'matching' | 'assignments'
   | 'finance' | 'disputes' | 'messages' | 'blog' | 'audit'
-  | 'cara_control' | 'alerts' | 'reports';
+  | 'cara_control' | 'alerts' | 'reports' | 'waitlist';
 
 const StatCard = ({ icon: Icon, label, value, trend, color, onClick }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -185,6 +186,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
         { id: 'appointments' as TabId, label: 'Appointments', icon: Calendar },
         { id: 'reviews' as TabId, label: 'Reviews', icon: Star },
         { id: 'intakes' as TabId, label: 'Intake Leads', icon: FileText, badge: pendingLeadsCount },
+        { id: 'waitlist' as TabId, label: 'Waitlist', icon: Phone },
         { id: 'matching' as TabId, label: 'Matching', icon: HeartHandshake },
         { id: 'assignments' as TabId, label: 'Assignments', icon: ClipboardList },
       ],
@@ -476,6 +478,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onBack }) => {
             {/* ── FINANCE ─────────────────────────────── */}
             {activeTab === 'finance' && <InvoicingTab />}
 
+
+            {/* ── WAITLIST (out-of-area leads, both doors) ── */}
+            {activeTab === 'waitlist' && <WaitlistPanel />}
 
             {/* ── SYSTEM ALERTS ────────────────────────── */}
             {activeTab === 'alerts' && (

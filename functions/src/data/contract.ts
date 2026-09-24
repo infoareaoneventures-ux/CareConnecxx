@@ -56,16 +56,16 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
   clientIntakes: {
     path: "clientIntakes",
     docId: "uid",
-    caraWrites: true,
+    caraWrites: false,
     webReads: true,
-    notes: "Evia onboarding writes clientIntakes/{uid}; matching triggers listen onCreate/onUpdate.",
+    notes: "Legacy intake doc. Evia onboarding no longer writes it (wizard parity — createJobPosting never did); site readers fall back to job_postings/{uid}.",
   },
   senior_profiles: {
     path: "senior_profiles",
     docId: "uid",
     caraWrites: true,
     webReads: true,
-    notes: "Web signup creates it; Evia onboarding mirrors senior name/age/needs/diagnoses.",
+    notes: "Web signup creates it; Evia onboarding writes the wizard's exact profileUpdate (name/needs/careNeeds/scheduleNeeded/zipCode/location/age/relationship) — no diagnoses.",
   },
   agent_objectives: {
     path: "agent_objectives",

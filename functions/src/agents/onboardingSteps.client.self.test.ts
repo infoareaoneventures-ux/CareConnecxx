@@ -10,7 +10,6 @@ import { AgentSession } from "../linq/client";
 const steps = buildClientSteps({
   generateCaraMessage: vi.fn(async ({ fallback }) => fallback),
   locationPrompt: (base: string) => base,
-  buildIntakeSummary: () => "summary",
 });
 
 function makeDeps(parseResult = "{}"): StepDeps & { merges: Array<{ fields: unknown; next: string | null }>; sent: string[] } {

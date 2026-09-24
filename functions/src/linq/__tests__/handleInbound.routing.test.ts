@@ -666,14 +666,6 @@ describe("cold inbound (no prior session) — consent gate", () => {
 });
 
 describe("safety + account gates", () => {
-  it("lapsed-subscription client gets the billing notice and nothing else", async () => {
-    seedSession();
-    hoisted.docState.set("users/u1", { subscriptionStatus: "past_due" });
-    await handleInbound(makeEvent("can you book someone for tomorrow?"));
-    expect(String(sendMessage.mock.calls[0][1])).toContain("billing");
-    expect(runQaAgent).not.toHaveBeenCalled();
-  });
-
   it("verified crisis is terminal: crisis message sent, NOTIFY armed, QA never runs", async () => {
     seedSession();
     detectCrisis.mockReturnValue("medical");
@@ -1276,7 +1268,7 @@ describe("caregiver onboarding agent-loop flag routing", () => {
 describe("onboarding checkpoint RESUME (2f, loop-only)", () => {
   const COMPLETE_CLIENT = {
     firstName: "Sarah", seniorName: "Dorothy", age: 82, relationship: "daughter",
-    careNeeds: ["companionship"], homeZipCode: "95110", sameAsHomeAddress: true,
+    careNeeds: ["companionship"], homeStreet: "1 Main St", homeZipCode: "95110", sameAsHomeAddress: true,
     city: "San Jose", zipCode: "95110", timeOfDay: "mornings",
     careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
     emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000", rate: 25,

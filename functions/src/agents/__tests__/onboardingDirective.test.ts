@@ -23,7 +23,7 @@ describe("buildOnboardingDirective", () => {
   it("client with everything collected instructs complete_collection, not more asking", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", age: 82, careNeeds: ["bathing"],
-      homeZipCode: "78701", sameAsHomeAddress: true,
+      homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", daysPerWeek: 5, timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
@@ -46,7 +46,7 @@ describe("buildOnboardingDirective", () => {
   it("nudges additionalRecipients before finishing, ordered right before caregiversNeeded", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
-      homeZipCode: "78701", sameAsHomeAddress: true,
+      homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
@@ -62,7 +62,7 @@ describe("buildOnboardingDirective", () => {
   it("stops nudging additionalRecipients once it's been answered", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
-      homeZipCode: "78701", sameAsHomeAddress: true,
+      homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
@@ -80,7 +80,7 @@ describe("buildOnboardingDirective", () => {
   it("nudges age, emergencyContactRelationship, and daysFlexible before finishing", () => {
     const d = buildOnboardingDirective("client", {
       firstName: "Imran", seniorName: "Dorothy", careNeeds: ["bathing"],
-      homeZipCode: "78701", sameAsHomeAddress: true,
+      homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
       city: "Austin", zipCode: "78701", timeOfDay: "mornings",
       careFrequency: "part_time", startDate: "2026-08-01", selectedDays: ["Mon", "Wed", "Fri"],
       relationship: "daughter", emergencyContactName: "Jane Doe", emergencyContactPhone: "+15551230000",
@@ -156,5 +156,30 @@ describe("buildOnboardingDirective — fields captured from the current message 
   it("ignores captured fields that are not actually known", () => {
     const d = buildOnboardingDirective("client", {}, undefined, ["firstName"]);
     expect(d).not.toContain("Their LAST message answered");
+  });
+});
+
+describe("buildOnboardingDirective — wizard-parity requirements (2026-09-23)", () => {
+  it("asks for the home STREET as a required item, in step-3 position, and never mentions conditions/diagnoses", () => {
+    const d = buildOnboardingDirective("client", { careFrequency: "part_time" });
+    const still = d.slice(d.indexOf("STILL NEEDED"), d.indexOf("WIZARD QUESTION ORDER"));
+    const streetIdx = still.indexOf("the account holder's home street address");
+    const zipIdx    = still.indexOf("the account holder's home zip code");
+    expect(streetIdx).toBeGreaterThan(-1);
+    expect(streetIdx).toBeLessThan(zipIdx);
+    expect(still.slice(streetIdx, still.indexOf("\n", streetIdx))).not.toContain("optional");
+    expect(d.toLowerCase()).not.toContain("diagnoses");
+  });
+
+  it("marks timeOfDay as optional for the family to skip", () => {
+    const d = buildOnboardingDirective("client", {});
+    const line = d.split("\n").find((l) => l.includes("what time of day")) ?? "";
+    expect(line).toContain("optional for THEM to skip");
+  });
+
+  it("tells the model the rate is a number with no 'flexible' option", () => {
+    const d = buildOnboardingDirective("client", {});
+    expect(d).toContain('never save the word "flexible"');
+    expect(d).not.toContain('or "flexible" if they say that');
   });
 });

@@ -82,14 +82,14 @@ export const AdminClientManager: React.FC = () => {
       const all = await dbService.getAllUsers();
       const clients = all.filter(u => u.userType === 'client') as ClientRow[];
 
-      // Merge clientIntakes data for each client so names/contact info show up
+      // Merge intake data for each client so names/contact info show up — the
+      // legacy clientIntakes doc when one exists, otherwise the wizard's own
+      // job_postings/{uid} record (which neither onboarding path skips).
       if (db && clients.length > 0) {
-        const intakeSnaps = await Promise.all(
-          clients.map(c => db!.collection('clientIntakes').doc(c.uid).get().catch(() => null))
-        );
+        const intakes = await Promise.all(clients.map(c => loadIntakeForClient(c.uid)));
         const merged = clients.map((c, i) => {
-          const snap = intakeSnaps[i];
-          if (snap?.exists) return mergeIntake(c, snap.data() as Record<string, any>);
+          const intake = intakes[i];
+          if (intake) return mergeIntake(c, intake);
           return { ...c, name: c.name || (c as any).firstName || '' };
         });
         setClients(merged);
@@ -113,17 +113,45 @@ export const AdminClientManager: React.FC = () => {
     setSuspendDays(7);
     setNotifyMsg('');
 
-    // Fetch clientIntakes doc if not already merged
+    // Fetch intake data (clientIntakes, else job_postings) if not already merged
     if (db && !c.intakeStatus) {
       try {
-        const snap = await db.collection('clientIntakes').doc(c.uid).get();
-        if (snap.exists) {
-          const merged = mergeIntake(c, snap.data() as Record<string, any>);
+        const intake = await loadIntakeForClient(c.uid);
+        if (intake) {
+          const merged = mergeIntake(c, intake);
           setSelected(merged);
           setForm({ name: merged.name, email: merged.email, phone: merged.phone, address: merged.address, city: merged.city, state: merged.state, zipCode: merged.zipCode });
         }
       } catch { /* non-fatal */ }
     }
+  };
+
+  // Intake-shaped record for a client: the legacy clientIntakes/{uid} doc when
+  // it exists, otherwise the wizard's job_postings/{uid} (the record both the
+  // site wizard and Evia's text onboarding write) mapped onto the same keys
+  // mergeIntake reads.
+  const loadIntakeForClient = async (uid: string): Promise<Record<string, any> | null> => {
+    if (!db) return null;
+    const intakeSnap = await db.collection('clientIntakes').doc(uid).get().catch(() => null);
+    if (intakeSnap?.exists) return intakeSnap.data() as Record<string, any>;
+    const jpSnap = await db.collection('job_postings').doc(uid).get().catch(() => null);
+    if (!jpSnap?.exists) return null;
+    const jp = jpSnap.data() as Record<string, any>;
+    const days: string[] = Array.isArray(jp.selectedDays) ? jp.selectedDays : [];
+    const times: string[] = Array.isArray(jp.timeOfDay) ? jp.timeOfDay : [];
+    return {
+      status: jp.status || 'active',
+      streetAddress: jp.street || '',
+      city: jp.city || '',
+      state: jp.state || '',
+      zipCode: jp.zipCode || '',
+      recipientName: [jp.careRecipientFirstName, jp.careRecipientLastName].filter(Boolean).join(' '),
+      relationship: jp.relationship || '',
+      careTypes: Array.isArray(jp.careNeeds) ? jp.careNeeds : [],
+      schedule: [days.join('/') || (jp.daysFlexible ? 'Flexible days' : ''), times.join('/')].filter(Boolean).join(', '),
+      startDate: jp.startDate || '',
+      budget: typeof jp.rate === 'number' && jp.rate > 0 ? `$${jp.rate}/hr` : '',
+    };
   };
 
   const loadAppointments = async (clientId: string) => {

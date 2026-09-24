@@ -5224,7 +5224,6 @@ async function executeToolCall(
         await db.collection("hire_decisions").add({ clientId, clientName: iv.clientName ?? "", caregiverId: iv.caregiverId, caregiverName: iv.caregiverName ?? "", decision: "decline", createdAt: nowIso }).catch(() => {});
       }
       await ivSnap.ref.update(ivUpdate);
-      await db.collection("admin_alerts").add({ type: "interview_feedback_submitted", fitLevel, interviewId, clientId, caregiverId: iv.caregiverId, priority: fitLevel === "strong" ? "high" : "low", resolved: false, createdAt: nowIso });
       logAudit({ eventType: "interview_feedback_submitted", userId: clientId as string, data: { source: "mcp:submit_interview_feedback", interviewId, fitLevel } }).catch(() => {});
       return { success: true, fitLevel };
     }
@@ -5887,19 +5886,6 @@ async function executeToolCall(
       if (recipientsCount != null) upd.recipientsCount = Math.max(1, Math.floor(Number(recipientsCount) || 1));
       if (Object.keys(upd).length === 1) return toolError("INVALID_INPUT", "Nothing to change — pass at least one field");
       await jpSnap.ref.update(upd);
-      // job_postings (the onboarding-contract mirror, clientJobPostingContract.ts)
-      // uses ITS OWN field names for two of these — jobDescription (not
-      // description) and selectedDays (not daysOfWeek). Only the fields that
-      // mirror there are written; everything else lives on job_posts alone.
-      const postingsUpd: Record<string, unknown> = { updatedAt: nowIso, clientId };
-      if (upd.rate        !== undefined) postingsUpd.rate           = upd.rate;
-      if (upd.description !== undefined) postingsUpd.jobDescription = upd.description;
-      if (upd.startDate   !== undefined) postingsUpd.startDate      = upd.startDate;
-      if (upd.daysOfWeek  !== undefined) postingsUpd.selectedDays   = upd.daysOfWeek;
-      if (upd.timeOfDay   !== undefined) postingsUpd.timeOfDay      = upd.timeOfDay;
-      if (upd.jobFrequency !== undefined) postingsUpd.jobFrequency  = upd.jobFrequency;
-      if (upd.caregiversNeeded !== undefined) postingsUpd.caregiversNeeded = upd.caregiversNeeded;
-      await db.collection("job_postings").doc(clientId as string).set(postingsUpd, { merge: true });
       logAudit({ eventType: "job_post_edited", userId: clientId as string, data: { source: "mcp:edit_job_post", jobId, fields: Object.keys(upd) } }).catch(() => {});
       return { success: true, jobId, updatedFields: Object.keys(upd).filter(k => k !== "updatedAt") };
     }
@@ -6859,6 +6845,72 @@ async function executeToolCall(
           guidance: `"${fieldValue}" doesn't look like a valid email address — ask them for it again.`,
         };
       }
+      // Wizard-parity value rules for the client's job post (ClientJobPostingWizard.tsx
+      // canAdvanceAt + createJobPosting): the answer is validated/canonicalized
+      // here, at save time, so the stored draft is exactly what the site stores.
+      //   rate — a number > 0; the wizard has NO "flexible" option.
+      //   startDate — ISO yyyy-mm-dd (a date input, clamped to today).
+      //   emergencyContactPhone — >=10 digits, stored as (555) 000-0000.
+      let clientNormalizedOverride: unknown = undefined;
+      if (role === "client" && fieldName === "rate") {
+        const { coerceClientRate } = await import("../agents/onboardingContract");
+        const n = coerceClientRate(fieldValue);
+        if (n === null) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `"${String(fieldValue)}" isn't a number, and there's no "flexible" option for the hourly rate — the job post needs a dollar figure. Gently mention that families in the area typically pay $22–$30/hr and ask what number they'd be comfortable starting at (they can always adjust it later). Save the number as rate.`,
+          };
+        }
+        clientNormalizedOverride = n;
+      }
+      if (role === "client" && fieldName === "startDate") {
+        const { normalizeStartDateToISO } = await import("../agents/clientJobPostingContract");
+        const { businessTodayStr } = await import("../utils/scheduledTime");
+        let iso = normalizeStartDateToISO(fieldValue);
+        if (!iso && typeof fieldValue === "string" && fieldValue.trim()) {
+          // Free-form ("next Monday", "June 1") → resolve with the quick model,
+          // anchored to the real business-date today (same technique as
+          // jobPostingFlow's start-date step), then canonicalize again.
+          try {
+            const { quickComplete } = await import("../utils/openaiClient");
+            const todayIso = businessTodayStr();
+            const todayDow = new Date().toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" });
+            const resolved = await quickComplete(
+              `Today is ${todayDow}, ${todayIso}. The user said when they want care to start. Reply with ONLY the date in YYYY-MM-DD format, relative to today. ` +
+              "If they mean right away (ASAP/now/soon/immediately), reply ASAP. If no date can be determined, reply UNKNOWN.",
+              fieldValue,
+              { maxTokens: 12 },
+            );
+            iso = normalizeStartDateToISO(resolved.trim());
+          } catch (err) {
+            console.error("save_onboarding_field: startDate resolution failed:", err);
+          }
+        }
+        if (!iso) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `Couldn't turn "${String(fieldValue)}" into a calendar date. Ask again, naturally, for roughly when they'd like care to start — right away, or a specific date — and save that answer as startDate.`,
+          };
+        }
+        clientNormalizedOverride = iso;
+      }
+      if (role === "client" && fieldName === "emergencyContactPhone") {
+        const { formatWizardPhone } = await import("../agents/clientJobPostingContract");
+        const formatted = formatWizardPhone(fieldValue);
+        if (!formatted) {
+          return {
+            ok: true,
+            saved: false,
+            invalidValue: true,
+            guidance: `"${String(fieldValue)}" isn't a complete phone number (it needs 10 digits). Ask for the emergency contact's full phone number, including area code.`,
+          };
+        }
+        clientNormalizedOverride = formatted;
+      }
       // Canonicalize enum-ish values the model may save in free-form casing
       // ("Full time" → "full_time"); otherwise the raw string is copied onto the
       // caregiver doc where matching expects occasional|part_time|full_time.
@@ -6873,7 +6925,9 @@ async function executeToolCall(
           guidance: `careRecipientPhotoURL only takes the link of a photo the family actually attached — it is filled automatically when a picture comes in. "${String(fieldValue)}" is a typed reply, not a photo: save nothing for it. The photo is optional, so if they'd rather skip it just move on; they can text a picture any time or add one later from Account Settings.`,
         };
       }
-      const normalizedValue = normalizeOnboardingFieldValue(fieldName, fieldValue);
+      const normalizedValue = clientNormalizedOverride !== undefined
+        ? clientNormalizedOverride
+        : normalizeOnboardingFieldValue(fieldName, fieldValue);
       if (fieldName === "jobType" && typeof normalizedValue === "string" && !CAREGIVER_JOB_TYPES.has(normalizedValue)) {
         console.info("save_onboarding_field: jobType value not canonical after normalization — keeping raw", { phone, raw: fieldValue });
       }

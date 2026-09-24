@@ -81,6 +81,8 @@ export interface BookingFlowData {
   applicationId?: string;
   jobPostRate?: number;
   jobPostDays?: string[];
+  /** The site's "Ongoing · No schedule set" state: sent with no days/times, added later on Care Requests. */
+  noSchedule?: boolean;
   jobPostEndDate?: string;
   hourlyRate?: number;
   // 2026-09-14: unified to match the site's OWN single schedule model
@@ -633,7 +635,7 @@ async function commitResend(phone: string, chatId: string, session: AgentSession
     lifestylePreferences: data.lifestylePreferences ?? (existing.lifestylePreferences ?? []),
     emergencyContact:     data.emergencyContact ?? null,
     schedule: {
-      days:          scheduleDays,
+      days:          scheduleDays.length ? scheduleDays : (data.jobPostDays ?? []).map(normDay),
       startDate:     data.startDate ?? null,
       endDate:       data.ongoing ? null : (data.scheduleEndDate ?? null),
       ongoing:       data.ongoing === true,
@@ -894,7 +896,7 @@ async function advanceToDays(phone: string, chatId: string, data: BookingFlowDat
 
 const DAYS_QUESTION = (jobPostDays?: string[]) =>
   'What days of the week would you like — e.g. "every Tue and Thu", "weekdays", "every day", or just one day ' +
-  'like "Friday"?' +
+  "like \"Friday\"? If there's no set schedule yet — it's ongoing and you'll work out days later — just say so." +
   (jobPostDays?.length ? ` (Your job post lists ${jobPostDays.join(", ")} — reply with that, or different days.)` : "");
 
 async function handleBkAskDays(
@@ -911,17 +913,27 @@ async function handleBkAskDays(
 
   const raw = await parseWithClaude(
     "Extract which days of the week the family wants, as full weekday names. Return ONLY a JSON object: " +
-    '{"days": ["Monday", ...]}. "weekdays" = Monday-Friday. "every day"/"all week" = all 7. "weekends" = ' +
-    'Saturday+Sunday. "every Tue and Thu" = [Tuesday,Thursday]. A single day name = just that one day. Never ' +
+    '{"days": ["Monday", ...], "noSchedule": false}. "noSchedule": true ONLY when they say there is no set schedule yet / ' +
+    "it's ongoing and they'll figure out days later / no fixed days (then days is []). \"weekdays\" = Monday-Friday. " +
+    '"every day"/"all week" = all 7. "weekends" = Saturday+Sunday. "every Tue and Thu" = [Tuesday,Thursday]. A single day name = just that one day. Never ' +
     "invent a day the message doesn't name or clearly imply — an empty array is correct if none is stated.",
     text
   );
   const parsed = parseJsonLoose(raw, "handleBkAskDays");
   const days: string[] = Array.isArray(parsed?.days) ? parsed.days.filter((d: unknown) => typeof d === "string") : [];
+  if (parsed?.noSchedule === true && !days.length) {
+    // PostsPage.tsx sends this as "Ongoing" with dayShiftTimes {} — the card
+    // reads "No schedule set" until the family adds days from Care Requests.
+    await mergeFlowData(phone, { days: [], dayTimes: {}, ongoing: true, noSchedule: true, scheduleEndDate: undefined });
+    await sendMessage(chatId, "No set schedule yet — got it. I'll send it as ongoing, and you can add days and times later from your Care Requests page.");
+    await advanceToLocation(phone, chatId, session);
+    return;
+  }
   if (!days.length) {
     await sendMessage(chatId, `${BK_DIDNT_CATCH} ${question}`);
     return;
   }
+  if (data.noSchedule) await mergeFlowData(phone, { noSchedule: false });
   await mergeFlowData(phone, { days });
   await updateStep(phone, "bk_ask_start_date");
   await sendMessage(chatId, `${days.join(", ")} — got it! ${START_DATE_QUESTION}`);
@@ -1369,8 +1381,10 @@ function formatRecipientLifestyle(lifestyle: unknown): string {
 
 export function buildBookingRecap(data: BookingFlowData): string {
   const spanLine = data.ongoing ? "(ongoing)" : data.scheduleEndDate ? `(through ${formatDateForDisplay(data.scheduleEndDate)})` : "";
-  const scheduleLine =
-    `${(data.days ?? []).map((d) => {
+  const noSchedule = !(data.days ?? []).length && !Object.keys(data.dayTimes ?? {}).length;
+  const scheduleLine = noSchedule
+    ? "Ongoing — no schedule set yet (add days and times later from your Care Requests page)"
+    : `${(data.days ?? []).map((d) => {
       const t = data.dayTimes?.[d];
       return t ? `${d} ${formatTimeForDisplay(t.start)}–${formatTimeForDisplay(t.end)}` : d;
     }).join(", ")}` +
@@ -1762,8 +1776,9 @@ async function handleBkConfirm(
       lifestylePreferences: data.lifestylePreferences ?? [],
       emergencyContact:     data.emergencyContact ?? null,
       schedule: {
-        days:          scheduleDays,
-        startDate:     data.startDate ?? businessTodayStr(),
+        // PostsPage.tsx: no timed days → fall back to the job post's days; startDate stays null until set.
+        days:          scheduleDays.length ? scheduleDays : (data.jobPostDays ?? []).map(normDay),
+        startDate:     data.startDate ?? null,
         endDate:       data.ongoing ? null : (data.scheduleEndDate ?? null),
         ongoing:       data.ongoing === true,
         dayShiftTimes,

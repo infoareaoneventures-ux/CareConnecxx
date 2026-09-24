@@ -13,8 +13,14 @@
 // own copies.
 
 import { allCareRecipients, normalizeAdditionalRecipients, toWebsiteRelationship } from "./careRecipients";
+import { coerceClientRate } from "./onboardingContract";
+import { businessTodayStr } from "../utils/scheduledTime";
 
 // ── Care level ────────────────────────────────────────────────────────────────
+// Used ONLY by the later Post-a-Job flow (jobPostingFlow.ts → job_posts). The
+// signup wizard never writes job_postings.careLevel (WhatsNext.tsx falls back
+// to 'moderate'), so buildJobPostingsDoc below does not either. Care needs
+// only — diagnoses/conditions are out of scope (non-medical care).
 
 export function deriveCareLevel(conditions: string[], careNeeds: string[]): string {
   const heavy = [...conditions, ...careNeeds].join(" ").toLowerCase();
@@ -57,23 +63,54 @@ export function mapCareFrequencyToWizardValue(freq: unknown): string | undefined
   }
 }
 
-// ── Rate — wizard's `rate` is a number (or absent), with a separate
-// `rateFlexible` boolean. Evia may collect the literal string "flexible". ──
+// ── Rate — wizard's `rate` is a number > 0 (numeric input, canAdvanceAt(13)),
+// with `rateFlexible` always false at signup: the wizard has NO "flexible"
+// option. (The later Post-a-Job flow's rateFlexible is a different flow.)
+// A non-numeric value → no rate (the save-time validator re-asks before it
+// can ever get here). ──
 
-export function parseRate(raw: unknown): { rate?: number; rateFlexible: boolean } {
-  if (raw === undefined || raw === null || raw === "") return { rateFlexible: false };
-  if (typeof raw === "number" && Number.isFinite(raw)) return { rate: raw, rateFlexible: false };
-  if (String(raw).toLowerCase() === "flexible") return { rateFlexible: true };
-  const n = Number(raw);
-  return Number.isFinite(n) ? { rate: n, rateFlexible: false } : { rateFlexible: true };
+export function parseRate(raw: unknown): { rate?: number; rateFlexible: false } {
+  const n = coerceClientRate(raw);
+  return n === null ? { rateFlexible: false } : { rate: n, rateFlexible: false };
+}
+
+// ── Start date — the wizard stores an ISO yyyy-mm-dd from a date input,
+// clamped to today (`val < todayISO() ? todayISO() : val`). ──
+// Canonicalizes an already-extracted answer into that shape:
+//   - ISO date (optionally with a time suffix) → the date, clamped to today
+//   - "ASAP"/"now"/"today"/"soon"/"immediately"/"right away" → today
+//   - anything else → null (caller resolves via the quick model, then re-asks)
+// Value canonicalization of a constrained value (same class as JOB_TYPE_CANON),
+// not intent parsing of free text — the LLM resolution lives in the caller.
+const ASAP_WORDS = new Set([
+  "asap", "now", "today", "soon", "immediately", "right away", "as soon as possible", "right now",
+]);
+
+export function normalizeStartDateToISO(raw: unknown, today: string = businessTodayStr()): string | null {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  if (!t) return null;
+  const iso = /^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/.exec(t);
+  if (iso) return iso[1] < today ? today : iso[1];
+  const key = t.toLowerCase().replace(/[.!]+$/g, "").replace(/\s+/g, " ");
+  if (ASAP_WORDS.has(key)) return today;
+  return null;
+}
+
+// ── Emergency contact phone — the wizard's input formats as `(555) 000-0000`
+// and canAdvanceAt(11) requires ≥10 digits. Returns undefined when fewer than
+// 10 digits are present (a leading US country code is dropped). ──
+export function formatWizardPhone(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
+  if (digits.length < 10) return undefined;
+  const d = digits.slice(0, 10);
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
 function todayISO(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return businessTodayStr();
 }
 
 function splitName(full: string): { first: string; last: string } {
@@ -100,7 +137,7 @@ export interface ClientJobPostingsDoc {
   additionalRecipients: Array<{ firstName: string; lastName: string; age?: string; relationship?: string }>;
   relationship?: string;
   emergencyFirstName?: string; emergencyLastName?: string; emergencyPhone?: string; emergencyRelationship?: string;
-  careNeeds: string[]; careLevel: string;
+  careNeeds: string[];
   petsInHome: boolean; smokingHousehold: boolean;
   rate?: number; rateFlexible: boolean; paymentMethod?: string;
   jobDescription?: string;
@@ -115,7 +152,6 @@ export interface ClientJobPostingsDoc {
 export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string, unknown>): ClientJobPostingsDoc {
   const seniorName   = (d.seniorName ?? "") as string;
   const { first: careRecipientFirstName, last: careRecipientLastName } = splitName(seniorName);
-  const conditions   = (Array.isArray(d.conditions) ? d.conditions : []) as string[];
   const careNeeds    = (Array.isArray(d.careNeeds)  ? d.careNeeds  : []) as string[];
   const seniorAge    = d.age as number | string | undefined;
 
@@ -143,7 +179,10 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     zipCode: (d.zipCode as string) || undefined,
     city: (d.city as string) || undefined,
     state: (d.state as string) || undefined,
-    startDate: (d.startDate as string) || todayISO(),
+    // Always the wizard's ISO yyyy-mm-dd (legacy sessions may still hold
+    // "ASAP"/free text — canonicalize, else fall back to today like the
+    // wizard's clamp does).
+    startDate: normalizeStartDateToISO(d.startDate) ?? todayISO(),
     endDate: (d.endDate as string) || undefined,
     ongoing: d.ongoing === true,
     daysFlexible: d.daysFlexible === true,
@@ -159,10 +198,9 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
     relationship,
     emergencyFirstName: emergencyFirstName || undefined,
     emergencyLastName: emergencyLastName || undefined,
-    emergencyPhone: (d.emergencyContactPhone as string) || undefined,
+    emergencyPhone: formatWizardPhone(d.emergencyContactPhone),
     emergencyRelationship: (d.emergencyContactRelationship as string) || undefined,
     careNeeds,
-    careLevel: deriveCareLevel(conditions, careNeeds),
     petsInHome: d.petsInHome === true,
     smokingHousehold: d.smokingHousehold === true,
     rate,
@@ -178,14 +216,14 @@ export function buildJobPostingsDoc(uid: string, phone: string, d: Record<string
 }
 
 // ── carePlans/{uid} location-pool entry ──────────────────────────────────────
-// Union of every field either current SMS writer or the web wizard needs, so
-// CarePlan.tsx's address picker never ends up missing street/state or
-// pets/smoking depending on which channel wrote it.
+// Same fields createJobPosting (services/api.ts) pushes onto locationPool
+// (street/city/state/zipCode/petsInHome/smokingHousehold), plus lat/lng — the
+// site reads carePlans.locationPool[].lat/lng for distance (FindCaregivers.tsx,
+// useNearbyCaregiversWithScores.ts). No Evia-only `primary` marker.
 
 export interface CarePlanLocationEntry {
   street?: string; city?: string; state?: string; zipCode?: string;
   petsInHome: boolean; smokingHousehold: boolean;
-  primary: true;
   lat?: number; lng?: number;
 }
 
@@ -200,20 +238,56 @@ export function buildCarePlanLocationEntry(
     zipCode: (d.zipCode as string) || undefined,
     petsInHome: d.petsInHome === true,
     smokingHousehold: d.smokingHousehold === true,
-    primary: true,
     ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
   };
 }
 
+// Upsert ONE entry into an existing pool the way createJobPosting does: match
+// on street (case-insensitive) + zip; on a match, refresh pets/smoking (and
+// lat/lng when known) on that entry; otherwise append. Returns null when the
+// entry has no street — createJobPosting's locationPoolUpdate returns early
+// then, so the pool is left untouched.
+export function upsertCarePlanLocationPool(
+  existingPool: unknown,
+  entry: CarePlanLocationEntry,
+): Array<Record<string, unknown>> | null {
+  if (!entry.street) return null;
+  const pool: Array<Record<string, unknown>> = Array.isArray(existingPool)
+    ? (existingPool as Array<Record<string, unknown>>).filter((l) => l && typeof l === "object")
+    : [];
+  const idx = pool.findIndex((l) =>
+    String(l.street ?? "").toLowerCase() === String(entry.street).toLowerCase() &&
+    String(l.zipCode ?? "") === String(entry.zipCode ?? ""));
+  const coords = entry.lat !== undefined && entry.lng !== undefined ? { lat: entry.lat, lng: entry.lng } : {};
+  if (idx >= 0) {
+    return pool.map((l, i) => (i === idx
+      ? { ...l, petsInHome: entry.petsInHome, smokingHousehold: entry.smokingHousehold, ...coords }
+      : l));
+  }
+  return [...pool, {
+    street: entry.street, city: entry.city, state: entry.state, zipCode: entry.zipCode,
+    petsInHome: entry.petsInHome, smokingHousehold: entry.smokingHousehold, ...coords,
+  }];
+}
+
 // ── senior_profiles/{uid} wizard-parity fields ───────────────────────────────
-// Additive to whatever else persistClientCareRecords already writes for this
-// doc (diagnoses, genderPreference, languagePreference are SMS-only extras the
-// wizard doesn't have — kept as-is by the caller, not touched here).
+// Exactly createJobPosting's profileUpdate (services/api.ts): careNeeds/needs/
+// scheduleNeeded/zipCode always; name/firstName/lastName/adultsCount/location
+// ("City, ST")/age/relationship only when present. No diagnoses or preference
+// fields — the wizard has none.
 
 export interface SeniorProfileWizardFields {
   careNeeds: string[];
   needs: string[];
   scheduleNeeded: string[];
+  zipCode?: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  adultsCount?: number;
+  location?: string;
+  age?: number;
+  relationship?: string;
 }
 
 // imageUrl deliberately NOT written here — senior_profiles.imageUrl is a dead
@@ -222,10 +296,25 @@ export interface SeniorProfileWizardFields {
 // the same date.
 export function buildSeniorProfileWizardFields(d: Record<string, unknown>): SeniorProfileWizardFields {
   const careNeeds = (Array.isArray(d.careNeeds) ? d.careNeeds : []) as string[];
+  const { first, last } = splitName((d.seniorName ?? "") as string);
+  const recipientName = [first, last].filter(Boolean).join(" ");
+  const city  = (d.city  as string) || "";
+  const state = (d.state as string) || "";
+  const age   = Number(d.age);
+  const relationship = toWebsiteRelationship(d.relationship as string | undefined);
+  const adultsCount = 1 + normalizeAdditionalRecipients(d.additionalRecipients).length;
   return {
     careNeeds,
     needs: careNeeds,
     scheduleNeeded: Array.isArray(d.selectedDays) ? d.selectedDays as string[] : [],
+    ...((d.zipCode as string) ? { zipCode: d.zipCode as string } : {}),
+    ...(recipientName ? { name: recipientName } : {}),
+    ...(first ? { firstName: first } : {}),
+    ...(last ? { lastName: last } : {}),
+    adultsCount,
+    ...(city && state ? { location: `${city}, ${state}` } : {}),
+    ...(Number.isFinite(age) && age > 0 ? { age } : {}),
+    ...(relationship ? { relationship } : {}),
   };
 }
 
@@ -291,8 +380,8 @@ export function mapJobPostingsDocToOnboardingData(
   if (Array.isArray(d.careNeeds) && d.careNeeds.length) out.careNeeds = d.careNeeds;
   if (typeof d.petsInHome === "boolean") out.petsInHome = d.petsInHome;
   if (typeof d.smokingHousehold === "boolean") out.smokingHousehold = d.smokingHousehold;
-  if (d.rateFlexible === true) out.rate = "flexible";
-  else if (typeof d.rate === "number" && d.rate > 0) out.rate = d.rate;
+  // The wizard has no "flexible" rate — only a numeric rate maps back.
+  if (typeof d.rate === "number" && d.rate > 0) out.rate = d.rate;
   if (d.jobDescription) out.jobDescription = d.jobDescription;
   if (d.careNeedDetails && typeof d.careNeedDetails === "object") out.careNeedDetails = d.careNeedDetails;
   // The wizard's home-address step (its own draft field names, saved per step by

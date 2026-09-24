@@ -23,6 +23,10 @@ const hoisted = vi.hoisted(() => {
       const prev = docState.get(path) ?? {};
       docState.set(path, { ...prev, ...data });
     }),
+    set: vi.fn(async (data: any) => {
+      const prev = docState.get(path) ?? {};
+      docState.set(path, { ...prev, ...data });
+    }),
   });
   const makeCollRef = (path: string): any => ({
     doc: (id?: string) => makeDocRef(`${path}/${id ?? "auto"}`),
@@ -113,6 +117,11 @@ describe("respondToInterviewRequest", () => {
     const update = hoisted.updates.find(u => u.path === `video_interviews/${IV_ID}`);
     expect(update?.data.proposedTime).toBe(r.proposedTime);
     expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("2026-10-01"));
+    // The site's "Accept this time" / "Propose another time" buttons, as a reply anchor (interviewCounterReply.ts).
+    expect(sendToPhone).toHaveBeenCalledWith("+15551234567", expect.stringContaining("Reply YES to book that time"));
+    expect(hoisted.docState.get("agent_sessions/+15551234567")).toMatchObject({
+      pendingInterviewCounter: { interviewId: IV_ID, caregiverId: CAREGIVER, proposedTime: r.proposedTime },
+    });
   });
 
   it("stamps respondedViaAgent on every response so the Firestore trigger never double-texts", async () => {

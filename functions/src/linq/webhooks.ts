@@ -3,7 +3,6 @@ import * as admin from "firebase-admin";
 import * as crypto from "crypto";
 import { traceable } from "langsmith/traceable";
 import { claimWebhookEvent, settleWebhookEvent, LINQ_EVENTS_COLLECTION } from "../utils/webhookLedger";
-import { appLink } from "../config/appUrl";
 import { sendMessage, startTyping, stopTyping, shareContactCard, checkCapability, markChatRead, AgentSession, LinqService } from "./client";
 import { applyProviderReceipt, applyProviderEdit } from "./providerMessageIndex";
 import { routeCaregiverMessage } from "./routeCaregiver";
@@ -1250,21 +1249,6 @@ const handleInboundInner = traceable(
 
     await sendMessage(chatId, buildHelpSmsReply(role, leadWith));
     return;
-  }
-
-  // ── Subscription lapse — graceful degradation for clients with lapsed billing ─
-  if (session.userType === "client" && session.onboardingStep === "complete") {
-    const userId = session.userId ?? phone;
-    const userSnap = await db.collection("users").doc(userId).get().catch(() => null);
-    const subStatus = userSnap?.data()?.subscriptionStatus as string | undefined;
-    if (subStatus === "past_due" || subStatus === "canceled" || subStatus === "unpaid") {
-      await sendMessage(chatId,
-        "Your Evia membership needs attention — there was an issue with your payment.\n\n" +
-        `To keep your care coordination active, please update your billing at ${appLink("/client/membership")}. Reply SUPPORT and I'll connect you with our team.`,
-        { preferredService: "SMS" } // billing/legal notice — force SMS, never iMessage
-      );
-      return;
-    }
   }
 
   // ── Twin-trigger cancel — user replied, cancel any pending proactive nudges ─

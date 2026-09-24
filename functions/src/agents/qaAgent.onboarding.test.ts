@@ -215,7 +215,7 @@ describe("runQaAgent onboarding mode — happy path (client)", () => {
     // handleToolCall contract: save → {ok:true,...}; complete_collection → {ok:true,complete:true}
     mockedHandle.mockImplementation(async (name: string) => {
       if (name === "save_onboarding_field") return { ok: true, saved: true, missing: [], collectionComplete: false } as any;
-      if (name === "complete_collection")   return { ok: true, complete: true, nextStep: "client_ask_start", status: "collection_complete" } as any;
+      if (name === "complete_collection")   return { ok: true, complete: true, nextStep: "client_confirm_intake", status: "collection_complete" } as any;
       return { ok: true } as any;
     });
 
@@ -325,7 +325,7 @@ describe("runQaAgent onboarding mode — complete_collection missing-fields bran
             guidance: "Not done yet — call save_onboarding_field for seniorName, then complete_collection again.",
           } as any;
         }
-        return { ok: true, complete: true, nextStep: "client_ask_start" } as any;
+        return { ok: true, complete: true, nextStep: "client_confirm_intake" } as any;
       }
       return { ok: true } as any;
     });

@@ -806,7 +806,13 @@ export async function settleShiftTransfer(
     updatedAt: now,
   });
 
-  await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `$${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
+  await pushNotification(shift.caregiverId, 'shift_hours_paid', 'Payment sent', `${(grossCents / 100).toFixed(2)} is on its way.`, { appointmentId });
+  // The family's Timesheets card flips to Paid on this write — tell them over
+  // text too (client-notified-of-everything, founder 2026-09-23). Amount = what
+  // the card was actually charged (stored at approval), not the caregiver gross.
+  const chargedCents = Number(shift.totalChargeCents ?? (grossCents + serviceFeeCentsFor(grossCents)));
+  await textClient(shift.clientId,
+    `your card was charged ${(chargedCents / 100).toFixed(2)} for ${shift.caregiverName ?? 'your caregiver'}'s visit — ${(grossCents / 100).toFixed(2)} to them plus the service fee. It's marked Paid on your Timesheets page.`);
 }
 
 /**

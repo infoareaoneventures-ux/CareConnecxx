@@ -13,18 +13,22 @@ import {
   isOnboardingTool,
   ONBOARDING_TOOL_NAMES,
   normalizeOnboardingFieldValue,
+  coerceClientRate,
   CAREGIVER_JOB_TYPES,
   caregiverJobTypesToWebIds,
 } from "../onboardingContract";
 
 describe("onboardingContract", () => {
-  it("client required fields are the flat keys downstream consumers read", () => {
+  it("client required fields are the flat keys downstream consumers read (wizard canAdvanceAt parity)", () => {
     expect(CLIENT_REQUIRED_FIELDS).toEqual([
-      "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
-      "startDate", "selectedDays", "timeOfDay",
+      "careFrequency", "homeStreet", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
+      "startDate", "selectedDays",
       "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
       "careNeeds", "rate", "email", "firstName",
     ]);
+    // The wizard does NOT require timeOfDay (still asked, optional to answer).
+    expect(CLIENT_REQUIRED_FIELDS).not.toContain("timeOfDay");
+    expect(isAllowedField("client", "timeOfDay")).toBe(true);
   });
 
   it("caregiver required fields match the caregiver step parse targets", () => {
@@ -42,55 +46,60 @@ describe("onboardingContract", () => {
   describe("missingRequiredFields (the complete_collection gate)", () => {
     it("empty client data → every required field missing", () => {
       expect(missingRequiredFields("client", {})).toEqual([
-        "careFrequency", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
-        "startDate", "selectedDays", "timeOfDay",
+        "careFrequency", "homeStreet", "homeZipCode", "sameAsHomeAddress", "city", "zipCode",
+        "startDate", "selectedDays",
         "relationship", "seniorName", "emergencyContactName", "emergencyContactPhone",
         "careNeeds", "rate", "email", "firstName",
       ]);
     });
 
+    const FULL = {
+      careFrequency: "part_time", homeStreet: "1 Main St", homeZipCode: "78701", sameAsHomeAddress: true,
+      city: "Austin", zipCode: "78701",
+      startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
+      relationship: "daughter", seniorName: "Dorothy",
+      emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
+      careNeeds: ["bathing"], rate: 26, email: "imran@example.com", firstName: "Imran",
+    };
+
     it("fully-filled client data → nothing missing (handoff allowed)", () => {
-      const data = {
-        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: true,
-        city: "Austin", zipCode: "78701",
-        startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
-        relationship: "daughter", seniorName: "Dorothy",
-        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 26, email: "imran@example.com", firstName: "Imran",
-      };
-      expect(missingRequiredFields("client", data)).toEqual([]);
+      expect(missingRequiredFields("client", FULL)).toEqual([]);
     });
 
     it("treats an explicit sameAsHomeAddress:false as filled, not missing", () => {
-      const data = {
-        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: false,
-        city: "Austin", zipCode: "78702",
-        startDate: "2026-09-01", selectedDays: ["MON", "WED"], timeOfDay: ["mornings"],
-        relationship: "daughter", seniorName: "Dorothy",
-        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 26, email: "imran@example.com", firstName: "Imran",
-      };
-      expect(missingRequiredFields("client", data)).toEqual([]);
+      expect(missingRequiredFields("client", { ...FULL, sameAsHomeAddress: false, zipCode: "78702" })).toEqual([]);
+    });
+
+    // Wizard canAdvanceAt(3): street AND zip are both required for the home address.
+    it("home street is required, like the wizard's home-address step", () => {
+      const { homeStreet: _omit, ...noStreet } = FULL;
+      expect(missingRequiredFields("client", noStreet)).toEqual(["homeStreet"]);
+    });
+
+    // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible`.
+    it("flexible-only days satisfy selectedDays; flexible:false with no days does not", () => {
+      expect(missingRequiredFields("client", { ...FULL, selectedDays: [], daysFlexible: true })).toEqual([]);
+      expect(missingRequiredFields("client", { ...FULL, selectedDays: undefined, daysFlexible: true })).toEqual([]);
+      expect(missingRequiredFields("client", { ...FULL, selectedDays: [], daysFlexible: false })).toEqual(["selectedDays"]);
+    });
+
+    // The wizard never requires timeOfDay — a "not sure" answer may leave it empty.
+    it("timeOfDay is optional", () => {
+      expect(missingRequiredFields("client", { ...FULL, timeOfDay: undefined })).toEqual([]);
+      expect(missingRequiredFields("client", { ...FULL, timeOfDay: [] })).toEqual([]);
     });
 
     it("partial client data → only the unfilled fields, in flow order", () => {
       const data = { careFrequency: "part_time", homeZipCode: "78701", city: "Austin", relationship: "daughter", seniorName: "Dorothy" };
       expect(missingRequiredFields("client", data)).toEqual([
-        "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "timeOfDay", "emergencyContactName",
+        "homeStreet", "sameAsHomeAddress", "zipCode", "startDate", "selectedDays", "emergencyContactName",
         "emergencyContactPhone", "careNeeds", "rate", "email", "firstName",
       ]);
     });
 
     it("treats empty string / zero / empty array as unfilled (isFieldFilled)", () => {
-      const data = {
-        careFrequency: "part_time", homeZipCode: "78701", sameAsHomeAddress: true,
-        city: "Austin", zipCode: "78701",
-        startDate: "2026-09-01", selectedDays: ["MON"], timeOfDay: [],
-        relationship: "daughter", seniorName: "Dorothy",
-        emergencyContactName: "Imran", emergencyContactPhone: "555-1234",
-        careNeeds: ["bathing"], rate: 0, email: "imran@example.com", firstName: "  ",
-      };
-      expect(missingRequiredFields("client", data)).toEqual(["timeOfDay", "rate", "firstName"]);
+      const data = { ...FULL, selectedDays: [], rate: 0, firstName: "  " };
+      expect(missingRequiredFields("client", data)).toEqual(["selectedDays", "rate", "firstName"]);
     });
 
     it("caregiver gate checks the caregiver set", () => {
@@ -105,12 +114,37 @@ describe("onboardingContract", () => {
     it("accepts required and optional client fields", () => {
       expect(isAllowedField("client", "seniorName")).toBe(true);
       expect(isAllowedField("client", "relationship")).toBe(true);
-      expect(isAllowedField("client", "budget")).toBe(true);
+      expect(isAllowedField("client", "homeStreet")).toBe(true);
+      expect(isAllowedField("client", "daysFlexible")).toBe(true);
     });
 
     it("rejects unknown / invented fields", () => {
       expect(isAllowedField("client", "favoriteColor")).toBe(false);
       expect(isAllowedField("caregiver", "ssn")).toBe(false);
+    });
+
+    // Wizard parity: the site never asks for diagnoses (medical scope is out),
+    // nor a budget/preferences (retired with the legacy post-collection steps).
+    it("rejects the retired non-wizard client fields (conditions, budget, preferences)", () => {
+      expect(isAllowedField("client", "conditions")).toBe(false);
+      expect(isAllowedField("client", "budget")).toBe(false);
+      expect(isAllowedField("client", "preferences")).toBe(false);
+    });
+  });
+
+  describe("coerceClientRate (wizard rate > 0, no 'flexible')", () => {
+    it("accepts numbers and numeric strings", () => {
+      expect(coerceClientRate(26)).toBe(26);
+      expect(coerceClientRate("26")).toBe(26);
+      expect(coerceClientRate("$28/hr")).toBe(28);
+      expect(coerceClientRate("27.5")).toBe(27.5);
+    });
+    it("rejects 'flexible', prose, zero and negatives (caller re-asks for a number)", () => {
+      expect(coerceClientRate("flexible")).toBeNull();
+      expect(coerceClientRate("not sure")).toBeNull();
+      expect(coerceClientRate(0)).toBeNull();
+      expect(coerceClientRate(-5)).toBeNull();
+      expect(coerceClientRate(undefined)).toBeNull();
     });
 
     it("scopes fields by role", () => {
@@ -209,8 +243,8 @@ describe("onboardingContract", () => {
   });
 
   describe("firstGateStep", () => {
-    it("client hands off to the legacy post-collection step", () => {
-      expect(firstGateStep("client")).toBe("client_ask_start");
+    it("client hands off straight to the intake confirmation (legacy start/preferences/budget steps removed)", () => {
+      expect(firstGateStep("client")).toBe("client_confirm_intake");
     });
     it("caregiver hands off to the first upload gate", () => {
       expect(firstGateStep("caregiver")).toBe("caregiver_send_photo");
@@ -229,7 +263,7 @@ describe("onboardingContract", () => {
     it("does NOT route a transactional/gate/confirm-name step (not a collection step)", () => {
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_send_payment" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "verify_phone" })).toBe(false);
-      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_ask_start" })).toBe(false);
+      expect(shouldRouteOnboardingToLoop({ ...base, step: "client_confirm_intake" })).toBe(false);
       expect(shouldRouteOnboardingToLoop({ ...base, step: "client_confirm_name" })).toBe(false);
     });
 

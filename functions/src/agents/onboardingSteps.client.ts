@@ -1,5 +1,4 @@
 import { ConversationStep } from "./conversationStep";
-import { getMarketRateText } from "../utils/marketRateRange";
 
 /**
  * CLIENT_STEPS — the linear client onboarding questions as data.
@@ -37,12 +36,10 @@ export interface ClientStepDeps {
   }) => Promise<string>;
   /** Wrap a location ask with the "tap to share" affordance on iMessage/RCS. */
   locationPrompt: (base: string, service?: string) => string;
-  /** Plain-text playback of the captured intake — sent after the budget step. */
-  buildIntakeSummary: (d: Record<string, unknown>) => string;
 }
 
 export function buildClientSteps(deps: ClientStepDeps): Record<string, ConversationStep> {
-  const { generateCaraMessage, locationPrompt, buildIntakeSummary } = deps;
+  const { generateCaraMessage, locationPrompt } = deps;
 
   return {
     // ── client_ask_name ─────────────────────────────────────────────────────────
@@ -181,13 +178,13 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
     client_ask_needs: {
       id: "client_ask_needs",
       parsePrompt:
-        'Extract age (as number), careNeeds (array of strings), and conditions (array of strings) from this message. ' +
+        'Extract age (as number) and careNeeds (array of strings — day-to-day help needed, NOT diagnoses) from this message. ' +
         'If ages for MULTIPLE people are given (e.g. "mom is 82 and dad is 85"), also include ' +
         '"recipientAges":[{"name":"...","age":0}] with one entry per named person. ' +
-        'Reply in JSON: {"age":0,"careNeeds":[],"conditions":[]}',
+        'Reply in JSON: {"age":0,"careNeeds":[]}',
       parse(raw, session) {
         if (raw === "__parse_error__") return null; // re-ask: "didn't catch that"
-        let parsed: { age?: unknown; careNeeds?: unknown; conditions?: unknown; recipientAges?: unknown };
+        let parsed: { age?: unknown; careNeeds?: unknown; recipientAges?: unknown };
         try {
           parsed = JSON.parse(raw);
         } catch {
@@ -196,7 +193,6 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
         const rawAge      = Number(parsed.age);
         const age         = Number.isFinite(rawAge) && rawAge > 0 ? rawAge : undefined;
         const careNeeds   = Array.isArray(parsed.careNeeds)  ? (parsed.careNeeds  as string[]) : [];
-        const conditions  = Array.isArray(parsed.conditions) ? (parsed.conditions as string[]) : [];
         const recipientAges: Array<{ name?: string; age?: number }> =
           Array.isArray(parsed.recipientAges) ? (parsed.recipientAges as Array<{ name?: string; age?: number }>) : [];
 
@@ -229,11 +225,10 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
           return {
             ...(resolvedAge !== undefined ? { age: resolvedAge } : {}),
             careNeeds,
-            conditions,
             additionalRecipients: patched,
           };
         }
-        return { ...(age !== undefined ? { age } : {}), careNeeds, conditions };
+        return { ...(age !== undefined ? { age } : {}), careNeeds };
       },
       nextStep: "client_ask_location",
       reask(session) {
@@ -248,9 +243,8 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
       async nextQuestion(session) {
         const d = session.onboardingData ?? {};
         const seniorName = d.seniorName;
-        const conditions = (d.conditions as string[]) ?? [];
         const careNeeds  = (d.careNeeds  as string[]) ?? [];
-        const condLabel = conditions.length > 0 ? conditions.join(", ") : (careNeeds.length > 0 ? careNeeds.join(", ") : "");
+        const condLabel = careNeeds.length > 0 ? careNeeds.join(", ") : "";
         const msg = await generateCaraMessage({
           audience: "family",
           context:
@@ -291,7 +285,10 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
           hoursPerDay: hoursPerDay || 4,
         };
       },
-      nextStep: "client_ask_start",
+      // Collection ends here → the intake playback/confirmation step (the legacy
+      // client_ask_start/preferences/budget steps were removed: the site's
+      // wizard never collected them).
+      nextStep: "client_confirm_intake",
       reask(session) {
         const d = session.onboardingData ?? {};
         return `How often does ${d.seniorName ?? "they"} need someone, and what times of day work best?`;
@@ -307,95 +304,6 @@ export function buildClientSteps(deps: ClientStepDeps): Record<string, Conversat
           emotionalDirective: (session as any)._emotionalDirective,
           maxTokens: 90,
         });
-      },
-    },
-
-    // ── client_ask_start ──────────────────────────────────────────────────────────
-    client_ask_start: {
-      id: "client_ask_start",
-      parsePrompt:
-        "Extract when the family wants care to start. Reply with a short phrase: \"asap\" if they want it right away/" +
-        "urgently, the specific date in their own words if they gave one, or \"flexible\" if they're unsure. Just the phrase.",
-      parse(raw) {
-        const startDate = (!raw || raw === "__parse_error__") ? "flexible" : raw;
-        return { startDate };
-      },
-      nextStep: "client_ask_preferences",
-      reask: () => "When would you like care to start — right away, or a specific date?",
-      // start always advances (defaults to "flexible") — retry is never reached.
-      retry: () => "When would you like care to start — right away, or a specific date?",
-      async nextQuestion(session) {
-        const startDate = (session.onboardingData?.startDate as string) ?? "flexible";
-        return generateCaraMessage({
-          audience: "family",
-          context: `Evia is onboarding a family; care should start "${startDate}". Acknowledge briefly, then ask if they have any preferences for the caregiver — gender, language, or whether they need someone who can drive. Make clear it's optional and they can just say "no preference".`,
-          fallback: "Any preferences for the caregiver — gender, language, or someone who can drive? Totally optional — just say \"no preference\" if not.",
-          emotionalDirective: (session as any)._emotionalDirective,
-          maxTokens: 90,
-        });
-      },
-    },
-
-    // ── client_ask_preferences ──────────────────────────────────────────────────────
-    client_ask_preferences: {
-      id: "client_ask_preferences",
-      parsePrompt:
-        "Extract caregiver preferences. Reply in JSON: {\"gender\":\"\",\"language\":\"\",\"driving\":false,\"other\":\"\"}. " +
-        "gender: \"female\"/\"male\" or \"\" if none. language: a language name or \"\". driving: true only if they need " +
-        "someone who can drive. other: any other preference (pets, smoking, non-smoker, etc.) or \"\". If they say no " +
-        "preference, return all empty/false.",
-      parse(raw) {
-        let prefs: { gender?: string; language?: string; driving?: boolean; other?: string } = {};
-        try { prefs = JSON.parse(raw); } catch { /* none */ }
-        return {
-          caregiverPreferences: prefs,
-          // Top-level keys the matching engine reads directly (matchingAgent + claudeMatching).
-          genderPreference:   prefs.gender   ?? "",
-          languagePreference: prefs.language ?? "",
-          needsDriving:       prefs.driving === true,
-          otherPreference:    prefs.other    ?? "",
-        };
-      },
-      nextStep: "client_ask_budget",
-      reask: () => "Any preferences for the caregiver — gender, language, driving? (or \"no preference\")",
-      // preferences always advances (empty prefs is a valid "no preference") — retry is never reached.
-      retry: () => "Any preferences for the caregiver — gender, language, driving? (or \"no preference\")",
-      async nextQuestion(session) {
-        const d = session.onboardingData ?? {};
-        const city = (d.city as string) ?? "";
-        const rateText = await getMarketRateText(); // live SCC caregiver rates, fail-soft static
-        const rangeHint = city ? `Caregivers near ${city} typically run ${rateText}` : `Caregivers typically run ${rateText}`;
-        return generateCaraMessage({
-          audience: "family",
-          context: `Evia is onboarding a family. They just shared caregiver preferences. Now ask about budget. In one line make clear the caregiver's hourly pay is SEPARATE from the Evia membership, include this hint verbatim: "${rangeHint}", and ask if they have an hourly budget in mind (they can say "not sure"). Warm and brief.`,
-          fallback: `One more — caregivers are paid hourly, separate from your Evia membership. ${rangeHint}. Do you have an hourly budget in mind? ("not sure" is totally fine)`,
-          maxTokens: 110,
-        });
-      },
-    },
-
-    // ── client_ask_budget ───────────────────────────────────────────────────────────
-    client_ask_budget: {
-      id: "client_ask_budget",
-      parsePrompt:
-        "Extract the family's hourly budget. Reply in JSON: {\"min\":0,\"max\":0}. If one number, set both to it. " +
-        "If a range, set min and max. If they're not sure / no budget, return {\"min\":0,\"max\":0}.",
-      parse(raw) {
-        let budget = { min: 0, max: 0 };
-        try { const p = JSON.parse(raw); budget = { min: Number(p.min) || 0, max: Number(p.max) || 0 }; } catch { /* none */ }
-        // Store budgetMax top-level too — the matching engine reads it directly.
-        return { budget, budgetMin: budget.min, budgetMax: budget.max };
-      },
-      // Advances to client_confirm_intake; the "next question" is the intake
-      // playback summary (formerly sent by sendClientIntakeSummary after a
-      // re-read of the session — content is identical now that runStep has
-      // merged budget into the in-memory onboardingData).
-      nextStep: "client_confirm_intake",
-      reask: () => "Do you have an hourly budget in mind? (\"not sure\" is fine)",
-      // budget always advances (defaults to 0/0) — retry is never reached.
-      retry: () => "Do you have an hourly budget in mind? (\"not sure\" is fine)",
-      async nextQuestion(session) {
-        return buildIntakeSummary(session.onboardingData ?? {});
       },
     },
   };

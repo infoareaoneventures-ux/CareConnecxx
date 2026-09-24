@@ -978,7 +978,6 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   // users doc may not exist yet, and update() would 500 the whole webhook.
   await admin.firestore().collection('users').doc(userId).set({
     membershipStatus:    'payment_failed',
-    subscriptionStatus:  'past_due',
     paymentFailureCount: attemptCount,
     lastPaymentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt:           admin.firestore.FieldValue.serverTimestamp(),

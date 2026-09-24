@@ -89,9 +89,22 @@ export async function respondToInterviewRequest(
     const cgData = (await db.collection("caregivers").doc(caregiverId).get()).data();
     const cgName = cgData?.name ?? "The caregiver";
     const notifyMsg = proposedDate
-      ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}.`
+      ? `${cgName} can't make the original time but is free ${proposedDate} at ${proposedTime ?? ""}. Reply YES to book that time, or send another time.`
       : `${cgName} isn't available for the interview. ${message ?? ""}`.trim();
     await sendToPhone(clientSess.docs[0].id, notifyMsg).catch(() => {});
+    // The website's Interviews card offers "Accept this time" / "Propose another
+    // time" on a declined-with-counter interview; over text the family's reply
+    // lands on agents/interviewCounterReply.ts, which makes the same new request.
+    if (proposedIso) {
+      await db.collection("agent_sessions").doc(clientSess.docs[0].id).set({
+        pendingInterviewCounter: {
+          interviewId, caregiverId, caregiverName: cgName, proposedTime: proposedIso,
+          ...(iv.jobId ? { jobId: String(iv.jobId) } : {}),
+          ...(iv.jobTitle ? { jobTitle: String(iv.jobTitle) } : {}),
+        },
+        pendingInterviewCounterSetAt: nowIso,
+      }, { merge: true }).catch(() => {});
+    }
   }
 
   logAudit({

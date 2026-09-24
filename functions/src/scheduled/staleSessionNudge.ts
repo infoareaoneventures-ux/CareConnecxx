@@ -238,14 +238,14 @@ export const sendStaleSessionNudges = functions.pubsub
             // Accurate money copy (2026-07-09): this checkout is a monthly
             // subscription (clientMonthlyDisplay) that bills immediately — never
             // claim "no charges until you book" or frame it as card-on-file.
-            context = `${firstName || "This family member"} stalled at the last step — starting their ${clientMonthlyDisplay()} Evia membership, which is what lets Evia begin finding and coordinating caregivers. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
-            fallback = `${greeting} The last step is starting your membership (${clientMonthlyDisplay()}) so I can begin finding caregivers for you.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
+            context = `${firstName || "This family member"} stalled at the last step — starting their ${clientMonthlyDisplay()} Evia membership, which is what lets them message, interview and book the caregivers they've seen. Warmly nudge: it takes about 30 seconds, the search starts the moment it's active, and they can reply here to get the link again.`;
+            fallback = `${greeting} The last step is starting your membership (${clientMonthlyDisplay()}) so you can message, interview and book the caregivers you've seen.\n\nTakes about 30 seconds — reply here and I'll send the link again.`;
           } else if (step === "client_awaiting_identity") {
             context = `${firstName || "This family member"} stalled on a quick identity check. Warmly reassure: it's a 30-second step that keeps every family on the platform safe, and they can reply here to get a fresh link.`;
             fallback = `${greeting} Just one quick identity check left — it's a 30-second step that keeps every family on the platform safe.\n\nReply here and I'll send you a fresh link.`;
           } else if (step === "client_ask_schedule") {
-            context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you'll start searching for caregivers.`;
-            fallback = `${greeting} Almost there. Just need to know how often you need care and I'll start searching for caregivers.`;
+            context = `${firstName || "This family member"} stalled before telling you how often they need care. Warmly nudge: once you know the schedule you can show them who's available nearby.`;
+            fallback = `${greeting} Almost there. Just need to know how often you need care and I'll show you who's available nearby.`;
           } else {
             context = `${firstName || "This family member"} stalled partway through getting set up. Send a short, warm nudge inviting them to reply whenever they're ready and you'll pick up where you left off.`;
             fallback = `${greeting} I'm here whenever you're ready to continue.\n\nJust reply and I'll pick up where we left off.`;

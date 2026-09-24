@@ -148,17 +148,14 @@ describe("edit_job_post", () => {
     expect(update?.data["schedule.days"]).toBeUndefined();
   });
 
-  it("mirrors to job_postings using ITS OWN field names (jobDescription/selectedDays)", async () => {
+  it("writes job_posts only — the site's EditJobPostModal never touches job_postings (2026-09-23)", async () => {
     hoisted.docState.set(`job_posts/${JOB_ID}`, { clientId: CLIENT, status: "open" });
     const r = await handleToolCall("edit_job_post", {
       jobId: JOB_ID, clientId: CLIENT, description: "Overnight care", daysOfWeek: ["Mon", "Wed"],
     }) as any;
     expect(r.success).toBe(true);
-    const postingsSet = hoisted.sets.find(s => s.path === `job_postings/${CLIENT}`);
-    expect(postingsSet?.data.jobDescription).toBe("Overnight care");
-    expect(postingsSet?.data.selectedDays).toEqual(["Mon", "Wed"]);
-    expect(postingsSet?.data.description).toBeUndefined();
-    expect(postingsSet?.data.daysOfWeek).toBeUndefined();
+    expect(hoisted.updates.find(u => u.path === `job_posts/${JOB_ID}`)?.data).toMatchObject({ description: "Overnight care", daysOfWeek: ["Mon", "Wed"] });
+    expect(hoisted.sets.find(s => s.path === `job_postings/${CLIENT}`)).toBeUndefined();
   });
 
   // 2026-09-16: the site's EditJobPostModal payload, field for field, with its rules.

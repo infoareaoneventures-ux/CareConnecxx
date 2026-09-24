@@ -17,13 +17,22 @@ describe("buildClientDraftMirror", () => {
     const out = buildClientDraftMirror("u1", "+1", {
       emergencyContactName: "Imran Mohammed", emergencyContactPhone: "4085551234", rate: 25, startDate: "2026-09-22", selectedDays: ["MON", "WED"], timeOfDay: "morning",
     });
-    expect(out).toMatchObject({ emergencyFirstName: "Imran", emergencyLastName: "Mohammed", emergencyPhone: "4085551234", rate: 25, rateFlexible: false, startDate: "2026-09-22", selectedDays: ["MON", "WED"], timeOfDay: ["morning"] });
+    // emergencyPhone lands in the wizard's own (555) 000-0000 shape; startDate stays ISO (clamped to today if past).
+    expect(out).toMatchObject({ emergencyFirstName: "Imran", emergencyLastName: "Mohammed", emergencyPhone: "(408) 555-1234", rate: 25, rateFlexible: false, selectedDays: ["MON", "WED"], timeOfDay: ["morning"] });
+    expect(out.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("a 'flexible' rate is never mirrored as a rate (the wizard has no such option) and a short phone is dropped", () => {
+    const out = buildClientDraftMirror("u1", "+1", { rate: "flexible", emergencyContactPhone: "1234" });
+    expect(out).not.toHaveProperty("rate");
+    expect(out).not.toHaveProperty("emergencyPhone");
+    expect(out.rateFlexible).toBe(false);
   });
 
   it("round-trips back into Evia's own field names through the existing reader", () => {
     const draft = buildClientDraftMirror("u1", "+1", { seniorName: "Samira M", relationship: "parent", careNeeds: ["Bathing"], emergencyContactName: "Imran Mohammed", emergencyContactPhone: "4085551234" });
     const back = mapJobPostingsDocToOnboardingData({ ...draft, clientId: "u1" });
-    expect(back).toMatchObject({ seniorName: "Samira M", relationship: "parent", careNeeds: ["Bathing"], emergencyContactName: "Imran Mohammed", emergencyContactPhone: "4085551234" });
+    expect(back).toMatchObject({ seniorName: "Samira M", relationship: "parent", careNeeds: ["Bathing"], emergencyContactName: "Imran Mohammed", emergencyContactPhone: "(408) 555-1234" });
   });
 
   it("empty answers produce an empty mirror (no write)", () => {

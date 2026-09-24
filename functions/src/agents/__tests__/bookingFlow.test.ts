@@ -634,6 +634,27 @@ describe("bk_ask_days → bk_ask_times → bk_ask_location → bk_confirm", () =
     expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("Reply YES to send it");
   });
 
+  it("\"no set schedule yet\" sends the site's Ongoing / No schedule set state — skips days, start, times and ongoing", async () => {
+    const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26 };
+    hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_days", bookingFlowData: daysData });
+    hoisted.docState.set("carePlans/client-uid", {
+      locationPool: [{ street: "1 Elm St", city: "Springfield", state: "CA", zipCode: "90000" }],
+    });
+    modelReplies("NO", JSON.stringify({ days: [], noSchedule: true }));
+    await handleBookingFlowStep(PHONE, CHAT, "we don't have set days yet, it's ongoing", session({ bookingFlowStep: "bk_ask_days", bookingFlowData: daysData }));
+    let stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_ask_message");
+    expect(stored.bookingFlowData).toMatchObject({ days: [], ongoing: true, noSchedule: true });
+    expect(stored.bookingFlowData.startDate).toBeUndefined();
+    expect(String(sendMessage.mock.calls.at(-2)![1])).toContain("No set schedule yet");
+
+    modelReplies("NO", "SKIP");
+    await handleBookingFlowStep(PHONE, CHAT, "no", session({ bookingFlowStep: "bk_ask_message", bookingFlowData: stored.bookingFlowData }));
+    stored = hoisted.docState.get(`agent_sessions/${PHONE}`);
+    expect(stored.bookingFlowStep).toBe("bk_confirm");
+    expect(String(sendMessage.mock.calls.at(-1)![1])).toContain("no schedule set yet");
+  });
+
   it("requires a start/end for EVERY day — a reply missing one day re-asks instead of leaving it blank", async () => {
     const daysData = { caregiverId: CG_ID, caregiverName: "Basra Yousuf", hourlyRate: 26, days: ["Tuesday", "Thursday"] };
     hoisted.docState.set(`agent_sessions/${PHONE}`, { bookingFlowStep: "bk_ask_times", bookingFlowData: daysData });

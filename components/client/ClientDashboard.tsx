@@ -406,8 +406,39 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
             const intakeDoc = await db.collection('clientIntakes').doc(currentUser.uid).get();
             if (intakeDoc.exists) {
               intakeLocal = intakeDoc.data() as ClientIntakeData;
-              setIntakeData(intakeLocal);
+            } else {
+              // No legacy intake doc (neither the site wizard nor Evia writes one
+              // anymore) — the same information lives on job_postings/{uid}, the
+              // wizard's record, so read it back in the intake shape.
+              const jpDoc = await db.collection('job_postings').doc(currentUser.uid).get();
+              if (jpDoc.exists) {
+                const jp = jpDoc.data() as any;
+                const days: string[] = Array.isArray(jp.selectedDays) ? jp.selectedDays : [];
+                const times: string[] = Array.isArray(jp.timeOfDay) ? jp.timeOfDay : [];
+                intakeLocal = {
+                  recipientName: [jp.careRecipientFirstName, jp.careRecipientLastName].filter(Boolean).join(' '),
+                  recipientFirstName: jp.careRecipientFirstName || '',
+                  recipientLastName: jp.careRecipientLastName || '',
+                  relationship: jp.relationship || '',
+                  careTypes: Array.isArray(jp.careNeeds) ? jp.careNeeds : [],
+                  streetAddress: jp.street || '',
+                  city: jp.city || '',
+                  state: jp.state || '',
+                  zipCode: jp.zipCode || '',
+                  schedule: [days.join('/') || (jp.daysFlexible ? 'Flexible days' : ''), times.join('/')].filter(Boolean).join(', '),
+                  startDate: jp.startDate || '',
+                  duration: jp.ongoing ? 'Ongoing' : (jp.endDate ? `Until ${jp.endDate}` : ''),
+                  additionalComments: jp.jobDescription || undefined,
+                  contactName: '',
+                  phone: jp.phone || '',
+                  email: '',
+                  userId: currentUser.uid,
+                  createdAt: jp.createdAt,
+                  status: 'active',
+                } as ClientIntakeData;
+              }
             }
+            if (intakeLocal) setIntakeData(intakeLocal);
           } catch (intakeError) {
             console.warn('Could not load intake data:', intakeError);
           }

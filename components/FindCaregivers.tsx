@@ -288,15 +288,19 @@ export default function FindCaregivers() {
         }
       }
 
-      // 7. Geocode from clientIntakes address (already loaded above — intake has streetAddress/city/state/zipCode)
-      if (locs.length === 0 && intakeData) {
-        const coords = await geocodeToLatLng(
-          intakeData.streetAddress,
-          intakeData.city,
-          intakeData.state,
-          intakeData.zipCode
-        );
-        if (coords) addLoc(coords.lat, coords.lng);
+      // 7. Geocode from the care address — the legacy clientIntakes doc when one
+      //    exists (streetAddress/city/state/zipCode), otherwise the wizard's own
+      //    job_postings/{uid} record (street/city/state/zipCode), which is the
+      //    only record a family onboarded on the site OR by text is guaranteed to have.
+      if (locs.length === 0) {
+        const jp = jpDoc.exists ? (jpDoc.data() as any) : null;
+        const addr = intakeData
+          ? { street: intakeData.streetAddress, city: intakeData.city, state: intakeData.state, zipCode: intakeData.zipCode }
+          : jp ? { street: jp.street, city: jp.city, state: jp.state, zipCode: jp.zipCode } : null;
+        if (addr && (addr.city || addr.zipCode)) {
+          const coords = await geocodeToLatLng(addr.street, addr.city, addr.state, addr.zipCode);
+          if (coords) addLoc(coords.lat, coords.lng);
+        }
       }
 
       setClientLocations(locs);

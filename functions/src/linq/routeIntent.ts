@@ -8,6 +8,7 @@ import { staleConfirmFlags, hasActiveSmsFlow, PENDING_MATCHES_TTL_MS } from "../
 import { getLatestPending } from "../agents/pendingActions";
 import { isBareDateOrTimeAnswer, isBareYesNoAnswer } from "../utils/bareDateTimeAnswer";
 import { handleCompletionNudgeReply, freshCompletionNudgeInterviewId } from "../agents/completionNudgeReply";
+import { handleInterviewCounterReply, freshInterviewCounter } from "../agents/interviewCounterReply";
 import { handleReviewPromptReply } from "../agents/reviewPrompt";
 import { handleEmailChangeReply } from "../agents/emailChangeReply";
 import { runQaAgent, runQuickReply, isTrivialQuickReply } from "../agents/qaAgent";
@@ -822,6 +823,9 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
     // Mark as Completed write; NO = offer Reschedule / Cancel. Anything else
     // goes to the full agent (which gets the interview id in its prompt) —
     // never to the quick reply while the check-in is fresh.
+    // 2026-09-23: a caregiver's counter-offered interview time — the site's
+    // "Accept this time" / "Propose another time" buttons, as a reply.
+    if (await handleInterviewCounterReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> })) return;
     const nudgeReply = await handleCompletionNudgeReply({ phone, chatId, text, session: session as unknown as Record<string, unknown> });
     if (nudgeReply) {
       await persistDefaultQaTurn(ctx, nudgeReply);
@@ -840,7 +844,8 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
       !intentDegraded &&
       isTrivialQuickReply(text) &&
       !hasActiveSmsFlow(session as unknown as Record<string, unknown>) &&
-      !freshCompletionNudgeInterviewId(session as unknown as Record<string, unknown>)
+      !freshCompletionNudgeInterviewId(session as unknown as Record<string, unknown>) &&
+      !freshInterviewCounter(session as unknown as Record<string, unknown>)
     ) {
       const quickReply = await runQuickReply({
         text,

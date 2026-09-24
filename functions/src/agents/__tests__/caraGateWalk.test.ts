@@ -677,47 +677,94 @@ describe("resend helpers confirm instead of re-sending a link when payment lande
 
 // ── 5. CLIENT care records — persisted at intake-confirm, not only at payment
 //    (client-side parity wave, 2026-07-10). A family who confirms intake but
-//    stalls at the paywall must still leave carePlans/senior_profiles/
-//    clientIntakes for the webapp; the payment webhook re-runs the same
-//    merge-writes and additionally mirrors the Stripe customer id.
+//    stalls at the paywall must still leave the wizard's records
+//    (job_postings/carePlans/senior_profiles) for the webapp; the payment
+//    webhook re-runs the same merge-writes and additionally mirrors the Stripe
+//    customer id. Wizard parity (2026-09-23): Evia writes EXACTLY what
+//    createJobPosting writes — no clientIntakes, no household senior_profiles
+//    docs, no users.seniorIds, no careLevel, no conditions/diagnoses.
 describe("client care records + payment mirror", () => {
   const CLIENT_UID  = "client-uid";
   const CLIENT_DATA = {
     firstName: "Hamse", seniorName: "Margaret", relationship: "mother",
-    age: 82, careNeeds: ["companionship"], conditions: ["dementia"],
-    city: "San Jose", zipCode: "95110",
+    age: 82, careNeeds: ["companionship"],
+    city: "San Jose", zipCode: "95110", state: "CA",
     daysPerWeek: 3, timeOfDay: "morning", hoursPerDay: 4,
+    startDate: "ASAP", rate: 26,
+    emergencyContactName: "Jane Doe", emergencyContactPhone: "4085551234", emergencyContactRelationship: "granddaughter",
     additionalRecipients: [{ name: "Frank", relationship: "father", age: 85 }],
   };
 
-  it("persistClientCareRecords writes carePlans, senior_profiles (primary + household), clientIntakes, seniorIds", async () => {
+  it("persistClientCareRecords writes the wizard's records only: carePlans (plans + wizard emergency contact), senior_profiles (wizard shape), job_postings — no clientIntakes/seniorIds/household docs/careLevel/conditions", async () => {
     await persistClientCareRecords(CLIENT_UID, PHONE, CLIENT_DATA);
 
     const plan = hoisted.docState.get(`carePlans/${CLIENT_UID}`);
     expect(plan?.clientId).toBe(CLIENT_UID);
     expect(Object.keys(plan?.recipientPlans ?? {})).toHaveLength(2); // Margaret + Frank
+    for (const rp of Object.values(plan?.recipientPlans ?? {}) as any[]) {
+      expect(rp).not.toHaveProperty("conditions");
+      expect(rp.careNeeds).toEqual(["Companionship"]);
+    }
     // Same review marker the website's "Looks good" button sets — stamped here
     // because persistClientCareRecords now only runs after the family has
     // explicitly confirmed their intake summary (client_confirm_intake), not
     // the instant collection completes.
     expect(plan?.carePlanReviewedAt).toBeTruthy();
+    // Emergency contact: createJobPosting's exact entry (id 'wizard', formatted phone).
+    expect(plan?.emergencyContacts).toEqual([
+      { id: "wizard", name: "Jane Doe", relation: "granddaughter", phone: "(408) 555-1234", isPrimary: true },
+    ]);
+    // No street collected → createJobPosting's locationPoolUpdate returns early; so does Evia.
+    expect(plan).not.toHaveProperty("locationPool");
 
     const senior = hoisted.docState.get(`senior_profiles/${CLIENT_UID}`);
     expect(senior?.name).toBe("Margaret");
+    expect(senior?.firstName).toBe("Margaret");
+    expect(senior?.adultsCount).toBe(2);
+    expect(senior?.location).toBe("San Jose, CA");
+    expect(senior?.zipCode).toBe("95110");
     expect(senior?.clientId).toBe(CLIENT_UID);
     expect(senior?.needs).toEqual(["Companionship"]); // site taxonomy category (careNeedsTaxonomy.ts)
-    expect(senior?.diagnoses).toEqual(["dementia"]);
+    expect(senior).not.toHaveProperty("diagnoses");
+    expect(senior).not.toHaveProperty("genderPreference");
 
-    const intake = hoisted.docState.get(`clientIntakes/${CLIENT_UID}`);
-    expect(intake?.recipientName).toBe("Margaret");
-    expect(intake?.contactName).toBe("Hamse");
-    expect(intake?.status).toBe("pending");
-    expect(intake?.schedule).toContain("3 days/week");
+    // The wizard writes no clientIntakes doc, no household senior_profiles docs
+    // and no users.seniorIds — neither does Evia.
+    expect([...hoisted.docState.keys()].filter((p) => p.startsWith("clientIntakes/"))).toHaveLength(0);
+    expect([...hoisted.docState.keys()].filter((p) => p.startsWith("senior_profiles/"))).toEqual([`senior_profiles/${CLIENT_UID}`]);
+    expect(hoisted.docState.get(`users/${CLIENT_UID}`)).not.toHaveProperty("seniorIds");
+    expect(hoisted.docState.get(`users/${CLIENT_UID}`)?.jobPostingCompleted).toBe(true);
 
-    // The household extra recipient got its own deterministic doc + back-ref.
-    const seniorIds: string[] = hoisted.docState.get(`users/${CLIENT_UID}`)?.seniorIds ?? [];
-    expect(seniorIds).toHaveLength(1);
-    expect(hoisted.docState.get(`senior_profiles/${seniorIds[0]}`)?.name).toBe("Frank");
+    const jp = hoisted.docState.get(`job_postings/${CLIENT_UID}`);
+    expect(jp).not.toHaveProperty("careLevel");
+    expect(jp?.rate).toBe(26);
+    expect(jp?.rateFlexible).toBe(false);
+    expect(jp?.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/); // "ASAP" → ISO today
+    expect(jp?.emergencyPhone).toBe("(408) 555-1234");
+    // createJobPosting's final write clears the wizard's per-step draft cursor.
+    expect(jp?.draftStep).toEqual({ __delete: true });
+    expect(jp?.draftUpdatedAt).toEqual({ __delete: true });
+  });
+
+  it("persistClientCareRecords upserts ONE locationPool entry (street+zip match) with lat/lng and no `primary` marker", async () => {
+    hoisted.docState.set(`carePlans/${CLIENT_UID}`, {
+      locationPool: [
+        { street: "9 Elm St", city: "Campbell", state: "CA", zipCode: "95008", petsInHome: false, smokingHousehold: false },
+        { street: "123 main st", city: "San Jose", state: "CA", zipCode: "95110", petsInHome: false, smokingHousehold: false },
+      ],
+    });
+    const withStreet = { ...CLIENT_DATA, street: "123 Main St", petsInHome: true, lat: 37.33, lng: -121.89 };
+    await persistClientCareRecords(CLIENT_UID, PHONE, withStreet);
+
+    const pool = hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.locationPool ?? [];
+    expect(pool).toHaveLength(2); // matched the existing San Jose entry — nothing replaced, nothing duplicated
+    expect(pool[0].street).toBe("9 Elm St");
+    expect(pool[1]).toMatchObject({ street: "123 main st", zipCode: "95110", petsInHome: true, smokingHousehold: false, lat: 37.33, lng: -121.89 });
+    expect(pool[1]).not.toHaveProperty("primary");
+    // job_postings carries the same geocode, like createJobPosting.
+    const jp = hoisted.docState.get(`job_postings/${CLIENT_UID}`);
+    expect(jp?.lat).toBe(37.33);
+    expect(jp?.lng).toBe(-121.89);
   });
 
   // 2026-09-15: the recipient roster on job_postings/{uid} is only ever ADDED
@@ -741,10 +788,10 @@ describe("client care records + payment mirror", () => {
     expect(jp?.adultsCount).toBe(1 + names.length);
   });
 
-  it("does NOT mint an anonymous intake at intake-confirm when no uid resolved", async () => {
+  it("writes nothing at all when no uid resolved (no anonymous intake, no records)", async () => {
     await persistClientCareRecords(undefined, PHONE, CLIENT_DATA);
-    const intakes = [...hoisted.docState.keys()].filter((p) => p.startsWith("clientIntakes/"));
-    expect(intakes).toHaveLength(0);
+    expect([...hoisted.docState.keys()].filter((p) => p.startsWith("clientIntakes/"))).toHaveLength(0);
+    expect([...hoisted.docState.keys()].filter((p) => p.startsWith("job_postings/") || p.startsWith("carePlans/"))).toHaveLength(0);
   });
 
   it("payment webhook mirrors stripeCustomerId onto users/{uid} AND customers/{uid} (billing portal parity)", async () => {
@@ -755,15 +802,21 @@ describe("client care records + payment mirror", () => {
 
     const user = hoisted.docState.get(`users/${CLIENT_UID}`);
     expect(user?.subscriptionActive).toBe(true);
-    expect(user?.stripeSubscriptionId).toBe("sub_test123");
+    expect(user?.membershipStatus).toBe("active");
+    // The site's Stripe webhook field name (stripe.ts `subscriptionId`), not an
+    // Evia-only alias; and no Evia-only onboardingProgress blob.
+    expect(user?.subscriptionId).toBe("sub_test123");
+    expect(user).not.toHaveProperty("stripeSubscriptionId");
+    expect(user).not.toHaveProperty("onboardingProgress");
     expect(user?.stripeCustomerId).toBe("cus_test123");
     // customers/{uid} is where the client Payments page + the shared billing
     // portal callable resolve the Stripe customer — SMS-paid clients used to
     // have no doc here at all.
     expect(hoisted.docState.get(`customers/${CLIENT_UID}`)?.stripeCustomerId).toBe("cus_test123");
-    // Care records re-persisted with the final data.
-    expect(hoisted.docState.get(`clientIntakes/${CLIENT_UID}`)?.recipientName).toBe("Margaret");
+    // Care records re-persisted with the final data (no clientIntakes — wizard parity).
+    expect(hoisted.docState.get(`job_postings/${CLIENT_UID}`)?.careRecipientFirstName).toBe("Margaret");
     expect(hoisted.docState.get(`carePlans/${CLIENT_UID}`)?.clientId).toBe(CLIENT_UID);
+    expect(hoisted.docState.get(`clientIntakes/${CLIENT_UID}`)).toBeUndefined();
   });
 
   // 2026-08-22: the site's Care Plan confirmation ("Looks good") happens

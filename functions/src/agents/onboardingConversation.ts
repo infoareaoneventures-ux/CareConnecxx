@@ -35,20 +35,25 @@ import { addKnownNames } from "../utils/knownNames";
 import { verifyProfilePhoto, verifyDocument } from "../utils/visionVerify";
 import { getAppUrl } from "../config/appUrl";
 import { caregiverAnnualDisplay, caregiverAnnualAmount, clientMonthlyDisplay, mvrDisplay } from "../config/pricing";
-// conversationStep + onboardingSteps.client are KEPT: the loop-only cut deleted
-// the scripted CONVERSATIONAL collection handlers, but the post-collection intake
-// steps (client_ask_start/preferences/budget/confirm_intake) still run on this
-// table-driven runner. (onboardingSteps.caregiver + onboardingDispatcher were
-// deleted — caregiver has no runStep-based kept steps and the dispatcher only
-// ever sequenced scripted client collection.)
-import { runStep, RunStepContext, StepDeps } from "./conversationStep";
+// onboardingSteps.client is KEPT only for its reask() text (currentStepQuestion
+// below). The loop-only cut deleted the scripted CONVERSATIONAL collection
+// handlers, and the legacy post-collection steps (client_ask_start/preferences/
+// budget) were removed too — the site's wizard never collected a start-date
+// preference, caregiver preferences or a budget — so complete_collection now
+// hands straight to client_confirm_intake and nothing runs on the table-driven
+// runner anymore.
 import { isQuestionOrOther as stepIsQuestionOrOther, classifyAwaitingReply } from "./stepHandler";
 import { buildClientSteps } from "./onboardingSteps.client";
 import { isOnboardingDryRun, recordSideEffect, guardSideEffect } from "./onboardingDryRun";
 import { runGetCaregiverPreviewAction } from "./actions/getCaregiverPreviewAction";
 import { deriveWeeklyAvailability } from "./caregiverAvailability";
-import { recipientPlanKey, householdSeniorDocId, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho, toWebsiteRelationship } from "./careRecipients";
-import { buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields } from "./clientJobPostingContract";
+import { recipientPlanKey, normalizeAdditionalRecipients, allCareRecipients, describeWhoIsWho } from "./careRecipients";
+import {
+  buildClientDraftMirror, buildJobPostingsDoc, buildCarePlanLocationEntry, buildSeniorProfileWizardFields,
+  upsertCarePlanLocationPool, formatWizardPhone, normalizeStartDateToISO, deriveCareLevel,
+} from "./clientJobPostingContract";
+import { coerceClientRate } from "./onboardingContract";
+import { businessTodayStr, formatDateForDisplay } from "../utils/scheduledTime";
 import { canonicalizeCareNeeds, describeCareNeeds, isCanonicalCareNeeds } from "./careNeedsTaxonomy";
 import { collectionStepsForRole, missingRequiredFields, firstGateStep, caregiverJobTypesToWebIds, isNumericOnboardingField, coerceNumericOnboardingField, normalizeOnboardingFieldValue } from "./onboardingContract";
 import { LIVE_GATE_FACT_BUILDERS, buildLiveBgcheckFact } from "./liveGateFacts";
@@ -446,6 +451,17 @@ export async function loadLiveClientLocation(
     out.lat = user.latitude;
     out.lng = user.longitude;
   }
+  // job_postings.lat/lng — the wizard's own geocode of the care address
+  // (createJobPosting), which FindCaregivers.tsx reads first for distance;
+  // Evia's persistClientCareRecords writes the same field now too.
+  if (out.lat == null) {
+    const jpSnap = await db.collection("job_postings").doc(userId).get().catch(() => null);
+    const jp = jpSnap?.exists ? jpSnap.data() as Record<string, unknown> : null;
+    if (typeof jp?.lat === "number" && typeof jp?.lng === "number") {
+      out.lat = jp.lat;
+      out.lng = jp.lng;
+    }
+  }
 
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -746,7 +762,7 @@ async function ensureWebAccount(
 // and the agent loop hands back to the deterministic gate machine. Kept (read by
 // finalization + the post-collection handoff); mirrors onboardingContract's
 // CLIENT_POST_COLLECTION_STEP.
-export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
+export const CLIENT_POST_COLLECTION_STEP = "client_confirm_intake";
 
 export function isFieldFilled(value: unknown): boolean {
   if (value === undefined || value === null) return false;
@@ -777,8 +793,7 @@ export async function absorbClientFields(text: string, existing: Record<string, 
       `"additionalRecipients":[{"name":"...","relationship":"...","age":number}] — ` +
       `ONLY when care is for MORE THAN ONE person (e.g. "both mom and dad"); every person after the first goes here,` +
       `"age":number (the FIRST care recipient's age),` +
-      `"careNeeds":["short need phrase"],` +
-      `"conditions":["short condition phrase"],` +
+      `"careNeeds":["short need phrase — day-to-day help, never a diagnosis"],` +
       `"city":"city name",` +
       `"zipCode":"5-digit US zip code",` +
       `"daysPerWeek":number of days per week care is needed,` +
@@ -825,8 +840,7 @@ export async function absorbClientProfileUpdate(
   const raw = await parseWithClaude(
     "A family member already signing up with Evia texted a message. Extract ONLY care details they are " +
       "adding about their loved one in THIS message. Return JSON only; omit anything not present. Schema: " +
-      `{"careNeeds":["short need phrase like 'bathing' or 'meal prep'"],` +
-      `"conditions":["short condition phrase like 'dementia'"]}. ` +
+      `{"careNeeds":["short need phrase like 'bathing' or 'meal prep' — day-to-day help, never a diagnosis"]}. ` +
       "Be conservative — only include what is unambiguously stated. Reply with raw JSON, no markdown.",
     text,
   ).catch(() => "{}");
@@ -835,7 +849,7 @@ export async function absorbClientProfileUpdate(
 
   const cleanArr = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
-  for (const key of ["careNeeds", "conditions"] as const) {
+  for (const key of ["careNeeds"] as const) {
     if (out[key]) continue; // first pass already handled the empty-field case
     const added = cleanArr(parsed[key]);
     if (!added.length) continue;
@@ -849,9 +863,10 @@ export async function absorbClientProfileUpdate(
 
 // Client twin of tryAbsorbGateProfileUpdate (caregiver side, 2026-07-15): a
 // family member parked at the identity/payment gate who volunteers a care
-// detail gets it SAVED — session onboardingData + the latest clientIntakes
-// doc — and specifically acknowledged, instead of a context-free nudge that
-// silently drops it. Returns true when it handled the turn.
+// detail gets it SAVED to the session onboardingData (the payment webhook's
+// persistClientCareRecords re-run lands it on the real records) and
+// specifically acknowledged, instead of a context-free nudge that silently
+// drops it. Returns true when it handled the turn.
 async function tryAbsorbClientGateUpdate(
   phone:          string,
   chatId:         string,
@@ -870,22 +885,6 @@ async function tryAbsorbClientGateUpdate(
   if (!keys.length) return false;
 
   await mergeOnboardingData(phone, updates);
-  // Mirror onto the latest intake so matching sees the update. Intake docs
-  // carry careTypes (mirrored from careNeeds at creation) — write the merged
-  // superset; never blanks a field (merge + omit-absent).
-  try {
-    const intakeSnap = await db.collection("clientIntakes")
-      .where("phone", "==", phone).orderBy("createdAt", "desc").limit(1).get();
-    if (!intakeSnap.empty) {
-      const intakeUpdate: Record<string, unknown> = {
-        ...(updates.careNeeds  ? { careTypes: updates.careNeeds }   : {}),
-        ...(updates.conditions ? { conditions: updates.conditions } : {}),
-      };
-      if (Object.keys(intakeUpdate).length) await intakeSnap.docs[0].ref.set(intakeUpdate, { merge: true });
-    }
-  } catch (err) {
-    console.error("[clientGateUpdate] intake mirror failed (session still updated):", err);
-  }
 
   const human = keys.map((k) => {
     const v = updates[k];
@@ -1202,9 +1201,8 @@ export async function handleOnboardingStep(
     // agent loop owns client collection. A collection-step cursor never reaches
     // this switch (webhook routes it to the loop); the defensive default below
     // covers any stray cursor.
-    case "client_ask_start":        return handleClientAskStart(phone, chatId, text, session);
-    case "client_ask_preferences":  return handleClientAskPreferences(phone, chatId, text, session);
-    case "client_ask_budget":       return handleClientAskBudget(phone, chatId, text, session);
+    // client_ask_start/preferences/budget: removed — the site's wizard never
+    // collected them; complete_collection hands straight to client_confirm_intake.
     case "client_confirm_intake":   return handleClientConfirmIntake(phone, chatId, text, session);
     case "client_ask_plan":       return handleClientPlanReply(phone, chatId, text, session);
     case "client_send_payment":   return handleClientSendPayment(phone, chatId, session);
@@ -1337,7 +1335,6 @@ export async function handleOnboardingStep(
       await runGateLinkNet(phone, chatId, session, clientPayNudge);
       return;
     }
-    case "job_ask_pay_rate":     return handleJobAskPayRate(phone, chatId, text, session);
     case "job_confirm_prefill":  return handleJobConfirmPrefill(phone, chatId, text, session);
     case "job_ask_start":        return handleJobAskStart(phone, chatId, text, session);
     case "job_ask_frequency":    return handleJobAskFrequency(phone, chatId, text, session);
@@ -1554,8 +1551,8 @@ export async function handleOnboardingStep(
     }
     default:
       // Loop-only defensive default (2c): a conversational collection-step cursor
-      // (*_ask_* other than the KEPT client_ask_start/preferences/budget and
-      // caregiver_ask_mvr, which have explicit cases above) should never reach the
+      // (*_ask_* other than caregiver_ask_mvr, which has an explicit case
+      // above) should never reach the
       // scripted runner — the webhook routes those turns to the agent loop. If one
       // strays in, nudge gently and LEAVE the cursor so the next inbound routes to
       // the loop; never wipe their progress with a START OVER.
@@ -1656,8 +1653,13 @@ async function findConflictingRoleAccount(
     if (data.userType !== "client" && data.userType !== "caregiver") continue;
     const role = data.userType as "client" | "caregiver";
     if (role === claimedRole) continue;
+    // Same "real client progress" test as userHasRealOnboardingProgress
+    // (linq/webhooks.ts): a legacy seniorId/seniorIds, OR the wizard's own
+    // jobPostingCompleted flag — which is also what Evia's
+    // persistClientCareRecords sets (it no longer writes seniorIds).
     const seniorIds = (data.seniorIds as string[] | undefined) ?? [];
-    const hasSeniorProgress = !!(data.seniorId as string | undefined) || seniorIds.length > 0;
+    const hasSeniorProgress = !!(data.seniorId as string | undefined) || seniorIds.length > 0
+      || data.jobPostingCompleted === true;
     const cgDoc = role === "caregiver" ? await db.collection("caregivers").doc(doc.id).get().catch(() => null) : null;
     const hasRealProgress = role === "client" ? hasSeniorProgress : !!cgDoc?.exists;
     if (hasRealProgress) return { userId: doc.id, role };
@@ -2082,66 +2084,24 @@ async function parseNameConfirmation(
   }
 }
 
-// The linear client question steps, expressed as data and driven by `runStep`
-// (see conversationStep.ts). Every user-visible string lives in
-// onboardingSteps.client.ts, copied verbatim from the former handlers. The
-// helpers each step needs are injected here so the table file stays free of an
-// import cycle. (`locationPrompt` and `buildIntakeSummary` are hoisted function
-// declarations, so referencing them at module-init time is safe.)
+// The client step table (onboardingSteps.client.ts) is kept ONLY for its
+// reask() text, used by currentStepQuestion above when a family greets mid-flow.
+// Nothing runs on the table-driven runner anymore: the loop owns collection and
+// the legacy post-collection steps were removed (see the import note at the top).
 const CLIENT_STEPS = buildClientSteps({
   generateCaraMessage,
   locationPrompt,
-  buildIntakeSummary,
 });
-
-// Production side effects for `runStep`: the real mid-flow helpers plus an
-// ATOMIC merge+advance — one Firestore `.update()` using dotted field paths, so
-// a failure can't leave a user half-advanced (the old code did two writes).
-const stepDeps: StepDeps = {
-  isQuestionOrOther,
-  answerQuestionMidFlow,
-  parseWithClaude,
-  sendMessage,
-  async mergeAndAdvance(phone, fields, nextStep) {
-    // Dotted paths update individual onboardingData keys without overwriting
-    // siblings, so this preserves everything collected on earlier steps.
-    const update: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(fields)) update[`onboardingData.${k}`] = v;
-    if (nextStep) update.onboardingStep = nextStep;
-    await db.collection("agent_sessions").doc(phone).update(update);
-  },
-};
-
-function clientStepCtx(phone: string, chatId: string, text: string, session: AgentSession): RunStepContext {
-  return { phone, chatId, text, session };
-}
-
-// ── New intake steps: start date → preferences → budget → playback confirm ─────
-
-async function handleClientAskStart(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CLIENT_STEPS.client_ask_start, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleClientAskPreferences(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  return runStep(CLIENT_STEPS.client_ask_preferences, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
-
-async function handleClientAskBudget(phone: string, chatId: string, text: string, session: AgentSession): Promise<void> {
-  // runStep advances to client_confirm_intake and sends the intake summary via
-  // the step's nextQuestion (buildIntakeSummary over the merged in-memory data).
-  return runStep(CLIENT_STEPS.client_ask_budget, clientStepCtx(phone, chatId, text, session), stepDeps);
-}
 
 // Plain-text playback of everything Evia captured — a confirmation gate before
 // the paywall so a parse error can't slip through unnoticed.
 function buildIntakeSummary(d: Record<string, unknown>): string {
   const seniorName = (d.seniorName as string) || "your loved one";
   const age        = d.age ? `${d.age}` : "";
-  const conditions = Array.isArray(d.conditions) && d.conditions.length
-    ? (d.conditions as string[]).join(", ")
-    : Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
-      ? describeCareNeeds(d.careNeeds as string[], d.careNeedDetails as Record<string, string[]> | undefined)
-      : "";
+  // Care needs only — diagnoses/conditions are never collected (non-medical scope).
+  const conditions = Array.isArray(d.careNeeds) && (d.careNeeds as string[]).length
+    ? describeCareNeeds(d.careNeeds as string[], d.careNeedDetails as Record<string, string[]> | undefined)
+    : "";
   // Full street address (2026-08-24), not just city+zip — a wrong house number
   // or street name is a real, consequential mistake (a caregiver can't find
   // the door), unlike city/zip alone confirming just the general area.
@@ -2152,27 +2112,23 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   // longer writes, so reading only daysPerWeek silently dropped schedule info
   // from this summary for every loop-collected signup.
   const days  = Array.isArray(d.selectedDays) && (d.selectedDays as string[]).length
-    ? (d.selectedDays as string[]).join("/")
-    : d.daysPerWeek ? `${d.daysPerWeek} day${Number(d.daysPerWeek) === 1 ? "" : "s"}/week` : "";
+    ? (d.selectedDays as string[]).join("/") + (d.daysFlexible === true ? " (flexible)" : "")
+    : d.daysFlexible === true
+      ? "flexible days"
+      : d.daysPerWeek ? `${d.daysPerWeek} day${Number(d.daysPerWeek) === 1 ? "" : "s"}/week` : "";
   const tod   = Array.isArray(d.timeOfDay) ? (d.timeOfDay as string[]).join("/") : (d.timeOfDay as string) || "";
   const sched = [days, tod].filter(Boolean).join(", ");
-  const start = (d.startDate as string) || "";
-  const prefs = (d.caregiverPreferences as Record<string, unknown> | undefined) ?? {};
-  const prefBits: string[] = [];
-  if (prefs.gender)   prefBits.push(String(prefs.gender));
-  if (prefs.language) prefBits.push(`${prefs.language}-speaking`);
-  if (prefs.driving)  prefBits.push("can drive");
-  if (prefs.other)    prefBits.push(String(prefs.other));
-  // rate (a number, or the string "flexible") is the current loop field —
-  // budget.{min,max} is the legacy shape the client loop no longer writes.
-  const b = (d.budget as { min?: number; max?: number } | undefined) ?? {};
-  const budget = typeof d.rate === "number"
-    ? `$${d.rate}/hr ($${(Math.round(d.rate * 1.09 * 100) / 100).toFixed(2)}/hr billed incl. the 9% service fee)`
-    : typeof d.rate === "string" && d.rate
-      ? d.rate
-      : (b.min || b.max)
-        ? (b.min === b.max ? `$${b.max}/hr` : `$${b.min}–${b.max}/hr`)
-        : "";
+  // startDate is stored as the wizard's ISO yyyy-mm-dd — read it back in
+  // family words: today → "as soon as possible", otherwise "September 30, 2026".
+  const startIso = normalizeStartDateToISO(d.startDate);
+  const start = startIso
+    ? (startIso === businessTodayStr() ? "as soon as possible" : formatDateForDisplay(startIso))
+    : "";
+  // rate is always a number (the wizard has no "flexible" option).
+  const rateNum = coerceClientRate(d.rate);
+  const budget = rateNum !== null
+    ? `$${rateNum}/hr ($${(Math.round(rateNum * 1.09 * 100) / 100).toFixed(2)}/hr billed incl. the 9% service fee)`
+    : "";
 
   const pieces: string[] = [];
   // Multi-recipient household: name everyone so the family can catch a missed
@@ -2188,7 +2144,6 @@ function buildIntakeSummary(d: Record<string, unknown>): string {
   if (loc) pieces.push(`in ${loc}`);
   if (sched) pieces.push(sched);
   if (start) pieces.push(`starting ${start}`);
-  if (prefBits.length) pieces.push(`preference: ${prefBits.join(", ")}`);
   if (budget) pieces.push(`budget ${budget}`);
   // The wizard's "What would you like caregivers to know" answer — the Care Plan
   // page shows it as the recipient's Notes, so the family sees it here too.
@@ -2203,14 +2158,19 @@ async function sendClientIntakeSummary(chatId: string, session: AgentSession): P
 
 // Pull any corrected intake fields out of a free-text edit at the confirm step.
 async function extractIntakeCorrections(text: string): Promise<Record<string, unknown>> {
+  // Anchor relative dates to the real business-date "today" so "next Monday"
+  // resolves correctly (same technique as jobPostingFlow's start-date step).
+  const todayIso = businessTodayStr();
+  const todayDow = new Date().toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" });
   const raw = await parseWithClaude(
-    "The family is correcting their care intake. Extract ONLY the fields they're changing; omit the rest. " +
-    "Return raw JSON with any of: {\"seniorName\":\"\",\"age\":0,\"careNeeds\":[],\"conditions\":[],\"city\":\"\"," +
-    "\"zipCode\":\"\",\"selectedDays\":[],\"timeOfDay\":\"\",\"startDate\":\"\",\"rate\":0,\"relationship\":\"\"," +
+    `Today is ${todayDow}, ${todayIso}. The family is correcting their care intake. Extract ONLY the fields they're changing; omit the rest. ` +
+    "Return raw JSON with any of: {\"seniorName\":\"\",\"age\":0,\"careNeeds\":[],\"city\":\"\"," +
+    "\"zipCode\":\"\",\"selectedDays\":[],\"daysFlexible\":false,\"timeOfDay\":\"\",\"startDate\":\"\",\"rate\":0,\"relationship\":\"\"," +
     "\"emergencyContactName\":\"\",\"emergencyContactPhone\":\"\",\"firstName\":\"\"," +
-    "\"daysPerWeek\":0,\"hoursPerDay\":0,\"budget\":{\"min\":0,\"max\":0}}. " +
-    "selectedDays is an array of uppercase 3-letter day codes e.g. ['MON','WED','FRI']. rate is a number, " +
-    "or the string \"flexible\" if they say that. relationship is one of: myself, parent, spouse, other. " +
+    "\"daysPerWeek\":0,\"hoursPerDay\":0}. " +
+    "selectedDays is an array of uppercase 3-letter day codes e.g. ['MON','WED','FRI']. rate is a NUMBER of dollars per hour " +
+    "(never a word). startDate is YYYY-MM-DD relative to today, or \"ASAP\" if they want it right away. " +
+    "relationship is one of: myself, parent, spouse, other. " +
     "Only include a field if they clearly changed it.",
     text
   ).catch(() => "{}");
@@ -2222,9 +2182,23 @@ async function extractIntakeCorrections(text: string): Promise<Record<string, un
       if (typeof v === "string" && v.trim() === "") continue;
       if (typeof v === "number" && v === 0) continue;
       if (Array.isArray(v) && v.length === 0) continue;
-      if (k === "budget") {
-        const bv = v as { min?: number; max?: number };
-        if (!bv.min && !bv.max) continue;
+      // Same value rules save_onboarding_field enforces: rate must be a
+      // positive number; startDate must canonicalize to the wizard's ISO date;
+      // the emergency phone takes the wizard's (555) 000-0000 shape (≥10 digits).
+      if (k === "rate") {
+        const n = coerceClientRate(v);
+        if (n !== null) out.rate = n;
+        continue;
+      }
+      if (k === "startDate") {
+        const iso = normalizeStartDateToISO(v);
+        if (iso) out.startDate = iso;
+        continue;
+      }
+      if (k === "emergencyContactPhone") {
+        const formatted = formatWizardPhone(v);
+        if (formatted) out.emergencyContactPhone = formatted;
+        continue;
       }
       // relationship must go through the same canonicalization
       // save_onboarding_field applies (daughter/son/child/mother/etc. →
@@ -2311,11 +2285,16 @@ async function createClientIdentitySession(phone: string): Promise<string> {
   return createBrandedLink("verify", session.url!, phone);
 }
 
-// Persist the confirmed client intake as REAL care records — carePlans/{uid},
-// senior_profiles (primary + household), clientIntakes/{uid}, users.seniorIds.
+// Persist the confirmed client intake as REAL care records — exactly the records
+// the website wizard's createJobPosting (services/api.ts) writes, and nothing
+// more: job_postings/{uid}, carePlans/{uid} (recipientPlans + one upserted
+// locationPool entry + emergencyContacts), senior_profiles/{uid} (the wizard's
+// profileUpdate shape), users/{uid} (address/email/photo/jobPostingCompleted).
+// No clientIntakes doc, no per-recipient household senior_profiles docs, no
+// users.seniorIds, no careLevel, no diagnoses — the wizard writes none of them.
 // Called at intake-confirm (handleClientShowCaregivers) so the webapp account
 // reflects the care recipient even if the family stalls at the paywall, and
-// re-run by the payment webhook so the final budget/preferences/startDate land.
+// re-run by the payment webhook so anything volunteered at a gate lands.
 // Every write is a merge — safe to run repeatedly. Same fix class as the
 // caregiver doc pre-create at the gate handoff (a client who onboarded but
 // didn't pay used to leave NO care record at all).
@@ -2323,21 +2302,19 @@ export async function persistClientCareRecords(
   uid: string | undefined,
   phone: string,
   d: Record<string, unknown>,
-  opts: { allowAnonIntake?: boolean } = {},
 ): Promise<void> {
-  // Raw coords (present only when the family shared a location pin) — unlock
-  // true haversine distance in aiMatching instead of city/zip proxy buckets.
+  // Geocoded care-address coords (ensureClientCoords / a shared location pin)
+  // — written onto job_postings.lat/lng and the locationPool entry the same
+  // way createJobPosting geocodes once at wizard completion.
   const lat = typeof d.lat === "number" ? d.lat as number : undefined;
   const lng = typeof d.lng === "number" ? d.lng as number : undefined;
   const hasCoords = lat !== undefined && lng !== undefined;
 
   const seniorName   = (d.seniorName   ?? "") as string;
-  const relationship = toWebsiteRelationship(d.relationship as string | undefined) ?? "";
   const city         = (d.city         ?? "") as string;
   const zipCode      = (d.zipCode      ?? "") as string;
   const street       = (d.street       ?? "") as string;
   const state        = (d.state        ?? "") as string;
-  const conditions   = (d.conditions   ?? []) as string[];
   const rawCareNeeds = (d.careNeeds    ?? []) as string[];
   // Site taxonomy (careNeedsTaxonomy.ts): recipientPlans[key].careNeeds holds the
   // page's CATEGORY names and careNeedDetails the sub-tasks — never the family's
@@ -2367,264 +2344,191 @@ export async function persistClientCareRecords(
   const homeZipCode  = (d.homeZipCode as string | undefined) || zipCode;
   const homeState    = (d.homeState   as string | undefined) || state;
 
-  if (uid) {
-    // One plan entry per care recipient (primary + any additional — "both
-    // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
-    // (recipientPlanKey) or the web tabs can't find Evia's plan data.
-    // Care needs/conditions are shared across recipients at signup — same
-    // behavior as the web PostJob flow; per-person details are edited later
-    // in the CarePlan tabs.
-    const recipients = allCareRecipients(d);
-    const recipientPlans: Record<string, unknown> = {};
-    for (const r of recipients) {
-      recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
-        name:         r.name,
-        age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
-        relationship: r.relationship ?? "",
-        careNeeds,
-        careNeedDetails,
-        conditions,
-        ...(noteText ? { notes: noteText } : {}),
-        // Provenance for multi-recipient households: these needs/conditions are
-        // a signup-time COPY shared across everyone — the care-plan interview
-        // confirms them per person rather than trusting them as individual.
-        ...(recipients.length > 1 ? { sharedAtSignup: true } : {}),
-        updatedAt:    new Date().toISOString(),
-      };
-    }
-    // Emergency contact collected over SMS — same shape the web wizard writes
-    const ecName  = (d.emergencyContactName  as string | undefined) ?? "";
-    const ecPhone = (d.emergencyContactPhone as string | undefined) ?? "";
-    const ecRel   = (d.emergencyContactRelationship as string | undefined) ?? "";
-    const emergencyContacts = (ecName || ecPhone)
-      ? [{ id: "sms", name: ecName, phone: ecPhone, relation: ecRel, isPrimary: true }]
-      : undefined;
+  if (!uid) return;
 
-    await db.collection("carePlans").doc(uid).set({
-      clientId: uid,
-      phone,
-      recipientPlans,
-      locationPool: [buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number } : undefined)],
-      ...(emergencyContacts ? { emergencyContacts } : {}),
-      // Same review marker the website's "Looks good" button sets on
-      // CarePlan.tsx. The wizard's version is a single end-of-form glance;
-      // over SMS the family already confirmed every field conversationally,
-      // one at a time, as they answered — that IS the review, so it's stamped
-      // here automatically rather than adding a redundant extra "does this
-      // look right?" turn right after they just finished answering everything.
-      carePlanReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-
-    // Write home address to users/{uid} — same as wizard step 3 writes.
-    // homeCity/homeZipCode are the account holder's address; care address may differ.
-    if (homeCity || homeZipCode) {
-      await db.collection("users").doc(uid).set({
-        city:    homeCity,
-        zipCode: homeZipCode,
-        ...(homeStreet ? { street: homeStreet } : {}),
-        ...(homeState  ? { state:  homeState  } : {}),
-      }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
-    }
-
-    // Recovery email — required field (onboardingContract.ts), written to
-    // users/{uid} the same place AccountSettings.tsx reads it from. Loosely
-    // validated (matches caregiverFieldAbsorber.ts's own EMAIL_RE) rather than
-    // trusted blindly — this is the sole recovery channel if the phone is lost.
-    const email = (d.email as string | undefined)?.trim();
-    if (email && /^\S+@\S+\.\S+$/.test(email)) {
-      await db.collection("users").doc(uid).set({ email: email.toLowerCase() }, { merge: true })
-        .catch((err) => console.error("persistClientCareRecords: users email write failed (non-fatal):", err));
-    }
-
-    // Signup-time photo is the ACCOUNT HOLDER's own photo — same semantics as
-    // AccountSettings.tsx's "your photo", not automatically the care
-    // recipient's (Hamse, 2026-08-23). Mirrored here regardless of who the
-    // care is for; buildJobPostingsDoc separately mirrors it onto the
-    // recipient-facing careRecipientPhotoURL field only when relationship is
-    // "myself" (self-care) — see clientJobPostingContract.ts.
-    const acctPhotoURL = (d.careRecipientPhotoURL as string | undefined) || undefined;
-    if (acctPhotoURL) {
-      await db.collection("users").doc(uid).set({ photoURL: acctPhotoURL }, { merge: true })
-        .catch((err) => console.error("persistClientCareRecords: users photo write failed (non-fatal):", err));
-      await admin.auth().updateUser(uid, { photoURL: acctPhotoURL }).catch(() => { /* best effort, matches AccountSettings.tsx */ });
-    }
-
-    // jobPostingCompleted — same flag + same TIMING the wizard's own "Submit"
-    // sets it (before Identity/Membership, not after payment). This function
-    // runs at intake-confirm, the true equivalent moment to the wizard's
-    // Submit; App.tsx's ClientRoute checks this flag before showing the
-    // ClientJobPostingWizard overlay, so an SMS client mid-flow shouldn't see
-    // it once they've reached this point.
-    await db.collection("users").doc(uid).set({
-      jobPostingCompleted: true,
-    }, { merge: true }).catch((err) =>
-      console.error("persistClientCareRecords: jobPostingCompleted write failed (non-fatal):", err));
-
-    // job_postings/{uid} full parity write — same shape the web wizard writes
-    // (clientJobPostingContract.ts is the single definition both channels use)
-    // so SMS-onboarded clients see a complete job post when they log in.
-    try {
-      const jpRef  = db.collection("job_postings").doc(uid);
-      const jpSnap = await jpRef.get();
-      const jpData = (jpSnap.exists ? jpSnap.data() : {}) as Record<string, unknown>;
-      const jpWrite: Record<string, unknown> = { ...buildJobPostingsDoc(uid, phone, d) };
-      if (!jpData.createdAt) {
-        jpWrite.createdAt = admin.firestore.FieldValue.serverTimestamp();
-      }
-      // The recipient roster is only ever ADDED to here, never replaced — same
-      // guarantee buildJobPost.ts and the website's own PostJobFlow give
-      // (2026-09-15: a wholesale additionalRecipients write could drop
-      // recipients the family had added on the Care Plan page). An existing
-      // primary is sticky; the SMS primary, if a different person, joins the
-      // additional list instead of displacing them.
-      const rosterKey = (first: unknown, last: unknown) =>
-        `${String(first ?? "").trim().toLowerCase()}_${(String(last ?? "").trim() || "noname").toLowerCase()}`.replace(/\s+/g, "_");
-      const existingAdditional = Array.isArray(jpData.additionalRecipients)
-        ? (jpData.additionalRecipients as Array<Record<string, unknown>>)
-        : [];
-      const incomingAdditional = Array.isArray(jpWrite.additionalRecipients)
-        ? (jpWrite.additionalRecipients as Array<Record<string, unknown>>)
-        : [];
-      const merged: Array<Record<string, unknown>> = [...existingAdditional];
-      const have = new Set<string>(existingAdditional.map((r) => rosterKey(r.firstName, r.lastName)));
-      if (jpData.careRecipientFirstName) {
-        have.add(rosterKey(jpData.careRecipientFirstName, jpData.careRecipientLastName));
-        // Primary already on file — keep it; fold the SMS primary in as an
-        // additional recipient when it's someone else.
-        const smsPrimaryKey = rosterKey(jpWrite.careRecipientFirstName, jpWrite.careRecipientLastName);
-        if (jpWrite.careRecipientFirstName && !have.has(smsPrimaryKey)) {
-          merged.push({
-            firstName: jpWrite.careRecipientFirstName, lastName: jpWrite.careRecipientLastName ?? "",
-            relationship: jpWrite.relationship ?? "",
-            ...(jpWrite.careRecipientAge !== undefined ? { age: jpWrite.careRecipientAge } : {}),
-          });
-          have.add(smsPrimaryKey);
-        }
-        delete jpWrite.careRecipientFirstName;
-        delete jpWrite.careRecipientLastName;
-        delete jpWrite.careRecipientAge;
-        delete jpWrite.relationship;
-        delete jpWrite.careRecipientPhotoURL;
-      }
-      for (const r of incomingAdditional) {
-        const k = rosterKey(r.firstName, r.lastName);
-        if (!have.has(k)) { merged.push(r); have.add(k); }
-      }
-      jpWrite.additionalRecipients = merged;
-      jpWrite.adultsCount = 1 + merged.length;
-      await jpRef.set(jpWrite, { merge: true });
-    } catch (err) {
-      console.error("persistClientCareRecords: job_postings full write failed (non-fatal):", err);
-    }
-
-    // senior_profiles/{uid} parity write for the PRIMARY recipient —
-    // CarePlan, matching, and the family dashboard read this doc (web
-    // signup creates it; Evia must too). The account holder's identity
-    // stays on users/{uid}; this doc is the care recipient's.
-    await db.collection("senior_profiles").doc(uid).set({
-      userId:    uid,
-      clientId:  uid,
-      name:      seniorName,
-      ...(seniorAge !== undefined ? { age: seniorAge } : {}),
-      ...(relationship ? { relationship } : {}),
-      // Wizard-parity fields (careNeeds/scheduleNeeded/imageUrl) — the web
-      // wizard's createJobPosting writes these same names alongside `needs`.
-      ...buildSeniorProfileWizardFields(d),
-      diagnoses: conditions,
-      // Web Senior type requires location (city string); preference fields
-      // feed the matching engine and the family dashboard.
-      location:  city || "",
-      zipCode:   zipCode || null,
-      genderPreference:   (d.genderPreference   ?? "") as string,
-      languagePreference: (d.languagePreference ?? "") as string,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
-
-    // Additional recipients get their own household senior_profiles docs
-    // (deterministic IDs — webhook retries must not mint duplicates) plus
-    // users/{uid}.seniorIds back-refs, so the MCP list_household_seniors
-    // tool and household-aware readers see every person Evia cares for.
-    const extraRecipients = normalizeAdditionalRecipients(d.additionalRecipients);
-    for (const r of extraRecipients) {
-      const seniorDocId = householdSeniorDocId(uid, r.name);
-      await db.collection("senior_profiles").doc(seniorDocId).set({
-        userId:    uid,
-        clientId:  uid,
-        name:      r.name,
-        ...(r.age !== undefined ? { age: r.age } : {}),
-        ...(r.relationship ? { relationship: r.relationship } : {}),
-        needs:     careNeeds,
-        diagnoses: conditions,
-        location:  city || "",
-        zipCode:   zipCode || null,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true }).catch((err) => console.error("household senior_profiles write error:", err));
-      await db.collection("users").doc(uid).set({
-        seniorIds: admin.firestore.FieldValue.arrayUnion(seniorDocId),
-      }, { merge: true }).catch((err) => console.error("users.seniorIds write error:", err));
-    }
+  // One plan entry per care recipient (primary + any additional — "both
+  // mom and dad"). Keys MUST use the web CarePlan.tsx getKey format
+  // (recipientPlanKey) or the web tabs can't find Evia's plan data. This is
+  // parity with the CarePlan page, which auto-seeds recipientPlans itself.
+  // Care needs are shared across recipients at signup — same behavior as the
+  // web PostJob flow; per-person details are edited later in the CarePlan tabs.
+  const recipients = allCareRecipients(d);
+  const recipientPlans: Record<string, unknown> = {};
+  for (const r of recipients) {
+    recipientPlans[recipientPlanKey(r.name.split(" ")[0] || r.name)] = {
+      name:         r.name,
+      age:          r.age ?? (recipientPlanKey(r.name) === recipientPlanKey(seniorName) ? seniorAge : undefined),
+      relationship: r.relationship ?? "",
+      careNeeds,
+      careNeedDetails,
+      ...(noteText ? { notes: noteText } : {}),
+      // Provenance for multi-recipient households: these needs are a
+      // signup-time COPY shared across everyone — the care-plan interview
+      // confirms them per person rather than trusting them as individual.
+      ...(recipients.length > 1 ? { sharedAtSignup: true } : {}),
+      updatedAt:    new Date().toISOString(),
+    };
   }
+  // Emergency contact — the exact entry createJobPosting writes: id 'wizard',
+  // phone in the wizard's (555) 000-0000 shape (>=10 digits, else omitted).
+  const ecName  = (d.emergencyContactName  as string | undefined) ?? "";
+  const ecPhone = formatWizardPhone(d.emergencyContactPhone) ?? "";
+  const ecRel   = (d.emergencyContactRelationship as string | undefined) ?? "";
+  const emergencyContacts = (ecName || ecPhone)
+    ? [{ id: "wizard", name: ecName, relation: ecRel, phone: ecPhone, isPrimary: true }]
+    : undefined;
 
-  // Write intake — uid-keyed so the web app (ClientIntakeFlowV2, matching
-  // hooks) reads the same doc Evia writes. Random-ID fallback only when no
-  // auth uid could be resolved AND the caller allows it (the payment webhook
-  // does; the intake-confirm call doesn't, so a transient auth failure can't
-  // mint a duplicate anonymous intake that payment re-adds later).
-  // Human-readable schedule string — the web ClientIntakeData contract and
-  // the matching prompt both read intake.schedule; built from the structured
-  // fields (or the absorbed free-text schedule when that's all we have).
-  const scheduleText = [
-    d.daysPerWeek ? `${d.daysPerWeek} days/week` : "",
-    (d.timeOfDay as string) ?? "",
-    d.hoursPerDay ? `${d.hoursPerDay} hrs/day` : "",
-  ].filter(Boolean).join(", ") || ((d.schedule as string) ?? "");
+  // locationPool: upsert ONE entry (match on street+zip, only when a street is
+  // present) exactly like createJobPosting's locationPoolUpdate — never
+  // replace the pool. lat/lng ride along: the site reads
+  // carePlans.locationPool[].lat/lng for distance.
+  const cpRef  = db.collection("carePlans").doc(uid);
+  const cpSnap = await cpRef.get().catch(() => null);
+  const existingPool = cpSnap?.exists ? (cpSnap.data() as Record<string, unknown>).locationPool : undefined;
+  const locationPool = upsertCarePlanLocationPool(
+    existingPool,
+    buildCarePlanLocationEntry(d, hasCoords ? { lat: lat as number, lng: lng as number } : undefined),
+  );
 
-  const intakeData = {
+  await cpRef.set({
+    clientId: uid,
     phone,
-    userId:      uid ?? null,
-    firstName:   d.firstName,
-    seniorName:  d.seniorName,
-    relationship: toWebsiteRelationship(d.relationship as string | undefined),
-    age:         d.age,
-    careNeeds:   d.careNeeds,
-    conditions:  d.conditions,
-    city:        d.city,
-    zipCode:     d.zipCode,
-    ...(hasCoords ? { lat, lng, location: { lat, lng } } : {}),
-    daysPerWeek: d.daysPerWeek,
-    timeOfDay:   d.timeOfDay,
-    hoursPerDay: d.hoursPerDay,
-    // Web-contract aliases (types.ts ClientIntakeData) — the client profile
-    // dashboard reads recipientName/careTypes/contactName/schedule and shows
-    // blanks without them.
-    recipientName:      (d.seniorName ?? "") as string,
-    recipientFirstName: (((d.seniorName ?? "") as string).split(" ")[0]) || (d.seniorName ?? ""),
-    careTypes:          d.careNeeds ?? [],
-    contactName:        (d.firstName ?? "") as string,
-    schedule:           scheduleText,
-    // Collected during intake but previously dropped at finalization:
-    startDate:          (d.startDate ?? null) as string | null,
-    budgetMin:          (d.budgetMin ?? null) as number | null,
-    budgetMax:          (d.budgetMax ?? null) as number | null,
-    caregiverPreferences: d.caregiverPreferences ?? {},
-    genderPreference:     (d.genderPreference   ?? "") as string,
-    languagePreference:   (d.languagePreference ?? "") as string,
-    needsDriving:         d.needsDriving === true,
-    otherPreference:      (d.otherPreference ?? "") as string,
-    // Multi-recipient household ("both mom and dad"): everyone after the
-    // primary, plus the count the web PostJob flow also records.
-    additionalRecipients: normalizeAdditionalRecipients(d.additionalRecipients)
-      .map((r) => ({ firstName: r.name, lastName: "", name: r.name, relationship: r.relationship ?? "", ...(r.age !== undefined ? { age: String(r.age) } : {}) })),
-    recipientsCount:      1 + normalizeAdditionalRecipients(d.additionalRecipients).length,
-    status:      "pending",
-    createdAt:   new Date().toISOString(),
-  };
-  if (uid) {
-    await db.collection("clientIntakes").doc(uid).set(intakeData, { merge: true });
-  } else if (opts.allowAnonIntake) {
-    await db.collection("clientIntakes").add(intakeData);
+    recipientPlans,
+    ...(locationPool ? { locationPool } : {}),
+    ...(emergencyContacts ? { emergencyContacts } : {}),
+    // Same review marker the website's "Looks good" button sets on
+    // CarePlan.tsx. The wizard's version is a single end-of-form glance;
+    // over SMS the family already confirmed every field conversationally,
+    // one at a time, as they answered — that IS the review, so it's stamped
+    // here automatically rather than adding a redundant extra "does this
+    // look right?" turn right after they just finished answering everything.
+    carePlanReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+
+  // Write home address to users/{uid} — same as wizard step 3 writes.
+  // homeCity/homeZipCode are the account holder's address; care address may differ.
+  if (homeCity || homeZipCode) {
+    await db.collection("users").doc(uid).set({
+      city:    homeCity,
+      zipCode: homeZipCode,
+      ...(homeStreet ? { street: homeStreet } : {}),
+      ...(homeState  ? { state:  homeState  } : {}),
+    }, { merge: true }).catch((err) => console.error("persistClientCareRecords: users address write failed (non-fatal):", err));
   }
+
+  // Recovery email — required field (onboardingContract.ts), written to
+  // users/{uid} the same place AccountSettings.tsx reads it from. Loosely
+  // validated (matches caregiverFieldAbsorber.ts's own EMAIL_RE) rather than
+  // trusted blindly — this is the sole recovery channel if the phone is lost.
+  const email = (d.email as string | undefined)?.trim();
+  if (email && /^\S+@\S+\.\S+$/.test(email)) {
+    await db.collection("users").doc(uid).set({ email: email.toLowerCase() }, { merge: true })
+      .catch((err) => console.error("persistClientCareRecords: users email write failed (non-fatal):", err));
+  }
+
+  // Signup-time photo is the ACCOUNT HOLDER's own photo — same semantics as
+  // AccountSettings.tsx's "your photo", not automatically the care
+  // recipient's (Hamse, 2026-08-23). Mirrored here regardless of who the
+  // care is for; buildJobPostingsDoc separately mirrors it onto the
+  // recipient-facing careRecipientPhotoURL field only when relationship is
+  // "myself" (self-care) — see clientJobPostingContract.ts.
+  const acctPhotoURL = (d.careRecipientPhotoURL as string | undefined) || undefined;
+  if (acctPhotoURL) {
+    await db.collection("users").doc(uid).set({ photoURL: acctPhotoURL }, { merge: true })
+      .catch((err) => console.error("persistClientCareRecords: users photo write failed (non-fatal):", err));
+    await admin.auth().updateUser(uid, { photoURL: acctPhotoURL }).catch(() => { /* best effort, matches AccountSettings.tsx */ });
+  }
+
+  // jobPostingCompleted — same flag + same TIMING the wizard's own "Submit"
+  // sets it (before Identity/Membership, not after payment). This function
+  // runs at intake-confirm, the true equivalent moment to the wizard's
+  // Submit; App.tsx's ClientRoute checks this flag before showing the
+  // ClientJobPostingWizard overlay, so an SMS client mid-flow shouldn't see
+  // it once they've reached this point. It is also what the backend's
+  // "real client progress" checks read (resolvePrimarySeniorId /
+  // userHasRealOnboardingProgress / findConflictingRoleAccount) now that
+  // users.seniorIds is no longer written.
+  await db.collection("users").doc(uid).set({
+    jobPostingCompleted: true,
+  }, { merge: true }).catch((err) =>
+    console.error("persistClientCareRecords: jobPostingCompleted write failed (non-fatal):", err));
+
+  // job_postings/{uid} full parity write — same shape the web wizard writes
+  // (clientJobPostingContract.ts is the single definition both channels use)
+  // so SMS-onboarded clients see a complete job post when they log in.
+  try {
+    const jpRef  = db.collection("job_postings").doc(uid);
+    const jpSnap = await jpRef.get();
+    const jpData = (jpSnap.exists ? jpSnap.data() : {}) as Record<string, unknown>;
+    const jpWrite: Record<string, unknown> = {
+      ...buildJobPostingsDoc(uid, phone, d),
+      // createJobPosting's final write: geocoded care-address coords, and the
+      // per-step draft cursor cleared now that the questionnaire is complete.
+      ...(hasCoords ? { lat, lng } : {}),
+      draftStep:      admin.firestore.FieldValue.delete(),
+      draftUpdatedAt: admin.firestore.FieldValue.delete(),
+    };
+    if (!jpData.createdAt) {
+      jpWrite.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    // The recipient roster is only ever ADDED to here, never replaced — same
+    // guarantee buildJobPost.ts and the website's own PostJobFlow give
+    // (2026-09-15: a wholesale additionalRecipients write could drop
+    // recipients the family had added on the Care Plan page). An existing
+    // primary is sticky; the SMS primary, if a different person, joins the
+    // additional list instead of displacing them.
+    const rosterKey = (first: unknown, last: unknown) =>
+      `${String(first ?? "").trim().toLowerCase()}_${(String(last ?? "").trim() || "noname").toLowerCase()}`.replace(/\s+/g, "_");
+    const existingAdditional = Array.isArray(jpData.additionalRecipients)
+      ? (jpData.additionalRecipients as Array<Record<string, unknown>>)
+      : [];
+    const incomingAdditional = Array.isArray(jpWrite.additionalRecipients)
+      ? (jpWrite.additionalRecipients as Array<Record<string, unknown>>)
+      : [];
+    const merged: Array<Record<string, unknown>> = [...existingAdditional];
+    const have = new Set<string>(existingAdditional.map((r) => rosterKey(r.firstName, r.lastName)));
+    if (jpData.careRecipientFirstName) {
+      have.add(rosterKey(jpData.careRecipientFirstName, jpData.careRecipientLastName));
+      // Primary already on file — keep it; fold the SMS primary in as an
+      // additional recipient when it's someone else.
+      const smsPrimaryKey = rosterKey(jpWrite.careRecipientFirstName, jpWrite.careRecipientLastName);
+      if (jpWrite.careRecipientFirstName && !have.has(smsPrimaryKey)) {
+        merged.push({
+          firstName: jpWrite.careRecipientFirstName, lastName: jpWrite.careRecipientLastName ?? "",
+          relationship: jpWrite.relationship ?? "",
+          ...(jpWrite.careRecipientAge !== undefined ? { age: jpWrite.careRecipientAge } : {}),
+        });
+        have.add(smsPrimaryKey);
+      }
+      delete jpWrite.careRecipientFirstName;
+      delete jpWrite.careRecipientLastName;
+      delete jpWrite.careRecipientAge;
+      delete jpWrite.relationship;
+      delete jpWrite.careRecipientPhotoURL;
+    }
+    for (const r of incomingAdditional) {
+      const k = rosterKey(r.firstName, r.lastName);
+      if (!have.has(k)) { merged.push(r); have.add(k); }
+    }
+    jpWrite.additionalRecipients = merged;
+    jpWrite.adultsCount = 1 + merged.length;
+    await jpRef.set(jpWrite, { merge: true });
+  } catch (err) {
+    console.error("persistClientCareRecords: job_postings full write failed (non-fatal):", err);
+  }
+
+  // senior_profiles/{uid} — the wizard's profileUpdate, field for field
+  // (buildSeniorProfileWizardFields): careNeeds/needs/scheduleNeeded/zipCode,
+  // name/firstName/lastName/adultsCount, location "City, ST", age,
+  // relationship. userId/clientId are kept so services/api.ts's
+  // getSeniorsForClient (where clientId == uid) keeps finding this doc.
+  await db.collection("senior_profiles").doc(uid).set({
+    userId:    uid,
+    clientId:  uid,
+    ...buildSeniorProfileWizardFields(d),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true }).catch((err) => console.error("senior_profiles parity write error:", err));
 }
 
 async function handleClientShowCaregivers(
@@ -2677,8 +2581,8 @@ async function handleClientShowCaregivers(
   // anywhere, so proximity-based preview scoring had nothing to work with.
   d = await ensureClientCoords(phone, d).catch(() => d);
 
-  // …and persist the confirmed intake as real care records NOW (carePlans,
-  // senior_profiles, clientIntakes) so the webapp shows the care recipient
+  // …and persist the confirmed intake as real care records NOW (job_postings,
+  // carePlans, senior_profiles) so the webapp shows the care recipient
   // even if the family never completes checkout. All merges; the payment
   // webhook re-runs this with the final budget/preferences. Non-fatal: the
   // caregiver preview below must still go out if a write hiccups.
@@ -3115,8 +3019,8 @@ export async function handleClientSendPayment(phone: string, chatId: string, ses
   await sendMessage(chatId, await generateCaraMessage({
     audience: "family",
     language: session.preferredLanguage === "es" ? "es" : "en",
-    context: (whoIsWho ? whoIsWho + " " : "") + `You just sent the family their payment setup link. Warmly reassure them that you'll start searching for caregivers${d.seniorName ? ` for ${d.seniorName}` : ""} while they set that up. One short line. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
-    fallback: `I'll start searching${d.seniorName ? ` for ${d.seniorName}` : ""} while you set that up.`,
+    context: (whoIsWho ? whoIsWho + " " : "") + `You just sent the family their payment setup link. Warmly reassure them that the moment it's active they can message, interview and book the caregivers they've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — you'll be right here. One short line. Never promise that you are searching or finding caregivers in the meantime. ${d.seniorName ? `The ONLY care-recipient name you may use is "${d.seniorName}" — never invent or substitute any other name.` : `You do NOT know the care recipient's name — refer to them only as "your loved one" and NEVER invent a name.`}`,
+    fallback: `As soon as it's active you can message, interview and book the caregivers you've seen${d.seniorName ? ` for ${d.seniorName}` : ""} — I'll be right here.`,
     maxTokens: 60,
   }));
 }
@@ -4910,15 +4814,13 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           uid,
           membershipStatus:   "active",
           subscriptionActive: true,
-          stripeSubscriptionId: taskData,
+          // Same field name the site's Stripe webhook writes (stripe.ts
+          // `subscriptionId: subscription.id`) — not an Evia-only alias.
+          subscriptionId:     taskData,
           ...(clientCustId ? { stripeCustomerId: clientCustId } : {}),
           phone,
           firstName:          (d.firstName ?? "") as string,
           updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
-          onboardingProgress: {
-            identityVerified: true,
-            membershipActive: true,
-          },
         }, { merge: true });
         if (clientCustId) {
           await db.collection("customers").doc(uid).set({
@@ -4929,12 +4831,11 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
 
       }
 
-      // Care records (carePlans, senior_profiles, clientIntakes, seniorIds)
-      // were already persisted at intake-confirm (handleClientShowCaregivers →
-      // persistClientCareRecords); re-run the same merge-writes here so the
-      // final budget/preferences/startDate land, with the anonymous-intake
-      // fallback for the rare path where no auth uid ever resolved.
-      await persistClientCareRecords(uid, phone, d, { allowAnonIntake: true });
+      // Care records (job_postings, carePlans, senior_profiles) were already
+      // persisted at intake-confirm (handleClientShowCaregivers →
+      // persistClientCareRecords); re-run the same merge-writes here so
+      // anything volunteered at a gate lands.
+      await persistClientCareRecords(uid, phone, d);
 
       // Notify admin of new client signup
       notifyAdminNewClientSignup({
@@ -4984,7 +4885,6 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         firstName:   (d.firstName    ?? "") as string,
         seniorName:  (d.seniorName   ?? "") as string,
         seniorAge:   d.age ? Number(d.age) : undefined,
-        conditions:  Array.isArray(d.conditions) ? d.conditions as string[] : undefined,
         careNeeds:   Array.isArray(d.careNeeds)  ? d.careNeeds  as string[] : undefined,
         city:        d.city         as string | undefined,
         relationship: d.relationship as string | undefined,
@@ -5284,11 +5184,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
           membershipStatus:   "active",
           subscriptionActive: true,
           phone,
-          onboardingProgress: { identityVerified: true, membershipActive: true },
           updatedAt:          admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         const d = session.onboardingData ?? {};
-        await persistClientCareRecords(uid, phone, d, { allowAnonIntake: true });
+        await persistClientCareRecords(uid, phone, d);
       } else {
         console.error(`admin_payment_override: no uid resolvable for phone=${phone} — membershipStatus NOT written.`);
       }
@@ -5477,7 +5376,10 @@ export async function advanceOnboardingStep(phone: string, task: string, taskDat
         const existingSeniorIds = (existingUserData?.seniorIds as string[] | undefined) ?? [];
         const hasConflictingClientProgress =
           existingUserData?.userType === "client" &&
-          (!!(existingUserData?.seniorId as string | undefined) || existingSeniorIds.length > 0);
+          (!!(existingUserData?.seniorId as string | undefined) || existingSeniorIds.length > 0
+            // jobPostingCompleted is the wizard's own flag and what Evia's
+            // persistClientCareRecords sets (users.seniorIds is no longer written).
+            || existingUserData?.jobPostingCompleted === true);
         if (hasConflictingClientProgress) {
           console.error(
             `caregiver finalize: refusing to overwrite users/${authUid}.userType — ` +
@@ -5629,12 +5531,11 @@ function mapTimeOfDayToSlots(tod: string): string[] {
 // Derive a ready-to-post job draft from the intake we ALREADY collected, so the
 // client confirms once instead of re-answering schedule/needs/budget after paying.
 function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unknown> {
-  const conditions  = (Array.isArray(d.conditions) ? d.conditions : []) as string[];
+  // Care needs only — conditions/diagnoses are never collected (non-medical
+  // scope). jobCareLevel is the Post-a-Job flow's own field (job_posts), the
+  // same derivation jobPostingFlow.ts uses.
   const careNeeds   = (Array.isArray(d.careNeeds)  ? d.careNeeds  : []) as string[];
-  const heavy       = [...conditions, ...careNeeds].join(" ").toLowerCase();
-  const careLevel   = /dementia|alzheimer|medical|wound|catheter|feeding|insulin/.test(heavy)
-    ? "intensive"
-    : (careNeeds.length || conditions.length) ? "moderate" : "light";
+  const careLevel   = deriveCareLevel([], careNeeds);
 
   // careFrequency from wizard/SMS takes precedence over derived-from-count
   const careFrequency = d.careFrequency as string | undefined;
@@ -5642,9 +5543,10 @@ function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unk
   const daysPerWeek   = selectedDays.length || Number(d.daysPerWeek ?? 0);
   const frequency     = careFrequency ?? (daysPerWeek >= 5 ? "full_time" : daysPerWeek >= 3 ? "part_time" : "occasional");
 
-  // rate from wizard/SMS takes precedence over budget fields
-  const rawRate = d.rate ?? d.budgetMax ?? d.budgetMin;
-  const hourlyRate: number | string = rawRate ? (typeof rawRate === "number" ? rawRate : String(rawRate) === "flexible" ? "flexible" : Number(rawRate) || "flexible") : "flexible";
+  // The onboarding rate is always a number (wizard parity); "flexible" here is
+  // the later Post-a-Job flow's own rateFlexible convention, not a signup value.
+  const rateNum = coerceClientRate(d.rate);
+  const hourlyRate: number | string = rateNum !== null ? rateNum : "flexible";
 
   return {
     jobStartDate:     (d.startDate as string) || "ASAP",
@@ -5652,7 +5554,7 @@ function deriveJobDataFromIntake(d: Record<string, unknown>): Record<string, unk
     jobDays:          selectedDays.length ? selectedDays : [],
     jobDaysPerWeek:   daysPerWeek,
     jobTimeOfDay:     mapTimeOfDayToSlots((d.timeOfDay as string) ?? ""),
-    jobCareNeeds:     careNeeds.length ? careNeeds : conditions,
+    jobCareNeeds:     careNeeds,
     jobCareLevel:     careLevel,
     jobHourlyRate:    hourlyRate,
     jobPaymentMethod: (d.paymentMethod as string) || "card",
@@ -5666,77 +5568,9 @@ async function presentPrefilledJobPost(phone: string, chatId: string, session: A
   const d       = session.onboardingData ?? {};
   const jobData = deriveJobDataFromIntake(d);
   await mergeOnboardingData(phone, jobData);
-  // Ask the pay rate up front (competitive range) BEFORE showing the summary.
-  // Previously the prefill posted at whatever was derived — always "flexible"
-  // since the intake never asks a budget — so jobs shipped at $0/flexible and
-  // caregivers saw "$0/hr". The chosen rate then flows into the summary below.
-  const seniorName = (d.seniorName as string) ?? "your loved one";
-  await updateSession(phone, { onboardingStep: "job_ask_pay_rate" });
-  await sendMessage(chatId,
-    `Membership active — thank you! 🎉 Before I post ${seniorName}'s care request, what would you like to pay per hour?\n\n` +
-    `Here's what families around you typically offer:\n` +
-    `💵 $22/hr — budget-friendly\n` +
-    `⭐ $26/hr — competitive (what most families choose)\n` +
-    `🌟 $30/hr — premium, attracts top caregivers\n\n` +
-    `Reply with an amount (like 26), or say "flexible" if you're open.`
-  );
-}
-
-async function handleJobAskPayRate(
-  phone: string, chatId: string, text: string, session: AgentSession
-): Promise<void> {
-  const askAgain = `What would you like to pay per hour — $22, $26, $30, a specific amount, or "flexible"?`;
-  if (await isQuestionOrOther(text, askAgain)) {
-    const answer = await answerQuestionMidFlow(text, session, phone);
-    await sendMessage(chatId, answer);
-    await sendMessage(chatId, askAgain);
-    return;
-  }
-  const raw = await parseWithClaude(
-    'A family is choosing what to pay a caregiver per hour. ' +
-    '"1"/"budget"/"budget-friendly"/"cheapest"/"22"/"$22" → 22. ' +
-    '"2"/"competitive"/"most families"/"middle"/"26"/"$26" → 26. ' +
-    '"3"/"premium"/"top"/"best"/"30"/"$30" → 30. ' +
-    'If they EXPLICITLY say flexible/open/negotiable/not sure/whatever/you decide → return "flexible". ' +
-    'If they give any other number, return just that number. ' +
-    'If the reply is none of these — you genuinely cannot tell what rate they mean — return "unclear". ' +
-    'Return ONLY a number, the word flexible, or the word unclear.',
-    text
-  );
-
-  // null = unparseable / out-of-range / unclear. Explicit "flexible" is NOT a
-  // failure — it flows straight to the summary. We only re-ask on genuinely
-  // unusable input, and we NEVER coerce to flexible silently (founder decision).
-  let hourlyRate: number | "flexible" | null = null;
-  if (raw === "flexible") {
-    hourlyRate = "flexible";
-  } else if (raw !== "unclear") {
-    const n = parseFloat(raw);
-    if (!isNaN(n) && n >= 5 && n <= 200) hourlyRate = n;
-  }
-
-  if (hourlyRate === null) {
-    const reaskUsed = (session.onboardingData as Record<string, unknown> | undefined)?.rateReaskUsed === true;
-    if (!reaskUsed) {
-      // First unusable reply — re-ask exactly once.
-      await mergeOnboardingData(phone, { rateReaskUsed: true });
-      await sendMessage(chatId,
-        `No rush — just need a number: $22, $26, $30, another amount, or say "flexible".`
-      );
-      return;
-    }
-    // Second unusable reply — fall back to flexible, but say so out loud.
-    await mergeOnboardingData(phone, { jobHourlyRate: "flexible", rateReaskUsed: false });
-    await sendMessage(chatId,
-      `I'll keep the rate flexible for now — you can change it anytime.`
-    );
-    const refreshed = await db.collection("agent_sessions").doc(phone).get();
-    await presentPrefilledJobPostSummary(phone, chatId, refreshed.data() as AgentSession);
-    return;
-  }
-
-  // Valid number or explicit flexible → store, clear the re-ask flag, continue.
-  await mergeOnboardingData(phone, { jobHourlyRate: hourlyRate, rateReaskUsed: false });
+  // Site parity (2026-09-23): the wizard already collected the hourly rate and
+  // the site posts with it — no second rate question here. The recap + YES is
+  // the family's review before the post goes live.
   const refreshed = await db.collection("agent_sessions").doc(phone).get();
   await presentPrefilledJobPostSummary(phone, chatId, refreshed.data() as AgentSession);
 }
@@ -6184,7 +6018,7 @@ const MVR_STEP_FACTS =
   "anytime later by texting Evia or from the Payments page.";
 const CLIENT_PAYMENT_STEP_FACTS =
   `The family membership is ${clientMonthlyDisplay()} — it's what lets Evia coordinate care: finding, vetting, and matching caregivers plus scheduling and secure payments. ` +
-  "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, Evia starts finding caregivers.";
+  "It's a recurring monthly membership and setup takes about 30 seconds. Once it's active, you can message, interview and book the caregivers you've seen.";
 const CLIENT_IDENTITY_STEP_FACTS =
   "Before payment, Evia runs a quick one-time identity check through Stripe Identity — it's secure, takes about 30 seconds, and keeps every family on the platform " +
   "real and safe. Their details go directly to Stripe, never stored by Evia. Once it clears, the next step is starting the membership.";

@@ -31,12 +31,12 @@ const FIELD_LABEL: Record<string, string> = {
   street:         "the street address where care is needed",
   state:          "the state where care is needed",
   // Step 5
-  startDate:      "when they'd like care to start (e.g. 'ASAP', 'next Monday', 'June 1')",
+  startDate:      "when they'd like care to start — save what they said (e.g. 'ASAP', 'next Monday', 'June 1'); it is converted to a calendar date automatically, and the tool tells you if it couldn't be",
   ongoing:        "whether care is ongoing with no end date, or has a specific end date — most families say ongoing",
   endDate:        "the end date, only if care is NOT ongoing (e.g. temporary/short-term care)",
-  selectedDays:   "which days of the week — save as an array e.g. ['MON','WED','FRI'] or ['MON','TUE','WED','THU','FRI']",
+  selectedDays:   "which days of the week — save as an array e.g. ['MON','WED','FRI'] or ['MON','TUE','WED','THU','FRI']; if they have no fixed days and say their days are flexible, save daysFlexible true and selectedDays may stay empty",
   daysFlexible:   "whether their days are flexible (the wizard's own toggle: 'My days are flexible') — save true or false",
-  timeOfDay:      "what time of day — morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–12am), or overnight",
+  timeOfDay:      "what time of day — morning (6am–12pm), afternoon (12pm–6pm), evening (6pm–12am), or overnight; if they're not sure yet, that's fine — leave it and move on",
   // Step 8 — photo (optional). Despite the field name (kept for the backend
   // persistence contract — see onboardingConversation.ts's persistClientCareRecords),
   // the wizard's own Step 8 asks for the ACCOUNT HOLDER's own photo (the
@@ -58,11 +58,10 @@ const FIELD_LABEL: Record<string, string> = {
   emergencyContactRelationship: "the emergency contact's relationship (e.g. son, neighbor)",
   // Step 11
   careNeeds:      "what kind of help is needed day to day — save the site's CATEGORY names only: Mobility Assistance, Dementia / Memory Care, Medication Reminders, Personal Care (bathing, dressing, toileting, feeding, grooming), Companionship, Transportation, Meal Preparation, Light Housekeeping (e.g. 'help with bathing' → 'Personal Care')",
-  conditions:     "any diagnoses or conditions (e.g. Alzheimer's, Parkinson's) — optional",
   petsInHome:       "whether there are pets in the home",
   smokingHousehold: "whether anyone in the household smokes",
   // Step 12
-  rate:           "what they'd like to pay per hour — a number or 'flexible'",
+  rate:           "what they'd like to pay per hour — a number (e.g. 26); there is no 'flexible' option, so if they're unsure gently ask for a number they'd be comfortable with",
   // Step 13
   jobDescription: "a short free-text description of the care situation (optional but helpful for caregivers)",
   // Not a wizard step — recovery-only, so the account has a way back in if
@@ -93,7 +92,7 @@ function labelFor(field: string): string {
 // optional status.
 const CLIENT_WIZARD_FIELD_ORDER: readonly string[] = [
   "careFrequency",                                              // Step 2
-  "homeZipCode",                                                // Step 3
+  "homeStreet", "homeZipCode",                                  // Step 3
   "sameAsHomeAddress", "city", "zipCode",                       // Step 3b
   "startDate",                                                   // Step 4
   "ongoing", "endDate",                                          // Step 5
@@ -246,7 +245,8 @@ export function buildOnboardingDirective(
     `  - Pets and smoking are their own question (step 13) — ask both together as one light question ("Any pets in the home, or does anyone smoke?"), don't fold it into the care-needs question and don't skip it once care needs are answered.`,
     `  - For the emergency contact: ask naturally ("In case of an emergency, who should we reach out to?"). Save name as emergencyContactName, phone as emergencyContactPhone, their relation as emergencyContactRelationship.`,
     `  - For email: when you confirm it back, always repeat the COMPLETE address exactly as they sent it (e.g. "Got it, hamse143@gmail.com") — never truncate it at the @ or drop the domain. A partial echo reads as if only part of it was saved, even when the full address was.`,
-    `  - For rate: ask what they'd like to pay per hour. Save the number as rate (e.g. 26) or "flexible" if they say that. Mention that families in the area typically pay $22–$30/hr if they seem unsure.
+    `  - For rate: ask what they'd like to pay per hour and save the NUMBER as rate (e.g. 26). There is no "flexible" option — if they say "flexible"/"not sure", mention that families in the area typically pay $22–$30/hr and gently ask for a number they'd be comfortable starting at; never save the word "flexible".
+  - For selectedDays: if they say their days are flexible and name no fixed days, save daysFlexible true (selectedDays can stay empty). For timeOfDay: if they're not sure yet, don't press — move on without it.
   - For startDate: when they give a date, acknowledge it as a TARGET or PREFERENCE — never say "X works" or imply availability is confirmed. Instead say something like "Got it, I'll aim for [date]" or "Noted — I'll look for someone available around then."`,
     `  - Ongoing/end date is step 5, its OWN question right after start date — don't skip it just because startDate is answered (e.g. "and is this ongoing, or is there an end date already — like recovering from surgery?"). Most families say ongoing — save ongoing:true and skip endDate. Only if they name a specific end date, save ongoing:false plus endDate.`,
     `  - If they front-load several answers, save them all and skip ahead — don't re-ask.`,

@@ -551,3 +551,89 @@ describe("save_onboarding_field zip → city/state auto-derivation", () => {
     expect(onboardingData().homeCity).toBeUndefined();
   });
 });
+
+// Wizard-parity value rules at the save site (2026-09-23): the client's rate,
+// start date and emergency phone are validated/canonicalized exactly as the
+// site's ClientJobPostingWizard would store them (canAdvanceAt + createJobPosting).
+vi.mock("../../utils/openaiClient", () => ({
+  quickComplete: vi.fn(async (_sys: string, text: string) =>
+    /next monday/i.test(text) ? "2099-06-07" : "UNKNOWN"),
+  getOpenAIClient: vi.fn(),
+}));
+import { businessTodayStr } from "../../utils/scheduledTime";
+
+describe("save_onboarding_field client wizard-parity values (rate / startDate / emergency phone)", () => {
+  const PHONE = "+15555550003";
+  beforeEach(() => { hoisted.reset(); });
+  const onboardingData = () => hoisted.docState.get(`agent_sessions/${PHONE}`)?.onboardingData ?? {};
+
+  it("a 'flexible' rate is NOT saved — gentle re-ask for a number (the wizard has no flexible option)", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "rate", fieldValue: "flexible",
+    }) as any;
+    expect(r.ok).toBe(true);
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(r.guidance).toMatch(/number/i);
+    expect(onboardingData().rate).toBeUndefined();
+  });
+
+  it("a numeric-string rate is saved as a number", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "rate", fieldValue: "$26/hr",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().rate).toBe(26);
+  });
+
+  it("startDate 'ASAP' is stored as today's ISO date, like the wizard's date input", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "startDate", fieldValue: "ASAP",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().startDate).toBe(businessTodayStr());
+  });
+
+  it("an ISO startDate is kept; free text is resolved through the quick model; unresolvable text is re-asked", async () => {
+    let r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "startDate", fieldValue: "2099-05-01",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().startDate).toBe("2099-05-01");
+
+    r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "startDate", fieldValue: "next Monday",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().startDate).toBe("2099-06-07");
+
+    r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "startDate", fieldValue: "whenever the stars align",
+    }) as any;
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+    expect(onboardingData().startDate).toBe("2099-06-07"); // unchanged
+  });
+
+  it("emergency phone is stored in the wizard's (555) 000-0000 shape; fewer than 10 digits is re-asked", async () => {
+    let r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "emergencyContactPhone", fieldValue: "408 555 1234",
+    }) as any;
+    expect(r.saved).toBe(true);
+    expect(onboardingData().emergencyContactPhone).toBe("(408) 555-1234");
+
+    r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "emergencyContactPhone", fieldValue: "555-1234",
+    }) as any;
+    expect(r.saved).toBe(false);
+    expect(r.invalidValue).toBe(true);
+  });
+
+  it("rejects the retired 'conditions' field outright", async () => {
+    const r = await handleToolCall("save_onboarding_field", {
+      phone: PHONE, role: "client", fieldName: "conditions", fieldValue: ["dementia"],
+    }) as any;
+    expect(r._toolError).toBe(true);
+    expect(onboardingData().conditions).toBeUndefined();
+  });
+});

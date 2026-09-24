@@ -7,7 +7,7 @@
 //
 // SOURCE OF TRUTH — these mirror the legacy contracts and must stay in sync:
 //   - CLIENT_REQUIRED_FIELDS  ↔ Object.values(CLIENT_STEP_FIELD) in onboardingConversation.ts
-//   - CLIENT post-collection  ↔ CLIENT_POST_COLLECTION_STEP ("client_ask_start")
+//   - CLIENT post-collection  ↔ CLIENT_POST_COLLECTION_STEP ("client_confirm_intake")
 //   - isFieldFilled           ↔ isFieldFilled in onboardingConversation.ts
 //   - CAREGIVER_REQUIRED_FIELDS ↔ caregiver step parse targets in onboardingSteps.caregiver.ts
 //
@@ -74,10 +74,11 @@ export function isFieldFilled(value: unknown): boolean {
 export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // Step 2 — care frequency
   "careFrequency",
-  // Step 3 — home address zip is required so the backend can deterministically
-  // derive homeCity/homeState from it — matching the wizard, which requires the
-  // zip and never lets the family type a city at all.
-  "homeZipCode",
+  // Step 3 — home address: the wizard's canAdvanceAt(3) requires BOTH the
+  // street and the zip (ClientJobPostingWizard.tsx). The zip is what lets the
+  // backend deterministically derive homeCity/homeState — the wizard never lets
+  // the family type a city at all.
+  "homeStreet", "homeZipCode",
   // Step 3b — the "is care at the same address?" confirmation must be an
   // explicit saved answer, not an assumption nothing can verify (2026-08-22: a
   // live test showed this question skipped entirely — the model silently
@@ -90,8 +91,11 @@ export const CLIENT_REQUIRED_FIELDS: readonly string[] = [
   // asking a free-form "what's your address" let a model extraction mistake a
   // street name for a city — "Campbell Ave" as the city "Campbell").
   "city", "zipCode",
-  // Step 5 — schedule
-  "startDate", "selectedDays", "timeOfDay",
+  // Step 5 — schedule. The wizard's canAdvanceAt(6) is
+  // `startDate && (selectedDays.length > 0 || daysFlexible)` — timeOfDay is
+  // NOT required there (still asked; a "not sure" may leave it empty), and
+  // flexible-only days satisfy selectedDays (see missingRequiredFields).
+  "startDate", "selectedDays",
   // Step 8/9 — who
   "relationship", "seniorName",
   // age is optional — nice to have but not required to find a caregiver
@@ -126,14 +130,20 @@ export const CLIENT_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   // save_onboarding_field("age", ...) was silently rejected ever since even
   // though onboardingDirective.ts still instructs the model to ask for it.
   "age",
-  "conditions", "hoursPerDay", "daysPerWeek",
+  // timeOfDay is asked (wizard step 6) but not required — see CLIENT_REQUIRED_FIELDS.
+  "timeOfDay",
+  // `conditions` (diagnoses) is deliberately NOT here — medical scope is out
+  // and the wizard never asks it, so Evia must never ask or absorb it.
+  "hoursPerDay", "daysPerWeek",
   "street", "state", "neighborhood",
   "emergencyContactRelationship",
   "jobDescription",
   "petsInHome", "smokingHousehold",
   "careRecipientLastName", "lastName",
-  // Backward-compat / absorber fields kept from the pre-wizard contract
-  "preferences", "budget", "schedule",
+  // Backward-compat absorber field kept from the pre-wizard contract (the
+  // wizard-less `preferences`/`budget` fields were retired with the legacy
+  // client_ask_preferences/client_ask_budget steps — the wizard never collects them)
+  "schedule",
   // Multi-recipient household
   "additionalRecipients",
   // Home address (account holder's address — distinct from care address).
@@ -167,10 +177,12 @@ export const CAREGIVER_ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 // The step the flow advances to once conversational collection completes and the
-// agent loop hands back to the deterministic gate machine. Client → the legacy
-// post-collection step. Caregiver → the first upload gate (matches the scripted
+// agent loop hands back to the deterministic gate machine. Client → the intake
+// playback/confirmation step (the wizard's own review moment; the legacy
+// client_ask_start/preferences/budget steps were removed — the wizard never
+// collected them). Caregiver → the first upload gate (matches the scripted
 // handoff: handleCaregiverAskBio sets caregiver_send_photo).
-export const CLIENT_POST_COLLECTION_STEP = "client_ask_start";
+export const CLIENT_POST_COLLECTION_STEP = "client_confirm_intake";
 export const CAREGIVER_FIRST_GATE_STEP = "caregiver_send_photo";
 
 export function requiredFieldsForRole(role: OnboardingRole): readonly string[] {
@@ -324,8 +336,27 @@ export function missingRequiredFields(
   const d = data ?? {};
   return requiredFieldsForRole(role).filter((f) => {
     if (role === "caregiver" && f === "bio" && d.bioSkipped === true) return false;
+    // Wizard canAdvanceAt(6): `selectedDays.length > 0 || daysFlexible` — a
+    // family whose days are flexible with no fixed days is complete.
+    if (role === "client" && f === "selectedDays" && d.daysFlexible === true) return false;
     return !isFieldFilled(d[f]);
   });
+}
+
+// Client hourly rate — the wizard's canAdvanceAt(13) is `rate > 0` (a number
+// from a numeric input; there is NO "flexible" option at signup). Coerce a
+// number or a numeric string ("$26", "26/hr") to the number; anything else
+// (including the literal "flexible") is null → the caller re-asks for a number.
+// Value-shape validation of an already-extracted answer, not intent parsing.
+export function coerceClientRate(value: unknown): number | null {
+  let n: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) n = value;
+  else if (typeof value === "string") {
+    const m = value.match(/\d+(\.\d+)?/);
+    if (m) n = Number(m[0]);
+  }
+  if (n === null || !Number.isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 export function firstGateStep(role: OnboardingRole): string {

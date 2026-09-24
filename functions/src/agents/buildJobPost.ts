@@ -130,7 +130,6 @@ export async function buildAndSaveJobPost(params: {
   const relationship  = rosterRelationship || ((onboardingData.relationship ?? "") as string);
   const city          = hasJobLocation ? ((jobData.city as string) ?? "") : ((onboardingData.city ?? "") as string);
   const zipCode       = hasJobLocation ? ((jobData.zipCode as string) ?? "") : ((onboardingData.zipCode ?? "") as string);
-  const conditions    = (onboardingData.conditions    ?? []) as string[];
   const seniorAge     = onboardingData.age as number | undefined;
 
   const careNeeds      = (jobData.jobCareNeeds     ?? []) as string[];
@@ -223,7 +222,7 @@ export async function buildAndSaveJobPost(params: {
       // all (2026-09-14, live-caught).
       careNeedDetails,
       careLevel,
-      conditions,
+      // (no `conditions` — diagnoses are out of scope; the site never writes them)
       // Direct write, matching the website's own PostJobFlow.tsx /
       // mirrorJobPostRecipientsToWeb — before 2026-09-07 this was never set
       // here, so the Care Plan page's "Notes" section relied entirely on its

@@ -126,6 +126,11 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
         const senior = seniorDoc.exists ? seniorDoc.data() as any : null;
         const carePlan = cpDoc.exists ? cpDoc.data() as any : null;
         const jobPostCareTypes = postsSnap.docs.flatMap(d => (d.data() as any).careTypes || []);
+        // The wizard's own job_postings/{uid} record (careNeeds + selectedDays) —
+        // the one record every family has, whether they set up on the site or by
+        // text; the legacy clientIntakes doc is no longer written by either path.
+        const jobPosting = jpDoc.exists ? (jpDoc.data() as any) : null;
+        const jobPostingCareTypes: string[] = Array.isArray(jobPosting?.careNeeds) ? jobPosting.careNeeds : [];
 
         // Extract care needs from carePlans recipientPlans (care plan page saves here)
         const carePlanCareTypes: string[] = Object.values(carePlan?.recipientPlans || {})
@@ -138,13 +143,22 @@ export function useNearbyCaregiversWithScores(uid: string | null, options: Optio
           ) : []),
           ...(senior?.needs || []),
           ...jobPostCareTypes,
+          ...jobPostingCareTypes,
           ...carePlanCareTypes,
         ].filter(Boolean);
 
         const needsTransportation = carePlanCareTypes.some((t: string) => /transport/i.test(t));
 
-        // Client's needed schedule — try multiple fields
-        const clientSchedule = intake?.weeklySchedule || intake?.schedule || null;
+        // Client's needed schedule — try multiple fields. job_postings.selectedDays
+        // is the wizard's 3-letter day array (['MON','WED']); availabilityOverlap
+        // compares full lowercase day names, so expand the codes first.
+        const DAY_CODE_TO_NAME: Record<string, string> = {
+          MON: 'monday', TUE: 'tuesday', WED: 'wednesday', THU: 'thursday', FRI: 'friday', SAT: 'saturday', SUN: 'sunday',
+        };
+        const jobPostingDays: string[] = Array.isArray(jobPosting?.selectedDays)
+          ? jobPosting.selectedDays.map((d: string) => DAY_CODE_TO_NAME[String(d).toUpperCase()] || String(d).toLowerCase())
+          : [];
+        const clientSchedule = intake?.weeklySchedule || intake?.schedule || (jobPostingDays.length ? jobPostingDays : null);
 
         // ── 4. Fetch caregivers ──
         // Caregivers collection ONLY. The old parallel `users` query

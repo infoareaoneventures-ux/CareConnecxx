@@ -4,7 +4,6 @@ import { quickComplete } from "../utils/openaiClient";
 import { generateCaraMessage } from "../utils/caraMessage";
 import { sendIfNotDND } from "../utils/dndGuard";
 import { sendViaInteractionAgent } from "../agents/caraAgent";
-import { handleCaregiverSwapRequest, handleSwapAcceptance } from "../agents/caregiverSwapHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate } from "../agents/caregiverProfileHandler";
 import { handleJobResponse, handleAvailabilityConfirmation } from "../triggers/jobNotifications";
@@ -19,7 +18,7 @@ import { answerHumanQuestionOnly } from "../agents/humanReply";
 import { businessTodayStr, businessTomorrowStr, parseScheduledTimeMs, formatDateForDisplay, formatHHMMForDisplay } from "../utils/scheduledTime";
 import { buildLayFallbackSummary } from "./shiftSummaryFallback";
 import { bookedWindowMillis, createValidatedShiftHours } from "../billing/createValidatedShiftHours";
-import { isJobInviteStale, JOB_INVITE_FLAGS, isFlowStale, MULTI_STEP_FLOW_TTL_MS } from "../utils/sessionState";
+import { isJobInviteStale, JOB_INVITE_FLAGS } from "../utils/sessionState";
 import { getVisitDoc } from "../utils/visitQuery";
 
 const db = admin.firestore();
@@ -1124,7 +1123,7 @@ async function handleCareNotes(
 export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise<"handled" | "fallthrough"> {
   const { phone, chatId, text, norm, session } = ctx;
 
-    // ── Shift offer YES/NO — new bookings, client swaps, time changes ─────────
+    // ── Shift offer YES/NO — new bookings, time changes ───────────────────────
     // Appointments only become confirmed (or change caregiver/time) after the
     // caregiver accepts; see agents/shiftOffer.ts. A question falls through so
     // the QA agent can answer it while the offer stays pending.
@@ -1135,76 +1134,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
         return "fallthrough" as const;
       });
       if (offerOutcome === "handled") return "handled";
-    }
-
-    // ── Swap acceptance/decline — when another caregiver was asked to cover ──
-    // Stale shift-swap requests (> 4h old) shouldn't hijack unrelated caregiver
-    // messages weeks later. Clear the lingering field on stale state.
-    if ((session as any).pendingSwapRequestId) {
-      const swapSetAt   = (session as any).pendingSwapSetAt as string | undefined;
-      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
-      if (swapSetAt && swapSetAt < fourHoursAgo) {
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
-          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
-          pendingSwapSetAt:     admin.firestore.FieldValue.delete(),
-        }).catch(() => {});
-        (session as any).pendingSwapRequestId = undefined;
-      }
-    }
-    if ((session as any).pendingSwapRequestId) {
-      const swapRequestId  = (session as any).pendingSwapRequestId as string;
-      const fromName       = (session as any).pendingSwapFromName as string ?? "A caregiver";
-      const swapRaw = await quickComplete(
-        "The caregiver is responding to a shift-swap request. " +
-          "Reply ACCEPT if they agree to cover the shift. " +
-          "Reply DECLINE if they refuse. " +
-          "Reply UNSURE if it is unclear. " +
-          "Reply with exactly one word.",
-        text,
-        { maxTokens: 10 },
-      ).catch(() => "");
-      const swapDecision = swapRaw.trim().toUpperCase();
-
-      if (swapDecision === "ACCEPT") {
-        const cgName = session.caregiverId
-          ? (await db.collection("caregivers").doc(session.caregiverId).get()).data()?.name ?? "Caregiver"
-          : "Caregiver";
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
-          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
-        });
-        if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-        try {
-          await handleSwapAcceptance(session.caregiverId ?? phone, cgName, swapRequestId, chatId);
-        } finally {
-          if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-        }
-        return "handled";
-      }
-
-      if (swapDecision === "DECLINE") {
-        await db.collection("shift_swap_requests").doc(swapRequestId).update({
-          candidateResponses: admin.firestore.FieldValue.arrayUnion({
-            caregiverId: session.caregiverId ?? phone,
-            response:    "declined",
-            at:          new Date().toISOString(),
-          }),
-        }).catch(() => {});
-        await db.collection("agent_sessions").doc(phone).update({
-          pendingSwapRequestId: admin.firestore.FieldValue.delete(),
-          pendingSwapFromName:  admin.firestore.FieldValue.delete(),
-        });
-        const swapDeclineMsg = await generateCaraMessage({
-          audience: "caregiver",
-          context: `Caregiver declined a shift swap request from ${fromName}. Evia is acknowledging the decline and thanking them for letting the coordinator know.`,
-          fallback: `No problem — thanks for letting ${fromName}'s coordinator know!`,
-          maxTokens: 60,
-        });
-        await sendMessage(chatId, swapDeclineMsg);
-        return "handled";
-      }
-      // UNSURE — fall through to normal routing so Claude can answer the message
     }
 
     // ── Job alert: staleness gate ────────────────────────────────────────────
@@ -1592,41 +1521,6 @@ export async function routeCaregiverMessage(ctx: CaregiverRouteContext): Promise
     // here, but NOTHING in production sets that flag — only a test seeded it.
     // A flag with no setter and no expiry was one hijack away from consuming
     // every inbound text.)
-
-    // ── Caregiver shift swap — multi-step state machine ───────────────────
-    // 24h freshness gate: an abandoned swap flow must not consume unrelated
-    // texts days later (it had NO expiry — unlike cancelStep below).
-    if (isFlowStale(session as unknown as Record<string, unknown>, "swapStep", "swapStepSetAt", MULTI_STEP_FLOW_TTL_MS)) {
-      await db.collection("agent_sessions").doc(phone).update({
-        swapStep:       admin.firestore.FieldValue.delete(),
-        swapStepSetAt:  admin.firestore.FieldValue.delete(),
-        swapCandidates: admin.firestore.FieldValue.delete(),
-        swapShiftId:    admin.firestore.FieldValue.delete(),
-        swapShiftDate:  admin.firestore.FieldValue.delete(),
-        swapClientId:   admin.firestore.FieldValue.delete(),
-      }).catch(() => {});
-      (session as any).swapStep = undefined;
-      // fall through to normal routing
-    }
-    if ((session as any).swapStep) {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try {
-        const cgDoc = session.caregiverId
-          ? await db.collection("caregivers").doc(session.caregiverId).get()
-          : null;
-        await handleCaregiverSwapRequest(
-          session.caregiverId ?? phone,
-          cgDoc?.data()?.name ?? "Caregiver",
-          phone,
-          text,
-          session as unknown as Record<string, unknown>,
-          chatId
-        );
-      } finally {
-        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-      }
-      return "handled";
-    }
 
     // ── Caregiver-initiated shift cancellation — multi-step state machine ─
     if ((session as any).cancelStep) {

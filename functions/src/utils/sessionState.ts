@@ -47,16 +47,6 @@ export const STATE_MACHINE_FLAGS = [
   "awaitingTaskAck",
   // Day-before shift confirmation from caregiver
   "pendingShiftConfirmation",
-  // Caregiver shift swap flow
-  "swapStep",
-  "swapStepSetAt",
-  "swapCandidates",
-  "swapShiftId",
-  "swapShiftDate",
-  "swapClientId",
-  // Swap acceptance (for caregivers contacted about covering a shift)
-  "pendingSwapRequestId",
-  "pendingSwapFromName",
   // Healthcare agentic flows (provider search, appointment booking, Rx refill, new Rx)
   "healthcareFlowStep",
   "healthcareFlowData",
@@ -157,13 +147,13 @@ export const JOB_INVITE_FLAGS = [
 ] as const;
 
 // ── Multi-step flow freshness ────────────────────────────────────────────────
-// Flows that collect over several turns (credentials, swaps, refunds) stamp a
+// Flows that collect over several turns (credentials, shift approvals) stamp a
 // per-flag SetAt and their consumers clear the flow when it's older than the
 // TTL — or when the stamp is missing (never-expires guard). Deliberately NOT
 // the shared stateExpiresAt field: it is shared across every flow and
 // deleting it while another flag is active is a known collision hazard.
 export const CREDENTIAL_FLOW_TTL_MS = 30 * 60 * 1000;      // password collection: strictest
-export const MULTI_STEP_FLOW_TTL_MS = 24 * 60 * 60 * 1000; // swap / refund flows
+export const MULTI_STEP_FLOW_TTL_MS = 24 * 60 * 60 * 1000; // stamped multi-step flows
 
 /**
  * True when a flow flag is set but its SetAt stamp is missing or older than
@@ -184,7 +174,7 @@ export function isFlowStale(
 
 // ── Interrupted-flow descriptions ────────────────────────────────────────────
 // When the expiry sweep clears a mid-flow state machine, the user used to be
-// dropped silently — they'd started a booking/dispute/swap and never heard
+// dropped silently — they'd started a booking/dispute/cancellation and never heard
 // another word about it. This map names the flows worth a resume nudge, in
 // user language. Passive ack/confirmation flags (pendingShiftConfirmation,
 // awaitingTaskAck, pendingBgCheckAck, …) are deliberately absent: they have
@@ -202,7 +192,6 @@ export const RESUMABLE_FLOW_DESCRIPTIONS: ReadonlyArray<[StateFlag, string]> = [
   ["healthcareFlowStep",      "that healthcare request"],
   ["awaitingIssueDescription", "the issue you started telling me about"],
   ["cancelStep",              "cancelling that shift"],
-  ["swapStep",                "finding coverage for your shift"],
   ["availabilityStep",        "updating your availability"],
   ["profileUpdateStep",       "updating your profile"],
   ["collectingCredential",    "your credential upload"],
@@ -281,7 +270,7 @@ export function isStateExpired(
 // `hasActiveSmsFlow` is a READ-ONLY predicate, DENY-BY-DEFAULT: every primary
 // STATE_MACHINE_FLAGS flag is guarded UNLESS it is explicitly listed passive
 // or as a data companion below — so money flags (pendingInstantPayoutConfirm,
-// pendingSwapRequestId, pendingShiftApproval) and any FUTURE flag defer by
+// pendingShiftApproval) and any FUTURE flag defer by
 // default rather than fall through an allow-list. Each guarded flag is composed
 // with its staleness helper (confirm/invite/stamped-step/generic), so a stale
 // flag never defers a web turn. The web path NEVER clears or stamps flags —
@@ -351,10 +340,6 @@ export const GUARDED_SMS_FLAGS: ReadonlyArray<[StateFlag, WebGuardStrategy]> = [
   ["correctionFlowStep", "generic"],
   ["interviewFlowStep", "generic"],
   ["reviewFlowStep", "generic"],
-  ["swapStep", "stampedStep"],
-  // Set by caregiverSwapHandler.ts alongside pendingSwapSetAt (NOT
-  // pendingSwapRequestIdSetAt); routeCaregiver.ts clears on the same stamp.
-  ["pendingSwapRequestId", { setAtField: "pendingSwapSetAt", ttlMs: MULTI_STEP_FLOW_TTL_MS }],
   ["healthcareFlowStep", "generic"],
   ["availabilityStep", "generic"],
   ["cancelStep", "generic"],
@@ -385,12 +370,6 @@ export const PASSIVE_SMS_FLAGS: ReadonlySet<StateFlag> = new Set<StateFlag>([
   "reviewFlowData",
   "awaitingTaskAck",
   "pendingShiftConfirmation",
-  "swapStepSetAt",
-  "swapCandidates",
-  "swapShiftId",
-  "swapShiftDate",
-  "swapClientId",
-  "pendingSwapFromName",
   "healthcareFlowData",
   "pendingAvailability",
   "cancelCandidates",

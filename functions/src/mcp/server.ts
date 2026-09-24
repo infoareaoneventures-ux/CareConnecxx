@@ -19,7 +19,7 @@ import { isHighRisk, proposePendingAction, buildPendingActionStub, getPendingAct
 import { claimToolExecution, settleToolExecution, toolExecutionKey } from "./toolExecutionLedger";
 import { pauseCaregiver, reactivateCaregiver } from "../agents/pauseAccount";
 import { resolveCaregiverPhone } from "../utils/caregiverPhone";
-import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatDateForDisplay, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
+import { apptStartMs, businessTodayStr, parseScheduledTimeMs, formatInterviewTime, formatHHMMForDisplay, weekdayForDate } from "../utils/scheduledTime";
 import { loadReschedulableShift, proposeShiftReschedule, isShiftOverdue, shiftDisplayStatus, acceptRescheduleProposal, clearRescheduleProposal } from "../agents/shiftReschedule";
 import { listActiveBookings } from "../agents/activeBookings";
 import { listClientInterviews } from "../agents/interviewsTab";
@@ -2005,44 +2005,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["caregiverId"],
     },
   },
-  {
-    name: "request_shift_swap",
-    description: "Initiate a shift swap request for a caregiver — finds available peer caregivers and broadcasts the coverage request. Only call after caregiver has confirmed which shift needs coverage.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string", description: "The requesting caregiver's ID" },
-        appointmentId: { type: "string", description: "The appointment that needs coverage" },
-        reason:        { type: "string", description: "Reason for swap (optional)" },
-      },
-      required: ["caregiverId", "appointmentId"],
-    },
-  },
-  {
-    name: "accept_shift_swap",
-    description: "Accept a pending shift swap request. Call when a caregiver says ACCEPT to an open swap offer.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:    { type: "string", description: "The accepting caregiver's ID" },
-        caregiverName:  { type: "string", description: "The accepting caregiver's name" },
-        swapRequestId:  { type: "string", description: "The shift_swap_requests document ID" },
-      },
-      required: ["caregiverId", "caregiverName", "swapRequestId"],
-    },
-  },
-  {
-    name: "cancel_shift_swap",
-    description: "Cancel an open shift swap request initiated by this caregiver.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId:   { type: "string", description: "The requesting caregiver's ID" },
-        swapRequestId: { type: "string", description: "The shift_swap_requests document ID" },
-      },
-      required: ["caregiverId", "swapRequestId"],
-    },
-  },
   // ── Account & profile ─────────────────────────────────────────────────────
   {
     name: "update_user_profile",
@@ -2400,20 +2362,6 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["userId"],
     },
   },
-  {
-    name: "list_shift_swaps",
-    description:
-      "List active shift swap requests for a caregiver — both their own outstanding coverage requests and open " +
-      "swap offers from peers they could accept. Use before accept_shift_swap/cancel_shift_swap or when they ask " +
-      "'any open swaps?' or 'did anyone pick up my shift?'.",
-    input_schema: {
-      type: "object",
-      properties: {
-        caregiverId: { type: "string", description: "The caregiver's Firestore document ID" },
-      },
-      required: ["caregiverId"],
-    },
-  },
 ];
 
 // Tools available to caregivers — scoped to what's relevant to their role
@@ -2450,9 +2398,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   "get_recent_messages",
   "delete_conversation",
   "mark_messages_read",
-  "request_shift_swap",
-  "accept_shift_swap",
-  "cancel_shift_swap",
   "get_job_recommendations",
   "submit_gps_checkin",
   "get_tax_summary",
@@ -2481,7 +2426,6 @@ const CAREGIVER_TOOL_NAMES = new Set([
   // CRUD/parity gap closures (agent-native audit 2026-07)
   "list_interviews",
   "cancel_interview",
-  "list_shift_swaps",
   // Outbound iMessage tapbacks (Linq reactions, 2026-07) — shared with clients
   "react_to_message",
   // Checkr Candidate MCP bridge (2026-07-09) — full report details, OTP-gated
@@ -2524,9 +2468,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "respond_to_interview_request",
   "send_client_message",
   "get_payout_history",
-  "request_shift_swap",
-  "accept_shift_swap",
-  "cancel_shift_swap",
   "get_job_recommendations",
   "submit_gps_checkin",
   "get_tax_summary",
@@ -2542,7 +2483,6 @@ const CAREGIVER_ONLY_TOOL_NAMES = new Set([
   "create_caregiver_referral",
   "get_shifts",
   "get_caregiver_availability",
-  "list_shift_swaps",
   // Checkr Candidate MCP bridge (2026-07-09) — a caregiver's own report only
   "request_checkr_verification",
   "verify_checkr_otp",
@@ -2926,7 +2866,7 @@ const READ_ONLY_TOOLS = new Set<string>([
   "get_job_recommendations", "get_my_applications", "get_background_check_status",
   "get_payout_status", "get_signup_completeness",
   // CRUD/parity gap closures (agent-native audit 2026-07) — pure reads only
-  "list_interviews", "list_blocked_users", "list_shift_swaps",
+  "list_interviews", "list_blocked_users",
   // get_checkr_report is a pure remote read (Checkr redacts PII; nothing is
   // consumed or mutated). request_checkr_verification / verify_checkr_otp are
   // NOT read-only — they send a real OTP email / burn a verify attempt.
@@ -6520,7 +6460,7 @@ async function executeToolCall(
       if (nextAvail !== null) upd6["availability"] = nextAvail;
       if (typeof preferredTimeOfDay === "string")
         upd6["preferredTimeOfDay"] = preferredTimeOfDay;
-      // Web parity: the caregiver calendar and swap/replacement matching read the
+      // Web parity: the caregiver calendar and replacement matching read the
       // weeklyAvailability map ({ monday: [{start,end}], ... }) — keep it in sync
       // with the day list. Added days get a default day-window slot if absent.
       const existingWeekly = (cgSnap6.data()?.weeklyAvailability ?? {}) as Record<string, Array<{ start: string; end: string }>>;
@@ -7066,56 +7006,8 @@ async function executeToolCall(
       await ref.set({ onboardingStep: nextStep }, { merge: true });
       return { ok: true, complete: true, nextStep, status: "collection_complete" };
     }
-    // ── request_shift_swap ──────────────────────────────────────────────────
-    if (name === "request_shift_swap") {
-      const { caregiverId, appointmentId, reason } = input as Record<string, string>;
-      const appt = await db.collection("appointments").doc(appointmentId).get();
-      if (!appt.exists) return toolError("NOT_FOUND", "Appointment not found");
-      const data = appt.data()!;
-      const ref = await db.collection("shift_swap_requests").add({
-        appointmentId,
-        fromCaregiverId: caregiverId,
-        fromCaregiverName: data.caregiverName ?? caregiverId,
-        clientId: data.clientId,
-        date: data.date,
-        time: data.time,
-        duration: data.duration,
-        reason: reason ?? "",
-        status: "open",
-        candidatesContacted: [],
-        candidateResponses: [],
-        initiatedBy: "caregiver",
-        createdAt: nowIso,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      return { success: true, swapRequestId: ref.id, message: "Swap request created. Finding available caregivers now." };
-    }
 
-    // ── accept_shift_swap ───────────────────────────────────────────────────
-    if (name === "accept_shift_swap") {
-      const { caregiverId, caregiverName, swapRequestId } = input as Record<string, string>;
-      const swapRef = db.collection("shift_swap_requests").doc(swapRequestId);
-      const swapDoc = await swapRef.get();
-      if (!swapDoc.exists) return toolError("NOT_FOUND", "Swap request not found");
-      const swap = swapDoc.data()!;
-      if (swap.status !== "open") return { _toolError: true, success: false, message: "This swap is no longer open." };
-      await db.runTransaction(async (tx) => {
-        tx.update(swapRef, { status: "accepted", toCaregiverId: caregiverId, toCaregiverName: caregiverName, acceptedAt: nowIso });
-        tx.update(db.collection("appointments").doc(swap.appointmentId), { caregiverId, caregiverName, swapNote: `Swapped from ${swap.fromCaregiverName}` });
-      });
-      return { success: true, message: `Shift on ${formatDateForDisplay(swap.date)} transferred to ${caregiverName}.` };
-    }
 
-    // ── cancel_shift_swap ───────────────────────────────────────────────────
-    if (name === "cancel_shift_swap") {
-      const { caregiverId, swapRequestId } = input as Record<string, string>;
-      const swapRef = db.collection("shift_swap_requests").doc(swapRequestId);
-      const swapDoc = await swapRef.get();
-      if (!swapDoc.exists) return toolError("NOT_FOUND", "Swap request not found");
-      if (swapDoc.data()!.fromCaregiverId !== caregiverId) return toolError("PERMISSION_DENIED", "You can only cancel your own swap requests");
-      await swapRef.update({ status: "cancelled" });
-      return { success: true };
-    }
 
     // ── get_job_recommendations ─────────────────────────────────────────────
     if (name === "get_job_recommendations") {
@@ -8143,36 +8035,6 @@ async function executeToolCall(
       return { success: true, blocked, count: blocked.length };
     }
 
-    // ── list_shift_swaps ────────────────────────────────────────────────────
-    if (name === "list_shift_swaps") {
-      const lsCaregiverId = input.caregiverId as string | undefined;
-      if (!lsCaregiverId) return toolError("INVALID_INPUT", "caregiverId is required");
-      const swapFields = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
-        const s = d.data();
-        return {
-          swapRequestId:     d.id,
-          appointmentId:     s.appointmentId ?? null,
-          date:              s.date ?? null,
-          time:              s.time ?? null,
-          reason:            s.reason ?? "",
-          status:            s.status ?? "open",
-          fromCaregiverId:   s.fromCaregiverId ?? null,
-          fromCaregiverName: s.fromCaregiverName ?? null,
-          expiresAt:         s.expiresAt ?? null,
-        };
-      };
-      const [mineSnap, openSnap] = await Promise.all([
-        db.collection("shift_swap_requests").where("fromCaregiverId", "==", lsCaregiverId).where("status", "in", ["open", "accepted"]).limit(20).get(),
-        db.collection("shift_swap_requests").where("status", "==", "open").limit(30).get(),
-      ]);
-      const myRequests = mineSnap.docs.map(swapFields);
-      const openOffers = openSnap.docs
-        .map(swapFields)
-        .filter(s => s.fromCaregiverId !== lsCaregiverId)
-        .filter(s => !s.expiresAt || String(s.expiresAt) > nowIso)
-        .slice(0, 10);
-      return { success: true, myRequests, openOffers, count: myRequests.length + openOffers.length };
-    }
 
     return toolError("INVALID_INPUT", `Unknown tool: ${name}`);
     })();

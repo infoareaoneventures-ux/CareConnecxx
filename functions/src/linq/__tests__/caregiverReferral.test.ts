@@ -97,10 +97,6 @@ vi.mock("../../utils/dndGuard", () => ({ sendIfNotDND: vi.fn(async () => {}) }))
 vi.mock("../../agents/caraAgent", () => ({ sendViaInteractionAgent: vi.fn(async () => {}) }));
 vi.mock("../../observability/auditLog", () => ({ logAudit: vi.fn(async () => {}) }));
 vi.mock("../../observability/actionLedger", () => ({ logAgentAction: vi.fn(async () => {}) }));
-vi.mock("../../agents/caregiverSwapHandler", () => ({
-  handleCaregiverSwapRequest: vi.fn(async () => {}),
-  handleSwapAcceptance: vi.fn(async () => {}),
-}));
 vi.mock("../../agents/caregiverCancelShiftHandler", () => ({ handleCaregiverCancelShift: vi.fn(async () => {}) }));
 vi.mock("../../agents/caregiverProfileHandler", () => ({ handleCaregiverProfileUpdate: vi.fn(async () => {}) }));
 vi.mock("../../triggers/jobNotifications", () => ({

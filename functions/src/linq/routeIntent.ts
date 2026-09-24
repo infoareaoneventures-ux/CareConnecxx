@@ -17,7 +17,6 @@ import { updatePermissionFromText } from "../agents/permissionsConversation";
 import { startJobPostingFlow } from "../agents/jobPostingFlow";
 import { handleEarningsView } from "../agents/earningsHandler";
 import { handleAvailabilityUpdate } from "../agents/availabilityHandler";
-import { handleCaregiverSwapRequest } from "../agents/caregiverSwapHandler";
 import { handleCaregiverCancelShift } from "../agents/caregiverCancelShiftHandler";
 import { handleCaregiverProfileUpdate, profileFieldFromIntent, ProfileUpdateField } from "../agents/caregiverProfileHandler";
 import { generateCaraMessage } from "../utils/caraMessage";
@@ -388,28 +387,6 @@ export async function routeIntentAndRespond(ctx: IntentRouteContext): Promise<vo
         intent,
         ...(ctx.eventId ? { sourceTurn: { conversationId: chatId, messageId: ctx.eventId } } : {}),
       });
-      return;
-    }
-
-    // ── SWAP_REQUEST — caregiver looking for coverage on one of their shifts ──
-    if (intent === "SWAP_REQUEST" && session.userType === "caregiver") {
-      if (session.service === "iMessage") await startTyping(chatId).catch(() => {});
-      try {
-        const cgDoc = session.caregiverId
-          ? await db.collection("caregivers").doc(session.caregiverId).get()
-          : null;
-        await handleCaregiverSwapRequest(
-          session.caregiverId ?? phone,
-          cgDoc?.data()?.name ?? "Caregiver",
-          phone,
-          text,
-          // Session has no swapStep yet — handler defaults to "identify_shift"
-          session as unknown as Record<string, unknown>,
-          chatId
-        );
-      } finally {
-        if (session.service === "iMessage") await stopTyping(chatId).catch(() => {});
-      }
       return;
     }
 

@@ -6,7 +6,7 @@ import type { McpTool } from "../mcp/server";
 // inbound, which cuts wrong-tool calls and shaves prompt-cache decode time.
 // A tool may belong to multiple buckets if it's genuinely cross-cutting.
 export type Capability =
-  | "booking"      // matching, requests, hiring, appointments, jobs, swaps
+  | "booking"      // matching, requests, hiring, appointments, jobs
   | "scheduling"   // recurring care, reminders, availability
   | "billing"      // invoices, payouts, refunds, payment methods, timesheets
   | "care_plan"    // care plan + journal + health + profiles
@@ -55,9 +55,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   browse_job_board:             ["booking"],
   get_job_recommendations:      ["booking"],
   get_my_applications:          ["booking"],
-  request_shift_swap:           ["booking", "scheduling", "messaging"],
-  accept_shift_swap:            ["booking", "scheduling", "messaging"],
-  cancel_shift_swap:            ["booking", "scheduling", "messaging"],
   withdraw_job_application:     ["booking"],
   respond_to_booking_request:   ["booking", "messaging"],
   // Booking-pipeline parity (2026-08-30): booking_requests/shifts/booking_amendments
@@ -144,7 +141,6 @@ export const TOOL_CAPABILITIES: Record<string, readonly Capability[]> = {
   accept_interview_reschedule: ["booking"],
   complete_interview:     ["booking"],
   list_blocked_users:     ["messaging"],
-  list_shift_swaps:       ["booking", "scheduling", "messaging"],
 
   // ── memory_search (memory files) ─────────────────────────────────────────
   read_memory_file:   ["memory_search"],
@@ -204,7 +200,7 @@ export const CORE_TOOL_NAMES = new Set<string>([
 // Mapping principles:
 //   • Stay conservative on filtering — better to bind a few extra tools than
 //     to deny Claude a tool it genuinely needs.
-//   • For composite flows (cancel + notify, swap + reschedule), include all
+//   • For composite flows (cancel + notify, cancel + reschedule), include all
 //     plausible capabilities even if one is the "primary" intent.
 //   • UPDATE_ONBOARDING is unfiltered because it touches profile, schedule,
 //     and care plan all at once.
@@ -227,7 +223,6 @@ export const INTENT_CAPABILITIES: Record<Intent, readonly Capability[]> = {
   HIRE_CAREGIVER:        ["booking", "messaging"],
   CAREGIVER_DECLINE_JOB: ["booking", "messaging"],
   RESCHEDULE_REQUEST:    ["booking", "scheduling", "messaging"],
-  SWAP_REQUEST:          ["booking", "scheduling", "messaging"],
   FIND_REPLACEMENT:      ["booking", "scheduling", "messaging"],
   CANCEL_SHIFT:          ["booking", "scheduling", "messaging"],
 
@@ -288,7 +283,7 @@ export const HIGH_STAKES_MUTATIONS = new Set<string>([
   "create_job_post", "edit_job_post", "cancel_job_post",
   // shifts
   "accept_shift", "decline_shift", "submit_shift_hours", "review_shift_hours",
-  "request_shift_swap", "accept_shift_swap", "cancel_shift_swap", "submit_gps_checkin",
+  "submit_gps_checkin",
   // money
   "set_subscription_status",
   "request_instant_payout", "retry_shift_payment",

@@ -109,7 +109,7 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     docId: "auto",
     caraWrites: true,
     webReads: true,
-    notes: "RETIRED: nothing creates appointments any more (the site and Evia both run on booking_requests → shifts). 2026-09-23 client sweep removed every client-facing reader (dashboard cards, callout modal, LiveCareFeed, the appointment triggers, callout/quick-confirm callables). Remaining .update() readers are caregiver-side (linq/routeCaregiver start/complete/late, caregiverSwapHandler) and queued for the caregiver pass.",
+    notes: "RETIRED: nothing creates appointments any more (the site and Evia both run on booking_requests → shifts). 2026-09-23 client sweep removed every client-facing reader (dashboard cards, callout modal, LiveCareFeed, the appointment triggers, callout/quick-confirm callables). Remaining .update() readers are caregiver-side (linq/routeCaregiver start/complete/late) and queued for the caregiver pass.",
   },
   booking_requests: {
     path: "booking_requests",
@@ -446,13 +446,6 @@ export const CONTRACT_COLLECTIONS: Record<string, ContractCollection> = {
     caraWrites: true,
     webReads: false,
     notes: "User-requested reminders (triggers/userTriggerManager.ts). Both creation paths (the MCP create/update/delete_reminder tools, and the conversational schedulingHandler.ts flow) were removed 2026-09-05 — no site equivalent. No new reminders can be created, and since 2026-09-23 triggerEngine.ts no longer evaluates this collection at all (userTriggerManager.ts removed). Existing docs inert. Server/agent-only.",
-  },
-  shift_swap_requests: {
-    path: "shift_swap_requests",
-    docId: "auto",
-    caraWrites: true,
-    webReads: false,
-    notes: "Caregiver shift-swap state machine (mcp request/accept/cancel/list_shift_swaps). Server/agent-only; the web reads the resulting appointments doc, not the swap record.",
   },
 };
 

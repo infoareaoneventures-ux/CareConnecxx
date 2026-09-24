@@ -39,7 +39,7 @@ const FIELD_KEYED_COLLECTIONS = [
   "user_triggers", "billingApprovalOutbox", "billingOperations", "admin_alerts",
   "support_tickets", "email_change_requests", "phone_change_requests",
   "account_action_requests", "weekly_digests", "emergency_alerts", "emergency_events",
-  "shift_checkins", "shift_offers", "shift_swap_requests", "match_history", "match_outcomes", "clientMatches",
+  "shift_checkins", "shift_offers", "match_history", "match_outcomes", "clientMatches",
   "user_activity_feed", "agent_action_ledger", "agent_audit_log", "agent_uncertainty_log", "agent_event_log",
   "agent_approvals", "wellbeing_checkins", "consent_audit_log", "referrals", "seniors", "notifications",
   "caregiver_booked_slots", "appointment_care_plans", "carePlanVersions",

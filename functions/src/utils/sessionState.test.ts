@@ -67,13 +67,13 @@ describe("isFlowStale", () => {
   const TTL = 24 * 60 * 60 * 1000;
 
   it("false when the flag is not set", () => {
-    expect(isFlowStale({}, "swapStep", "swapStepSetAt", TTL, NOW_MS)).toBe(false);
+    expect(isFlowStale({}, "someStep", "someStepSetAt", TTL, NOW_MS)).toBe(false);
   });
 
   it("false for a fresh flow", () => {
     expect(isFlowStale(
-      { swapStep: "confirm_shift", swapStepSetAt: iso(60 * 60 * 1000) },
-      "swapStep", "swapStepSetAt", TTL, NOW_MS,
+      { someStep: "confirm_shift", someStepSetAt: iso(60 * 60 * 1000) },
+      "someStep", "someStepSetAt", TTL, NOW_MS,
     )).toBe(false);
   });
 

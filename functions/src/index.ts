@@ -117,7 +117,6 @@ export * from './triggers/userCreated';
 export { triggerFamilyEmergency } from './triggers/familyEmergency';
 export { recomputeConfidenceScore } from './triggers/confidenceScoreTrigger';
 export { projectActivityFeed } from './triggers/projectActivityFeed';
-export { projectSwapRequestSummary, projectSwapOfferSummary } from './triggers/projectSwapSummary';
 
 
 // Token-scoped quick-confirm callable (replaces the QuickConfirmPage direct web

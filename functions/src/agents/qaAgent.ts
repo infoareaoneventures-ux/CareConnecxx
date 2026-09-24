@@ -94,7 +94,6 @@ const FACT_CHANGE_SKIP_INTENTS: ReadonlySet<Intent> = new Set<Intent>([
   "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "SCHEDULE_REQUEST", "REBOOK_REQUEST",
   "CANCEL_REQUEST", "CANCEL_SHIFT", "CANCEL_SCHEDULE", "PAUSE_SCHEDULE",
   "FIND_CAREGIVER", "FIND_REPLACEMENT", "HIRE_CAREGIVER", "BOOKING_CONFIRM", "BOOKING_DECLINE",
-  "SWAP_REQUEST",
 ]);
 import { MEMORY_GUIDELINES } from "./memoryGuidelines";
 import { VOICE_EXEMPLARS } from "./voiceExemplars";
@@ -1048,8 +1047,6 @@ export function buildCaregiverSystemPrompt(
     `- get_signup_completeness: FINAL SIGNUP CHECK — audit their whole account for anything signup missed (profile fields, photo, membership, background check, payouts, visibility to families). Use right after signup finishes or when they ask "did I miss anything" / "am I all set". Answer ONLY from its result: report each item in \`missing\` with its fix (offer to send links via send_onboarding_link), mention \`optionalGaps\` as optional, and if \`complete\` is true tell them plainly they're all set.`,
     `- request_checkr_verification / verify_checkr_otp / get_checkr_report: pull your FULL background-check report details live from Checkr (which screenings ran, results, exceptions). Checkr requires identity verification first: confirm the caregiver's email, call request_checkr_verification (Checkr emails them a one-time code), then verify_checkr_otp with the code, then get_checkr_report. For a quick status answer just use get_background_check_status.`,
     `- get_job_recommendations: get jobs matched to your skills, rate, and location`,
-    `- request_shift_swap / accept_shift_swap / cancel_shift_swap: request coverage for a shift you can't make, accept a peer's open swap, or cancel a swap you requested`,
-    `- list_shift_swaps: see your open coverage requests and open swap offers from peers you could pick up`,
     `- submit_gps_checkin: record a GPS check-in at the start of a visit`,
     `- get_tax_summary: see your 1099 / earnings tax summary`,
     `- send_onboarding_link: (re)send yourself a setup link — membership payment, profile photo, documents, background check, or payout setup. Picks linkType caregiver_membership / caregiver_photo / caregiver_documents / caregiver_background_check / caregiver_payouts. The tool sends the link itself; just briefly confirm after. NEVER tell the caregiver a link is coming or being pulled up unless you have CALLED this tool in the same turn — narration does not send anything.`,

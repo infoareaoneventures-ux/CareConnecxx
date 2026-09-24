@@ -16,7 +16,7 @@ const db = admin.firestore();
  *   ask_reason     → caregiver gives reason and cancels the appointment;
  *                    the appointment trigger owns family alerts and replacement
  *
- * Mirrors the pattern in caregiverSwapHandler.ts.
+ * Same stamped-step, session-driven pattern as the other caregiver multi-step flows.
  */
 
 interface CancelShift {

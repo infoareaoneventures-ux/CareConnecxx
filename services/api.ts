@@ -4,11 +4,6 @@ import { checkRateLimit, RATE_LIMITS } from './rateLimit';
 import firebase, { auth, db, functions, isConfigured } from '../lib/firebase';
 import { DEFAULT_CAREGIVER_AVATAR } from '../constants';
 import { UNBOOKABLE_BG_STATUSES } from '../utils/caregiverEligibility';
-import {
-    PendingSwap,
-    isActiveSwap,
-    mapSummaryDoc,
-} from './shiftSwap';
 
 // A family-facing "Evia Activity" entry (projection of an allow-listed audit
 // event; see functions/src/agents/activityFeedMap.ts). PII-free by construction.
@@ -537,37 +532,6 @@ export const dbService = {
                 (e: any) => {
                     if (e?.code !== 'permission-denied') console.warn("subscribeAgentActivity error:", e);
                     if (onError) onError(e); else onUpdate([]);
-                }
-            );
-    },
-
-    // Caregiver-initiated swaps this caregiver is tracking (U7). Live, reads the
-    // sanitized shift_swap_summaries projection (raw collections are server-only).
-    subscribeShiftSwapsForCaregiver: (caregiverId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
-        if (!isConfigured || !db || !caregiverId) { onUpdate([]); return () => {}; }
-        return db.collection('shift_swap_summaries')
-            .where('fromCaregiverId', '==', caregiverId)
-            .onSnapshot(
-                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
-                (e: any) => {
-                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForCaregiver error:", e);
-                    onUpdate([]);
-                }
-            );
-    },
-
-    // Swaps affecting this client's appointments (U7). Both swap sources are
-    // projected into shift_swap_summaries keyed by clientId, so a single
-    // owner-scoped listener covers caregiver- and client-initiated swaps.
-    subscribeShiftSwapsForClient: (clientId: string, onUpdate: (swaps: PendingSwap[]) => void): (() => void) => {
-        if (!isConfigured || !db || !clientId) { onUpdate([]); return () => {}; }
-        return db.collection('shift_swap_summaries')
-            .where('clientId', '==', clientId)
-            .onSnapshot(
-                snap => onUpdate(snap.docs.map(mapSummaryDoc).filter(isActiveSwap)),
-                (e: any) => {
-                    if (e?.code !== 'permission-denied') console.warn("subscribeShiftSwapsForClient error:", e);
-                    onUpdate([]);
                 }
             );
     },

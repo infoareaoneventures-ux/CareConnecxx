@@ -23,7 +23,6 @@ const INTENT_TO_FLOW: Partial<Record<Intent, string>> = {
   UPDATE_RATE:        "caregiver_profile",
   UPDATE_SKILLS:      "caregiver_profile",
   UPDATE_BIO:         "caregiver_profile",
-  SWAP_REQUEST:       "swap",
   FIND_REPLACEMENT:   "replacement",
   CANCEL_SHIFT:       "cancel_shift",
 };

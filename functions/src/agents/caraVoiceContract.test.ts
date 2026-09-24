@@ -17,7 +17,6 @@ const runtimeFiles = [
   "functions/src/agents/stepHandler.ts",
   "functions/src/agents/caregiverProfileHandler.ts",
   "functions/src/agents/caregiverCancelShiftHandler.ts",
-  "functions/src/agents/caregiverSwapHandler.ts",
   "functions/src/agents/shiftOffer.ts",
   "functions/src/agents/approvalHandler.ts",
   "functions/src/triggers/jobNotifications.ts",

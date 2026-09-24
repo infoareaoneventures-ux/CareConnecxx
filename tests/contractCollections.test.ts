@@ -120,7 +120,7 @@ const RUNTIME_ONLY_COLLECTIONS = new Set<string>([
     'system_config', 'experiment_scorecards', 'weekly_digests',
     '_meta',
     // Server-only request/workflow records the web does not read directly
-    // ('blocks' + 'shift_swap_requests' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
+    // ('blocks' moved to CONTRACT_COLLECTIONS — agent-native audit 2026-07)
     'comments', 'client_cancel_requests', 'email_change_requests',
     'emergency_events', 'instant_payouts', 'refundRequests',
     // Phone-number-change token/verification requests (2026-09-03) — the web

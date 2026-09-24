@@ -43,7 +43,6 @@ export type Intent =
   | "UPDATE_PAYMENT_METHOD"
   | "VIEW_INVOICE"
   | "VIEW_CARE_PLAN_HISTORY"
-  | "SWAP_REQUEST"
   | "FIND_REPLACEMENT"
   | "CANCEL_SHIFT"
   | "UPDATE_RATE"
@@ -69,7 +68,7 @@ const VALID_INTENTS = new Set<Intent>([
   "VIEW_EARNINGS", "UPDATE_AVAILABILITY", "BROWSE_JOB_BOARD",
   "RESCHEDULE_REQUEST", "MODIFY_SCHEDULE", "UPDATE_PAYMENT_METHOD",
   "VIEW_INVOICE", "VIEW_CARE_PLAN_HISTORY",
-  "SWAP_REQUEST", "FIND_REPLACEMENT",
+  "FIND_REPLACEMENT",
   "CANCEL_SHIFT", "UPDATE_RATE", "UPDATE_SKILLS", "UPDATE_BIO", "UPDATE_PHOTO",
   "PAUSE_ACCOUNT", "REACTIVATE", "INSTANT_PAYOUT",
   "FIND_NEARBY_PROVIDER", "BOOK_DOCTOR_APPOINTMENT",
@@ -122,7 +121,7 @@ export async function classifyIntentDetailed(
   try {
     const raw = await quickComplete(
         "You classify a message sent to a care coordinator named Evia. " +
-        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, SWAP_REQUEST, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
+        "Reply with exactly one word from this list: STOP, TASK_REPLY, BOOKING_CONFIRM, BOOKING_DECLINE, HIRE_CAREGIVER, CAREGIVER_DECLINE_JOB, PERMISSION_UPDATE, REBOOK_REQUEST, CANCEL_REQUEST, MEMORY_QUERY, FACT_CORRECTION, FIND_CAREGIVER, PAUSE_SCHEDULE, CANCEL_SCHEDULE, SCHEDULE_REQUEST, TRIGGER_MANAGEMENT, CREDENTIAL_MANAGEMENT, POST_JOB, VIEW_MY_JOBS, VIEW_APPLICANTS, VIEW_JOURNAL, VIEW_EARNINGS, UPDATE_AVAILABILITY, BROWSE_JOB_BOARD, RESCHEDULE_REQUEST, MODIFY_SCHEDULE, UPDATE_PAYMENT_METHOD, VIEW_INVOICE, VIEW_CARE_PLAN_HISTORY, FIND_REPLACEMENT, CANCEL_SHIFT, UPDATE_RATE, UPDATE_SKILLS, UPDATE_BIO, UPDATE_PHOTO, PAUSE_ACCOUNT, REACTIVATE, INSTANT_PAYOUT, FIND_NEARBY_PROVIDER, BOOK_DOCTOR_APPOINTMENT, PRESCRIPTION_REFILL, NEW_PRESCRIPTION, UPDATE_ONBOARDING, QUESTION.\n" +
         "STOP = opting out of all messages.\n" +
         "TASK_REPLY = responding to a numbered list (1, 2, or 3).\n" +
         "BOOKING_CONFIRM = confirming or approving a booking, schedule, or action (e.g. 'yes', 'sure', 'sounds good', 'let's do it', 'book it', 'go ahead', 'that works', 'perfect', 'confirmed', 'ok', 'yep').\n" +
@@ -152,7 +151,6 @@ export async function classifyIntentDetailed(
         "UPDATE_PAYMENT_METHOD = a client wanting to update or change their billing or payment method (e.g. 'update my card', 'change my credit card', 'my card expired', 'update billing', 'add a new payment method', 'my payment failed').\n" +
         "VIEW_INVOICE = a client asking what they were charged or paid for care — the Timesheets page's History tab (e.g. 'show my bill', 'what was I charged for', 'what did I pay for', 'how much did I pay Basra last month', 'my payment history', 'approve the timesheet', 'any hours to approve').\n" +
         "VIEW_CARE_PLAN_HISTORY = a client asking about changes to the care plan or wanting to see past versions (e.g. 'what changed in the care plan', 'show care plan history', 'who updated the care plan', 'restore old care plan', 'show previous care plan').\n" +
-        "SWAP_REQUEST = a caregiver wanting to swap, transfer, or find coverage for one of their shifts (e.g. 'can someone cover my Tuesday shift', 'I need someone to take my Wednesday visit', 'looking for coverage', 'can\\'t make Thursday need swap', 'swap my shift with someone').\n" +
         "FIND_REPLACEMENT = a client asking to find or send a replacement/cover for a visit their caregiver CANCELLED — a visit showing 'Needs Replacement' (e.g. 'find a replacement for Tuesday', 'who is available for replacement', 'can someone cover the visit Basra cancelled', 'find replacement', 'I need someone to cover tomorrow's cancelled visit'). This is the website's Find Replacement button, not a general caregiver search (FIND_CAREGIVER) — swapping a still-active caregiver is not something the site offers; a family asking for that is answered by the Q&A agent (cancel the visit, or wait for the caregiver to cancel).\n" +
         "CANCEL_SHIFT = a caregiver wanting to proactively cancel one of their own upcoming shifts (e.g. 'I need to cancel my Tuesday shift', 'cancel my Wednesday visit', 'I can't make my Friday appointment', 'I have to back out of tomorrow').\n" +
         "UPDATE_RATE = a caregiver wanting to change their hourly rate (e.g. 'change my rate to $28', 'update my hourly to 25', 'I want to raise my rate', 'set my pay to $30/hr').\n" +

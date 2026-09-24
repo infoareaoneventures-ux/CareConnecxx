@@ -4,8 +4,6 @@ import { User, Loader2, Calendar, CalendarDays, Phone, Heart, FileText, Clock, H
 import { ScheduleInterviewModal } from '../ScheduleInterviewModal';
 import { ViewType, Caregiver, ClientIntakeData, Senior } from '../../types';
 import { dbService, authService, normalizeJobPost } from '../../services/api';
-import type { PendingSwap } from '../../services/shiftSwap';
-import { PendingSwapsPanel } from '../shared/PendingSwapsPanel';
 import { useCareConnex } from '../../context/CareConnexContext';
 import { useAccessGates } from '../../hooks/useAccessGates';
 import { ClientNavigation } from './ClientNavigation';
@@ -158,7 +156,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
   const [careTeamProfiles, setCareTeamProfiles] = useState<Record<string, { rating?: number; reviewCount?: number; verified?: boolean; backgroundCheckStatus?: string }>>({});
   const [pendingBookingRequests, setPendingBookingRequests] = useState<any[]>([]);
   const [pendingAmendments, setPendingAmendments] = useState<any[]>([]);
-  const [pendingSwaps, setPendingSwaps] = useState<PendingSwap[]>([]);
   const [allBookingRequests, setAllBookingRequests] = useState<any[]>([]);
   const [clientAllPosts, setClientAllPosts] = useState<any[]>([]);
   const [allInterviews, setAllInterviews] = useState<any[]>([]);
@@ -329,10 +326,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
         setRequestedCaregiverIds(new Set(pending.map((d: any) => d.caregiverId).filter(Boolean)));
       }, () => {});
     unsubs.push(interviewUnsub);
-
-    // Pending shift swaps affecting this family's appointments (U7) — merges
-    // caregiver-initiated and client-initiated swaps, live.
-    unsubs.push(dbService.subscribeShiftSwapsForClient(currentUser.uid, setPendingSwaps));
 
     // Completed shifts + this family's reviews — the first-visit review card.
     unsubs.push(db.collection('shifts')
@@ -1107,13 +1100,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({ onNavigate }) 
                 to your care team" line regardless of whether the care team
                 had anyone to receive it, which reads as inaccurate. Revisit
                 once the feed can reflect real delivery. */}
-
-            {/* Pending care changes — live shift swaps (U7); hidden when none */}
-            <PendingSwapsPanel
-              swaps={pendingSwaps}
-              title="Pending care changes"
-              subtitle="Shift swaps being arranged for your visits"
-            />
 
             {/* Row 3: Upcoming Bookings + Timesheets + Caregivers Near You */}
             <div className="grid lg:grid-cols-3 gap-4">

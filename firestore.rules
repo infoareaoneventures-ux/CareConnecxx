@@ -1219,8 +1219,7 @@ service cloud.firestore {
     }
 
     // Shift offers — caregiver YES/NO offer state machine (agents/shiftOffer.ts).
-    // Server-only. The raw doc carries clientPhone/caregiverPhone/caregiverName,
-    // so the UI reads the sanitized shift_swap_summaries projection instead (U7).
+    // Server-only. The raw doc carries clientPhone/caregiverPhone/caregiverName.
     match /shift_offers/{offerId} {
       allow read, write: if false;
     }
@@ -1239,27 +1238,6 @@ service cloud.firestore {
     // user id). Server-only — written by the Linq webhook/send path (Admin SDK).
     match /linq_message_index/{scopedHash} {
       allow read, write: if false;
-    }
-
-    // Caregiver-initiated shift swaps (caregiverSwapHandler). Server-only. The raw
-    // doc carries candidatesContacted/candidateResponses/fromCaregiverName, so the
-    // UI reads the sanitized shift_swap_summaries projection instead (U7).
-    match /shift_swap_requests/{swapId} {
-      allow read, write: if false;
-    }
-
-    // Sanitized swap summaries (projectSwapSummary trigger) — the ONLY swap data
-    // the UI reads. Carries status/appointment/date/time + owner ids, never the
-    // phone/name/candidate fields from the raw collections. Owner-scoped read for
-    // the affected client and the involved caregiver; writes server-only.
-    match /shift_swap_summaries/{summaryId} {
-      allow read: if isAuthenticated() && (
-        resource.data.clientId == request.auth.uid ||
-        resource.data.caregiverId == request.auth.uid ||
-        resource.data.fromCaregiverId == request.auth.uid ||
-        isAdmin()
-      );
-      allow write: if false;
     }
 
     // Webhook idempotency ledgers (utils/webhookLedger.ts) — server-only.

@@ -123,14 +123,6 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
     expect(hasActiveSmsFlow({ pendingInstantPayoutConfirm: true }, NOW)).toBe(false);
   });
 
-  it("pendingSwapRequestId (stamped on pendingSwapSetAt): fresh defers, past 24h or missing stamp does not", () => {
-    const freshStamp = iso(NOW - 60 * 60 * 1000);
-    const staleStamp = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
-    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1", pendingSwapSetAt: freshStamp }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1", pendingSwapSetAt: staleStamp }, NOW)).toBe(false);
-    expect(hasActiveSmsFlow({ pendingSwapRequestId: "req-1" }, NOW)).toBe(false);
-  });
-
   it("pendingShiftApproval (stamped on pendingShiftApprovalSetAt): fresh defers, past 24h or missing stamp does not", () => {
     const freshStamp = iso(NOW - 60 * 60 * 1000);
     const staleStamp = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
@@ -170,13 +162,6 @@ describe("hasActiveSmsFlow (U2 web guard)", () => {
     const staleInvite = iso(NOW - JOB_INVITE_TTL_MS - 60 * 1000);
     expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: freshInvite }, NOW)).toBe(true);
     expect(hasActiveSmsFlow({ awaitingJobResponse: true, pendingJobSentAt: staleInvite }, NOW)).toBe(false);
-  });
-
-  it("stamped step flow (swapStep): fresh defers, past 24h TTL does not", () => {
-    const freshStep = iso(NOW - 60 * 1000);
-    const staleStep = iso(NOW - MULTI_STEP_FLOW_TTL_MS - 60 * 1000);
-    expect(hasActiveSmsFlow({ swapStep: "pick", swapStepSetAt: freshStep }, NOW)).toBe(true);
-    expect(hasActiveSmsFlow({ swapStep: "pick", swapStepSetAt: staleStep }, NOW)).toBe(false);
   });
 
   it("generic stamp-less flow: future stateExpiresAt defers, past does not, absent defers (deny-by-default)", () => {

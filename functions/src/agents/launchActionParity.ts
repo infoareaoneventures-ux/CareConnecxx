@@ -531,19 +531,6 @@ export const LAUNCH_ACTION_PARITY: readonly LaunchAction[] = [
     notes: "Parity audit 2026-07-06: web-only write to caregivers.introVideoUrl — update_caregiver_profile excludes it and no SMS media pipeline routes a texted video there. Should-have (not launch-critical): needs a Storage upload path for SMS media before the tool is honest.",
   },
 
-  // ── Caregiver CRUD/parity gap closures (agent-native audit 2026-07) ────────
-  {
-    id: "caregiver-list-shift-swaps",
-    actor: "caregiver",
-    action: "List active shift swap requests and open peer offers",
-    webSurface: "components/caregiver/CaregiverBookingsPage.tsx",
-    collection: "shift_swap_requests",
-    tool: "list_shift_swaps",
-    promptActor: "caregiver",
-    status: "shipped",
-    notes: "Read primitive over the collection request_shift_swap/accept_shift_swap write: the caller's own requests plus unexpired open offers from peers.",
-  },
-
   // ── Admin exception handling (R3) ──────────────────────────────────────────
   {
     id: "admin-review-caregiver-exception",
